@@ -7,6 +7,7 @@ pub(crate) fn extract_error_message(error: &Value) -> Option<String> {
 
     for pointer in [
         "/error/message",
+        "/errors/message",
         "/message",
         "/detail",
         "/msg",
@@ -38,11 +39,21 @@ pub(crate) fn extract_error_message(error: &Value) -> Option<String> {
 }
 
 pub(crate) fn extract_error_type(error: &Value) -> Option<String> {
-    extract_error_string(error, &["/error/type", "/error/status", "/type", "/status"])
+    extract_error_string(
+        error,
+        &[
+            "/error/type",
+            "/errors/type",
+            "/error/status",
+            "/errors/status",
+            "/type",
+            "/status",
+        ],
+    )
 }
 
 pub(crate) fn extract_error_code(error: &Value) -> Option<Value> {
-    for pointer in ["/error/code", "/code"] {
+    for pointer in ["/error/code", "/errors/code", "/code"] {
         if let Some(code) = error.pointer(pointer).filter(|code| !code.is_null()) {
             return Some(code.clone());
         }
@@ -51,7 +62,7 @@ pub(crate) fn extract_error_code(error: &Value) -> Option<Value> {
 }
 
 pub(crate) fn extract_error_param(error: &Value) -> Option<Value> {
-    for pointer in ["/error/param", "/param"] {
+    for pointer in ["/error/param", "/errors/param", "/param"] {
         if let Some(param) = error.pointer(pointer).filter(|param| !param.is_null()) {
             return Some(param.clone());
         }

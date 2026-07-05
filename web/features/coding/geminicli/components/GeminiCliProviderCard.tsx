@@ -33,7 +33,10 @@ import ProxyTag from '@/components/common/ProxyTag';
 import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
 import {
   firstGatewayApiFormat,
+  getGatewayProviderApiFormatFromMeta,
+  getGatewayProviderProfilesVersion,
   providerNeedsGatewayProxy,
+  subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 
 const { Text } = Typography;
@@ -139,7 +142,19 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const modelName = extractModelName(settingsConfig);
   const maskedApiKey = maskSecret(env.GEMINI_API_KEY || env.GOOGLE_API_KEY);
   const isOfficialProvider = provider.category === 'official';
-  const providerApiFormat = firstGatewayApiFormat(provider.meta?.apiFormat);
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
+  const providerProfileApiFormat = React.useMemo(
+    () => getGatewayProviderApiFormatFromMeta(provider.meta, 'gemini'),
+    [gatewayProviderProfilesVersion, provider.meta],
+  );
+  const providerApiFormat = firstGatewayApiFormat(
+    providerProfileApiFormat,
+    provider.meta?.apiFormat,
+  );
   const needsGatewayProxy =
     !isOfficialProvider &&
     provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID &&

@@ -1,9 +1,17 @@
 export type GeminiCliProviderCategory = 'official' | 'custom' | 'third_party' | string;
 export type GeminiCliApiFormat = 'gemini_native' | 'openai_chat' | 'openai_responses' | 'anthropic';
 
+export interface GatewayProviderProfileReference {
+  tool?: 'claude' | 'codex' | 'gemini';
+  profileId: string;
+  endpointId: string;
+}
+
 export interface GatewayProviderMeta {
+  gatewayProfile?: GatewayProviderProfileReference;
   providerType?: string;
   apiFormat?: GeminiCliApiFormat | string;
+  apiKeyField?: string;
   reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
   defaultMaxTokens?: number;
   imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
@@ -86,6 +94,7 @@ export interface GeminiCliProviderFormValues {
   name: string;
   category: GeminiCliProviderCategory;
   settingsConfig: string;
+  channel?: string;
   apiFormat?: GeminiCliApiFormat;
   meta?: GatewayProviderMeta;
   notes?: string;

@@ -5,16 +5,62 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 const CACHE_FILE_NAME: &str = "gateway_provider_profiles.json";
 const DEFAULT_GATEWAY_PROVIDER_PROFILES_JSON: &str =
     include_str!("../../../resources/gateway_provider_profiles.json");
+const SUPPORTED_PROFILE_TOOLS: [&str; 3] = ["claude", "codex", "gemini"];
+const SUPPORTED_COMPAT_RULES: [&str; 24] = [
+    "anthropic_tool_thinking_history",
+    "bailian_tool_call_merge",
+    "bailian_tool_call_stream_filter",
+    "codex_chat_reasoning_enable_thinking",
+    "codex_chat_reasoning_low_high_effort",
+    "codex_chat_reasoning_split",
+    "copilot_dynamic_route",
+    "copilot_headers",
+    "copilot_token_exchange",
+    "deepseek_disabled_strip_effort",
+    "deepseek_json_schema",
+    "deepseek_thinking",
+    "doubao_metadata",
+    "longcat_message_content_array",
+    "modelscope_remove_metadata",
+    "moonshot_json_schema",
+    "ollama_api_chat_wire_adapter",
+    "openrouter_reasoning_object",
+    "reasoning_field_reasoning",
+    "xai_filter_empty_delta",
+    "xai_strip_unsupported_fields",
+    "zai_metadata",
+    "zai_thinking",
+    "zai_tool_choice",
+];
 
 static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+static ACTIVE_GATEWAY_PROVIDER_PROFILES: OnceLock<RwLock<Option<Value>>> = OnceLock::new();
 
 pub fn set_cache_dir(dir: PathBuf) {
     let _ = CACHE_DIR.set(dir);
+}
+
+fn active_gateway_provider_profiles() -> &'static RwLock<Option<Value>> {
+    ACTIVE_GATEWAY_PROVIDER_PROFILES.get_or_init(|| RwLock::new(None))
+}
+
+fn set_active_gateway_provider_profiles(data: Value) {
+    let mut active = active_gateway_provider_profiles()
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    *active = Some(data);
+}
+
+fn get_active_gateway_provider_profiles() -> Option<Value> {
+    let active = active_gateway_provider_profiles()
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    active.clone()
 }
 
 fn get_cache_file_path() -> Option<PathBuf> {
@@ -130,7 +176,7 @@ fn profile_has_valid_tool(tools: Option<&Value>) -> bool {
     };
 
     let mut has_supported_tool = false;
-    for tool_key in ["claude", "codex"] {
+    for tool_key in SUPPORTED_PROFILE_TOOLS {
         let Some(tool_value) = tools_object.get(tool_key) else {
             continue;
         };
@@ -144,6 +190,34 @@ fn profile_has_valid_tool(tools: Option<&Value>) -> bool {
     }
 
     has_supported_tool
+}
+
+fn profile_has_valid_compat(compat: Option<&Value>) -> bool {
+    let Some(compat) = compat else {
+        return true;
+    };
+    let Some(compat_object) = compat.as_object() else {
+        return false;
+    };
+
+    for rules in compat_object.values() {
+        let Some(rules) = rules.as_array() else {
+            return false;
+        };
+        if rules.is_empty() {
+            return false;
+        }
+        for rule in rules {
+            let Some(rule) = rule.as_str().map(str::trim) else {
+                return false;
+            };
+            if rule.is_empty() || !SUPPORTED_COMPAT_RULES.contains(&rule) {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 pub(crate) fn is_valid_gateway_provider_profiles(data: &Value) -> bool {
@@ -182,6 +256,7 @@ pub(crate) fn is_valid_gateway_provider_profiles(data: &Value) -> bool {
         if text_field_is_empty(profile_object, "providerType")
             || text_field_is_empty(profile_object, "label")
             || !profile_has_valid_tool(profile_object.get("tools"))
+            || !profile_has_valid_compat(profile_object.get("compat"))
         {
             return false;
         }
@@ -198,6 +273,11 @@ pub fn load_cached_gateway_provider_profiles() -> Result<Option<Value>, String> 
         }
     }
     Ok(get_bundled_gateway_provider_profiles())
+}
+
+pub(crate) fn load_gateway_provider_profiles_for_runtime() -> Option<Value> {
+    get_active_gateway_provider_profiles()
+        .or_else(|| load_cached_gateway_provider_profiles().ok().flatten())
 }
 
 #[tauri::command]
@@ -227,6 +307,8 @@ pub async fn fetch_remote_gateway_provider_profiles(
     if !is_valid_gateway_provider_profiles(&json) {
         return Err("Remote provider profiles JSON is invalid".to_string());
     }
+
+    set_active_gateway_provider_profiles(json.clone());
 
     if let Err(error) = write_cache_file(&json) {
         log::warn!("[GatewayProviderProfiles] Failed to write cache: {error}");
@@ -316,6 +398,55 @@ mod tests {
         catalog["profiles"][0]["tools"]["claude"]["endpoints"][0]["apiFormat"] =
             json!("unknown_format");
         assert!(!is_valid_gateway_provider_profiles(&catalog));
+    }
+
+    #[test]
+    fn gemini_tool_profiles_are_valid() {
+        let mut catalog = valid_catalog();
+        catalog["profiles"][0]["tools"]
+            .as_object_mut()
+            .unwrap()
+            .remove("claude");
+        catalog["profiles"][0]["tools"]["gemini"] = json!({
+            "defaultEndpointId": "openai_chat",
+            "endpoints": [
+                {
+                    "id": "openai_chat",
+                    "label": "OpenAI Chat",
+                    "apiFormat": "openai_chat",
+                    "baseUrl": "https://api.deepseek.com/v1"
+                }
+            ]
+        });
+
+        assert!(is_valid_gateway_provider_profiles(&catalog));
+    }
+
+    #[test]
+    fn unknown_compat_rules_are_rejected() {
+        let mut catalog = valid_catalog();
+        catalog["profiles"][0]["compat"] = json!({
+            "openaiChat": ["unknown_provider_compat"]
+        });
+
+        assert!(!is_valid_gateway_provider_profiles(&catalog));
+    }
+
+    #[test]
+    fn runtime_profiles_prefer_active_remote_catalog() {
+        let mut first_catalog = get_bundled_gateway_provider_profiles().expect("bundled catalog");
+        first_catalog["updatedAt"] = json!("remote-first");
+        set_active_gateway_provider_profiles(first_catalog);
+
+        let first_loaded = load_gateway_provider_profiles_for_runtime().expect("runtime catalog");
+        assert_eq!(first_loaded["updatedAt"], "remote-first");
+
+        let mut second_catalog = get_bundled_gateway_provider_profiles().expect("bundled catalog");
+        second_catalog["updatedAt"] = json!("remote-second");
+        set_active_gateway_provider_profiles(second_catalog);
+
+        let second_loaded = load_gateway_provider_profiles_for_runtime().expect("runtime catalog");
+        assert_eq!(second_loaded["updatedAt"], "remote-second");
     }
 
     #[test]

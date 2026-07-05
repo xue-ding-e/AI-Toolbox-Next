@@ -684,7 +684,11 @@ impl SourceStreamState {
                 }
                 Vec::new()
             }
-            "response.completed" => {
+            "response.completed"
+            | "response.failed"
+            | "response.cancelled"
+            | "response.canceled"
+            | "response.incomplete" => {
                 let response = value.get("response").unwrap_or(&value);
                 let has_tool_call = !self.responses_tool_by_item.is_empty()
                     || response
@@ -699,20 +703,24 @@ impl SourceStreamState {
                             })
                         })
                         .unwrap_or(false);
-                vec![UnifiedStreamEvent::Finish {
-                    reason: response
+                let reason = match event_type {
+                    "response.failed" => Some("error".to_string()),
+                    "response.cancelled" | "response.canceled" => Some("cancelled".to_string()),
+                    "response.incomplete" => Some("length".to_string()),
+                    _ => response
                         .get("status")
                         .and_then(Value::as_str)
-                        .map(|status| {
-                            if status == "incomplete" {
-                                "length"
-                            } else if has_tool_call {
-                                "tool_calls"
-                            } else {
-                                "stop"
-                            }
+                        .map(|status| match status {
+                            "failed" => "error",
+                            "canceled" | "cancelled" => "cancelled",
+                            "incomplete" => "length",
+                            _ if has_tool_call => "tool_calls",
+                            _ => "stop",
                         })
                         .map(ToString::to_string),
+                };
+                vec![UnifiedStreamEvent::Finish {
+                    reason,
                     usage: response.get("usage").cloned(),
                 }]
             }
@@ -1749,6 +1757,51 @@ impl TargetStreamState {
             .pending_responses_finish_reason
             .take()
             .unwrap_or_else(|| "stop".to_string());
+        if finish_reason == "error" {
+            let mut response = json!({
+                "id": self.id,
+                "object": "response",
+                "status": "failed",
+                "model": self.model,
+                "output": self.completed_responses_output(),
+                "error": {
+                    "type": "server_error",
+                    "code": "response_error",
+                    "message": "Response failed"
+                }
+            });
+            if let Some(usage) = usage.as_ref() {
+                response["usage"] = chat_usage_to_responses(Some(usage));
+            }
+            out.push(sse_event(
+                Some("response.failed"),
+                &json!({
+                    "type": "response.failed",
+                    "response": response
+                }),
+            ));
+            return out;
+        }
+        if finish_reason == "cancelled" || finish_reason == "canceled" {
+            let mut response = json!({
+                "id": self.id,
+                "object": "response",
+                "status": "canceled",
+                "model": self.model,
+                "output": self.completed_responses_output()
+            });
+            if let Some(usage) = usage.as_ref() {
+                response["usage"] = chat_usage_to_responses(Some(usage));
+            }
+            out.push(sse_event(
+                Some("response.cancelled"),
+                &json!({
+                    "type": "response.cancelled",
+                    "response": response
+                }),
+            ));
+            return out;
+        }
         let mut response = json!({
             "id": self.id,
             "object": "response",
@@ -2239,6 +2292,8 @@ impl TargetStreamState {
                     Some(match reason.as_deref() {
                         Some("length") => "length",
                         Some("tool_calls") => "tool_calls",
+                        Some("error") => "error",
+                        Some("cancelled") | Some("canceled") => "cancelled",
                         _ => "stop",
                     }),
                 ));

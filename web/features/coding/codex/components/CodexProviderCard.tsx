@@ -35,8 +35,11 @@ import {
   canApplyProviderWithGatewayProxy,
   codexWireApiFormatFromConfig,
   firstGatewayApiFormat,
+  getGatewayProviderApiFormatFromMeta,
+  getGatewayProviderProfilesVersion,
   openAiApiFormatFromBaseUrl,
   providerNeedsGatewayProxy,
+  subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
@@ -155,7 +158,17 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     apiFormat?: unknown;
     api_format?: unknown;
   };
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
+  const providerProfileApiFormat = React.useMemo(
+    () => getGatewayProviderApiFormatFromMeta(provider.meta, 'codex'),
+    [gatewayProviderProfilesVersion, provider.meta],
+  );
   const providerApiFormat = firstGatewayApiFormat(
+    providerProfileApiFormat,
     provider.meta?.apiFormat,
     typeof settingsConfigApiFormat.apiFormat === 'string'
       ? settingsConfigApiFormat.apiFormat

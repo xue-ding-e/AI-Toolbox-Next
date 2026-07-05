@@ -8,3 +8,14 @@ export {
   providerNeedsGatewayProxy,
   type GatewayApiFormat,
 } from './providerProtocol';
+export {
+  getGatewayProviderApiFormatFromMeta,
+  getGatewayProviderProfileReferenceFromMeta,
+  getGatewayProviderProfilesVersion,
+  inferGatewayProviderEndpointSelection,
+  inferUniqueGatewayProviderEndpointSelection,
+  mergeGatewayProfileReferenceIntoMeta,
+  subscribeGatewayProviderProfiles,
+  toGatewayProviderProfileReference,
+  type GatewayProviderProfileReference,
+} from './providerProfiles';

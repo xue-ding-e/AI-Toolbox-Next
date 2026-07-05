@@ -30,10 +30,13 @@ import {
   getGatewayProviderProfilesForTool,
   getGatewayProviderProfilesVersion,
   inferGatewayProviderEndpointSelection,
+  mergeGatewayProfileReferenceIntoMeta,
   parseGatewayProviderEndpointKey,
   subscribeGatewayProviderProfiles,
   toGatewayProviderEndpointKey,
+  toGatewayProviderProfileReference,
   type GatewayProviderEndpointProfile,
+  type GatewayProviderProfileReference,
 } from '@/features/coding/shared/gateway/providerProfiles';
 import {
   extractCodexBaseUrl,
@@ -74,60 +77,10 @@ function normalizeCodexApiFormat(value?: string): CodexApiFormat {
 
 function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
+  gatewayProfile: GatewayProviderProfileReference | undefined,
   apiFormat: CodexApiFormat | undefined,
-  providerType?: string,
-  reasoningField?: string,
-  codexChatReasoning?: Record<string, unknown>,
-  endpoint?: GatewayProviderEndpointProfile,
-  defaultMaxTokens?: number,
-  ownsReasoningField = false,
 ): GatewayProviderMeta | undefined {
-  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
-  delete nextMeta.apiFormat;
-  delete nextMeta.providerType;
-  delete nextMeta.apiKeyField;
-  delete nextMeta.codexChatReasoning;
-  delete nextMeta.imageInputPolicy;
-  delete nextMeta.textOnlyModels;
-  delete nextMeta.imageCapableModels;
-  delete nextMeta.allowTextOnlyModelHeuristic;
-  delete nextMeta.defaultMaxTokens;
-  if (ownsReasoningField) {
-    delete nextMeta.reasoningField;
-  }
-  if (apiFormat) {
-    nextMeta.apiFormat = apiFormat;
-  }
-  if (providerType?.trim()) {
-    nextMeta.providerType = providerType.trim();
-  }
-  if (endpoint?.apiKeyField?.trim()) {
-    nextMeta.apiKeyField = endpoint.apiKeyField.trim();
-  }
-  if (reasoningField?.trim()) {
-    nextMeta.reasoningField = reasoningField.trim();
-  }
-  if (codexChatReasoning && Object.keys(codexChatReasoning).length > 0) {
-    nextMeta.codexChatReasoning = codexChatReasoning;
-  }
-  if (endpoint?.imageInputPolicy) {
-    nextMeta.imageInputPolicy = endpoint.imageInputPolicy;
-  }
-  if (endpoint?.textOnlyModels?.length) {
-    nextMeta.textOnlyModels = endpoint.textOnlyModels;
-  }
-  if (endpoint?.imageCapableModels?.length) {
-    nextMeta.imageCapableModels = endpoint.imageCapableModels;
-  }
-  if (endpoint?.allowTextOnlyModelHeuristic !== undefined) {
-    nextMeta.allowTextOnlyModelHeuristic = endpoint.allowTextOnlyModelHeuristic;
-  }
-  if (defaultMaxTokens !== undefined) {
-    nextMeta.defaultMaxTokens = defaultMaxTokens;
-  }
-  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
-    ? nextMeta
-    : undefined;
+  return mergeGatewayProfileReferenceIntoMeta(meta, gatewayProfile, apiFormat);
 }
 
 function getEndpointCatalogModels(endpoint?: GatewayProviderEndpointProfile): CodexCatalogModel[] {
@@ -343,7 +296,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [modelMappingExpanded, setModelMappingExpanded] = React.useState(false);
-  // 当前表单的 baseUrl（用于匹配供应商）
+  // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
@@ -482,9 +435,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           }
         : inferGatewayProviderEndpointSelection({
             tool: 'codex',
+            meta: provider.meta,
             providerType: provider.meta?.providerType,
             apiFormat: provider.meta?.apiFormat,
-            baseUrl,
           });
       const providerEndpoint = providerEndpointSelection.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
         ? undefined
@@ -787,16 +740,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             'codex',
             submittedValues.providerEndpointId,
           );
-      const selectedProfile = selectedEndpoint
-        ? findGatewayProviderProfile(submittedValues.providerProfileId)
-        : undefined;
       const selectedApiFormat = selectedCategory === 'official'
         ? undefined
         : selectedEndpoint
           ? normalizeCodexApiFormat(selectedEndpoint.apiFormat)
           : normalizeCodexApiFormat(submittedValues.apiFormat);
-      const selectedReasoningField = selectedEndpoint?.reasoningField ?? selectedProfile?.reasoningField;
-      const selectedDefaultMaxTokens = selectedEndpoint?.defaultMaxTokens ?? selectedProfile?.defaultMaxTokens;
+      const gatewayProfile = selectedEndpoint
+        ? toGatewayProviderProfileReference('codex', submittedValues.providerProfileId || '', selectedEndpoint.id)
+        : undefined;
       const finalSettingsConfig = selectedCategory === 'official'
         ? settingsConfig
         : applyEndpointToCodexSettingsConfig(
@@ -810,10 +761,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         name: submittedValues.name,
         category: selectedCategory,
         providerEndpointKey: selectedEndpoint
-          ? toGatewayProviderEndpointKey(selectedProfile?.id || submittedValues.providerProfileId || '', selectedEndpoint.id)
+          ? toGatewayProviderEndpointKey(submittedValues.providerProfileId || '', selectedEndpoint.id)
           : CUSTOM_PROVIDER_ENDPOINT_KEY,
         providerProfileId: selectedEndpoint
-          ? selectedProfile?.id
+          ? submittedValues.providerProfileId
           : CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: selectedEndpoint?.id,
         settingsConfig: finalSettingsConfig,
@@ -821,13 +772,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         meta: mergeBillingConfigIntoMeta(
           mergeGatewayMetaIntoProviderMeta(
             provider?.meta,
-            selectedApiFormat,
-            selectedCategory === 'official' ? undefined : selectedProfile?.providerType,
-            selectedCategory === 'official' ? undefined : selectedReasoningField,
-            selectedCategory === 'official' ? undefined : selectedEndpoint?.codexChatReasoning,
-            selectedCategory === 'official' ? undefined : selectedEndpoint,
-            selectedCategory === 'official' ? undefined : selectedDefaultMaxTokens,
-            selectedCategory === 'official' || Boolean(selectedEndpoint) || Boolean(provider?.meta?.providerType),
+            gatewayProfile,
+            gatewayProfile ? undefined : selectedApiFormat,
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
@@ -935,7 +881,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setCodexCatalogModels((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
   }, [setCodexCatalogModels]);
 
-  // 根据 baseUrl 匹配供应商的模型列表
+  // 根据 baseUrl 辅助匹配 OpenCode 导入候选的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
     if (!currentBaseUrl || openCodeProviders.length === 0) {

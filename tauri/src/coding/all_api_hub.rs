@@ -14,9 +14,16 @@ use super::open_code::types::{OpenCodeModel, OpenCodeProvider, OpenCodeProviderO
 use crate::db::SqliteDbState;
 use crate::http_client;
 
-const KNOWN_EXTENSION_IDS: &[&str] = &[
-    "hnmbbaagobbadojmjkeilcgbnpdfifmk",
-    "lapnciffpekdengooeolaienkeoilfeo",
+const ALL_API_HUB_LEGACY_CHROME_EXTENSION_ID: &str = "hnmbbaagobbadojmjkeilcgbnpdfifmk";
+const ALL_API_HUB_CHROME_EXTENSION_ID: &str = "lapnciffpekdengooeolaienkeoilfeo";
+const ALL_API_HUB_EDGE_EXTENSION_ID: &str = "pcokpjaffghgipcgjhapgdpeddlhblaa";
+const CHROME_EXTENSION_IDS: &[&str] = &[
+    ALL_API_HUB_CHROME_EXTENSION_ID,
+    ALL_API_HUB_LEGACY_CHROME_EXTENSION_ID,
+];
+const EDGE_EXTENSION_IDS: &[&str] = &[
+    ALL_API_HUB_CHROME_EXTENSION_ID,
+    ALL_API_HUB_EDGE_EXTENSION_ID,
 ];
 
 const STORAGE_KEY: &str = "site_accounts";
@@ -74,6 +81,13 @@ pub struct AllApiHubDiscovery {
     pub profiles: Vec<AllApiHubProfileInfo>,
     pub providers: Vec<AllApiHubProviderCandidate>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BrowserExtensionSource<'a> {
+    browser_name: &'a str,
+    base_dir: PathBuf,
+    extension_ids: &'a [&'a str],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,7 +386,50 @@ fn get_chrome_base_dir() -> Option<PathBuf> {
     }
 }
 
-fn list_chrome_profiles(base: &Path) -> Vec<(String, PathBuf)> {
+fn get_edge_base_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir().map(|h| {
+            h.join("Library")
+                .join("Application Support")
+                .join("Microsoft Edge")
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        dirs::home_dir().map(|h| h.join(".config").join("microsoft-edge"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_local_dir().map(|d| d.join("Microsoft").join("Edge").join("User Data"))
+    }
+}
+
+fn browser_extension_sources() -> Vec<BrowserExtensionSource<'static>> {
+    let mut sources = Vec::new();
+
+    if let Some(base_dir) = get_chrome_base_dir() {
+        sources.push(BrowserExtensionSource {
+            browser_name: "Chrome",
+            base_dir,
+            extension_ids: CHROME_EXTENSION_IDS,
+        });
+    }
+
+    if let Some(base_dir) = get_edge_base_dir() {
+        sources.push(BrowserExtensionSource {
+            browser_name: "Edge",
+            base_dir,
+            extension_ids: EDGE_EXTENSION_IDS,
+        });
+    }
+
+    sources
+}
+
+fn list_browser_profiles(base: &Path) -> Vec<(String, PathBuf)> {
     let mut profiles = Vec::new();
 
     let Ok(entries) = std::fs::read_dir(base) else {
@@ -389,41 +446,49 @@ fn list_chrome_profiles(base: &Path) -> Vec<(String, PathBuf)> {
         }
     }
 
+    profiles.sort_by(|left, right| left.0.cmp(&right.0));
     profiles
 }
 
 pub fn discover_extension_dirs() -> Vec<ExtensionInfo> {
-    let base = match get_chrome_base_dir() {
-        Some(path) if path.is_dir() => path,
-        _ => {
-            info!("Chrome base directory not found");
-            return Vec::new();
-        }
-    };
+    discover_extension_dirs_from_sources(&browser_extension_sources())
+}
 
-    let profiles = list_chrome_profiles(&base);
-    if profiles.is_empty() {
-        info!("No Chrome profiles found in {:?}", base);
-        return Vec::new();
-    }
-
+fn discover_extension_dirs_from_sources(
+    sources: &[BrowserExtensionSource<'_>],
+) -> Vec<ExtensionInfo> {
     let mut results = Vec::new();
 
-    for (profile_name, ext_settings_dir) in &profiles {
-        for &ext_id in KNOWN_EXTENSION_IDS {
-            let candidate = ext_settings_dir.join(ext_id);
-            if candidate.is_dir() {
-                results.push(ExtensionInfo {
-                    profile_name: profile_name.clone(),
-                    extension_id: ext_id.to_string(),
-                    path: candidate,
-                });
+    for source in sources {
+        if !source.base_dir.is_dir() {
+            info!(
+                "{} base directory not found: {:?}",
+                source.browser_name, source.base_dir
+            );
+            continue;
+        }
+
+        let profiles = list_browser_profiles(&source.base_dir);
+        if profiles.is_empty() {
+            info!(
+                "No {} profiles found in {:?}",
+                source.browser_name, source.base_dir
+            );
+            continue;
+        }
+
+        for (profile_name, ext_settings_dir) in &profiles {
+            for &ext_id in source.extension_ids {
+                let candidate = ext_settings_dir.join(ext_id);
+                if candidate.is_dir() {
+                    results.push(ExtensionInfo {
+                        profile_name: format!("{} / {}", source.browser_name, profile_name),
+                        extension_id: ext_id.to_string(),
+                        path: candidate,
+                    });
+                }
             }
         }
-    }
-
-    if !results.is_empty() {
-        return results;
     }
 
     results
@@ -1396,7 +1461,10 @@ fn unwrap_json_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_npm, mask_api_key_preview, slugify, uniquify_provider_id};
+    use super::{
+        discover_extension_dirs_from_sources, infer_npm, mask_api_key_preview, slugify,
+        uniquify_provider_id, BrowserExtensionSource,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -1429,5 +1497,69 @@ mod tests {
         assert_eq!(mask_api_key_preview("abcd"), "****");
         assert_eq!(mask_api_key_preview("abcdef"), "ab***");
         assert_eq!(mask_api_key_preview("abcdefghij"), "abc...ij");
+    }
+
+    #[test]
+    fn discover_extension_dirs_prefers_chrome_and_supports_edge_ids() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let chrome_base_dir = temp_dir.path().join("Chrome").join("User Data");
+        let edge_base_dir = temp_dir.path().join("Edge").join("User Data");
+
+        let chrome_extension_dir = chrome_base_dir
+            .join("Default")
+            .join("Local Extension Settings")
+            .join("chrome-extension");
+        let edge_chrome_extension_dir = edge_base_dir
+            .join("Default")
+            .join("Local Extension Settings")
+            .join("chrome-extension");
+        let edge_store_extension_dir = edge_base_dir
+            .join("Profile 1")
+            .join("Local Extension Settings")
+            .join("edge-extension");
+        let unknown_extension_dir = edge_base_dir
+            .join("Profile 2")
+            .join("Local Extension Settings")
+            .join("unknown-extension");
+
+        std::fs::create_dir_all(&chrome_extension_dir).expect("create chrome extension dir");
+        std::fs::create_dir_all(&edge_chrome_extension_dir)
+            .expect("create edge chrome extension dir");
+        std::fs::create_dir_all(&edge_store_extension_dir)
+            .expect("create edge store extension dir");
+        std::fs::create_dir_all(&unknown_extension_dir).expect("create unknown extension dir");
+
+        let chrome_extension_ids = ["chrome-extension"];
+        let edge_extension_ids = ["chrome-extension", "edge-extension"];
+        let sources = vec![
+            BrowserExtensionSource {
+                browser_name: "Chrome",
+                base_dir: chrome_base_dir,
+                extension_ids: &chrome_extension_ids,
+            },
+            BrowserExtensionSource {
+                browser_name: "Edge",
+                base_dir: edge_base_dir,
+                extension_ids: &edge_extension_ids,
+            },
+        ];
+
+        let discovered = discover_extension_dirs_from_sources(&sources);
+        let discovered_summary = discovered
+            .iter()
+            .map(|info| (info.profile_name.as_str(), info.extension_id.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            discovered_summary,
+            vec![
+                ("Chrome / Default", "chrome-extension"),
+                ("Edge / Default", "chrome-extension"),
+                ("Edge / Profile 1", "edge-extension"),
+            ]
+        );
+        assert_eq!(discovered[0].path, chrome_extension_dir);
+        assert_eq!(discovered[1].path, edge_chrome_extension_dir);
+        assert_eq!(discovered[2].path, edge_store_extension_dir);
     }
 }

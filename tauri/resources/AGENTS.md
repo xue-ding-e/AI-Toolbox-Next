@@ -16,8 +16,9 @@
 
 - 这些 JSON 放在 `tauri/resources/`，是为了让应用在无网络、缓存缺失或远端拉取失败时仍有稳定的默认模型数据可用。
 - `preset_models.json` 的数组顺序是用户可见语义，不只是排版。前端预设模型选择 UI 直接按分组数组顺序渲染，不会再做二次排序。
-- `gateway_provider_profiles.json` 的 endpoint 是内置供应商 URL/API 格式/providerType 的唯一事实源。前端保存内置供应商时应从选中的 endpoint 反推 `baseUrl`、`meta.apiFormat` 和 `meta.providerType`，不能信任表单里的可编辑字符串。
+- `gateway_provider_profiles.json` 的 endpoint 是内置供应商默认 URL、API 格式、providerType 和 provider 兼容能力的事实源。前端保存内置供应商时只应持久化 `meta.gatewayProfile={tool,profileId,endpointId}` 引用和用户覆盖项，Base URL 继续使用表单中的用户可编辑值；不要把 `meta.apiFormat` / `meta.providerType` / `apiKeyField` / `reasoningField` / `defaultMaxTokens` / 图片策略 / `codexChatReasoning` 等 profile 派生快照写进 provider meta。
 - Gateway provider 专属兼容能力必须通过 `gateway_provider_profiles.json` 的明确 profile/endpoint 暴露给用户选择，或通过用户显式 provider meta 配置启用；不要让 runtime 仅凭模型名猜测 provider。比如自定义渠道里 `model=deepseek-*`、`qwen*`、`MiniMax-*` 不应触发 DeepSeek/Qwen/MiniMax 专属请求改写。
+- `gateway_provider_profiles.json` 的 `compat` 是 catalog 描述，不是 runtime 执行入口；但后端 validator 会拒绝未知 compat 名称，防止 profile 声明和 runtime 实现漂移。新增 compat 名称时必须同步更新 `tauri/src/coding/proxy_gateway/provider_profiles.rs` 的白名单、runtime adapter/测试和架构文档。
 
 ## 关键流程
 
@@ -45,6 +46,7 @@ sequenceDiagram
 - 给新模型补预设时，若需求是“参数和旧模型一样”，优先复制对应旧模型条目，只做 `id` / `name` 和必要顺序调整，不要顺手改能力字段。
 - 不要在这里记录“远端缓存刷新后也许会覆盖本地顺序”之类推测；判断最终线上效果时，要先区分当前看到的是 bundled defaults 还是 app data / 远端缓存数据。
 - 新增 Gateway provider compat 后要同步更新 `gateway_provider_profiles.json`，否则用户只能走自定义渠道，runtime 也不应靠模型名 fallback 补偿这个缺口。模型名可以作为已识别 provider 内部的能力细分条件，但不能作为 provider 身份识别条件。
+- `tools.gemini` 可以从 `tools.codex` 的同 target endpoint 派生基础 URL/API 格式/providerType/model 信息，但不能复制 Codex-only `codexChatReasoning`；Gemini CLI provider 只保存 `gatewayProfile` 引用和用户覆盖项，runtime 从 `tools.gemini` 动态解析自身会用到的 effective meta。
 
 ## 跨模块依赖
 

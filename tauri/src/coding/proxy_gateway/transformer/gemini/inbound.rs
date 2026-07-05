@@ -707,12 +707,7 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
             "functionResponse": {
                 "id": message.tool_call_id.clone().unwrap_or_default(),
                 "name": message.tool_call_name.or(message.tool_call_id).unwrap_or_default(),
-                "response": {
-                    "content": match message.content {
-                        MessageContent::Text(text) => text,
-                        other => serde_json::to_string(&other).unwrap_or_default(),
-                    }
-                }
+                "response": gemini_function_response_value(message.content)
             }
         }));
         return json!({ "role": "user", "parts": parts });
@@ -862,15 +857,21 @@ fn llm_tool_message_to_gemini_content(
             "functionResponse": {
                 "id": tool_call_id,
                 "name": tool_call_name,
-                "response": {
-                    "content": match message.content {
-                        MessageContent::Text(text) => text,
-                        other => serde_json::to_string(&other).unwrap_or_default(),
-                    }
-                }
+                "response": gemini_function_response_value(message.content)
             }
         }]
     })
+}
+
+fn gemini_function_response_value(content: MessageContent) -> Value {
+    let text = match content {
+        MessageContent::Text(text) => text,
+        other => serde_json::to_string(&other).unwrap_or_default(),
+    };
+    if let Ok(Value::Object(object)) = serde_json::from_str::<Value>(&text) {
+        return Value::Object(object);
+    }
+    json!({ "result": text })
 }
 
 fn gemini_stop_sequences(stop: Option<Stop>) -> Option<Vec<String>> {

@@ -7,7 +7,14 @@
 export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
 export type ClaudeApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses' | 'gemini_native';
 
+export interface GatewayProviderProfileReference {
+  tool?: 'claude' | 'codex' | 'gemini';
+  profileId: string;
+  endpointId: string;
+}
+
 export interface GatewayProviderMeta {
+  gatewayProfile?: GatewayProviderProfileReference;
   providerType?: string;
   apiFormat?: ClaudeApiFormat | string;
   apiKeyField?: string;

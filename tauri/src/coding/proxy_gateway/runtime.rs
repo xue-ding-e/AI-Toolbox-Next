@@ -1,4 +1,5 @@
 mod cache_injector;
+mod compat;
 mod header_preserving_client;
 mod http_io;
 mod middleware;
@@ -795,11 +796,21 @@ data: {"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read
             stream
                 .write_all(
                     br#"event: message_delta
-data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_tokens":5}}
+data: {"type":"message_delta","delta":{"stop_reason":null},"usage":{"output_tokens":30,"cache_creation_input_tokens":5}}
 
 "#,
                 )
                 .expect("write second chunk");
+            stream.flush().expect("flush second chunk");
+            thread::sleep(Duration::from_millis(50));
+            stream
+                .write_all(
+                    br#"event: content_block_delta
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
+
+"#,
+                )
+                .expect("write third chunk");
         });
         (base_url, rx)
     }

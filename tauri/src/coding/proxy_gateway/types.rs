@@ -58,6 +58,8 @@ pub struct AppProxyConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct ProviderGatewayMeta {
+    #[serde(rename = "gatewayProfile", alias = "gateway_profile")]
+    pub gateway_profile: Option<GatewayProviderProfileReference>,
     pub provider_type: Option<String>,
     pub api_format: Option<String>,
     pub api_key_field: Option<String>,
@@ -73,6 +75,15 @@ pub struct ProviderGatewayMeta {
     pub allow_text_only_model_heuristic: bool,
     pub cost_multiplier: String,
     pub pricing_model_source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayProviderProfileReference {
+    pub tool: Option<String>,
+    #[serde(rename = "profileId", alias = "profile_id")]
+    pub profile_id: String,
+    #[serde(rename = "endpointId", alias = "endpoint_id")]
+    pub endpoint_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -95,6 +106,7 @@ pub struct CodexChatReasoningMeta {
 impl Default for ProviderGatewayMeta {
     fn default() -> Self {
         Self {
+            gateway_profile: None,
             provider_type: None,
             api_format: None,
             api_key_field: None,

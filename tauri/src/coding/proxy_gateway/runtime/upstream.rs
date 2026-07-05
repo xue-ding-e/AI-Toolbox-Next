@@ -1,3 +1,6 @@
+use super::compat::codex_responses_compact::{
+    CodexResponsesCompactCompat, CODEX_RESPONSES_COMPACT_COMPAT_HEADER,
+};
 use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
     PreservedHeader,
@@ -54,6 +57,8 @@ const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 const DEFAULT_COPILOT_WARMUP_MODEL: &str = "gpt-5-mini";
 const DEFAULT_COPILOT_TOKEN_ENDPOINT: &str = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_TOKEN_EXPIRY_BUFFER_SECS: i64 = 300;
+const STREAM_SEMANTIC_PROBE_MAX_CHUNKS: usize = 32;
+const STREAM_SEMANTIC_PROBE_MAX_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone)]
 struct CopilotTokenCacheEntry {
@@ -85,21 +90,21 @@ impl GatewayForwardError {
     }
 }
 
-struct FirstChunkStream {
-    first_chunk: Option<Vec<u8>>,
+struct PreReadChunkStream {
+    pending_chunks: VecDeque<Vec<u8>>,
     inner: super::http_io::DebugBodyStream,
 }
 
-impl Unpin for FirstChunkStream {}
+impl Unpin for PreReadChunkStream {}
 
-impl futures_util::Stream for FirstChunkStream {
+impl futures_util::Stream for PreReadChunkStream {
     type Item = Result<Vec<u8>, String>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        if let Some(chunk) = self.first_chunk.take() {
+        if let Some(chunk) = self.pending_chunks.pop_front() {
             return std::task::Poll::Ready(Some(Ok(chunk)));
         }
         self.inner.as_mut().poll_next(cx)
@@ -206,6 +211,9 @@ async fn validate_streaming_first_chunk(
         return Ok(());
     };
     let timeout_duration = Duration::from_secs(first_byte_timeout_secs.max(1));
+    let semantic_probe = response_is_sse_header_pairs(&response.headers);
+    let mut pre_read_chunks = VecDeque::new();
+    let mut probe = StreamingSemanticProbe::new(semantic_probe);
     loop {
         let next_chunk = tokio::time::timeout(timeout_duration, body_stream.next())
             .await
@@ -220,11 +228,26 @@ async fn validate_streaming_first_chunk(
             })?;
         match next_chunk {
             Some(Ok(chunk)) if !chunk.is_empty() => {
-                response.body_stream = Some(Box::pin(FirstChunkStream {
-                    first_chunk: Some(chunk),
-                    inner: body_stream,
-                }));
-                return Ok(());
+                let decision = probe.push_chunk(&chunk);
+                pre_read_chunks.push_back(chunk);
+                match decision {
+                    StreamingProbeDecision::Meaningful => {
+                        response.body_stream = Some(Box::pin(PreReadChunkStream {
+                            pending_chunks: pre_read_chunks,
+                            inner: body_stream,
+                        }));
+                        return Ok(());
+                    }
+                    StreamingProbeDecision::Continue => {
+                        if probe.exceeded_limits() {
+                            response.body_stream = Some(Box::pin(PreReadChunkStream {
+                                pending_chunks: pre_read_chunks,
+                                inner: body_stream,
+                            }));
+                            return Ok(());
+                        }
+                    }
+                }
             }
             Some(Ok(_)) => continue,
             Some(Err(error)) => {
@@ -234,13 +257,226 @@ async fn validate_streaming_first_chunk(
                 ));
             }
             None => {
+                if pre_read_chunks.is_empty() {
+                    return Err(GatewayForwardError::new(
+                        "Upstream streaming response ended before first chunk",
+                        GatewayFailureKind::Timeout,
+                    ));
+                }
+                if probe.finish() == StreamingProbeDecision::Meaningful {
+                    response.body_stream = Some(Box::pin(PreReadChunkStream {
+                        pending_chunks: pre_read_chunks,
+                        inner: body_stream,
+                    }));
+                    return Ok(());
+                }
                 return Err(GatewayForwardError::new(
-                    "Upstream streaming response ended before first chunk",
-                    GatewayFailureKind::Timeout,
+                    "Upstream streaming response ended before meaningful content",
+                    GatewayFailureKind::EmptyResponse,
                 ));
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamingProbeDecision {
+    Continue,
+    Meaningful,
+}
+
+struct StreamingSemanticProbe {
+    enabled: bool,
+    buffer: Vec<u8>,
+    chunk_count: usize,
+    byte_count: usize,
+}
+
+impl StreamingSemanticProbe {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            buffer: Vec::new(),
+            chunk_count: 0,
+            byte_count: 0,
+        }
+    }
+
+    fn push_chunk(&mut self, chunk: &[u8]) -> StreamingProbeDecision {
+        self.chunk_count = self.chunk_count.saturating_add(1);
+        self.byte_count = self.byte_count.saturating_add(chunk.len());
+        if !self.enabled {
+            return StreamingProbeDecision::Meaningful;
+        }
+
+        self.buffer.extend_from_slice(chunk);
+        while let Some((end, delimiter_len)) = find_sse_block_delimiter(&self.buffer) {
+            let block = self.buffer.drain(..end + delimiter_len).collect::<Vec<_>>();
+            if sse_block_has_meaningful_content(&block) {
+                return StreamingProbeDecision::Meaningful;
+            }
+        }
+        StreamingProbeDecision::Continue
+    }
+
+    fn finish(&mut self) -> StreamingProbeDecision {
+        if !self.enabled {
+            return if self.byte_count > 0 {
+                StreamingProbeDecision::Meaningful
+            } else {
+                StreamingProbeDecision::Continue
+            };
+        }
+        if self.buffer.is_empty() {
+            return StreamingProbeDecision::Continue;
+        }
+        let block = std::mem::take(&mut self.buffer);
+        if sse_block_has_meaningful_content(&block) {
+            StreamingProbeDecision::Meaningful
+        } else {
+            StreamingProbeDecision::Continue
+        }
+    }
+
+    fn exceeded_limits(&self) -> bool {
+        self.chunk_count >= STREAM_SEMANTIC_PROBE_MAX_CHUNKS
+            || self.byte_count >= STREAM_SEMANTIC_PROBE_MAX_BYTES
+    }
+}
+
+fn response_is_sse_header_pairs(headers: &[(String, String)]) -> bool {
+    headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case(CONTENT_TYPE.as_str())
+            && value.to_ascii_lowercase().contains("text/event-stream")
+    })
+}
+
+fn sse_block_has_meaningful_content(block: &[u8]) -> bool {
+    let block = String::from_utf8_lossy(block);
+    let event_name = sse_event_name(&block);
+    let Some(data) = sse_data_payload(&block) else {
+        return false;
+    };
+    let trimmed = data.trim();
+    if trimmed.is_empty() || trimmed == "[DONE]" {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return true;
+    };
+    sse_value_has_meaningful_content(event_name.as_deref(), &value)
+}
+
+fn sse_event_name(block: &str) -> Option<String> {
+    block.lines().find_map(|line| {
+        line.strip_prefix("event:")
+            .map(str::trim)
+            .filter(|event| !event.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn sse_value_has_meaningful_content(event_name: Option<&str>, value: &Value) -> bool {
+    if value.get("error").is_some()
+        || event_name == Some("error")
+        || value.get("type").and_then(Value::as_str) == Some("error")
+    {
+        return true;
+    }
+
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .or(event_name)
+        .unwrap_or_default();
+    match event_type {
+        "response.created"
+        | "response.in_progress"
+        | "response.output_item.added"
+        | "response.content_part.added"
+        | "response.output_text.done"
+        | "response.reasoning_summary_text.done"
+        | "response.function_call_arguments.done"
+        | "response.custom_tool_call_input.done"
+        | "response.content_part.done"
+        | "response.output_item.done"
+        | "response.completed" => responses_sse_event_has_meaningful_content(event_type, value),
+        "response.output_text.delta"
+        | "response.reasoning_summary_text.delta"
+        | "response.function_call_arguments.delta"
+        | "response.custom_tool_call_input.delta" => {
+            responses_sse_event_has_meaningful_content(event_type, value)
+        }
+        "message_start"
+        | "content_block_start"
+        | "content_block_delta"
+        | "message_delta"
+        | "message_stop"
+        | "ping" => anthropic_sse_event_has_meaningful_content(event_type, value),
+        _ => generic_sse_value_has_meaningful_content(value),
+    }
+}
+
+fn responses_sse_event_has_meaningful_content(event_type: &str, value: &Value) -> bool {
+    match event_type {
+        "response.created" | "response.in_progress" | "response.content_part.added" => false,
+        "response.output_text.delta" | "response.reasoning_summary_text.delta" => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.function_call_arguments.delta" => value
+            .get("delta")
+            .or_else(|| value.get("arguments"))
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.custom_tool_call_input.delta" => value
+            .get("delta")
+            .or_else(|| value.get("input"))
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        "response.output_item.added" | "response.output_item.done" => value
+            .get("item")
+            .is_some_and(output_item_has_meaningful_content),
+        "response.completed" => value
+            .get("response")
+            .and_then(|response| response.get("output"))
+            .and_then(Value::as_array)
+            .is_some_and(|output| output.iter().any(output_item_has_meaningful_content)),
+        _ => false,
+    }
+}
+
+fn anthropic_sse_event_has_meaningful_content(event_type: &str, value: &Value) -> bool {
+    match event_type {
+        "ping" | "message_start" | "message_stop" => false,
+        "content_block_start" => value
+            .get("content_block")
+            .is_some_and(content_part_has_meaningful_content),
+        "content_block_delta" => value
+            .get("delta")
+            .is_some_and(content_part_has_meaningful_content),
+        "message_delta" => value
+            .pointer("/delta/stop_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason == "tool_use"),
+        _ => false,
+    }
+}
+
+fn generic_sse_value_has_meaningful_content(value: &Value) -> bool {
+    if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+        return choices.iter().any(choice_has_meaningful_content);
+    }
+    if let Some(candidates) = value.get("candidates").and_then(Value::as_array) {
+        return candidates.iter().any(candidate_has_meaningful_content);
+    }
+    if let Some(content) = value.get("content").and_then(Value::as_array) {
+        return content.iter().any(content_part_has_meaningful_content);
+    }
+    if let Some(output) = value.get("output").and_then(Value::as_array) {
+        return output.iter().any(output_item_has_meaningful_content);
+    }
+    true
 }
 
 fn emit_failover_event_if_needed(
@@ -672,12 +908,14 @@ async fn send_upstream_request(
     let mut effective_provider =
         effective_upstream_provider_for_request(provider, upstream_model_id);
     let provider = &effective_provider;
+    let compact_compat = CodexResponsesCompactCompat::new(route, provider);
     let source_protocol = source_protocol_from_route(route);
-    let conversion_route =
-        source_protocol.and_then(|source_protocol| conversion_route(source_protocol, provider));
-    if should_reject_openai_responses_compact_target(route, provider) {
+    let conversion_route = compact_compat.conversion_route().or_else(|| {
+        source_protocol.and_then(|source_protocol| conversion_route(source_protocol, provider))
+    });
+    if let Err(message) = compact_compat.validate_request(route, &request.body) {
         return Err(GatewayForwardError::new(
-            "OpenAI Responses compact requests are only supported by OpenAI Responses target providers",
+            message,
             GatewayFailureKind::RequestSchema,
         ));
     }
@@ -700,6 +938,7 @@ async fn send_upstream_request(
         Some(context),
         Some(provider),
         route_declares_streaming(route),
+        compact_compat,
     )?;
     let upstream_body = prepared_upstream_body.body;
     let conversion_context = prepared_upstream_body.conversion_context;
@@ -806,6 +1045,7 @@ async fn send_upstream_request(
                 Some(context),
                 Some(provider),
                 route_declares_streaming(route),
+                compact_compat,
                 &upstream_body_snapshot,
             )? {
                 let rectified_body = rectified.body;
@@ -835,6 +1075,7 @@ async fn send_upstream_request(
                     Some(rectified_context),
                     upstream_response_snapshot_limit,
                     Some(context),
+                    compact_compat,
                 )
                 .await;
             }
@@ -871,6 +1112,7 @@ async fn send_upstream_request(
                     Some(conversion_context.clone()),
                     upstream_response_snapshot_limit,
                     Some(context),
+                    compact_compat,
                 )
                 .await;
             }
@@ -907,12 +1149,19 @@ async fn send_upstream_request(
                     Some(conversion_context.clone()),
                     upstream_response_snapshot_limit,
                     Some(context),
+                    compact_compat,
                 )
                 .await;
             }
         }
         let upstream_response_body = body.clone();
-        let body = convert_buffered_error_body(conversion_route, body, &mut response_headers);
+        let body = convert_buffered_error_body(
+            conversion_route,
+            compact_compat,
+            body,
+            &mut response_headers,
+        );
+        append_compact_compat_header(&mut response_headers, compact_compat);
         let stored_upstream_response_body =
             (upstream_response_body != body).then_some(upstream_response_body);
         return Ok(buffered_gateway_response(
@@ -939,6 +1188,7 @@ async fn send_upstream_request(
         Some(conversion_context),
         upstream_response_snapshot_limit,
         Some(context),
+        compact_compat,
     )
     .await
 }
@@ -1000,6 +1250,7 @@ async fn build_gateway_response(
     conversion_context: Option<ConversionContext>,
     upstream_response_snapshot_limit: Option<usize>,
     context: Option<&GatewayRuntimeContext>,
+    compact_compat: CodexResponsesCompactCompat,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let status = response.status();
     let mut response_headers = filtered_response_headers(response.headers());
@@ -1025,7 +1276,17 @@ async fn build_gateway_response(
                 })?;
         let upstream_response_body_bytes = upstream_response_body.len() as u64;
         let target_response_body = body.clone();
-        if let Some(route) = response_conversion_route {
+        if compact_compat.is_compact() {
+            body = compact_compat
+                .convert_response_body(&body, conversion_context.as_ref())
+                .map_err(|error| GatewayForwardError {
+                    message: error.to_string(),
+                    kind: GatewayFailureKind::GatewayParse,
+                    upstream_request_body: Some(upstream_body_snapshot.clone()),
+                    upstream_response_body: Some(upstream_response_body.clone()),
+                    upstream_response_body_bytes,
+                })?;
+        } else if let Some(route) = response_conversion_route {
             body = convert_response_body_with_context(route, &body, conversion_context.as_ref())
                 .map_err(|error| GatewayForwardError {
                     message: error.to_string(),
@@ -1036,6 +1297,7 @@ async fn build_gateway_response(
                 })?;
         }
         set_response_content_type(&mut response_headers, "application/json");
+        append_compact_compat_header(&mut response_headers, compact_compat);
         record_side_store_response(
             context,
             provider,
@@ -1114,6 +1376,7 @@ async fn build_gateway_response(
         );
         let raw_body_stream =
             maybe_filter_bailian_openai_chat_sse_stream(raw_body_stream, provider);
+        let raw_body_stream = maybe_filter_xai_openai_chat_sse_stream(raw_body_stream, provider);
         let raw_body_stream = if converts_ollama_stream {
             convert_ollama_ndjson_stream_to_openai_chat_sse(raw_body_stream)
         } else {
@@ -1185,7 +1448,24 @@ async fn build_gateway_response(
         })?;
         set_response_content_type(&mut response_headers, "application/json");
     }
-    if let Some(route) = response_conversion_route {
+    if compact_compat.is_compact() && (200..400).contains(&status.as_u16()) {
+        body = compact_compat
+            .convert_response_body(&body, conversion_context.as_ref())
+            .map_err(|error| GatewayForwardError {
+                message: error.to_string(),
+                kind: GatewayFailureKind::GatewayParse,
+                upstream_request_body: Some(upstream_body_snapshot.clone()),
+                upstream_response_body: Some(upstream_response_body.clone()),
+                upstream_response_body_bytes,
+            })?;
+        set_response_content_type(&mut response_headers, "application/json");
+    } else if compact_compat.is_compact() {
+        let converted_error_body = compact_compat.convert_error_response_body(&body);
+        if converted_error_body != body {
+            body = converted_error_body;
+            set_response_content_type(&mut response_headers, "application/json");
+        }
+    } else if let Some(route) = response_conversion_route {
         if (200..400).contains(&status.as_u16()) {
             body = convert_response_body_with_context(route, &body, conversion_context.as_ref())
                 .map_err(|error| GatewayForwardError {
@@ -1204,6 +1484,7 @@ async fn build_gateway_response(
             }
         }
     }
+    append_compact_compat_header(&mut response_headers, compact_compat);
     record_side_store_response(
         context,
         provider,
@@ -2504,6 +2785,18 @@ fn append_lossy_warning_header(
     ));
 }
 
+fn append_compact_compat_header(
+    response_headers: &mut Vec<(String, String)>,
+    compact_compat: CodexResponsesCompactCompat,
+) {
+    if let Some(value) = compact_compat.header_value() {
+        response_headers.push((
+            CODEX_RESPONSES_COMPACT_COMPAT_HEADER.to_string(),
+            value.to_string(),
+        ));
+    }
+}
+
 fn maybe_record_codex_responses_sse_stream(
     stream: DebugBodyStream,
     context: Option<&GatewayRuntimeContext>,
@@ -2575,6 +2868,133 @@ fn filter_bailian_openai_chat_sse_stream(stream: DebugBodyStream) -> DebugBodySt
             }
         },
     ))
+}
+
+fn maybe_filter_xai_openai_chat_sse_stream(
+    stream: DebugBodyStream,
+    provider: &UpstreamProvider,
+) -> DebugBodyStream {
+    if provider.target_protocol != AiProtocol::OpenAiChat {
+        return stream;
+    }
+    if ProviderBodyCompat::from_provider_type(
+        provider.meta.provider_type.as_deref(),
+        provider.target_protocol,
+    ) != Some(ProviderBodyCompat::Xai)
+    {
+        return stream;
+    }
+    filter_xai_openai_chat_sse_stream(stream)
+}
+
+fn filter_xai_openai_chat_sse_stream(stream: DebugBodyStream) -> DebugBodyStream {
+    struct State {
+        inner: DebugBodyStream,
+        filter: XaiChatStreamFilterState,
+        pending: VecDeque<Result<Vec<u8>, String>>,
+        finished: bool,
+    }
+
+    Box::pin(futures_util::stream::unfold(
+        State {
+            inner: stream,
+            filter: XaiChatStreamFilterState::default(),
+            pending: VecDeque::new(),
+            finished: false,
+        },
+        |mut state| async move {
+            loop {
+                if let Some(chunk) = state.pending.pop_front() {
+                    return Some((chunk, state));
+                }
+                if state.finished {
+                    return None;
+                }
+                match state.inner.next().await {
+                    Some(Ok(chunk)) => {
+                        state
+                            .pending
+                            .extend(state.filter.push_chunk(&chunk).into_iter().map(Ok));
+                    }
+                    Some(Err(error)) => return Some((Err(error), state)),
+                    None => {
+                        state.finished = true;
+                        state
+                            .pending
+                            .extend(state.filter.finish().into_iter().map(Ok));
+                    }
+                }
+            }
+        },
+    ))
+}
+
+#[derive(Debug, Default)]
+struct XaiChatStreamFilterState {
+    buffer: Vec<u8>,
+}
+
+impl XaiChatStreamFilterState {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        self.buffer.extend_from_slice(chunk);
+        let mut out = Vec::new();
+        while let Some((end, delimiter_len)) = find_sse_block_delimiter(&self.buffer) {
+            let block = self.buffer.drain(..end + delimiter_len).collect::<Vec<_>>();
+            out.extend(self.filter_block(&block));
+        }
+        out
+    }
+
+    fn finish(&mut self) -> Vec<Vec<u8>> {
+        if self.buffer.is_empty() {
+            return Vec::new();
+        }
+        let tail = std::mem::take(&mut self.buffer);
+        self.filter_block(&tail)
+    }
+
+    fn filter_block(&self, block: &[u8]) -> Vec<Vec<u8>> {
+        let block_text = String::from_utf8_lossy(block);
+        let Some(data) = sse_data_payload(&block_text) else {
+            return vec![block.to_vec()];
+        };
+        if data.trim() == "[DONE]" {
+            return vec![block.to_vec()];
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            return vec![block.to_vec()];
+        };
+        if is_xai_empty_chat_delta_chunk(&value) {
+            return Vec::new();
+        }
+
+        vec![block.to_vec()]
+    }
+}
+
+fn is_xai_empty_chat_delta_chunk(value: &Value) -> bool {
+    if value.get("usage").is_some_and(|usage| !usage.is_null()) {
+        return false;
+    }
+    let Some(choices) = value.get("choices").and_then(Value::as_array) else {
+        return false;
+    };
+    if choices.is_empty() {
+        return false;
+    }
+
+    choices.iter().all(|choice| {
+        if choice
+            .get("finish_reason")
+            .is_some_and(|finish_reason| !finish_reason.is_null())
+        {
+            return false;
+        }
+        choice
+            .get("delta")
+            .and_then(Value::as_object)
+            .is_some_and(|delta| delta.is_empty())
+    })
 }
 
 #[derive(Debug, Default)]
@@ -2959,16 +3379,26 @@ fn local_request_schema_failure_response(
     provider_attempt_count: u32,
     failover: bool,
 ) -> DebugHttpResponse {
+    let message = error.message.clone();
+    let body = CodexResponsesCompactCompat::new(route, provider)
+        .request_schema_error_value(&message)
+        .unwrap_or_else(|| {
+            json!({
+                "error": "gateway_request_schema_rejected",
+                "message": message,
+            })
+        });
     let mut response = json_response(
         400,
         "Bad Request",
-        json!({
-            "error": "gateway_request_schema_rejected",
-            "message": error.message,
-        }),
+        body,
         route.route_name,
         None,
         "gateway rejected request before upstream forwarding",
+    );
+    append_compact_compat_header(
+        &mut response.headers,
+        CodexResponsesCompactCompat::new(route, provider),
     );
     response.cli_key = Some(route.cli_key);
     response.provider_id = Some(provider.id.clone());
@@ -3044,19 +3474,7 @@ fn route_declares_streaming(route: &GatewayRoute) -> bool {
 }
 
 fn route_is_openai_responses_compact(route: &GatewayRoute) -> bool {
-    route.cli_key == GatewayCliKey::Codex
-        && matches!(
-            route.forwarded_path.as_str(),
-            "/v1/responses/compact" | "/responses/compact"
-        )
-}
-
-fn should_reject_openai_responses_compact_target(
-    route: &GatewayRoute,
-    provider: &UpstreamProvider,
-) -> bool {
-    route_is_openai_responses_compact(route)
-        && provider.target_protocol != AiProtocol::OpenAiResponses
+    super::compat::codex_responses_compact::is_codex_responses_compact_route(route)
 }
 
 fn should_attempt_thinking_budget_rectifier(
@@ -3325,10 +3743,17 @@ fn should_attempt_thinking_signature_rectifier(
 
 fn convert_buffered_error_body(
     conversion_route: Option<ConversionRoute>,
+    compact_compat: CodexResponsesCompactCompat,
     mut body: Vec<u8>,
     response_headers: &mut Vec<(String, String)>,
 ) -> Vec<u8> {
-    if let Some(route) = conversion_route.map(ConversionRoute::reverse) {
+    if compact_compat.is_compact() {
+        let converted_error_body = compact_compat.convert_error_response_body(&body);
+        if converted_error_body != body {
+            body = converted_error_body;
+            set_response_content_type(response_headers, "application/json");
+        }
+    } else if let Some(route) = conversion_route.map(ConversionRoute::reverse) {
         let converted_error_body = convert_error_response_body(route, &body);
         if converted_error_body != body {
             body = converted_error_body;
@@ -3464,6 +3889,7 @@ fn build_upstream_body(
         None,
         None,
         route_streaming,
+        CodexResponsesCompactCompat::none(),
     )
     .map(|prepared| prepared.body)
 }
@@ -3487,6 +3913,7 @@ fn build_upstream_body_for_provider(
     context: Option<&GatewayRuntimeContext>,
     provider: Option<&UpstreamProvider>,
     route_streaming: bool,
+    compact_compat: CodexResponsesCompactCompat,
 ) -> Result<PreparedUpstreamBody, GatewayForwardError> {
     let Ok(mut value) = serde_json::from_slice::<Value>(&request.body) else {
         if let Some(route) = conversion_route {
@@ -3524,9 +3951,9 @@ fn build_upstream_body_for_provider(
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
         })?;
-    if conversion_route.is_some_and(|route| {
-        route.source == AiProtocol::OpenAiResponses && route.target == AiProtocol::OpenAiChat
-    }) {
+    if compact_compat.should_use_codex_chat_history()
+        || conversion_route.is_some_and(should_enrich_codex_history_before_conversion)
+    {
         if let Some(context) = context {
             context.side_stores.enrich_codex_request(&mut value);
         }
@@ -3568,7 +3995,17 @@ fn build_upstream_body_for_provider(
         upstream_response_body: None,
         upstream_response_body_bytes: 0,
     })?;
-    let (mut upstream_body, mut conversion_context) = if let Some(route) = conversion_route {
+    let (mut upstream_body, mut conversion_context) = if compact_compat.is_compact() {
+        compact_compat
+            .convert_request_body(&rewritten_body)
+            .map_err(|error| GatewayForwardError {
+                message: error.to_string(),
+                kind: GatewayFailureKind::GatewayParse,
+                upstream_request_body: Some(rewritten_body.clone()),
+                upstream_response_body: None,
+                upstream_response_body_bytes: 0,
+            })?
+    } else if let Some(route) = conversion_route {
         let converted =
             convert_request_body_with_context(route, &rewritten_body).map_err(|error| {
                 GatewayForwardError {
@@ -3584,6 +4021,9 @@ fn build_upstream_body_for_provider(
         (rewritten_body, ConversionContext::default())
     };
     conversion_context.lossy_warnings = lossy_warnings;
+    if let Some(warning) = compact_compat.warning() {
+        conversion_context.lossy_warnings.push(warning.to_string());
+    }
     if target_protocol == AiProtocol::GeminiNative {
         if let (Some(context), Some(provider)) = (context, provider) {
             upstream_body =
@@ -3609,6 +4049,14 @@ fn build_upstream_body_for_provider(
         body: upstream_body,
         conversion_context,
     })
+}
+
+fn should_enrich_codex_history_before_conversion(route: ConversionRoute) -> bool {
+    route.source == AiProtocol::OpenAiResponses
+        && matches!(
+            route.target,
+            AiProtocol::OpenAiChat | AiProtocol::AnthropicMessages
+        )
 }
 
 fn build_provider_pipeline(
@@ -6057,6 +6505,7 @@ fn build_thinking_signature_rectified_upstream_body(
     context: Option<&GatewayRuntimeContext>,
     provider: Option<&UpstreamProvider>,
     route_streaming: bool,
+    compact_compat: CodexResponsesCompactCompat,
     original_upstream_body: &[u8],
 ) -> Result<Option<PreparedUpstreamBody>, GatewayForwardError> {
     let prepared = build_upstream_body_for_provider(
@@ -6072,6 +6521,7 @@ fn build_thinking_signature_rectified_upstream_body(
         context,
         provider,
         route_streaming,
+        compact_compat,
     )?;
 
     if prepared.body == original_upstream_body {
@@ -7912,6 +8362,45 @@ mod tests {
     }
 
     #[test]
+    fn compact_request_schema_failure_returns_openai_error_shape() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses/compact");
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::OpenAiChat,
+            ..provider_for_cli(GatewayCliKey::Codex)
+        };
+        let response = local_request_schema_failure_response(
+            &route,
+            &provider,
+            "gpt-5",
+            "gpt-5",
+            GatewayForwardError::new(
+                "Codex Responses compact compatibility does not support streaming requests",
+                GatewayFailureKind::RequestSchema,
+            ),
+            1,
+            1,
+            false,
+        );
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 400);
+        assert_eq!(response.status_text, "Bad Request");
+        assert_eq!(response.error_category.as_deref(), Some("request_schema"));
+        assert_eq!(
+            body.pointer("/error/message").and_then(Value::as_str),
+            Some("Codex Responses compact compatibility does not support streaming requests")
+        );
+        assert_eq!(
+            body.pointer("/error/type").and_then(Value::as_str),
+            Some("invalid_request_error")
+        );
+        assert_eq!(
+            body.pointer("/error/code").and_then(Value::as_str),
+            Some("gateway_request_schema_rejected")
+        );
+    }
+
+    #[test]
     fn lossy_conversion_policy_allows_request_header_bypass() {
         let value = lossy_responses_value();
         let mut request = debug_request(serde_json::to_vec(&value).unwrap().as_slice());
@@ -8124,11 +8613,11 @@ mod tests {
         };
         let source_protocol = source_protocol_from_route(&route).unwrap();
         let conversion = conversion_route(source_protocol, &provider);
+        let compact_compat = CodexResponsesCompactCompat::new(&route, &provider);
 
         assert!(route_is_openai_responses_compact(&route));
-        assert!(!should_reject_openai_responses_compact_target(
-            &route, &provider
-        ));
+        assert!(compact_compat.is_compact());
+        assert!(!compact_compat.is_fallback());
         assert!(conversion.is_none());
         assert_eq!(
             upstream_forwarded_path(&route, &provider, conversion, "gpt-5", false).as_ref(),
@@ -8137,20 +8626,81 @@ mod tests {
     }
 
     #[test]
-    fn responses_compact_cross_protocol_route_is_rejected_before_conversion() {
+    fn responses_compact_anthropic_fallback_rewrites_to_messages_path() {
         let route = gateway_route(GatewayCliKey::Codex, "/v1/responses/compact");
         let provider = UpstreamProvider {
             target_protocol: AiProtocol::AnthropicMessages,
             ..provider_for_cli(GatewayCliKey::Codex)
         };
         let source_protocol = source_protocol_from_route(&route).unwrap();
-        let conversion = conversion_route(source_protocol, &provider);
+        let generic_conversion = conversion_route(source_protocol, &provider);
+        let compact_compat = CodexResponsesCompactCompat::new(&route, &provider);
+        let compact_conversion = compact_compat.conversion_route();
 
         assert!(route_is_openai_responses_compact(&route));
-        assert!(should_reject_openai_responses_compact_target(
-            &route, &provider
-        ));
-        assert!(conversion.is_some());
+        assert!(generic_conversion.is_some());
+        assert!(compact_compat.is_fallback());
+        assert_eq!(
+            compact_conversion,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::AnthropicMessages
+            ))
+        );
+        assert_eq!(
+            upstream_forwarded_path(
+                &route,
+                &provider,
+                compact_conversion,
+                "claude-sonnet",
+                false
+            )
+            .as_ref(),
+            "/v1/messages"
+        );
+    }
+
+    #[test]
+    fn responses_compact_chat_fallback_rewrites_to_chat_path() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses/compact");
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::OpenAiChat,
+            ..provider_for_cli(GatewayCliKey::Codex)
+        };
+        let compact_compat = CodexResponsesCompactCompat::new(&route, &provider);
+        let compact_conversion = compact_compat.conversion_route();
+
+        assert!(compact_compat.is_fallback());
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, compact_conversion, "gpt-4o", false)
+                .as_ref(),
+            "/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn responses_compact_gemini_fallback_rewrites_to_generate_content_path() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses/compact");
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::GeminiNative,
+            base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+            ..provider_for_cli(GatewayCliKey::Codex)
+        };
+        let compact_compat = CodexResponsesCompactCompat::new(&route, &provider);
+        let compact_conversion = compact_compat.conversion_route();
+
+        assert!(compact_compat.is_fallback());
+        assert_eq!(
+            upstream_forwarded_path(
+                &route,
+                &provider,
+                compact_conversion,
+                "gemini-2.5-pro",
+                false
+            )
+            .as_ref(),
+            "/v1beta/models/gemini-2.5-pro:generateContent"
+        );
     }
 
     #[test]
@@ -8207,6 +8757,7 @@ mod tests {
             None,
             None,
             false,
+            CodexResponsesCompactCompat::none(),
         )
         .unwrap();
         let value: Value = serde_json::from_slice(&prepared.body).unwrap();
@@ -8245,6 +8796,7 @@ mod tests {
             None,
             None,
             false,
+            CodexResponsesCompactCompat::none(),
         )
         .unwrap();
         let value: Value = serde_json::from_slice(&prepared.body).unwrap();
@@ -8278,6 +8830,7 @@ mod tests {
             None,
             None,
             false,
+            CodexResponsesCompactCompat::none(),
         )
         .unwrap();
         let value: Value = serde_json::from_slice(&prepared.body).unwrap();
@@ -8311,6 +8864,7 @@ mod tests {
             None,
             None,
             false,
+            CodexResponsesCompactCompat::none(),
         )
         .unwrap();
         let value: Value = serde_json::from_slice(&prepared.body).unwrap();
@@ -9484,6 +10038,67 @@ mod tests {
     }
 
     #[test]
+    fn codex_history_enriches_responses_follow_up_for_anthropic_target() {
+        let context = GatewayRuntimeContext::new(
+            crate::coding::proxy_gateway::types::ProxyGatewaySettings::default(),
+            None,
+            None,
+        );
+        context.side_stores.record_codex_response(&json!({
+            "id": "resp_1",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "read_file",
+                "arguments": "{\"path\":\"README.md\"}",
+                "status": "completed"
+            }]
+        }));
+        let request = debug_request(
+            br#"{
+                "model":"gpt-5-codex",
+                "previous_response_id":"resp_1",
+                "input":[{
+                    "type":"function_call_output",
+                    "call_id":"call_1",
+                    "output":"ok"
+                }]
+            }"#,
+        );
+
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "gpt-5-codex",
+            "claude-sonnet-4-6",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            AiProtocol::AnthropicMessages,
+            Some(responses_to_anthropic_route()),
+            None,
+            Some(&context),
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&prepared.body).unwrap();
+
+        assert_eq!(value["messages"][0]["role"], "assistant");
+        assert_eq!(value["messages"][0]["content"][0]["type"], "tool_use");
+        assert_eq!(value["messages"][0]["content"][0]["id"], "call_1");
+        assert_eq!(value["messages"][0]["content"][0]["name"], "read_file");
+        assert_eq!(
+            value["messages"][0]["content"][0]["input"]["path"],
+            "README.md"
+        );
+        assert_eq!(value["messages"][1]["role"], "user");
+        assert_eq!(value["messages"][1]["content"][0]["type"], "tool_result");
+        assert_eq!(value["messages"][1]["content"][0]["tool_use_id"], "call_1");
+        assert_eq!(value["messages"][1]["content"][0]["content"], "ok");
+    }
+
+    #[test]
     fn outbound_adapter_preserves_gemini_derived_tool_choice_without_tools() {
         let request = debug_request(
             br#"{
@@ -10332,6 +10947,114 @@ mod tests {
                 200,
             )
         );
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_validation_rejects_semantically_empty_sse() {
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_empty\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_empty\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"
+        )
+        .as_bytes()
+        .to_vec())]));
+        let mut response = DebugHttpResponse {
+            status_code: 200,
+            status_text: "OK".to_string(),
+            headers: vec![(CONTENT_TYPE.to_string(), "text/event-stream".to_string())],
+            body: Vec::new(),
+            body_stream: Some(stream),
+            response_body_bytes: 0,
+            token_usage: TokenUsage::default(),
+            first_token_ms: None,
+            is_streaming: true,
+            cli_key: None,
+            route_name: "test".to_string(),
+            provider_id: None,
+            provider_name: None,
+            provider_type: None,
+            cost_multiplier: None,
+            pricing_model_source: None,
+            requested_model: None,
+            upstream_model_id: None,
+            upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
+            upstream_response_body_stream_snapshot: None,
+            upstream_url: None,
+            error_category: None,
+            attempt_count: 1,
+            provider_attempt_count: 1,
+            provider_attempts: Vec::new(),
+            failover: false,
+            note: String::new(),
+        };
+
+        let error = validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect_err("semantic empty SSE should fail before commit");
+        assert_eq!(error.kind, GatewayFailureKind::EmptyResponse);
+        assert!(response.body_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_validation_replays_preread_sse_chunks() {
+        let created = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_ok\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\",\"item_id\":\"msg_1\",\"output_index\":0,\"content_index\":0}\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(created.clone()),
+            Ok(delta.clone()),
+        ]));
+        let mut response = DebugHttpResponse {
+            status_code: 200,
+            status_text: "OK".to_string(),
+            headers: vec![(CONTENT_TYPE.to_string(), "text/event-stream".to_string())],
+            body: Vec::new(),
+            body_stream: Some(stream),
+            response_body_bytes: 0,
+            token_usage: TokenUsage::default(),
+            first_token_ms: None,
+            is_streaming: true,
+            cli_key: None,
+            route_name: "test".to_string(),
+            provider_id: None,
+            provider_name: None,
+            provider_type: None,
+            cost_multiplier: None,
+            pricing_model_source: None,
+            requested_model: None,
+            upstream_model_id: None,
+            upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
+            upstream_response_body_stream_snapshot: None,
+            upstream_url: None,
+            error_category: None,
+            attempt_count: 1,
+            provider_attempt_count: 1,
+            provider_attempts: Vec::new(),
+            failover: false,
+            note: String::new(),
+        };
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("meaningful SSE should pass");
+        let mut stream = response.body_stream.take().expect("replayed body stream");
+        assert_eq!(stream.next().await.unwrap().unwrap(), created);
+        assert_eq!(stream.next().await.unwrap().unwrap(), delta);
+        assert!(stream.next().await.is_none());
     }
 
     #[test]
@@ -11194,6 +11917,42 @@ mod tests {
     }
 
     #[test]
+    fn xai_stream_filter_drops_empty_delta_chunks() {
+        let mut filter = XaiChatStreamFilterState::default();
+        let chunks = filter.push_chunk(
+            br#"data: {"id":"role_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"empty_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":null}]}
+
+data: {"id":"content_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}
+
+data: {"id":"finish_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"usage_1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+
+data: [DONE]
+
+"#,
+        );
+        let output = String::from_utf8(
+            chunks
+                .iter()
+                .flat_map(|chunk| chunk.iter().copied())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let values = sse_json_values(chunks);
+
+        assert!(!output.contains("empty_1"));
+        assert!(output.contains("role_1"));
+        assert!(output.contains("content_1"));
+        assert!(output.contains("finish_1"));
+        assert!(output.contains("usage_1"));
+        assert!(output.contains("[DONE]"));
+        assert_eq!(values.len(), 4);
+    }
+
+    #[test]
     fn provider_body_compat_longcat_chat_forces_message_content_arrays() {
         let body = br#"{
             "model":"longcat-flash",
@@ -11532,6 +12291,7 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             None,
             None,
             false,
+            CodexResponsesCompactCompat::none(),
             &original_body,
         )
         .unwrap()

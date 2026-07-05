@@ -20,7 +20,8 @@ pub use error::ProtocolConversionError;
 pub use kernel::{
     convert_error_response_body, convert_request_body, convert_request_body_with_context,
     convert_request_value, convert_response_body, convert_response_body_with_context,
-    convert_response_value,
+    convert_response_value, convert_responses_compact_request_body_to_target,
+    convert_target_response_body_to_responses_compact,
 };
 pub use kernel::{convert_sse_stream, convert_sse_stream_with_context, ConversionContext};
 pub use shared::lossy::{check_lossy_conversion, LossyConversionIssue};

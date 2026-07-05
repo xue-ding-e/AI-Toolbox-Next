@@ -1065,7 +1065,7 @@
     "allApiHub": {
       "importFromAllApiHub": "Import from All API Hub",
       "noAllApiHubProviders": "No All API Hub providers available to import",
-      "extensionNotFound": "All API Hub browser extension was not found. Please make sure Chrome is installed and the extension is enabled.",
+      "extensionNotFound": "All API Hub browser extension was not found. Please make sure Chrome or Edge is installed and the extension is enabled.",
       "importSelected": "Import Selected",
       "importSuccess": "Successfully imported {{count}} providers from All API Hub",
       "importAllApiHubProtocolTitle": "Please Confirm Before Importing",
@@ -2559,7 +2559,7 @@
       "providerProfile": "Channel",
       "providerProfileCustom": "Custom",
       "providerProfileOfficial": "Official channel",
-      "providerProfileHelp": "Custom channels can choose the upstream API format. Gateway converts when it differs from the Gemini request protocol.",
+      "providerProfileHelp": "Built-in channels fill API format and Base URL, and Base URL can still be edited. Custom channels can choose the upstream API format manually.",
       "formName": "Name",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatOpenAIResponses": "OpenAI Responses"
@@ -2573,7 +2573,8 @@
       "officialUpdated": "Updated the official model catalog with {{count}} model(s)",
       "officialBundled": "Remote model catalog is unavailable. Using the bundled catalog with {{count}} model(s)",
       "apiKeyRequired": "Please add GEMINI_API_KEY / GOOGLE_API_KEY in settingsConfig.env, or configure a custom GOOGLE_GEMINI_BASE_URL gateway",
-      "configInvalid": "Fix settingsConfig JSON before fetching models"
+      "configInvalid": "Fix settingsConfig JSON before fetching models",
+      "baseUrlRequired": "Please enter Base URL first"
     },
     "commonConfig": {
       "title": "Common Config",

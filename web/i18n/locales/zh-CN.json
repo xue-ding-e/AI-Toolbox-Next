@@ -1065,7 +1065,7 @@
     "allApiHub": {
       "importFromAllApiHub": "从 All API Hub 导入",
       "noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
-      "extensionNotFound": "未找到 All API Hub 浏览器插件，请确认 Chrome 已安装且插件已启用。",
+      "extensionNotFound": "未找到 All API Hub 浏览器插件，请确认 Chrome 或 Edge 已安装且插件已启用。",
       "importSelected": "导入选中",
       "importSuccess": "成功从 All API Hub 导入 {{count}} 个供应商",
       "importAllApiHubProtocolTitle": "导入前请确认",
@@ -2556,7 +2556,7 @@
       "providerProfile": "渠道",
       "providerProfileCustom": "自定义",
       "providerProfileOfficial": "官方渠道",
-      "providerProfileHelp": "自定义渠道可选择上游接口协议；与 Gemini 请求协议不一致时由网关转换。",
+      "providerProfileHelp": "内置渠道会填入 API 格式和 Base URL，Base URL 可按需修改；自定义渠道可手动选择上游接口协议。",
       "formName": "名称",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatOpenAIResponses": "OpenAI Responses"
@@ -2570,7 +2570,8 @@
       "officialUpdated": "已更新预设模型目录，共 {{count}} 个模型",
       "officialBundled": "远程预设模型目录不可用，已使用内置模型目录（{{count}} 个模型）",
       "apiKeyRequired": "请先在 settingsConfig.env 中填写 GEMINI_API_KEY / GOOGLE_API_KEY，或配置 GOOGLE_GEMINI_BASE_URL 自定义网关",
-      "configInvalid": "请先修正 settingsConfig JSON 后再获取模型"
+      "configInvalid": "请先修正 settingsConfig JSON 后再获取模型",
+      "baseUrlRequired": "请先填写 Base URL"
     },
     "commonConfig": {
       "title": "通用配置",

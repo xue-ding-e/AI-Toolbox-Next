@@ -11,7 +11,14 @@ export type CodexApiFormat =
   | 'anthropic_messages'
   | 'gemini_native';
 
+export interface GatewayProviderProfileReference {
+  tool?: 'claude' | 'codex' | 'gemini';
+  profileId: string;
+  endpointId: string;
+}
+
 export interface GatewayProviderMeta {
+  gatewayProfile?: GatewayProviderProfileReference;
   providerType?: string;
   apiFormat?: CodexApiFormat | string;
   apiKeyField?: string;

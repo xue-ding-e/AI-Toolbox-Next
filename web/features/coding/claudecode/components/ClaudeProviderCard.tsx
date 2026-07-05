@@ -28,7 +28,10 @@ import ProxyTag from '@/components/common/ProxyTag';
 import {
   canApplyProviderWithGatewayProxy,
   firstGatewayApiFormat,
+  getGatewayProviderApiFormatFromMeta,
+  getGatewayProviderProfilesVersion,
   providerNeedsGatewayProxy,
+  subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
@@ -123,7 +126,17 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     apiFormat?: unknown;
     api_format?: unknown;
   };
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
+  const providerProfileApiFormat = React.useMemo(
+    () => getGatewayProviderApiFormatFromMeta(provider.meta, 'claude'),
+    [gatewayProviderProfilesVersion, provider.meta],
+  );
   const providerApiFormat = firstGatewayApiFormat(
+    providerProfileApiFormat,
     provider.meta?.apiFormat,
     typeof settingsConfigApiFormat.apiFormat === 'string'
       ? settingsConfigApiFormat.apiFormat

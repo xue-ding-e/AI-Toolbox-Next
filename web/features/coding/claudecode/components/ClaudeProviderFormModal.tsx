@@ -19,14 +19,15 @@ import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
   findGatewayProviderEndpoint,
-  findGatewayProviderProfile,
   getGatewayProviderProfilesForTool,
   getGatewayProviderProfilesVersion,
   inferGatewayProviderEndpointSelection,
+  mergeGatewayProfileReferenceIntoMeta,
   parseGatewayProviderEndpointKey,
   subscribeGatewayProviderProfiles,
   toGatewayProviderEndpointKey,
-  type GatewayProviderEndpointProfile,
+  toGatewayProviderProfileReference,
+  type GatewayProviderProfileReference,
 } from '@/features/coding/shared/gateway/providerProfiles';
 import {
   getClaudeProviderModelConfig,
@@ -97,55 +98,10 @@ function normalizeClaudeApiFormat(value?: string): ClaudeApiFormat {
 
 function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
+  gatewayProfile: GatewayProviderProfileReference | undefined,
   apiFormat: ClaudeApiFormat | undefined,
-  providerType?: string,
-  reasoningField?: string,
-  endpoint?: GatewayProviderEndpointProfile,
-  defaultMaxTokens?: number,
-  ownsReasoningField = false,
 ): GatewayProviderMeta | undefined {
-  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
-  delete nextMeta.apiFormat;
-  delete nextMeta.providerType;
-  delete nextMeta.apiKeyField;
-  delete nextMeta.imageInputPolicy;
-  delete nextMeta.textOnlyModels;
-  delete nextMeta.imageCapableModels;
-  delete nextMeta.allowTextOnlyModelHeuristic;
-  delete nextMeta.defaultMaxTokens;
-  if (ownsReasoningField) {
-    delete nextMeta.reasoningField;
-  }
-  if (apiFormat) {
-    nextMeta.apiFormat = apiFormat;
-  }
-  if (providerType?.trim()) {
-    nextMeta.providerType = providerType.trim();
-  }
-  if (endpoint?.apiKeyField?.trim()) {
-    nextMeta.apiKeyField = endpoint.apiKeyField.trim();
-  }
-  if (reasoningField?.trim()) {
-    nextMeta.reasoningField = reasoningField.trim();
-  }
-  if (endpoint?.imageInputPolicy) {
-    nextMeta.imageInputPolicy = endpoint.imageInputPolicy;
-  }
-  if (endpoint?.textOnlyModels?.length) {
-    nextMeta.textOnlyModels = endpoint.textOnlyModels;
-  }
-  if (endpoint?.imageCapableModels?.length) {
-    nextMeta.imageCapableModels = endpoint.imageCapableModels;
-  }
-  if (endpoint?.allowTextOnlyModelHeuristic !== undefined) {
-    nextMeta.allowTextOnlyModelHeuristic = endpoint.allowTextOnlyModelHeuristic;
-  }
-  if (defaultMaxTokens !== undefined) {
-    nextMeta.defaultMaxTokens = defaultMaxTokens;
-  }
-  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
-    ? nextMeta
-    : undefined;
+  return mergeGatewayProfileReferenceIntoMeta(meta, gatewayProfile, apiFormat);
 }
 
 // OpenCode 供应商展示类型
@@ -217,7 +173,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
-  // 当前表单的 baseUrl（用于匹配供应商）
+  // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
   const [extraSettingsValue, setExtraSettingsValue] = React.useState<unknown>(null);
@@ -409,9 +365,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           }
         : inferGatewayProviderEndpointSelection({
             tool: 'claude',
+            meta: provider.meta,
             providerType: provider.meta?.providerType,
             apiFormat: provider.meta?.apiFormat,
-            baseUrl,
           });
       const providerEndpoint = providerEndpointSelection.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
         ? undefined
@@ -689,9 +645,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             'claude',
             submittedValues.providerEndpointId,
           );
-      const selectedProfile = selectedEndpoint
-        ? findGatewayProviderProfile(submittedValues.providerProfileId)
-        : undefined;
       const selectedApiFormat = selectedCategory === 'official'
         ? undefined
         : selectedEndpoint
@@ -700,8 +653,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       const selectedBaseUrl = selectedCategory === 'official'
         ? undefined
         : normalizedBaseUrl ?? selectedEndpoint?.baseUrl;
-      const selectedReasoningField = selectedEndpoint?.reasoningField ?? selectedProfile?.reasoningField;
-      const selectedDefaultMaxTokens = selectedEndpoint?.defaultMaxTokens ?? selectedProfile?.defaultMaxTokens;
+      const gatewayProfile = selectedEndpoint
+        ? toGatewayProviderProfileReference('claude', submittedValues.providerProfileId || '', selectedEndpoint.id)
+        : undefined;
       let extraSettingsConfig: string | undefined;
       try {
         extraSettingsConfig = selectedCategory === 'official'
@@ -716,10 +670,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         name: submittedValues.name,
         category: selectedCategory,
         providerEndpointKey: selectedEndpoint
-          ? toGatewayProviderEndpointKey(selectedProfile?.id || submittedValues.providerProfileId || '', selectedEndpoint.id)
+          ? toGatewayProviderEndpointKey(submittedValues.providerProfileId || '', selectedEndpoint.id)
           : CUSTOM_PROVIDER_ENDPOINT_KEY,
         providerProfileId: selectedEndpoint
-          ? selectedProfile?.id
+          ? submittedValues.providerProfileId
           : CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: selectedEndpoint?.id,
         baseUrl: mode === 'import'
@@ -742,12 +696,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         meta: mergeBillingConfigIntoMeta(
           mergeGatewayMetaIntoProviderMeta(
             provider?.meta,
-            selectedApiFormat,
-            selectedCategory === 'official' ? undefined : selectedProfile?.providerType,
-            selectedCategory === 'official' ? undefined : selectedReasoningField,
-            selectedCategory === 'official' ? undefined : selectedEndpoint,
-            selectedCategory === 'official' ? undefined : selectedDefaultMaxTokens,
-            selectedCategory === 'official' || Boolean(selectedEndpoint) || Boolean(provider?.meta?.providerType),
+            gatewayProfile,
+            gatewayProfile ? undefined : selectedApiFormat,
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
@@ -773,7 +723,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   };
 
-  // 根据 baseUrl 匹配供应商的模型列表
+  // 根据 baseUrl 辅助匹配 OpenCode 导入候选的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
     if (!currentBaseUrl || openCodeProviders.length === 0) {

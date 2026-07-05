@@ -7,7 +7,11 @@ use super::openai::codex_tools::{
     rewrite_response_with_codex_tool_context, rewrite_responses_request_for_chat_context,
     CodexToolContext,
 };
-use super::openai::responses::{OpenAiResponsesInbound, OpenAiResponsesOutbound};
+use super::openai::responses::{
+    llm_request_to_responses_compact, llm_response_to_responses_compact,
+    responses_compact_request_to_llm, responses_compact_response_to_llm, OpenAiResponsesInbound,
+    OpenAiResponsesOutbound,
+};
 use super::stream::StreamKernel;
 use super::traits::{InboundTransformer, OutboundTransformer};
 use super::types::{AiProtocol, ConversionRoute};
@@ -53,6 +57,88 @@ pub fn convert_request_body(
 pub struct ConvertedRequestBody {
     pub body: Vec<u8>,
     pub context: ConversionContext,
+}
+
+pub fn convert_responses_compact_request_body_to_target(
+    target: AiProtocol,
+    body: &[u8],
+) -> Result<ConvertedRequestBody, ProtocolConversionError> {
+    let value = serde_json::from_slice::<Value>(body)
+        .map_err(|error| ProtocolConversionError::InvalidJson(error.to_string()))?;
+    let (converted, context) = convert_responses_compact_request_value_to_target(target, value)?;
+    let body = serde_json::to_vec(&converted)
+        .map_err(|error| ProtocolConversionError::Transform(error.to_string()))?;
+    Ok(ConvertedRequestBody { body, context })
+}
+
+pub fn convert_responses_compact_request_value_to_target(
+    target: AiProtocol,
+    value: Value,
+) -> Result<(Value, ConversionContext), ProtocolConversionError> {
+    if target == AiProtocol::OpenAiResponses {
+        let request = responses_compact_request_to_llm(value);
+        return Ok((
+            llm_request_to_responses_compact(request),
+            ConversionContext::default(),
+        ));
+    }
+
+    if target == AiProtocol::OpenAiChat {
+        let codex_tool_context = build_codex_tool_context_from_request(&value);
+        let request_for_chat =
+            rewrite_responses_request_for_chat_context(value.clone(), &codex_tool_context);
+        let request = responses_compact_request_to_llm(request_for_chat);
+        let mut converted = outbound_transformer(target).request_from_llm(request)?;
+        apply_codex_tool_context_to_chat_request(&mut converted, &value, &codex_tool_context);
+        let context = (!codex_tool_context.is_empty()).then_some(codex_tool_context);
+        return Ok((
+            converted,
+            ConversionContext {
+                codex_tool_context: context,
+                ..ConversionContext::default()
+            },
+        ));
+    }
+
+    let request = responses_compact_request_to_llm(value);
+    let converted = outbound_transformer(target).request_from_llm(request)?;
+    Ok((converted, ConversionContext::default()))
+}
+
+pub fn convert_target_response_body_to_responses_compact(
+    source: AiProtocol,
+    body: &[u8],
+    context: Option<&ConversionContext>,
+) -> Result<Vec<u8>, ProtocolConversionError> {
+    let value = serde_json::from_slice::<Value>(body)
+        .map_err(|error| ProtocolConversionError::InvalidJson(error.to_string()))?;
+    let converted = convert_target_response_value_to_responses_compact(source, value, context)?;
+    serde_json::to_vec(&converted)
+        .map_err(|error| ProtocolConversionError::Transform(error.to_string()))
+}
+
+pub fn convert_target_response_value_to_responses_compact(
+    source: AiProtocol,
+    value: Value,
+    context: Option<&ConversionContext>,
+) -> Result<Value, ProtocolConversionError> {
+    let response = if source == AiProtocol::OpenAiResponses {
+        responses_compact_response_to_llm(value)
+    } else {
+        outbound_transformer(source).response_to_llm(value)?
+    };
+    let mut converted = llm_response_to_responses_compact(response);
+    if source == AiProtocol::OpenAiChat {
+        if let Some(codex_tool_context) = context.and_then(|context| {
+            context
+                .codex_tool_context
+                .as_ref()
+                .filter(|tool_context| !tool_context.is_empty())
+        }) {
+            rewrite_response_with_codex_tool_context(&mut converted, codex_tool_context);
+        }
+    }
+    Ok(converted)
 }
 
 pub fn convert_request_body_with_context(
@@ -279,7 +365,8 @@ mod tests {
         chat_request_to_llm, chat_response_to_llm, llm_response_to_chat,
     };
     use crate::coding::proxy_gateway::transformer::openai::responses::{
-        llm_response_to_responses, responses_request_to_llm, responses_response_to_llm,
+        llm_response_to_responses, responses_compact_request_to_llm, responses_request_to_llm,
+        responses_response_to_llm,
     };
     use crate::coding::proxy_gateway::transformer::shared::signature::DEFAULT_GEMINI_THOUGHT_SIGNATURE;
     use futures_util::{stream, StreamExt};
@@ -1825,6 +1912,20 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn openai_plural_errors_envelope_preserves_error_fields() {
+        let converted = convert_error_response_body(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            br#"{"errors":{"message":"bad request","type":"invalid_request_error","param":"input","code":"bad_input"}}"#,
+        );
+        let value = serde_json::from_slice::<Value>(&converted).unwrap();
+
+        assert_eq!(value["error"]["message"], "bad request");
+        assert_eq!(value["error"]["type"], "invalid_request_error");
+        assert_eq!(value["error"]["param"], "input");
+        assert_eq!(value["error"]["code"], "bad_input");
+    }
+
+    #[test]
     fn openai_error_to_gemini_uses_gemini_error_shape() {
         let converted = convert_error_response_body(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
@@ -2177,8 +2278,42 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             "get_weather"
         );
         assert_eq!(
-            converted["contents"][1]["parts"][0]["functionResponse"]["response"]["content"],
+            converted["contents"][1]["parts"][0]["functionResponse"]["response"]["result"],
             "sunny"
+        );
+    }
+
+    #[test]
+    fn gemini_function_response_preserves_json_object_tool_result() {
+        let converted = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "gemini-2.5-pro",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call_weather",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\":\"Tokyo\"}"
+                            }
+                        }]
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_weather",
+                        "content": "{\"temperature\":24,\"condition\":\"sunny\"}"
+                    }
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            converted["contents"][1]["parts"][0]["functionResponse"]["response"],
+            json!({"temperature": 24, "condition": "sunny"})
         );
     }
 
@@ -2871,6 +3006,117 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn responses_failed_stream_to_chat_finishes_with_error() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_failed","model":"gpt-5","status":"in_progress","output":[]}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_failed","model":"gpt-5","status":"failed","output":[],"error":{"message":"boom"}}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("chat.completion.chunk"));
+        assert!(output.contains("data: [DONE]"));
+        assert!(!output.contains(r#""finish_reason":"stop""#));
+        let values = sse_data_values(&output);
+        let finish = values
+            .iter()
+            .find(|value| value["choices"][0]["finish_reason"] == "error")
+            .expect("response.failed should map to Chat finish_reason=error");
+        assert_eq!(finish["choices"][0]["delta"], json!({}));
+    }
+
+    #[test]
+    fn responses_incomplete_stream_to_gemini_finishes_with_max_tokens() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_incomplete","model":"gpt-5","status":"in_progress","output":[]}}
+
+event: response.incomplete
+data: {"type":"response.incomplete","response":{"id":"resp_incomplete","model":"gpt-5","status":"incomplete","output":[],"usage":{"input_tokens":2,"output_tokens":0,"total_tokens":2}}}
+
+"#
+            .to_string(),
+        );
+
+        let values = sse_data_values(&output);
+        let finish = values
+            .iter()
+            .find(|value| value["candidates"][0]["finishReason"] == "MAX_TOKENS")
+            .expect("response.incomplete should map to Gemini MAX_TOKENS");
+        assert_eq!(finish["responseId"], "resp_incomplete");
+    }
+
+    #[test]
+    fn responses_cancelled_stream_passthrough_does_not_synthesize_completed() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_cancelled","model":"gpt-5","status":"in_progress","output":[]}}
+
+event: response.cancelled
+data: {"type":"response.cancelled","response":{"id":"resp_cancelled","model":"gpt-5","status":"canceled","output":[]}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: response.cancelled"));
+        assert!(!output.contains("event: response.completed"));
+        let values = sse_data_values(&output);
+        let cancelled = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.cancelled"))
+            .expect("response.cancelled event should be preserved");
+        assert_eq!(cancelled["response"]["status"], "canceled");
+    }
+
+    #[test]
+    fn chat_stream_error_and_cancelled_finish_map_to_responses_terminal_events() {
+        let failed = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"data: {"id":"chat_error","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chat_error","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"error"}]}
+
+"#
+            .to_string(),
+        );
+        assert!(failed.contains("event: response.failed"));
+        assert!(!failed.contains("event: response.completed"));
+        let failed_values = sse_data_values(&failed);
+        let failed_event = failed_values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.failed"))
+            .expect("Chat error finish should map to response.failed");
+        assert_eq!(failed_event["response"]["status"], "failed");
+        assert_eq!(failed_event["response"]["error"]["code"], "response_error");
+
+        let cancelled = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"cancelled"}]}
+
+"#
+            .to_string(),
+        );
+        assert!(cancelled.contains("event: response.cancelled"));
+        assert!(!cancelled.contains("event: response.completed"));
+        let cancelled_values = sse_data_values(&cancelled);
+        let cancelled_event = cancelled_values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.cancelled"))
+            .expect("Chat cancelled finish should map to response.cancelled");
+        assert_eq!(cancelled_event["response"]["status"], "canceled");
+    }
+
+    #[test]
     fn gemini_thinking_config_maps_to_reasoning_effort_and_back() {
         let chat = convert_request_value(
             ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
@@ -3099,6 +3345,79 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         }));
         assert_eq!(gemini.request_type, Some(RequestType::Chat));
         assert_eq!(gemini.api_format, Some(ApiFormat::GeminiContents));
+
+        let compact = responses_compact_request_to_llm(json!({
+            "model": "model-a",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+        }));
+        assert_eq!(compact.request_type, Some(RequestType::Compact));
+        assert_eq!(compact.api_format, Some(ApiFormat::OpenAiResponsesCompact));
+        assert_eq!(compact.stream, Some(false));
+    }
+
+    #[test]
+    fn responses_compact_request_converts_to_supported_fallback_targets() {
+        let compact_request = json!({
+            "model": "model-a",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "summarize this context"}]
+            }]
+        });
+
+        let (chat, chat_context) = convert_responses_compact_request_value_to_target(
+            AiProtocol::OpenAiChat,
+            compact_request.clone(),
+        )
+        .unwrap();
+        assert!(chat_context.is_empty());
+        assert!(chat.get("messages").and_then(Value::as_array).is_some());
+        assert_eq!(chat["stream"], false);
+
+        let (anthropic, anthropic_context) = convert_responses_compact_request_value_to_target(
+            AiProtocol::AnthropicMessages,
+            compact_request.clone(),
+        )
+        .unwrap();
+        assert!(anthropic_context.is_empty());
+        assert!(anthropic
+            .get("messages")
+            .and_then(Value::as_array)
+            .is_some());
+        assert_eq!(anthropic["messages"][0]["role"], "user");
+
+        let (gemini, gemini_context) = convert_responses_compact_request_value_to_target(
+            AiProtocol::GeminiNative,
+            compact_request,
+        )
+        .unwrap();
+        assert!(gemini_context.is_empty());
+        assert!(gemini.get("contents").and_then(Value::as_array).is_some());
+        assert_eq!(gemini["contents"][0]["role"], "user");
+    }
+
+    #[test]
+    fn target_response_conversion_to_responses_compact_sets_compaction_object() {
+        let compact = convert_target_response_value_to_responses_compact(
+            AiProtocol::OpenAiChat,
+            json!({
+                "id": "chatcmpl_1",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "model-a",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop"
+                }]
+            }),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(compact["object"], "response.compaction");
+        assert_eq!(compact["status"], "completed");
+        assert_eq!(compact["output"][0]["type"], "message");
     }
 
     #[test]
@@ -3606,6 +3925,56 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
         assert_eq!(function_call["id"], "fc_call_iAamgdUMID7fjUog5w2YxfIP");
         assert_eq!(function_call["call_id"], "call_iAamgdUMID7fjUog5w2YxfIP");
+    }
+
+    #[test]
+    fn anthropic_tool_use_and_result_lift_to_responses_items() {
+        let responses = convert_request_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiResponses),
+            json!({
+                "model": "model-a",
+                "max_tokens": 1024,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "read README"
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": "call_readme",
+                            "name": "read_file",
+                            "input": {"path": "README.md"}
+                        }]
+                    },
+                    {
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": "call_readme",
+                            "content": "file contents"
+                        }]
+                    }
+                ]
+            }),
+        )
+        .unwrap();
+        let input = responses["input"].as_array().unwrap();
+
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["id"], "fc_call_readme");
+        assert_eq!(input[1]["call_id"], "call_readme");
+        assert_eq!(input[1]["name"], "read_file");
+        assert_eq!(input[1]["status"], "completed");
+        let arguments: Value = serde_json::from_str(input[1]["arguments"].as_str().unwrap())
+            .expect("function_call arguments should stay JSON encoded");
+        assert_eq!(arguments["path"], "README.md");
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_readme");
+        assert_eq!(input[2]["output"], "file contents");
     }
 
     #[test]

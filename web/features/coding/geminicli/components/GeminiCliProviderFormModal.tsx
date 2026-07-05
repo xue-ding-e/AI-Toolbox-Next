@@ -11,6 +11,20 @@ import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
+import {
+  CUSTOM_PROVIDER_ENDPOINT_KEY,
+  CUSTOM_PROVIDER_PROFILE_ID,
+  findGatewayProviderEndpoint,
+  getGatewayProviderProfilesForTool,
+  getGatewayProviderProfilesVersion,
+  inferGatewayProviderEndpointSelection,
+  mergeGatewayProfileReferenceIntoMeta,
+  parseGatewayProviderEndpointKey,
+  subscribeGatewayProviderProfiles,
+  toGatewayProviderEndpointKey,
+  toGatewayProviderProfileReference,
+  type GatewayProviderProfileReference,
+} from '@/features/coding/shared/gateway/providerProfiles';
 import type {
   GatewayProviderMeta,
   GeminiCliApiFormat,
@@ -24,7 +38,6 @@ const { Text } = Typography;
 
 const DEFAULT_GEMINI_MODELS_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_GEMINI_API_FORMAT: GeminiCliApiFormat = 'gemini_native';
-const CUSTOM_GEMINI_CHANNEL_KEY = '__custom__';
 const OFFICIAL_GEMINI_CHANNEL_KEY = '__official__';
 
 const DEFAULT_GEMINI_MODEL_OPTIONS = [
@@ -63,18 +76,12 @@ function normalizeGeminiApiFormat(value?: string): GeminiCliApiFormat {
   return DEFAULT_GEMINI_API_FORMAT;
 }
 
-function mergeApiFormatIntoMeta(
+function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
+  gatewayProfile: GatewayProviderProfileReference | undefined,
   apiFormat: GeminiCliApiFormat | undefined,
 ): GatewayProviderMeta | undefined {
-  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
-  delete nextMeta.apiFormat;
-  if (apiFormat) {
-    nextMeta.apiFormat = apiFormat;
-  }
-  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
-    ? nextMeta
-    : undefined;
+  return mergeGatewayProfileReferenceIntoMeta(meta, gatewayProfile, apiFormat);
 }
 
 interface GeminiCliProviderFormModalProps {
@@ -326,6 +333,12 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const selectedChannel = Form.useWatch('channel', form) as string | undefined;
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
   const apiFormatOptions = React.useMemo(() => [
     {
       value: 'gemini_native',
@@ -350,30 +363,37 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const canSelectProviderCategory = !provider;
   const providerCategory = provider ? (provider.category || 'custom') : selectedProviderCategory;
   const isOfficialMode = providerCategory === 'official';
+  const selectedIsCustomProviderProfile = !selectedChannel || selectedChannel === CUSTOM_PROVIDER_ENDPOINT_KEY;
   const channelOptions = React.useMemo(() => (
-    canSelectProviderCategory
+    isOfficialMode && !canSelectProviderCategory
       ? [
-          {
-            value: CUSTOM_GEMINI_CHANNEL_KEY,
-            label: t('geminicli.provider.providerProfileCustom'),
-          },
           {
             value: OFFICIAL_GEMINI_CHANNEL_KEY,
             label: t('geminicli.provider.providerProfileOfficial'),
           },
         ]
       : [
-          providerCategory === 'official'
-            ? {
-                value: OFFICIAL_GEMINI_CHANNEL_KEY,
-                label: t('geminicli.provider.providerProfileOfficial'),
-              }
-            : {
-                value: CUSTOM_GEMINI_CHANNEL_KEY,
-                label: t('geminicli.provider.providerProfileCustom'),
-              },
+          {
+            value: CUSTOM_PROVIDER_ENDPOINT_KEY,
+            label: t('geminicli.provider.providerProfileCustom'),
+          },
+          ...(canSelectProviderCategory
+            ? [
+                {
+                  value: OFFICIAL_GEMINI_CHANNEL_KEY,
+                  label: t('geminicli.provider.providerProfileOfficial'),
+                },
+              ]
+            : []),
+          ...getGatewayProviderProfilesForTool('gemini').flatMap((profile) => {
+            const endpoints = profile.tools.gemini?.endpoints || [];
+            return endpoints.map((endpoint) => ({
+              value: toGatewayProviderEndpointKey(profile.id, endpoint.id),
+              label: `${profile.label} / ${endpoint.label}`,
+            }));
+          }),
         ]
-  ), [canSelectProviderCategory, providerCategory, t]);
+  ), [canSelectProviderCategory, gatewayProviderProfilesVersion, isOfficialMode, t]);
   const activeFormKey = React.useMemo(() => {
     if (!open) {
       return null;
@@ -433,6 +453,31 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       rawInitialConfig,
       initialCategory,
     ) as GeminiCliSettingsConfig;
+    const initialBaseUrl = extractEnvString(initialConfig, 'GOOGLE_GEMINI_BASE_URL');
+    const providerEndpointSelection = initialCategory === 'official'
+      ? {
+          providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
+          providerEndpointId: undefined,
+        }
+      : inferGatewayProviderEndpointSelection({
+          tool: 'gemini',
+          meta: provider?.meta,
+          providerType: provider?.meta?.providerType,
+          apiFormat: provider?.meta?.apiFormat,
+        });
+    const providerEndpoint = providerEndpointSelection.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+      ? undefined
+      : findGatewayProviderEndpoint(
+          providerEndpointSelection.providerProfileId,
+          'gemini',
+          providerEndpointSelection.providerEndpointId,
+        );
+    const selectedBaseUrl = initialBaseUrl || providerEndpoint?.baseUrl || '';
+    const selectedApiFormat = initialCategory === 'official'
+      ? DEFAULT_GEMINI_API_FORMAT
+      : providerEndpoint
+        ? normalizeGeminiApiFormat(providerEndpoint.apiFormat)
+        : normalizeGeminiApiFormat(provider?.meta?.apiFormat);
 
     setSelectedProviderCategory(initialCategory);
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
@@ -444,13 +489,14 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       category: initialCategory,
       channel: initialCategory === 'official'
         ? OFFICIAL_GEMINI_CHANNEL_KEY
-        : CUSTOM_GEMINI_CHANNEL_KEY,
+        : toGatewayProviderEndpointKey(
+            providerEndpointSelection.providerProfileId,
+            providerEndpointSelection.providerEndpointId,
+          ),
       apiKey: extractGeminiApiKey(initialConfig),
-      baseUrl: extractEnvString(initialConfig, 'GOOGLE_GEMINI_BASE_URL'),
+      baseUrl: selectedBaseUrl,
       modelName: extractGeminiEnvModelName(initialConfig),
-      apiFormat: initialCategory === 'official'
-        ? DEFAULT_GEMINI_API_FORMAT
-        : normalizeGeminiApiFormat(provider?.meta?.apiFormat),
+      apiFormat: selectedApiFormat,
       settingsConfig: initialConfig,
       notes: provider?.notes || '',
     });
@@ -474,7 +520,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       category,
       channel: category === 'official'
         ? OFFICIAL_GEMINI_CHANNEL_KEY
-        : CUSTOM_GEMINI_CHANNEL_KEY,
+        : CUSTOM_PROVIDER_ENDPOINT_KEY,
       apiKey: extractGeminiApiKey(nextConfig),
       baseUrl: extractEnvString(nextConfig, 'GOOGLE_GEMINI_BASE_URL'),
       modelName: extractGeminiEnvModelName(nextConfig),
@@ -484,10 +530,55 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   };
 
   const handleChannelChange = (channel: string) => {
-    if (!canSelectProviderCategory) {
+    if (channel === OFFICIAL_GEMINI_CHANNEL_KEY) {
+      if (!canSelectProviderCategory) {
+        return;
+      }
+      handleCategoryChange('official');
       return;
     }
-    handleCategoryChange(channel === OFFICIAL_GEMINI_CHANNEL_KEY ? 'official' : 'custom');
+
+    const { providerProfileId, providerEndpointId } = parseGatewayProviderEndpointKey(channel);
+    if (canSelectProviderCategory && providerCategory !== 'custom') {
+      setSelectedProviderCategory('custom');
+      form.setFieldsValue({ category: 'custom' });
+    }
+
+    if (providerProfileId === CUSTOM_PROVIDER_PROFILE_ID) {
+      form.setFieldsValue({
+        channel: CUSTOM_PROVIDER_ENDPOINT_KEY,
+        apiFormat: form.getFieldValue('apiFormat') || DEFAULT_GEMINI_API_FORMAT,
+      });
+      return;
+    }
+
+    const endpoint = findGatewayProviderEndpoint(providerProfileId, 'gemini', providerEndpointId);
+    if (!endpoint) {
+      return;
+    }
+
+    const nextModelName = endpoint.model?.trim() || form.getFieldValue('modelName') || '';
+    const nextConfig = normalizeSettingsConfigForCategory(
+      syncDedicatedFieldsToSettingsConfig(
+        settingsConfigValue || {},
+        {
+          baseUrl: endpoint.baseUrl,
+          modelName: nextModelName,
+        },
+      ),
+      'custom',
+    );
+    setSettingsConfigValue(nextConfig);
+    setSettingsConfigValid(true);
+    setFetchedModels([]);
+    form.setFieldsValue({
+      category: 'custom',
+      channel: toGatewayProviderEndpointKey(providerProfileId, endpoint.id),
+      apiFormat: normalizeGeminiApiFormat(endpoint.apiFormat),
+      baseUrl: endpoint.baseUrl,
+      modelName: nextModelName,
+      settingsConfig: nextConfig,
+    });
   };
 
   const handleApiKeyChange = (apiKey: string) => {
@@ -584,20 +675,40 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
     );
     setSettingsConfigValue(latestSettingsConfig);
     const { baseUrl, apiKey, hasConfiguredBaseUrl } = resolveFetchModelsConfig(latestSettingsConfig);
-    if (!apiKey && !hasConfiguredBaseUrl) {
+    const selectedApiFormat = normalizeGeminiApiFormat(form.getFieldValue('apiFormat'));
+    if (selectedApiFormat === 'gemini_native' && !apiKey && !hasConfiguredBaseUrl) {
       message.warning(t('geminicli.fetchModels.apiKeyRequired'));
+      return;
+    }
+    if (selectedApiFormat !== 'gemini_native' && !hasConfiguredBaseUrl) {
+      message.warning(t('geminicli.fetchModels.baseUrlRequired'));
       return;
     }
 
     setLoadingModels(true);
     try {
+      const modelFetchRequest = selectedApiFormat === 'gemini_native'
+        ? {
+            baseUrl,
+            apiKey: apiKey || undefined,
+            apiType: 'native',
+            sdkType: '@ai-sdk/google',
+          }
+        : selectedApiFormat === 'anthropic'
+          ? {
+              baseUrl,
+              apiKey: apiKey || undefined,
+              apiType: 'native',
+              sdkType: '@ai-sdk/anthropic',
+            }
+          : {
+              baseUrl,
+              apiKey: apiKey || undefined,
+              apiType: 'openai_compat',
+              sdkType: '@ai-sdk/openai',
+            };
       const response = await invoke<FetchModelsResponse>('fetch_provider_models', {
-        request: {
-          baseUrl,
-          apiKey: apiKey || undefined,
-          apiType: 'native',
-          sdkType: '@ai-sdk/google',
-        },
+        request: modelFetchRequest,
       });
 
       setFetchedModels(response.models);
@@ -625,6 +736,19 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       const selectedCategory = (canSelectProviderCategory ? values.category : providerCategory) === 'official'
         ? 'official'
         : 'custom';
+      const selectedChannel = typeof values.channel === 'string' ? values.channel : CUSTOM_PROVIDER_ENDPOINT_KEY;
+      const { providerProfileId, providerEndpointId } = parseGatewayProviderEndpointKey(selectedChannel);
+      const selectedEndpoint = selectedCategory === 'official' || providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+        ? undefined
+        : findGatewayProviderEndpoint(providerProfileId, 'gemini', providerEndpointId);
+      const selectedApiFormat = selectedCategory === 'official'
+        ? undefined
+        : selectedEndpoint
+          ? normalizeGeminiApiFormat(selectedEndpoint.apiFormat)
+          : normalizeGeminiApiFormat(values.apiFormat);
+      const gatewayProfile = selectedEndpoint
+        ? toGatewayProviderProfileReference('gemini', providerProfileId, selectedEndpoint.id)
+        : undefined;
       const latestSettingsConfig = syncDedicatedFieldsToSettingsConfig(
         settingsConfigValue || {},
         values,
@@ -638,11 +762,12 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
-        apiFormat: selectedCategory === 'official' ? undefined : values.apiFormat,
+        apiFormat: selectedApiFormat,
         meta: mergeBillingConfigIntoMeta(
-          mergeApiFormatIntoMeta(
+          mergeGatewayMetaIntoProviderMeta(
             provider?.meta,
-            selectedCategory === 'official' ? undefined : values.apiFormat,
+            gatewayProfile,
+            gatewayProfile ? undefined : selectedApiFormat,
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
@@ -684,7 +809,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
               >
                 <Select
                   options={channelOptions}
-                  disabled={!canSelectProviderCategory}
+                  disabled={isOfficialMode && !canSelectProviderCategory}
                   onChange={handleChannelChange}
                 />
               </Form.Item>
@@ -694,7 +819,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
                   noStyle
                   initialValue={DEFAULT_GEMINI_API_FORMAT}
                 >
-                  <Select options={apiFormatOptions} />
+                  <Select options={apiFormatOptions} disabled={!selectedIsCustomProviderProfile} />
                 </Form.Item>
               )}
             </div>

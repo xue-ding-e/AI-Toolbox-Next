@@ -1,9 +1,11 @@
 use crate::coding::proxy_gateway::types::{
-    normalize_pricing_model_source, GatewayCliKey, GatewayProxyMode, ProviderGatewayMeta,
-    ProviderPriorityEntry, ProxyGatewaySettings,
+    normalize_pricing_model_source, CodexChatReasoningMeta, GatewayCliKey,
+    GatewayProviderProfileReference, GatewayProxyMode, ProviderGatewayMeta, ProviderPriorityEntry,
+    ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::{
-    cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths, transformer::AiProtocol,
+    cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
+    provider_profiles::load_gateway_provider_profiles_for_runtime, transformer::AiProtocol,
 };
 use crate::coding::{claude_code, codex, gemini_cli};
 use crate::db::helpers::db_list;
@@ -376,6 +378,7 @@ fn provider_meta_from_record(
         .map(|settings| settings.default_pricing_model_source_for(cli_key))
         .unwrap_or_else(|| "upstream".to_string());
     let mut meta = ProviderGatewayMeta {
+        gateway_profile: gateway_profile_reference_from_meta(meta_value),
         provider_type: json_string_compat(meta_value, "provider_type", "providerType"),
         api_format: json_string_compat(meta_value, "api_format", "apiFormat"),
         api_key_field: json_string_compat(meta_value, "api_key_field", "apiKeyField"),
@@ -414,6 +417,7 @@ fn provider_meta_from_record(
         .map(|value| normalize_pricing_model_source(&value))
         .unwrap_or_else(|| default_pricing_model_source.clone()),
     };
+    apply_gateway_profile_reference(cli_key, &mut meta);
     if meta.provider_type.is_none() {
         meta.provider_type = record
             .get("category")
@@ -430,6 +434,151 @@ fn provider_meta_from_record(
     }
     merge_model_catalog_image_capabilities(&mut meta, record.get("settings_config"));
     meta
+}
+
+fn gateway_profile_reference_from_meta(value: &Value) -> Option<GatewayProviderProfileReference> {
+    let reference = value
+        .get("gateway_profile")
+        .or_else(|| value.get("gatewayProfile"))?;
+    let profile_id = json_string_compat(reference, "profile_id", "profileId")?;
+    let endpoint_id = json_string_compat(reference, "endpoint_id", "endpointId")?;
+    Some(GatewayProviderProfileReference {
+        tool: json_value_string(reference, "tool"),
+        profile_id,
+        endpoint_id,
+    })
+}
+
+fn apply_gateway_profile_reference(cli_key: GatewayCliKey, meta: &mut ProviderGatewayMeta) {
+    let Some(reference) = meta.gateway_profile.clone() else {
+        return;
+    };
+    let Some(tool) = gateway_profile_tool_for_cli(cli_key) else {
+        return;
+    };
+    if !gateway_profile_reference_matches_tool(&reference, tool) {
+        return;
+    }
+    let Some(catalog) = load_gateway_provider_profiles_for_runtime() else {
+        return;
+    };
+    let Some((profile, endpoint)) = find_gateway_profile_endpoint(
+        &catalog,
+        tool,
+        reference.profile_id.trim(),
+        reference.endpoint_id.trim(),
+    ) else {
+        return;
+    };
+
+    meta.provider_type = json_value_string(profile, "providerType");
+    meta.api_format = json_value_string(endpoint, "apiFormat");
+    meta.api_key_field = json_value_string(endpoint, "apiKeyField")
+        .or_else(|| json_value_string(profile, "apiKeyField"));
+    meta.reasoning_field = json_value_string(endpoint, "reasoningField")
+        .or_else(|| json_value_string(profile, "reasoningField"));
+    meta.default_max_tokens = json_i64_compat(endpoint, "default_max_tokens", "defaultMaxTokens")
+        .or_else(|| json_i64_compat(profile, "default_max_tokens", "defaultMaxTokens"));
+    meta.image_input_policy = json_value_string(endpoint, "imageInputPolicy")
+        .or_else(|| json_value_string(profile, "imageInputPolicy"));
+    meta.text_only_models = {
+        let endpoint_models =
+            json_string_vec_compat(endpoint, "text_only_models", "textOnlyModels");
+        if endpoint_models.is_empty() {
+            json_string_vec_compat(profile, "text_only_models", "textOnlyModels")
+        } else {
+            endpoint_models
+        }
+    };
+    meta.image_capable_models = {
+        let endpoint_models =
+            json_string_vec_compat(endpoint, "image_capable_models", "imageCapableModels");
+        if endpoint_models.is_empty() {
+            json_string_vec_compat(profile, "image_capable_models", "imageCapableModels")
+        } else {
+            endpoint_models
+        }
+    };
+    meta.allow_text_only_model_heuristic = json_bool_compat(
+        endpoint,
+        "allow_text_only_model_heuristic",
+        "allowTextOnlyModelHeuristic",
+    )
+    .or_else(|| {
+        json_bool_compat(
+            profile,
+            "allow_text_only_model_heuristic",
+            "allowTextOnlyModelHeuristic",
+        )
+    })
+    .unwrap_or(false);
+    meta.codex_chat_reasoning = if tool == "codex" {
+        codex_chat_reasoning_from_profile_value(endpoint)
+            .or_else(|| codex_chat_reasoning_from_profile_value(profile))
+    } else {
+        None
+    };
+}
+
+fn gateway_profile_tool_for_cli(cli_key: GatewayCliKey) -> Option<&'static str> {
+    match cli_key {
+        GatewayCliKey::Claude => Some("claude"),
+        GatewayCliKey::Codex => Some("codex"),
+        GatewayCliKey::Gemini => Some("gemini"),
+        GatewayCliKey::OpenCode => None,
+    }
+}
+
+fn gateway_profile_reference_matches_tool(
+    reference: &GatewayProviderProfileReference,
+    expected_tool: &str,
+) -> bool {
+    reference
+        .tool
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none_or(|tool| tool.eq_ignore_ascii_case(expected_tool))
+}
+
+fn find_gateway_profile_endpoint<'a>(
+    catalog: &'a Value,
+    tool: &str,
+    profile_id: &str,
+    endpoint_id: &str,
+) -> Option<(&'a Value, &'a Value)> {
+    let profile = catalog
+        .get("profiles")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|profile| {
+            profile
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|id| id == profile_id)
+        })?;
+    let endpoint = profile
+        .get("tools")
+        .and_then(|tools| tools.get(tool))
+        .and_then(|tool_profile| tool_profile.get("endpoints"))
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|endpoint| {
+            endpoint
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|id| id == endpoint_id)
+        })?;
+    Some((profile, endpoint))
+}
+
+fn codex_chat_reasoning_from_profile_value(value: &Value) -> Option<CodexChatReasoningMeta> {
+    value
+        .get("codex_chat_reasoning")
+        .or_else(|| value.get("codexChatReasoning"))
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
 }
 
 fn json_string_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<String> {
@@ -1261,6 +1410,132 @@ base_url = "https://api.example.com/v1"
             result.meta.image_capable_models,
             vec!["vision-model".to_string()]
         );
+    }
+
+    #[test]
+    fn provider_meta_resolves_gateway_profile_reference_from_catalog() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Codex,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "gatewayProfile": {
+                        "tool": "codex",
+                        "profileId": "deepseek",
+                        "endpointId": "openai_chat"
+                    }
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(meta.provider_type.as_deref(), Some("deepseek"));
+        assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+        assert_eq!(
+            meta.codex_chat_reasoning
+                .as_ref()
+                .and_then(|config| config.effort_value_mode.as_deref()),
+            Some("deepseek")
+        );
+    }
+
+    #[test]
+    fn provider_meta_gateway_profile_reference_preserves_user_owned_fields() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Claude,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "gatewayProfile": {
+                        "tool": "claude",
+                        "profileId": "deepseek",
+                        "endpointId": "openai_chat"
+                    },
+                    "costMultiplier": "1.25",
+                    "pricingModelSource": "requested",
+                    "isFullUrl": true,
+                    "promptCacheKey": "session-key"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(meta.provider_type.as_deref(), Some("deepseek"));
+        assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+        assert_eq!(meta.cost_multiplier, "1.25");
+        assert_eq!(meta.pricing_model_source, "requested");
+        assert!(meta.is_full_url);
+        assert_eq!(meta.prompt_cache_key.as_deref(), Some("session-key"));
+    }
+
+    #[test]
+    fn provider_meta_gateway_profile_reference_uses_current_profile_fields() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Gemini,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "gatewayProfile": {
+                        "tool": "gemini",
+                        "profileId": "openrouter",
+                        "endpointId": "openai_chat"
+                    }
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(meta.provider_type.as_deref(), Some("openrouter"));
+        assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+        assert_eq!(meta.reasoning_field.as_deref(), Some("reasoning"));
+    }
+
+    #[test]
+    fn provider_meta_gateway_profile_reference_does_not_apply_codex_reasoning_for_gemini() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Gemini,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "gatewayProfile": {
+                        "tool": "gemini",
+                        "profileId": "openrouter",
+                        "endpointId": "openai_chat"
+                    },
+                    "codexChatReasoning": {
+                        "supportsEffort": true,
+                        "effortValueMode": "legacy"
+                    }
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(meta.provider_type.as_deref(), Some("openrouter"));
+        assert!(meta.codex_chat_reasoning.is_none());
+    }
+
+    #[test]
+    fn provider_meta_gateway_profile_reference_falls_back_to_legacy_when_missing() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Codex,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "gatewayProfile": {
+                        "tool": "codex",
+                        "profileId": "missing-profile",
+                        "endpointId": "openai_chat"
+                    },
+                    "providerType": "legacy-provider",
+                    "apiFormat": "openai_chat"
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(meta.provider_type.as_deref(), Some("legacy-provider"));
+        assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
     }
 
     #[test]

@@ -29,6 +29,10 @@ const RESPONSES_TRUNCATION_METADATA_KEY: &str = "openai_responses_truncation";
 const RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY: &str =
     "openai_responses_compaction_encrypted_content";
 const RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY: &str = "openai_responses_compaction_created_by";
+const RESPONSES_RAW_TOOLS_METADATA_KEY: &str = "openai_responses_raw_tools";
+const RESPONSES_TOOL_SIGNATURES_METADATA_KEY: &str = "openai_responses_tool_signatures";
+const RESPONSES_RAW_TOOL_CHOICE_METADATA_KEY: &str = "openai_responses_raw_tool_choice";
+const RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY: &str = "openai_responses_raw_input_items";
 
 impl InboundTransformer for OpenAiResponsesInbound {
     fn protocol(&self) -> AiProtocol {
@@ -165,6 +169,15 @@ pub fn responses_request_to_llm(body: Value) -> Request {
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
         request.tools = tools.iter().filter_map(responses_tool_to_llm).collect();
     }
+    attach_responses_raw_request_metadata(&body, &mut request);
+    request
+}
+
+pub fn responses_compact_request_to_llm(body: Value) -> Request {
+    let mut request = responses_request_to_llm(body);
+    request.request_type = Some(RequestType::Compact);
+    request.api_format = Some(ApiFormat::OpenAiResponsesCompact);
+    request.stream = Some(false);
     request
 }
 
@@ -179,6 +192,112 @@ fn preserve_responses_transformer_metadata(
             .transformer_metadata
             .insert(metadata_key.to_string(), value.clone());
     }
+}
+
+fn attach_responses_raw_request_metadata(body: &Value, request: &mut Request) {
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        let raw_tools = tools
+            .iter()
+            .enumerate()
+            .filter(|(_, tool)| !is_structurally_represented_responses_tool(tool))
+            .map(|(index, tool)| raw_responses_fragment(index, tool.clone()))
+            .collect::<Vec<_>>();
+        if !raw_tools.is_empty() {
+            request.transformer_metadata.insert(
+                RESPONSES_RAW_TOOLS_METADATA_KEY.to_string(),
+                Value::Array(raw_tools),
+            );
+        }
+
+        let tool_signatures = tools
+            .iter()
+            .filter(|tool| is_structurally_represented_responses_tool(tool))
+            .filter_map(responses_tool_signature)
+            .map(Value::String)
+            .collect::<Vec<_>>();
+        if !tool_signatures.is_empty() {
+            request.transformer_metadata.insert(
+                RESPONSES_TOOL_SIGNATURES_METADATA_KEY.to_string(),
+                Value::Array(tool_signatures),
+            );
+        }
+    }
+
+    if let Some(tool_choice) = body
+        .get("tool_choice")
+        .filter(|tool_choice| should_preserve_raw_responses_tool_choice(tool_choice))
+    {
+        request.transformer_metadata.insert(
+            RESPONSES_RAW_TOOL_CHOICE_METADATA_KEY.to_string(),
+            tool_choice.clone(),
+        );
+    }
+
+    if let Some(input_items) = body.get("input").and_then(Value::as_array) {
+        let raw_input_items = input_items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| !is_structurally_represented_responses_input_item(item))
+            .map(|(index, item)| raw_responses_fragment(index, item.clone()))
+            .collect::<Vec<_>>();
+        if !raw_input_items.is_empty() {
+            request.transformer_metadata.insert(
+                RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY.to_string(),
+                Value::Array(raw_input_items),
+            );
+        }
+    }
+}
+
+fn raw_responses_fragment(index: usize, value: Value) -> Value {
+    json!({
+        "index": index,
+        "value": value
+    })
+}
+
+fn is_structurally_represented_responses_tool(tool: &Value) -> bool {
+    matches!(
+        tool.get("type").and_then(Value::as_str),
+        Some("function" | "custom")
+    )
+}
+
+fn responses_tool_signature(tool: &Value) -> Option<String> {
+    match tool.get("type").and_then(Value::as_str)? {
+        tool_type @ ("function" | "custom") => tool
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| format!("{tool_type}:{name}")),
+        tool_type => Some(tool_type.to_string()),
+    }
+}
+
+fn should_preserve_raw_responses_tool_choice(tool_choice: &Value) -> bool {
+    match tool_choice {
+        Value::Object(object) => {
+            object.get("tools").is_some() || tool_choice_from_openai(Some(tool_choice)).is_none()
+        }
+        _ => false,
+    }
+}
+
+fn is_structurally_represented_responses_input_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(Value::as_str),
+        None | Some(
+            "message"
+                | "input_text"
+                | "input_image"
+                | "function_call"
+                | "function_call_output"
+                | "custom_tool_call"
+                | "custom_tool_call_output"
+                | "reasoning"
+                | "compaction"
+                | "compaction_summary"
+        )
+    )
 }
 
 fn responses_instructions_text(value: Option<&Value>) -> Option<String> {
@@ -239,6 +358,12 @@ fn append_responses_input_to_messages(input: Option<&Value>, messages: &mut Vec<
 
 fn append_responses_item_to_messages(item: &Value, messages: &mut Vec<Message>) {
     match item.get("type").and_then(Value::as_str) {
+        Some("input_text") | Some("output_text") | Some("text") => messages.push(Message {
+            role: responses_text_item_role(item),
+            content: responses_value_to_message_content(item),
+            annotations: part_annotations(item),
+            ..Default::default()
+        }),
         Some("function_call") | Some("custom_tool_call") => messages.push(Message {
             role: "assistant".to_string(),
             tool_calls: vec![responses_call_to_tool_call(item, 0)],
@@ -250,12 +375,10 @@ fn append_responses_item_to_messages(item: &Value, messages: &mut Vec<Message>) 
                 .get("call_id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
-            content: MessageContent::Text(
-                item.get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            ),
+            content: item
+                .get("output")
+                .map(responses_value_to_message_content)
+                .unwrap_or_default(),
             ..Default::default()
         }),
         Some("reasoning") => messages.push(responses_reasoning_message(item)),
@@ -271,7 +394,62 @@ fn append_responses_item_to_messages(item: &Value, messages: &mut Vec<Message>) 
                 });
             }
         }
-        _ => messages.push(responses_message_item_to_llm(item)),
+        None | Some("message") => messages.push(responses_message_item_to_llm(item)),
+        _ => {}
+    }
+}
+
+fn responses_text_item_role(item: &Value) -> String {
+    item.get("role")
+        .and_then(Value::as_str)
+        .filter(|role| !role.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            if item.get("type").and_then(Value::as_str) == Some("output_text") {
+                "assistant".to_string()
+            } else {
+                "user".to_string()
+            }
+        })
+}
+
+fn responses_value_to_message_content(value: &Value) -> MessageContent {
+    match value {
+        Value::String(text) => MessageContent::Text(text.clone()),
+        Value::Array(items) => {
+            let parts = items
+                .iter()
+                .filter_map(responses_content_part_to_llm)
+                .collect::<Vec<_>>();
+            if parts.len() != items.len() {
+                return MessageContent::Text(responses_string_or_compact_json(value));
+            }
+            let has_annotations = items.iter().any(|item| {
+                item.get("annotations")
+                    .and_then(Value::as_array)
+                    .is_some_and(|annotations| !annotations.is_empty())
+            });
+            if parts.len() == 1
+                && parts[0].part_type == "text"
+                && parts[0].id.is_empty()
+                && !has_annotations
+            {
+                if let Some(text) = parts[0].text.clone() {
+                    return MessageContent::Text(text);
+                }
+            }
+            MessageContent::Parts(parts)
+        }
+        Value::Object(_) => {
+            if value.get("text").is_some() || value.get("type").is_some() {
+                if let Some(part) = responses_content_part_to_llm(value) {
+                    return MessageContent::Parts(vec![part]);
+                }
+            }
+            MessageContent::Text(value.to_string())
+        }
+        Value::Null => MessageContent::Empty,
+        other => MessageContent::Text(other.to_string()),
     }
 }
 
@@ -350,41 +528,25 @@ fn responses_message_item_to_llm(item: &Value) -> Message {
         .to_string();
     let mut parts = Vec::new();
     let mut refusal = String::new();
-    if let Some(content) = item.get("content").and_then(Value::as_array) {
-        for part in content {
-            match part.get("type").and_then(Value::as_str) {
-                Some("input_text") | Some("output_text") => {
-                    parts.push(MessageContentPart {
-                        id: part
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        part_type: "text".to_string(),
-                        text: part
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string),
-                        ..Default::default()
-                    });
-                }
-                Some("input_image") => {
-                    if let Some(part) = responses_input_image_part(part) {
-                        parts.push(part);
-                    }
-                }
-                Some("compaction") | Some("compaction_summary") => {
-                    parts.push(responses_compaction_part(part));
-                }
-                Some("refusal") => {
+    let mut content = MessageContent::Empty;
+    if let Some(content_value) = item.get("content") {
+        if let Some(content_parts) = content_value.as_array() {
+            for part in content_parts {
+                if part.get("type").and_then(Value::as_str) == Some("refusal") {
                     refusal = part
                         .get("refusal")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
+                    continue;
                 }
-                _ => {}
+                if let Some(part) = responses_content_part_to_llm(part) {
+                    parts.push(part);
+                }
             }
+            content = MessageContent::Parts(parts);
+        } else {
+            content = responses_value_to_message_content(content_value);
         }
     }
     Message {
@@ -394,14 +556,35 @@ fn responses_message_item_to_llm(item: &Value) -> Message {
             .unwrap_or_default()
             .to_string(),
         role,
-        content: MessageContent::Parts(parts),
+        content,
         refusal,
         annotations: item
             .get("content")
-            .and_then(Value::as_array)
-            .map(|content| content_annotations(content))
+            .map(content_annotations_from_value)
             .unwrap_or_default(),
         ..Default::default()
+    }
+}
+
+fn responses_content_part_to_llm(part: &Value) -> Option<MessageContentPart> {
+    match part.get("type").and_then(Value::as_str) {
+        Some("input_text") | Some("output_text") | Some("text") => Some(MessageContentPart {
+            id: part
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            part_type: "text".to_string(),
+            text: part
+                .get("text")
+                .or_else(|| part.get("content"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            ..Default::default()
+        }),
+        Some("input_image") => responses_input_image_part(part),
+        Some("compaction") | Some("compaction_summary") => Some(responses_compaction_part(part)),
+        _ => None,
     }
 }
 
@@ -519,9 +702,8 @@ fn responses_call_to_tool_call(item: &Value, index: usize) -> ToolCall {
             .to_string();
         let input = item
             .get("input")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+            .map(responses_string_or_compact_json)
+            .unwrap_or_default();
         return ToolCall {
             id: call_id.clone(),
             tool_type: TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string(),
@@ -545,8 +727,9 @@ fn responses_call_to_tool_call(item: &Value, index: usize) -> ToolCall {
         .to_string();
     let arguments = sanitize_responses_function_arguments(
         &name,
-        item.get("arguments")
-            .and_then(Value::as_str)
+        &item
+            .get("arguments")
+            .map(responses_string_or_compact_json)
             .unwrap_or_default(),
     );
     ToolCall {
@@ -560,6 +743,14 @@ fn responses_call_to_tool_call(item: &Value, index: usize) -> ToolCall {
         function: FunctionCall { name, arguments },
         index,
         ..Default::default()
+    }
+}
+
+fn responses_string_or_compact_json(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
 
@@ -581,6 +772,18 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     let mut input = Vec::new();
     let mut instructions = Vec::new();
     let mut custom_tool_call_ids = HashMap::new();
+    let raw_tools = request
+        .transformer_metadata
+        .get(RESPONSES_RAW_TOOLS_METADATA_KEY)
+        .cloned();
+    let raw_tool_choice = request
+        .transformer_metadata
+        .get(RESPONSES_RAW_TOOL_CHOICE_METADATA_KEY)
+        .cloned();
+    let raw_input_items = request
+        .transformer_metadata
+        .get(RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY)
+        .cloned();
     let include = request
         .transformer_metadata
         .get(RESPONSES_INCLUDE_METADATA_KEY)
@@ -614,6 +817,7 @@ pub fn llm_request_to_responses(request: Request) -> Value {
         }
         append_llm_message_as_responses_input(message, &mut input, &mut custom_tool_call_ids);
     }
+    input = merge_raw_responses_fragments(input, raw_input_items.as_ref());
     let mut body = json!({
         "model": request.model,
         "input": input,
@@ -661,12 +865,17 @@ pub fn llm_request_to_responses(request: Request) -> Value {
             if tool.tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
                 return tool.response_custom_tool.and_then(|custom| {
                     (!custom.name.is_empty()).then(|| {
-                        json!({
-                            "type": "custom",
-                            "name": custom.name,
-                            "description": custom.description,
-                            "format": custom.format
-                        })
+                        let mut tool_object = Map::new();
+                        tool_object.insert("type".to_string(), json!("custom"));
+                        tool_object.insert("name".to_string(), json!(custom.name));
+                        if !custom.description.is_empty() {
+                            tool_object
+                                .insert("description".to_string(), json!(custom.description));
+                        }
+                        if let Some(format) = custom.format {
+                            tool_object.insert("format".to_string(), json!(format));
+                        }
+                        Value::Object(tool_object)
                     })
                 });
             }
@@ -678,7 +887,9 @@ pub fn llm_request_to_responses(request: Request) -> Value {
                 let mut tool_object = Map::new();
                 tool_object.insert("type".to_string(), json!("function"));
                 tool_object.insert("name".to_string(), json!(function.name));
-                tool_object.insert("description".to_string(), json!(function.description));
+                if !function.description.is_empty() {
+                    tool_object.insert("description".to_string(), json!(function.description));
+                }
                 tool_object.insert(
                     "parameters".to_string(),
                     responses_function_parameters(function.parameters, strict),
@@ -691,10 +902,13 @@ pub fn llm_request_to_responses(request: Request) -> Value {
             None
         })
         .collect::<Vec<_>>();
+    let tools = merge_raw_responses_fragments(tools, raw_tools.as_ref());
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
-    if let Some(tool_choice) = tool_choice_to_responses(request.tool_choice) {
+    if let Some(raw_tool_choice) = raw_tool_choice {
+        body["tool_choice"] = raw_tool_choice;
+    } else if let Some(tool_choice) = tool_choice_to_responses(request.tool_choice) {
         body["tool_choice"] = tool_choice;
     }
     if let Some(parallel_tool_calls) = request.parallel_tool_calls {
@@ -732,6 +946,64 @@ pub fn llm_request_to_responses(request: Request) -> Value {
         body["truncation"] = truncation;
     }
     body
+}
+
+pub fn llm_request_to_responses_compact(request: Request) -> Value {
+    let mut body = llm_request_to_responses(request);
+    if let Some(object) = body.as_object_mut() {
+        object.remove("stream");
+    }
+    body
+}
+
+fn merge_raw_responses_fragments(
+    mut structured: Vec<Value>,
+    raw_fragments: Option<&Value>,
+) -> Vec<Value> {
+    let raw = raw_fragments
+        .and_then(Value::as_array)
+        .map(|items| {
+            let max_merge_index = structured.len().saturating_add(items.len());
+            items
+                .iter()
+                .filter_map(raw_responses_fragment_parts)
+                .filter(|(index, _)| *index <= max_merge_index)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if raw.is_empty() {
+        return structured;
+    }
+
+    let mut total = structured.len() + raw.len();
+    for (index, _) in &raw {
+        total = total.max(index.saturating_add(1));
+    }
+
+    let mut raw_by_index = raw.into_iter().collect::<HashMap<_, _>>();
+    let mut merged = Vec::with_capacity(total);
+    let mut structured_iter = structured.drain(..);
+    for index in 0..total {
+        if let Some(value) = raw_by_index.remove(&index) {
+            merged.push(value);
+        } else if let Some(value) = structured_iter.next() {
+            merged.push(value);
+        }
+    }
+    merged.extend(structured_iter);
+    merged.extend(
+        raw_by_index
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>(),
+    );
+    merged
+}
+
+fn raw_responses_fragment_parts(value: &Value) -> Option<(usize, Value)> {
+    let index = value.get("index").and_then(Value::as_u64)? as usize;
+    let raw_value = value.get("value")?.clone();
+    Some((index, raw_value))
 }
 
 fn responses_metadata_or_extra_body(
@@ -777,18 +1049,45 @@ fn append_llm_message_as_responses_input(
         return;
     }
     let role = message.role;
-    append_responses_message_content_items(
-        role,
-        message.content,
-        message.annotations,
-        message.refusal,
-        input,
-    );
+    let assistant = role == "assistant";
+    let has_tool_calls = !message.tool_calls.is_empty();
+    let has_message_content =
+        has_responses_message_content(&message.content, &message.refusal, assistant);
+    if !has_tool_calls || has_message_content {
+        append_responses_message_content_items(
+            role,
+            message.content,
+            message.annotations,
+            message.refusal,
+            input,
+        );
+    }
     for tool_call in message.tool_calls {
         if tool_call.tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
             custom_tool_call_ids.insert(tool_call.id.clone(), true);
         }
         input.push(tool_call_to_responses_item(tool_call));
+    }
+}
+
+fn has_responses_message_content(content: &MessageContent, refusal: &str, assistant: bool) -> bool {
+    if assistant && !refusal.is_empty() {
+        return true;
+    }
+    match content {
+        MessageContent::Text(text) => !text.is_empty(),
+        MessageContent::Parts(parts) => parts.iter().any(|part| {
+            is_responses_compaction_type(&part.part_type)
+                || matches!(
+                    part.part_type.as_str(),
+                    "image_url" | "input_image" | "refusal"
+                )
+                || matches!(
+                    part.part_type.as_str(),
+                    "text" | "input_text" | "output_text"
+                ) && part.text.as_deref().is_some_and(|text| !text.is_empty())
+        }),
+        MessageContent::Empty => false,
     }
 }
 
@@ -1005,34 +1304,50 @@ pub fn responses_response_to_llm(body: Value) -> Response {
         for item in output {
             match item.get("type").and_then(Value::as_str) {
                 Some("message") => {
-                    if let Some(content) = item.get("content").and_then(Value::as_array) {
-                        for part in content {
-                            match part.get("type").and_then(Value::as_str) {
-                                Some("output_text") => {
-                                    if let Some(annotations) =
-                                        part.get("annotations").and_then(Value::as_array)
-                                    {
-                                        message.annotations.extend(annotations.iter().cloned());
+                    if let Some(content) = item.get("content") {
+                        if let Some(content_array) = content.as_array() {
+                            for part in content_array {
+                                match part.get("type").and_then(Value::as_str) {
+                                    Some("output_text") | Some("input_text") | Some("text") => {
+                                        if let Some(annotations) =
+                                            part.get("annotations").and_then(Value::as_array)
+                                        {
+                                            message.annotations.extend(annotations.iter().cloned());
+                                        }
+                                        if let Some(part) = responses_content_part_to_llm(part) {
+                                            parts.push(part);
+                                        }
                                     }
-                                    parts.push(MessageContentPart {
-                                        part_type: "text".to_string(),
-                                        text: part
-                                            .get("text")
+                                    Some("refusal") => {
+                                        message.refusal = part
+                                            .get("refusal")
                                             .and_then(Value::as_str)
-                                            .map(ToString::to_string),
-                                        ..Default::default()
-                                    });
+                                            .unwrap_or_default()
+                                            .to_string();
+                                    }
+                                    _ => {}
                                 }
-                                Some("refusal") => {
-                                    message.refusal = part
-                                        .get("refusal")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                }
-                                _ => {}
+                            }
+                        } else {
+                            message
+                                .annotations
+                                .extend(content_annotations_from_value(content));
+                            match responses_value_to_message_content(content) {
+                                MessageContent::Text(text) => parts.push(MessageContentPart {
+                                    part_type: "text".to_string(),
+                                    text: Some(text),
+                                    ..Default::default()
+                                }),
+                                MessageContent::Parts(content_parts) => parts.extend(content_parts),
+                                MessageContent::Empty => {}
                             }
                         }
+                    }
+                }
+                Some("output_text") | Some("input_text") | Some("text") => {
+                    message.annotations.extend(part_annotations(item));
+                    if let Some(part) = responses_content_part_to_llm(item) {
+                        parts.push(part);
                     }
                 }
                 Some("function_call") | Some("custom_tool_call") => {
@@ -1101,6 +1416,12 @@ pub fn responses_response_to_llm(body: Value) -> Response {
     }
 }
 
+pub fn responses_compact_response_to_llm(body: Value) -> Response {
+    let mut response = responses_response_to_llm(body);
+    response.object = "response.compaction".to_string();
+    response
+}
+
 pub fn llm_response_to_responses(response: Response) -> Value {
     let previous_response_id = response.previous_response_id.clone();
     let choice = response.choices.first().cloned().unwrap_or_default();
@@ -1129,6 +1450,17 @@ pub fn llm_response_to_responses(response: Response) -> Value {
     });
     if let Some(previous_response_id) = previous_response_id {
         body["previous_response_id"] = json!(previous_response_id);
+    }
+    body
+}
+
+pub fn llm_response_to_responses_compact(response: Response) -> Value {
+    let mut body = llm_response_to_responses(response);
+    if let Some(object) = body.as_object_mut() {
+        object.insert("object".to_string(), json!("response.compaction"));
+        if !object.contains_key("status") && !object.contains_key("error") {
+            object.insert("status".to_string(), json!("completed"));
+        }
     }
     body
 }
@@ -1241,15 +1573,21 @@ fn text_content_item(
 }
 
 fn content_annotations(content: &[Value]) -> Vec<Value> {
-    content
-        .iter()
-        .flat_map(|part| {
-            part.get("annotations")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .collect()
+    content.iter().flat_map(part_annotations).collect()
+}
+
+fn content_annotations_from_value(content: &Value) -> Vec<Value> {
+    if let Some(parts) = content.as_array() {
+        return content_annotations(parts);
+    }
+    part_annotations(content)
+}
+
+fn part_annotations(part: &Value) -> Vec<Value> {
+    part.get("annotations")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn responses_reasoning_text(item: &Value) -> Option<String> {
@@ -1309,6 +1647,149 @@ fn finish_to_responses_status(reason: Option<&str>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding::proxy_gateway::transformer::llm::ResponseCustomTool;
+
+    #[test]
+    fn responses_request_accepts_raw_message_and_input_shapes() {
+        let llm = responses_request_to_llm(json!({
+            "model": "gpt-5",
+            "input": [
+                {"type": "input_text", "text": "standalone text"},
+                {"type": "message", "role": "user", "content": "string content"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_lookup",
+                    "name": "lookup",
+                    "arguments": {"query": "rust"}
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_lookup",
+                    "output": [{"type": "output_text", "text": "tool output"}]
+                }
+            ]
+        }));
+
+        assert_eq!(llm.messages.len(), 4);
+        let first_parts = match &llm.messages[0].content {
+            MessageContent::Parts(parts) => parts,
+            other => panic!("expected standalone text part, got {other:?}"),
+        };
+        assert_eq!(first_parts[0].text.as_deref(), Some("standalone text"));
+        assert_eq!(
+            llm.messages[1].content,
+            MessageContent::Text("string content".to_string())
+        );
+        assert_eq!(
+            llm.messages[2].tool_calls[0].function.arguments,
+            r#"{"query":"rust"}"#
+        );
+        assert_eq!(
+            llm.messages[3].content,
+            MessageContent::Text("tool output".to_string())
+        );
+    }
+
+    #[test]
+    fn responses_request_preserves_raw_json_array_tool_output() {
+        let llm = responses_request_to_llm(json!({
+            "model": "gpt-5",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_lookup",
+                "output": [{"value": 1}]
+            }]
+        }));
+
+        assert_eq!(
+            llm.messages[0].content,
+            MessageContent::Text(r#"[{"value":1}]"#.to_string())
+        );
+    }
+
+    #[test]
+    fn responses_response_accepts_top_level_output_text() {
+        let llm = responses_response_to_llm(json!({
+            "id": "resp_text",
+            "object": "response",
+            "created_at": 123,
+            "status": "completed",
+            "model": "gpt-5",
+            "output": [
+                {"type": "output_text", "text": "hello", "annotations": [{"type": "url_citation"}]}
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        }));
+
+        let message = &llm.choices[0].message;
+        let parts = match &message.content {
+            MessageContent::Parts(parts) => parts,
+            other => panic!("expected output text part, got {other:?}"),
+        };
+        assert_eq!(parts[0].text.as_deref(), Some("hello"));
+        assert_eq!(message.annotations, vec![json!({"type": "url_citation"})]);
+    }
+
+    #[test]
+    fn responses_response_accepts_message_content_object() {
+        let llm = responses_response_to_llm(json!({
+            "id": "resp_content_object",
+            "object": "response",
+            "created_at": 123,
+            "status": "completed",
+            "model": "gpt-5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": {
+                    "type": "output_text",
+                    "text": "object text",
+                    "annotations": [{"type": "url_citation"}]
+                }
+            }]
+        }));
+
+        let message = &llm.choices[0].message;
+        let parts = match &message.content {
+            MessageContent::Parts(parts) => parts,
+            other => panic!("expected output text part, got {other:?}"),
+        };
+        assert_eq!(parts[0].text.as_deref(), Some("object text"));
+        assert_eq!(message.annotations, vec![json!({"type": "url_citation"})]);
+    }
+
+    #[test]
+    fn responses_tools_omit_empty_optional_fields() {
+        let responses = llm_request_to_responses(Request {
+            model: "gpt-5".to_string(),
+            tools: vec![
+                Tool {
+                    tool_type: TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string(),
+                    response_custom_tool: Some(ResponseCustomTool {
+                        name: "freeform".to_string(),
+                        description: String::new(),
+                        format: None,
+                    }),
+                    ..Default::default()
+                },
+                Tool {
+                    tool_type: TOOL_TYPE_FUNCTION.to_string(),
+                    function: Some(Function {
+                        name: "lookup".to_string(),
+                        description: String::new(),
+                        parameters: Some(json!({"type": "object"})),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+
+        assert!(responses["tools"][0].get("description").is_none());
+        assert!(responses["tools"][0].get("format").is_none());
+        assert!(responses["tools"][1].get("description").is_none());
+    }
 
     #[test]
     fn responses_request_roundtrip_preserves_compaction_items() {
@@ -1359,6 +1840,60 @@ mod tests {
         assert_eq!(input[1]["created_by"], "model");
         assert_eq!(input[2]["type"], "message");
         assert_eq!(input[2]["content"][0]["text"], "after");
+    }
+
+    #[test]
+    fn responses_compact_roundtrip_preserves_raw_only_request_fragments() {
+        let raw_tool_choice = json!({
+            "type": "allowed_tools",
+            "mode": "auto",
+            "tools": [{"type": "mcp", "server_label": "local"}]
+        });
+        let compact = responses_compact_request_to_llm(json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "before"}]
+                },
+                {
+                    "type": "local_shell_call",
+                    "id": "shell_1",
+                    "call_id": "call_shell",
+                    "status": "completed",
+                    "action": {"command": "pwd"}
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "after"}]
+                }
+            ],
+            "tools": [
+                {"type": "function", "name": "known", "parameters": {"type": "object"}},
+                {"type": "mcp", "server_label": "local", "server_url": "http://localhost:3000"},
+                {"type": "custom", "name": "freeform"}
+            ],
+            "tool_choice": raw_tool_choice
+        }));
+
+        let converted = llm_request_to_responses_compact(compact);
+        let input = converted["input"].as_array().expect("responses input");
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[1]["type"], "local_shell_call");
+        assert_eq!(input[1]["action"]["command"], "pwd");
+        assert_eq!(input[2]["type"], "message");
+
+        let tools = converted["tools"].as_array().expect("responses tools");
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[1]["type"], "mcp");
+        assert_eq!(tools[1]["server_url"], "http://localhost:3000");
+        assert_eq!(tools[2]["type"], "custom");
+        assert_eq!(converted["tool_choice"], raw_tool_choice);
+        assert!(converted.get("stream").is_none());
     }
 
     #[test]
