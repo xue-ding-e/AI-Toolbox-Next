@@ -172,6 +172,9 @@ export interface GatewayPaginatedRequestLogs {
 export interface GatewayRequestLogItem {
   trace_id: string;
   cli_key: GatewayCliKey;
+  route_name?: string | null;
+  method?: string | null;
+  path?: string | null;
   provider_id: string;
   provider_name: string | null;
   requested_model: string | null;

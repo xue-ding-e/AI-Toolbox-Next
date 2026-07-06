@@ -75,6 +75,220 @@ export const formatUsd = (value: string | number | null | undefined, digits = 6)
   return `$${parsed.toFixed(digits)}`;
 };
 
+export type GatewayRequestDisplayKind =
+  | 'model'
+  | 'modelList'
+  | 'contextCompact'
+  | 'connectionProbe'
+  | 'genericRequest'
+  | 'unknown';
+
+export interface GatewayRequestDisplayInput {
+  method?: string | null;
+  path?: string | null;
+  requested_model?: string | null;
+  upstream_model_id?: string | null;
+}
+
+export interface GatewayRequestDisplay {
+  kind: GatewayRequestDisplayKind;
+  titleKey: string | null;
+  requestLine: string;
+  modelText: string;
+  modelApplicable: boolean;
+}
+
+const REQUEST_EXPORT_FILE_NAME_FALLBACK = 'gateway-request';
+const placeholderModelValues = new Set(['', 'unknown', 'null', 'none']);
+
+const isPlaceholderModel = (value: string | null | undefined) =>
+  placeholderModelValues.has(value?.trim().toLowerCase() ?? '');
+
+export const formatModelRoute = (
+  requestedModel: string | null,
+  upstreamModelId: string | null,
+  fallback: string,
+) => {
+  const requested = requestedModel?.trim() ?? '';
+  const upstream = upstreamModelId?.trim() ?? '';
+  const hasRequested = !isPlaceholderModel(requested);
+  const hasUpstream = !isPlaceholderModel(upstream);
+  const displayModel = hasRequested ? requested : hasUpstream ? upstream : fallback;
+  if (hasRequested && hasUpstream && upstream !== requested) {
+    return `${requested} -> ${upstream}`;
+  }
+  return displayModel;
+};
+
+const splitRequestPath = (path: string | null | undefined) => {
+  const trimmed = path?.trim() ?? '';
+  const [pathOnly] = trimmed.split('?');
+  return (pathOnly || trimmed).toLowerCase();
+};
+
+const compactMethod = (method: string | null | undefined) => method?.trim().toUpperCase() ?? '';
+
+const normalizedPathSegments = (normalizedPath: string) =>
+  normalizedPath.split('/').filter(Boolean);
+
+const pathEndsWithSegments = (normalizedPath: string, suffix: string[]) => {
+  const segments = normalizedPathSegments(normalizedPath);
+  if (segments.length < suffix.length) {
+    return false;
+  }
+  return suffix.every((segment, index) => segments[segments.length - suffix.length + index] === segment);
+};
+
+const isModelListPath = (normalizedPath: string) => {
+  if (pathEndsWithSegments(normalizedPath, ['models'])) {
+    return true;
+  }
+  return /\/models:listmodels$/.test(normalizedPath);
+};
+
+const isConnectionProbePath = (normalizedPath: string) =>
+  normalizedPath === '/anthropic' ||
+  normalizedPath === '/openai/v1' ||
+  normalizedPath === '/gemini/v1' ||
+  normalizedPath === '/gemini/v1beta' ||
+  normalizedPath === '/gemini/v1alpha';
+
+const isContextCompactPath = (normalizedPath: string) =>
+  pathEndsWithSegments(normalizedPath, ['responses', 'compact']);
+
+export const requestLineText = (
+  value: Pick<GatewayRequestDisplayInput, 'method' | 'path'>,
+  fallback: string,
+) => {
+  const method = compactMethod(value.method);
+  const path = value.path?.trim() ?? '';
+  if (method && path) {
+    return `${method} ${path}`;
+  }
+  if (path) {
+    return path;
+  }
+  if (method) {
+    return method;
+  }
+  return fallback;
+};
+
+export const gatewayRequestDisplayKind = (
+  value: GatewayRequestDisplayInput,
+): GatewayRequestDisplayKind => {
+  const method = compactMethod(value.method);
+  const normalizedPath = splitRequestPath(value.path);
+
+  if (method === 'POST' && isContextCompactPath(normalizedPath)) {
+    return 'contextCompact';
+  }
+
+  if (method === 'GET' || method === 'HEAD') {
+    if (isModelListPath(normalizedPath)) {
+      return 'modelList';
+    }
+    if (isConnectionProbePath(normalizedPath)) {
+      return 'connectionProbe';
+    }
+  }
+
+  if (!isPlaceholderModel(value.requested_model) || !isPlaceholderModel(value.upstream_model_id)) {
+    return 'model';
+  }
+  if (method || normalizedPath) {
+    return 'genericRequest';
+  }
+  return 'unknown';
+};
+
+export const requestDisplayTitleKey = (kind: GatewayRequestDisplayKind) => {
+  switch (kind) {
+    case 'modelList':
+      return 'gateway.page.requests.requestTypes.modelList';
+    case 'contextCompact':
+      return 'gateway.page.requests.requestTypes.contextCompact';
+    case 'connectionProbe':
+      return 'gateway.page.requests.requestTypes.connectionProbe';
+    case 'genericRequest':
+      return 'gateway.page.requests.requestTypes.genericRequest';
+    case 'unknown':
+      return 'gateway.page.requests.requestTypes.unknown';
+    case 'model':
+    default:
+      return null;
+  }
+};
+
+export const isGatewayRequestUsageApplicable = (
+  value: GatewayRequestDisplayInput | GatewayRequestDisplayKind,
+) => {
+  const kind = typeof value === 'string' ? value : gatewayRequestDisplayKind(value);
+  return kind === 'model' || kind === 'contextCompact';
+};
+
+export const deriveGatewayRequestDisplay = (
+  value: GatewayRequestDisplayInput,
+): GatewayRequestDisplay => {
+  const kind = gatewayRequestDisplayKind(value);
+  const modelText = formatModelRoute(value.requested_model ?? null, value.upstream_model_id ?? null, '-');
+  if (kind === 'model') {
+    return {
+      kind,
+      titleKey: null,
+      requestLine: '',
+      modelText,
+      modelApplicable: true,
+    };
+  }
+
+  return {
+    kind,
+    titleKey: requestDisplayTitleKey(kind),
+    requestLine: requestLineText(value, ''),
+    modelText,
+    modelApplicable: false,
+  };
+};
+
+export const sanitizeGatewayFileNamePart = (
+  value: string | null | undefined,
+  fallback = REQUEST_EXPORT_FILE_NAME_FALLBACK,
+) => {
+  const normalized = value
+    ?.trim()
+    .replace(/[\\/:*?"<>|\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized || fallback;
+};
+
+export const requestExportPrefix = (
+  value: GatewayRequestDisplayInput,
+  fallback = REQUEST_EXPORT_FILE_NAME_FALLBACK,
+) => {
+  const kind = gatewayRequestDisplayKind(value);
+  if (kind === 'model') {
+    return sanitizeGatewayFileNamePart(
+      formatModelRoute(value.requested_model ?? null, value.upstream_model_id ?? null, ''),
+      fallback,
+    );
+  }
+  switch (kind) {
+    case 'modelList':
+      return 'models-list';
+    case 'contextCompact':
+      return 'compact';
+    case 'connectionProbe':
+      return 'probe';
+    case 'genericRequest':
+      return 'gateway-request';
+    case 'unknown':
+    default:
+      return fallback;
+  }
+};
+
 interface AttemptCountsInput {
   attempt_count: number;
   total_attempt_count?: number | null;

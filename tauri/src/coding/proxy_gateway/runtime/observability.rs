@@ -50,7 +50,7 @@ pub(super) fn record_gateway_observability(
                 cli_key: response.cli_key,
                 route_name: response.route_name.clone(),
                 method: request.method.clone(),
-                path: request.path.clone(),
+                path: request_log::redact_request_path(&request.path),
                 provider_id: response.provider_id.clone(),
                 provider_name: response.provider_name.clone(),
                 provider_type: response.provider_type.clone(),

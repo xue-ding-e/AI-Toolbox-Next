@@ -390,13 +390,26 @@ fn load_request_log_detail(
         if let Some(detail) =
             request_log::get_request_log_detail_at(&paths, &detail_file, detail_offset, trace_id)?
         {
-            return Ok(Some(detail));
+            return Ok(Some(sanitize_request_log_detail_for_display(detail)));
         }
     }
     if let Some(detail) = request_log::get_request_log_detail(&paths, trace_id)? {
-        return Ok(Some(detail));
+        return Ok(Some(sanitize_request_log_detail_for_display(detail)));
     }
     usage_stats::request_log_detail_from_summary(db_state, trace_id)
+        .map(|detail| detail.map(sanitize_request_log_detail_for_display))
+}
+
+fn sanitize_request_log_detail_for_display(
+    mut detail: GatewayRequestLogDetail,
+) -> GatewayRequestLogDetail {
+    detail.summary.path = request_log::redact_request_path(&detail.summary.path);
+    detail.summary.upstream_url = detail
+        .summary
+        .upstream_url
+        .as_deref()
+        .map(request_log::redact_request_path);
+    detail
 }
 
 fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
@@ -430,7 +443,11 @@ fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
         "routing": {
             "requested_model": requested_model,
             "upstream_model_id": upstream_model,
-            "upstream_url": redact_text(summary.upstream_url.as_deref())
+            "upstream_url": summary
+                .upstream_url
+                .as_deref()
+                .map(request_log::redact_request_path)
+                .and_then(|value| redact_text(Some(&value)))
         }
     })
 }
@@ -652,6 +669,7 @@ fn is_sensitive_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding::proxy_gateway::types::GatewayRequestLogSummary;
 
     #[test]
     fn export_redaction_redacts_json_auth_fields() {
@@ -695,6 +713,70 @@ mod tests {
         let redacted = redact_auth_like_text("https://example.test/search?monkey=value&alt=sse");
 
         assert_eq!(redacted, "https://example.test/search?monkey=value&alt=sse");
+    }
+
+    #[test]
+    fn display_sanitization_redacts_path_and_upstream_url_queries() {
+        let now = Utc::now();
+        let detail = GatewayRequestLogDetail {
+            summary: GatewayRequestLogSummary {
+                trace_id: "trace-redact-display".to_string(),
+                started_at: now,
+                ended_at: now,
+                cli_key: Some(GatewayCliKey::Gemini),
+                route_name: "gemini".to_string(),
+                method: "GET".to_string(),
+                path: "/gemini/v1beta/models?key=secret&api%5Fkey=encoded&alt=sse".to_string(),
+                provider_id: Some("provider-a".to_string()),
+                provider_name: Some("Provider A".to_string()),
+                provider_type: None,
+                cost_multiplier: None,
+                pricing_model_source: None,
+                requested_model: Some("unknown".to_string()),
+                upstream_model_id: Some("unknown".to_string()),
+                upstream_url: Some(
+                    "https://generativelanguage.googleapis.com/v1beta/models?key=secret"
+                        .to_string(),
+                ),
+                status_code: Some(200),
+                success: true,
+                error_category: None,
+                error_message: None,
+                duration_ms: 1,
+                attempt_count: 1,
+                total_attempt_count: 1,
+                failover: false,
+                input_tokens: Some(0),
+                output_tokens: Some(0),
+                cache_read_tokens: Some(0),
+                cache_creation_tokens: Some(0),
+                total_tokens: Some(0),
+                request_body_bytes: 0,
+                response_body_bytes: 0,
+                is_streaming: false,
+                first_token_ms: None,
+                detail_file: None,
+                detail_offset: None,
+            },
+            request_headers: None,
+            request_body: None,
+            upstream_request_body: None,
+            response_headers: None,
+            upstream_response_body: None,
+            response_body: None,
+            provider_attempts: Vec::new(),
+        };
+
+        let sanitized = sanitize_request_log_detail_for_display(detail);
+
+        assert_eq!(
+            sanitized.summary.path,
+            "/gemini/v1beta/models?key=xxx&api%5Fkey=xxx&alt=sse"
+        );
+        assert_eq!(
+            sanitized.summary.upstream_url.as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta/models?key=xxx")
+        );
     }
 }
 

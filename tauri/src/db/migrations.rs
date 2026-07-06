@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 6;
+pub const TARGET_SCHEMA_VERSION: i32 = 7;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -25,6 +25,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 6 {
         run_migration_step(conn, 6, migrate_v6)?;
+    }
+    if current_version < 7 {
+        run_migration_step(conn, 7, migrate_v7)?;
     }
 
     Ok(())
@@ -155,6 +158,12 @@ fn migrate_v6(conn: &Connection) -> Result<(), String> {
     )
 }
 
+fn migrate_v7(conn: &Connection) -> Result<(), String> {
+    add_column_if_missing(conn, "proxy_request_logs", "route_name", "TEXT")?;
+    add_column_if_missing(conn, "proxy_request_logs", "method", "TEXT")?;
+    add_column_if_missing(conn, "proxy_request_logs", "path", "TEXT")
+}
+
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
@@ -266,7 +275,10 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             created_at INTEGER NOT NULL,
             data_source TEXT NOT NULL DEFAULT 'proxy',
             detail_file TEXT,
-            detail_offset INTEGER
+            detail_offset INTEGER,
+            route_name TEXT,
+            method TEXT,
+            path TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_request_logs_provider

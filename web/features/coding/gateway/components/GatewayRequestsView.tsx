@@ -31,14 +31,19 @@ import {
   type GatewayRequestLogItem,
 } from '@/services';
 import {
+  deriveGatewayRequestDisplay,
   formatCompactInteger,
   formatDateTime,
   formatDuration,
   formatGatewayError,
   formatInteger,
   formatUsd,
+  isGatewayRequestUsageApplicable,
   joinClassNames,
   normalizeAttemptCounts,
+  requestExportPrefix,
+  requestLineText,
+  sanitizeGatewayFileNamePart,
   shouldShowBodyComparison,
   stringifyDetailValue,
 } from '../utils/gatewayFormatters';
@@ -53,7 +58,6 @@ const REQUEST_DETAIL_TABS: RequestDetailTabKey[] = ['record', 'body', 'headers',
 const COLLAPSED_LINE_LIMIT = 10;
 const COLLAPSED_CHARACTER_LIMIT = 8_000;
 const PAGE_SIZE = 20;
-const EXPORT_FILE_NAME_FALLBACK = 'gateway-request';
 const EXPORT_NOTICE_DURATION_MS = 3000;
 
 interface GatewayRequestsViewProps {
@@ -81,18 +85,6 @@ const defaultDraft: RequestFilterDraft = {
 };
 
 const lineCountOf = (content: string) => content.split(/\r\n|\r|\n/).length;
-
-const formatModelRoute = (
-  requestedModel: string | null,
-  upstreamModelId: string | null,
-  fallback: string,
-) => {
-  const displayModel = requestedModel?.trim() || upstreamModelId?.trim() || fallback;
-  if (requestedModel && upstreamModelId && upstreamModelId !== requestedModel) {
-    return `${requestedModel} -> ${upstreamModelId}`;
-  }
-  return displayModel;
-};
 
 const tokenBreakdownText = (
   t: ReturnType<typeof useTranslation>['t'],
@@ -134,19 +126,10 @@ const providerDisplayMeta = (
   return `${cliLabel} · ${providerId}`;
 };
 
-const sanitizeFileNamePart = (value: string | null | undefined) => {
-  const normalized = value
-    ?.trim()
-    .replace(/[\\/:*?"<>|\s]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return normalized || EXPORT_FILE_NAME_FALLBACK;
-};
-
 const buildRequestDetailExportFileName = (detail: GatewayRequestLogDetail) => {
-  const model = sanitizeFileNamePart(detail.requested_model || detail.upstream_model_id);
-  const traceId = sanitizeFileNamePart(detail.trace_id);
-  const time = sanitizeFileNamePart(detail.ended_at?.replace(/[T:]/g, '-').replace(/\.\d+Z?$/, 'Z'));
+  const model = requestExportPrefix(detail);
+  const traceId = sanitizeGatewayFileNamePart(detail.trace_id);
+  const time = sanitizeGatewayFileNamePart(detail.ended_at?.replace(/[T:]/g, '-').replace(/\.\d+Z?$/, 'Z'));
   return `${model}-${traceId}-${time}.json`;
 };
 
@@ -422,16 +405,22 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     if (activeDetailTab === 'record') {
       const attemptCounts = normalizeAttemptCounts(detail);
       const providerAttempts = detail.provider_attempts ?? [];
+      const requestDisplay = deriveGatewayRequestDisplay(detail);
+      const requestDisplayTitle = requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
       return (
         <div className={styles.detailGrid}>
           <span>{t('gateway.page.requests.fields.traceId')}</span>
           <code>{detail.trace_id}</code>
           <span>{t('gateway.page.requests.fields.time')}</span>
           <strong>{formatDateTime(detail.ended_at)}</strong>
+          <span>{t('gateway.page.requests.fields.requestType')}</span>
+          <strong>{requestDisplayTitle}</strong>
+          <span>{t('gateway.page.requests.fields.requestPath')}</span>
+          <code>{requestLineText(detail, t('gateway.page.requests.requestPathUnavailable'))}</code>
           <span>{t('gateway.page.requests.fields.provider')}</span>
           <strong>{providerDisplayName(t, detail.provider_id, detail.provider_name)}</strong>
           <span>{t('gateway.page.requests.fields.model')}</span>
-          <strong>{formatModelRoute(detail.requested_model, detail.upstream_model_id, '-')}</strong>
+          <strong>{requestDisplay.modelApplicable ? requestDisplay.modelText : t('gateway.page.requests.notApplicable')}</strong>
           <span>{t('gateway.page.requests.fields.status')}</span>
           <strong>{detail.status_code ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.duration')}</span>
@@ -441,7 +430,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <span>{t('gateway.page.requests.fields.streaming')}</span>
           <strong>{detail.is_streaming ? t('common.yes') : t('common.no')}</strong>
           <span>{t('gateway.page.requests.fields.tokens')}</span>
-          <strong>{tokenBreakdownText(t, detail)}</strong>
+          <strong>{isGatewayRequestUsageApplicable(detail) ? tokenBreakdownText(t, detail) : '-'}</strong>
           <span>{t('gateway.page.requests.fields.attempts')}</span>
           <strong>{attemptCounts.current} / {attemptCounts.total}</strong>
           {providerAttempts.length > 0 && (
@@ -544,18 +533,28 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       ),
     },
     {
-      title: t('gateway.page.requests.columns.model'),
+      title: t('gateway.page.requests.columns.request'),
       dataIndex: 'requested_model',
       render: (_, record) => (
         <div className={styles.tableMainCell}>
-          <strong>{formatModelRoute(record.requested_model, record.upstream_model_id, '-')}</strong>
-          <small>
-            {t('gateway.page.requests.tokensShort', {
-              input: formatCompactInteger(record.input_tokens),
-              output: formatCompactInteger(record.output_tokens),
-              cache: formatCompactInteger(record.cache_read_tokens + record.cache_creation_tokens),
-            })}
-          </small>
+          {(() => {
+            const requestDisplay = deriveGatewayRequestDisplay(record);
+            const requestDisplayTitle = requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
+            return (
+              <>
+                <strong>{requestDisplayTitle}</strong>
+                <small>
+                  {requestDisplay.kind === 'model'
+                    ? t('gateway.page.requests.tokensShort', {
+                        input: formatCompactInteger(record.input_tokens),
+                        output: formatCompactInteger(record.output_tokens),
+                        cache: formatCompactInteger(record.cache_read_tokens + record.cache_creation_tokens),
+                      })
+                    : requestLineText(record, t('gateway.page.requests.requestPathUnavailable'))}
+                </small>
+              </>
+            );
+          })()}
         </div>
       ),
     },
@@ -575,14 +574,16 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'total_tokens',
       width: 110,
       align: 'right',
-      render: (value: number) => formatCompactInteger(value),
+      render: (value: number, record) =>
+        isGatewayRequestUsageApplicable(record) ? formatCompactInteger(value) : '-',
     },
     {
       title: t('gateway.page.requests.columns.cost'),
       dataIndex: 'total_cost_usd',
       width: 110,
       align: 'right',
-      render: (value: string) => formatUsd(value, 6),
+      render: (value: string, record) =>
+        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 6) : '-',
     },
     {
       title: t('gateway.page.requests.columns.duration'),

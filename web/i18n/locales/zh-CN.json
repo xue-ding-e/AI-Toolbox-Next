@@ -167,7 +167,9 @@
           "attempts": "尝试次数",
           "attemptTimeline": "尝试链路",
           "upstream": "上游地址",
-          "error": "错误分类"
+          "error": "错误分类",
+          "requestType": "请求类型",
+          "requestPath": "请求路径"
         },
         "detailTabs": {
           "record": "请求记录",
@@ -187,12 +189,22 @@
           "status": "状态",
           "tokens": "Token",
           "cost": "成本",
-          "duration": "耗时"
+          "duration": "耗时",
+          "request": "请求/模型"
         },
         "upstreamResponseBody": "上游原始响应（转换前）",
         "clientResponseBody": "返回给客户端的响应（转换后）",
         "exportDetail": "导出详情",
-        "exportDone": "请求详情已导出"
+        "exportDone": "请求详情已导出",
+        "requestTypes": {
+          "modelList": "获取模型列表",
+          "contextCompact": "压缩上下文",
+          "connectionProbe": "连接探测",
+          "genericRequest": "普通请求",
+          "unknown": "未识别请求"
+        },
+        "requestPathUnavailable": "路径未记录",
+        "notApplicable": "不适用"
       }
     },
     "takeover": {

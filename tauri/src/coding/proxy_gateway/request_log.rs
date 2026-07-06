@@ -50,6 +50,113 @@ pub fn is_sensitive_header(normalized_name: &str) -> bool {
         || normalized_name.ends_with("-api-key")
 }
 
+pub fn redact_request_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Some((base_path, query)) = trimmed.split_once('?') else {
+        return trimmed.to_string();
+    };
+    if query.is_empty() {
+        return trimmed.to_string();
+    }
+
+    let redacted_query = query
+        .split('&')
+        .map(|part| redact_query_part(part))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{base_path}?{redacted_query}")
+}
+
+fn redact_query_part(part: &str) -> String {
+    let Some((key, value)) = part.split_once('=') else {
+        return part.to_string();
+    };
+    let normalized_key = decode_query_key_for_matching(key)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    if is_sensitive_query_key(&normalized_key) {
+        format!("{key}=xxx")
+    } else {
+        format!("{key}={value}")
+    }
+}
+
+fn decode_query_key_for_matching(key: &str) -> String {
+    let bytes = key.as_bytes();
+    let mut decoded = String::with_capacity(key.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                match (
+                    hex_digit_value(bytes[index + 1]),
+                    hex_digit_value(bytes[index + 2]),
+                ) {
+                    (Some(high), Some(low)) => {
+                        decoded.push((high << 4 | low) as char);
+                        index += 3;
+                    }
+                    _ => {
+                        decoded.push('%');
+                        index += 1;
+                    }
+                }
+            }
+            byte => {
+                decoded.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    decoded
+}
+
+fn hex_digit_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn is_sensitive_query_key(normalized_key: &str) -> bool {
+    request_query_key_is_token_like(normalized_key)
+        || matches!(
+            normalized_key,
+            "key"
+                | "api_key"
+                | "apikey"
+                | "x-api-key"
+                | "access_token"
+                | "refresh_token"
+                | "client_secret"
+                | "clientsecret"
+                | "authorization"
+                | "auth"
+                | "password"
+                | "secret"
+        )
+}
+
+fn request_query_key_is_token_like(normalized_key: &str) -> bool {
+    normalized_key == "token"
+        || normalized_key.ends_with("_token")
+        || normalized_key.ends_with("-token")
+        || normalized_key.contains("access_token")
+        || normalized_key.contains("refresh_token")
+}
+
 pub fn new_request_log_record(detail: GatewayRequestLogDetail) -> GatewayRequestLogRecord {
     GatewayRequestLogRecord {
         schema_version: REQUEST_LOG_SCHEMA_VERSION,
@@ -400,6 +507,27 @@ mod tests {
 
         assert_eq!(redacted.get("Content-Type").unwrap(), "application/json");
         assert_eq!(redacted.get("User-Agent").unwrap(), "ai-toolbox");
+    }
+
+    #[test]
+    fn redact_request_path_redacts_sensitive_query_values() {
+        let redacted = redact_request_path(
+            "/v1beta/models?key=secret&client_version=0.1&api%5Fkey=encoded&token=t",
+        );
+
+        assert_eq!(
+            redacted,
+            "/v1beta/models?key=xxx&client_version=0.1&api%5Fkey=xxx&token=xxx"
+        );
+        assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("encoded"));
+    }
+
+    #[test]
+    fn redact_request_path_preserves_non_sensitive_query_values() {
+        let redacted = redact_request_path("/search?monkey=value&client_version=0.1");
+
+        assert_eq!(redacted, "/search?monkey=value&client_version=0.1");
     }
 
     #[test]

@@ -167,7 +167,9 @@
           "attempts": "Attempts",
           "attemptTimeline": "Attempt path",
           "upstream": "Upstream",
-          "error": "Error"
+          "error": "Error",
+          "requestType": "Request type",
+          "requestPath": "Request path"
         },
         "detailTabs": {
           "record": "Record",
@@ -187,12 +189,22 @@
           "status": "Status",
           "tokens": "Tokens",
           "cost": "Cost",
-          "duration": "Duration"
+          "duration": "Duration",
+          "request": "Request / Model"
         },
         "upstreamResponseBody": "Upstream response body (before conversion)",
         "clientResponseBody": "Client response body (after conversion)",
         "exportDetail": "Export detail",
-        "exportDone": "Request detail exported"
+        "exportDone": "Request detail exported",
+        "requestTypes": {
+          "modelList": "Fetch model list",
+          "contextCompact": "Compact context",
+          "connectionProbe": "Connection probe",
+          "genericRequest": "Generic request",
+          "unknown": "Unrecognized request"
+        },
+        "requestPathUnavailable": "Path not recorded",
+        "notApplicable": "Not applicable"
       }
     },
     "takeover": {

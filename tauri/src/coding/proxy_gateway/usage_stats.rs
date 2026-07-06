@@ -1,3 +1,4 @@
+use super::request_log;
 use super::types::{
     normalize_pricing_model_source, GatewayCliKey, GatewayModelStats, GatewayPaginatedRequestLogs,
     GatewayProviderStats, GatewayRequestLogDetail, GatewayRequestLogFilters, GatewayRequestLogItem,
@@ -219,6 +220,9 @@ pub fn record_request_summary(
                 .as_deref()
                 .unwrap_or("upstream"),
         );
+        let route_name = optional_compact_string(&summary.route_name);
+        let method = optional_compact_string(&summary.method);
+        let path = optional_compact_string(&request_log::redact_request_path(&summary.path));
         let costs = pricing
             .as_ref()
             .map(|pricing| {
@@ -241,14 +245,14 @@ pub fn record_request_summary(
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
                 cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
-                detail_offset
+                detail_offset, route_name, method, path
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, NULL, ?20, ?21,
-                ?22, ?23, ?24, 'proxy', ?25, ?26
+                ?22, ?23, ?24, 'proxy', ?25, ?26, ?27, ?28, ?29
             )",
             rusqlite::params![
                 summary.trace_id,
@@ -277,6 +281,9 @@ pub fn record_request_summary(
                 created_at,
                 summary.detail_file,
                 summary.detail_offset.map(|value| value as i64),
+                route_name,
+                method,
+                path,
             ],
         )
         .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -313,7 +320,8 @@ pub fn request_logs(
             "SELECT request_id, provider_id, app_type, model, request_model,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     total_cost_usd, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, is_streaming
+                    status_code, error_message, created_at, is_streaming,
+                    route_name, method, path
              FROM proxy_request_logs l
              {where_clause}
              ORDER BY created_at DESC
@@ -336,6 +344,9 @@ pub fn request_logs(
                 Ok(Some(GatewayRequestLogItem {
                     trace_id: row.get(0)?,
                     cli_key,
+                    route_name: row.get(17)?,
+                    method: row.get(18)?,
+                    path: row.get(19)?,
                     provider_id: provider_id.clone(),
                     provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
                     upstream_model_id: row.get(3)?,
@@ -378,6 +389,11 @@ pub fn request_logs(
             page_size,
         })
     })
+}
+
+fn optional_compact_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 pub fn usage_summary(
@@ -1638,7 +1654,8 @@ pub fn request_log_detail_from_summary(
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     latency_ms, first_token_ms, duration_ms, status_code, error_message,
                     created_at, is_streaming, total_cost_usd, provider_type,
-                    cost_multiplier, pricing_model_source, detail_file, detail_offset
+                    cost_multiplier, pricing_model_source, detail_file, detail_offset,
+                    route_name, method, path
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -1665,9 +1682,18 @@ pub fn request_log_detail_from_summary(
                         started_at,
                         ended_at,
                         cli_key,
-                        route_name: app_type.clone(),
-                        method: "-".to_string(),
-                        path: String::new(),
+                        route_name: row
+                            .get::<_, Option<String>>(22)?
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or_else(|| app_type.clone()),
+                        method: row
+                            .get::<_, Option<String>>(23)?
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or_default(),
+                        path: row
+                            .get::<_, Option<String>>(24)?
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or_default(),
                         provider_id: Some(provider_id.clone()),
                         provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
                         provider_type: row.get(17)?,
@@ -1942,8 +1968,6 @@ mod tests {
             "response_body",
             "attempt_count",
             "total_attempt_count",
-            "route_name",
-            "path",
             "request_body_bytes",
             "response_body_bytes",
         ] {
@@ -1976,6 +2000,39 @@ mod tests {
         assert_eq!(logs.data[0].provider_id, "provider-alpha");
         assert_eq!(logs.data[0].total_tokens, 30);
         assert!(logs.data[0].success);
+        assert_eq!(logs.data[0].route_name.as_deref(), Some("claude_messages"));
+        assert_eq!(logs.data[0].method.as_deref(), Some("POST"));
+        assert_eq!(logs.data[0].path.as_deref(), Some("/v1/messages"));
+    }
+
+    #[test]
+    fn record_request_summary_redacts_request_path_query() {
+        let db = test_db();
+        let mut detail = make_detail("trace-redact-path", "provider-alpha", 200, 0, 0);
+        detail.summary.method = "GET".to_string();
+        detail.summary.path =
+            "/v1beta/models?key=secret&client_version=0.1&access_token=token&api%5Fkey=encoded"
+                .to_string();
+
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record summary");
+
+        let path = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT path FROM proxy_request_logs WHERE request_id = 'trace-redact-path'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("path")
+            .expect("path should be stored");
+
+        assert_eq!(
+            path,
+            "/v1beta/models?key=xxx&client_version=0.1&access_token=xxx&api%5Fkey=xxx"
+        );
     }
 
     #[test]
@@ -2073,8 +2130,29 @@ mod tests {
             fallback.summary.pricing_model_source.as_deref(),
             Some("requested")
         );
+        assert_eq!(fallback.summary.route_name, "claude_messages");
+        assert_eq!(fallback.summary.method, "POST");
+        assert_eq!(fallback.summary.path, "/v1/messages");
         assert!(fallback.request_body.is_none());
         assert!(fallback.response_body.is_none());
+    }
+
+    #[test]
+    fn request_log_detail_summary_fallback_preserves_missing_method() {
+        let db = test_db();
+        let mut detail = make_detail("trace-summary-missing-method", "provider-alpha", 200, 0, 0);
+        detail.summary.method = String::new();
+        detail.summary.path = "/openai/v1/models".to_string();
+
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record summary");
+
+        let fallback = request_log_detail_from_summary(&db, "trace-summary-missing-method")
+            .expect("fallback detail")
+            .expect("summary detail exists");
+
+        assert_eq!(fallback.summary.method, "");
+        assert_eq!(fallback.summary.path, "/openai/v1/models");
     }
 
     #[test]

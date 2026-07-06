@@ -484,6 +484,9 @@ pub struct GatewayPaginatedRequestLogs {
 pub struct GatewayRequestLogItem {
     pub trace_id: String,
     pub cli_key: GatewayCliKey,
+    pub route_name: Option<String>,
+    pub method: Option<String>,
+    pub path: Option<String>,
     pub provider_id: String,
     pub provider_name: Option<String>,
     pub requested_model: Option<String>,
