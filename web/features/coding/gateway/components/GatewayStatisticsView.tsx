@@ -8,7 +8,6 @@ import {
   CalendarDays,
   Clock,
   Coins,
-  Database,
   DollarSign,
   Gauge,
   RefreshCw,
@@ -80,6 +79,7 @@ const emptyState: StatisticsState = {
 const cliOptions: GatewayCliFilter[] = ['all', 'claude', 'codex', 'gemini'];
 const rangeOptions: GatewayUsageRangePreset[] = ['today', '1d', '7d', '14d', '30d', 'custom'];
 const trendSeriesKeys: readonly TrendSeriesKey[] = ['input', 'output', 'cache', 'cost'];
+const trendCurveType = 'monotoneX' as const;
 const dateOnlyBucketPattern = /^(\d{4})-(\d{2})-(\d{2})$/;
 const dateTimeBucketPattern = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/;
 
@@ -237,6 +237,8 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
 
   const summary = state.summary;
   const successRate = summary?.success_rate ?? 0;
+  const totalCacheTokens =
+    (summary?.total_cache_read_tokens ?? 0) + (summary?.total_cache_creation_tokens ?? 0);
   const chartRows = chartData(state.trends);
 
   const handleTrendLegendClick = React.useCallback((payload: unknown) => {
@@ -474,17 +476,9 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           meta={t('gateway.page.statistics.tokens', {
             input: formatCompactInteger(summary?.total_input_tokens ?? 0),
             output: formatCompactInteger(summary?.total_output_tokens ?? 0),
+            cache: formatCompactInteger(totalCacheTokens),
           })}
           tone="info"
-        />
-        <StatTile
-          icon={<Database size={15} />}
-          label={t('gateway.page.statistics.summaryCache')}
-          value={formatCompactInteger(summary?.total_cache_read_tokens ?? 0)}
-          meta={t('gateway.page.statistics.cacheCreation', {
-            value: formatCompactInteger(summary?.total_cache_creation_tokens ?? 0),
-          })}
-          tone="success"
         />
         <StatTile
           icon={<Coins size={15} />}
@@ -532,7 +526,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                 />
                 <Area
                   yAxisId="tokens"
-                  type="monotone"
+                  type={trendCurveType}
                   dataKey="input"
                   name={t('gateway.page.statistics.chart.input')}
                   hide={hiddenSeries.has('input')}
@@ -543,7 +537,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                 />
                 <Area
                   yAxisId="tokens"
-                  type="monotone"
+                  type={trendCurveType}
                   dataKey="output"
                   name={t('gateway.page.statistics.chart.output')}
                   hide={hiddenSeries.has('output')}
@@ -554,7 +548,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                 />
                 <Area
                   yAxisId="tokens"
-                  type="monotone"
+                  type={trendCurveType}
                   dataKey="cache"
                   name={t('gateway.page.statistics.chart.cache')}
                   hide={hiddenSeries.has('cache')}
@@ -565,7 +559,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                 />
                 <Area
                   yAxisId="cost"
-                  type="monotone"
+                  type={trendCurveType}
                   dataKey="cost"
                   name={t('gateway.page.statistics.chart.cost')}
                   hide={hiddenSeries.has('cost')}

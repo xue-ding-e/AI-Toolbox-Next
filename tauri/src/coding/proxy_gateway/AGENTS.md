@@ -77,12 +77,12 @@ sequenceDiagram
 - 请求摘要/统计可以写数据库，但必须保持 compact：不要把 body/header/attempt/response 这类大字段或敏感详情写进 SQLite。`route_name` / `method` / `path` 只允许保存脱敏后的轻量请求类型摘要，用于列表识别模型列表、上下文压缩、连接探测等无模型请求；详情展示需要继续按 trace id 读取 JSONL 文件。
 - `cost_multiplier` 和 `pricing_model_source` 都是成本计算必需的 compact 摘要字段。新增或调整 provider 计费语义时，必须同时保证运行时 response、`proxy_request_logs` 落库和 SQLite summary fallback 详情都保留这两个字段，不能只保存倍率而丢掉按请求模型/返回模型计费的选择。
 - 入站 HTTP 读取必须保留 header/body 大小上限，不能按 `Content-Length` 无限读入内存；流式响应 usage collector 也必须保持 bounded buffer，不能用全量事件列表累计长会话。
-- `proxy_request_logs` 要保持与 cc-switch 核心 usage schema 兼容：统计、计费和筛选不要依赖 `route_name`、`method`、`path`、body byte count 或其他 AI Toolbox 额外列；这些额外列只能服务请求列表展示和 SQLite summary fallback。`path` 写入前必须脱敏 query 中的 `key`、`api_key`、`access_token`、`refresh_token`、`client_secret`、`token` 等鉴权参数。
+- `proxy_request_logs` 要保持与 cc-switch 核心 usage schema 兼容：统计、计费和筛选不要依赖 `route_name`、`method`、`path`、body byte count 或其他 AI Toolbox 额外列；这些额外列只能服务请求列表展示和 SQLite summary fallback。`path` 写入前必须脱敏 query 中的 `key`、`api_key` / `api-key`、`access_token`、`refresh_token`、`client_secret` / `client-secret`、`token` 等鉴权参数。
 - 只要 `request_log_enabled` 或 `metrics_enabled` 任一开启，就要写 compact 请求摘要；否则请求 Tab 列表和统计页会丢当前请求。只有 `request_log_enabled=true` 时才写 JSONL 详情文件。
 - 旧 metrics rollup 文件入口已经废弃；`metrics_enabled` 现在表示写入 SQLite compact 请求摘要供统计页使用，不再维护文件 rollup API。
 - 请求日志里 `request_body` 表示网关收到的原始请求体，`upstream_request_body` 表示实际发往上游的请求体。两者都受 `store_request_body` 控制；后续新增请求体改写能力时必须同步保存上游快照，否则 UI 无法对比整流前后差异。
 - 请求日志里 `upstream_response_body` 表示上游返回给网关、尚未转换的原始响应，`response_body` 表示网关最终返回给客户端的响应。两者都受 `store_response_body` 控制；非流式响应可以在转换前保留原始 body，流式响应只能保存 bounded snapshot，不能为了日志 full-buffer SSE。
-- 请求详情导出必须同时脱敏 JSON 字段、header 值和 URL/query 文本中的鉴权参数。尤其是 Gemini 常见 `?key=...`、`api_key`、`access_token`、`refresh_token`、`client_secret`、`token` 这类 query 不能以明文出现在 `summary.path`、`routing.upstream_url` 或 provider attempts 中。
+- 请求详情导出必须同时脱敏 JSON 字段、header 值和 URL/query 文本中的鉴权参数。尤其是 Gemini 常见 `?key=...`、`api_key` / `api-key`、`access_token`、`refresh_token`、`client_secret` / `client-secret`、`token` 这类 query 不能以明文出现在 `summary.path`、`routing.upstream_url` 或 provider attempts 中。
 - SSE/流式响应必须边读边写回客户端，不能为了日志、统计或 token 解析先 `bytes().await` 全量缓冲；统计采集只能在透传过程中维护 bounded snapshot 和 usage collector。
 - 网关运行态必须保持 tokio async 链路：监听使用 `tokio::net::TcpListener`，连接处理使用 `tokio::spawn`，HTTP 读写和流式 body 写回都 `.await`。不要在请求路径里重新引入 `std::thread + block_on` 或 thread-per-connection。
 - 流式 failover 只有在首个有协议意义的 chunk 到达后才算当前 provider 成功；单纯 SSE 控制事件、heartbeat、created/completed 但没有文本/工具/候选等实际内容时仍应按 empty response 失败并允许重试/故障转移。完全没有收到非空 chunk 的首包前断流仍按 timeout 处理。写回客户端时每个 chunk 读取都必须套 idle timeout，避免上游半开连接永久挂住。
@@ -94,6 +94,7 @@ sequenceDiagram
 - 官方模型定价同步的核心保护是 `INSERT OR IGNORE`：用户编辑过的同 model_id 价格、迁移期已存在价格、以及手动新增价格都不能被 bundled 或 remote 默认值覆盖。用户删除某个默认模型价后，下一次启动或手动同步会按默认数据重新插入缺失行。
 - 请求摘要中的 `input_tokens` 语义是“非缓存输入 token”，`cache_read_tokens` / `cache_creation_tokens` 单独记录缓存 token；`total_tokens` 和成本计算按这些分量相加/分别计价。OpenAI/Gemini 这类上游返回的 prompt/input 总数若包含 cached tokens，解析层要先拆分，成本层不能再二次扣减 cache。
 - Anthropic usage 解析默认按官方语义处理：`input_tokens` 已是 fresh input，`cache_read_input_tokens` / `cache_creation_input_tokens` 另记。Moonshot/Kimi Anthropic-compatible target 是例外，provider-aware usage parser 必须按 `providerType=moonshot/kimi` 识别 `cached_tokens`，并处理 Moonshot 可能返回的负 `input_tokens` 折扣形态，最终仍写入本仓库统一语义的 fresh `input_tokens` + `cache_read_tokens`。不要在成本层再对 Moonshot 做第二次 cache 扣减。
+- 请求 Tab 列表保留所有 compact 摘要供排障；统计页只统计真实模型请求和 Codex/OpenAI Responses Compact 请求。`usage_daily_rollups` 没有 `method` / `path`，只有无有效模型的 Compact 才使用内部模型哨兵保留在总量、趋势和 provider 统计里，并在模型维度隐藏；带有效模型的 Compact 仍按模型计入统计。不要把模型列表、连接探测或其他无模型请求聚合成 `unknown` 参与统计。
 - `usage_daily_rollups` 聚合/裁剪不能放在每个请求的热路径里高频执行；如果需要触发，必须有节流或后台任务。
 - 模型健康快照只持久化非健康状态。失败进入 degraded/cooling/probing 后写快照；恢复 healthy 后移除对应条目，避免后续成功请求继续重复写快照。
 - 模型健康列表里的 provider id 只是稳定键，返回前应尽量从 Claude/Codex/Gemini provider 表注入 `provider_name`，避免前端展示数据库原始 ID。

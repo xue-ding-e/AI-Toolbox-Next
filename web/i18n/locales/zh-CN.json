@@ -48,11 +48,9 @@
         "providerUnselected": "未选择供应商",
         "summaryRequests": "请求数",
         "summaryTokens": "Token 总量",
-        "summaryCache": "缓存读取",
         "summaryCost": "成本",
         "successRateOnly": "成功率 {{rate}}%",
-        "tokens": "输入 {{input}} / 输出 {{output}}",
-        "cacheCreation": "缓存写入 {{value}}",
+        "tokens": "输入 {{input}} / 输出 {{output}} / 缓存 {{cache}}",
         "dbSummaryOnly": "来自数据库摘要",
         "filters": {
           "all": "全部 CLI"

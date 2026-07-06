@@ -48,11 +48,9 @@
         "providerUnselected": "No provider selected",
         "summaryRequests": "Requests",
         "summaryTokens": "Total tokens",
-        "summaryCache": "Cache read",
         "summaryCost": "Cost",
         "successRateOnly": "{{rate}}% success",
-        "tokens": "In {{input}} / out {{output}}",
-        "cacheCreation": "Cache write {{value}}",
+        "tokens": "In {{input}} / out {{output}} / cache {{cache}}",
         "dbSummaryOnly": "From DB summaries",
         "filters": {
           "all": "All CLIs"

@@ -598,10 +598,15 @@ fn find_next_sensitive_assignment(
     const SENSITIVE_QUERY_KEYS: &[&str] = &[
         "key",
         "api_key",
+        "api-key",
         "apikey",
+        "x-api-key",
         "access_token",
+        "access-token",
         "refresh_token",
+        "refresh-token",
         "client_secret",
+        "client-secret",
         "token",
     ];
 
@@ -654,16 +659,32 @@ fn sensitive_assignment_value_end(token: &str, value_start: usize) -> usize {
 
 fn is_sensitive_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
+    let separator_normalized = normalized
+        .chars()
+        .map(|character| match character {
+            '-' | ' ' => '_',
+            _ => character,
+        })
+        .collect::<String>();
     request_log::is_sensitive_header(&normalized)
+        || request_log::is_sensitive_header(&separator_normalized)
         || normalized.contains("secret")
+        || separator_normalized.contains("secret")
         || normalized.contains("password")
+        || separator_normalized.contains("password")
         || normalized.contains("credential")
+        || separator_normalized.contains("credential")
         || normalized == "token"
+        || separator_normalized == "token"
         || normalized.contains("access_token")
+        || separator_normalized.contains("access_token")
         || normalized.contains("refresh_token")
+        || separator_normalized.contains("refresh_token")
         || normalized == "key"
-        || normalized == "api_key"
+        || separator_normalized == "key"
         || normalized == "apikey"
+        || separator_normalized == "api_key"
+        || separator_normalized == "apikey"
 }
 
 #[cfg(test)]
@@ -674,10 +695,12 @@ mod tests {
     #[test]
     fn export_redaction_redacts_json_auth_fields() {
         let redacted = redact_body(Some(
-            r#"{"api_key":"sk-test","nested":{"authorization":"Bearer real-token","content":"keep"}}"#,
+            r#"{"api_key":"sk-test","api-key":"hyphen","client-secret":"clientSecretValue","nested":{"authorization":"Bearer real-token","content":"keep"}}"#,
         ));
 
         assert_eq!(redacted["api_key"], "xxx");
+        assert_eq!(redacted["api-key"], "xxx");
+        assert_eq!(redacted["client-secret"], "xxx");
         assert_eq!(redacted["nested"]["authorization"], "xxx");
         assert_eq!(redacted["nested"]["content"], "keep");
     }
@@ -685,14 +708,16 @@ mod tests {
     #[test]
     fn export_redaction_redacts_auth_like_text() {
         let redacted = redact_auth_like_text(
-            "Authorization: Bearer sk-test https://example.test/v1?api_key=secret&alt=sse keep",
+            "Authorization: Bearer sk-test https://example.test/v1?api_key=secret&api-key=hyphen&client-secret=clientSecretValue&alt=sse keep",
         );
 
         assert!(redacted.contains("Bearer xxx"));
-        assert!(redacted.contains("api_key=xxx&alt=sse"));
+        assert!(redacted.contains("api_key=xxx&api-key=xxx&client-secret=xxx&alt=sse"));
         assert!(redacted.contains("keep"));
         assert!(!redacted.contains("sk-test"));
         assert!(!redacted.contains("api_key=secret"));
+        assert!(!redacted.contains("api-key=hyphen"));
+        assert!(!redacted.contains("clientSecretValue"));
     }
 
     #[test]
@@ -726,7 +751,7 @@ mod tests {
                 cli_key: Some(GatewayCliKey::Gemini),
                 route_name: "gemini".to_string(),
                 method: "GET".to_string(),
-                path: "/gemini/v1beta/models?key=secret&api%5Fkey=encoded&alt=sse".to_string(),
+                path: "/gemini/v1beta/models?key=secret&api%5Fkey=encoded&api-key=hyphen&client-secret=clientSecretValue&alt=sse".to_string(),
                 provider_id: Some("provider-a".to_string()),
                 provider_name: Some("Provider A".to_string()),
                 provider_type: None,
@@ -735,7 +760,7 @@ mod tests {
                 requested_model: Some("unknown".to_string()),
                 upstream_model_id: Some("unknown".to_string()),
                 upstream_url: Some(
-                    "https://generativelanguage.googleapis.com/v1beta/models?key=secret"
+                    "https://generativelanguage.googleapis.com/v1beta/models?key=secret&api-key=hyphen"
                         .to_string(),
                 ),
                 status_code: Some(200),
@@ -771,12 +796,20 @@ mod tests {
 
         assert_eq!(
             sanitized.summary.path,
-            "/gemini/v1beta/models?key=xxx&api%5Fkey=xxx&alt=sse"
+            "/gemini/v1beta/models?key=xxx&api%5Fkey=xxx&api-key=xxx&client-secret=xxx&alt=sse"
         );
         assert_eq!(
             sanitized.summary.upstream_url.as_deref(),
-            Some("https://generativelanguage.googleapis.com/v1beta/models?key=xxx")
+            Some("https://generativelanguage.googleapis.com/v1beta/models?key=xxx&api-key=xxx")
         );
+        assert!(!sanitized.summary.path.contains("hyphen"));
+        assert!(!sanitized.summary.path.contains("clientSecretValue"));
+        assert!(!sanitized
+            .summary
+            .upstream_url
+            .as_deref()
+            .unwrap_or_default()
+            .contains("hyphen"));
     }
 }
 

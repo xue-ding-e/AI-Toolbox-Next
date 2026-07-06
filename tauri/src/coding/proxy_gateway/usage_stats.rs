@@ -20,6 +20,7 @@ type ProviderNameMap = HashMap<(String, String), String>;
 const MAX_PAGE_SIZE: u32 = 100;
 const ROLLUP_THROTTLE_SECONDS: u64 = 300;
 const ONE_M_CONTEXT_MARKER: &str = "[1m]";
+const COMPACT_ROLLUP_MODEL: &str = "__context_compact__";
 
 static LAST_ROLLUP_PRUNE_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
@@ -404,7 +405,8 @@ pub fn usage_summary(
 ) -> Result<GatewayUsageSummary, String> {
     db.with_conn(|conn| {
         let mut params = Vec::<Box<dyn ToSql>>::new();
-        let detail_where = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let detail_where =
+            build_usage_stats_where(start_date, end_date, cli_key, "l", true, &mut params);
         let refs = to_param_refs(&params);
         let mut summary = conn
             .query_row(
@@ -458,7 +460,8 @@ pub fn usage_trends(
         };
         let mut trend_map = std::collections::BTreeMap::<String, TrendAccumulator>::new();
         let mut params = Vec::<Box<dyn ToSql>>::new();
-        let where_clause = build_stats_where(Some(start), Some(end), cli_key, "l", &mut params);
+        let where_clause =
+            build_usage_stats_where(Some(start), Some(end), cli_key, "l", true, &mut params);
         let refs = to_param_refs(&params);
         let mut stmt = conn
             .prepare(&format!(
@@ -527,7 +530,8 @@ pub fn provider_stats(
         let provider_names = load_provider_names(conn)?;
         let mut stats_map = HashMap::<(String, String), StatsAccumulator>::new();
         let mut params = Vec::<Box<dyn ToSql>>::new();
-        let where_clause = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let where_clause =
+            build_usage_stats_where(start_date, end_date, cli_key, "l", true, &mut params);
         let refs = to_param_refs(&params);
         let mut stmt = conn
             .prepare(&format!(
@@ -615,18 +619,20 @@ pub fn model_stats(
     db.with_conn(|conn| {
         let mut stats_map = HashMap::<(String, String), StatsAccumulator>::new();
         let mut params = Vec::<Box<dyn ToSql>>::new();
-        let where_clause = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let where_clause =
+            build_usage_stats_where(start_date, end_date, cli_key, "l", false, &mut params);
+        let model_expr = model_stats_detail_model_expression("l");
         let refs = to_param_refs(&params);
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT app_type, model,
+                "SELECT app_type, {model_expr} AS stats_model,
                         COUNT(*),
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
                         COALESCE(AVG(latency_ms), 0)
                  FROM proxy_request_logs l
                  {where_clause}
-                 GROUP BY app_type, model
+                 GROUP BY app_type, stats_model
                  ORDER BY 3 DESC"
             ))
             .map_err(|error| format!("Failed to prepare model stats query: {error}"))?;
@@ -836,7 +842,12 @@ fn merge_rollup_model_stats(
     cli_key: Option<GatewayCliKey>,
 ) -> Result<(), String> {
     let mut params = Vec::<Box<dyn ToSql>>::new();
-    let where_clause = build_rollup_where(start_date, end_date, cli_key, Some("r"), &mut params);
+    let mut where_clause =
+        build_rollup_where(start_date, end_date, cli_key, Some("r"), &mut params);
+    append_static_where_condition(
+        &mut where_clause,
+        &format!("r.model != '{COMPACT_ROLLUP_MODEL}'"),
+    );
     let refs = to_param_refs(&params);
     let mut stmt = conn
         .prepare(&format!(
@@ -936,13 +947,16 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
         return Ok(());
     }
 
+    let usage_condition = usage_applicable_detail_condition("l", true);
+    let rollup_model_expr = rollup_detail_model_expression("l");
     conn.execute(
-        "INSERT OR REPLACE INTO usage_daily_rollups
+        &format!(
+            "INSERT OR REPLACE INTO usage_daily_rollups
             (date, app_type, provider_id, model, request_count, success_count,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
              total_cost_usd, avg_latency_ms)
          SELECT
-            agg.d, agg.app_type, agg.provider_id, agg.model,
+            agg.d, agg.app_type, agg.provider_id, agg.rollup_model,
             COALESCE(old.request_count, 0) + agg.request_count,
             COALESCE(old.success_count, 0) + agg.success_count,
             COALESCE(old.input_tokens, 0) + agg.input_tokens,
@@ -956,27 +970,29 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
                      / (COALESCE(old.request_count, 0) + agg.request_count)
                 ELSE 0 END
          FROM (
-            SELECT date(created_at, 'unixepoch', 'localtime') AS d,
-                   app_type,
-                   provider_id,
-                   model,
+            SELECT date(l.created_at, 'unixepoch', 'localtime') AS d,
+                   l.app_type,
+                   l.provider_id,
+                   {rollup_model_expr} AS rollup_model,
                    COUNT(*) AS request_count,
-                   SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
-                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                   COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-                   COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
-                   COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) AS total_cost,
-                   COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
-            FROM proxy_request_logs
-            WHERE created_at < ?1
-            GROUP BY d, app_type, provider_id, model
+                   SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 400 THEN 1 ELSE 0 END) AS success_count,
+                   COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
+                   COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens,
+                   COALESCE(SUM(l.cache_creation_tokens), 0) AS cache_creation_tokens,
+                   COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) AS total_cost,
+                   COALESCE(AVG(l.latency_ms), 0) AS avg_latency_ms
+            FROM proxy_request_logs l
+            WHERE l.created_at < ?1
+              AND {usage_condition}
+            GROUP BY d, l.app_type, l.provider_id, rollup_model
          ) agg
          LEFT JOIN usage_daily_rollups old
             ON old.date = agg.d
             AND old.app_type = agg.app_type
             AND old.provider_id = agg.provider_id
-            AND old.model = agg.model",
+            AND old.model = agg.rollup_model"
+        ),
         [cutoff],
     )
     .map_err(|error| format!("Failed to roll up gateway logs: {error}"))?;
@@ -1113,6 +1129,31 @@ fn build_stats_where(
     alias: &str,
     params: &mut Vec<Box<dyn ToSql>>,
 ) -> String {
+    format_where_clause(build_stats_conditions(
+        start_date, end_date, cli_key, alias, params,
+    ))
+}
+
+fn build_usage_stats_where(
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+    alias: &str,
+    include_compact: bool,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> String {
+    let mut conditions = build_stats_conditions(start_date, end_date, cli_key, alias, params);
+    conditions.push(usage_applicable_detail_condition(alias, include_compact));
+    format_where_clause(conditions)
+}
+
+fn build_stats_conditions(
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+    alias: &str,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> Vec<String> {
     let mut conditions = Vec::new();
     if let Some(start) = start_date {
         conditions.push(format!("{alias}.created_at >= ?{}", params.len() + 1));
@@ -1126,10 +1167,23 @@ fn build_stats_where(
         conditions.push(format!("{alias}.app_type = ?{}", params.len() + 1));
         params.push(Box::new(cli_key.as_str().to_string()));
     }
+    conditions
+}
+
+fn format_where_clause(conditions: Vec<String>) -> String {
     if conditions.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+fn append_static_where_condition(where_clause: &mut String, condition: &str) {
+    if where_clause.trim().is_empty() {
+        *where_clause = format!("WHERE {condition}");
+    } else {
+        where_clause.push_str(" AND ");
+        where_clause.push_str(condition);
     }
 }
 
@@ -1160,11 +1214,75 @@ fn build_rollup_where(
         conditions.push(format!("{prefix}app_type = ?{}", params.len() + 1));
         params.push(Box::new(cli_key.as_str().to_string()));
     }
-    if conditions.is_empty() {
-        String::new()
+    conditions.push(valid_model_sql_condition(alias));
+    format_where_clause(conditions)
+}
+
+fn usage_applicable_detail_condition(alias: &str, include_compact: bool) -> String {
+    let valid_model = valid_detail_model_sql_condition(alias);
+    if include_compact {
+        format!(
+            "({valid_model} OR {})",
+            compact_request_sql_condition(alias)
+        )
     } else {
-        format!("WHERE {}", conditions.join(" AND "))
+        valid_model
     }
+}
+
+fn valid_detail_model_sql_condition(alias: &str) -> String {
+    format!(
+        "({} OR {})",
+        valid_model_column_sql_condition(Some(alias), "model"),
+        valid_model_column_sql_condition(Some(alias), "request_model")
+    )
+}
+
+fn model_stats_detail_model_expression(alias: &str) -> String {
+    format!(
+        "CASE WHEN {} THEN {alias}.model ELSE {alias}.request_model END",
+        valid_model_column_sql_condition(Some(alias), "model")
+    )
+}
+
+fn rollup_detail_model_expression(alias: &str) -> String {
+    format!(
+        "CASE WHEN {} THEN {alias}.model \
+         WHEN {} THEN {alias}.request_model \
+         ELSE '{COMPACT_ROLLUP_MODEL}' END",
+        valid_model_column_sql_condition(Some(alias), "model"),
+        valid_model_column_sql_condition(Some(alias), "request_model")
+    )
+}
+
+fn valid_model_sql_condition(alias: Option<&str>) -> String {
+    format!(
+        "({} OR {})",
+        valid_model_column_sql_condition(alias, "model"),
+        compact_rollup_model_sql_condition(alias)
+    )
+}
+
+fn valid_model_column_sql_condition(alias: Option<&str>, column: &str) -> String {
+    let column_ref = alias
+        .map(|alias| format!("{alias}.{column}"))
+        .unwrap_or_else(|| column.to_string());
+    format!("LOWER(TRIM(COALESCE({column_ref}, ''))) NOT IN ('', 'unknown', 'null', 'none')")
+}
+
+fn compact_rollup_model_sql_condition(alias: Option<&str>) -> String {
+    let column_ref = alias
+        .map(|alias| format!("{alias}.model"))
+        .unwrap_or_else(|| "model".to_string());
+    format!("{column_ref} = '{COMPACT_ROLLUP_MODEL}'")
+}
+
+fn compact_request_sql_condition(alias: &str) -> String {
+    format!(
+        "(UPPER(TRIM(COALESCE({alias}.method, ''))) = 'POST' \
+         AND (LOWER(COALESCE({alias}.path, '')) LIKE '%/responses/compact' \
+              OR LOWER(COALESCE({alias}.path, '')) LIKE '%/responses/compact?%'))"
+    )
 }
 
 fn push_condition<T: ToSql + 'static>(
@@ -1935,6 +2053,24 @@ mod tests {
         }
     }
 
+    fn make_no_model_detail(
+        trace_id: &str,
+        provider_id: &str,
+        method: &str,
+        path: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> GatewayRequestLogDetail {
+        let mut detail = make_detail(trace_id, provider_id, 200, input_tokens, output_tokens);
+        detail.summary.route_name = "openai-compatible".to_string();
+        detail.summary.method = method.to_string();
+        detail.summary.path = path.to_string();
+        detail.summary.requested_model = None;
+        detail.summary.upstream_model_id = None;
+        detail.summary.total_tokens = Some(input_tokens + output_tokens);
+        detail
+    }
+
     #[test]
     fn record_request_summary_stores_only_compact_fields() {
         let db = test_db();
@@ -2011,7 +2147,7 @@ mod tests {
         let mut detail = make_detail("trace-redact-path", "provider-alpha", 200, 0, 0);
         detail.summary.method = "GET".to_string();
         detail.summary.path =
-            "/v1beta/models?key=secret&client_version=0.1&access_token=token&api%5Fkey=encoded"
+            "/v1beta/models?key=secret&client_version=0.1&access_token=token&api%5Fkey=encoded&api-key=hyphen&client-secret=clientSecretValue"
                 .to_string();
 
         record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
@@ -2031,8 +2167,10 @@ mod tests {
 
         assert_eq!(
             path,
-            "/v1beta/models?key=xxx&client_version=0.1&access_token=xxx&api%5Fkey=xxx"
+            "/v1beta/models?key=xxx&client_version=0.1&access_token=xxx&api%5Fkey=xxx&api-key=xxx&client-secret=xxx"
         );
+        assert!(!path.contains("hyphen"));
+        assert!(!path.contains("clientSecretValue"));
     }
 
     #[test]
@@ -2231,6 +2369,337 @@ mod tests {
         assert_eq!(model_rows.len(), 1);
         assert_eq!(model_rows[0].request_count, 2);
         assert_eq!(model_rows[0].total_tokens, 26);
+    }
+
+    #[test]
+    fn usage_stats_exclude_no_usage_requests_but_include_compact() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail("trace-model", "provider-alpha", 200, 10, 5),
+        )
+        .expect("record model request");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_no_model_detail(
+                "trace-model-list",
+                "provider-alpha",
+                "GET",
+                "/openai/v1/models",
+                99,
+                88,
+            ),
+        )
+        .expect("record model list request");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_no_model_detail(
+                "trace-probe",
+                "provider-alpha",
+                "HEAD",
+                "/gemini/v1beta",
+                77,
+                66,
+            ),
+        )
+        .expect("record connection probe");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_no_model_detail(
+                "trace-generic",
+                "provider-alpha",
+                "POST",
+                "/openai/v1/embeddings",
+                55,
+                44,
+            ),
+        )
+        .expect("record generic no-model request");
+        let mut compact_detail = make_no_model_detail(
+            "trace-compact",
+            "provider-alpha",
+            "POST",
+            "/openai/v1/responses/compact",
+            3,
+            2,
+        );
+        compact_detail.summary.requested_model = Some("gpt-5-mini".to_string());
+        compact_detail.summary.upstream_model_id = Some("openai/gpt-5-mini".to_string());
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &compact_detail)
+            .expect("record compact request");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_no_model_detail(
+                "trace-compact-no-model",
+                "provider-alpha",
+                "POST",
+                "/openai/v1/responses/compact",
+                4,
+                1,
+            ),
+        )
+        .expect("record no-model compact request");
+
+        let logs =
+            request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10).expect("request logs");
+        assert_eq!(logs.total, 6);
+
+        let summary = usage_summary(&db, None, None, Some(GatewayCliKey::Claude)).expect("summary");
+        assert_eq!(summary.total_requests, 3);
+        assert_eq!(summary.total_input_tokens, 17);
+        assert_eq!(summary.total_output_tokens, 8);
+        assert_eq!(summary.total_tokens, 25);
+        assert_eq!(summary.success_rate, 100.0);
+
+        let provider_rows =
+            provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(provider_rows[0].provider_id, "provider-alpha");
+        assert_eq!(provider_rows[0].request_count, 3);
+        assert_eq!(provider_rows[0].total_tokens, 25);
+
+        let model_rows =
+            model_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("model stats");
+        let model_map = model_rows
+            .iter()
+            .map(|item| (item.model.as_str(), item))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(model_map.len(), 2);
+        assert_eq!(
+            model_map
+                .get("anthropic/claude-sonnet-4-5")
+                .expect("normal model")
+                .request_count,
+            1
+        );
+        assert_eq!(
+            model_map
+                .get("anthropic/claude-sonnet-4-5")
+                .expect("normal model")
+                .total_tokens,
+            15
+        );
+        assert_eq!(
+            model_map
+                .get("openai/gpt-5-mini")
+                .expect("compact model")
+                .request_count,
+            1
+        );
+        assert_eq!(
+            model_map
+                .get("openai/gpt-5-mini")
+                .expect("compact model")
+                .total_tokens,
+            5
+        );
+        assert!(!model_map.contains_key("unknown"));
+        assert!(!model_map.contains_key(COMPACT_ROLLUP_MODEL));
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 5, 20, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let end = Utc
+            .with_ymd_and_hms(2026, 5, 20, 23, 59, 59)
+            .unwrap()
+            .timestamp();
+        let trend_rows =
+            usage_trends(&db, Some(start), Some(end), Some(GatewayCliKey::Claude)).expect("trends");
+        assert_eq!(trend_rows.len(), 1);
+        assert_eq!(trend_rows[0].request_count, 3);
+        assert_eq!(trend_rows[0].total_tokens, 25);
+    }
+
+    #[test]
+    fn usage_rollups_count_compact_sentinel_but_hide_it_from_model_stats() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES
+                ('2026-05-18', 'claude', 'provider-alpha', 'anthropic/claude-sonnet-4-5',
+                    2, 2, 20, 8, 1, 0, '0.100000', 200),
+                ('2026-05-18', 'claude', 'provider-alpha', 'openai/gpt-5-mini',
+                    1, 1, 3, 2, 0, 0, '0.020000', 120),
+                ('2026-05-18', 'claude', 'provider-alpha', '__context_compact__',
+                    1, 1, 3, 2, 0, 0, '0.010000', 100),
+                ('2026-05-18', 'claude', 'provider-alpha', 'unknown',
+                    9, 9, 900, 900, 0, 0, '9.000000', 50)",
+                [],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
+        .expect("insert rollups");
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 5, 18, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let end = Utc
+            .with_ymd_and_hms(2026, 5, 18, 23, 59, 59)
+            .unwrap()
+            .timestamp();
+
+        let summary = usage_summary(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+            .expect("summary");
+        assert_eq!(summary.total_requests, 4);
+        assert_eq!(summary.total_tokens, 39);
+        assert_eq!(summary.success_rate, 100.0);
+
+        let provider_rows =
+            provider_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+                .expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(provider_rows[0].request_count, 4);
+        assert_eq!(provider_rows[0].total_tokens, 39);
+
+        let model_rows = model_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+            .expect("model stats");
+        let model_map = model_rows
+            .iter()
+            .map(|item| (item.model.as_str(), item))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(model_map.len(), 2);
+        assert_eq!(
+            model_map
+                .get("anthropic/claude-sonnet-4-5")
+                .expect("normal model")
+                .request_count,
+            2
+        );
+        assert_eq!(
+            model_map
+                .get("anthropic/claude-sonnet-4-5")
+                .expect("normal model")
+                .total_tokens,
+            29
+        );
+        assert_eq!(
+            model_map
+                .get("openai/gpt-5-mini")
+                .expect("compact model")
+                .request_count,
+            1
+        );
+        assert_eq!(
+            model_map
+                .get("openai/gpt-5-mini")
+                .expect("compact model")
+                .total_tokens,
+            5
+        );
+        assert!(!model_map.contains_key("unknown"));
+        assert!(!model_map.contains_key(COMPACT_ROLLUP_MODEL));
+
+        let trend_rows =
+            usage_trends(&db, Some(start), Some(end), Some(GatewayCliKey::Claude)).expect("trends");
+        assert_eq!(trend_rows.len(), 1);
+        assert_eq!(trend_rows[0].request_count, 4);
+        assert_eq!(trend_rows[0].total_tokens, 39);
+    }
+
+    #[test]
+    fn rollup_and_prune_preserves_valid_compact_model_and_hides_no_model_compact() {
+        let db = test_db();
+        let old_created_at = Utc::now().timestamp() - 40 * 24 * 60 * 60;
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, method, path
+                ) VALUES
+                ('old-normal', 'provider-alpha', 'claude', 'anthropic/claude-sonnet-4-5', 'claude-sonnet-4-5',
+                    10, 5, 0, 0, '0.100000', 200, 200, ?1, 'POST', '/v1/messages'),
+                ('old-compact-model', 'provider-alpha', 'claude', 'openai/gpt-5-mini', 'gpt-5-mini',
+                    3, 2, 0, 0, '0.020000', 120, 200, ?1, 'POST', '/openai/v1/responses/compact'),
+                ('old-compact-no-model', 'provider-alpha', 'claude', 'unknown', NULL,
+                    4, 1, 0, 0, '0.010000', 100, 200, ?1, 'POST', '/openai/v1/responses/compact'),
+                ('old-model-list', 'provider-alpha', 'claude', 'unknown', NULL,
+                    90, 80, 0, 0, '9.000000', 50, 200, ?1, 'GET', '/openai/v1/models')",
+                [old_created_at],
+            )
+            .map_err(|error| error.to_string())?;
+
+            rollup_and_prune(conn, 30)
+        })
+        .expect("roll up old compact logs");
+
+        let rollup_models = db
+            .with_conn(|conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT model, request_count,
+                                input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens AS total_tokens
+                         FROM usage_daily_rollups
+                         ORDER BY model",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)? as u64,
+                            row.get::<_, i64>(2)? as u64,
+                        ))
+                    })
+                    .map_err(|error| error.to_string())?;
+                let mut items = Vec::new();
+                for row in rows {
+                    items.push(row.map_err(|error| error.to_string())?);
+                }
+                Ok(items)
+            })
+            .expect("rollup rows");
+        assert_eq!(
+            rollup_models,
+            vec![
+                ("__context_compact__".to_string(), 1, 5),
+                ("anthropic/claude-sonnet-4-5".to_string(), 1, 15),
+                ("openai/gpt-5-mini".to_string(), 1, 5),
+            ]
+        );
+
+        let summary = usage_summary(&db, None, None, Some(GatewayCliKey::Claude))
+            .expect("summary from rollups");
+        assert_eq!(summary.total_requests, 3);
+        assert_eq!(summary.total_tokens, 25);
+
+        let model_rows =
+            model_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("model stats");
+        let model_map = model_rows
+            .iter()
+            .map(|item| (item.model.as_str(), item))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(model_map.len(), 2);
+        assert_eq!(
+            model_map
+                .get("anthropic/claude-sonnet-4-5")
+                .expect("normal model")
+                .total_tokens,
+            15
+        );
+        assert_eq!(
+            model_map
+                .get("openai/gpt-5-mini")
+                .expect("compact model")
+                .total_tokens,
+            5
+        );
+        assert!(!model_map.contains_key("unknown"));
+        assert!(!model_map.contains_key(COMPACT_ROLLUP_MODEL));
     }
 
     #[test]

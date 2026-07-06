@@ -131,6 +131,23 @@ fn hex_digit_value(byte: u8) -> Option<u8> {
 }
 
 fn is_sensitive_query_key(normalized_key: &str) -> bool {
+    let separator_normalized_key = normalize_query_key_separators(normalized_key);
+    request_query_key_matches_sensitive_name(normalized_key)
+        || (separator_normalized_key != normalized_key
+            && request_query_key_matches_sensitive_name(&separator_normalized_key))
+}
+
+fn normalize_query_key_separators(normalized_key: &str) -> String {
+    normalized_key
+        .chars()
+        .map(|character| match character {
+            '-' | ' ' => '_',
+            _ => character,
+        })
+        .collect()
+}
+
+fn request_query_key_matches_sensitive_name(normalized_key: &str) -> bool {
     request_query_key_is_token_like(normalized_key)
         || matches!(
             normalized_key,
@@ -138,6 +155,7 @@ fn is_sensitive_query_key(normalized_key: &str) -> bool {
                 | "api_key"
                 | "apikey"
                 | "x-api-key"
+                | "x_api_key"
                 | "access_token"
                 | "refresh_token"
                 | "client_secret"
@@ -512,15 +530,18 @@ mod tests {
     #[test]
     fn redact_request_path_redacts_sensitive_query_values() {
         let redacted = redact_request_path(
-            "/v1beta/models?key=secret&client_version=0.1&api%5Fkey=encoded&token=t",
+            "/v1beta/models?key=secret&client_version=0.1&api%5Fkey=encoded&api-key=hyphen&client-secret=clientSecretValue&x%2Dapi%2Dkey=xhyphen&token=t",
         );
 
         assert_eq!(
             redacted,
-            "/v1beta/models?key=xxx&client_version=0.1&api%5Fkey=xxx&token=xxx"
+            "/v1beta/models?key=xxx&client_version=0.1&api%5Fkey=xxx&api-key=xxx&client-secret=xxx&x%2Dapi%2Dkey=xxx&token=xxx"
         );
-        assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("key=secret"));
         assert!(!redacted.contains("encoded"));
+        assert!(!redacted.contains("hyphen"));
+        assert!(!redacted.contains("clientSecretValue"));
+        assert!(!redacted.contains("xhyphen"));
     }
 
     #[test]
