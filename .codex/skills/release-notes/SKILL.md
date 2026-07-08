@@ -28,10 +28,11 @@ Always work in this order:
 1. Determine the release range.
 2. Read the commit and diff summary for that range.
 3. Check for clearly related staged or unstaged candidate changes that belong to the same upcoming release.
-4. Read merged PRs and candidate PR context when available.
-5. Read related issues for confirmation and issue references.
-6. Draft bullets from user-visible impact, not implementation detail.
-7. Run a final issue-matching pass for every bullet before returning the publishable draft.
+4. Check whether the range or candidate changes include a SQLite database schema upgrade.
+5. Read merged PRs and candidate PR context when available.
+6. Read related issues for confirmation and issue references.
+7. Draft bullets from user-visible impact, not implementation detail.
+8. Run a final issue-matching pass for every bullet before returning the publishable draft.
 
 Prefer these sources:
 
@@ -42,6 +43,8 @@ Prefer these sources:
 - `gh pr list --state merged ...`
 - `gh issue list --state all ...`
 - `gh release list` when release publication context matters
+
+For SQLite database schema changes, check commits or diffs that touch `tauri/src/db/migrations.rs`, `TARGET_SCHEMA_VERSION`, `run_migration_step`, `PRAGMA user_version`, `tauri/src/db/sqlite_state.rs`, or migration tests.
 
 If `gh` metadata is unavailable, degrade gracefully to commit-based notes. Do not invent PR numbers, issue numbers, or authors.
 
@@ -141,6 +144,18 @@ Default behavior in this repository:
 - Prefer open issues and recently active issues when drafting the next release.
 - Omit the issue number only when no strong semantic match is found.
 
+## Database Upgrade Notice
+
+If the release range or included candidate changes increase the SQLite `TARGET_SCHEMA_VERSION` or add a new SQLite schema migration, append the database compatibility notice after the `What's Changed` bullets and before the Mac install notice.
+
+Use this exact Chinese notice unless the user asks for a different surface or wording:
+
+```md
+⚠️ 数据库升级提示：本版本包含数据库结构升级。升级后请不要直接降级到旧版本，否则旧版本可能因数据库版本不匹配而无法启动。如需降级，请先在当前版本的设置里执行一次数据备份，确认备份完成后退出应用，再到应用数据目录的 `sqlite-migration-backups` 中找到升级前自动创建的 `.db` 备份，并用它替换当前的 `ai-toolbox.db`。如果升级后做过内容变更，替换数据库后会回到升级前状态；需要找回这些变更时，请在可兼容该备份的版本中通过设置的数据恢复导入刚才创建的备份。
+```
+
+Do not add this notice for ordinary data changes, seed data changes, model preset/resource updates, or non-SQLite runtime database files. The signal must be a SQLite schema/user_version upgrade, not merely a touched database-related file. Keep the normal in-app data backup and the migration backup distinct: the normal backup is a safety copy of the current state, while the downgrade-compatible database is the pre-migration `.db` under `sqlite-migration-backups`. Do not promise that an older app version can restore a backup created by a newer schema; say to restore it only in a version compatible with that backup.
+
 ## Output template
 
 Use this default GitHub Release body template unless the user requests another surface:
@@ -152,6 +167,8 @@ Use this default GitHub Release body template unless the user requests another s
 - 会话管理：一句话概括同一主题下的会话或删除流程修复
 - Claude Code / WSL / SSH：一句话概括同一主题下的跨端同步或路径修复，可在末尾带 `，关联 #123`
 
+⚠️ 数据库升级提示：本版本包含数据库结构升级。升级后请不要直接降级到旧版本，否则旧版本可能因数据库版本不匹配而无法启动。如需降级，请先在当前版本的设置里执行一次数据备份，确认备份完成后退出应用，再到应用数据目录的 `sqlite-migration-backups` 中找到升级前自动创建的 `.db` 备份，并用它替换当前的 `ai-toolbox.db`。如果升级后做过内容变更，替换数据库后会回到升级前状态；需要找回这些变更时，请在可兼容该备份的版本中通过设置的数据恢复导入刚才创建的备份。
+
 ⚠️ Mac安装提示：`"应用程序"已损坏` 解决方法：`xattr -cr /Applications/AI\ Toolbox.app`
 ```
 
@@ -162,6 +179,7 @@ Template rules:
 - Do not output placeholder bullets in the final answer.
 - Keep the Mac install notice exactly as written for this repository unless the user asks to change it.
 - Do not include `Full Changelog` by default in this repository unless the user explicitly asks for it.
+- Include the database upgrade notice only when a SQLite schema/user_version upgrade is in scope.
 - Prefer the shortest acceptable wording that still preserves the user-facing meaning.
 
 ## Style rules
@@ -267,3 +285,4 @@ Before finalizing, verify:
 6. Any unreleased candidate items are worded as next-release draft content, not falsely described as already published.
 7. The final draft does not expose raw commit hashes, `(from ...)` tails, or commit-scope-first wording unless the user explicitly asks for that format.
 8. Relevant uncommitted changes are included by default for next-release drafting unless the user explicitly asks for committed-only notes.
+9. If the release includes a SQLite schema/user_version upgrade, the database upgrade notice is present before the Mac install notice.
