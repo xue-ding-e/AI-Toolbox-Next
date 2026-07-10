@@ -44,6 +44,8 @@ sequenceDiagram
 - 改 `preset_models.json` 时，不要只看“有没有这个模型”，还要看它在同组数组里的位置；顺序会直接影响预设标签展示顺序。
 - 新增某个模型家族的新版本时，默认应放在对应旧版本前面，而不是机械地塞到整栏最前。比如 `qwen3.6-plus` 放在 `qwen3.5-plus` 前，`kimi-k2.6` 放在 `kimi-k2.5` 前。
 - 给新模型补预设时，若需求是“参数和旧模型一样”，优先复制对应旧模型条目，只做 `id` / `name` 和必要顺序调整，不要顺手改能力字段。
+- OpenCode 的 `@ai-sdk/anthropic` 预设必须按模型代际维护 reasoning variants，不能把所有 Claude 模型套成同一结构：Sonnet/Opus 4.6 及之后使用同级的 `thinking: { type: "adaptive" }` 与 `effort`；Opus 4.7+、Sonnet 5、Fable 5 还要提供 `xhigh`，并设置 `display: "summarized"` 避免默认省略思考文本；Opus 4.5 使用 `effort` 但不启用 adaptive；Sonnet 4.5、Haiku 4.5、Opus 4.1、Sonnet 4 和 Sonnet 3.7 继续使用 `thinking: { type: "enabled", budgetTokens }`。`effort` 是 `thinking` 的同级字段，不能放进 `thinking` 对象。
+- 更新 Claude 预设时，同时核对 models.dev 的 `reasoning_options`、context/output limit 与当前 OpenCode provider variant 生成逻辑；只看 Anthropic API 支持范围不够，因为 OpenCode 会按 provider SDK 和具体模型代际生成不同参数形状。
 - 不要在这里记录“远端缓存刷新后也许会覆盖本地顺序”之类推测；判断最终线上效果时，要先区分当前看到的是 bundled defaults 还是 app data / 远端缓存数据。
 - 新增 Gateway provider compat 后要同步更新 `gateway_provider_profiles.json`，否则用户只能走自定义渠道，runtime 也不应靠模型名 fallback 补偿这个缺口。模型名可以作为已识别 provider 内部的能力细分条件，但不能作为 provider 身份识别条件。
 - `tools.gemini` 可以从 `tools.codex` 的同 target endpoint 派生基础 URL/API 格式/providerType/model 信息，但不能复制 Codex-only `codexChatReasoning`；Gemini CLI provider 只保存 `gatewayProfile` 引用和用户覆盖项，runtime 从 `tools.gemini` 动态解析自身会用到的 effective meta。
@@ -74,5 +76,6 @@ sequenceDiagram
 
 - 修改任一 JSON 后，至少做一次 JSON 合法性校验。
 - 修改 `preset_models.json` 后，至少复核消费端是否仍按数组顺序直出，没有额外排序。
+- 修改 `@ai-sdk/anthropic` Claude 预设后，至少运行 `cargo test coding::preset_models::tests`，确认 adaptive、effort-only 与固定 budget 三类模型没有互相串用参数。
 - 修改 `model_pricing.json` 后，至少跑一次 `cargo test model_pricing_seed` 或等价测试，确认 bundled JSON 可解析且 seed 仍是 `INSERT OR IGNORE` 语义。
 - 如果本轮同时改了缓存/远端刷新链路，还要额外区分 bundled defaults、app data cache 和 remote fetch 三条路径分别验证。
