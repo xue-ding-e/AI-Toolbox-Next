@@ -161,6 +161,15 @@ mod tests {
             .expect("Anthropic preset group should exist")
     }
 
+    fn bundled_openai_models() -> Value {
+        let presets: Value = serde_json::from_str(DEFAULT_PRESET_MODELS_JSON)
+            .expect("bundled preset models JSON should parse");
+        presets
+            .get("@ai-sdk/openai")
+            .cloned()
+            .expect("OpenAI preset group should exist")
+    }
+
     fn model<'a>(models: &'a Value, model_id: &str) -> &'a Value {
         models
             .as_array()
@@ -252,6 +261,92 @@ mod tests {
                     .and_then(Value::as_u64),
                 Some(budget_tokens)
             );
+        }
+    }
+
+    #[test]
+    fn openai_presets_define_gpt_5_6_family_with_max_reasoning() {
+        const GPT_5_6_MODEL_IDS: [&str; 3] = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+        const GPT_5_6_REASONING_LEVELS: [&str; 6] =
+            ["none", "low", "medium", "high", "xhigh", "max"];
+
+        let models = bundled_openai_models();
+        let model_list = models
+            .as_array()
+            .expect("OpenAI preset group should be an array");
+        let leading_model_ids: Vec<&str> = model_list
+            .iter()
+            .take(GPT_5_6_MODEL_IDS.len())
+            .filter_map(|preset| preset.get("id").and_then(Value::as_str))
+            .collect();
+
+        assert_eq!(leading_model_ids, GPT_5_6_MODEL_IDS);
+        assert!(
+            model_list
+                .iter()
+                .all(|preset| preset.get("id").and_then(Value::as_str) != Some("gpt-5.6")),
+            "the gpt-5.6 alias should not duplicate the canonical Sol preset"
+        );
+
+        for model_id in GPT_5_6_MODEL_IDS {
+            let preset = model_list
+                .iter()
+                .find(|preset| preset.get("id").and_then(Value::as_str) == Some(model_id))
+                .unwrap_or_else(|| panic!("OpenAI preset model {model_id} should exist"));
+
+            assert_eq!(
+                preset.get("contextLimit").and_then(Value::as_u64),
+                Some(1_050_000)
+            );
+            assert_eq!(
+                preset.get("outputLimit").and_then(Value::as_u64),
+                Some(128_000)
+            );
+            assert_eq!(preset.get("reasoning").and_then(Value::as_bool), Some(true));
+            assert_eq!(preset.get("tool_call").and_then(Value::as_bool), Some(true));
+            assert_eq!(
+                preset.get("temperature").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                preset.get("attachment").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                preset.pointer("/options/store").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                preset.pointer("/modalities/input"),
+                Some(&serde_json::json!(["text", "image"]))
+            );
+            assert_eq!(
+                preset.pointer("/modalities/output"),
+                Some(&serde_json::json!(["text"]))
+            );
+
+            let variants = preset
+                .get("variants")
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("{model_id} should define reasoning variants"));
+            assert_eq!(variants.len(), GPT_5_6_REASONING_LEVELS.len());
+            for reasoning_level in GPT_5_6_REASONING_LEVELS {
+                let variant = variants.get(reasoning_level).unwrap_or_else(|| {
+                    panic!("{model_id} should define the {reasoning_level} variant")
+                });
+                assert_eq!(
+                    variant.get("reasoningEffort").and_then(Value::as_str),
+                    Some(reasoning_level)
+                );
+                assert_eq!(
+                    variant.get("reasoningSummary").and_then(Value::as_str),
+                    Some("auto")
+                );
+                assert_eq!(
+                    variant.get("textVerbosity").and_then(Value::as_str),
+                    Some("medium")
+                );
+            }
         }
     }
 
