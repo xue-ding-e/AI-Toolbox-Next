@@ -1717,7 +1717,7 @@ fn strip_hyphenated_date_suffix(value: &str) -> Option<String> {
 }
 
 fn strip_reasoning_effort_suffix(value: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh", "-max"] {
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
         if let Some(stripped) = value.strip_suffix(suffix) {
             if !stripped.is_empty() {
                 return Some(stripped.to_string());
@@ -2711,7 +2711,6 @@ mod tests {
             assert!(find_model_pricing(conn, "global.anthropic.claude-opus-4-8-v1:0").is_some());
             assert!(find_model_pricing(conn, "claude-opus-4-8@20260527").is_some());
             assert!(find_model_pricing(conn, "OpenAI/GPT-5.5@HIGH").is_some());
-            assert!(find_model_pricing(conn, "OpenAI/GPT-5.5-MAX").is_some());
             assert!(find_model_pricing(conn, "claude-gpt-5.5").is_some());
             assert!(find_model_pricing(conn, "kimi-for-coding").is_none());
             Ok(())
@@ -2743,6 +2742,22 @@ mod tests {
             Ok(())
         })
         .expect("short base pricing should not match variants");
+    }
+
+    #[test]
+    fn model_pricing_matching_preserves_max_as_part_of_canonical_model_id() {
+        let db = test_db();
+        insert_model_pricing(&db, "qwen3.7", "1", "2");
+        insert_model_pricing(&db, "qwen3.7-max", "3", "4");
+
+        db.with_conn(|conn| {
+            let pricing = find_model_pricing(conn, "qwen3.7-max")
+                .expect("canonical max model pricing should exist");
+            assert_eq!(pricing.input_cost_per_million, Decimal::from(3));
+            assert_eq!(pricing.output_cost_per_million, Decimal::from(4));
+            Ok(())
+        })
+        .expect("canonical max model pricing should stay exact");
     }
 
     #[test]
