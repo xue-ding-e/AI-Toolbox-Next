@@ -22,7 +22,9 @@ use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, Orde
 use crate::db::SqliteDbState;
 use tauri::{Emitter, Runtime};
 
-const PI_THINKING_LEVEL_KEYS: [&str; 6] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const PI_THINKING_LEVEL_KEYS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const PI_EXTENDED_THINKING_LEVEL_KEYS: [&str; 2] = ["xhigh", "max"];
 const PI_OTHER_SETTINGS_PROTECTED_KEYS: [&str; 1] = ["packages"];
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -347,7 +349,8 @@ fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
         .and_then(|map| map.get(thinking_level))
     {
         Some(Value::Null) => false,
-        Some(_) | None => true,
+        Some(_) => true,
+        None => !PI_EXTENDED_THINKING_LEVEL_KEYS.contains(&thinking_level),
     }
 }
 
@@ -1044,7 +1047,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn thinking_level_map_treats_omitted_levels_as_supported() {
+    fn thinking_level_map_only_defaults_standard_omitted_levels_to_supported() {
         let model = json!({
             "id": "deepseek-v4-pro",
             "reasoning": true,
@@ -1060,8 +1063,22 @@ mod tests {
         assert!(model_supports_thinking_level(&model, "off"));
         assert!(model_supports_thinking_level(&model, "high"));
         assert!(model_supports_thinking_level(&model, "xhigh"));
+        assert!(!model_supports_thinking_level(&model, "max"));
         assert!(!model_supports_thinking_level(&model, "minimal"));
+        assert!(!model_supports_thinking_level(&model, "ultra"));
         assert!(!model_supports_thinking_level(&model, "unknown"));
+    }
+
+    #[test]
+    fn thinking_level_map_accepts_explicit_max_mapping() {
+        let model = json!({
+            "reasoning": true,
+            "thinkingLevelMap": {
+                "max": "max"
+            }
+        });
+
+        assert!(model_supports_thinking_level(&model, "max"));
     }
 
     #[test]

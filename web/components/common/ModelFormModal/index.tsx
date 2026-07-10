@@ -953,7 +953,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     "low": null,
     "medium": null,
     "high": "high",
-    "xhigh": "max"
+    "xhigh": "xhigh",
+    "max": "max"
 }`}
                     />
                   </Form.Item>

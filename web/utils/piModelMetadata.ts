@@ -1,12 +1,18 @@
 import type { OpenCodeModelVariant } from '@/types/opencode';
 
 export const PI_INPUT_TYPES = new Set(['text', 'image']);
-export const PI_THINKING_LEVEL_KEYS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+export const PI_STANDARD_THINKING_LEVEL_KEYS = ['off', 'minimal', 'low', 'medium', 'high'] as const;
+export const PI_EXTENDED_THINKING_LEVEL_KEYS = ['xhigh', 'max'] as const;
+export const PI_THINKING_LEVEL_KEYS = [
+  ...PI_STANDARD_THINKING_LEVEL_KEYS,
+  ...PI_EXTENDED_THINKING_LEVEL_KEYS,
+] as const;
 export const PI_THINKING_LEVELS = new Set<string>(PI_THINKING_LEVEL_KEYS);
-export const PI_THINKING_LEVEL_OPTIONS = PI_THINKING_LEVEL_KEYS.map((value) => ({
+export const PI_THINKING_LEVEL_OPTIONS = PI_STANDARD_THINKING_LEVEL_KEYS.map((value) => ({
   value,
   label: value,
 }));
+const PI_EXTENDED_THINKING_LEVELS = new Set<string>(PI_EXTENDED_THINKING_LEVEL_KEYS);
 
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -19,6 +25,17 @@ export const normalizePiThinkingLevelKey = (key: string): string | undefined => 
     return 'off';
   }
   return PI_THINKING_LEVELS.has(key) ? key : undefined;
+};
+
+export const isPiThinkingLevelMapEntrySupported = (
+  levelKey: string,
+  thinkingLevelMap: Record<string, unknown>,
+): boolean => {
+  const mappedValue = thinkingLevelMap[levelKey];
+  if (mappedValue === null) {
+    return false;
+  }
+  return !PI_EXTENDED_THINKING_LEVELS.has(levelKey) || mappedValue !== undefined;
 };
 
 export const getPresetThinkingLevelValue = (

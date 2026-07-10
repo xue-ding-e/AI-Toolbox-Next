@@ -40,3 +40,4 @@
 - 自定义 Pi root 下的扩展列表应扫描 `<custom-root>/extensions`，不是默认 home 目录。
 - `pi list --no-approve` 中的 package 扩展和 `extensions/*.ts` / `extensions/<dir>/index.ts` 本地扩展应合并展示。
 - `settings.json` 中已有 `packages` 时，`read_pi_runtime_config().other_settings` 不返回该字段，`save_pi_other_settings` 也不会删除或覆盖它。
+- Pi 0.80.6 起共享 thinking ladder 是 `off/minimal/low/medium/high/xhigh/max`。AI Toolbox 的前端选项、preset `thinkingLevelMap` 转换和后端校验白名单必须同步维护这七档；缺省的标准档 `off/minimal/low/medium/high` 按 identity mapping 支持，扩展档 `xhigh/max` 必须由模型显式提供非 `null` 映射才算支持。`ultra` 属于 Codex 的主动多智能体档位，不是 Pi thinking level，不能加入 Pi settings 或模型映射。

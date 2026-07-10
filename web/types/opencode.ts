@@ -11,7 +11,7 @@ export interface OpenCodeModelLimit {
 }
 
 export interface OpenCodeModelVariant {
-  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   textVerbosity?: 'low' | 'medium' | 'high';
   disabled?: boolean;
   [key: string]: unknown;

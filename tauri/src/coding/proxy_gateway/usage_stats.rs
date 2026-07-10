@@ -1717,7 +1717,7 @@ fn strip_hyphenated_date_suffix(value: &str) -> Option<String> {
 }
 
 fn strip_reasoning_effort_suffix(value: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh", "-max"] {
         if let Some(stripped) = value.strip_suffix(suffix) {
             if !stripped.is_empty() {
                 return Some(stripped.to_string());
@@ -2711,6 +2711,7 @@ mod tests {
             assert!(find_model_pricing(conn, "global.anthropic.claude-opus-4-8-v1:0").is_some());
             assert!(find_model_pricing(conn, "claude-opus-4-8@20260527").is_some());
             assert!(find_model_pricing(conn, "OpenAI/GPT-5.5@HIGH").is_some());
+            assert!(find_model_pricing(conn, "OpenAI/GPT-5.5-MAX").is_some());
             assert!(find_model_pricing(conn, "claude-gpt-5.5").is_some());
             assert!(find_model_pricing(conn, "kimi-for-coding").is_none());
             Ok(())

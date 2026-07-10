@@ -3566,7 +3566,7 @@
       "capabilitiesHint": "Enable when this model supports Pi extended thinking.",
       "reasoning": "Supports Thinking",
       "thinkingLevelMap": "Thinking Level Map",
-      "thinkingLevelMapHint": "This is not the default thinking level. It is a model-level support/mapping table: keys are off/minimal/low/medium/high/xhigh, strings are sent upstream, and null hides unsupported levels.",
+      "thinkingLevelMapHint": "This is not the default thinking level. It is a model-level support/mapping table: keys are off/minimal/low/medium/high/xhigh/max, strings are sent upstream, and null hides unsupported levels; xhigh/max require explicit mappings.",
       "invalidThinkingLevelMap": "Thinking level map JSON is invalid",
       "cost": "Cost",
       "costHint": "Cost per million tokens. Leave all fields empty to remove cost config.",

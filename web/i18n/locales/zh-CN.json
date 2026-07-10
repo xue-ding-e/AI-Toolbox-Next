@@ -3563,7 +3563,7 @@
       "capabilitiesHint": "开启后表示该模型支持 Pi 的 extended thinking。",
       "reasoning": "支持思考",
       "thinkingLevelMap": "思考等级映射",
-      "thinkingLevelMapHint": "不是默认思考等级；这是模型级支持/映射表。key 为 off/minimal/low/medium/high/xhigh，字符串会发送给上游，null 表示该等级不支持并隐藏。",
+      "thinkingLevelMapHint": "不是默认思考等级；这是模型级支持/映射表。key 为 off/minimal/low/medium/high/xhigh/max，字符串会发送给上游，null 表示该等级不支持并隐藏；xhigh/max 必须显式映射才算支持。",
       "invalidThinkingLevelMap": "思考等级映射 JSON 格式不正确",
       "cost": "成本",
       "costHint": "单位为每百万 token 的费用；留空则删除 cost 配置。",

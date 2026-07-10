@@ -95,6 +95,7 @@ import {
   PI_THINKING_LEVEL_KEYS,
   PI_THINKING_LEVEL_OPTIONS,
   buildPiThinkingLevelMapFromPreset,
+  isPiThinkingLevelMapEntrySupported,
 } from '@/utils/piModelMetadata';
 import {
   deletePiRuntimeProvider,
@@ -349,7 +350,7 @@ const getPiModelThinkingLevelOptions = (
   const thinkingLevelMap = asRecord(model.thinkingLevelMap);
   if (!isRecordEmpty(thinkingLevelMap)) {
     return PI_THINKING_LEVEL_KEYS
-      .filter((levelKey) => thinkingLevelMap[levelKey] !== null)
+      .filter((levelKey) => isPiThinkingLevelMapEntrySupported(levelKey, thinkingLevelMap))
       .map((levelKey) => ({
         value: levelKey,
         label: buildPiThinkingLevelOptionLabel(levelKey, thinkingLevelMap[levelKey]),
