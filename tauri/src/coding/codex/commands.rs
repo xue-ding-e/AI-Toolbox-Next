@@ -1930,9 +1930,12 @@ fn remove_toml_item(target: &mut toml_edit::Item, source: &toml_edit::Item) {
                     toml_remove_array_items(target_array, source_array);
                     remove_item = target_array.is_empty();
                 }
-                (_, _) => {
+                (target_value, source_value)
+                    if toml_value_is_subset(target_value, source_value) =>
+                {
                     remove_item = true;
                 }
+                _ => {}
             }
         }
 
@@ -2866,7 +2869,7 @@ async fn apply_config_to_file_with_previous_managed_config(
     Ok(())
 }
 
-/// Append common TOML config to provider config (common is appended after provider)
+/// Merge common defaults with provider config while preserving explicit provider overrides.
 fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
     let provider_content = provider.trim();
     let common_content = common.trim();
@@ -2878,11 +2881,11 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
         return Ok(provider_content.to_string());
     }
 
-    let mut provider_doc = parse_toml_document(provider_content, "provider config")?;
-    let common_doc = parse_toml_document(common_content, "common config")?;
+    let provider_doc = parse_toml_document(provider_content, "provider config")?;
+    let mut common_doc = parse_toml_document(common_content, "common config")?;
 
-    merge_toml_tables(provider_doc.as_table_mut(), common_doc.as_table());
-    Ok(provider_doc.to_string())
+    merge_toml_tables(common_doc.as_table_mut(), provider_doc.as_table());
+    Ok(common_doc.to_string())
 }
 
 /// Write auth.json and config.toml files
@@ -3448,7 +3451,7 @@ mod tests {
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::path::PathBuf;
     use toml_edit::DocumentMut;
 
@@ -3616,6 +3619,26 @@ wire_api = "responses"
             doc["model_providers"]["custom"]["wire_api"].as_str(),
             Some("responses")
         );
+    }
+
+    #[test]
+    fn append_toml_configs_keeps_explicit_provider_scalar_overrides() {
+        let provider = r#"
+model = "glm-5.2"
+model_reasoning_effort = "high"
+"#;
+        let common = r#"
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+approval_policy = "never"
+"#;
+
+        let merged = append_toml_configs(provider, common).unwrap();
+        let doc: DocumentMut = merged.parse().unwrap();
+
+        assert_eq!(doc["model"].as_str(), Some("glm-5.2"));
+        assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));
+        assert_eq!(doc["approval_policy"].as_str(), Some("never"));
     }
 
     #[test]
@@ -4163,10 +4186,32 @@ enabled = false
             Some("https://api.example.com")
         );
         assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
-        assert!(doc["features"].get("test_generation").is_none());
+        assert_eq!(doc["features"]["test_generation"].as_bool(), Some(false));
         assert_eq!(doc["features"]["runtime_owned"].as_bool(), Some(true));
         assert_eq!(doc["plugins"]["demo"]["enabled"].as_bool(), Some(true));
         assert_eq!(doc["mcp_servers"]["local"]["command"].as_str(), Some("uvx"));
+        assert!(doc.get("approval_policy").is_none());
+    }
+
+    #[test]
+    fn strip_codex_common_config_from_toml_preserves_different_provider_values() {
+        let config_toml = r#"
+model = "glm-5.2"
+model_reasoning_effort = "high"
+approval_policy = "never"
+"#;
+        let common_toml = r#"
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+approval_policy = "never"
+"#;
+
+        let stripped = strip_codex_common_config_from_toml(config_toml, common_toml)
+            .expect("strip should succeed");
+        let doc: DocumentMut = stripped.parse().expect("parse stripped config");
+
+        assert_eq!(doc["model"].as_str(), Some("glm-5.2"));
+        assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));
         assert!(doc.get("approval_policy").is_none());
     }
 
@@ -4299,6 +4344,44 @@ model = "deepseek-v4-flash"
         assert!(provider_settings
             .pointer("/modelCatalog/models/2")
             .is_none());
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_keeps_default_model_independent_from_catalog() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": r#"
+model = "gpt-5.4"
+model_provider = "custom"
+"#,
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "glm-5.2",
+                        "displayName": "GLM 5.2"
+                    }
+                ]
+            }
+        });
+        let common_toml = r#"
+model = "gpt-5.5"
+"#;
+
+        let provider_settings =
+            extract_provider_settings_for_storage(&settings, Some(common_toml)).unwrap();
+        let config = provider_settings
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config string");
+        let doc: DocumentMut = config.parse().expect("parse provider config");
+
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.4"));
+        assert_eq!(
+            provider_settings.pointer("/modelCatalog/models/0/model"),
+            Some(&json!("glm-5.2"))
+        );
     }
 
     #[test]

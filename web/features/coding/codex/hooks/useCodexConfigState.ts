@@ -19,11 +19,21 @@ import {
   normalizeCodexCatalogModalities,
   normalizeCodexCatalogModels,
 } from '../utils/codexCatalogModels';
+import { buildCodexSettingsConfig } from '../utils/codexSettingsConfig';
 
 interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: string;
   };
+}
+
+export interface CodexSettingsConfigSnapshot {
+  category?: CodexProviderCategory;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  config?: string;
+  catalogModels?: CodexCatalogModel[];
 }
 
 // 新建配置的默认 config.toml 模板
@@ -374,50 +384,20 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
   // 获取最终的 settingsConfig（用于保存）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const getFinalSettingsConfig = useCallback((externalConfig?: string): string => {
-    // 如果传入了外部配置，优先使用它；否则使用内部状态
-    let finalConfig = externalConfig !== undefined ? externalConfig : codexConfig;
-    const normalizedCatalogModels = normalizeCodexCatalogModels(codexCatalogModels);
-
-    if (providerCategory === 'custom') {
-      // 写入 base_url
-      if (codexBaseUrl) {
-        finalConfig = setCodexBaseUrl(finalConfig, codexBaseUrl);
-      }
-
-      // 写入 model
-      if (codexModel) {
-        finalConfig = setCodexModel(finalConfig, codexModel);
-      }
-      if (normalizedCatalogModels.length > 0) {
-        finalConfig = setCodexModel(finalConfig, normalizedCatalogModels[0].model);
-      }
-    } else {
-      finalConfig = normalizeCodexConfigForOfficialMode(finalConfig);
-      if (codexModel) {
-        finalConfig = setCodexModel(finalConfig, codexModel);
-      }
-    }
-
-    // 使用完整的 auth.json 内容，但仅维护 OPENAI_API_KEY，保留运行时字段
-    const finalAuth = { ...codexAuth };
-    if (providerCategory === 'custom' && codexApiKey) {
-      finalAuth.OPENAI_API_KEY = codexApiKey;
-    } else {
-      delete finalAuth.OPENAI_API_KEY;
-    }
-
-    const settingsConfig: CodexSettingsConfig = {
-      auth: finalAuth,
-      config: finalConfig.trim(),
-    };
-    if (providerCategory === 'custom' && normalizedCatalogModels.length > 0) {
-      settingsConfig.modelCatalog = {
-        models: normalizedCatalogModels,
-      };
-    }
-
-    return JSON.stringify(settingsConfig);
+  const getFinalSettingsConfig = useCallback((snapshot: CodexSettingsConfigSnapshot = {}): string => {
+    const finalCategory = snapshot.category ?? providerCategory;
+    const finalApiKey = snapshot.apiKey ?? codexApiKey;
+    const finalBaseUrl = snapshot.baseUrl ?? codexBaseUrl;
+    const finalModel = snapshot.model ?? codexModel;
+    return buildCodexSettingsConfig({
+      category: finalCategory,
+      apiKey: finalApiKey,
+      baseUrl: finalBaseUrl,
+      model: finalModel,
+      config: snapshot.config ?? codexConfig,
+      catalogModels: snapshot.catalogModels ?? codexCatalogModels,
+      auth: codexAuth,
+    });
   }, [codexApiKey, codexAuth, codexBaseUrl, codexCatalogModels, codexModel, codexConfig, providerCategory]);
 
   return {

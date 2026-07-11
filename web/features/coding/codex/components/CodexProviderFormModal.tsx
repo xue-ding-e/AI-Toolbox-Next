@@ -180,9 +180,9 @@ function applyEndpointToCodexSettingsConfig(
     const parsed = JSON.parse(settingsConfig || '{}') as CodexSettingsConfig;
     const catalogModels = getCodexEndpointCatalogModels(profileId, endpoint);
     let configText = parsed.config || '';
-    const modelFromEndpoint = catalogModels[0]?.model || selectedModel?.trim() || endpoint.model?.trim();
-    if (modelFromEndpoint) {
-      configText = setCodexModel(configText, modelFromEndpoint);
+    const defaultModel = selectedModel?.trim() || endpoint.model?.trim();
+    if (defaultModel) {
+      configText = setCodexModel(configText, defaultModel);
     }
 
     const nextSettingsConfig: CodexSettingsConfig = {
@@ -504,10 +504,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       'codex',
       form.getFieldValue('providerEndpointId'),
     );
-    const currentEndpointModel = currentEndpoint
-      ? getCodexEndpointCatalogModels(form.getFieldValue('providerProfileId'), currentEndpoint)[0]?.model
-        || currentEndpoint.model
-      : undefined;
+    const currentEndpointModel = currentEndpoint?.model;
     const nextFieldValues = provider
       ? {
           name: provider.name,
@@ -674,7 +671,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
 
     const catalogModels = getCodexEndpointCatalogModels(providerProfileId, endpoint);
-    const nextModel = catalogModels[0]?.model || endpoint.model || form.getFieldValue('model');
+    const nextModel = endpoint.model || form.getFieldValue('model');
 
     form.setFieldsValue({
       providerEndpointKey: toGatewayProviderEndpointKey(providerProfileId, endpoint.id),
@@ -706,18 +703,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
         : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
 
-      // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
-      const currentValues = form.getFieldsValue();
-      if (currentValues.apiKey !== undefined) {
-        handleApiKeyChange(currentValues.apiKey || '');
-      }
-      if (currentValues.baseUrl !== undefined) {
-        handleBaseUrlChange(currentValues.baseUrl || '');
-      }
-      if (currentValues.model !== undefined) {
-        handleModelChange(currentValues.model || '');
-      }
-
       const values = await form.validateFields(fieldsToValidate);
       const submittedValues = {
         ...(form.getFieldsValue(true) as CodexProviderFormValues),
@@ -726,13 +711,17 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
       setLoading(true);
 
-      // 从表单获取最新的 config.toml 值（同步后表单中的值是最新的）
-      const latestConfigToml = (form.getFieldValue('configToml') as string) || '';
-      // 使用 Hook 提供的最终配置（已合并字段），但 config 使用表单最新值
-      const settingsConfig = getFinalSettingsConfig(latestConfigToml);
       const selectedCategory = mode === 'import'
         ? 'custom'
         : (activeProviderCategory === 'official' ? 'official' : 'custom');
+      const settingsConfig = getFinalSettingsConfig({
+        category: selectedCategory,
+        apiKey: submittedValues.apiKey || '',
+        baseUrl: submittedValues.baseUrl || '',
+        model: submittedValues.model || '',
+        config: submittedValues.configToml || '',
+        catalogModels: codexCatalogModels,
+      });
       const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
         ? undefined
         : findGatewayProviderEndpoint(
