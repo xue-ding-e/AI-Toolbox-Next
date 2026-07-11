@@ -1154,9 +1154,10 @@ async fn send_upstream_request(
         if should_attempt_responses_encrypted_content_rectifier
             && should_rectify_responses_encrypted_content(status_code, &body)
         {
-            context
-                .side_stores
-                .remember_invalid_responses_ciphers(&provider.id, &upstream_body_snapshot);
+            context.side_stores.remember_invalid_responses_ciphers(
+                responses_cipher_provider_config_identity(provider),
+                &upstream_body_snapshot,
+            );
             if let Some(rectified_body) =
                 build_responses_encrypted_content_rectified_body(&upstream_body_snapshot)?
             {
@@ -3684,9 +3685,10 @@ fn strip_known_invalid_responses_ciphers(
     let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
         return Ok(0);
     };
-    let removed = context
-        .side_stores
-        .strip_known_invalid_responses_ciphers(&provider.id, &mut value);
+    let removed = context.side_stores.strip_known_invalid_responses_ciphers(
+        responses_cipher_provider_config_identity(provider),
+        &mut value,
+    );
     if removed == 0 {
         return Ok(0);
     }
@@ -3700,6 +3702,42 @@ fn strip_known_invalid_responses_ciphers(
         upstream_response_body_bytes: 0,
     })?;
     Ok(removed)
+}
+
+fn responses_cipher_provider_config_identity(provider: &UpstreamProvider) -> [u8; 32] {
+    fn update_component(hasher: &mut Sha256, value: &str) {
+        hasher.update(value.len().to_le_bytes());
+        hasher.update(value.as_bytes());
+    }
+
+    let mut hasher = Sha256::new();
+    update_component(&mut hasher, provider.cli_key.as_str());
+    update_component(&mut hasher, &provider.id);
+    update_component(&mut hasher, &provider.base_url);
+    update_component(&mut hasher, provider.target_protocol.as_str());
+    update_component(
+        &mut hasher,
+        if provider.is_full_url {
+            "full_url"
+        } else {
+            "base_url"
+        },
+    );
+    update_component(
+        &mut hasher,
+        provider.meta.provider_type.as_deref().unwrap_or_default(),
+    );
+    update_component(
+        &mut hasher,
+        provider.meta.api_format.as_deref().unwrap_or_default(),
+    );
+    if let Some(profile) = provider.meta.gateway_profile.as_ref() {
+        update_component(&mut hasher, profile.tool.as_deref().unwrap_or_default());
+        update_component(&mut hasher, &profile.profile_id);
+        update_component(&mut hasher, &profile.endpoint_id);
+    }
+    update_component(&mut hasher, &provider.api_key);
+    hasher.finalize().into()
 }
 
 fn should_rectify_thinking_signature(status_code: u16, body: &[u8]) -> bool {
@@ -12632,9 +12670,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
         }))
         .unwrap();
-        context
-            .side_stores
-            .remember_invalid_responses_ciphers(&provider.id, &rejected_body);
+        context.side_stores.remember_invalid_responses_ciphers(
+            responses_cipher_provider_config_identity(&provider),
+            &rejected_body,
+        );
 
         let mut next_body = serde_json::to_vec(&json!({
             "model":"gpt-5",
@@ -12662,6 +12701,19 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
         assert_eq!(
             strip_known_invalid_responses_ciphers(&context, &other_provider, &mut other_body)
                 .unwrap(),
+            0
+        );
+
+        let mut reconfigured_provider = provider.clone();
+        reconfigured_provider.base_url = "https://other.example.com/v1".to_string();
+        let mut reconfigured_body = rejected_body;
+        assert_eq!(
+            strip_known_invalid_responses_ciphers(
+                &context,
+                &reconfigured_provider,
+                &mut reconfigured_body,
+            )
+            .unwrap(),
             0
         );
     }

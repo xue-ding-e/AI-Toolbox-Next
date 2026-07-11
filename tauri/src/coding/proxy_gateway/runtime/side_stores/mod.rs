@@ -49,19 +49,19 @@ impl GatewaySideStores {
 
     pub(super) fn remember_invalid_responses_ciphers(
         &self,
-        provider_id: &str,
+        provider_config_identity: [u8; 32],
         body: &[u8],
     ) -> usize {
         self.invalid_responses_ciphers
-            .remember_from_body(provider_id, body)
+            .remember_from_body(provider_config_identity, body)
     }
 
     pub(super) fn strip_known_invalid_responses_ciphers(
         &self,
-        provider_id: &str,
+        provider_config_identity: [u8; 32],
         body: &mut serde_json::Value,
     ) -> usize {
         self.invalid_responses_ciphers
-            .strip_known_from_body(provider_id, body)
+            .strip_known_from_body(provider_config_identity, body)
     }
 }

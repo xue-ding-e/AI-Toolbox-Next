@@ -216,23 +216,29 @@ async fn run_gateway_connectivity_request(
     let request_headers = header_pairs_to_value(&request.headers);
     let request_body = parse_json_or_raw(&request.body);
 
+    let total_timeout = Duration::from_secs(timeout_secs.max(1));
     let mut response = route_request_with_options(&request, context, options).await;
     let mut stream_error = None;
     if let Some(body_stream) = response.body_stream.take() {
-        match tokio::time::timeout(
-            Duration::from_secs(timeout_secs.max(1)),
-            drain_gateway_body_stream(body_stream, &mut response, settings, started),
-        )
-        .await
-        {
-            Err(_) => {
-                stream_error =
-                    Some("Gateway connectivity stream exceeded the total timeout".to_string())
+        if let Some(remaining_timeout) = remaining_total_timeout(total_timeout, started.elapsed()) {
+            match tokio::time::timeout(
+                remaining_timeout,
+                drain_gateway_body_stream(body_stream, &mut response, settings, started),
+            )
+            .await
+            {
+                Err(_) => {
+                    stream_error =
+                        Some("Gateway connectivity stream exceeded the total timeout".to_string())
+                }
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    stream_error = Some(error);
+                }
             }
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                stream_error = Some(error);
-            }
+        } else {
+            stream_error =
+                Some("Gateway connectivity stream exceeded the total timeout".to_string());
         }
     } else if response.first_token_ms.is_none() && !response.body.is_empty() {
         response.first_token_ms =
@@ -274,6 +280,12 @@ async fn run_gateway_connectivity_request(
         response_headers: Some(header_pairs_to_value(&response.headers)),
         response_body: Some(parse_json_or_raw(&response.body)),
     }
+}
+
+fn remaining_total_timeout(total_timeout: Duration, elapsed: Duration) -> Option<Duration> {
+    total_timeout
+        .checked_sub(elapsed)
+        .filter(|remaining| !remaining.is_zero())
 }
 
 async fn drain_gateway_body_stream(
@@ -335,28 +347,62 @@ fn gateway_body_reports_error(body: &[u8]) -> bool {
         return false;
     }
     if let Ok(value) = serde_json::from_slice::<Value>(body) {
-        return value.get("error").is_some()
-            || value
-                .get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value == "error");
+        return gateway_json_reports_error(&value);
     }
     String::from_utf8_lossy(body).lines().any(|line| {
-        let payload = line
-            .trim()
+        let trimmed = line.trim();
+        if trimmed
+            .strip_prefix("event:")
+            .map(str::trim)
+            .is_some_and(gateway_event_reports_error)
+        {
+            return true;
+        }
+        let payload = trimmed
             .strip_prefix("data:")
             .map(str::trim)
-            .unwrap_or(line.trim());
+            .unwrap_or(trimmed);
         serde_json::from_str::<Value>(payload)
             .ok()
-            .is_some_and(|value| {
-                value.get("error").is_some()
-                    || value
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "error")
-            })
+            .is_some_and(|value| gateway_json_reports_error(&value))
     })
+}
+
+fn gateway_json_reports_error(value: &Value) -> bool {
+    value.get("error").is_some_and(|error| !error.is_null())
+        || value
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_event_reports_error)
+        || value
+            .get("event")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_event_reports_error)
+        || value.get("response").is_some_and(|response| {
+            response.get("error").is_some_and(|error| !error.is_null())
+                || response
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(gateway_response_status_reports_error)
+        })
+}
+
+fn gateway_event_reports_error(event: &str) -> bool {
+    matches!(
+        event.trim(),
+        "error"
+            | "response.failed"
+            | "response.cancelled"
+            | "response.canceled"
+            | "response.incomplete"
+    )
+}
+
+fn gateway_response_status_reports_error(status: &str) -> bool {
+    matches!(
+        status.trim(),
+        "failed" | "cancelled" | "canceled" | "incomplete"
+    )
 }
 
 fn header_pairs_to_value(headers: &[(String, String)]) -> Value {
@@ -377,7 +423,8 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::gateway_body_reports_error;
+    use super::{gateway_body_reports_error, remaining_total_timeout};
+    use std::time::Duration;
 
     #[test]
     fn gateway_body_error_detection_handles_json_and_sse() {
@@ -387,8 +434,30 @@ mod tests {
         assert!(gateway_body_reports_error(
             b"event: error\ndata: {\"type\":\"error\",\"message\":\"failed\"}\n\n"
         ));
+        assert!(gateway_body_reports_error(
+            b"event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"message\":\"failed\"}}}\n\n"
+        ));
+        assert!(gateway_body_reports_error(
+            br#"{"response":{"status":"failed","error":{"message":"failed"}}}"#
+        ));
         assert!(!gateway_body_reports_error(
             b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
         ));
+    }
+
+    #[test]
+    fn total_timeout_only_exposes_time_remaining_after_routing() {
+        assert_eq!(
+            remaining_total_timeout(Duration::from_secs(30), Duration::from_secs(12)),
+            Some(Duration::from_secs(18))
+        );
+        assert_eq!(
+            remaining_total_timeout(Duration::from_secs(30), Duration::from_secs(30)),
+            None
+        );
+        assert_eq!(
+            remaining_total_timeout(Duration::from_secs(30), Duration::from_secs(31)),
+            None
+        );
     }
 }

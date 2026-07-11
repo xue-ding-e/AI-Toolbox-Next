@@ -512,14 +512,13 @@ pub async fn get_pi_settings_config(
 
 /// Normalize a Pi root directory path for WSL UNC scenarios.
 ///
-/// On Windows, the native file dialog cannot navigate into hidden (dot-prefixed)
-/// WSL directories like `.pi`, so users can only select the parent directory.
-/// Pi's config files always live in the `agent` subdirectory. This function
-/// appends `agent` when the WSL linux path ends with `/.pi`.
+/// A WSL directory named `.pi` can itself be a valid custom Pi root. Only treat
+/// it as the standard parent directory when the selected directory has no Pi
+/// runtime data and its `agent` child contains an existing Pi runtime layout.
 pub(crate) fn normalize_pi_root_dir(path: &str) -> String {
     if let Some(wsl_info) = runtime_location::parse_wsl_unc_path(path) {
         let linux_path = wsl_info.linux_path.trim_end_matches('/');
-        if linux_path.ends_with("/.pi") {
+        if linux_path.ends_with("/.pi") && should_use_pi_agent_subdirectory(Path::new(path)) {
             let new_linux_path = format!("{}/agent", linux_path);
             return runtime_location::build_windows_unc_path(&wsl_info.distro, &new_linux_path)
                 .to_string_lossy()
@@ -527,6 +526,24 @@ pub(crate) fn normalize_pi_root_dir(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+fn should_use_pi_agent_subdirectory(selected_root: &Path) -> bool {
+    !contains_pi_runtime_layout(selected_root)
+        && contains_pi_runtime_layout(&selected_root.join("agent"))
+}
+
+fn contains_pi_runtime_layout(root: &Path) -> bool {
+    [
+        PI_SETTINGS_FILE,
+        PI_AUTH_FILE,
+        PI_MODELS_FILE,
+        PI_MCP_FILE,
+        PI_PROMPT_FILE,
+    ]
+    .iter()
+    .any(|file_name| root.join(file_name).is_file())
+        || root.join("extensions").is_dir()
 }
 
 #[tauri::command]
@@ -1186,10 +1203,10 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pi_root_dir_appends_agent_for_wsl_unc_path_ending_with_dot_pi() {
+    fn normalize_pi_root_dir_preserves_unconfirmed_wsl_dot_pi_root() {
         let path = r"\\wsl.localhost\Ubuntu\home\tester\.pi";
         let normalized = normalize_pi_root_dir(path);
-        assert_eq!(normalized, r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent");
+        assert_eq!(normalized, path);
     }
 
     #[test]
@@ -1222,5 +1239,21 @@ mod tests {
         let path = r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent";
         let normalized = normalize_pi_root_dir(path);
         assert_eq!(normalized, r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent");
+    }
+
+    #[test]
+    fn pi_agent_subdirectory_requires_existing_agent_runtime_layout() {
+        let temp_dir = tempfile::tempdir().expect("create temp Pi root");
+        let selected_root = temp_dir.path().join(".pi");
+        let agent_root = selected_root.join("agent");
+        fs::create_dir_all(&agent_root).expect("create agent root");
+
+        assert!(!should_use_pi_agent_subdirectory(&selected_root));
+
+        fs::write(agent_root.join(PI_SETTINGS_FILE), "{}").expect("write Pi settings");
+        assert!(should_use_pi_agent_subdirectory(&selected_root));
+
+        fs::write(selected_root.join(PI_SETTINGS_FILE), "{}").expect("write custom Pi settings");
+        assert!(!should_use_pi_agent_subdirectory(&selected_root));
     }
 }

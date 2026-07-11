@@ -2196,7 +2196,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pi_runtime_refresh_normalizes_stored_wsl_dot_pi_root() {
+    async fn pi_runtime_refresh_preserves_unconfirmed_stored_wsl_dot_pi_root() {
         let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
         clear_runtime_location_cache();
         let (_temp_dir, db) = create_test_db().await;
@@ -2219,11 +2219,11 @@ mod tests {
 
         assert_eq!(
             location.host_path.to_string_lossy(),
-            r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent"
+            r"\\wsl.localhost\Ubuntu\home\tester\.pi"
         );
         assert_eq!(
             location.wsl.as_ref().map(|wsl| wsl.linux_path.as_str()),
-            Some("/home/tester/.pi/agent")
+            Some("/home/tester/.pi")
         );
         let stored_record = db
             .with_conn(|conn| db_get(conn, DbTable::PiSettingsConfig, "common"))
@@ -2233,7 +2233,7 @@ mod tests {
             stored_record
                 .get("root_dir")
                 .and_then(serde_json::Value::as_str),
-            Some(r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent")
+            Some(r"\\wsl.localhost\Ubuntu\home\tester\.pi")
         );
     }
 }

@@ -7,7 +7,7 @@ const MAX_INVALID_RESPONSES_CIPHERS: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct InvalidResponsesCipherKey {
-    provider_id: String,
+    provider_config_identity: [u8; 32],
     ciphertext_digest: [u8; 32],
 }
 
@@ -23,11 +23,15 @@ pub(super) struct InvalidResponsesCipherStore {
 }
 
 impl InvalidResponsesCipherStore {
-    pub(super) fn remember_from_body(&self, provider_id: &str, body: &[u8]) -> usize {
+    pub(super) fn remember_from_body(
+        &self,
+        provider_config_identity: [u8; 32],
+        body: &[u8],
+    ) -> usize {
         let Ok(value) = serde_json::from_slice::<Value>(body) else {
             return 0;
         };
-        let keys = encrypted_reasoning_keys(provider_id, &value);
+        let keys = encrypted_reasoning_keys(provider_config_identity, &value);
         if keys.is_empty() {
             return 0;
         }
@@ -50,7 +54,11 @@ impl InvalidResponsesCipherStore {
         inserted
     }
 
-    pub(super) fn strip_known_from_body(&self, provider_id: &str, body: &mut Value) -> usize {
+    pub(super) fn strip_known_from_body(
+        &self,
+        provider_config_identity: [u8; 32],
+        body: &mut Value,
+    ) -> usize {
         let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
             return 0;
         };
@@ -62,20 +70,23 @@ impl InvalidResponsesCipherStore {
             encrypted_reasoning_content(item).is_none_or(|encrypted_content| {
                 !inner
                     .keys
-                    .contains(&cipher_key(provider_id, encrypted_content))
+                    .contains(&cipher_key(provider_config_identity, encrypted_content))
             })
         });
         original_len.saturating_sub(input.len())
     }
 }
 
-fn encrypted_reasoning_keys(provider_id: &str, body: &Value) -> Vec<InvalidResponsesCipherKey> {
+fn encrypted_reasoning_keys(
+    provider_config_identity: [u8; 32],
+    body: &Value,
+) -> Vec<InvalidResponsesCipherKey> {
     body.get("input")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(encrypted_reasoning_content)
-        .map(|encrypted_content| cipher_key(provider_id, encrypted_content))
+        .map(|encrypted_content| cipher_key(provider_config_identity, encrypted_content))
         .collect()
 }
 
@@ -86,9 +97,12 @@ fn encrypted_reasoning_content(item: &Value) -> Option<&str> {
         .filter(|encrypted_content| !encrypted_content.trim().is_empty())
 }
 
-fn cipher_key(provider_id: &str, encrypted_content: &str) -> InvalidResponsesCipherKey {
+fn cipher_key(
+    provider_config_identity: [u8; 32],
+    encrypted_content: &str,
+) -> InvalidResponsesCipherKey {
     InvalidResponsesCipherKey {
-        provider_id: provider_id.to_string(),
+        provider_config_identity,
         ciphertext_digest: Sha256::digest(encrypted_content.as_bytes()).into(),
     }
 }
@@ -101,11 +115,13 @@ mod tests {
     #[test]
     fn strips_only_known_ciphers_for_the_same_provider() {
         let store = InvalidResponsesCipherStore::default();
+        let provider_a = [1; 32];
+        let provider_b = [2; 32];
         let rejected_body = serde_json::to_vec(&json!({
             "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
         }))
         .unwrap();
-        assert_eq!(store.remember_from_body("provider-a", &rejected_body), 1);
+        assert_eq!(store.remember_from_body(provider_a, &rejected_body), 1);
 
         let mut same_provider = json!({
             "input": [
@@ -116,7 +132,7 @@ mod tests {
             ]
         });
         assert_eq!(
-            store.strip_known_from_body("provider-a", &mut same_provider),
+            store.strip_known_from_body(provider_a, &mut same_provider),
             1
         );
         assert_eq!(same_provider["input"].as_array().unwrap().len(), 3);
@@ -126,7 +142,7 @@ mod tests {
             "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
         });
         assert_eq!(
-            store.strip_known_from_body("provider-b", &mut other_provider),
+            store.strip_known_from_body(provider_b, &mut other_provider),
             0
         );
     }
@@ -134,18 +150,20 @@ mod tests {
     #[test]
     fn remembering_the_same_cipher_is_idempotent() {
         let store = InvalidResponsesCipherStore::default();
+        let provider = [1; 32];
         let body = serde_json::to_vec(&json!({
             "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
         }))
         .unwrap();
 
-        assert_eq!(store.remember_from_body("provider-a", &body), 1);
-        assert_eq!(store.remember_from_body("provider-a", &body), 0);
+        assert_eq!(store.remember_from_body(provider, &body), 1);
+        assert_eq!(store.remember_from_body(provider, &body), 0);
     }
 
     #[test]
     fn evicts_the_oldest_cipher_when_capacity_is_exceeded() {
         let store = InvalidResponsesCipherStore::default();
+        let provider = [1; 32];
         for index in 0..=MAX_INVALID_RESPONSES_CIPHERS {
             let body = serde_json::to_vec(&json!({
                 "input": [{
@@ -154,13 +172,13 @@ mod tests {
                 }]
             }))
             .unwrap();
-            assert_eq!(store.remember_from_body("provider-a", &body), 1);
+            assert_eq!(store.remember_from_body(provider, &body), 1);
         }
 
         let mut oldest = json!({
             "input": [{"type":"reasoning","encrypted_content":"cipher-0"}]
         });
-        assert_eq!(store.strip_known_from_body("provider-a", &mut oldest), 0);
+        assert_eq!(store.strip_known_from_body(provider, &mut oldest), 0);
 
         let mut newest = json!({
             "input": [{
@@ -168,6 +186,6 @@ mod tests {
                 "encrypted_content": format!("cipher-{MAX_INVALID_RESPONSES_CIPHERS}")
             }]
         });
-        assert_eq!(store.strip_known_from_body("provider-a", &mut newest), 1);
+        assert_eq!(store.strip_known_from_body(provider, &mut newest), 1);
     }
 }
