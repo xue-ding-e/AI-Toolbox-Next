@@ -47,13 +47,17 @@ impl GatewaySideStores {
         self.gemini_shadow.clone()
     }
 
-    pub(super) fn remember_invalid_responses_ciphers(
+    pub(super) fn remember_rejected_responses_ciphers(
         &self,
         provider_config_identity: [u8; 32],
         body: &[u8],
+        error_message: &str,
     ) -> usize {
-        self.invalid_responses_ciphers
-            .remember_from_body(provider_config_identity, body)
+        self.invalid_responses_ciphers.remember_rejected_from_body(
+            provider_config_identity,
+            body,
+            error_message,
+        )
     }
 
     pub(super) fn strip_known_invalid_responses_ciphers(
@@ -63,5 +67,13 @@ impl GatewaySideStores {
     ) -> usize {
         self.invalid_responses_ciphers
             .strip_known_from_body(provider_config_identity, body)
+    }
+
+    pub(super) fn has_known_invalid_responses_ciphers(
+        &self,
+        provider_config_identity: [u8; 32],
+    ) -> bool {
+        self.invalid_responses_ciphers
+            .has_entries_for_provider(provider_config_identity)
     }
 }

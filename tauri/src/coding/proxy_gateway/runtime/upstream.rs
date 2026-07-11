@@ -1151,44 +1151,50 @@ async fn send_upstream_request(
             }
         }
 
-        if should_attempt_responses_encrypted_content_rectifier
-            && should_rectify_responses_encrypted_content(status_code, &body)
-        {
-            context.side_stores.remember_invalid_responses_ciphers(
-                responses_cipher_provider_config_identity(provider),
-                &upstream_body_snapshot,
-            );
-            if let Some(rectified_body) =
-                build_responses_encrypted_content_rectified_body(&upstream_body_snapshot)?
-            {
-                let response = send_request_once(
-                    &client,
-                    method.clone(),
-                    &upstream_url,
-                    headers.clone(),
-                    rectified_body.clone(),
-                    non_streaming_timeout_secs.max(1),
-                    header_preserving_proxy.clone(),
-                )
-                .await
-                .map_err(|mut error| {
-                    error.upstream_request_body = Some(rectified_body.clone());
-                    error
-                })?;
-                return build_gateway_response(
-                    request,
-                    route,
-                    provider,
-                    response,
-                    rectified_body,
-                    upstream_url.to_string(),
-                    conversion_route,
-                    Some(conversion_context.clone()),
-                    upstream_response_snapshot_limit,
-                    Some(context),
-                    compact_compat,
-                )
-                .await;
+        if should_attempt_responses_encrypted_content_rectifier {
+            let encrypted_content_error =
+                detect_responses_encrypted_content_error(status_code, &body);
+            if let Some(encrypted_content_error) = encrypted_content_error {
+                context.side_stores.remember_rejected_responses_ciphers(
+                    responses_cipher_provider_config_identity(provider),
+                    &upstream_body_snapshot,
+                    encrypted_content_error
+                        .message
+                        .as_deref()
+                        .unwrap_or_default(),
+                );
+                if let Some(rectified_body) =
+                    build_responses_encrypted_content_rectified_body(&upstream_body_snapshot)?
+                {
+                    let response = send_request_once(
+                        &client,
+                        method.clone(),
+                        &upstream_url,
+                        headers.clone(),
+                        rectified_body.clone(),
+                        non_streaming_timeout_secs.max(1),
+                        header_preserving_proxy.clone(),
+                    )
+                    .await
+                    .map_err(|mut error| {
+                        error.upstream_request_body = Some(rectified_body.clone());
+                        error
+                    })?;
+                    return build_gateway_response(
+                        request,
+                        route,
+                        provider,
+                        response,
+                        rectified_body,
+                        upstream_url.to_string(),
+                        conversion_route,
+                        Some(conversion_context.clone()),
+                        upstream_response_snapshot_limit,
+                        Some(context),
+                        compact_compat,
+                    )
+                    .await;
+                }
             }
         }
 
@@ -3625,13 +3631,37 @@ fn should_filter_known_invalid_responses_ciphers(
     enabled && target_protocol == AiProtocol::OpenAiResponses && !compact_compat.is_compact()
 }
 
-fn should_rectify_responses_encrypted_content(status_code: u16, body: &[u8]) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResponsesEncryptedContentError {
+    message: Option<String>,
+}
+
+fn detect_responses_encrypted_content_error(
+    status_code: u16,
+    body: &[u8],
+) -> Option<ResponsesEncryptedContentError> {
     if !(400..500).contains(&status_code) {
-        return false;
+        return None;
     }
-    let Some(message) = extract_error_message_from_body(body) else {
-        return false;
-    };
+    let parsed_body = serde_json::from_slice::<Value>(body).ok();
+    let message = parsed_body
+        .as_ref()
+        .and_then(extract_error_message_from_value)
+        .or_else(|| extract_error_message_from_body(body));
+    let error_code = parsed_body
+        .as_ref()
+        .and_then(|value| string_at_error_or_top_level(value, "code"));
+    if error_code.is_some_and(|code| code.eq_ignore_ascii_case("invalid_encrypted_content")) {
+        return Some(ResponsesEncryptedContentError { message });
+    }
+    let error_param = parsed_body
+        .as_ref()
+        .and_then(|value| string_at_error_or_top_level(value, "param"));
+    if error_param.is_some_and(|param| param.eq_ignore_ascii_case("encrypted_content")) {
+        return Some(ResponsesEncryptedContentError { message });
+    }
+
+    let message = message?;
     let lower = message.to_ascii_lowercase();
     let mentions_encrypted_content =
         lower.contains("encrypted content") || lower.contains("encrypted_content");
@@ -3639,7 +3669,24 @@ fn should_rectify_responses_encrypted_content(status_code: u16, body: &[u8]) -> 
     let decryption_failed = lower.contains("could not be decrypted")
         || lower.contains("could not be decrypted or parsed");
 
-    mentions_encrypted_content && (verification_failed || decryption_failed)
+    (mentions_encrypted_content && (verification_failed || decryption_failed)).then_some(
+        ResponsesEncryptedContentError {
+            message: Some(message),
+        },
+    )
+}
+
+fn string_at_error_or_top_level<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value
+        .get("error")
+        .and_then(|error| error.get(field))
+        .or_else(|| value.get(field))
+        .and_then(Value::as_str)
+}
+
+#[cfg(test)]
+fn should_rectify_responses_encrypted_content(status_code: u16, body: &[u8]) -> bool {
+    detect_responses_encrypted_content_error(status_code, body).is_some()
 }
 
 fn build_responses_encrypted_content_rectified_body(
@@ -3682,13 +3729,19 @@ fn strip_known_invalid_responses_ciphers(
     provider: &UpstreamProvider,
     body: &mut Vec<u8>,
 ) -> Result<usize, GatewayForwardError> {
+    let provider_config_identity = responses_cipher_provider_config_identity(provider);
+    if !context
+        .side_stores
+        .has_known_invalid_responses_ciphers(provider_config_identity)
+    {
+        return Ok(0);
+    }
     let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
         return Ok(0);
     };
-    let removed = context.side_stores.strip_known_invalid_responses_ciphers(
-        responses_cipher_provider_config_identity(provider),
-        &mut value,
-    );
+    let removed = context
+        .side_stores
+        .strip_known_invalid_responses_ciphers(provider_config_identity, &mut value);
     if removed == 0 {
         return Ok(0);
     }
@@ -12599,10 +12652,31 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             br#"{"error":{"message":"The encrypted content gAAAA... could not be verified. Reason: Encrypted content could not be decrypted or parsed."}}"#
         ));
         assert!(should_rectify_responses_encrypted_content(
+            400,
+            r#"{"error":{"message":"无法验证请求中的加密内容","type":"invalid_request_error","code":"invalid_encrypted_content"}}"#.as_bytes()
+        ));
+        assert!(should_rectify_responses_encrypted_content(
+            400,
+            r#"{"message":"暗号化された内容を検証できません","code":"invalid_encrypted_content"}"#
+                .as_bytes()
+        ));
+        assert!(should_rectify_responses_encrypted_content(
+            422,
+            br#"{"error":{"message":"invalid request field","param":"encrypted_content"}}"#
+        ));
+        assert!(should_rectify_responses_encrypted_content(
             422,
             br#"{"detail":"encrypted_content could not be decrypted"}"#
         ));
 
+        assert!(!should_rectify_responses_encrypted_content(
+            400,
+            r#"{"error":{"message":"当前模型 gpt-5.6-sol 负载已经达到上限，请稍后重试","type":"new_api_error","code":"get_channel_failed"}}"#.as_bytes()
+        ));
+        assert!(!should_rectify_responses_encrypted_content(
+            400,
+            r#"{"error":{"message":"请求无效","type":"invalid_request_error"}}"#.as_bytes()
+        ));
         assert!(!should_rectify_responses_encrypted_content(
             400,
             br#"{"error":{"message":"Invalid JSON schema: strict must be a boolean"}}"#
@@ -12670,9 +12744,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
         }))
         .unwrap();
-        context.side_stores.remember_invalid_responses_ciphers(
+        context.side_stores.remember_rejected_responses_ciphers(
             responses_cipher_provider_config_identity(&provider),
             &rejected_body,
+            "encrypted_content could not be decrypted",
         );
 
         let mut next_body = serde_json::to_vec(&json!({
