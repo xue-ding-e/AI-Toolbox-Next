@@ -230,6 +230,29 @@ test('clearInvalidOpenCodeDefaultAgent keeps implicit built-in primary defaults'
   }
 });
 
+test('clearInvalidOpenCodeDefaultAgent uses effective Markdown agent candidates when provided', () => {
+  const config = {
+    provider: {},
+    default_agent: 'md-reviewer',
+    agent: { build: { model: 'provider/model' } },
+  };
+
+  assert.equal(
+    clearInvalidOpenCodeDefaultAgent(config, {
+      build: { model: 'provider/model' },
+      'md-reviewer': { mode: 'primary' },
+    }).default_agent,
+    'md-reviewer',
+  );
+  assert.equal(
+    clearInvalidOpenCodeDefaultAgent(config, {
+      build: { model: 'provider/model' },
+      'md-reviewer': { mode: 'subagent' },
+    }).default_agent,
+    undefined,
+  );
+});
+
 test('configured agent model IDs include every explicit model override', () => {
   assert.deepEqual(
     getConfiguredOpenCodeAgentModelIds(createConfig()),

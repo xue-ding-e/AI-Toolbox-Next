@@ -55,6 +55,8 @@ import {
   mergeOpenCodeAgentConfigs,
   replaceOpenCodeMarkdownAgentFrontmatter,
   replaceOpenCodeMarkdownAgentPrompt,
+  resolveOpenCodeAgentConfigFieldSource,
+  type OpenCodeAgentConfigField,
   setOpenCodeMarkdownAgentFrontmatterField,
 } from '../utils/openCodeMarkdownAgent';
 import OpenCodeAgentAdvancedModal from './OpenCodeAgentAdvancedModal';
@@ -98,6 +100,11 @@ interface PromptEditorTarget {
 interface MarkdownAdvancedTarget {
   agent: OpenCodeMarkdownAgent;
   editFullFile: boolean;
+}
+
+interface MarkdownAgentFieldUpdate {
+  agent: OpenCodeMarkdownAgent;
+  fields: Map<OpenCodeAgentConfigField, string | undefined>;
 }
 
 const defaultDescriptions: Record<string, string> = {
@@ -156,21 +163,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
     ...markdownAgents.map((agent) => agent.name).filter((name) => !isOpenCodeBuiltInAgentName(name)),
   ])).sort((left, right) => left.localeCompare(right)), [config, markdownAgents]);
   const defaultAgentCandidates = React.useMemo(() => {
-    const names = new Set([
-      ...getOpenCodeDefaultAgentCandidates(config),
-      ...Object.keys(effectiveAgentConfigs),
-    ]);
-    return Array.from(names).filter((agentName) => {
-      const agentConfig = effectiveAgentConfigs[agentName];
-      if (agentConfig?.disable || isOpenCodeAgentHidden(agentName, agentConfig)) return false;
-      return getOpenCodeAgentMode(agentName, agentConfig) !== 'subagent';
-    }).sort((left, right) => {
-      if (left === 'build') return -1;
-      if (right === 'build') return 1;
-      if (left === 'plan') return -1;
-      if (right === 'plan') return 1;
-      return left.localeCompare(right);
-    });
+    return getOpenCodeDefaultAgentCandidates(config, effectiveAgentConfigs);
   }, [config, effectiveAgentConfigs]);
 
   const reloadMarkdownAgents = React.useCallback(async () => {
@@ -227,64 +220,141 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
     ];
   };
 
+  const buildEffectiveAgentConfigs = (nextConfig: OpenCodeConfig) => {
+    const nextAgentConfigs = getOpenCodeAgentConfigs(nextConfig);
+    const names = new Set([...Object.keys(nextAgentConfigs), ...markdownAgentsByName.keys()]);
+    return Object.fromEntries(Array.from(names).map((agentName) => [
+      agentName,
+      mergeOpenCodeAgentConfigs(
+        nextAgentConfigs[agentName],
+        (markdownAgentsByName.get(agentName) ?? [])
+          .filter((agent) => !agent.parseError)
+          .map((agent) => agent.config),
+      ),
+    ]));
+  };
+
+  const queueMarkdownFieldUpdate = (
+    updates: Map<string, MarkdownAgentFieldUpdate>,
+    agent: OpenCodeMarkdownAgent,
+    fieldName: OpenCodeAgentConfigField,
+    value: string | undefined,
+  ) => {
+    const current = updates.get(agent.path) ?? {
+      agent,
+      fields: new Map<OpenCodeAgentConfigField, string | undefined>(),
+    };
+    current.fields.set(fieldName, value);
+    updates.set(agent.path, current);
+  };
+
+  const persistAgentFieldChanges = async (
+    nextConfig: OpenCodeConfig,
+    markdownUpdates: Map<string, MarkdownAgentFieldUpdate>,
+  ) => {
+    const savedMarkdownAgents: OpenCodeMarkdownAgent[] = [];
+    for (const { agent, fields } of markdownUpdates.values()) {
+      let content = agent.rawContent;
+      fields.forEach((value, fieldName) => {
+        content = setOpenCodeMarkdownAgentFrontmatterField(content, fieldName, value);
+      });
+      savedMarkdownAgents.push(await saveOpenCodeMarkdownAgent({
+        path: agent.path,
+        expectedContentHash: agent.contentHash,
+        content,
+      }));
+    }
+
+    if (savedMarkdownAgents.length > 0) {
+      const savedByPath = new Map(savedMarkdownAgents.map((agent) => [agent.path, agent]));
+      setMarkdownAgents((current) => current.map((agent) => savedByPath.get(agent.path) ?? agent));
+    }
+    if (nextConfig !== config) {
+      await onSave(nextConfig);
+    }
+  };
+
   const handleModelChange = async (agentName: string, model: string | undefined) => {
     const variants = model ? modelVariantsMap[model] ?? [] : [];
-    const markdownSources = markdownAgentsByName.get(agentName) ?? [];
-    const markdownAgent = markdownSources[markdownSources.length - 1];
-    try {
-      if (markdownAgent) {
-        let content = setOpenCodeMarkdownAgentFrontmatterField(
-          markdownAgent.rawContent,
-          'model',
-          model,
-        );
-        if (!model || !variants.includes(effectiveAgentConfigs[agentName]?.variant ?? '')) {
-          content = setOpenCodeMarkdownAgentFrontmatterField(content, 'variant', undefined);
+    const markdownSources = (markdownAgentsByName.get(agentName) ?? [])
+      .filter((agent) => !agent.parseError);
+    const markdownConfigs = markdownSources.map((agent) => agent.config);
+    const source = resolveOpenCodeAgentConfigFieldSource(
+      agentConfigs[agentName],
+      markdownConfigs,
+      'model',
+    ) ?? (markdownSources.length > 0
+      ? { type: 'markdown' as const, index: markdownSources.length - 1 }
+      : { type: 'json' as const });
+    const markdownUpdates = new Map<string, MarkdownAgentFieldUpdate>();
+    let nextConfig = config;
+    if (source.type === 'markdown') {
+      queueMarkdownFieldUpdate(markdownUpdates, markdownSources[source.index], 'model', model);
+    } else {
+      nextConfig = setOpenCodeAgentModel(nextConfig, agentName, model, variants);
+    }
+
+    const currentVariant = effectiveAgentConfigs[agentName]?.variant;
+    if (!model || !variants.includes(currentVariant ?? '')) {
+      if (Object.prototype.hasOwnProperty.call(agentConfigs[agentName] ?? {}, 'variant')) {
+        nextConfig = setOpenCodeAgentVariant(nextConfig, agentName, undefined);
+      }
+      markdownSources.forEach((agent) => {
+        if (agent.config && Object.prototype.hasOwnProperty.call(agent.config, 'variant')) {
+          queueMarkdownFieldUpdate(markdownUpdates, agent, 'variant', undefined);
         }
-        const saved = await saveOpenCodeMarkdownAgent({
-          path: markdownAgent.path,
-          expectedContentHash: markdownAgent.contentHash,
-          content,
-        });
-        setMarkdownAgents((current) => current.map((agent) => (
-          agent.path === saved.path ? saved : agent
-        )));
+      });
+    }
+
+    try {
+      await persistAgentFieldChanges(nextConfig, markdownUpdates);
+      if (markdownUpdates.size > 0) {
         message.success(t('common.success'));
-        return;
       }
-      await onSave(setOpenCodeAgentModel(config, agentName, model, variants));
     } catch (error) {
-      if (markdownAgent) {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      }
+      await reloadMarkdownAgents();
+      message.error(error instanceof Error ? error.message : t('common.error'));
     }
   };
 
   const handleVariantChange = async (agentName: string, variant: string | undefined) => {
-    const markdownSources = markdownAgentsByName.get(agentName) ?? [];
-    const markdownAgent = markdownSources[markdownSources.length - 1];
+    const markdownSources = (markdownAgentsByName.get(agentName) ?? [])
+      .filter((agent) => !agent.parseError);
+    const markdownConfigs = markdownSources.map((agent) => agent.config);
+    const existingSource = resolveOpenCodeAgentConfigFieldSource(
+      agentConfigs[agentName],
+      markdownConfigs,
+      'variant',
+    );
+    const modelSource = resolveOpenCodeAgentConfigFieldSource(
+      agentConfigs[agentName],
+      markdownConfigs,
+      'model',
+    );
+    const source = existingSource ?? modelSource ?? (markdownSources.length > 0
+      ? { type: 'markdown' as const, index: markdownSources.length - 1 }
+      : { type: 'json' as const });
+    const markdownUpdates = new Map<string, MarkdownAgentFieldUpdate>();
+    let nextConfig = config;
+    if (source.type === 'markdown') {
+      queueMarkdownFieldUpdate(markdownUpdates, markdownSources[source.index], 'variant', variant);
+    } else {
+      nextConfig = setOpenCodeAgentVariant(
+        nextConfig,
+        agentName,
+        variant,
+        effectiveAgentConfigs[agentName]?.model,
+      );
+    }
+
     try {
-      if (markdownAgent) {
-        const saved = await saveOpenCodeMarkdownAgent({
-          path: markdownAgent.path,
-          expectedContentHash: markdownAgent.contentHash,
-          content: setOpenCodeMarkdownAgentFrontmatterField(
-            markdownAgent.rawContent,
-            'variant',
-            variant,
-          ),
-        });
-        setMarkdownAgents((current) => current.map((agent) => (
-          agent.path === saved.path ? saved : agent
-        )));
+      await persistAgentFieldChanges(nextConfig, markdownUpdates);
+      if (markdownUpdates.size > 0) {
         message.success(t('common.success'));
-        return;
       }
-      await onSave(setOpenCodeAgentVariant(config, agentName, variant));
     } catch (error) {
-      if (markdownAgent) {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      }
+      await reloadMarkdownAgents();
+      message.error(error instanceof Error ? error.message : t('common.error'));
     }
   };
 
@@ -364,6 +434,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
           }
           message.success(t('common.success'));
         } catch (error) {
+          await reloadMarkdownAgents();
           message.error(error instanceof Error ? error.message : t('common.error'));
           throw error;
         }
@@ -658,7 +729,10 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
         onSave={async (agentConfig) => {
           if (!advancedAgentName) return;
           const nextConfig = setOpenCodeAgentAdvancedConfig(config, advancedAgentName, agentConfig);
-          await onSave(clearInvalidOpenCodeDefaultAgent(nextConfig));
+          await onSave(clearInvalidOpenCodeDefaultAgent(
+            nextConfig,
+            buildEffectiveAgentConfigs(nextConfig),
+          ));
         }}
       />
 

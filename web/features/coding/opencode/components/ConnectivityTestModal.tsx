@@ -9,6 +9,10 @@ import {
   type ConnectivityTestResult,
   type OpenCodeDiagnosticsConfig,
 } from '@/services/opencodeApi';
+import {
+  testGatewayProviderModelConnectivity,
+  type GatewayConnectivityTestRequest,
+} from '@/services/proxyGatewayApi';
 import type { OpenCodeProvider } from '@/types/opencode';
 import styles from './ConnectivityTestModal.module.less';
 
@@ -24,6 +28,7 @@ interface ConnectivityTestModalProps {
   diagnostics?: OpenCodeDiagnosticsConfig;
   onSaveDiagnostics: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
   onRemoveModels?: (modelIds: string[]) => Promise<void>;
+  gatewayRequest?: Pick<GatewayConnectivityTestRequest, 'cliKey' | 'providerId'>;
 }
 
 interface TestResult extends Partial<ConnectivityTestResult> {
@@ -51,6 +56,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   diagnostics,
   onSaveDiagnostics,
   onRemoveModels,
+  gatewayRequest,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
@@ -236,10 +242,18 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       const failedModelIds: string[] = [];
       const promises = modelsToTest.map(async (modelId) => {
         try {
-          const response = await testProviderModelConnectivity({
-            ...baseRequest,
-            modelIds: [modelId],
-          });
+          const response = gatewayRequest
+            ? await testGatewayProviderModelConnectivity({
+                ...gatewayRequest,
+                prompt: values.prompt,
+                stream: values.stream,
+                modelIds: [modelId],
+                timeoutSecs: 30,
+              })
+            : await testProviderModelConnectivity({
+                ...baseRequest,
+                modelIds: [modelId],
+              });
 
           const result = response.results[0];
 
@@ -559,7 +573,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
               </div>
             </div>
 
-            <Collapse
+            {!gatewayRequest ? <Collapse
               className={styles.advancedCollapse}
               ghost
               activeKey={advancedActive}
@@ -666,7 +680,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                   )
                 }
               ]}
-            />
+            /> : null}
           </Form>
         </section>
 

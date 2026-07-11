@@ -50,6 +50,7 @@ fn provider_target_protocol(
                     .get("config")
                     .and_then(Value::as_str)
                     .and_then(codex_wire_api_from_config)
+                    .and_then(|value| AiProtocol::from_api_format(&value))
             })
             .unwrap_or_else(|| {
                 let base_url = settings
@@ -76,26 +77,61 @@ fn protocol_from_meta_or_settings(meta: Option<&Value>, settings: &Value) -> Opt
         .and_then(|value| AiProtocol::from_api_format(&value))
 }
 
-fn codex_wire_api_from_config(config_toml: &str) -> Option<AiProtocol> {
+pub(crate) fn codex_wire_api_from_config(config_toml: &str) -> Option<String> {
     let document = config_toml.trim().parse::<DocumentMut>().ok()?;
-    document
-        .as_table()
-        .get("wire_api")
-        .and_then(Item::as_str)
-        .or_else(|| document.as_table().get("api_format").and_then(Item::as_str))
-        .and_then(AiProtocol::from_api_format)
+    let root = document.as_table();
+    selected_codex_provider_table(root)
+        .and_then(|provider| {
+            toml_string(provider, "wire_api").or_else(|| toml_string(provider, "api_format"))
+        })
+        .or_else(|| toml_string(root, "wire_api"))
+        .or_else(|| toml_string(root, "api_format"))
+        .or_else(|| {
+            codex_provider_tables(root).and_then(|providers| {
+                providers.iter().find_map(|(_, item)| {
+                    item.as_table().and_then(|provider| {
+                        toml_string(provider, "wire_api")
+                            .or_else(|| toml_string(provider, "api_format"))
+                    })
+                })
+            })
+        })
 }
 
-fn codex_base_url_from_config(config_toml: &str) -> Option<String> {
+pub(crate) fn codex_base_url_from_config(config_toml: &str) -> Option<String> {
     let document = config_toml.trim().parse::<DocumentMut>().ok()?;
-    let provider_name = document
-        .as_table()
+    let root = document.as_table();
+    selected_codex_provider_table(root)
+        .and_then(|provider| toml_string(provider, "base_url"))
+        .or_else(|| toml_string(root, "base_url"))
+        .or_else(|| {
+            codex_provider_tables(root).and_then(|providers| {
+                providers.iter().find_map(|(_, item)| {
+                    item.as_table()
+                        .and_then(|provider| toml_string(provider, "base_url"))
+                })
+            })
+        })
+}
+
+fn codex_provider_tables(root: &toml_edit::Table) -> Option<&toml_edit::Table> {
+    root.get("model_providers").and_then(Item::as_table)
+}
+
+fn selected_codex_provider_table(root: &toml_edit::Table) -> Option<&toml_edit::Table> {
+    let provider_name = root
         .get("model_provider")
-        .and_then(Item::as_str)?;
-    document
-        .get("model_providers")?
-        .get(provider_name)?
-        .get("base_url")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    codex_provider_tables(root)?
+        .get(provider_name)
+        .and_then(Item::as_table)
+}
+
+fn toml_string(table: &toml_edit::Table, key: &str) -> Option<String> {
+    table
+        .get(key)
         .and_then(Item::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -185,6 +221,49 @@ mod tests {
             Some(&json!({ "apiFormat": "openai_responses" })),
             "{}",
         ));
+    }
+
+    #[test]
+    fn codex_selected_provider_fields_drive_protocol_and_base_url() {
+        let config = r#"
+model_provider = "chat"
+wire_api = "responses"
+base_url = "https://legacy.example.com/v1"
+
+[model_providers.responses]
+wire_api = "responses"
+base_url = "https://responses.example.com/v1"
+
+[model_providers.chat]
+wire_api = "chat"
+base_url = "https://chat.example.com/v1/chat/completions"
+"#;
+
+        assert_eq!(codex_wire_api_from_config(config).as_deref(), Some("chat"));
+        assert_eq!(
+            codex_base_url_from_config(config).as_deref(),
+            Some("https://chat.example.com/v1/chat/completions")
+        );
+        assert!(provider_needs_gateway_proxy(
+            GatewayCliKey::Codex,
+            "custom",
+            None,
+            &serde_json::json!({ "config": config }).to_string(),
+        ));
+    }
+
+    #[test]
+    fn codex_root_fields_remain_supported_for_legacy_configs() {
+        let config = r#"
+wire_api = "chat"
+base_url = "https://legacy.example.com/v1/chat/completions"
+"#;
+
+        assert_eq!(codex_wire_api_from_config(config).as_deref(), Some("chat"));
+        assert_eq!(
+            codex_base_url_from_config(config).as_deref(),
+            Some("https://legacy.example.com/v1/chat/completions")
+        );
     }
 
     #[test]

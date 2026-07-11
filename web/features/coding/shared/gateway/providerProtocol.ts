@@ -1,4 +1,5 @@
 import type { GatewayCliTakeoverStatus } from '@/services';
+import { parse as parseToml } from 'smol-toml';
 
 export type GatewayApiFormat =
   | 'anthropic_messages'
@@ -89,8 +90,41 @@ export const codexWireApiFormatFromConfig = (config?: string | null) => {
     return null;
   }
 
-  const match = config.match(/^\s*(?:wire_api|api_format)\s*=\s*["']([^"']+)["']/m);
-  return match?.[1] ?? null;
+  try {
+    const parsed = parseToml(config) as Record<string, unknown>;
+    const selectedProvider = typeof parsed.model_provider === 'string'
+      ? parsed.model_provider.trim()
+      : '';
+    const modelProviders = parsed.model_providers && typeof parsed.model_providers === 'object'
+      && !Array.isArray(parsed.model_providers)
+      ? parsed.model_providers as Record<string, unknown>
+      : undefined;
+    const provider = selectedProvider && modelProviders?.[selectedProvider]
+      && typeof modelProviders[selectedProvider] === 'object'
+      && !Array.isArray(modelProviders[selectedProvider])
+      ? modelProviders[selectedProvider] as Record<string, unknown>
+      : undefined;
+    const selectedValue = provider?.wire_api ?? provider?.api_format;
+    if (typeof selectedValue === 'string' && selectedValue.trim()) {
+      return selectedValue.trim();
+    }
+    const rootValue = parsed.wire_api ?? parsed.api_format;
+    if (typeof rootValue === 'string' && rootValue.trim()) {
+      return rootValue.trim();
+    }
+    for (const value of Object.values(modelProviders ?? {})) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const providerValue = (value as Record<string, unknown>).wire_api
+        ?? (value as Record<string, unknown>).api_format;
+      if (typeof providerValue === 'string' && providerValue.trim()) {
+        return providerValue.trim();
+      }
+    }
+    return null;
+  } catch {
+    const match = config.match(/^\s*(?:wire_api|api_format)\s*=\s*["']([^"']+)["']/m);
+    return match?.[1] ?? null;
+  }
 };
 
 export const openAiApiFormatFromBaseUrl = (baseUrl?: string | null) => {

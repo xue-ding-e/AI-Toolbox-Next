@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { PRESET_MODELS_REMOTE_URL, updatePresetModels } from '@/constants/presetModels';
 import type { PresetModel } from '@/constants/presetModels';
 import {
+  markGatewayProviderProfilesInitialized,
   GATEWAY_PROVIDER_PROFILES_REMOTE_URL,
   updateGatewayProviderProfiles,
   type GatewayProviderProfileCatalog,
@@ -149,12 +150,14 @@ export const loadCachedGatewayProviderProfiles = async (): Promise<boolean> => {
     );
     if (json && typeof json === 'object') {
       updateGatewayProviderProfiles(json);
+      markGatewayProviderProfilesInitialized();
       console.log('[GatewayProviderProfiles] Loaded from local cache');
       return true;
     }
   } catch (err) {
     console.warn('[GatewayProviderProfiles] Failed to load local cache:', err);
   }
+  markGatewayProviderProfilesInitialized();
   return false;
 };
 
@@ -166,6 +169,7 @@ export const fetchRemoteGatewayProviderProfiles = async (): Promise<void> => {
     );
     if (json && typeof json === 'object') {
       updateGatewayProviderProfiles(json);
+      markGatewayProviderProfilesInitialized();
       console.log('[GatewayProviderProfiles] Updated from remote');
     }
   } catch (err) {

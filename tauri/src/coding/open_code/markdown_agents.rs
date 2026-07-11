@@ -294,9 +294,18 @@ pub async fn list_opencode_markdown_agents(
                 continue;
             }
             let mut files = WalkDir::new(&directory)
-                .follow_links(true)
+                .follow_links(false)
                 .into_iter()
-                .filter_map(Result::ok)
+                .filter_map(|entry| match entry {
+                    Ok(entry) => Some(entry),
+                    Err(error) => {
+                        log::warn!(
+                            "Failed to inspect OpenCode Markdown Agent entry under {}: {error}",
+                            directory.display()
+                        );
+                        None
+                    }
+                })
                 .filter(|entry| entry.file_type().is_file())
                 .filter(|entry| {
                     entry
@@ -309,7 +318,10 @@ pub async fn list_opencode_markdown_agents(
                 .collect::<Vec<_>>();
             files.sort();
             for file in files {
-                agents.push(read_markdown_agent(&root, &file)?);
+                match read_markdown_agent(&root, &file) {
+                    Ok(agent) => agents.push(agent),
+                    Err(error) => log::warn!("{error}"),
+                }
             }
         }
     }

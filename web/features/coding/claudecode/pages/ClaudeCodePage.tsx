@@ -61,6 +61,7 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import {
+  areGatewayProviderProfilesInitialized,
   firstGatewayApiFormat,
   GatewayFailoverButton,
   getGatewayProviderApiFormatFromMeta,
@@ -254,6 +255,7 @@ const ClaudeCodePage: React.FC = () => {
   const [previewData, setPreviewDataLocal] = React.useState<unknown>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
+  const [connectivityUsesGateway, setConnectivityUsesGateway] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
   const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
@@ -544,8 +546,25 @@ const ClaudeCodePage: React.FC = () => {
       message.info(t('claudecode.provider.officialConnectivityHint'));
       return;
     }
+    if (!areGatewayProviderProfilesInitialized()) {
+      message.info(t('common.loading'));
+      return;
+    }
 
+    const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig) as {
+      apiFormat?: unknown;
+      api_format?: unknown;
+      openrouter_compat_mode?: unknown;
+    };
+    const providerApiFormat = firstGatewayApiFormat(
+      getGatewayProviderApiFormatFromMeta(provider.meta, 'claude'),
+      provider.meta?.apiFormat,
+      typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
+      typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
+      isGatewayConfigFlagEnabled(settingsConfig.openrouter_compat_mode) ? 'openai_chat' : undefined,
+    );
     setConnectivityInfo(buildClaudeProviderConnectivityInfo(provider));
+    setConnectivityUsesGateway(providerNeedsGatewayProxy(providerApiFormat, 'anthropic'));
     setConnectivityModalOpen(true);
   };
 
@@ -575,6 +594,10 @@ const ClaudeCodePage: React.FC = () => {
   }, [connectivityInfo, providers, t]);
 
   const handleBatchTestProviders = React.useCallback(async () => {
+    if (!areGatewayProviderProfilesInitialized()) {
+      message.info(t('common.loading'));
+      return;
+    }
     if (providers.length === 0) {
       return;
     }
@@ -1393,6 +1416,8 @@ const ClaudeCodePage: React.FC = () => {
         <ProviderConnectivityTestModal
           open={connectivityModalOpen}
           connectivityInfo={connectivityInfo}
+          gatewayCliKey="claude"
+          useGateway={connectivityUsesGateway}
           diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'claudecode', connectivityInfo.providerId) : undefined}
           onSaveDiagnostics={handleSaveConnectivityDiagnostics}
           onCancel={() => setConnectivityModalOpen(false)}

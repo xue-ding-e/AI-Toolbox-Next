@@ -61,16 +61,16 @@ export const isOpenCodeAgentHidden = (
 
 export const getOpenCodeDefaultAgentCandidates = (
   config: OpenCodeConfig | null | undefined,
+  effectiveAgents: Record<string, OpenCodeAgentConfig> = getOpenCodeAgentConfigs(config),
 ): string[] => {
-  const agents = getOpenCodeAgentConfigs(config);
   const candidateNames = new Set<string>([
     ...OPEN_CODE_BUILT_IN_PRIMARY_AGENTS,
-    ...Object.keys(agents),
+    ...Object.keys(effectiveAgents),
   ]);
 
   return Array.from(candidateNames)
     .filter((agentName) => {
-      const agentConfig = agents[agentName];
+      const agentConfig = effectiveAgents[agentName];
       if (agentConfig?.disable) return false;
       if (isOpenCodeAgentHidden(agentName, agentConfig)) return false;
       return getOpenCodeAgentMode(agentName, agentConfig) !== 'subagent';
@@ -86,10 +86,11 @@ export const getOpenCodeDefaultAgentCandidates = (
 
 export const clearInvalidOpenCodeDefaultAgent = (
   config: OpenCodeConfig,
+  effectiveAgents?: Record<string, OpenCodeAgentConfig>,
 ): OpenCodeConfig => {
   if (!config.default_agent) return config;
 
-  if (getOpenCodeDefaultAgentCandidates(config).includes(config.default_agent)) return config;
+  if (getOpenCodeDefaultAgentCandidates(config, effectiveAgents).includes(config.default_agent)) return config;
   return {
     ...config,
     default_agent: undefined,
@@ -154,8 +155,9 @@ export const setOpenCodeAgentVariant = (
   config: OpenCodeConfig,
   agentName: string,
   variant: string | undefined,
+  effectiveModel?: string,
 ): OpenCodeConfig => updateAgentRecord(config, agentName, (agentConfig) => {
-  if (!agentConfig.model || !variant) {
+  if (!(agentConfig.model ?? effectiveModel) || !variant) {
     const { variant: _variant, ...remainingConfig } = agentConfig;
     return remainingConfig;
   }

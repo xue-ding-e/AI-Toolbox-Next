@@ -6,6 +6,7 @@ import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import { getClaudeConfiguredModelIds } from '@/features/coding/claudecode/utils/claudeModelConfig';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
+import type { GatewayCliKey } from '@/services/proxyGatewayApi';
 
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com/v1';
 const DEFAULT_CODEX_BASE_URL = 'https://api.openai.com/v1';
@@ -24,6 +25,8 @@ interface ProviderConnectivityTestModalProps {
   onCancel: () => void;
   diagnostics?: OpenCodeDiagnosticsConfig;
   onSaveDiagnostics?: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
+  gatewayCliKey?: Extract<GatewayCliKey, 'claude' | 'codex' | 'gemini'>;
+  useGateway?: boolean;
 }
 
 function parseJsonConfig<T>(rawConfig: string, fallbackValue: T): T {
@@ -112,6 +115,8 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
   onCancel,
   diagnostics,
   onSaveDiagnostics,
+  gatewayCliKey,
+  useGateway,
 }) => {
   if (!connectivityInfo) {
     return null;
@@ -127,6 +132,9 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       modelIds={connectivityInfo.modelIds}
       diagnostics={diagnostics}
       onSaveDiagnostics={onSaveDiagnostics || (async () => {})}
+      gatewayRequest={useGateway && gatewayCliKey
+        ? { cliKey: gatewayCliKey, providerId: connectivityInfo.providerId }
+        : undefined}
     />
   );
 };

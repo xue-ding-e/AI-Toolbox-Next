@@ -5,12 +5,33 @@ import assert from 'node:assert/strict';
 
 import {
   canToggleCodexRemoteCompaction,
+  extractCodexBaseUrl,
   getCodexIgnoredCommonConfigKeys,
   isCodexGoalModeEnabled,
   isCodexRemoteCompactionEnabled,
   setCodexGoalMode,
   setCodexRemoteCompaction,
 } from '../../../../../utils/codexConfigUtils.ts';
+
+test('extractCodexBaseUrl prefers the selected provider table over other locations', () => {
+  assert.equal(extractCodexBaseUrl(`
+model_provider = "chat"
+base_url = "https://legacy.example.com/v1"
+
+[model_providers.responses]
+base_url = "https://responses.example.com/v1"
+
+[model_providers.chat]
+base_url = "https://chat.example.com/v1/chat/completions"
+`), 'https://chat.example.com/v1/chat/completions');
+});
+
+test('extractCodexBaseUrl supports root-level legacy configs', () => {
+  assert.equal(
+    extractCodexBaseUrl('base_url = "https://legacy.example.com/v1"'),
+    'https://legacy.example.com/v1',
+  );
+});
 
 test('setCodexGoalMode adds and detects features.goals', () => {
   const nextConfig = setCodexGoalMode('model = "gpt-5"\n', true);

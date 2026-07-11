@@ -1,4 +1,5 @@
 import type { OpenCodeConfig } from '@/types/opencode';
+import { isJsonObject } from '../../../../utils/json.ts';
 
 const managedConfigFields = new Set([
   '$schema',
@@ -10,10 +11,6 @@ const managedConfigFields = new Set([
   'plugin',
   'mcp',
 ]);
-
-const isJsonObject = (value: unknown): value is Record<string, unknown> => (
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-);
 
 export const extractOpenCodeOtherConfigFields = (
   config: OpenCodeConfig | null | undefined,

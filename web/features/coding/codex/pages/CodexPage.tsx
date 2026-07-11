@@ -77,6 +77,7 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import {
+  areGatewayProviderProfilesInitialized,
   codexWireApiFormatFromConfig,
   firstGatewayApiFormat,
   GatewayFailoverButton,
@@ -273,6 +274,7 @@ const CodexPage: React.FC = () => {
   const [previewData, setPreviewDataLocal] = React.useState<CodexSettings | null>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
+  const [connectivityUsesGateway, setConnectivityUsesGateway] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
   const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
@@ -726,8 +728,26 @@ const CodexPage: React.FC = () => {
       message.info(t('codex.provider.officialConnectivityHint'));
       return;
     }
+    if (!areGatewayProviderProfilesInitialized()) {
+      message.info(t('common.loading'));
+      return;
+    }
 
+    const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig) as CodexSettingsConfig & {
+      apiFormat?: unknown;
+      api_format?: unknown;
+    };
+    const baseUrl = extractCodexBaseUrl(settingsConfig.config);
+    const providerApiFormat = firstGatewayApiFormat(
+      getGatewayProviderApiFormatFromMeta(provider.meta, 'codex'),
+      provider.meta?.apiFormat,
+      typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
+      typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
+      codexWireApiFormatFromConfig(settingsConfig.config),
+      openAiApiFormatFromBaseUrl(baseUrl),
+    );
     setConnectivityInfo(buildCodexProviderConnectivityInfo(provider));
+    setConnectivityUsesGateway(providerNeedsGatewayProxy(providerApiFormat, 'openai_responses'));
     setConnectivityModalOpen(true);
   };
 
@@ -757,6 +777,10 @@ const CodexPage: React.FC = () => {
   }, [connectivityInfo, providers, t]);
 
   const handleBatchTestProviders = React.useCallback(async () => {
+    if (!areGatewayProviderProfilesInitialized()) {
+      message.info(t('common.loading'));
+      return;
+    }
     if (providers.length === 0) {
       return;
     }
@@ -1774,6 +1798,8 @@ const CodexPage: React.FC = () => {
         <ProviderConnectivityTestModal
           open={connectivityModalOpen}
           connectivityInfo={connectivityInfo}
+          gatewayCliKey="codex"
+          useGateway={connectivityUsesGateway}
           diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'codex', connectivityInfo.providerId) : undefined}
           onSaveDiagnostics={handleSaveConnectivityDiagnostics}
           onCancel={() => setConnectivityModalOpen(false)}

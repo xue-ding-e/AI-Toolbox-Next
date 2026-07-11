@@ -17,7 +17,8 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
     db: SqliteDbState,
     request: GatewayConnectivityTestRequest,
 ) -> Result<GatewayConnectivityTestResponse, String> {
-    let Some(native_protocol) = super::super::provider_protocol::native_cli_protocol(request.cli_key)
+    let Some(native_protocol) =
+        super::super::provider_protocol::native_cli_protocol(request.cli_key)
     else {
         return Err(format!(
             "{} does not support Gateway connectivity testing",
@@ -25,22 +26,13 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
         ));
     };
 
-    let provider = providers::load_candidate_providers_with_settings_and_selection(
+    let provider = providers::load_provider_by_id_for_connectivity_test(
         &db,
         request.cli_key,
+        &request.provider_id,
         Some(&settings),
-        None,
     )
-    .await?
-    .into_iter()
-    .find(|provider| provider.id == request.provider_id)
-    .ok_or_else(|| {
-        format!(
-            "Provider '{}' is not an enabled Gateway candidate for {}",
-            request.provider_id,
-            request.cli_key.as_str()
-        )
-    })?;
+    .await?;
 
     if provider.target_protocol == native_protocol {
         return Err(format!(
@@ -103,6 +95,7 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
             &test_settings,
             debug_request,
             &model_id,
+            timeout_secs,
         )
         .await;
         results.push(result);
@@ -216,6 +209,7 @@ async fn run_gateway_connectivity_request(
     settings: &ProxyGatewaySettings,
     request: DebugHttpRequest,
     model_id: &str,
+    timeout_secs: u64,
 ) -> GatewayConnectivityTestResult {
     let started = Instant::now();
     let request_url = request.path.clone();
@@ -225,9 +219,18 @@ async fn run_gateway_connectivity_request(
     let mut response = route_request_with_options(&request, context, options).await;
     let mut stream_error = None;
     if let Some(body_stream) = response.body_stream.take() {
-        match drain_gateway_body_stream(body_stream, &mut response, settings, started).await {
-            Ok(()) => {}
-            Err(error) => {
+        match tokio::time::timeout(
+            Duration::from_secs(timeout_secs.max(1)),
+            drain_gateway_body_stream(body_stream, &mut response, settings, started),
+        )
+        .await
+        {
+            Err(_) => {
+                stream_error =
+                    Some("Gateway connectivity stream exceeded the total timeout".to_string())
+            }
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
                 stream_error = Some(error);
             }
         }
@@ -237,14 +240,26 @@ async fn run_gateway_connectivity_request(
     }
 
     let total_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-    let status = if response.status_code < 400 && stream_error.is_none() {
+    let body_has_content = !response.body.is_empty();
+    let body_reports_error = gateway_body_reports_error(&response.body);
+    let status = if (200..300).contains(&response.status_code)
+        && stream_error.is_none()
+        && body_has_content
+        && !body_reports_error
+    {
         "success"
     } else {
         "error"
     };
     let error_message = stream_error.or_else(|| {
-        (response.status_code >= 400)
+        (!(200..300).contains(&response.status_code))
             .then(|| format!("Gateway API error: {}", response.status_code))
+            .or_else(|| {
+                (!body_has_content).then(|| "Gateway returned an empty response".to_string())
+            })
+            .or_else(|| {
+                body_reports_error.then(|| "Gateway response contained an error event".to_string())
+            })
     });
 
     GatewayConnectivityTestResult {
@@ -303,9 +318,45 @@ async fn drain_gateway_body_stream(
         response.response_body_bytes = response
             .response_body_bytes
             .saturating_add(chunk.len() as u64);
-        response.body.extend_from_slice(&chunk);
+        const MAX_RESPONSE_PREVIEW_BYTES: usize = 256 * 1024;
+        let remaining_preview_bytes =
+            MAX_RESPONSE_PREVIEW_BYTES.saturating_sub(response.body.len());
+        if remaining_preview_bytes > 0 {
+            response
+                .body
+                .extend_from_slice(&chunk[..chunk.len().min(remaining_preview_bytes)]);
+        }
     }
     Ok(())
+}
+
+fn gateway_body_reports_error(body: &[u8]) -> bool {
+    if body.is_empty() {
+        return false;
+    }
+    if let Ok(value) = serde_json::from_slice::<Value>(body) {
+        return value.get("error").is_some()
+            || value
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == "error");
+    }
+    String::from_utf8_lossy(body).lines().any(|line| {
+        let payload = line
+            .trim()
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(line.trim());
+        serde_json::from_str::<Value>(payload)
+            .ok()
+            .is_some_and(|value| {
+                value.get("error").is_some()
+                    || value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value == "error")
+            })
+    })
 }
 
 fn header_pairs_to_value(headers: &[(String, String)]) -> Value {
@@ -322,4 +373,22 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
     }
     serde_json::from_slice::<Value>(body)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gateway_body_reports_error;
+
+    #[test]
+    fn gateway_body_error_detection_handles_json_and_sse() {
+        assert!(gateway_body_reports_error(
+            br#"{"error":{"message":"failed"}}"#
+        ));
+        assert!(gateway_body_reports_error(
+            b"event: error\ndata: {\"type\":\"error\",\"message\":\"failed\"}\n\n"
+        ));
+        assert!(!gateway_body_reports_error(
+            b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+        ));
+    }
 }

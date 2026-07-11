@@ -57,6 +57,35 @@ export const replaceOpenCodeMarkdownAgentFrontmatter = (
 
 const quoteYamlString = (value: string): string => JSON.stringify(value);
 
+const yamlBlockScalarPattern = /^[|>](?:[1-9][+-]?|[+-][1-9]?|[+-])?(?:\s+#.*)?$/;
+
+const findFrontmatterFieldRange = (
+  frontmatter: string,
+  fieldName: 'model' | 'variant',
+): { end: number; start: number } | undefined => {
+  const fieldPattern = new RegExp(`^${fieldName}\\s*:(.*)(?:\\r?\\n|$)`, 'm');
+  const match = fieldPattern.exec(frontmatter);
+  if (!match || match.index === undefined) return undefined;
+
+  const start = match.index;
+  let end = start + match[0].length;
+  if (!yamlBlockScalarPattern.test(match[1].trim())) {
+    return { start, end };
+  }
+
+  while (end < frontmatter.length) {
+    const nextLineEnd = frontmatter.indexOf('\n', end);
+    const lineEnd = nextLineEnd >= 0 ? nextLineEnd + 1 : frontmatter.length;
+    const line = frontmatter.slice(end, lineEnd).replace(/\r?\n$/, '');
+    if (line.trim() !== '' && !/^\s/.test(line)) {
+      break;
+    }
+    end = lineEnd;
+  }
+
+  return { start, end };
+};
+
 export const setOpenCodeMarkdownAgentFrontmatterField = (
   rawContent: string,
   fieldName: 'model' | 'variant',
@@ -66,10 +95,10 @@ export const setOpenCodeMarkdownAgentFrontmatterField = (
   if (!range) return rawContent;
   const newline = detectNewline(rawContent);
   const frontmatter = rawContent.slice(range.frontmatterStart, range.closingStart);
-  const fieldPattern = new RegExp(`^${fieldName}\\s*:.*(?:\\r?\\n|$)`, 'm');
   const replacement = value ? `${fieldName}: ${quoteYamlString(value)}${newline}` : '';
-  const nextFrontmatter = fieldPattern.test(frontmatter)
-    ? frontmatter.replace(fieldPattern, replacement)
+  const fieldRange = findFrontmatterFieldRange(frontmatter, fieldName);
+  const nextFrontmatter = fieldRange
+    ? `${frontmatter.slice(0, fieldRange.start)}${replacement}${frontmatter.slice(fieldRange.end)}`
     : value
       ? `${frontmatter.replace(/(?:\r?\n)*$/, newline)}${replacement}`
       : frontmatter;
@@ -112,4 +141,29 @@ export const mergeOpenCodeAgentConfigs = (
     ) as OpenCodeAgentConfig,
     { ...(baseConfig ?? {}) },
   );
+};
+
+export type OpenCodeAgentConfigField = 'model' | 'variant';
+
+export type OpenCodeAgentConfigFieldSource =
+  | { type: 'json' }
+  | { index: number; type: 'markdown' };
+
+export const resolveOpenCodeAgentConfigFieldSource = (
+  baseConfig: OpenCodeAgentConfig | undefined,
+  markdownConfigs: Array<OpenCodeAgentConfig | undefined>,
+  fieldName: OpenCodeAgentConfigField,
+): OpenCodeAgentConfigFieldSource | undefined => {
+  for (let index = markdownConfigs.length - 1; index >= 0; index -= 1) {
+    const markdownConfig = markdownConfigs[index];
+    if (markdownConfig && Object.prototype.hasOwnProperty.call(markdownConfig, fieldName)) {
+      return { type: 'markdown', index };
+    }
+  }
+
+  if (baseConfig && Object.prototype.hasOwnProperty.call(baseConfig, fieldName)) {
+    return { type: 'json' };
+  }
+
+  return undefined;
 };

@@ -242,11 +242,31 @@ export function extractCodexBaseUrl(configText: string | undefined | null): stri
     const text = normalizeQuotes(raw);
     if (!text) return undefined;
     
-    // 匹配 base_url = "xxx" 或 base_url = 'xxx'
-    const match = text.match(/base_url\s*=\s*(['"])([^'"]+)\1/);
-    return match?.[2];
+    const parsedConfig = parseToml(text) as Record<string, unknown>;
+    const providerKey = resolveCodexCustomProviderKey(parsedConfig);
+    const modelProviders = isCodexProviderConfigSection(parsedConfig.model_providers)
+      ? parsedConfig.model_providers
+      : undefined;
+    const providerConfig = modelProviders && isCodexProviderConfigSection(modelProviders[providerKey])
+      ? modelProviders[providerKey]
+      : undefined;
+    if (typeof providerConfig?.base_url === 'string' && providerConfig.base_url.trim()) {
+      return providerConfig.base_url.trim();
+    }
+    if (typeof parsedConfig.base_url === 'string' && parsedConfig.base_url.trim()) {
+      return parsedConfig.base_url.trim();
+    }
+    const fallbackProvider = getCodexProviderSectionKeys(modelProviders)
+      .map((key) => modelProviders?.[key])
+      .find((value) => isCodexProviderConfigSection(value) && typeof value.base_url === 'string');
+    return isCodexProviderConfigSection(fallbackProvider)
+      && typeof fallbackProvider.base_url === 'string'
+      ? fallbackProvider.base_url.trim() || undefined
+      : undefined;
   } catch {
-    return undefined;
+    const match = normalizeQuotes(typeof configText === 'string' ? configText : '')
+      .match(/base_url\s*=\s*(['"])([^'"]+)\1/);
+    return match?.[2];
   }
 }
 

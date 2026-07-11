@@ -22,6 +22,7 @@
 - Agent 模型是“模型设置”卡片内的低频子模块，默认折叠；不要再把它恢复成独立页面卡片或独立侧栏分区。其内部使用横向表单行，并按所选模型是否提供 Variant 渐进展示 Variant 字段。
 - Agent 指令属于 OpenCode Core 的 `agent.<name>.prompt` 字符串。页面使用 Markdown 编辑器只是提供编辑/预览体验，保存时直接写入当前 `opencode.json` 的 Agent 配置并复用既有配置保存、事件和 WSL 同步链路；不要在此模块额外生成 `prompts/*.md` 或 `agents/*.md` 文件。添加弹窗只显示摘要入口，正文在独立大弹窗编辑；清空内置 Agent 唯一的 prompt 覆盖时应恢复默认节点，自定义 Agent 则只移除 prompt。
 - 上一条只描述 JSON Agent。用户已有的官方 Markdown Agent（全局 `agent/**/*.md` / `agents/**/*.md`）必须作为独立来源读取和原地编辑：Frontmatter 管配置，正文管 Agent 指令；不能把它转换成 `agent.<name>`。同名 JSON/Markdown 配置按 OpenCode 顺序聚合展示并明确标出多来源，新增 Agent 的重名校验也必须包含 Markdown 名称。
+- JSON 与 Markdown 同名 Agent 聚合后，`default_agent` 合法性、页面候选和 model/variant 行内编辑都必须使用同一份 effective config。已有字段写回真正声明该字段的最高优先级来源；只有字段在所有来源中都不存在时，才写入最高优先级可编辑来源。修改 Markdown Frontmatter 的 `model` / `variant` 时必须完整处理 YAML `|` / `>` block scalar 续行，不能只替换字段首行。
 
 ## 关键流程
 

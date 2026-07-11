@@ -23,9 +23,9 @@ pub(crate) use self::providers::{
 };
 
 #[cfg(test)]
-use self::http_io::{find_header_end, header_value};
-#[cfg(test)]
 use self::http_io::DebugHttpRequest;
+#[cfg(test)]
+use self::http_io::{find_header_end, header_value};
 use self::http_io::{read_http_request, write_response};
 #[cfg(test)]
 use self::providers::{codex_base_url_from_config, json_object_string};
@@ -33,16 +33,16 @@ use self::providers::{codex_base_url_from_config, json_object_string};
 use self::routes::{build_target_url, match_gateway_route};
 #[cfg(test)]
 use self::upstream::build_upstream_headers;
+use self::upstream::route_request;
 #[cfg(test)]
 use self::upstream::{route_request_with_options, GatewayRequestOptions};
-use self::upstream::route_request;
 use super::listen::bind_gateway_listener;
 use super::model_health::ModelHealthRegistry;
 use super::paths::ProxyGatewayPaths;
 #[cfg(test)]
-use super::types::ProviderGatewayMeta;
-#[cfg(test)]
 use super::types::GatewayConnectivityTestRequest;
+#[cfg(test)]
+use super::types::ProviderGatewayMeta;
 use super::types::{
     GatewayCliKey, ProxyGatewayHealthCheckResult, ProxyGatewaySettings, ProxyGatewayStatus,
 };

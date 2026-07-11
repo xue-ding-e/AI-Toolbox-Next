@@ -13,6 +13,7 @@ export {
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfileReferenceFromMeta,
   getGatewayProviderProfilesVersion,
+  areGatewayProviderProfilesInitialized,
   inferGatewayProviderEndpointSelection,
   inferUniqueGatewayProviderEndpointSelection,
   mergeGatewayProfileReferenceIntoMeta,

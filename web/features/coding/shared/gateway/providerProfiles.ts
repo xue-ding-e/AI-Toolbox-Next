@@ -83,9 +83,16 @@ export const GATEWAY_PROVIDER_PROFILE_CATALOG: GatewayProviderProfileCatalog = {
 };
 
 let gatewayProviderProfilesVersion = 0;
+let gatewayProviderProfilesInitialized = false;
 const gatewayProviderProfileListeners = new Set<GatewayProviderProfileListener>();
 
 export const getGatewayProviderProfilesVersion = () => gatewayProviderProfilesVersion;
+export const areGatewayProviderProfilesInitialized = () => gatewayProviderProfilesInitialized;
+export const markGatewayProviderProfilesInitialized = () => {
+  if (gatewayProviderProfilesInitialized) return;
+  gatewayProviderProfilesInitialized = true;
+  notifyGatewayProviderProfilesUpdated();
+};
 
 export const subscribeGatewayProviderProfiles = (
   listener: GatewayProviderProfileListener,
@@ -108,6 +115,7 @@ export const updateGatewayProviderProfiles = (catalog: GatewayProviderProfileCat
   GATEWAY_PROVIDER_PROFILE_CATALOG.schemaVersion = catalog.schemaVersion;
   GATEWAY_PROVIDER_PROFILE_CATALOG.updatedAt = catalog.updatedAt;
   GATEWAY_PROVIDER_PROFILE_CATALOG.profiles = catalog.profiles;
+  gatewayProviderProfilesInitialized = true;
   notifyGatewayProviderProfilesUpdated();
 };
 

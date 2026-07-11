@@ -55,6 +55,7 @@ sequenceDiagram
 - 改配置落盘后不要只刷新页面状态；托盘和 WSL 自动同步也依赖统一事件链路。
 - `OpenCodeConfig.other` 是 `agent`、`default_agent` 和未来顶层字段的无损兼容边界。新增 Agent UI 时不要把后端类型收窄为不完整结构；读取 -> 写回必须保留 Agent 的 permission、options、Provider 私有字段和其他未知字段。
 - JSON Agent 和 Markdown Agent 是两个独立 Source of Truth。页面可以按 OpenCode 加载顺序聚合展示，但编辑必须写回原来源；禁止把已有 Markdown Agent 静默复制或迁移进 `opencode.json`。Markdown 保存应保留正文与未知 Frontmatter 字段，并用内容 Hash 防止覆盖外部编辑。
+- Markdown Agent 列表是 best-effort 聚合：单个不可读文件或目录遍历错误只记录 warning，不得让其他正常 Agent 全部消失。遍历 `agent/` / `agents/` 时不要跟随目录符号链接扩大读取边界。
 - 共享 `fetch_provider_models` 的 Google Native 模型列表探测使用 Gemini API `models.list` 路径。传入的 Gemini base URL 如果不以 `v1` / `v1alpha` / `v1beta` 结尾，后端应只在探测时补 `/v1beta/models`；不要要求 Gemini CLI 的 `GOOGLE_GEMINI_BASE_URL` 持久化时必须包含版本路径。
 
 ## 跨模块依赖

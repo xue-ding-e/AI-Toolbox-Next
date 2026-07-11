@@ -993,8 +993,15 @@ async fn send_upstream_request(
         route_declares_streaming(route),
         compact_compat,
     )?;
-    let upstream_body = prepared_upstream_body.body;
+    let mut upstream_body = prepared_upstream_body.body;
     let conversion_context = prepared_upstream_body.conversion_context;
+    if should_filter_known_invalid_responses_ciphers(
+        responses_encrypted_content_rectifier_enabled,
+        provider.target_protocol,
+        compact_compat,
+    ) {
+        strip_known_invalid_responses_ciphers(context, provider, &mut upstream_body)?;
+    }
     let upstream_body_snapshot = upstream_body.clone();
     let client =
         http_client::client_with_timeout_no_compression(db, non_streaming_timeout_secs.max(1))
@@ -1147,6 +1154,9 @@ async fn send_upstream_request(
         if should_attempt_responses_encrypted_content_rectifier
             && should_rectify_responses_encrypted_content(status_code, &body)
         {
+            context
+                .side_stores
+                .remember_invalid_responses_ciphers(&provider.id, &upstream_body_snapshot);
             if let Some(rectified_body) =
                 build_responses_encrypted_content_rectified_body(&upstream_body_snapshot)?
             {
@@ -3606,6 +3616,14 @@ fn should_attempt_responses_encrypted_content_rectifier(
         && (400..500).contains(&status_code)
 }
 
+fn should_filter_known_invalid_responses_ciphers(
+    enabled: bool,
+    target_protocol: AiProtocol,
+    compact_compat: CodexResponsesCompactCompat,
+) -> bool {
+    enabled && target_protocol == AiProtocol::OpenAiResponses && !compact_compat.is_compact()
+}
+
 fn should_rectify_responses_encrypted_content(status_code: u16, body: &[u8]) -> bool {
     if !(400..500).contains(&status_code) {
         return false;
@@ -3656,6 +3674,32 @@ fn build_responses_encrypted_content_rectified_body(
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
         })
+}
+
+fn strip_known_invalid_responses_ciphers(
+    context: &GatewayRuntimeContext,
+    provider: &UpstreamProvider,
+    body: &mut Vec<u8>,
+) -> Result<usize, GatewayForwardError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
+        return Ok(0);
+    };
+    let removed = context
+        .side_stores
+        .strip_known_invalid_responses_ciphers(&provider.id, &mut value);
+    if removed == 0 {
+        return Ok(0);
+    }
+    *body = serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!(
+            "Failed to serialize Responses body after filtering known invalid encrypted content: {error}"
+        ),
+        kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+    })?;
+    Ok(removed)
 }
 
 fn should_rectify_thinking_signature(status_code: u16, body: &[u8]) -> bool {
@@ -8353,6 +8397,7 @@ fn save_health_registry_if_needed(context: &GatewayRuntimeContext, changed: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding::proxy_gateway::types::ProxyGatewaySettings;
 
     fn debug_request(body: &[u8]) -> DebugHttpRequest {
         DebugHttpRequest {
@@ -12580,6 +12625,48 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
     }
 
     #[test]
+    fn responses_encrypted_content_negative_cache_filters_only_rejected_provider_ciphers() {
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), None, None);
+        let provider = provider_for_cli(GatewayCliKey::Codex);
+        let rejected_body = serde_json::to_vec(&json!({
+            "input": [{"type":"reasoning","encrypted_content":"cipher-old"}]
+        }))
+        .unwrap();
+        context
+            .side_stores
+            .remember_invalid_responses_ciphers(&provider.id, &rejected_body);
+
+        let mut next_body = serde_json::to_vec(&json!({
+            "model":"gpt-5",
+            "input":[
+                {"type":"reasoning","encrypted_content":"cipher-old"},
+                {"type":"reasoning","encrypted_content":"cipher-new"},
+                {"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}]},
+                {"type":"message","role":"user","content":"hello"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            strip_known_invalid_responses_ciphers(&context, &provider, &mut next_body).unwrap(),
+            1
+        );
+        let next_value = serde_json::from_slice::<Value>(&next_body).unwrap();
+        assert_eq!(next_value["input"].as_array().unwrap().len(), 3);
+        assert_eq!(next_value["input"][0]["encrypted_content"], "cipher-new");
+        assert_eq!(next_value["input"][1]["type"], "reasoning");
+        assert_eq!(next_value["input"][2]["type"], "message");
+
+        let mut other_provider = provider.clone();
+        other_provider.id = "provider-b".to_string();
+        let mut other_body = rejected_body.clone();
+        assert_eq!(
+            strip_known_invalid_responses_ciphers(&context, &other_provider, &mut other_body)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn chat_to_responses_conversion_does_not_forge_encrypted_content() {
         let encrypted_content = concat!("g", "AAAAABfixture-openai-responses");
         let request_body = serde_json::to_vec(&json!({
@@ -12712,8 +12799,25 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             &headers,
             500,
         ));
+        assert!(should_filter_known_invalid_responses_ciphers(
+            true,
+            AiProtocol::OpenAiResponses,
+            CodexResponsesCompactCompat::none(),
+        ));
+        assert!(!should_filter_known_invalid_responses_ciphers(
+            false,
+            AiProtocol::OpenAiResponses,
+            CodexResponsesCompactCompat::none(),
+        ));
+        assert!(!should_filter_known_invalid_responses_ciphers(
+            true,
+            AiProtocol::OpenAiChat,
+            CodexResponsesCompactCompat::none(),
+        ));
 
         let compact_route = gateway_route(GatewayCliKey::Codex, "/v1/responses/compact");
+        let compact_provider = provider_for_cli(GatewayCliKey::Codex);
+        let compact_compat = CodexResponsesCompactCompat::new(&compact_route, &compact_provider);
         assert!(!should_attempt_responses_encrypted_content_rectifier(
             true,
             AiProtocol::OpenAiResponses,
@@ -12721,6 +12825,11 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             &compact_route,
             &headers,
             400,
+        ));
+        assert!(!should_filter_known_invalid_responses_ciphers(
+            true,
+            AiProtocol::OpenAiResponses,
+            compact_compat,
         ));
     }
 

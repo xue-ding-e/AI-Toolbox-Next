@@ -13,7 +13,6 @@ use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use serde_json::Value;
 use std::fs;
-use toml_edit::{DocumentMut, Item};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpstreamProvider {
@@ -107,6 +106,39 @@ pub(crate) async fn load_candidate_providers_with_settings_and_selection(
     }
 
     apply_provider_selection(providers, selection)
+}
+
+pub(crate) async fn load_provider_by_id_for_connectivity_test(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    provider_id: &str,
+    settings: Option<&ProxyGatewaySettings>,
+) -> Result<UpstreamProvider, String> {
+    let table = match cli_key {
+        GatewayCliKey::Claude => DbTable::ClaudeProvider,
+        GatewayCliKey::Codex => DbTable::CodexProvider,
+        GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
+        GatewayCliKey::OpenCode => {
+            return Err(
+                "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
+            )
+        }
+    };
+    let records = db.with_conn(|conn| db_list(conn, table, None))?;
+    let record = records
+        .into_iter()
+        .find(|record| record.get("id").and_then(Value::as_str) == Some(provider_id))
+        .ok_or_else(|| {
+            format!(
+                "Provider '{provider_id}' was not found for {}",
+                cli_key.as_str()
+            )
+        })?;
+    provider_from_record(cli_key, record, settings)?.ok_or_else(|| {
+        format!(
+            "Provider '{provider_id}' is disabled or not eligible for Gateway connectivity testing"
+        )
+    })
 }
 
 pub(crate) fn load_gateway_provider_selection(
@@ -800,23 +832,7 @@ fn codex_wire_api_from_settings(settings: &Value) -> Option<String> {
     settings
         .get("config")
         .and_then(Value::as_str)
-        .and_then(codex_wire_api_from_config)
-}
-
-fn codex_wire_api_from_config(config_toml: &str) -> Option<String> {
-    let trimmed = config_toml.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let document = trimmed.parse::<DocumentMut>().ok()?;
-    document
-        .as_table()
-        .get("wire_api")
-        .and_then(Item::as_str)
-        .or_else(|| document.as_table().get("api_format").and_then(Item::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .and_then(super::super::provider_protocol::codex_wire_api_from_config)
 }
 
 fn is_chat_completions_url(url: &str) -> bool {
@@ -1061,41 +1077,7 @@ pub(super) fn json_object_string(
 }
 
 pub(super) fn codex_base_url_from_config(config_toml: &str) -> Option<String> {
-    let trimmed = config_toml.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let document = trimmed.parse::<DocumentMut>().ok()?;
-    let root = document.as_table();
-    let providers = root.get("model_providers")?.as_table()?;
-    let selected_provider = root
-        .get("model_provider")
-        .and_then(Item::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
-    if let Some(selected_provider) = selected_provider {
-        if let Some(base_url) = providers
-            .get(selected_provider)
-            .and_then(Item::as_table)
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(Item::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(base_url.to_string());
-        }
-    }
-
-    let fallback = providers.iter().find_map(|(_, item)| {
-        item.as_table()
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(Item::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    });
-    fallback
+    super::super::provider_protocol::codex_base_url_from_config(config_toml)
 }
 
 #[cfg(test)]
