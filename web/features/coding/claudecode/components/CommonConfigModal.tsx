@@ -8,6 +8,7 @@ import {
   saveClaudeLocalConfig,
 } from '@/services/claudeCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
+import { isJsonObject } from '@/utils/json';
 import styles from './CommonConfigModal.module.less';
 
 interface CommonConfigModalProps {
@@ -82,7 +83,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       const extractedValue = extractedConfig.config
         ? JSON.parse(extractedConfig.config) as unknown
         : {};
-      if (!isPlainObject(extractedValue)) {
+      if (!isJsonObject(extractedValue)) {
         throw new Error(t('claudecode.commonConfig.invalidJsonObject'));
       }
       setConfigValue(extractedValue);
@@ -111,7 +112,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
     }
 
     const normalizedConfigValue = normalizeCommonConfigValue(configValue);
-    if (!isPlainObject(normalizedConfigValue)) {
+    if (!isJsonObject(normalizedConfigValue)) {
       message.error(t('claudecode.commonConfig.invalidJsonObject'));
       return;
     }
@@ -266,10 +267,6 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 
 export default CommonConfigModal;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function normalizeCommonConfigValue(value: unknown): unknown {
   if (typeof value === 'string' && value.trim() === '') {
     return {};
@@ -311,7 +308,7 @@ const EMPTY_TOGGLE_STATES: CommonConfigToggleStates = {
 
 function parseCommonConfigObject(value: unknown): Record<string, unknown> | null {
   const normalizedValue = normalizeCommonConfigValue(value);
-  return isPlainObject(normalizedValue) ? normalizedValue : null;
+  return isJsonObject(normalizedValue) ? normalizedValue : null;
 }
 
 function deriveCommonConfigToggleStates(
@@ -321,8 +318,8 @@ function deriveCommonConfigToggleStates(
     return EMPTY_TOGGLE_STATES;
   }
 
-  const attribution = isPlainObject(config.attribution) ? config.attribution : {};
-  const env = isPlainObject(config.env) ? config.env : {};
+  const attribution = isJsonObject(config.attribution) ? config.attribution : {};
+  const env = isJsonObject(config.env) ? config.env : {};
 
   return {
     hideAttribution: attribution.commit === '' && attribution.pr === '',
@@ -342,7 +339,7 @@ function applyCommonConfigQuickOption(
   const nextConfig = cloneCommonConfig(config);
 
   if (option === 'hideAttribution') {
-    const attribution = isPlainObject(nextConfig.attribution)
+    const attribution = isJsonObject(nextConfig.attribution)
       ? { ...nextConfig.attribution }
       : {};
 
@@ -362,7 +359,7 @@ function applyCommonConfigQuickOption(
     return nextConfig;
   }
 
-  const env = isPlainObject(nextConfig.env) ? { ...nextConfig.env } : {};
+  const env = isJsonObject(nextConfig.env) ? { ...nextConfig.env } : {};
   const envField = getCommonConfigEnvField(option);
 
   if (checked) {

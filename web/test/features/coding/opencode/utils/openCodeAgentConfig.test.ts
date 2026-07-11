@@ -210,6 +210,26 @@ test('clearInvalidOpenCodeDefaultAgent removes invalid defaults after advanced e
   assert.equal(valid.default_agent, 'reviewer');
 });
 
+test('clearInvalidOpenCodeDefaultAgent removes a missing custom default', () => {
+  const result = clearInvalidOpenCodeDefaultAgent({
+    provider: {},
+    default_agent: 'ghost',
+  });
+
+  assert.equal(result.default_agent, undefined);
+});
+
+test('clearInvalidOpenCodeDefaultAgent keeps implicit built-in primary defaults', () => {
+  for (const defaultAgent of ['build', 'plan']) {
+    const result = clearInvalidOpenCodeDefaultAgent({
+      provider: {},
+      default_agent: defaultAgent,
+    });
+
+    assert.equal(result.default_agent, defaultAgent);
+  }
+});
+
 test('configured agent model IDs include every explicit model override', () => {
   assert.deepEqual(
     getConfiguredOpenCodeAgentModelIds(createConfig()),

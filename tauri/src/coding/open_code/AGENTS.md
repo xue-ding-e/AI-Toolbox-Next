@@ -11,6 +11,7 @@
 - OpenCode prompt 文件不是独立根目录配置，而是基于当前生效配置文件所在目录派生出的 `AGENTS.md`。
 - OpenCode 主模型和小模型的运行时值都使用 `provider_id/model_id` 格式；不要把它降成裸 `model_id`。
 - OpenCode Core 的 Agent 配置位于顶层单数 `agent`，Agent 独立模型同样使用完整 `provider_id/model_id`；插件 OMO/OMOS 使用的复数 `agents` 是另一份配置，不能混用。`small_model` 当前仍用于标题生成等轻量内部任务，并未被 `agent` 取代。
+- OpenCode Core 还会从全局配置目录下的 `agent/**/*.md` 和 `agents/**/*.md` 读取 Markdown Agent。应用内自定义 `OPENCODE_CONFIG` 文件只改变主 JSON 文件，不改变默认全局 Agent 目录；不能从自定义 JSON 的父目录猜测 Markdown Agent 目录。WSL Direct 时该目录必须从统一 runtime location 的 Linux 用户根解析。
 - models.dev 的 `experimental.modes.*` 在 OpenCode 语义中会展开成虚拟模型，ID 形如 `${base_model_id}-${mode}`，例如 `gpt-5.5-fast`；后端统一模型列表需要透出 `base_model_id` / `experimental_mode`，供前端继承 base variants。
 - `favorite provider` / `我使用过的供应商` 库不是当前配置镜像，而是独立的历史库和诊断缓存；真正的 OpenCode 运行时配置仍以当前配置文件内容为准。
 
@@ -53,6 +54,7 @@ sequenceDiagram
 - `favorite provider` 库的产品语义是“使用过的供应商历史库”，主要用于删除后找回和保留诊断信息；如果某个 provider 已不在当前配置里但仍留在库中，默认先视为预期语义，而不是脏数据。
 - 改配置落盘后不要只刷新页面状态；托盘和 WSL 自动同步也依赖统一事件链路。
 - `OpenCodeConfig.other` 是 `agent`、`default_agent` 和未来顶层字段的无损兼容边界。新增 Agent UI 时不要把后端类型收窄为不完整结构；读取 -> 写回必须保留 Agent 的 permission、options、Provider 私有字段和其他未知字段。
+- JSON Agent 和 Markdown Agent 是两个独立 Source of Truth。页面可以按 OpenCode 加载顺序聚合展示，但编辑必须写回原来源；禁止把已有 Markdown Agent 静默复制或迁移进 `opencode.json`。Markdown 保存应保留正文与未知 Frontmatter 字段，并用内容 Hash 防止覆盖外部编辑。
 - 共享 `fetch_provider_models` 的 Google Native 模型列表探测使用 Gemini API `models.list` 路径。传入的 Gemini base URL 如果不以 `v1` / `v1alpha` / `v1beta` 结尾，后端应只在探测时补 `/v1beta/models`；不要要求 Gemini CLI 的 `GOOGLE_GEMINI_BASE_URL` 持久化时必须包含版本路径。
 
 ## 跨模块依赖

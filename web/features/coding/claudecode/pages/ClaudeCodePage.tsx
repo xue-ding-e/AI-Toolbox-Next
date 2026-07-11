@@ -594,19 +594,14 @@ const ClaudeCodePage: React.FC = () => {
     const targets = testableProviders.map((provider) => {
 
       const connectivityInfo = buildClaudeProviderConnectivityInfo(provider);
-      let settingsConfig: {
+      const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig) as {
         env?: {
           ANTHROPIC_BASE_URL?: string;
         };
         apiFormat?: unknown;
         api_format?: unknown;
         openrouter_compat_mode?: unknown;
-      } = {};
-      try {
-        settingsConfig = JSON.parse(provider.settingsConfig || '{}') as typeof settingsConfig;
-      } catch (error) {
-        console.error('Failed to parse Claude provider settings config for batch test:', error);
-      }
+      };
       const hasExplicitBaseUrl = Boolean(settingsConfig.env?.ANTHROPIC_BASE_URL?.trim());
       const providerApiFormat = firstGatewayApiFormat(
         getGatewayProviderApiFormatFromMeta(provider.meta, 'claude'),

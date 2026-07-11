@@ -301,6 +301,7 @@
       "id": "step-3.7-flash",
       "name": "Step 3.7 Flash",
       "contextLimit": 262144,
+      "outputLimit": 262144,
       "modalities": {
         "input": [
           "text"
@@ -318,6 +319,7 @@
       "id": "step-3.5-flash-2603",
       "name": "Step 3.5 Flash 2603",
       "contextLimit": 262144,
+      "outputLimit": 262144,
       "modalities": {
         "input": [
           "text"
@@ -335,6 +337,7 @@
       "id": "step-3.5-flash",
       "name": "Step 3.5 Flash",
       "contextLimit": 262144,
+      "outputLimit": 262144,
       "modalities": {
         "input": [
           "text"

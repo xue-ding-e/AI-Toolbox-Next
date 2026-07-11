@@ -1,5 +1,7 @@
 import JSON5 from 'json5';
 
+import { isJsonObject } from '../../../../utils/json.ts';
+
 export interface ImportedConfigData {
   agents?: Record<string, Record<string, unknown>>;
   categories?: Record<string, Record<string, unknown>>;
@@ -7,9 +9,6 @@ export interface ImportedConfigData {
 }
 
 export type ImportedConfigVariant = 'omo' | 'omos';
-
-export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export const deepMergeObjects = (
   base?: Record<string, unknown>,
@@ -22,7 +21,7 @@ export const deepMergeObjects = (
 
   Object.entries(override).forEach(([key, overrideValue]) => {
     const baseValue = result[key];
-    if (isPlainObject(baseValue) && isPlainObject(overrideValue)) {
+    if (isJsonObject(baseValue) && isJsonObject(overrideValue)) {
       result[key] = deepMergeObjects(baseValue, overrideValue);
       return;
     }
@@ -35,18 +34,18 @@ export const deepMergeObjects = (
 export const resolveSlimImportedAgents = (
   config: Record<string, unknown>,
 ): Record<string, Record<string, unknown>> | undefined => {
-  const rootAgents = isPlainObject(config.agents)
+  const rootAgents = isJsonObject(config.agents)
     ? config.agents as Record<string, Record<string, unknown>>
     : undefined;
 
   const activePresetName = typeof config.preset === 'string' ? config.preset.trim() : '';
-  const presets = isPlainObject(config.presets) ? config.presets : undefined;
-  let presetAgents = activePresetName && presets && isPlainObject(presets[activePresetName])
+  const presets = isJsonObject(config.presets) ? config.presets : undefined;
+  let presetAgents = activePresetName && presets && isJsonObject(presets[activePresetName])
     ? presets[activePresetName] as Record<string, Record<string, unknown>>
     : undefined;
 
   if (!presetAgents && presets) {
-    const presetEntries = Object.entries(presets).filter(([, presetValue]) => isPlainObject(presetValue));
+    const presetEntries = Object.entries(presets).filter(([, presetValue]) => isJsonObject(presetValue));
     if (presetEntries.length === 1) {
       presetAgents = presetEntries[0][1] as Record<string, Record<string, unknown>>;
     }
@@ -65,11 +64,11 @@ export const extractImportedConfigData = (
 ): ImportedConfigData | undefined => {
   const agents = variant === 'omos'
     ? resolveSlimImportedAgents(config)
-    : (isPlainObject(config.agents)
+    : (isJsonObject(config.agents)
       ? config.agents as Record<string, Record<string, unknown>>
       : undefined);
 
-  const categories = isPlainObject(config.categories)
+  const categories = isJsonObject(config.categories)
     ? config.categories as Record<string, Record<string, unknown>>
     : undefined;
 
@@ -101,7 +100,7 @@ export const parseImportedConfigText = (
   variant: ImportedConfigVariant,
 ): ImportedConfigData | undefined => {
   const parsedValue = JSON5.parse(raw);
-  if (!isPlainObject(parsedValue)) {
+  if (!isJsonObject(parsedValue)) {
     throw new Error('invalid-config-object');
   }
 

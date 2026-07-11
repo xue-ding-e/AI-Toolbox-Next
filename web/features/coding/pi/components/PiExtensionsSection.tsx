@@ -52,6 +52,10 @@ interface RecommendedPiExtension {
   detailUrl: string;
 }
 
+interface PiExtensionsSectionProps {
+  refreshKey?: number;
+}
+
 const RECOMMENDED_PI_EXTENSIONS: RecommendedPiExtension[] = [
   {
     name: 'context-mode',
@@ -116,7 +120,7 @@ const isMagicContextInstalled = (extensions: PiExtensionSummary[]): boolean => (
   isRecommendedInstalled(extensions, 'npm:@cortexkit/pi-magic-context')
 );
 
-const PiExtensionsSection: React.FC = () => {
+const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 0 }) => {
   const { t } = useTranslation();
   const { message } = App.useApp();
   const [data, setData] = React.useState<PiExtensionListResult | null>(null);
@@ -145,7 +149,7 @@ const PiExtensionsSection: React.FC = () => {
 
   React.useEffect(() => {
     void loadExtensions();
-  }, [loadExtensions]);
+  }, [loadExtensions, refreshKey]);
 
   const extensions = data?.extensions ?? [];
   const magicContextInstalled = isMagicContextInstalled(extensions);

@@ -2127,6 +2127,7 @@ const OpenCodePage: React.FC = () => {
 
                   {config && (
                     <OpenCodeAgentSettings
+                      key={configPathInfo?.path ?? 'opencode-agent-settings'}
                       config={config}
                       modelOptions={omoModelGroupedOptions}
                       modelVariantsMap={modelVariantsMap}

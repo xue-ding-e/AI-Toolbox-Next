@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::types::{
     McpPackageVersionManager, McpPackageVersionResolveRequest, McpPackageVersionResolveResult,
 };
+use crate::coding::url_utils::encode_url_path_segment;
 use crate::{http_client, SqliteDbState};
 
 const NPM_REGISTRY_BASE_URL: &str = "https://registry.npmjs.org";
@@ -166,19 +167,6 @@ fn strip_python_extras(package_name: &str) -> String {
         .map(|(name, _)| name)
         .unwrap_or(package_name)
         .to_string()
-}
-
-fn encode_url_path_segment(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }
 
 #[cfg(test)]

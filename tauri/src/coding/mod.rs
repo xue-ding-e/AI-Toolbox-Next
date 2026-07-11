@@ -19,6 +19,7 @@ pub mod session_manager;
 pub mod skills;
 pub mod ssh;
 pub mod tools;
+pub(crate) mod url_utils;
 pub mod wsl;
 
 mod db_id;

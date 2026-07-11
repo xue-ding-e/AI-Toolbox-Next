@@ -10,6 +10,7 @@ import {
   setCodexBaseUrl,
   setCodexModel,
 } from '../../../../utils/codexConfigUtils';
+import { isJsonObject } from '../../../../utils/json';
 import { normalizeCodexCatalogModels } from './codexCatalogModels';
 
 export interface BuildCodexSettingsConfigInput {
@@ -20,6 +21,18 @@ export interface BuildCodexSettingsConfigInput {
   config: string;
   catalogModels: CodexCatalogModel[];
   auth: Record<string, unknown>;
+}
+
+export function parseCodexSettingsConfig(rawConfig: string | undefined): CodexSettingsConfig {
+  if (!rawConfig?.trim()) return {};
+
+  try {
+    const parsedConfig = JSON.parse(rawConfig) as unknown;
+    return isJsonObject(parsedConfig) ? parsedConfig as CodexSettingsConfig : {};
+  } catch (error) {
+    console.error('Failed to parse Codex settings config:', error);
+    return {};
+  }
 }
 
 export function buildCodexSettingsConfig({

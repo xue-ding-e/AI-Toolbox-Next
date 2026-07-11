@@ -1932,7 +1932,7 @@
       "deleteConfirmTitle": "删除自定义 Agent {{name}}？",
       "deleteConfirmContent": "该 Agent 的模型、权限、Prompt 和其他配置都会从 opencode.json 中删除。",
       "advancedTitle": "{{name}} 高级设置",
-      "advancedHint": "编辑该 Agent 的完整配置对象。未知字段会原样保留；tools 和 maxSteps 是 OpenCode 兼容的废弃字段，新配置优先使用 permission 和 steps。",
+      "advancedHint": "编辑该 Agent 的完整配置对象。下方占位内容是可直接参考的协议字段示例；未知字段会原样保留。tools 和 maxSteps 是 OpenCode 兼容的废弃字段，新配置优先使用 permission 和 steps。",
       "validation": {
         "json": "JSON 格式无效，请修正后再保存。",
         "object": "Agent 配置必须是 JSON 对象。",
@@ -1962,7 +1962,23 @@
       "promptNotSet": "未设置 Agent 指令",
       "addPrompt": "添加指令",
       "newAgent": "新 Agent",
-      "reservedName": "该名称属于 OpenCode 内置 Agent，请直接编辑对应的内置 Agent。"
+      "reservedName": "该名称属于 OpenCode 内置 Agent，请直接编辑对应的内置 Agent。",
+      "markdownSource": "Markdown",
+      "jsonSource": "JSON",
+      "multipleSources": "多来源",
+      "multipleSourcesTooltip": "该 Agent 同时存在 JSON 与 Markdown 配置，OpenCode 会合并这些来源。当前 Markdown 文件：{{path}}",
+      "invalidMarkdown": "配置错误",
+      "markdownAdvanced": "编辑 Markdown 高级设置",
+      "jsonAdvanced": "编辑 JSON 高级设置",
+      "repairMarkdown": "修复 Markdown 文件",
+      "deleteMarkdownSource": "删除 Markdown 配置",
+      "deleteJsonSource": "删除 JSON 配置",
+      "deleteMarkdownConfirmTitle": "删除 Markdown Agent {{name}}？",
+      "deleteMarkdownConfirmContent": "将删除 Markdown Agent 文件：{{path}}。不会删除 opencode.json 中的同名配置。",
+      "markdownAdvancedTitle": "{{name}} Markdown 高级设置",
+      "markdownAdvancedHint": "编辑该 Markdown Agent 的 YAML Frontmatter。Agent 指令正文不会被修改；未知字段会保留在当前文件中。",
+      "markdownRepairHint": "当前 Markdown Agent 无法解析。请修复完整文件中的 YAML Frontmatter；保存前会重新校验。",
+      "markdownPromptEditorHint": "内容将保存到 Markdown Agent {{name}} 的正文：{{path}}"
     }
   },
   "claudecode": {

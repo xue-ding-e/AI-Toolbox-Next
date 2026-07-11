@@ -1095,9 +1095,9 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 7;
-    const DEFAULTS_VERSION_BEFORE_PI_MCP: u64 = 6;
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V7: &[&str] = &["pi-mcp"];
+    const CURRENT_DEFAULTS_VERSION: u64 = 8;
+    const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agent", "opencode-agents"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1121,8 +1121,8 @@ async fn backfill_default_file_mappings(
                 stored_version,
                 existing_mapping_count,
                 &default_mapping.id,
-                DEFAULTS_VERSION_BEFORE_PI_MCP,
-                DEFAULT_MAPPING_IDS_ADDED_IN_V7,
+                DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V8,
             )
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1553,6 +1553,30 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
+        SSHFileMapping {
+            id: "opencode-agent".to_string(),
+            name: "OpenCode Agent 配置（agent）".to_string(),
+            module: "opencode".to_string(),
+            local_path: "~/.config/opencode/agent".to_string(),
+            remote_path: "~/.config/opencode/agent".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "opencode-agents".to_string(),
+            name: "OpenCode Agent 配置（agents）".to_string(),
+            module: "opencode".to_string(),
+            local_path: "~/.config/opencode/agents".to_string(),
+            remote_path: "~/.config/opencode/agents".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
         // Claude Code
         SSHFileMapping {
             id: "claude-settings".to_string(),
@@ -1929,6 +1953,43 @@ mod tests {
             6,
             &["pi-mcp"],
         ));
+    }
+
+    #[test]
+    fn defaults_backfill_v8_only_adds_opencode_agent_directories_for_existing_v7_users() {
+        for mapping_id in ["opencode-agent", "opencode-agents"] {
+            assert!(should_backfill_default_mapping(
+                7,
+                4,
+                mapping_id,
+                7,
+                &["opencode-agent", "opencode-agents"],
+            ));
+        }
+        assert!(!should_backfill_default_mapping(
+            7,
+            4,
+            "opencode-prompt",
+            7,
+            &["opencode-agent", "opencode-agents"],
+        ));
+    }
+
+    #[test]
+    fn opencode_agent_default_mappings_are_separate_directories() {
+        let mappings = default_file_mappings();
+        for (mapping_id, path) in [
+            ("opencode-agent", "~/.config/opencode/agent"),
+            ("opencode-agents", "~/.config/opencode/agents"),
+        ] {
+            let mapping = mappings
+                .iter()
+                .find(|mapping| mapping.id == mapping_id)
+                .expect("OpenCode Agent mapping exists");
+            assert!(mapping.is_directory);
+            assert_eq!(mapping.local_path, path);
+            assert_eq!(mapping.remote_path, path);
+        }
     }
 
     #[test]

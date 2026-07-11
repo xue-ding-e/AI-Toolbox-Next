@@ -1,5 +1,6 @@
 import type { OpenCodeDiagnosticsConfig, OpenCodeFavoriteProvider } from '@/services/opencodeApi';
 import type { OpenCodeProvider } from '@/types/opencode';
+import { isJsonObject } from '../../../utils/json.ts';
 
 export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'openclaw' | 'pi';
 
@@ -52,16 +53,12 @@ function startsWithKnownStoragePrefix(providerId: string): boolean {
   );
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function normalizeForStableSignature(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeForStableSignature(item));
   }
 
-  if (isPlainObject(value)) {
+  if (isJsonObject(value)) {
     return Object.keys(value)
       .sort()
       .reduce<Record<string, unknown>>((result, key) => {

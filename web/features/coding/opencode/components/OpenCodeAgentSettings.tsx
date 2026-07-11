@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  App,
   Button,
   Collapse,
   Divider,
@@ -8,6 +9,7 @@ import {
   Modal,
   Select,
   Space,
+  Tag,
   Tooltip,
 } from 'antd';
 import {
@@ -25,15 +27,23 @@ import type {
   OpenCodeAgentConfig,
   OpenCodeConfig,
 } from '@/types/opencode';
+import {
+  deleteOpenCodeMarkdownAgent,
+  listOpenCodeMarkdownAgents,
+  saveOpenCodeMarkdownAgent,
+  type OpenCodeMarkdownAgent,
+} from '@/services/opencodeApi';
 
 import {
   clearInvalidOpenCodeDefaultAgent,
+  getOpenCodeAgentMode,
   getOpenCodeAgentConfigs,
   getOpenCodeCustomAgentNames,
   getOpenCodeDefaultAgentCandidates,
   OPEN_CODE_BUILT_IN_PRIMARY_AGENTS,
   OPEN_CODE_BUILT_IN_SUBAGENTS,
   OPEN_CODE_INTERNAL_AGENTS,
+  isOpenCodeAgentHidden,
   isOpenCodeBuiltInAgentName,
   removeOpenCodeAgentOverride,
   setOpenCodeAgentAdvancedConfig,
@@ -41,7 +51,14 @@ import {
   setOpenCodeAgentPrompt,
   setOpenCodeAgentVariant,
 } from '../utils/openCodeAgentConfig';
+import {
+  mergeOpenCodeAgentConfigs,
+  replaceOpenCodeMarkdownAgentFrontmatter,
+  replaceOpenCodeMarkdownAgentPrompt,
+  setOpenCodeMarkdownAgentFrontmatterField,
+} from '../utils/openCodeMarkdownAgent';
 import OpenCodeAgentAdvancedModal from './OpenCodeAgentAdvancedModal';
+import OpenCodeAgentMarkdownAdvancedModal from './OpenCodeAgentMarkdownAdvancedModal';
 import OpenCodeAgentPromptModal from './OpenCodeAgentPromptModal';
 import styles from './OpenCodeAgentSettings.module.less';
 
@@ -75,6 +92,12 @@ interface NewAgentDraft {
 interface PromptEditorTarget {
   type: 'new' | 'existing';
   agentName: string;
+  markdownAgent?: OpenCodeMarkdownAgent;
+}
+
+interface MarkdownAdvancedTarget {
+  agent: OpenCodeMarkdownAgent;
+  editFullFile: boolean;
 }
 
 const defaultDescriptions: Record<string, string> = {
@@ -95,9 +118,12 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
   onSave,
 }) => {
   const { t } = useTranslation();
+  const { message } = App.useApp();
   const [expanded, setExpanded] = React.useState(false);
   const [advancedAgentName, setAdvancedAgentName] = React.useState<string>();
+  const [markdownAdvancedTarget, setMarkdownAdvancedTarget] = React.useState<MarkdownAdvancedTarget>();
   const [promptEditorTarget, setPromptEditorTarget] = React.useState<PromptEditorTarget>();
+  const [markdownAgents, setMarkdownAgents] = React.useState<OpenCodeMarkdownAgent[]>([]);
   const [addModalOpen, setAddModalOpen] = React.useState(false);
   const [newAgent, setNewAgent] = React.useState<NewAgentDraft>({
     name: '',
@@ -106,8 +132,58 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
   });
 
   const agentConfigs = getOpenCodeAgentConfigs(config);
-  const customAgentNames = getOpenCodeCustomAgentNames(config);
-  const defaultAgentCandidates = getOpenCodeDefaultAgentCandidates(config);
+  const markdownAgentsByName = React.useMemo(() => {
+    const grouped = new Map<string, OpenCodeMarkdownAgent[]>();
+    markdownAgents.forEach((agent) => {
+      grouped.set(agent.name, [...(grouped.get(agent.name) ?? []), agent]);
+    });
+    return grouped;
+  }, [markdownAgents]);
+  const effectiveAgentConfigs = React.useMemo(() => {
+    const names = new Set([...Object.keys(agentConfigs), ...markdownAgentsByName.keys()]);
+    return Object.fromEntries(Array.from(names).map((agentName) => [
+      agentName,
+      mergeOpenCodeAgentConfigs(
+        agentConfigs[agentName],
+        (markdownAgentsByName.get(agentName) ?? [])
+          .filter((agent) => !agent.parseError)
+          .map((agent) => agent.config),
+      ),
+    ]));
+  }, [agentConfigs, markdownAgentsByName]);
+  const customAgentNames = React.useMemo(() => Array.from(new Set([
+    ...getOpenCodeCustomAgentNames(config),
+    ...markdownAgents.map((agent) => agent.name).filter((name) => !isOpenCodeBuiltInAgentName(name)),
+  ])).sort((left, right) => left.localeCompare(right)), [config, markdownAgents]);
+  const defaultAgentCandidates = React.useMemo(() => {
+    const names = new Set([
+      ...getOpenCodeDefaultAgentCandidates(config),
+      ...Object.keys(effectiveAgentConfigs),
+    ]);
+    return Array.from(names).filter((agentName) => {
+      const agentConfig = effectiveAgentConfigs[agentName];
+      if (agentConfig?.disable || isOpenCodeAgentHidden(agentName, agentConfig)) return false;
+      return getOpenCodeAgentMode(agentName, agentConfig) !== 'subagent';
+    }).sort((left, right) => {
+      if (left === 'build') return -1;
+      if (right === 'build') return 1;
+      if (left === 'plan') return -1;
+      if (right === 'plan') return 1;
+      return left.localeCompare(right);
+    });
+  }, [config, effectiveAgentConfigs]);
+
+  const reloadMarkdownAgents = React.useCallback(async () => {
+    try {
+      setMarkdownAgents(await listOpenCodeMarkdownAgents());
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  }, [message, t]);
+
+  React.useEffect(() => {
+    void reloadMarkdownAgents();
+  }, [config, reloadMarkdownAgents]);
   const defaultAgentOptions = React.useMemo(() => {
     const candidates = defaultAgentCandidates.map((agentName) => ({
       label: agentName,
@@ -153,18 +229,62 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
 
   const handleModelChange = async (agentName: string, model: string | undefined) => {
     const variants = model ? modelVariantsMap[model] ?? [] : [];
+    const markdownSources = markdownAgentsByName.get(agentName) ?? [];
+    const markdownAgent = markdownSources[markdownSources.length - 1];
     try {
+      if (markdownAgent) {
+        let content = setOpenCodeMarkdownAgentFrontmatterField(
+          markdownAgent.rawContent,
+          'model',
+          model,
+        );
+        if (!model || !variants.includes(effectiveAgentConfigs[agentName]?.variant ?? '')) {
+          content = setOpenCodeMarkdownAgentFrontmatterField(content, 'variant', undefined);
+        }
+        const saved = await saveOpenCodeMarkdownAgent({
+          path: markdownAgent.path,
+          expectedContentHash: markdownAgent.contentHash,
+          content,
+        });
+        setMarkdownAgents((current) => current.map((agent) => (
+          agent.path === saved.path ? saved : agent
+        )));
+        message.success(t('common.success'));
+        return;
+      }
       await onSave(setOpenCodeAgentModel(config, agentName, model, variants));
-    } catch {
-      // Parent save handler already reports the error.
+    } catch (error) {
+      if (markdownAgent) {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      }
     }
   };
 
   const handleVariantChange = async (agentName: string, variant: string | undefined) => {
+    const markdownSources = markdownAgentsByName.get(agentName) ?? [];
+    const markdownAgent = markdownSources[markdownSources.length - 1];
     try {
+      if (markdownAgent) {
+        const saved = await saveOpenCodeMarkdownAgent({
+          path: markdownAgent.path,
+          expectedContentHash: markdownAgent.contentHash,
+          content: setOpenCodeMarkdownAgentFrontmatterField(
+            markdownAgent.rawContent,
+            'variant',
+            variant,
+          ),
+        });
+        setMarkdownAgents((current) => current.map((agent) => (
+          agent.path === saved.path ? saved : agent
+        )));
+        message.success(t('common.success'));
+        return;
+      }
       await onSave(setOpenCodeAgentVariant(config, agentName, variant));
-    } catch {
-      // Parent save handler already reports the error.
+    } catch (error) {
+      if (markdownAgent) {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      }
     }
   };
 
@@ -192,10 +312,61 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
       cancelText: t('common.cancel'),
       onOk: async () => {
         const nextConfig = removeOpenCodeAgentOverride(config, agentName);
-        if (config.default_agent === agentName) {
+        const remainingMarkdownSources = (markdownAgentsByName.get(agentName) ?? [])
+          .filter((agent) => !agent.parseError);
+        const remainingAgentConfig = mergeOpenCodeAgentConfigs(
+          undefined,
+          remainingMarkdownSources.map((agent) => agent.config),
+        );
+        const hasRemainingSource = !custom || remainingMarkdownSources.length > 0;
+        const remainsDefaultCandidate = hasRemainingSource
+          && !remainingAgentConfig.disable
+          && !isOpenCodeAgentHidden(agentName, remainingAgentConfig)
+          && getOpenCodeAgentMode(agentName, remainingAgentConfig) !== 'subagent';
+        if (config.default_agent === agentName && !remainsDefaultCandidate) {
           nextConfig.default_agent = undefined;
         }
         await onSave(nextConfig);
+      },
+    });
+  };
+
+  const handleDeleteMarkdownAgent = (agent: OpenCodeMarkdownAgent) => {
+    Modal.confirm({
+      title: t('opencode.agentSettings.deleteMarkdownConfirmTitle', { name: agent.name }),
+      content: t('opencode.agentSettings.deleteMarkdownConfirmContent', { path: agent.path }),
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          await deleteOpenCodeMarkdownAgent({
+            path: agent.path,
+            expectedContentHash: agent.contentHash,
+          });
+          const remainingMarkdownConfigs = (markdownAgentsByName.get(agent.name) ?? [])
+            .filter((item) => item.path !== agent.path && !item.parseError)
+            .map((item) => item.config);
+          const remainingAgentConfig = mergeOpenCodeAgentConfigs(
+            agentConfigs[agent.name],
+            remainingMarkdownConfigs,
+          );
+          const hasRemainingSource = isOpenCodeBuiltInAgentName(agent.name)
+            || Boolean(agentConfigs[agent.name])
+            || remainingMarkdownConfigs.length > 0;
+          const remainsDefaultCandidate = hasRemainingSource
+            && !remainingAgentConfig.disable
+            && !isOpenCodeAgentHidden(agent.name, remainingAgentConfig)
+            && getOpenCodeAgentMode(agent.name, remainingAgentConfig) !== 'subagent';
+          setMarkdownAgents((current) => current.filter((item) => item.path !== agent.path));
+          if (config.default_agent === agent.name && !remainsDefaultCandidate) {
+            await onSave({ ...config, default_agent: undefined });
+          }
+          message.success(t('common.success'));
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+          throw error;
+        }
       },
     });
   };
@@ -216,7 +387,11 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
   };
 
   const renderAgentRow = (agentName: string, custom = false) => {
-    const agentConfig = agentConfigs[agentName] ?? {};
+    const agentConfig = effectiveAgentConfigs[agentName] ?? {};
+    const markdownSources = markdownAgentsByName.get(agentName) ?? [];
+    const primaryMarkdownAgent = markdownSources[markdownSources.length - 1];
+    const hasJsonSource = Boolean(agentConfigs[agentName]);
+    const hasParseError = markdownSources.some((agent) => Boolean(agent.parseError));
     const variants = getVariants(agentConfig.model, agentConfig.variant);
     const showVariant = Boolean(agentConfig.model && variants.length > 0);
     const description = agentConfig.description
@@ -227,21 +402,50 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
         key: 'prompt',
         icon: <FileTextOutlined />,
         label: t('opencode.agentSettings.editPrompt'),
-        onClick: () => setPromptEditorTarget({ type: 'existing', agentName }),
+        disabled: Boolean(primaryMarkdownAgent?.parseError),
+        onClick: () => setPromptEditorTarget({
+          type: 'existing',
+          agentName,
+          markdownAgent: primaryMarkdownAgent,
+        }),
       },
-      {
-        key: 'advanced',
+      ...(primaryMarkdownAgent ? [{
+        key: 'markdown-advanced',
         icon: <SettingOutlined />,
-        label: t('opencode.agentSettings.advanced'),
+        label: primaryMarkdownAgent.parseError
+          ? t('opencode.agentSettings.repairMarkdown')
+          : t('opencode.agentSettings.markdownAdvanced'),
+        onClick: () => setMarkdownAdvancedTarget({
+          agent: primaryMarkdownAgent,
+          editFullFile: Boolean(primaryMarkdownAgent.parseError),
+        }),
+      }] : []),
+      ...(hasJsonSource || !primaryMarkdownAgent ? [{
+        key: 'json-advanced',
+        icon: <SettingOutlined />,
+        label: primaryMarkdownAgent
+          ? t('opencode.agentSettings.jsonAdvanced')
+          : t('opencode.agentSettings.advanced'),
         onClick: () => setAdvancedAgentName(agentName),
-      },
-      {
-        key: 'reset',
+      }] : []),
+      ...(markdownSources.map((agent, index) => ({
+        key: `delete-markdown-${index}`,
+        icon: <DeleteOutlined />,
+        danger: true,
+        label: t('opencode.agentSettings.deleteMarkdownSource'),
+        onClick: () => handleDeleteMarkdownAgent(agent),
+      }))),
+      ...(hasJsonSource || !primaryMarkdownAgent ? [{
+        key: 'reset-json',
         icon: custom ? <DeleteOutlined /> : <UndoOutlined />,
         danger: custom,
-        label: custom ? t('opencode.agentSettings.deleteAgent') : t('opencode.agentSettings.restoreDefaults'),
+        label: primaryMarkdownAgent
+          ? t('opencode.agentSettings.deleteJsonSource')
+          : custom
+            ? t('opencode.agentSettings.deleteAgent')
+            : t('opencode.agentSettings.restoreDefaults'),
         onClick: () => handleReset(agentName, custom),
-      },
+      }] : []),
     ];
 
     return (
@@ -250,6 +454,27 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
           <Tooltip title={agentName}>
             <span className={styles.agentName}>{agentName}</span>
           </Tooltip>
+          {primaryMarkdownAgent ? (
+            <Tooltip title={markdownSources.length > 1 || hasJsonSource
+              ? t('opencode.agentSettings.multipleSourcesTooltip', { path: primaryMarkdownAgent.path })
+              : primaryMarkdownAgent.path}
+            >
+              <Tag className={styles.sourceTag}>
+                {markdownSources.length > 1 || hasJsonSource
+                  ? t('opencode.agentSettings.multipleSources')
+                  : t('opencode.agentSettings.markdownSource')}
+              </Tag>
+            </Tooltip>
+          ) : custom && hasJsonSource ? (
+            <Tag className={styles.sourceTag}>{t('opencode.agentSettings.jsonSource')}</Tag>
+          ) : null}
+          {hasParseError ? (
+            <Tooltip title={markdownSources.find((agent) => agent.parseError)?.parseError}>
+              <Tag className={styles.errorTag} color="error">
+                {t('opencode.agentSettings.invalidMarkdown')}
+              </Tag>
+            </Tooltip>
+          ) : null}
           <Tooltip title={description}>
             <QuestionCircleOutlined
               className={styles.agentHelpIcon}
@@ -270,6 +495,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
             options={getModelOptions(agentConfig.model)}
             placeholder={t('opencode.agentSettings.inheritModel')}
             allowClear
+            disabled={Boolean(primaryMarkdownAgent?.parseError)}
             showSearch
             optionFilterProp="label"
             aria-label={`${agentName} ${t('opencode.agentSettings.model')}`}
@@ -283,6 +509,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
               options={variants.map((variant) => ({ label: variant, value: variant }))}
               placeholder={t('opencode.agentSettings.variantPlaceholder')}
               allowClear
+              disabled={Boolean(primaryMarkdownAgent?.parseError)}
               aria-label={`${agentName} ${t('opencode.agentSettings.variant')}`}
               onChange={(variant) => void handleVariantChange(agentName, variant)}
             />
@@ -306,6 +533,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
       !agentName
       || !description
       || agentConfigs[agentName]
+      || markdownAgentsByName.has(agentName)
       || isOpenCodeBuiltInAgentName(agentName)
     ) return;
 
@@ -331,7 +559,7 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
   const reservedAgentName = normalizedNewAgentName !== ''
     && isOpenCodeBuiltInAgentName(normalizedNewAgentName);
   const duplicateAgentName = normalizedNewAgentName !== ''
-    && Boolean(agentConfigs[normalizedNewAgentName]);
+    && (Boolean(agentConfigs[normalizedNewAgentName]) || markdownAgentsByName.has(normalizedNewAgentName));
   const cannotAddAgent = !newAgent.name.trim()
     || duplicateAgentName
     || reservedAgentName
@@ -339,7 +567,8 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
   const promptEditorInitialValue = promptEditorTarget?.type === 'new'
     ? newAgent.prompt
     : promptEditorTarget
-      ? agentConfigs[promptEditorTarget.agentName]?.prompt
+      ? promptEditorTarget.markdownAgent?.prompt
+        ?? agentConfigs[promptEditorTarget.agentName]?.prompt
       : undefined;
 
   return (
@@ -430,6 +659,51 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
           if (!advancedAgentName) return;
           const nextConfig = setOpenCodeAgentAdvancedConfig(config, advancedAgentName, agentConfig);
           await onSave(clearInvalidOpenCodeDefaultAgent(nextConfig));
+        }}
+      />
+
+      <OpenCodeAgentMarkdownAdvancedModal
+        open={Boolean(markdownAdvancedTarget)}
+        agentName={markdownAdvancedTarget?.agent.name ?? ''}
+        initialValue={markdownAdvancedTarget?.editFullFile
+          ? markdownAdvancedTarget.agent.rawContent
+          : markdownAdvancedTarget?.agent.frontmatter ?? ''}
+        editFullFile={markdownAdvancedTarget?.editFullFile}
+        onCancel={() => setMarkdownAdvancedTarget(undefined)}
+        onSave={async (value) => {
+          if (!markdownAdvancedTarget) return;
+          const content = markdownAdvancedTarget.editFullFile
+            ? value
+            : replaceOpenCodeMarkdownAgentFrontmatter(
+              markdownAdvancedTarget.agent.rawContent,
+              value,
+            );
+          const saved = await saveOpenCodeMarkdownAgent({
+            path: markdownAdvancedTarget.agent.path,
+            expectedContentHash: markdownAdvancedTarget.agent.contentHash,
+            content,
+          });
+          setMarkdownAgents((current) => current.map((agent) => (
+            agent.path === saved.path ? saved : agent
+          )));
+          if (config.default_agent === saved.name) {
+            const remainingMarkdownConfigs = (markdownAgentsByName.get(saved.name) ?? [])
+              .map((agent) => (agent.path === saved.path ? saved : agent))
+              .filter((agent) => !agent.parseError)
+              .map((agent) => agent.config);
+            const effectiveConfig = mergeOpenCodeAgentConfigs(
+              agentConfigs[saved.name],
+              remainingMarkdownConfigs,
+            );
+            if (
+              effectiveConfig.disable
+              || isOpenCodeAgentHidden(saved.name, effectiveConfig)
+              || getOpenCodeAgentMode(saved.name, effectiveConfig) === 'subagent'
+            ) {
+              await onSave({ ...config, default_agent: undefined });
+            }
+          }
+          message.success(t('common.success'));
         }}
       />
 
@@ -538,6 +812,12 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
         open={Boolean(promptEditorTarget)}
         agentName={promptEditorTarget?.agentName || newAgent.name.trim() || t('opencode.agentSettings.newAgent')}
         initialValue={promptEditorInitialValue}
+        hint={promptEditorTarget?.markdownAgent
+          ? t('opencode.agentSettings.markdownPromptEditorHint', {
+            name: promptEditorTarget.agentName,
+            path: promptEditorTarget.markdownAgent.path,
+          })
+          : undefined}
         onCancel={() => setPromptEditorTarget(undefined)}
         onSave={async (prompt) => {
           if (!promptEditorTarget) return;
@@ -547,11 +827,31 @@ const OpenCodeAgentSettings: React.FC<OpenCodeAgentSettingsProps> = ({
             return;
           }
 
-          await onSave(setOpenCodeAgentPrompt(
-            config,
-            promptEditorTarget.agentName,
-            prompt,
-          ));
+          if (promptEditorTarget.markdownAgent) {
+            try {
+              const saved = await saveOpenCodeMarkdownAgent({
+                path: promptEditorTarget.markdownAgent.path,
+                expectedContentHash: promptEditorTarget.markdownAgent.contentHash,
+                content: replaceOpenCodeMarkdownAgentPrompt(
+                  promptEditorTarget.markdownAgent.rawContent,
+                  prompt,
+                ),
+              });
+              setMarkdownAgents((current) => current.map((agent) => (
+                agent.path === saved.path ? saved : agent
+              )));
+              message.success(t('common.success'));
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : t('common.error'));
+              throw error;
+            }
+          } else {
+            await onSave(setOpenCodeAgentPrompt(
+              config,
+              promptEditorTarget.agentName,
+              prompt,
+            ));
+          }
           setPromptEditorTarget(undefined);
         }}
       />

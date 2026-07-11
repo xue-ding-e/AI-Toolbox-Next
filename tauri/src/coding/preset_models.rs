@@ -179,6 +179,32 @@ mod tests {
             .expect("xAI preset group should exist")
     }
 
+    #[test]
+    fn preset_model_limits_are_always_complete_pairs() {
+        let presets: Value = serde_json::from_str(DEFAULT_PRESET_MODELS_JSON)
+            .expect("bundled preset models JSON should parse");
+
+        for (provider, models) in presets
+            .as_object()
+            .expect("preset model root should be an object")
+        {
+            for preset in models
+                .as_array()
+                .unwrap_or_else(|| panic!("preset group {provider} should be an array"))
+            {
+                let model_id = preset
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown>");
+                assert_eq!(
+                    preset.get("contextLimit").is_some(),
+                    preset.get("outputLimit").is_some(),
+                    "preset {provider}/{model_id} must define contextLimit and outputLimit together"
+                );
+            }
+        }
+    }
+
     fn model<'a>(models: &'a Value, model_id: &str) -> &'a Value {
         models
             .as_array()

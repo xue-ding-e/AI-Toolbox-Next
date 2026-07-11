@@ -107,3 +107,31 @@ test('buildProviderConnectivityBatchTarget builds gateway request for converted 
     timeoutSecs: 12,
   });
 });
+
+test('buildProviderConnectivityBatchTarget does not require a frontend API key for Codex gateway requests', () => {
+  const target = buildProviderConnectivityBatchTarget(createConnectivityInfo({
+    providerConfig: {
+      npm: '@ai-sdk/openai',
+      options: {
+        baseURL: 'https://api.example.com/v1',
+      },
+    },
+  }), {
+    requireBaseUrl: false,
+    requireApiKey: false,
+    gatewayCliKey: 'codex',
+    useGateway: true,
+    errorMessages,
+  });
+
+  assert.equal(target.errorMessage, undefined);
+  assert.equal(target.request, undefined);
+  assert.deepEqual(target.gatewayRequest, {
+    cliKey: 'codex',
+    providerId: 'provider-1',
+    prompt: 'say hi!',
+    stream: true,
+    modelIds: ['model-a'],
+    timeoutSecs: 30,
+  });
+});

@@ -10,6 +10,7 @@ interface OpenCodeAgentPromptModalProps {
   open: boolean;
   agentName: string;
   initialValue?: string;
+  hint?: string;
   onCancel: () => void;
   onSave: (prompt: string | undefined) => Promise<void> | void;
 }
@@ -18,6 +19,7 @@ const OpenCodeAgentPromptModal: React.FC<OpenCodeAgentPromptModalProps> = ({
   open,
   agentName,
   initialValue,
+  hint,
   onCancel,
   onSave,
 }) => {
@@ -57,7 +59,7 @@ const OpenCodeAgentPromptModal: React.FC<OpenCodeAgentPromptModalProps> = ({
     >
       <div className={styles.content}>
         <div className={styles.hint}>
-          {t('opencode.agentSettings.promptEditorHint', { name: agentName })}
+          {hint ?? t('opencode.agentSettings.promptEditorHint', { name: agentName })}
         </div>
         <MarkdownEditor
           value={draft}

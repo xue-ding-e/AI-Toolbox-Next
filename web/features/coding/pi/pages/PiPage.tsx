@@ -599,6 +599,7 @@ const PiPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [refreshingModels, setRefreshingModels] = React.useState(false);
+  const [extensionsRefreshKey, setExtensionsRefreshKey] = React.useState(0);
   const [runtimeConfig, setRuntimeConfig] = React.useState<PiRuntimeConfig | null>(null);
   const [modelForm] = Form.useForm();
   const [providerModal, setProviderModal] = React.useState<ProviderJsonModalState | null>(null);
@@ -1684,6 +1685,12 @@ const PiPage: React.FC = () => {
     }
   };
 
+  const handleRefreshConfig = () => {
+    void loadConfig(true);
+    setExtensionsRefreshKey((currentRefreshKey) => currentRefreshKey + 1);
+    void refreshTrayMenu();
+  };
+
   const handleRefreshModelsCache = async () => {
     setRefreshingModels(true);
     try {
@@ -1884,10 +1891,7 @@ const PiPage: React.FC = () => {
                   type="text"
                   size="small"
                   icon={<ReloadOutlined />}
-                  onClick={() => {
-                    void loadConfig(true);
-                    void refreshTrayMenu();
-                  }}
+                  onClick={handleRefreshConfig}
                   className={styles.textAction}
                 >
                   {t('pi.refreshConfig')}
@@ -2041,7 +2045,7 @@ const PiPage: React.FC = () => {
             data-pi-sidebar-section="true"
             data-sidebar-title={t('pi.extensions.title')}
           >
-            <PiExtensionsSection />
+            <PiExtensionsSection refreshKey={extensionsRefreshKey} />
           </div>
 
           <div

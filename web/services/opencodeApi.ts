@@ -5,7 +5,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { OpenCodeConfig, OpenCodeProvider } from '@/types/opencode';
+import type { OpenCodeAgentConfig, OpenCodeConfig, OpenCodeProvider } from '@/types/opencode';
 
 /**
  * Configuration path information
@@ -13,6 +13,24 @@ import type { OpenCodeConfig, OpenCodeProvider } from '@/types/opencode';
 export interface ConfigPathInfo {
   path: string;
   source: 'custom' | 'env' | 'shell' | 'default';
+}
+
+export interface OpenCodeMarkdownAgent {
+  name: string;
+  path: string;
+  directory: string;
+  frontmatter: string;
+  prompt: string;
+  rawContent: string;
+  contentHash: string;
+  config?: OpenCodeAgentConfig;
+  parseError?: string;
+}
+
+export interface SaveOpenCodeMarkdownAgentRequest {
+  path: string;
+  expectedContentHash: string;
+  content: string;
 }
 
 /**
@@ -88,6 +106,22 @@ export const readCurrentOpenCodeProviders = async (): Promise<Record<string, Ope
  */
 export const saveOpenCodeConfig = async (config: OpenCodeConfig): Promise<void> => {
   await invoke('save_opencode_config', { config });
+};
+
+export const listOpenCodeMarkdownAgents = async (): Promise<OpenCodeMarkdownAgent[]> => {
+  return await invoke<OpenCodeMarkdownAgent[]>('list_opencode_markdown_agents');
+};
+
+export const saveOpenCodeMarkdownAgent = async (
+  request: SaveOpenCodeMarkdownAgentRequest,
+): Promise<OpenCodeMarkdownAgent> => {
+  return await invoke<OpenCodeMarkdownAgent>('save_opencode_markdown_agent', { request });
+};
+
+export const deleteOpenCodeMarkdownAgent = async (
+  request: Omit<SaveOpenCodeMarkdownAgentRequest, 'content'>,
+): Promise<void> => {
+  await invoke('delete_opencode_markdown_agent', { request });
 };
 
 /**

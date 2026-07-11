@@ -2,6 +2,7 @@ import type {
   OpenCodeAgentConfig,
   OpenCodeConfig,
 } from '@/types/opencode';
+import { isJsonObject } from '../../../../utils/json.ts';
 
 export const OPEN_CODE_BUILT_IN_PRIMARY_AGENTS = ['build', 'plan'] as const;
 export const OPEN_CODE_BUILT_IN_SUBAGENTS = ['general', 'explore', 'scout'] as const;
@@ -30,16 +31,10 @@ const defaultAgentModes: Record<string, OpenCodeAgentConfig['mode']> = {
 
 const hiddenByDefault = new Set<string>(OPEN_CODE_INTERNAL_AGENTS);
 
-export const isOpenCodeJsonObject = (
-  value: unknown,
-): value is Record<string, unknown> => (
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-);
-
 export const getOpenCodeAgentConfigs = (
   config: OpenCodeConfig | null | undefined,
 ): Record<string, OpenCodeAgentConfig> => {
-  if (!isOpenCodeJsonObject(config?.agent)) {
+  if (!isJsonObject(config?.agent)) {
     return {};
   }
 
@@ -94,12 +89,7 @@ export const clearInvalidOpenCodeDefaultAgent = (
 ): OpenCodeConfig => {
   if (!config.default_agent) return config;
 
-  const agentConfig = getOpenCodeAgentConfigs(config)[config.default_agent];
-  const invalid = agentConfig?.disable
-    || isOpenCodeAgentHidden(config.default_agent, agentConfig)
-    || getOpenCodeAgentMode(config.default_agent, agentConfig) === 'subagent';
-
-  if (!invalid) return config;
+  if (getOpenCodeDefaultAgentCandidates(config).includes(config.default_agent)) return config;
   return {
     ...config,
     default_agent: undefined,
@@ -251,7 +241,7 @@ export const validateOpenCodeAgentConfig = (
   value: unknown,
   options: { requireDescription?: boolean } = {},
 ): string | undefined => {
-  if (!isOpenCodeJsonObject(value)) {
+  if (!isJsonObject(value)) {
     return 'object';
   }
 

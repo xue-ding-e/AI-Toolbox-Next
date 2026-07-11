@@ -1935,7 +1935,7 @@
       "deleteConfirmTitle": "Delete custom agent {{name}}?",
       "deleteConfirmContent": "The agent model, permissions, prompt, and all other settings will be removed from opencode.json.",
       "advancedTitle": "Advanced Settings: {{name}}",
-      "advancedHint": "Edit the complete agent configuration object. Unknown fields are preserved. tools and maxSteps are deprecated compatibility fields; prefer permission and steps for new settings.",
+      "advancedHint": "Edit the complete agent configuration object. The placeholder below is a protocol-field example you can use as a reference. Unknown fields are preserved. tools and maxSteps are deprecated compatibility fields; prefer permission and steps for new settings.",
       "validation": {
         "json": "Invalid JSON. Fix the syntax before saving.",
         "object": "Agent configuration must be a JSON object.",
@@ -1965,7 +1965,23 @@
       "promptNotSet": "No agent instructions set",
       "addPrompt": "Add Instructions",
       "newAgent": "New Agent",
-      "reservedName": "This name is reserved by a built-in OpenCode agent. Edit the corresponding built-in agent instead."
+      "reservedName": "This name is reserved by a built-in OpenCode agent. Edit the corresponding built-in agent instead.",
+      "markdownSource": "Markdown",
+      "jsonSource": "JSON",
+      "multipleSources": "Multiple sources",
+      "multipleSourcesTooltip": "This agent has both JSON and Markdown configuration. OpenCode merges these sources. Current Markdown file: {{path}}",
+      "invalidMarkdown": "Invalid config",
+      "markdownAdvanced": "Edit Markdown settings",
+      "jsonAdvanced": "Edit JSON settings",
+      "repairMarkdown": "Repair Markdown file",
+      "deleteMarkdownSource": "Delete Markdown config",
+      "deleteJsonSource": "Delete JSON config",
+      "deleteMarkdownConfirmTitle": "Delete Markdown agent {{name}}?",
+      "deleteMarkdownConfirmContent": "The Markdown agent file will be deleted: {{path}}. A same-name entry in opencode.json will not be deleted.",
+      "markdownAdvancedTitle": "{{name}} Markdown Settings",
+      "markdownAdvancedHint": "Edit the YAML frontmatter for this Markdown agent. The prompt body is unchanged and unknown fields remain in the current file.",
+      "markdownRepairHint": "This Markdown agent cannot be parsed. Repair the YAML frontmatter in the full file; it will be validated again before saving.",
+      "markdownPromptEditorHint": "The content will be saved as the Markdown prompt body for {{name}}: {{path}}"
     }
   },
   "claudecode": {

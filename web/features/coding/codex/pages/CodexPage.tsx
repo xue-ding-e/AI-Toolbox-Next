@@ -121,6 +121,7 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
+import { parseCodexSettingsConfig } from '../utils/codexSettingsConfig';
 import {
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
@@ -129,15 +130,6 @@ import {
 } from '@/services';
 
 const { Title, Text, Link } = Typography;
-
-function parseCodexSettingsConfig(rawConfig: string): CodexSettingsConfig {
-  try {
-    return JSON.parse(rawConfig) as CodexSettingsConfig;
-  } catch (error) {
-    console.error('Failed to parse Codex settings config:', error);
-    return {};
-  }
-}
 
 function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
   const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig);
@@ -783,16 +775,11 @@ const CodexPage: React.FC = () => {
 
     const targets = testableProviders.map((provider) => {
       const connectivityInfo = buildCodexProviderConnectivityInfo(provider);
-      let settingsConfig: {
+      const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig) as {
         config?: string;
         apiFormat?: unknown;
         api_format?: unknown;
-      } = {};
-      try {
-        settingsConfig = JSON.parse(provider.settingsConfig || '{}') as typeof settingsConfig;
-      } catch (error) {
-        console.error('Failed to parse Codex provider settings config for batch test:', error);
-      }
+      };
       const hasExplicitBaseUrl = Boolean(
         settingsConfig.config?.match(/^\s*base_url\s*=\s*['"]/m),
       );
@@ -816,7 +803,7 @@ const CodexPage: React.FC = () => {
 
       return buildProviderConnectivityBatchTarget(connectivityInfo, {
         requireBaseUrl: false,
-        requireApiKey: true,
+        requireApiKey: !useGateway,
         gatewayCliKey: 'codex',
         useGateway,
         preferredModelId: findDefaultTestModelIdForProvider(favoriteProviders, 'codex', provider.id),

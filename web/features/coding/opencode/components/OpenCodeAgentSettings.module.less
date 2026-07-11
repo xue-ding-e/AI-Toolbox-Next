@@ -142,7 +142,7 @@
 
 .agentRow {
   display: grid;
-  grid-template-columns: minmax(108px, 132px) minmax(0, 1fr);
+  grid-template-columns: minmax(132px, 180px) minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   min-height: 40px;
@@ -172,6 +172,20 @@
   line-height: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sourceTag,
+.errorTag {
+  margin-inline-end: 0;
+  flex: none;
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.sourceTag {
+  border-color: var(--color-border-secondary);
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
 }
 
 .agentHelpIcon {

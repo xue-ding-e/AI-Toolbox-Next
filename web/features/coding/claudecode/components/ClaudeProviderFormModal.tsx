@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import JsonEditor from '@/components/common/JsonEditor';
 import { useAppStore } from '@/stores';
 import type { ClaudeApiFormat, ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig, GatewayProviderMeta } from '@/types/claudecode';
+import { isJsonObject } from '@/utils/json';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
 import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
@@ -38,10 +39,6 @@ import {
 } from '../utils/claudeModelConfig';
 import styles from './ClaudeProviderFormModal.module.less';
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function toExtraSettingsEditorValue(rawConfig?: string): unknown {
   if (!rawConfig?.trim()) {
     return null;
@@ -49,7 +46,7 @@ function toExtraSettingsEditorValue(rawConfig?: string): unknown {
 
   try {
     const parsed = JSON.parse(rawConfig) as unknown;
-    if (!isPlainObject(parsed)) {
+    if (!isJsonObject(parsed)) {
       return rawConfig;
     }
     return parsed;
@@ -65,7 +62,7 @@ function parseExtraSettingsConfig(rawConfig?: string): string | undefined {
   }
 
   const parsed = JSON.parse(trimmedConfig) as unknown;
-  if (!isPlainObject(parsed)) {
+  if (!isJsonObject(parsed)) {
     throw new Error('Expected JSON object');
   }
 
@@ -80,7 +77,7 @@ function hasNonEmptyExtraSettingsObject(rawConfig?: string): boolean {
 
   try {
     const parsed = JSON.parse(trimmedConfig) as unknown;
-    return isPlainObject(parsed) && Object.keys(parsed).length > 0;
+    return isJsonObject(parsed) && Object.keys(parsed).length > 0;
   } catch {
     return false;
   }

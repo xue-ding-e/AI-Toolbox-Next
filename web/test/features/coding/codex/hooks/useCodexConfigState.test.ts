@@ -4,8 +4,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeCodexCatalogModels } from '../../../../../features/coding/codex/utils/codexCatalogModels.ts';
-import { buildCodexSettingsConfig } from '../../../../../features/coding/codex/utils/codexSettingsConfig.ts';
+import {
+  buildCodexSettingsConfig,
+  parseCodexSettingsConfig,
+} from '../../../../../features/coding/codex/utils/codexSettingsConfig.ts';
 import { extractCodexModel } from '../../../../../utils/codexConfigUtils.ts';
+
+test('parseCodexSettingsConfig accepts JSON objects and rejects other top-level values', () => {
+  assert.deepEqual(parseCodexSettingsConfig('{"config":"model = \\"gpt-5.6\\""}'), {
+    config: 'model = "gpt-5.6"',
+  });
+  assert.deepEqual(parseCodexSettingsConfig('null'), {});
+  assert.deepEqual(parseCodexSettingsConfig('[]'), {});
+  assert.deepEqual(parseCodexSettingsConfig('{invalid'), {});
+});
 
 test('normalizeCodexCatalogModels preserves image capability metadata', () => {
   const models = normalizeCodexCatalogModels([

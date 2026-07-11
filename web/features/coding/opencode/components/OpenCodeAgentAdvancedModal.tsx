@@ -4,9 +4,9 @@ import { useTranslation } from 'react-i18next';
 
 import JsonEditor from '@/components/common/JsonEditor';
 import type { OpenCodeAgentConfig } from '@/types/opencode';
+import { isJsonObject } from '@/utils/json';
 
 import {
-  isOpenCodeJsonObject,
   validateOpenCodeAgentConfig,
 } from '../utils/openCodeAgentConfig';
 import styles from './OpenCodeAgentAdvancedModal.module.less';
@@ -52,7 +52,7 @@ const OpenCodeAgentAdvancedModal: React.FC<OpenCodeAgentAdvancedModalProps> = ({
       setValidationKey(nextValidationKey);
       return;
     }
-    if (!isOpenCodeJsonObject(value)) {
+    if (!isJsonObject(value)) {
       setValidationKey('object');
       return;
     }

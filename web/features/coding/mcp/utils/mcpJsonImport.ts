@@ -1,4 +1,5 @@
 import type { HttpConfig, StdioConfig } from '../types';
+import { isJsonObject } from '../../../../utils/json.ts';
 
 export interface ParsedMcpJsonServer {
   name: string;
@@ -7,10 +8,6 @@ export interface ParsedMcpJsonServer {
 }
 
 const DEFAULT_SINGLE_SERVER_NAME = 'imported-mcp-server';
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function hasServerConfigShape(config: Record<string, unknown>): boolean {
   return (
@@ -52,9 +49,9 @@ export function parseMcpServerConfig(config: Record<string, unknown>): StdioConf
       args = Array.isArray(config.args) ? config.args.map(String) : [];
     }
 
-    const env = isPlainObject(config.env)
+    const env = isJsonObject(config.env)
       ? config.env as Record<string, string>
-      : isPlainObject(config.environment)
+      : isJsonObject(config.environment)
         ? config.environment as Record<string, string>
         : undefined;
 
@@ -71,23 +68,23 @@ export function parseMcpServerConfig(config: Record<string, unknown>): StdioConf
 
   return {
     url: String(remoteUrl || ''),
-    headers: isPlainObject(config.headers) ? config.headers as Record<string, string> : undefined,
+    headers: isJsonObject(config.headers) ? config.headers as Record<string, string> : undefined,
   };
 }
 
 function extractServersObject(parsed: Record<string, unknown>): Record<string, unknown> {
   const wrappedMcpServers = parsed.mcpServers;
-  if (isPlainObject(wrappedMcpServers)) {
+  if (isJsonObject(wrappedMcpServers)) {
     return wrappedMcpServers;
   }
 
   const wrappedServers = parsed.servers;
-  if (isPlainObject(wrappedServers)) {
+  if (isJsonObject(wrappedServers)) {
     return wrappedServers;
   }
 
   const mcpConfig = parsed.mcp;
-  if (isPlainObject(mcpConfig) && isPlainObject(mcpConfig.servers)) {
+  if (isJsonObject(mcpConfig) && isJsonObject(mcpConfig.servers)) {
     return mcpConfig.servers;
   }
 
@@ -117,7 +114,7 @@ function buildParsedServer(name: string, config: Record<string, unknown>): Parse
 }
 
 export function parseMcpServersFromJsonValue(value: unknown): ParsedMcpJsonServer[] {
-  if (!isPlainObject(value)) {
+  if (!isJsonObject(value)) {
     return [];
   }
 
@@ -133,7 +130,7 @@ export function parseMcpServersFromJsonValue(value: unknown): ParsedMcpJsonServe
   const parsedServers: ParsedMcpJsonServer[] = [];
 
   for (const [name, config] of Object.entries(serversObject)) {
-    if (!isPlainObject(config)) {
+    if (!isJsonObject(config)) {
       continue;
     }
 
