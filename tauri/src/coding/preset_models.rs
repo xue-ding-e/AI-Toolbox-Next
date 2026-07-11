@@ -375,7 +375,10 @@ mod tests {
             preset.get("contextLimit").and_then(Value::as_u64),
             Some(500_000)
         );
-        assert!(preset.get("outputLimit").is_none());
+        assert_eq!(
+            preset.get("outputLimit").and_then(Value::as_u64),
+            Some(500_000)
+        );
         assert_eq!(preset.get("reasoning").and_then(Value::as_bool), Some(true));
         assert_eq!(preset.get("tool_call").and_then(Value::as_bool), Some(true));
         assert_eq!(

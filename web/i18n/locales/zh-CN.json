@@ -1408,7 +1408,8 @@
       "apiPlaceholder": "留空则继承供应商",
       "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
       "compat": "兼容性 compat",
-      "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。"
+      "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
+      "limitsBothRequired": "上下文限制和输出限制需同时填写或同时留空"
     },
     "fetchModels": {
       "button": "获取模型",

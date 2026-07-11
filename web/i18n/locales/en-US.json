@@ -1411,7 +1411,8 @@
       "apiPlaceholder": "Leave empty to inherit provider",
       "apiHint": "Set only when this model needs to override the provider API type.",
       "compat": "Compatibility compat",
-      "compatHint": "Model-level compatibility overrides merged with provider compat. Leave empty to remove model compat."
+      "compatHint": "Model-level compatibility overrides merged with provider compat. Leave empty to remove model compat.",
+      "limitsBothRequired": "Context and output limits must both be filled or both left empty"
     },
     "fetchModels": {
       "button": "Fetch Models",

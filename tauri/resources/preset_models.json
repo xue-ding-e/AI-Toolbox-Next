@@ -1781,6 +1781,7 @@
       "id": "grok-4.5",
       "name": "Grok 4.5",
       "contextLimit": 500000,
+      "outputLimit": 500000,
       "modalities": {
         "input": [
           "text",

@@ -15,6 +15,7 @@ import {
   PI_INPUT_TYPES,
   buildPiThinkingLevelMapFromPreset,
 } from '@/utils/piModelMetadata';
+import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
 
 const { Text } = Typography;
 
@@ -109,6 +110,8 @@ interface ModelFormModalProps {
   showCost?: boolean;
   /** Whether limit fields are required (settings page: true, OpenCode: false) */
   limitRequired?: boolean;
+  /** Whether context and output limits must both be filled or both be empty */
+  requireCompleteLimitPair?: boolean;
   /** Whether name field is required (settings page: true, OpenCode: false) */
   nameRequired?: boolean;
 
@@ -146,6 +149,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   showCompat = false,
   showCost = false,
   limitRequired = true,
+  requireCompleteLimitPair = false,
   nameRequired = true,
   npmType,
   width,
@@ -534,6 +538,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         const hasOutput = outputModalities.length > 0;
         if (hasInput !== hasOutput) {
           message.error(t('opencode.model.modalitiesBothRequired'));
+          return;
+        }
+      }
+
+      if (requireCompleteLimitPair) {
+        if (!hasCompleteModelLimitPair(values.contextLimit, values.outputLimit)) {
+          message.error(t('opencode.model.limitsBothRequired'));
           return;
         }
       }

@@ -71,6 +71,7 @@ import type { ModelFormValues } from '@/components/common/ModelFormModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
+import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
@@ -183,15 +184,17 @@ const buildManagedModelLimit = (
   baseModel: OpenCodeModel | null,
   values: ModelFormValues,
 ): OpenCodeModel['limit'] => {
+  if (values.contextLimit === undefined && values.outputLimit === undefined) {
+    return undefined;
+  }
+
   const nextLimit: OpenCodeModel['limit'] = {
     ...(baseModel?.limit ?? {}),
-    ...(values.contextLimit !== undefined ? { context: values.contextLimit } : { context: undefined }),
-    ...(values.outputLimit !== undefined ? { output: values.outputLimit } : { output: undefined }),
+    context: values.contextLimit,
+    output: values.outputLimit,
   };
 
-  return nextLimit && Object.values(nextLimit).some((value) => value !== undefined)
-    ? nextLimit
-    : undefined;
+  return nextLimit;
 };
 
 // Helper function to convert OpenCodeProvider to ProviderDisplayData
@@ -254,11 +257,13 @@ const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
 
 const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string): OpenCodeModel => ({
   name: preset.name || fallbackName,
-  ...(preset.contextLimit || preset.outputLimit
+  ...(hasCompleteModelLimitPair(preset.contextLimit, preset.outputLimit)
+    && preset.contextLimit !== undefined
+    && preset.outputLimit !== undefined
     ? {
       limit: {
-        ...(preset.contextLimit ? { context: preset.contextLimit } : {}),
-        ...(preset.outputLimit ? { output: preset.outputLimit } : {}),
+        context: preset.contextLimit,
+        output: preset.outputLimit,
       },
     }
     : {}),
@@ -1342,6 +1347,11 @@ const OpenCodePage: React.FC = () => {
 
   const handleModelSuccess = async (values: ModelFormValues) => {
     if (!config) return;
+
+    if (!hasCompleteModelLimitPair(values.contextLimit, values.outputLimit)) {
+      message.error(t('opencode.model.limitsBothRequired'));
+      return;
+    }
 
     const provider = config.provider[currentModelProviderId];
     if (!provider) return;
@@ -2621,6 +2631,7 @@ const OpenCodePage: React.FC = () => {
               showVariants={true}
               showModalities={true}
               limitRequired={false}
+              requireCompleteLimitPair
               nameRequired={false}
               npmType={currentModelProviderId && config?.provider[currentModelProviderId]?.npm || '@ai-sdk/openai-compatible'}
               onCancel={() => {
