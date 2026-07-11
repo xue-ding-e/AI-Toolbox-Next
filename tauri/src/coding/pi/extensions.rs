@@ -19,6 +19,15 @@ use crate::db::SqliteDbState;
 
 const NPM_LEGACY_PEER_DEPS_ENV_KEY: &str = "NPM_CONFIG_LEGACY_PEER_DEPS";
 const NPM_LEGACY_PEER_DEPS_ENV_VALUE: &str = "true";
+const WSL_PI_COMMAND_SCRIPT: &str = r#"path_prefix=$1
+pi_root=$2
+shift 2
+if [ -n "$path_prefix" ]; then
+    PATH="$path_prefix${PATH:+:$PATH}"
+    export PATH
+fi
+export PI_CODING_AGENT_DIR="$pi_root"
+exec "$@""#;
 
 struct PiCommandInvocation {
     command: Command,
@@ -51,17 +60,22 @@ fn apply_pi_extension_npm_compat_env(command: &mut Command) {
     }
 }
 
-fn shell_quote(value: &str) -> String {
-    // If the value contains no shell metacharacters, no quoting is needed.
-    if value
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '/' || c == '_' || c == '-' || c == '.')
-    {
-        value.to_string()
-    } else {
-        // Single-quote and escape internal single quotes.
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
+fn pi_wsl_path_prefix(linux_user_root: Option<&str>) -> String {
+    let Some(linux_user_root) = linux_user_root.filter(|root| !root.trim().is_empty()) else {
+        return String::new();
+    };
+    let linux_user_root = linux_user_root.trim_end_matches('/');
+    [
+        format!("{linux_user_root}/.local/share/mise/shims"),
+        format!("{linux_user_root}/.asdf/shims"),
+        format!("{linux_user_root}/.local/bin"),
+        format!("{linux_user_root}/.volta/bin"),
+        format!("{linux_user_root}/.local/share/fnm/aliases/default/bin"),
+        format!("{linux_user_root}/.fnm/aliases/default/bin"),
+        format!("{linux_user_root}/.fnm/current/bin"),
+        format!("{linux_user_root}/.npm-global/bin"),
+    ]
+    .join(":")
 }
 
 fn build_pi_command(
@@ -89,41 +103,27 @@ fn build_pi_command(
             let wsl = runtime_location.wsl.as_ref().ok_or_else(|| {
                 "Missing WSL runtime metadata for Pi extension command".to_string()
             })?;
-            // `wsl --exec` does not run any shell startup file, so CLIs
-            // installed via shell-integrated version managers (mise, asdf,
-            // nvm, volta, fnm, ...) cannot be found. We use `wsl --` to run a
-            // shell that (a) prepends common version-manager shim directories
-            // to PATH, and (b) uses the user's login shell via `$SHELL` if
-            // available, falling back to `bash -l`.
-            let linux_root = wsl.linux_user_root.as_deref().unwrap_or("");
-            let mut path_prefix = String::from("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-            if !linux_root.is_empty() {
-                path_prefix = format!(
-                    "{root}/.local/share/mise/shims:{root}/.local/bin:{root}/.volta/bin:{root}/.fnm/current/bin:{root}/.npm-global/bin:{path}",
-                    root = linux_root,
-                    path = path_prefix
-                );
-            }
-            let mut env_prefix = format!(
-                "PATH={path_prefix} {pi_env_key}={linux_path}",
-                path_prefix = path_prefix,
-                pi_env_key = PI_ENV_KEY,
-                linux_path = wsl.linux_path
-            );
+            let mut command = Command::new("wsl");
+            command.args([
+                "-d",
+                &wsl.distro,
+                "--exec",
+                "/bin/sh",
+                "-c",
+                WSL_PI_COMMAND_SCRIPT,
+                "ai-toolbox-pi",
+                &pi_wsl_path_prefix(wsl.linux_user_root.as_deref()),
+                &wsl.linux_path,
+                "env",
+            ]);
             for (key, value) in pi_extension_npm_compat_env() {
-                env_prefix.push(' ');
-                env_prefix.push_str(&format!("{key}={value}"));
+                command.arg(format!("{key}={value}"));
             }
             if offline {
-                env_prefix.push_str(" PI_OFFLINE=1");
+                command.arg("PI_OFFLINE=1");
             }
-            let mut shell_cmd = format!("env {env_prefix} pi");
-            for arg in args {
-                shell_cmd.push(' ');
-                shell_cmd.push_str(&shell_quote(arg));
-            }
-            let mut command = Command::new("wsl");
-            command.args(["-d", &wsl.distro, "--exec", "bash", "-c", &shell_cmd]);
+            command.arg("pi");
+            command.args(args);
             Ok(PiCommandInvocation {
                 command,
                 local_program_label: None,
@@ -515,18 +515,89 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_quote_preserves_simple_args() {
-        assert_eq!(shell_quote("list"), "list");
-        assert_eq!(shell_quote("--no-approve"), "--no-approve");
-        assert_eq!(shell_quote("npm:context-mode"), "npm:context-mode");
-        assert_eq!(shell_quote("-l"), "-l");
+    fn pi_wsl_path_prefix_includes_common_user_install_locations() {
+        let prefix = pi_wsl_path_prefix(Some("/home/tester"));
+        assert_eq!(
+            prefix,
+            "/home/tester/.local/share/mise/shims:\
+/home/tester/.asdf/shims:\
+/home/tester/.local/bin:\
+/home/tester/.volta/bin:\
+/home/tester/.local/share/fnm/aliases/default/bin:\
+/home/tester/.fnm/aliases/default/bin:\
+/home/tester/.fnm/current/bin:\
+/home/tester/.npm-global/bin"
+        );
+        assert_eq!(pi_wsl_path_prefix(None), "");
     }
 
     #[test]
-    fn shell_quote_quotes_args_with_metacharacters() {
-        assert_eq!(shell_quote("hello world"), "'hello world'");
-        assert_eq!(shell_quote("it's"), "'it'\\''s'");
-        assert_eq!(shell_quote("a$b"), "'a$b'");
+    fn build_pi_command_keeps_wsl_paths_and_cli_args_out_of_shell_script() {
+        let runtime_location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::WslDirect,
+            source: "custom".to_string(),
+            host_path: PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\test user\.pi;echo injected\agent",
+            ),
+            wsl: Some(runtime_location::WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/test user/.pi;echo injected/agent".to_string(),
+                linux_user_root: Some("/home/test user".to_string()),
+            }),
+        };
+        let package_source = "file:/tmp/extension dir;$(touch /tmp/injected)";
+        let invocation = build_pi_command(
+            &runtime_location,
+            &["install", package_source, "--no-approve"],
+            true,
+        )
+        .expect("build WSL Pi command");
+        let command = invocation.command.as_std();
+        let command_args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), "wsl");
+        assert_eq!(
+            command_args[0..7],
+            [
+                "-d",
+                "Ubuntu",
+                "--exec",
+                "/bin/sh",
+                "-c",
+                WSL_PI_COMMAND_SCRIPT,
+                "ai-toolbox-pi"
+            ]
+        );
+        assert_eq!(
+            command_args[7],
+            "/home/test user/.local/share/mise/shims:\
+/home/test user/.asdf/shims:\
+/home/test user/.local/bin:\
+/home/test user/.volta/bin:\
+/home/test user/.local/share/fnm/aliases/default/bin:\
+/home/test user/.fnm/aliases/default/bin:\
+/home/test user/.fnm/current/bin:\
+/home/test user/.npm-global/bin"
+        );
+        assert_eq!(command_args[8], "/home/test user/.pi;echo injected/agent");
+        assert_eq!(
+            &command_args[9..],
+            [
+                "env",
+                "NPM_CONFIG_LEGACY_PEER_DEPS=true",
+                "PI_OFFLINE=1",
+                "pi",
+                "install",
+                package_source,
+                "--no-approve",
+            ]
+        );
+        assert!(!WSL_PI_COMMAND_SCRIPT.contains("test user"));
+        assert!(!WSL_PI_COMMAND_SCRIPT.contains("injected"));
+        assert!(WSL_PI_COMMAND_SCRIPT.contains("${PATH:+:$PATH}"));
     }
 
     #[test]

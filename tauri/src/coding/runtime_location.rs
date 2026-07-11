@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
 use crate::coding::{claude_code, codex, gemini_cli, open_claw, open_code, pi};
-use crate::db::helpers::db_get;
+use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
 const MODULE_KEYS: [&str; 6] = ["opencode", "claude", "codex", "openclaw", "geminicli", "pi"];
@@ -920,12 +920,7 @@ pub async fn get_pi_runtime_location_async(
 async fn resolve_pi_runtime_location_uncached_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
-    let path_info = get_custom_path_from_record(db, DbTable::PiSettingsConfig, "common", |value| {
-        crate::coding::pi::adapter::settings_from_db_value(value)
-            .root_dir
-            .filter(|path| !path.trim().is_empty())
-    })
-    .await;
+    let path_info = normalize_stored_pi_root_dir(db)?;
 
     let (path, source) = if let Some(path) = path_info {
         (PathBuf::from(path), "custom".to_string())
@@ -934,6 +929,32 @@ async fn resolve_pi_runtime_location_uncached_async(
     };
 
     Ok(build_runtime_location(path, source))
+}
+
+fn normalize_stored_pi_root_dir(db: &crate::db::SqliteDbState) -> Result<Option<String>, String> {
+    db.with_conn(|conn| {
+        let Some(record) = db_get(conn, DbTable::PiSettingsConfig, "common")? else {
+            return Ok(None);
+        };
+        let Some(root_dir) = crate::coding::pi::adapter::settings_from_db_value(record)
+            .root_dir
+            .filter(|path| !path.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let normalized_root_dir = crate::coding::pi::normalize_pi_root_dir(&root_dir);
+        if normalized_root_dir != root_dir {
+            if let Err(error) = db_patch_fields(
+                conn,
+                DbTable::PiSettingsConfig,
+                "common",
+                &[("root_dir", Value::String(normalized_root_dir.clone()))],
+            ) {
+                log::warn!("Failed to persist normalized Pi root directory: {error}");
+            }
+        }
+        Ok(Some(normalized_root_dir))
+    })
 }
 
 async fn resolve_gemini_cli_runtime_location_uncached_async(
@@ -1565,7 +1586,7 @@ mod tests {
         RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo, CODEX_DEFAULT_PROMPT_FILE_NAME,
         CODEX_OVERRIDE_PROMPT_FILE_NAME,
     };
-    use crate::db::helpers::{db_delete, db_put};
+    use crate::db::helpers::{db_delete, db_get, db_put};
     use crate::db::schema::DbTable;
     use crate::db::SqliteDbState;
     use std::ffi::OsString;
@@ -2171,6 +2192,48 @@ mod tests {
                 .expect("pi async mcp path")
                 .to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\mcp.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn pi_runtime_refresh_normalizes_stored_wsl_dot_pi_root() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        db.with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::PiSettingsConfig,
+                "common",
+                &serde_json::json!({
+                    "root_dir": r"\\wsl.localhost\Ubuntu\home\tester\.pi",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                }),
+            )
+        })
+        .expect("save legacy Pi root");
+
+        let location = refresh_runtime_location_cache_for_module_async(&db, "pi")
+            .await
+            .expect("refresh Pi runtime cache");
+
+        assert_eq!(
+            location.host_path.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent"
+        );
+        assert_eq!(
+            location.wsl.as_ref().map(|wsl| wsl.linux_path.as_str()),
+            Some("/home/tester/.pi/agent")
+        );
+        let stored_record = db
+            .with_conn(|conn| db_get(conn, DbTable::PiSettingsConfig, "common"))
+            .expect("read migrated Pi root")
+            .expect("Pi settings record");
+        assert_eq!(
+            stored_record
+                .get("root_dir")
+                .and_then(serde_json::Value::as_str),
+            Some(r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent")
         );
     }
 }

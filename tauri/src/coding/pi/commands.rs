@@ -1,13 +1,13 @@
 use chrono::Local;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::adapter;
 use super::constants::{
-    PI_AUTH_FILE, PI_BUILTIN_PROVIDERS, PI_ENV_KEY, PI_MCP_FILE, PI_MODELS_FILE, PI_PROMPT_FILE,
-    PI_SETTINGS_FILE, builtin_provider_name, is_builtin_provider,
+    builtin_provider_name, is_builtin_provider, PI_AUTH_FILE, PI_BUILTIN_PROVIDERS, PI_ENV_KEY,
+    PI_MCP_FILE, PI_MODELS_FILE, PI_PROMPT_FILE, PI_SETTINGS_FILE,
 };
 use super::types::*;
 use crate::coding::db_id::db_new_id;
@@ -15,11 +15,11 @@ use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
-use crate::db::SqliteDbState;
 use crate::db::helpers::{
     db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_put, db_update_applied_status,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::SqliteDbState;
 use tauri::{Emitter, Runtime};
 
 const PI_THINKING_LEVEL_KEYS: [&str; 7] =
@@ -516,7 +516,7 @@ pub async fn get_pi_settings_config(
 /// WSL directories like `.pi`, so users can only select the parent directory.
 /// Pi's config files always live in the `agent` subdirectory. This function
 /// appends `agent` when the WSL linux path ends with `/.pi`.
-fn normalize_pi_root_dir(path: &str) -> String {
+pub(crate) fn normalize_pi_root_dir(path: &str) -> String {
     if let Some(wsl_info) = runtime_location::parse_wsl_unc_path(path) {
         let linux_path = wsl_info.linux_path.trim_end_matches('/');
         if linux_path.ends_with("/.pi") {
