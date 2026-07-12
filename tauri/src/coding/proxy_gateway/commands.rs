@@ -152,6 +152,55 @@ pub async fn proxy_gateway_stop(
     }
     Ok(status)
 }
+/// Hot-restart the running gateway without CLI stop preflight.
+///
+/// Keeps takeover manifests and settings, rebuilds runtime state, and resets
+/// blocking runtime health/cache so network-switch recovery does not require
+/// disengaging CLIs first.
+#[tauri::command]
+pub async fn proxy_gateway_restart(
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+) -> Result<ProxyGatewayStatus, String> {
+    let paths = proxy_gateway_paths(&app)?;
+    // Restart may stop the old runtime before rebinding. Always report the final
+    // running bit so listeners refresh even when restart fails mid-way.
+    let (restart_result, running) = {
+        let mut manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        match manager.restart_with_context_and_app(db_state.db().clone(), paths, app.clone()) {
+            Ok(status) => {
+                let running = status.running;
+                (Ok(status), running)
+            }
+            Err(error) => {
+                let running = manager.status().running;
+                (Err(error), running)
+            }
+        }
+    };
+
+    if restart_result.is_ok() {
+        // Restart keeps the service running; preserve auto-restore marker.
+        let mut settings = settings::load_settings_from_sqlite_state(&sqlite_state)?;
+        if !settings.enabled_on_startup {
+            settings.enabled_on_startup = true;
+            if let Err(error) = settings::save_settings(&sqlite_state, settings) {
+                log::warn!("Failed to persist proxy gateway startup state after restart: {error}");
+            }
+        }
+    }
+
+    if let Err(error) = app.emit("gateway-running-changed", running) {
+        log::warn!("Failed to emit proxy gateway running status after restart: {error}");
+    }
+
+    restart_result
+}
 
 #[tauri::command]
 pub fn proxy_gateway_status(

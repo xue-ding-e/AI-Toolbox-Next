@@ -1,12 +1,16 @@
 import React from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { Dropdown } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   Activity,
   BarChart3,
+  ChevronDown,
   FileText,
   Loader2,
   Network,
   Power,
+  RotateCcw,
   Settings,
   Square,
 } from 'lucide-react';
@@ -18,6 +22,7 @@ import {
   getProxyGatewaySettings,
   getProxyGatewayStatus,
   preflightStopProxyGateway,
+  restartProxyGateway,
   startProxyGateway,
   stopProxyGateway,
   updateProxyGatewaySettings,
@@ -36,7 +41,7 @@ import {
 } from '../utils/gatewayNavigation';
 import styles from './GatewayPage.module.less';
 
-type GatewayAction = 'load' | 'start' | 'stop' | 'health';
+type GatewayAction = 'load' | 'start' | 'stop' | 'restart' | 'health';
 type GatewayNoticeKind = 'success' | 'error';
 
 const cloneGatewaySettings = (settings: ProxyGatewaySettings): ProxyGatewaySettings => ({
@@ -254,6 +259,64 @@ const GatewayPage: React.FC = () => {
     }
   };
 
+  const handleRestart = async () => {
+    setBusyAction('restart');
+    try {
+      const nextStatus = await restartProxyGateway();
+      setStatus(nextStatus);
+      bumpTabRefreshKey(activeTab);
+      setNotice({ kind: 'success', text: t('settings.gateway.notice.restarted') });
+    } catch (error) {
+      const errorText = formatGatewayError(error);
+      let nextStatus: ProxyGatewayStatus | null = null;
+      try {
+        nextStatus = await getProxyGatewayStatus();
+        setStatus(nextStatus);
+      } catch {
+        // Best effort refresh only.
+      }
+      // Backend already returns a full "now stopped" message after mid-restart
+      // failure; avoid wrapping it again with restartFailedStopped.
+      setNotice({
+        kind: 'error',
+        text: nextStatus && !nextStatus.running
+          ? errorText
+          : t('settings.gateway.notice.restartFailed', { error: errorText }),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const powerMenuItems = React.useMemo<MenuProps['items']>(
+    () => [
+      {
+        key: 'restart',
+        icon: <RotateCcw size={14} aria-hidden="true" />,
+        label: t('settings.gateway.actions.restart'),
+        disabled: Boolean(busyAction),
+      },
+      {
+        key: 'stop',
+        icon: <Square size={14} aria-hidden="true" />,
+        label: t('settings.gateway.actions.stop'),
+        disabled: Boolean(busyAction),
+        danger: true,
+      },
+    ],
+    [busyAction, t],
+  );
+
+  const handlePowerMenuClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === 'restart') {
+      void handleRestart();
+      return;
+    }
+    if (key === 'stop') {
+      void handleStop();
+    }
+  };
+
   const handleHealthCheck = async () => {
     setBusyAction('health');
     try {
@@ -300,21 +363,30 @@ const GatewayPage: React.FC = () => {
           </div>
           <div className={styles.actionBar}>
             {status?.running ? (
-              <button
-                type="button"
-                className={styles.actionButton}
+              <Dropdown
+                trigger={['click']}
                 disabled={Boolean(busyAction)}
-                aria-label={t('settings.gateway.actions.stop')}
-                title={t('settings.gateway.actions.stop')}
-                onClick={() => void handleStop()}
+                menu={{
+                  items: powerMenuItems,
+                  onClick: handlePowerMenuClick,
+                }}
               >
-                {busyAction === 'stop' ? (
-                  <Loader2 size={15} className={styles.spin} aria-hidden="true" />
-                ) : (
-                  <Square size={14} aria-hidden="true" />
-                )}
-                <span>{t('settings.gateway.actions.stop')}</span>
-              </button>
+                <button
+                  type="button"
+                  className={styles.actionButton}
+                  disabled={Boolean(busyAction)}
+                  aria-label={t('settings.gateway.actions.power')}
+                  title={t('settings.gateway.actions.power')}
+                >
+                  {busyAction === 'restart' || busyAction === 'stop' ? (
+                    <Loader2 size={15} className={styles.spin} aria-hidden="true" />
+                  ) : (
+                    <Power size={15} aria-hidden="true" />
+                  )}
+                  <span>{t('settings.gateway.actions.power')}</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+              </Dropdown>
             ) : (
               <button
                 type="button"

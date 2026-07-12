@@ -67,7 +67,27 @@ use tokio::net::{TcpListener, TcpStream as TokioTcpStream};
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_CONCURRENT_CONNECTIONS: u32 = 128;
 const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(30);
+const RESTART_BIND_RETRY_ATTEMPTS: u32 = 4;
+const RESTART_BIND_RETRY_DELAY: Duration = Duration::from_millis(50);
 const BUSY_RESPONSE_BODY: &[u8] = br#"{"error":"gateway_busy","message":"too many connections"}"#;
+
+fn bind_gateway_listener_with_retry(
+    settings: &ProxyGatewaySettings,
+) -> Result<super::listen::BoundGatewayListener, String> {
+    let mut last_error = None;
+    for attempt in 0..RESTART_BIND_RETRY_ATTEMPTS {
+        match bind_gateway_listener(settings) {
+            Ok(bound) => return Ok(bound),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 < RESTART_BIND_RETRY_ATTEMPTS {
+                    std::thread::sleep(RESTART_BIND_RETRY_DELAY);
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "Failed to bind gateway listener".to_string()))
+}
 
 #[derive(Default)]
 pub struct ProxyGatewayState {
@@ -143,6 +163,118 @@ impl ProxyGatewayManager {
             settings.clone(),
             GatewayRuntimeContext::new(settings, Some(db), Some(paths)).with_app_handle(app_handle),
         )
+    }
+
+    /// Hot-restart the running gateway runtime.
+    ///
+    /// Unlike stop, this does not enforce CLI takeover preflight and does not
+    /// change CLI manifests. It rebuilds the listener/runtime context, keeps the
+    /// previous listen host/port when possible, and resets blocking runtime state
+    /// such as model health cooldowns, provider cache, and side stores.
+    pub fn restart_with_context(
+        &mut self,
+        db: SqliteDbState,
+        paths: ProxyGatewayPaths,
+    ) -> Result<ProxyGatewayStatus, String> {
+        self.restart_internal(db, paths, None)
+    }
+
+    pub fn restart_with_context_and_app(
+        &mut self,
+        db: SqliteDbState,
+        paths: ProxyGatewayPaths,
+        app_handle: AppHandle,
+    ) -> Result<ProxyGatewayStatus, String> {
+        self.restart_internal(db, paths, Some(app_handle))
+    }
+
+    fn restart_internal(
+        &mut self,
+        db: SqliteDbState,
+        paths: ProxyGatewayPaths,
+        app_handle: Option<AppHandle>,
+    ) -> Result<ProxyGatewayStatus, String> {
+        if self.runtime.is_none() {
+            return Err("Gateway is not running".to_string());
+        }
+
+        let live_settings = self
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.live_settings())
+            .unwrap_or_else(|| self.last_settings.clone());
+        let listen_host = self
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.listen_host.clone())
+            .unwrap_or_else(|| live_settings.listen_host.clone());
+        let listen_port = self
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.listen_port)
+            .unwrap_or(live_settings.listen_port);
+
+        // Keep the user's original port_auto_select in live settings. Only the
+        // restart bind path forces the current port so CLI origins do not drift.
+        let restart_settings = ProxyGatewaySettings {
+            listen_host: listen_host.clone(),
+            listen_port,
+            ..live_settings
+        };
+        let bind_settings = ProxyGatewaySettings {
+            listen_host,
+            listen_port,
+            port_auto_select: false,
+            ..restart_settings.clone()
+        };
+
+        if let Some(mut runtime) = self.runtime.take() {
+            runtime.stop();
+        }
+
+        let bound = match bind_gateway_listener_with_retry(&bind_settings) {
+            Ok(bound) => bound,
+            Err(error) => {
+                return Err(self.fail_restart_after_stop(restart_settings, error));
+            }
+        };
+
+        let mut context = GatewayRuntimeContext::new_reset_health(
+            restart_settings.clone(),
+            Some(db),
+            Some(paths),
+        );
+        if let Some(app_handle) = app_handle {
+            context = context.with_app_handle(app_handle);
+        }
+
+        match ProxyGatewayRuntime::spawn(bound, context) {
+            Ok(runtime) => {
+                self.last_settings = ProxyGatewaySettings {
+                    listen_host: runtime.listen_host.clone(),
+                    listen_port: runtime.listen_port,
+                    ..restart_settings
+                };
+                self.last_error = None;
+                self.runtime = Some(runtime);
+                Ok(self.status())
+            }
+            Err(error) => Err(self.fail_restart_after_stop(restart_settings, error)),
+        }
+    }
+
+    fn fail_restart_after_stop(
+        &mut self,
+        restart_settings: ProxyGatewaySettings,
+        error: impl Into<String>,
+    ) -> String {
+        let detail = error.into();
+        let message = format!(
+            "Gateway restart failed and the gateway is now stopped: {detail}. Start the gateway again, or restore CLI direct mode if takeover is still enabled."
+        );
+        self.last_settings = restart_settings;
+        self.last_error = Some(message.clone());
+        message
     }
 
     fn start_internal(
@@ -265,6 +397,17 @@ impl GatewayTaskHandle {
 }
 
 impl ProxyGatewayRuntime {
+    fn live_settings(&self) -> ProxyGatewaySettings {
+        self.settings
+            .read()
+            .map(|settings| settings.clone())
+            .unwrap_or_else(|_| ProxyGatewaySettings {
+                listen_host: self.listen_host.clone(),
+                listen_port: self.listen_port,
+                ..ProxyGatewaySettings::default()
+            })
+    }
+
     fn spawn(
         bound: super::listen::BoundGatewayListener,
         context: GatewayRuntimeContext,
@@ -382,13 +525,39 @@ impl GatewayRuntimeContext {
         db: Option<SqliteDbState>,
         paths: Option<ProxyGatewayPaths>,
     ) -> Self {
+        Self::new_with_health_mode(settings, db, paths, false)
+    }
+
+    fn new_reset_health(
+        settings: ProxyGatewaySettings,
+        db: Option<SqliteDbState>,
+        paths: Option<ProxyGatewayPaths>,
+    ) -> Self {
+        Self::new_with_health_mode(settings, db, paths, true)
+    }
+
+    fn new_with_health_mode(
+        settings: ProxyGatewaySettings,
+        db: Option<SqliteDbState>,
+        paths: Option<ProxyGatewayPaths>,
+        reset_health: bool,
+    ) -> Self {
         let health_path = paths.as_ref().map(|paths| paths.model_health_path());
         let health_registry = health_path.as_ref().map(|path| {
-            let registry =
+            let registry = if reset_health {
+                let registry = ModelHealthRegistry::new(settings.clone());
+                if let Err(error) = registry.save(path) {
+                    log::warn!(
+                        "Failed to reset proxy gateway model health during restart: {error}"
+                    );
+                }
+                registry
+            } else {
                 ModelHealthRegistry::load(path, settings.clone()).unwrap_or_else(|error| {
                     log::warn!("Failed to load proxy gateway model health at startup: {error}");
                     ModelHealthRegistry::new(settings.clone())
-                });
+                })
+            };
             Arc::new(Mutex::new(registry))
         });
         Self {
@@ -719,8 +888,11 @@ pub(crate) async fn health_check_socket_async(addr: SocketAddr) -> ProxyGatewayH
 mod tests {
     use super::*;
     use crate::coding::proxy_gateway::cli_proxy::manifest::CliProxyManifest;
+    use crate::coding::proxy_gateway::model_health::GatewayFailureKind;
     use crate::coding::proxy_gateway::request_log;
-    use crate::coding::proxy_gateway::types::{GatewayProxyMode, ProxyGatewayRequestLogListInput};
+    use crate::coding::proxy_gateway::types::{
+        GatewayProxyMode, ProviderModelHealthKey, ProxyGatewayRequestLogListInput,
+    };
     use crate::db::helpers::{db_create, db_put};
     use crate::db::schema::DbTable;
     use crate::db::SqliteDbState;
@@ -982,6 +1154,99 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
 
         let rebound = TcpListener::bind(("127.0.0.1", port));
         assert!(rebound.is_ok());
+    }
+
+    #[test]
+    fn restart_keeps_same_port_and_resets_runtime_health() {
+        let port = next_available_port();
+        let (_db_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let app_dir = tempfile::tempdir().expect("temp app dir");
+        let paths = ProxyGatewayPaths::new(app_dir.path());
+        let health_path = paths.model_health_path();
+        let mut manager = ProxyGatewayManager::default();
+
+        manager
+            .start_with_context(
+                ProxyGatewaySettings {
+                    listen_port: port,
+                    port_auto_select: true,
+                    ..ProxyGatewaySettings::default()
+                },
+                db.clone(),
+                paths.clone(),
+            )
+            .expect("start gateway");
+
+        // Seed a cooling health snapshot that ordinary start would reload.
+        let mut seeded = ModelHealthRegistry::new(ProxyGatewaySettings::default());
+        let cooling_key = ProviderModelHealthKey {
+            cli_key: GatewayCliKey::Claude,
+            provider_id: "provider-1".to_string(),
+            upstream_model_id: "model-a".to_string(),
+        };
+        seeded.record_failure(&cooling_key, GatewayFailureKind::Connection, Utc::now());
+        seeded.record_failure(&cooling_key, GatewayFailureKind::Connection, Utc::now());
+        seeded.save(&health_path).expect("seed health");
+        assert!(
+            !ModelHealthRegistry::load(&health_path, ProxyGatewaySettings::default())
+                .expect("load seeded health")
+                .is_model_available(&cooling_key, Utc::now())
+        );
+
+        let restarted = manager
+            .restart_with_context(db, paths.clone())
+            .expect("restart gateway");
+
+        assert!(restarted.running);
+        assert_eq!(restarted.listen_port, Some(port));
+        assert_eq!(manager.health_check().status_code, Some(200));
+        assert!(
+            ModelHealthRegistry::load(&health_path, ProxyGatewaySettings::default())
+                .expect("load health after restart")
+                .is_model_available(&cooling_key, Utc::now())
+        );
+        // Restart bind forces the current port, but live settings keep user auto-select.
+        assert!(manager.last_settings.port_auto_select);
+
+        manager.stop().expect("stop gateway");
+    }
+
+    #[test]
+    fn restart_when_not_running_returns_error() {
+        let mut manager = ProxyGatewayManager::default();
+        let (_db_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let app_dir = tempfile::tempdir().expect("temp app dir");
+        let paths = ProxyGatewayPaths::new(app_dir.path());
+
+        let error = manager
+            .restart_with_context(db, paths)
+            .expect_err("restart while stopped");
+        assert!(error.contains("not running"));
+        assert!(!manager.status().running);
+    }
+
+    #[test]
+    fn fail_restart_after_stop_sets_stopped_status_and_message() {
+        let mut manager = ProxyGatewayManager::default();
+        let settings = ProxyGatewaySettings {
+            listen_host: "127.0.0.1".to_string(),
+            listen_port: 18765,
+            port_auto_select: true,
+            ..ProxyGatewaySettings::default()
+        };
+
+        let message = manager.fail_restart_after_stop(settings.clone(), "port already in use");
+
+        assert!(message.contains("now stopped"));
+        assert!(message.contains("port already in use"));
+        assert!(message.contains("Start the gateway again"));
+        assert!(!manager.status().running);
+        assert_eq!(
+            manager.status().last_error.as_deref(),
+            Some(message.as_str())
+        );
+        assert_eq!(manager.last_settings.listen_port, settings.listen_port);
+        assert!(manager.last_settings.port_auto_select);
     }
 
     #[test]

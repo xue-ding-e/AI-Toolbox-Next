@@ -1708,6 +1708,7 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_update_settings,
             coding::proxy_gateway::proxy_gateway_start,
             coding::proxy_gateway::proxy_gateway_stop,
+            coding::proxy_gateway::proxy_gateway_restart,
             coding::proxy_gateway::proxy_gateway_status,
             coding::proxy_gateway::proxy_gateway_health_check,
             coding::proxy_gateway::proxy_gateway_check_port_available,

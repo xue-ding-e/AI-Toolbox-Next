@@ -22,12 +22,15 @@
 - 每 CLI 的默认计费配置存放在 `ProxyGatewaySettings.app_configs` 中，只在 provider 记录没有显式 `data.meta.cost_multiplier` / `data.meta.pricing_model_source` 时作为缺省值；不要把默认配置误实现成覆盖所有 provider 的强制全局倍率。
 - `model_pricing` 是独立 SQLite 物理表，不是 JSONB helper 表。模型定价 CRUD 必须直接查询/写入这张表，并继续使用字符串形式保存每百万 token 成本。官方默认价来自 bundled/cache/remote `model_pricing.json`，只允许 `INSERT OR IGNORE` 增量补齐，不能覆盖已有行。
 - `ProxyGatewaySettings.enabled_on_startup` 表示上次应用退出前的网关运行态，不是用户可见的独立开关。启动成功后置 `true`，用户手动停止成功前置 `false`，应用启动时按它自动恢复网关。
+- 网关“重启”是独立于“停止”的热重启命令：不做 CLI 接管 preflight、不改 manifest、尽量保持当前 host/port，并重建 runtime（清空 provider cache / side stores，重置模型健康冷却并写回 `model-health.json`）。请求历史与统计不删。
+- 重启 bind 只临时关闭 `port_auto_select`，不要把用户设置永久写成 `false`；同端口释放有短重试。若重启在 stop 之后 start 失败，必须明确返回“网关已停止”错误，并提示重新启动或先恢复 CLI 直连；命令层无论成功失败都要按最终 running 状态 emit `gateway-running-changed`，避免中途失败后其它 UI 仍以为网关在跑。
 
 ## 核心设计决策（Why）
 
 - CLI 接管使用文件 manifest，而不是数据库状态，原因是接管必须跟随本机 runtime 文件恢复，即使数据库记录损坏或迁移，仍能根据 manifest 找到备份并回滚。
 - `OpenCode` adapter 暂不属于当前 MVP；不要把 `GatewayCliKey::OpenCode` 当成可接管 CLI 开启入口。
 - 停止网关前必须做后端硬检查：只要存在 enabled manifest，就拒绝停止，要求先恢复对应 CLI 直连，避免用户 CLI 被留在不可用的本机网关地址上。
+- 重启网关不能走 stop preflight，也不能实现成前端 `stop + start`。有接管时重启必须仍可用，否则网络切换后的半死状态只能靠用户先恢复直连才能自愈。
 - 重新接管时必须复用已有 manifest 的原始备份，不要把已经被网关改写过的文件再次备份成“原始状态”。
 
 ## 关键流程

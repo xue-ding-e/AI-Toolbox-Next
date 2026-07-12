@@ -432,6 +432,10 @@ export const stopProxyGateway = async (): Promise<ProxyGatewayStatus> => {
   return invoke<ProxyGatewayStatus>('proxy_gateway_stop');
 };
 
+export const restartProxyGateway = async (): Promise<ProxyGatewayStatus> => {
+  return invoke<ProxyGatewayStatus>('proxy_gateway_restart');
+};
+
 export const getProxyGatewayStatus = async (): Promise<ProxyGatewayStatus> => {
   return invoke<ProxyGatewayStatus>('proxy_gateway_status');
 };

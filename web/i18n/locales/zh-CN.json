@@ -490,7 +490,9 @@
       "actions": {
         "start": "启动",
         "stop": "停止",
-        "health": "健康检查"
+        "health": "健康检查",
+        "power": "启停",
+        "restart": "重启"
       },
       "fields": {
         "host": "监听地址",
@@ -593,7 +595,9 @@
         "healthFailed": "网关健康检查失败：{{error}}",
         "portAvailable": "端口 {{port}} 可用",
         "portOccupied": "端口 {{port}} 已被占用",
-        "portCheckFailed": "端口检查失败：{{error}}"
+        "portCheckFailed": "端口检查失败：{{error}}",
+        "restarted": "网关已重启",
+        "restartFailed": "网关重启失败：{{error}}"
       }
     },
     "provider": {

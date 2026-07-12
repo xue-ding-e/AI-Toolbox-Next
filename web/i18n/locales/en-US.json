@@ -490,7 +490,9 @@
       "actions": {
         "start": "Start",
         "stop": "Stop",
-        "health": "Health"
+        "health": "Health",
+        "power": "Start/Stop",
+        "restart": "Restart"
       },
       "fields": {
         "host": "Host",
@@ -593,7 +595,9 @@
         "healthFailed": "Gateway health check failed: {{error}}",
         "portAvailable": "Port {{port}} is available",
         "portOccupied": "Port {{port}} is occupied",
-        "portCheckFailed": "Port check failed: {{error}}"
+        "portCheckFailed": "Port check failed: {{error}}",
+        "restarted": "Gateway restarted",
+        "restartFailed": "Failed to restart gateway: {{error}}"
       }
     },
     "provider": {
