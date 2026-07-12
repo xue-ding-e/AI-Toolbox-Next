@@ -31,7 +31,8 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
     try {
       const data = await listOhMyOpenAgentConfigs();
       setConfigs(data);
-      const applied = data.find((c) => c.isApplied);
+      // `__local__` is a local-file bridge, not a managed applied preset.
+      const applied = data.find((c) => c.isApplied && c.id !== '__local__');
       if (applied) {
         setSelectedConfigId(applied.id);
       } else {
@@ -49,7 +50,6 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
       setSelectedConfigId('');
       return;
     }
-
     try {
       await applyOhMyOpenAgentConfig(configId);
       setSelectedConfigId(configId);
@@ -65,9 +65,10 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
     }
   };
 
-  const options = configs.map((config) => ({
-    label: config.isApplied 
-      ? `${config.name} ✓` 
+  const managedConfigs = configs.filter((config) => config.id !== '__local__');
+  const options = managedConfigs.map((config) => ({
+    label: config.isApplied
+      ? `${config.name} ✓`
       : config.name,
     value: config.id,
   }));
@@ -76,7 +77,7 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
     return <Spin size="small" />;
   }
 
-  if (configs.length === 0) {
+  if (managedConfigs.length === 0) {
     return (
       <Empty 
         description={t('opencode.ohMyOpenCode.noConfigs')} 

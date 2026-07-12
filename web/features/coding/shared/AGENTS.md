@@ -75,6 +75,7 @@ sequenceDiagram
 - 已保存内置 provider 重新打开表单时，优先用 `meta.gatewayProfile.profileId + endpointId` 回显 endpoint；Base URL 是可编辑连接地址，不参与 endpoint 身份判断。没有 `gatewayProfile` 的 legacy provider 只能在 `providerType + apiFormat` 唯一命中时自动回显内置 endpoint，多匹配时必须回到自定义渠道，等待用户从渠道下拉显式选择。`providerType + apiFormat` 是 runtime effective compat 输出，不是内置渠道身份。
 - Codex 消费内置 profile 时，显式 `modelCatalog` 优先；Anthropic/Claude 协议 endpoint 如果没有目录，前端可从同一 profile 的 Claude endpoint `models` 派生添加供应商表单的初始映射，避免协议切换时模型映射丢失。不要把这个派生规则反过来写成共享 profile JSON 的新必填字段。
 - Magic Context 配置卡片只在调用方确认插件/扩展已安装时展示；OpenCode 由页面检查 `config.plugin`，Pi 由扩展列表检查 `@cortexkit/pi-magic-context`。不要在 shared 组件里重复实现安装扫描。
+- `GlobalPromptSettings` 的 `__local__` 只是本地 prompt 文件的临时桥接项（DB 为空时读本地 `CLAUDE.md` / `AGENTS.md` 等映射出来）。后端可能把它标成 `isApplied=true`，表示“当前文件内容就是这份镜像”，但 UI 不能把它当正式已应用预设：不要显示「已应用」标签、不要高亮选中态、折叠标题也不要显示「当前: default」，也不要露出「应用」按钮。用户应通过编辑后 `saveLocalConfig` 收编入库，才进入真正的 applied 管理语义。
 
 ## 跨模块依赖
 

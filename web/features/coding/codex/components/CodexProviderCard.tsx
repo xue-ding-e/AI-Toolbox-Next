@@ -43,7 +43,11 @@ import {
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
-import { CODEX_LOCAL_PROVIDER_ID, shouldShowCodexOfficialAccounts } from '../utils/localProvider';
+import {
+  CODEX_LOCAL_PROVIDER_ID,
+  isCodexLocalProviderId,
+  shouldShowCodexOfficialAccounts,
+} from '../utils/localProvider';
 
 const { Text } = Typography;
 
@@ -117,14 +121,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     opacity: isDragging ? 0.5 : (provider.isDisabled ? 0.6 : 1),
   };
 
-  const handleToggleDisabled = (checked: boolean) => {
-    if (isApplied && !checked) {
-      message.warning(t('common.disableAppliedConfigWarning'));
-      return;
-    }
-    onToggleDisabled(provider, !checked);
-  };
-
   // Parse settingsConfig JSON string
   const settingsConfig: CodexSettingsConfig = React.useMemo(() => {
     try {
@@ -154,6 +150,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     return extractCodexReasoningEffort(configContent);
   }, [settingsConfig.config]);
   const isOfficialProvider = provider.category === 'official';
+  const isLocalProvider = isCodexLocalProviderId(provider.id);
+  // `__local__` is a local-file bridge, not a managed applied preset.
+  const showRuntimeApplied = isApplied && !isLocalProvider;
   const settingsConfigApiFormat = settingsConfig as CodexSettingsConfig & {
     apiFormat?: unknown;
     api_format?: unknown;
@@ -181,7 +180,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   );
   const needsGatewayProxy =
     !isOfficialProvider &&
-    provider.id !== CODEX_LOCAL_PROVIDER_ID &&
+    !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
@@ -201,17 +200,16 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     Boolean(apiKey?.trim()) &&
     Boolean(modelName?.trim()) &&
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
-  const showRuntimeApplied = isApplied;
-  const showProxyTag = isApplied && gatewayProxyActive;
+  const showProxyTag = showRuntimeApplied && gatewayProxyActive;
   const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
   const canShowGatewayProxyButton =
-    isApplied &&
+    showRuntimeApplied &&
     !gatewayMode &&
     Boolean(gatewayStatus?.can_takeover) &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== CODEX_LOCAL_PROVIDER_ID;
-  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+    !isLocalProvider;
+  const canRestoreDirect = showRuntimeApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
   const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
   const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
@@ -219,29 +217,36 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     !isApplied &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== CODEX_LOCAL_PROVIDER_ID;
-  const showApplyAction = !gatewayProxyActive && !isApplied;
+    !isLocalProvider;
+  const showApplyAction = !gatewayProxyActive && !isApplied && !isLocalProvider;
   const showApplyWithProxyAction = showApplyAction && needsGatewayProxy;
   const showDirectApplyAction = showApplyAction && !needsGatewayProxy;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
   const applyWithProxyDisabled = provider.isDisabled || !gatewayCanApplyProxy;
+  // Match Claude: size the action rail from actual action flags, not applied chrome.
   const actionAreaWidth =
     showApplyWithProxyAction
       ? 160
-      : showRuntimeApplied || gatewayProxyActive
-      ? canShowGatewayProxyButton || showGatewaySwitchAction || showGatewayLockedApply || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
+      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
         ? 140
-        : 40
-      : 112;
+        : 40;
+
+  const handleToggleDisabled = (checked: boolean) => {
+    if (showRuntimeApplied && !checked) {
+      message.warning(t('common.disableAppliedConfigWarning'));
+      return;
+    }
+    onToggleDisabled(provider, !checked);
+  };
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--ant-color-primary)'
       : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--color-bg-selected)'
       : undefined;
   const shouldShowOfficialAccounts = shouldShowCodexOfficialAccounts(
@@ -539,7 +544,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   };
 
   const menuItems: MenuProps['items'] = [
-    {
+    ...(!isLocalProvider ? [{
       key: 'toggle',
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -556,7 +561,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
           />
         </div>
       ),
-    },
+    }] : []),
     {
       key: 'edit',
       label: t('common.edit'),
@@ -569,7 +574,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    ...(provider.id !== CODEX_LOCAL_PROVIDER_ID
+    // Hide delete button for __local__ provider
+    ...(!isLocalProvider
       ? [
           {
             type: 'divider' as const,
@@ -626,7 +632,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
-                {provider.id === CODEX_LOCAL_PROVIDER_ID && (
+                {isLocalProvider && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('codex.localConfigHint')})
                   </Text>

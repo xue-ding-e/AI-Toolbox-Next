@@ -38,6 +38,9 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const [expanded, setExpanded] = React.useState(false);
+  const isLocalConfig = config.id === '__local__';
+  // `__local__` is only a local-file bridge, not a managed applied preset.
+  const showAsApplied = config.isApplied && !isLocalConfig;
   const {
     attributes,
     listeners,
@@ -45,7 +48,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: config.id, disabled: config.id === '__local__' });
+  } = useSortable({ id: config.id, disabled: isLocalConfig });
 
   const sortableStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -60,7 +63,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
       icon: <EditOutlined />,
       onClick: () => onEdit(config),
     },
-    ...(config.id !== '__local__'
+    ...(!isLocalConfig
       ? [{
           type: 'divider' as const,
         }, {
@@ -80,9 +83,9 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
         className={styles.card}
         style={{
           marginBottom: 8,
-          borderColor: config.isApplied ? token.colorPrimary : 'var(--color-border-secondary)',
-          backgroundColor: config.isApplied ? 'var(--color-bg-selected)' : 'var(--color-bg-container)',
-          opacity: config.id === '__local__' ? 0.95 : 1,
+          borderColor: showAsApplied ? token.colorPrimary : 'var(--color-border-secondary)',
+          backgroundColor: showAsApplied ? 'var(--color-bg-selected)' : 'var(--color-bg-container)',
+          opacity: isLocalConfig ? 0.95 : 1,
           transition: 'opacity 0.3s ease, border-color 0.2s ease',
         }}
         styles={{ body: { padding: '8px 12px' } }}
@@ -90,10 +93,10 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <div
             className={styles.dragHandle}
-            {...(config.id !== '__local__' ? attributes : {})}
-            {...(config.id !== '__local__' ? listeners : {})}
+            {...(!isLocalConfig ? attributes : {})}
+            {...(!isLocalConfig ? listeners : {})}
             style={{
-              cursor: config.id === '__local__' ? 'default' : (isDragging ? 'grabbing' : 'grab'),
+              cursor: isLocalConfig ? 'default' : (isDragging ? 'grabbing' : 'grab'),
               touchAction: 'none',
               padding: '4px 0',
             }}
@@ -104,19 +107,19 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
             <div className={styles.cardHeader}>
               <div className={styles.cardTitleRow}>
                 <Text strong className={styles.cardName}>{config.name}</Text>
-                {config.id === '__local__' && (
+                {isLocalConfig && (
                   <Text type="secondary" className={styles.cardHint}>
                     ({t(`${translationKeyPrefix}.localConfigHint`)})
                   </Text>
                 )}
-                {config.isApplied && (
+                {showAsApplied && (
                   <AppliedTag>
                     {t(`${translationKeyPrefix}.applied`)}
                   </AppliedTag>
                 )}
               </div>
               <Space size={4}>
-                {!config.isApplied && (
+                {!isLocalConfig && !config.isApplied && (
                   <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => onApply(config)}>
                     {t(`${translationKeyPrefix}.apply`)}
                   </Button>

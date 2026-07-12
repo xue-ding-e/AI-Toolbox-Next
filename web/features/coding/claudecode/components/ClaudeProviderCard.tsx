@@ -94,14 +94,6 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     opacity: isDragging ? 0.5 : (provider.isDisabled ? 0.6 : 1),
   };
 
-  const handleToggleDisabled = (checked: boolean) => {
-    if (isApplied && !checked) {
-      message.warning(t('common.disableAppliedConfigWarning'));
-      return;
-    }
-    onToggleDisabled(provider, !checked);  // Switch 的 checked 表示"启用"，所以取反
-  };
-
   // 解析 settingsConfig JSON 字符串
   const settingsConfig = React.useMemo(
     () => parseClaudeSettingsConfig(provider.settingsConfig),
@@ -122,6 +114,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     '';
   const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
   const isOfficialProvider = provider.category === 'official';
+  const isLocalProvider = provider.id === '__local__';
+  // `__local__` is a local-file bridge, not a managed applied preset.
+  const showRuntimeApplied = isApplied && !isLocalProvider;
   const settingsConfigApiFormat = settingsConfig as {
     apiFormat?: unknown;
     api_format?: unknown;
@@ -147,7 +142,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   );
   const needsGatewayProxy =
     !isOfficialProvider &&
-    provider.id !== '__local__' &&
+    !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
@@ -158,13 +153,13 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     : undefined;
   const isGatewayPrimary = priorityEntry?.label === 'P0';
   const canShowGatewayProxyButton =
-    isApplied &&
+    showRuntimeApplied &&
     !gatewayMode &&
     Boolean(gatewayStatus?.can_takeover) &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== '__local__';
-  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+    !isLocalProvider;
+  const canRestoreDirect = showRuntimeApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
   const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
   const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
@@ -172,7 +167,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     !isApplied &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== '__local__';
+    !isLocalProvider;
   const requiresExplicitBaseUrl = !isOfficialProvider;
   const canRunConnectivityTest =
     !isOfficialProvider &&
@@ -180,8 +175,16 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     configuredModelIds.length > 0 &&
     (!requiresExplicitBaseUrl || Boolean(configuredBaseUrl));
 
+  const handleToggleDisabled = (checked: boolean) => {
+    if (showRuntimeApplied && !checked) {
+      message.warning(t('common.disableAppliedConfigWarning'));
+      return;
+    }
+    onToggleDisabled(provider, !checked);  // Switch 的 checked 表示"启用"，所以取反
+  };
+
   const menuItems: MenuProps['items'] = [
-    {
+    ...(!isLocalProvider ? [{
       key: 'toggle',
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -198,7 +201,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
           />
         </div>
       ),
-    },
+    }] : []),
     {
       key: 'edit',
       label: t('common.edit'),
@@ -212,7 +215,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       onClick: () => onCopy(provider),
     },
     // Hide delete button for __local__ provider
-    ...(provider.id !== '__local__' ? [
+    ...(!isLocalProvider ? [
       {
         type: 'divider' as const,
       },
@@ -233,9 +236,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     modelConfig.roles.fable.model ||
     modelConfig.legacyReasoningModel;
   const hasConfiguredModels = Boolean(modelConfig.fallbackModel || hasModels);
-  const showRuntimeApplied = isApplied;
-  const showProxyTag = isApplied && gatewayProxyActive;
-  const showApplyAction = !gatewayProxyActive && !isApplied;
+  const showProxyTag = showRuntimeApplied && gatewayProxyActive;
+  const showApplyAction = !gatewayProxyActive && !isApplied && !isLocalProvider;
   const showApplyWithProxyAction = showApplyAction && needsGatewayProxy;
   const showDirectApplyAction = showApplyAction && !needsGatewayProxy;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
@@ -249,12 +251,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       : 40;
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--ant-color-primary)'
       : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--color-bg-selected)'
       : undefined;
 
@@ -373,7 +375,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               <Text strong style={{ fontSize: 14 }}>
                 {provider.name}
               </Text>
-              {provider.id === '__local__' && (
+              {isLocalProvider && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   ({t('claudecode.localConfigHint')})
                 </Text>

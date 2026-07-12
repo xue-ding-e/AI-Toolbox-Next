@@ -39,6 +39,7 @@ sequenceDiagram
 ## 易错点与历史坑（Gotchas）
 
 - 不要把 `__local__` 直接当成真实记录复用；保存到数据库时必须转成正式记录。
+- 前端 UI 即使后端把 `__local__` 标成已应用，也不要显示「已应用」标签、选中高亮或「应用」按钮；只保留本地来源提示。用户应先保存收编入库，再进入正式 applied 管理语义。
 - 该模块虽与 OpenAgent 相邻，但路径和字段语义不完全相同，不能直接复制 OpenAgent 的文件名兼容逻辑。
 - 改应用/保存链路时，同样要考虑它会触发 OpenCode WSL 同步，而不是独立的 Slim 事件。
 - OMOS v2 的运行时 schema 不接受 `fallback.chains`；备用模型链应写成 `agents.<agent>.model` 数组。历史 `fallback.chains` 只作为 AI Toolbox 旧数据兼容读取，应用配置时必须合并进 agent model 数组，并从最终 `fallback` 输出中剔除。

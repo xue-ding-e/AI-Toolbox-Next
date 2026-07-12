@@ -56,8 +56,12 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
     opacity: isDragging ? 0.5 : (config.isDisabled ? 0.6 : 1),
   };
 
+  const isLocalConfig = config.id === '__local__';
+  // `__local__` is a local-file bridge, not a managed applied preset.
+  const showAsApplied = isSelected && !isLocalConfig;
+
   const handleToggleDisabled = (checked: boolean) => {
-    if (isSelected && !checked) {
+    if (showAsApplied && !checked) {
       message.warning(t('common.disableAppliedConfigWarning'));
       return;
     }
@@ -124,10 +128,10 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
     }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
-  const canClearAppliedConfig = isSelected && allowClearAppliedConfig && config.id !== '__local__';
+  const canClearAppliedConfig = showAsApplied && allowClearAppliedConfig;
 
   const menuItems: MenuProps['items'] = [
-    {
+    ...(!isLocalConfig ? [{
       key: 'toggle',
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -147,7 +151,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
           />
         </div>
       ),
-    },
+    }] : []),
     {
       key: 'edit',
       label: t('common.edit'),
@@ -161,7 +165,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
       onClick: () => onCopy(config),
     },
     // Hide delete button for __local__ config
-    ...(config.id !== '__local__' ? [
+    ...(!isLocalConfig ? [
       {
         type: 'divider' as const,
       },
@@ -181,8 +185,8 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isSelected ? '#1890ff' : 'var(--color-border-card)',
-          backgroundColor: isSelected ? 'var(--color-bg-selected)' : 'var(--color-bg-container)',
+          borderColor: showAsApplied ? '#1890ff' : 'var(--color-border-card)',
+          backgroundColor: showAsApplied ? 'var(--color-bg-selected)' : 'var(--color-bg-container)',
           boxShadow: 'var(--shadow-card-sm)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.16s ease',
         }}
@@ -217,7 +221,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
                 <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
 
                 {/* __local__ 配置提示 */}
-                {config.id === '__local__' && (
+                {isLocalConfig && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('opencode.ohMyOpenCode.localConfigHint')})
                   </Text>
@@ -234,7 +238,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
                   </Tag>
                 )}
 
-                {isSelected && (
+                {showAsApplied && (
                   <Tooltip title={canClearAppliedConfig ? t('opencode.ohMyOpenCode.clearAppliedTagTooltip') : undefined}>
                     <AppliedTag
                       style={{ cursor: canClearAppliedConfig ? 'pointer' : 'default' }}
@@ -248,7 +252,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
 
               {/* 右侧：操作按钮 */}
               <Space size={4}>
-                {!isSelected && (
+                {!isLocalConfig && !isSelected && (
                   <Button
                     type="link"
                     size="small"

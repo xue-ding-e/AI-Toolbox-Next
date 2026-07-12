@@ -218,7 +218,10 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
     </Spin>
   );
 
-  const appliedConfig = configs.find((config) => config.isApplied);
+  // `__local__` mirrors the local prompt file only; do not present it as a managed applied preset.
+  const appliedConfig = configs.find(
+    (config) => config.isApplied && config.id !== '__local__'
+  );
 
   return (
     <>

@@ -30,7 +30,11 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
-import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
+import {
+  GEMINI_CLI_LOCAL_PROVIDER_ID,
+  isGeminiCliLocalProviderId,
+  shouldShowGeminiCliOfficialAccounts,
+} from '../utils/localProvider';
 import {
   firstGatewayApiFormat,
   getGatewayProviderApiFormatFromMeta,
@@ -155,9 +159,12 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     providerProfileApiFormat,
     provider.meta?.apiFormat,
   );
+  const isLocalProvider = isGeminiCliLocalProviderId(provider.id);
+  // `__local__` is a local-file bridge, not a managed applied preset.
+  const showRuntimeApplied = isApplied && !isLocalProvider;
   const needsGatewayProxy =
     !isOfficialProvider &&
-    provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID &&
+    !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'gemini_native');
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -171,17 +178,16 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     provider,
     officialAccounts.length,
   );
-  const showRuntimeApplied = isApplied;
-  const showProxyTag = isApplied && gatewayProxyActive;
+  const showProxyTag = showRuntimeApplied && gatewayProxyActive;
   const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
   const canShowGatewayProxyButton =
-    isApplied &&
+    showRuntimeApplied &&
     !gatewayMode &&
     Boolean(gatewayStatus?.can_takeover) &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
-  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+    !isLocalProvider;
+  const canRestoreDirect = showRuntimeApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
   const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
   const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
@@ -189,18 +195,18 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     !isApplied &&
     !provider.isDisabled &&
     !isOfficialProvider &&
-    provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
-  const showApplyAction = !gatewayProxyActive && !isApplied;
+    !isLocalProvider;
+  const showApplyAction = !gatewayProxyActive && !isApplied && !isLocalProvider;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--ant-color-primary)'
       : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
-    : isApplied
+    : showRuntimeApplied
       ? 'var(--color-bg-selected)'
       : undefined;
 
@@ -262,7 +268,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   };
 
   const handleToggleDisabled = (checked: boolean) => {
-    if (isApplied && !checked) {
+    if (showRuntimeApplied && !checked) {
       message.warning(t('common.disableAppliedConfigWarning'));
       return;
     }
@@ -270,7 +276,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   };
 
   const menuItems: MenuProps['items'] = [
-    {
+    ...(!isLocalProvider ? [{
       key: 'toggle',
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -283,7 +289,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
           <Switch checked={!provider.isDisabled} onChange={handleToggleDisabled} size="small" />
         </div>
       ),
-    },
+    }] : []),
     {
       key: 'edit',
       label: t('common.edit'),
@@ -296,7 +302,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    ...(provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID
+    // Hide delete button for __local__ provider
+    ...(!isLocalProvider
       ? [
           { type: 'divider' as const },
           {
@@ -570,7 +577,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
-                {provider.id === GEMINI_CLI_LOCAL_PROVIDER_ID && (
+                {isLocalProvider && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('geminicli.localConfigHint')})
                   </Text>

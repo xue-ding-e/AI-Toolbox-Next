@@ -39,6 +39,7 @@ sequenceDiagram
 ## 易错点与历史坑（Gotchas）
 
 - 不要把 `__local__` 当成可长期引用的真实记录 ID。它只是数据库为空时的临时桥接态。
+- 前端 UI 即使后端把 `__local__` 标成已应用，也不要显示「已应用」标签、选中高亮或「应用」按钮；只保留本地来源提示。用户应先保存收编入库，再进入正式 applied 管理语义。
 - 保存 `__local__` 到数据库时，要区分“整个 profile/global section 未传入”和“section 已传入但某个 optional 字段为 `None`”。后者代表用户明确清空该字段，不能再回退到本地文件旧值。
 - 路径来源不是简单的“默认目录就默认、其它都 custom”，还要兼容旧文件名候选和 `runtime_location` 决议。
 - 改应用逻辑时要记住它属于 OpenCode 运行时的一部分，所以 WSL 同步事件也复用 `wsl-sync-request-opencode`。

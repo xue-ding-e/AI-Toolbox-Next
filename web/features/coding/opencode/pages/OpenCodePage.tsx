@@ -660,8 +660,8 @@ const OpenCodePage: React.FC = () => {
     const autoApplyConfig = async () => {
       // Only auto-apply when plugin changes from disabled to enabled
       if (!prevOmoPluginEnabledRef.current && omoPluginEnabled && omoConfigs.length > 0) {
-        // Find the applied config
-        const appliedConfig = omoConfigs.find((c) => c.isApplied);
+        // Find the managed applied config (exclude local-file bridge).
+        const appliedConfig = omoConfigs.find((c) => c.isApplied && c.id !== '__local__');
         if (appliedConfig) {
           try {
             await applyOhMyOpenAgentConfig(appliedConfig.id);

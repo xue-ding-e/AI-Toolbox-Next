@@ -31,7 +31,8 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
     try {
       const data = await listOhMyOpenCodeSlimConfigs();
       setConfigs(data);
-      const applied = data.find((c) => c.isApplied);
+      // `__local__` is a local-file bridge, not a managed applied preset.
+      const applied = data.find((c) => c.isApplied && c.id !== '__local__');
       if (applied) {
         setSelectedConfigId(applied.id);
       } else {
@@ -49,7 +50,6 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
       setSelectedConfigId('');
       return;
     }
-
     try {
       await applyOhMyOpenCodeSlimConfig(configId);
       setSelectedConfigId(configId);
@@ -65,7 +65,8 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
     }
   };
 
-  const options = configs.map((config) => ({
+  const managedConfigs = configs.filter((config) => config.id !== '__local__');
+  const options = managedConfigs.map((config) => ({
     label: config.isApplied
       ? `${config.name} ✓`
       : config.name,
@@ -76,7 +77,7 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
     return <Spin size="small" />;
   }
 
-  if (configs.length === 0) {
+  if (managedConfigs.length === 0) {
     return (
       <Empty
         description={t('opencode.ohMyOpenCode.noConfigs')}

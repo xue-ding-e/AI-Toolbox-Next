@@ -433,7 +433,8 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
     }
   };
 
-  const appliedConfig = configs.find((c) => c.isApplied);
+  // `__local__` is a local-file bridge; do not present it as a managed applied preset.
+  const appliedConfig = configs.find((c) => c.isApplied && c.id !== '__local__');
 
   const content = (
     <Spin spinning={loading}>
