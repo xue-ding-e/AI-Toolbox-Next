@@ -3949,7 +3949,27 @@
       "authJsonTitle": "auth.json"
     },
     "prompt": {
-      "title": "Global Prompt"
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple Grok global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local  file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default Grok Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\\n\\nMarkdown is supported and will be written to Grok CLI  when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local  and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     },
     "provider": {
       "addProvider": "Add Provider",
@@ -4026,7 +4046,25 @@
     "providerEnabled": "Provider enabled",
     "refreshConfig": "Refresh Config",
     "rootPathSource": {
-      "customize": "Customize Root Directory"
+      "customize": "Customize Root Directory",
+      "modal": {
+        "title": "Customize Grok Root Directory",
+        "currentSource": "Current Source",
+        "sourceCustom": "App Settings",
+        "sourceEnv": "Environment Variable GROK_HOME",
+        "sourceShell": "Shell Config GROK_HOME",
+        "sourceDefault": "Default Path",
+        "description": "Grok CLI derives config.toml, auth.json, AGENTS.md, and plugins from this root directory.",
+        "envWarningTitle": "Environment Variable Setup Required",
+        "envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Grok CLI itself should also use this directory, set GROK_HOME manually.",
+        "customPath": "Root Directory",
+        "placeholder": "Enter or select Grok root directory",
+        "folderOnlyTitle": "Please select a folder",
+        "folderOnlyDesc": "Do not select a specific file. Grok CLI will derive config.toml, auth.json, AGENTS.md, and plugins inside the selected folder.",
+        "saveSuccess": "Grok root directory saved",
+        "resetSuccess": "Reset to default root directory",
+        "reset": "Reset to Default"
+      }
     },
     "title": "Grok Configuration",
     "viewDocs": "Documentation"

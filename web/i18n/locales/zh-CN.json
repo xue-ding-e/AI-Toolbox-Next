@@ -3946,7 +3946,27 @@
       "authJsonTitle": "auth.json"
     },
     "prompt": {
-      "title": "全局提示词"
+      "title": "全局提示词",
+      "sectionHint": "可通过右上角「添加配置」预设多套 Grok 全局提示词方案，并通过「应用」或系统托盘快捷切换。",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地  文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "如：默认 Grok 助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 请输入提示词内容\\n\\n支持 Markdown，应用后会写入 Grok CLI 的 。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 ，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
     },
     "provider": {
       "addProvider": "添加供应商",
@@ -4023,7 +4043,25 @@
     "providerEnabled": "供应商已启用",
     "refreshConfig": "刷新配置",
     "rootPathSource": {
-      "customize": "自定义配置目录"
+      "customize": "自定义配置目录",
+      "modal": {
+        "title": "自定义 Grok 配置目录",
+        "currentSource": "当前来源",
+        "sourceCustom": "应用内设置",
+        "sourceEnv": "环境变量 GROK_HOME",
+        "sourceShell": "Shell 配置 GROK_HOME",
+        "sourceDefault": "默认路径",
+        "description": "Grok CLI 的 config.toml、auth.json、AGENTS.md 和 plugins 会从这个配置目录派生。",
+        "envWarningTitle": "环境变量需手动配置",
+        "envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Grok CLI 本体也使用该目录，请自行设置 GROK_HOME。",
+        "customPath": "配置目录",
+        "placeholder": "输入或选择 Grok 配置目录",
+        "folderOnlyTitle": "请选择文件夹",
+        "folderOnlyDesc": "不要选择具体文件，Grok CLI 会在所选文件夹下派生 config.toml、auth.json、AGENTS.md 和 plugins。",
+        "saveSuccess": "Grok 配置目录已保存",
+        "resetSuccess": "已重置为默认配置目录",
+        "reset": "重置为默认"
+      }
     },
     "title": "Grok 配置管理",
     "viewDocs": "官方文档"
