@@ -17,6 +17,7 @@ import {
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
+  FolderOpenOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -55,6 +56,30 @@ import styles from './GrokPluginsPanel.module.less';
 
 const { Text } = Typography;
 
+const GROK_OFFICIAL_MARKETPLACE_SOURCE = 'xai-org/plugin-marketplace';
+const GROK_OFFICIAL_MARKETPLACE_NAME = 'xai-official';
+
+function isLocalMarketplacePath(path: string): boolean {
+  const normalized = path.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith('/') || /^[A-Za-z]:[\\/]/.test(normalized)) {
+    return true;
+  }
+  if (normalized.startsWith('./') || normalized.startsWith('../') || normalized.startsWith('~')) {
+    return true;
+  }
+  // Remote git URLs and GitHub shorthand are marketplaces, not local directories.
+  if (normalized.includes('://') || normalized.startsWith('git@')) {
+    return false;
+  }
+  if (/^[\w.-]+\/[\w.-]+(?:\.git)?$/.test(normalized)) {
+    return false;
+  }
+  return false;
+}
+
 type GrokPluginActionKey =
   | `installed:${string}:enable`
   | `installed:${string}:disable`
@@ -63,7 +88,7 @@ type GrokPluginActionKey =
   | `installed:${string}:details`
   | `installed:${string}:validate`
   | `discover:${string}:install`
-  | 'workspace:add'
+  | 'marketplace:add'
   | `workspace:${string}:remove`
   | `marketplace:${string}:update`;
 
@@ -99,6 +124,8 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
   const [activeTabKey, setActiveTabKey] = React.useState('installed');
   const [runtimeCollapsed, setRuntimeCollapsed] = React.useState(true);
   const [workspaceCollapsed, setWorkspaceCollapsed] = React.useState(true);
+  const [addMarketplaceModalOpen, setAddMarketplaceModalOpen] = React.useState(false);
+  const [marketplaceSourceInput, setMarketplaceSourceInput] = React.useState('');
   const [runtimeStatus, setRuntimeStatus] = React.useState<GrokPluginRuntimeStatus | null>(null);
   const [installedPlugins, setInstalledPlugins] = React.useState<GrokInstalledPlugin[]>([]);
   const [marketplaces, setMarketplaces] = React.useState<GrokPluginMarketplace[]>([]);
@@ -321,7 +348,28 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
     });
   }, [installedPlugins.length, loadData, showManualRestartNotice, t]);
 
-  const handlePickWorkspace = React.useCallback(async () => {
+  const handleAddMarketplace = React.useCallback(async (sourceOverride?: string) => {
+    const normalizedSource = (sourceOverride ?? marketplaceSourceInput).trim();
+    if (!normalizedSource) {
+      message.warning(t('grok.plugins.marketplaces.sourceRequired'));
+      return false;
+    }
+
+    const succeeded = await runAction(
+      'marketplace:add',
+      () => addGrokPluginWorkspaceRoot({ path: normalizedSource }),
+      t('grok.plugins.marketplaces.addSuccess'),
+    );
+
+    if (succeeded) {
+      setMarketplaceSourceInput('');
+      setAddMarketplaceModalOpen(false);
+      setActiveTabKey('marketplaces');
+    }
+    return succeeded;
+  }, [marketplaceSourceInput, runAction, t]);
+
+  const handlePickLocalMarketplaceDirectory = React.useCallback(async () => {
     try {
       const selected = await open({
         title: t('grok.plugins.marketplaces.pickDirectoryTitle'),
@@ -333,20 +381,17 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
         return;
       }
 
-      const succeeded = await runAction(
-        'workspace:add',
-        () => addGrokPluginWorkspaceRoot({ path: selected }),
-        t('grok.plugins.marketplaces.addSuccess'),
-      );
-
-      if (succeeded) {
-        setActiveTabKey('marketplaces');
-      }
+      setMarketplaceSourceInput(selected);
     } catch (error) {
-      console.error('Failed to pick Grok workspace directory:', error);
+      console.error('Failed to pick Grok marketplace directory:', error);
       message.error(t('grok.plugins.marketplaces.pickDirectoryError'));
     }
-  }, [runAction, t]);
+  }, [t]);
+
+  const handleAddOfficialMarketplace = React.useCallback(async () => {
+    setMarketplaceSourceInput(GROK_OFFICIAL_MARKETPLACE_SOURCE);
+    await handleAddMarketplace(GROK_OFFICIAL_MARKETPLACE_SOURCE);
+  }, [handleAddMarketplace]);
 
   const handleRemoveWorkspace = React.useCallback(async (path: string) => {
     await runAction(
@@ -355,6 +400,15 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
       t('grok.plugins.marketplaces.removeSuccess'),
     );
   }, [runAction, t]);
+
+  const hasOfficialMarketplace = marketplaces.some(
+    (marketplace) => marketplace.name === GROK_OFFICIAL_MARKETPLACE_NAME,
+  );
+  // Backend currently mirrors known marketplaces into workspace roots.
+  // Only keep true local directory paths to avoid duplicating remote marketplace entries.
+  const localWorkspaceRoots = workspaceRoots.filter((workspaceRoot) =>
+    isLocalMarketplacePath(workspaceRoot.path),
+  );
 
   const installedPluginCount = installedPlugins.length;
   const enabledInstalledPluginCount = installedPlugins.filter((plugin) => plugin.enabled).length;
@@ -487,140 +541,146 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
 
   const marketplaceItems = (
     <>
-      <section className={styles.workspaceSection}>
-        <Collapse
-          bordered={false}
-          className={styles.workspaceCollapse}
-          activeKey={workspaceCollapsed ? [] : ['workspace']}
-          onChange={(keys) => setWorkspaceCollapsed(!keys.includes('workspace'))}
-          items={[
-            {
-              key: 'workspace',
-              label: (
-                <div className={styles.workspaceCollapseHeader}>
-                  <div className={styles.workspaceHeaderText}>
-                    <div className={styles.workspaceTitleRow}>
-                      <div className={styles.workspaceTitle}>
-                        {t('grok.plugins.marketplaces.workspaceTitle')}
+      {localWorkspaceRoots.length > 0 ? (
+        <section className={styles.workspaceSection}>
+          <Collapse
+            bordered={false}
+            className={styles.workspaceCollapse}
+            activeKey={workspaceCollapsed ? [] : ['workspace']}
+            onChange={(keys) => setWorkspaceCollapsed(!keys.includes('workspace'))}
+            items={[
+              {
+                key: 'workspace',
+                label: (
+                  <div className={styles.workspaceCollapseHeader}>
+                    <div className={styles.workspaceHeaderText}>
+                      <div className={styles.workspaceTitleRow}>
+                        <div className={styles.workspaceTitle}>
+                          {t('grok.plugins.marketplaces.workspaceTitle')}
+                        </div>
+                        <Tag>{localWorkspaceRoots.length}</Tag>
                       </div>
-                      <Tag>{workspaceRoots.length}</Tag>
-                    </div>
-                    <div className={styles.workspaceHint}>
-                      {t('grok.plugins.marketplaces.sectionHint')}
+                      <div className={styles.workspaceHint}>
+                        {t('grok.plugins.marketplaces.sectionHint')}
+                      </div>
                     </div>
                   </div>
-
-                  <Button
-                    type="text"
-                    className={styles.ghostActionButton}
-                    size="small"
-                    icon={<PlusOutlined />}
-                    disabled={Boolean(activeActionKey)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handlePickWorkspace();
-                    }}
-                  >
-                    {t('grok.plugins.marketplaces.addWorkspace')}
-                  </Button>
-                </div>
-              ),
-              children: workspaceRoots.length === 0 ? (
-                <div className={styles.emptyWrap}>
-                  <Empty description={t('grok.plugins.marketplaces.workspaceEmpty')} />
-                </div>
-              ) : (
-                <div className={styles.list}>
-                  {workspaceRoots.map((workspaceRoot) => (
-                    <div key={workspaceRoot.path} className={styles.pluginCard}>
-                      <div className={styles.pluginHeader}>
-                        <div className={styles.pluginTitleWrap}>
-                          <div className={styles.pluginTitleRow}>
-                            <Text className={styles.pluginTitle}>{t('grok.plugins.marketplaces.workspacePath')}</Text>
-                            <Tag color={workspaceRoot.status === 'ready' ? 'green' : 'default'}>
-                              {workspaceRoot.status === 'ready'
-                                ? t('grok.plugins.marketplaces.statusReady')
-                                : t('grok.plugins.marketplaces.statusMissing')}
-                            </Tag>
-                            {workspaceRoot.resolutionSource ? (
-                              <Tag>
-                                {workspaceRoot.resolutionSource === 'direct'
-                                  ? t('grok.plugins.marketplaces.resolutionSourceDirect')
-                                  : t('grok.plugins.marketplaces.resolutionSourceGitRepo')}
+                ),
+                children: (
+                  <div className={styles.list}>
+                    {localWorkspaceRoots.map((workspaceRoot) => (
+                      <div key={workspaceRoot.path} className={styles.pluginCard}>
+                        <div className={styles.pluginHeader}>
+                          <div className={styles.pluginTitleWrap}>
+                            <div className={styles.pluginTitleRow}>
+                              <Text className={styles.pluginTitle}>{t('grok.plugins.marketplaces.workspacePath')}</Text>
+                              <Tag color={workspaceRoot.status === 'ready' ? 'green' : 'default'}>
+                                {workspaceRoot.status === 'ready'
+                                  ? t('grok.plugins.marketplaces.statusReady')
+                                  : t('grok.plugins.marketplaces.statusMissing')}
                               </Tag>
-                            ) : null}
+                              {workspaceRoot.resolutionSource ? (
+                                <Tag>
+                                  {workspaceRoot.resolutionSource === 'direct'
+                                    ? t('grok.plugins.marketplaces.resolutionSourceDirect')
+                                    : t('grok.plugins.marketplaces.resolutionSourceGitRepo')}
+                                </Tag>
+                              ) : null}
+                            </div>
                           </div>
-                        </div>
 
-                        <div className={styles.pluginActions}>
-                          <Popconfirm
-                            title={t('grok.plugins.marketplaces.removeConfirm')}
-                            onConfirm={() => handleRemoveWorkspace(workspaceRoot.path)}
-                            okText={t('common.confirm')}
-                            cancelText={t('common.cancel')}
-                          >
-                            <Button
-                              type="text"
-                              className={styles.ghostActionButton}
-                              size="small"
-                              danger
-                              icon={<DeleteOutlined />}
-                              loading={activeActionKey === `workspace:${workspaceRoot.path}:remove`}
-                              disabled={Boolean(activeActionKey)}
+                          <div className={styles.pluginActions}>
+                            <Popconfirm
+                              title={t('grok.plugins.marketplaces.removeConfirm')}
+                              onConfirm={() => handleRemoveWorkspace(workspaceRoot.path)}
+                              okText={t('common.confirm')}
+                              cancelText={t('common.cancel')}
                             >
-                              {t('grok.plugins.marketplaces.remove')}
-                            </Button>
-                          </Popconfirm>
+                              <Button
+                                type="text"
+                                className={styles.ghostActionButton}
+                                size="small"
+                                danger
+                                icon={<DeleteOutlined />}
+                                loading={activeActionKey === `workspace:${workspaceRoot.path}:remove`}
+                                disabled={Boolean(activeActionKey)}
+                              >
+                                {t('grok.plugins.marketplaces.remove')}
+                              </Button>
+                            </Popconfirm>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className={styles.pluginMeta}>
-                        <div className={styles.pluginMetaItem}>
-                          <Text className={styles.pluginMetaLabel}>
-                            {t('grok.plugins.marketplaces.workspacePath')}:
-                          </Text>{' '}
-                          <Text code>{workspaceRoot.path}</Text>
-                        </div>
-                        {workspaceRoot.resolvedMarketplacePath ? (
+                        <div className={styles.pluginMeta}>
                           <div className={styles.pluginMetaItem}>
                             <Text className={styles.pluginMetaLabel}>
-                              {t('grok.plugins.marketplaces.resolvedMarketplacePath')}:
+                              {t('grok.plugins.marketplaces.workspacePath')}:
                             </Text>{' '}
-                            <Text code>{workspaceRoot.resolvedMarketplacePath}</Text>
+                            <Text code>{workspaceRoot.path}</Text>
                           </div>
-                        ) : null}
-                        {workspaceRoot.resolvedRepoRoot ? (
-                          <div className={styles.pluginMetaItem}>
-                            <Text className={styles.pluginMetaLabel}>
-                              {t('grok.plugins.marketplaces.resolvedRepoRoot')}:
-                            </Text>{' '}
-                            <Text code>{workspaceRoot.resolvedRepoRoot}</Text>
+                          {workspaceRoot.resolvedMarketplacePath ? (
+                            <div className={styles.pluginMetaItem}>
+                              <Text className={styles.pluginMetaLabel}>
+                                {t('grok.plugins.marketplaces.resolvedMarketplacePath')}:
+                              </Text>{' '}
+                              <Text code>{workspaceRoot.resolvedMarketplacePath}</Text>
+                            </div>
+                          ) : null}
+                          {workspaceRoot.resolvedRepoRoot ? (
+                            <div className={styles.pluginMetaItem}>
+                              <Text className={styles.pluginMetaLabel}>
+                                {t('grok.plugins.marketplaces.resolvedRepoRoot')}:
+                              </Text>{' '}
+                              <Text code>{workspaceRoot.resolvedRepoRoot}</Text>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {workspaceRoot.error ? (
+                          <div className={styles.workspaceError}>
+                            {workspaceRoot.error}
                           </div>
                         ) : null}
                       </div>
-
-                      {workspaceRoot.error ? (
-                        <div className={styles.workspaceError}>
-                          {workspaceRoot.error}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ),
-            },
-          ]}
-        />
-      </section>
+                    ))}
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </section>
+      ) : null}
 
       {marketplaces.length === 0 ? (
         <div className={styles.emptyWrap}>
           <Empty description={t('grok.plugins.marketplaces.empty')} />
+          <div className={styles.emptyActions}>
+            {!hasOfficialMarketplace ? (
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                loading={activeActionKey === 'marketplace:add'}
+                disabled={Boolean(activeActionKey)}
+                onClick={() => void handleAddOfficialMarketplace()}
+              >
+                {t('grok.plugins.marketplaces.addOfficial')}
+              </Button>
+            ) : null}
+            <Button
+              size="small"
+              icon={<PlusOutlined />}
+              disabled={Boolean(activeActionKey)}
+              onClick={() => setAddMarketplaceModalOpen(true)}
+            >
+              {t('grok.plugins.marketplaces.add')}
+            </Button>
+          </div>
         </div>
       ) : (
         <div className={styles.list}>
           {marketplaces.map((marketplace) => (
-            <div key={marketplace.path} className={styles.pluginCard}>
+            <div key={marketplace.path || marketplace.name} className={styles.pluginCard}>
               <div className={styles.pluginHeader}>
                 <div className={styles.pluginTitleWrap}>
                   <div className={styles.pluginTitleRow}>
@@ -633,7 +693,7 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
                     <Tag>{t('grok.plugins.marketplaces.pluginCount', { count: marketplace.pluginCount })}</Tag>
                     {marketplace.isCurated ? (
                       <span className={styles.marketplaceInlineHint}>
-                      {t('grok.plugins.marketplaces.updateTimingHint')}
+                        {t('grok.plugins.marketplaces.updateTimingHint')}
                       </span>
                     ) : null}
                   </div>
@@ -666,6 +726,36 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
               </div>
             </div>
           ))}
+          {!hasOfficialMarketplace ? (
+            <div className={styles.pluginCard}>
+              <div className={styles.pluginHeader}>
+                <div className={styles.pluginTitleWrap}>
+                  <div className={styles.pluginTitleRow}>
+                    <Text className={styles.pluginTitle}>
+                      {t('grok.plugins.marketplaces.officialTitle')}
+                    </Text>
+                    <Tag color="blue">{t('grok.plugins.marketplaces.recommended')}</Tag>
+                  </div>
+                  <div className={styles.pluginDescription}>
+                    {t('grok.plugins.marketplaces.officialDescription')}
+                  </div>
+                </div>
+                <div className={styles.pluginActions}>
+                  <Button
+                    type="text"
+                    className={styles.ghostActionButton}
+                    size="small"
+                    icon={<PlusOutlined />}
+                    loading={activeActionKey === 'marketplace:add'}
+                    disabled={Boolean(activeActionKey)}
+                    onClick={() => void handleAddOfficialMarketplace()}
+                  >
+                    {t('grok.plugins.marketplaces.addOfficial')}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -866,6 +956,18 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
                       ) : null}
                     </>
                   ) : null}
+                  {activeTabKey === 'marketplaces' ? (
+                    <Button
+                      type="text"
+                      className={styles.ghostActionButton}
+                      size="small"
+                      icon={<PlusOutlined />}
+                      disabled={Boolean(activeActionKey)}
+                      onClick={() => setAddMarketplaceModalOpen(true)}
+                    >
+                      {t('grok.plugins.marketplaces.add')}
+                    </Button>
+                  ) : null}
                   <Button
                     type="text"
                     className={styles.ghostActionButton}
@@ -894,6 +996,69 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
         </section>
       </div>
       </Spin>
+
+      <Modal
+        open={addMarketplaceModalOpen}
+        title={t('grok.plugins.marketplaces.addModalTitle')}
+        okText={t('grok.plugins.marketplaces.add')}
+        cancelText={t('common.cancel')}
+        confirmLoading={activeActionKey === 'marketplace:add'}
+        destroyOnHidden
+        onOk={async () => {
+          const succeeded = await handleAddMarketplace();
+          if (!succeeded) {
+            // Keep the modal open when validation fails or the backend rejects.
+            throw new Error('marketplace-add-failed');
+          }
+        }}
+        onCancel={() => {
+          if (activeActionKey !== 'marketplace:add') {
+            setAddMarketplaceModalOpen(false);
+            setMarketplaceSourceInput('');
+          }
+        }}
+      >
+        <div className={styles.modalFieldRow}>
+          <div className={styles.modalFieldLabel}>
+            {t('grok.plugins.marketplaces.sourceLabel')}
+          </div>
+          <div className={styles.modalFieldControl}>
+            <Input
+              autoFocus
+              value={marketplaceSourceInput}
+              onChange={(event) => setMarketplaceSourceInput(event.target.value)}
+              placeholder={t('grok.plugins.marketplaces.sourcePlaceholder')}
+              onPressEnter={() => {
+                void handleAddMarketplace();
+              }}
+            />
+            <div className={styles.modalFieldActions}>
+              <Button
+                size="small"
+                icon={<FolderOpenOutlined />}
+                disabled={Boolean(activeActionKey)}
+                onClick={() => void handlePickLocalMarketplaceDirectory()}
+              >
+                {t('grok.plugins.marketplaces.pickDirectory')}
+              </Button>
+              {!hasOfficialMarketplace ? (
+                <Button
+                  size="small"
+                  type="link"
+                  disabled={Boolean(activeActionKey)}
+                  onClick={() => setMarketplaceSourceInput(GROK_OFFICIAL_MARKETPLACE_SOURCE)}
+                >
+                  {t('grok.plugins.marketplaces.useOfficialSource')}
+                </Button>
+              ) : null}
+            </div>
+            <div className={styles.modalHint}>
+              {t('grok.plugins.marketplaces.sourceHint')}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       <Modal
         open={Boolean(pluginDetails)}
         title={pluginDetails?.name}

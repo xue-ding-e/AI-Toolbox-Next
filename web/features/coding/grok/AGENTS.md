@@ -55,6 +55,8 @@ sequenceDiagram
 - Gateway 现在是 direct → single → failover 三态。single 入口在已应用 provider 卡片的“网关代理”按钮；single/failover 接管期间都必须锁定其他 provider 的“应用”入口，failover 时卡片额外显示 P0/P1 优先级，切 P0 必须先恢复直连。
 - 前端不要假设 Grok prompt 文件名永远是 `AGENTS.md`。展示路径、删除已应用 prompt 后的刷新和同步结果都以后端返回/事件为准。
 - 插件页的全部启用/全部禁用只作用于“已安装”Tab 中当前 runtime 的已安装插件，不作用于市场可安装列表。Grok 没有 Codex 的 plugins feature toggle，不得复制该开关。
+- Grok marketplace 添加入口应使用 Modal + 文本输入（GitHub repo / git URL / 本地路径），不能只靠本地目录选择。CLI 支持 `xai-org/plugin-marketplace` 这类 shorthand；空态可提供“添加 xAI 官方市场”快捷入口。`is_curated` 只对应官方 `xai-official`。
+- 后端 `list_grok_plugin_workspace_roots` 目前会镜像 known marketplaces；前端本地目录区块只展示真正的本地路径，避免把 git URL / `owner/repo` 重复显示成“本地市场目录”。推荐卡片用“推荐”标签，不要伪装成已 curated。
 - Grok Session Manager 只管理 Grok 自己的 session 目录、详情、恢复、导入导出和删除；不要增加 Codex 的统一历史、provider 路由迁移或 SQLite history 修复入口。
 - Grok 单个和批量会话导出需明确区分三种格式：共享 AI Toolbox JSON、官方 `grok export` Markdown、独立 native snapshot JSON。格式选择复用共享 Session Manager 的现有导出动作和 Modal，不新增 Grok 专用详情页或视觉体系。
 

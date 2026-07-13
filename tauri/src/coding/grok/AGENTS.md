@@ -30,6 +30,8 @@
 - Device Code 和 token 只留在后端；事件和前端 payload 不得包含凭据。
 - xAI Device Code scope 包含 `conversations:read conversations:write`；身份字段来自 access-token claims 与 OIDC userinfo。refresh 必须保留同 principal 的 CLI enrichment，apply/delete/logout 必须保留其他 auth scope，最后一个 scope 删除后才删除文件。
 - 从 live `config.toml` 生成 `__local__` 时必须跳过模型级 `api_key`，不能把它放进 `auth`、`modelCatalog` 或 `extraConfig` 后返回前端。
+- Official xAI marketplace name is `xai-official` (`xai-org/plugin-marketplace`, `.grok-plugin/marketplace.json`). `is_curated` must only match `xai-official`. Claude-compatible marketplaces may still be installed, but resolve install sources from `.grok-plugin` first, then `.claude-plugin`.
+- Official marketplace install sources use either `{source:"url",url,sha}` or `{type:"local",path}`. `marketplace_install_source` must pin `sha`/`ref` and resolve local path objects relative to the marketplace cache root.
 
 ## 最小验证
 

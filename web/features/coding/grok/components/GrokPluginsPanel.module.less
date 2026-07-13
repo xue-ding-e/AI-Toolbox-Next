@@ -211,6 +211,46 @@
   }
 }
 
+.modalFieldRow {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.modalFieldLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--color-text-primary);
+}
+
+.modalFieldControl {
+  min-width: 0;
+}
+
+.modalFieldActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.modalHint {
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.emptyActions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
 .tagList {
   display: flex;
   align-items: center;

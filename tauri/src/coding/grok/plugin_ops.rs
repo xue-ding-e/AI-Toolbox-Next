@@ -277,13 +277,9 @@ fn marketplace_plugin_install_sources(
     };
     for entry in entries.flatten() {
         let repository_root = entry.path();
-        let manifest_path = repository_root
-            .join(".claude-plugin")
-            .join("marketplace.json");
-        let Ok(content) = fs::read_to_string(&manifest_path) else {
-            continue;
-        };
-        let Ok(manifest) = serde_json::from_str::<Value>(&content) else {
+        // Official xAI marketplace uses `.grok-plugin/marketplace.json`;
+        // Claude-compatible marketplaces keep `.claude-plugin/marketplace.json`.
+        let Some(manifest) = read_marketplace_manifest(&repository_root) else {
             continue;
         };
         let Some(marketplace_name) = manifest.get("name").and_then(Value::as_str) else {
@@ -310,6 +306,25 @@ fn marketplace_plugin_install_sources(
     result
 }
 
+fn read_marketplace_manifest(repository_root: &Path) -> Option<Value> {
+    for dir_name in [".grok-plugin", ".claude-plugin"] {
+        let manifest_path = repository_root.join(dir_name).join("marketplace.json");
+        let Ok(content) = fs::read_to_string(manifest_path) else {
+            continue;
+        };
+        if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
+            return Some(manifest);
+        }
+    }
+    None
+}
+
+fn is_curated_marketplace_name(name: &str) -> bool {
+    // Only the official xAI marketplace is curated.
+    // Claude-compatible marketplaces may still be installed, but they are not Grok official curated.
+    name == "xai-official"
+}
+
 fn marketplace_install_source(repository_root: &Path, source: &Value) -> Option<String> {
     if let Some(relative) = source.as_str() {
         let path = repository_root.join(relative);
@@ -319,15 +334,41 @@ fn marketplace_install_source(repository_root: &Path, source: &Value) -> Option<
     let url = object
         .get("url")
         .or_else(|| object.get("repo"))
-        .and_then(Value::as_str)?;
-    let reference = object.get("ref").and_then(Value::as_str);
-    let subdirectory = object.get("path").and_then(Value::as_str);
-    let mut install_source = url.to_string();
-    if let Some(reference) = reference.filter(|value| !value.trim().is_empty()) {
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let local_or_subdir_path = object
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    // Official xAI marketplace uses local path objects without remote URL:
+    // { "type": "local", "path": "./external_plugins/neon" }
+    if url.is_none() {
+        let relative = local_or_subdir_path?;
+        return Some(
+            repository_root
+                .join(relative)
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+
+    let mut install_source = url?.to_string();
+    // Pin commit with either git ref or sha (official marketplace uses sha).
+    let reference = object
+        .get("ref")
+        .or_else(|| object.get("sha"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(reference) = reference {
         install_source.push('@');
         install_source.push_str(reference);
     }
-    if let Some(subdirectory) = subdirectory.filter(|value| !value.trim().is_empty()) {
+    // When both remote URL and path exist, path is a git subdirectory.
+    if let Some(subdirectory) = local_or_subdir_path {
         install_source.push('#');
         install_source.push_str(subdirectory);
     }
@@ -363,7 +404,7 @@ pub async fn list_grok_marketplaces(
                 display_name: Some(name.clone()),
                 description: None,
                 plugin_count: plugin_counts.get(&name).copied().unwrap_or(0),
-                is_curated: name == "claude-plugins-official",
+                is_curated: is_curated_marketplace_name(&name),
                 name,
             }
         })
@@ -536,6 +577,8 @@ pub async fn remove_grok_plugin_workspace_root(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn marketplace_install_source_supports_relative_and_git_subdir_sources() {
@@ -557,6 +600,67 @@ mod tests {
             )
             .as_deref(),
             Some("https://github.com/example/plugins.git@v1.2.3#plugins/review")
+        );
+    }
+
+    #[test]
+    fn marketplace_install_source_supports_official_url_sha_and_local_path() {
+        let repository_root = Path::new("/tmp/xai-official");
+        assert_eq!(
+            marketplace_install_source(
+                repository_root,
+                &serde_json::json!({
+                    "source": "url",
+                    "url": "https://github.com/vercel/vercel-plugin.git",
+                    "sha": "61f1903bed7b322c9745f6ba67095bc006de7e63"
+                }),
+            )
+            .as_deref(),
+            Some(
+                "https://github.com/vercel/vercel-plugin.git@61f1903bed7b322c9745f6ba67095bc006de7e63"
+            )
+        );
+        assert_eq!(
+            marketplace_install_source(
+                repository_root,
+                &serde_json::json!({
+                    "type": "local",
+                    "path": "./external_plugins/neon"
+                }),
+            )
+            .as_deref(),
+            Some("/tmp/xai-official/./external_plugins/neon")
+        );
+    }
+
+    #[test]
+    fn curated_marketplace_name_is_only_xai_official() {
+        assert!(is_curated_marketplace_name("xai-official"));
+        assert!(!is_curated_marketplace_name("claude-plugins-official"));
+        assert!(!is_curated_marketplace_name("community-marketplace"));
+    }
+
+    #[test]
+    fn marketplace_manifest_prefers_grok_plugin_over_claude_plugin() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::create_dir_all(root.join(".grok-plugin")).expect("create grok plugin dir");
+        fs::create_dir_all(root.join(".claude-plugin")).expect("create claude plugin dir");
+        fs::write(
+            root.join(".grok-plugin").join("marketplace.json"),
+            r#"{"name":"xai-official","plugins":[]}"#,
+        )
+        .expect("write grok manifest");
+        fs::write(
+            root.join(".claude-plugin").join("marketplace.json"),
+            r#"{"name":"claude-plugins-official","plugins":[]}"#,
+        )
+        .expect("write claude manifest");
+
+        let manifest = read_marketplace_manifest(root).expect("read manifest");
+        assert_eq!(
+            manifest.get("name").and_then(Value::as_str),
+            Some("xai-official")
         );
     }
 }
