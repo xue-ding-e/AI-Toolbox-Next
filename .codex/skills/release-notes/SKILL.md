@@ -36,9 +36,10 @@ Always work in this order:
 
 Prefer these sources:
 
-- `git describe --tags --abbrev=0`
-- `git diff --stat <base>..HEAD`
-- `git log --first-parent --oneline <base>..HEAD`
+- `git tag --sort=-creatordate` / `git describe --tags --abbrev=0` (then skip prerelease tags when selecting the default base)
+- latest **stable** GitHub Release from `gh release list` (ignore titles/tags marked beta/prerelease unless the user asked for that boundary)
+- `git diff --stat <stable-base>..HEAD`
+- `git log --first-parent --oneline <stable-base>..HEAD`
 - `gh repo view --json nameWithOwner,url,defaultBranchRef`
 - `gh pr list --state merged ...`
 - `gh issue list --state all ...`
@@ -50,10 +51,14 @@ If `gh` metadata is unavailable, degrade gracefully to commit-based notes. Do no
 
 ## Range rules
 
-- By default, compare the latest relevant tag to `HEAD`.
+- By default, compare the latest **stable (non-prerelease)** tag to `HEAD`.
+- In this repository, **beta / alpha / rc / pre tags do not count as the release base**. Treat tags matching `*-beta*`, `*-alpha*`, `*-rc*`, `*-pre*`, or similar prerelease suffixes as draft checkpoints only, not as the start of the next formal release range.
+- Prefer the latest formal release tag such as `v1.0.2` over a newer prerelease such as `v1.0.3-beta1`. Example: if tags are `v1.0.2` and `v1.0.3-beta1`, the default range is `v1.0.2..HEAD`, and commits that landed during the beta period are still part of the next formal release notes.
+- Only use a beta/prerelease tag as the range base when the user explicitly asks for that beta boundary (for example “from v1.0.3-beta1” or “beta 变更”).
 - If the user explicitly names a range like `v0.8.4..v0.8.5`, use that exact range.
-- If the latest tag points to `HEAD` and the user wants the notes for that released version, compare the previous tag to the current tag.
+- If the latest **stable** tag points to `HEAD` and the user wants the notes for that released version, compare the previous **stable** tag to the current tag.
 - Do not focus only on working tree changes. Released or tagged history is usually the real scope.
+- When choosing the base with git, do not stop at `git describe --tags --abbrev=0` if that tag is a prerelease. Walk newer tags and pick the latest stable tag that is an ancestor of `HEAD` (or of the requested end ref).
 
 ## Dirty worktree rules
 
@@ -277,7 +282,7 @@ Good:
 
 Before finalizing, verify:
 
-1. The compare range is explicit.
+1. The compare range is explicit, and the default base is a **stable** tag (not a beta/prerelease) unless the user asked otherwise.
 2. Every bullet is backed by a PR or commit in that range.
 3. Every `#123` actually exists.
 4. Every `by @user` is real and omitted for self-authored PRs.
@@ -286,3 +291,4 @@ Before finalizing, verify:
 7. The final draft does not expose raw commit hashes, `(from ...)` tails, or commit-scope-first wording unless the user explicitly asks for that format.
 8. Relevant uncommitted changes are included by default for next-release drafting unless the user explicitly asks for committed-only notes.
 9. If the release includes a SQLite schema/user_version upgrade, the database upgrade notice is present before the Mac install notice.
+10. Beta-period commits between the last stable tag and `HEAD` are included in the next formal release notes, not omitted just because a beta tag exists.

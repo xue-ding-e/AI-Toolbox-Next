@@ -1140,10 +1140,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             />
           </Form.Item>
 
-          <Form.Item
-            label={t('grok.provider.backendSearch')}
-            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.backendSearchHint')}</Text>}
-          >
+          <Form.Item label={t('grok.provider.backendSearch')}>
             <Checkbox
               checked={supportsBackendSearch}
               onChange={(event) => handleBackendSearchToggle(event.target.checked)}
