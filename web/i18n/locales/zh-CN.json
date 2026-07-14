@@ -3994,6 +3994,7 @@
       "baseUrl": "Base URL",
       "baseUrlHelp": "填写 API 端点地址。Grok 支持 OpenAI Chat Completions、OpenAI Responses 与 Anthropic Messages 三种协议。",
       "backendSearch": "服务端搜索",
+      "backendSearchHint": "写入当前渠道的 supports_backend_search。",
       "enableBackendSearch": "启用服务端搜索",
       "advancedConfig": "高级设置",
       "configTomlHelp": "可选高级附加 TOML（非模型字段）。Base URL、API 格式与模型映射由上方表单管理。",

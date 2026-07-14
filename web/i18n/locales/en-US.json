@@ -3997,6 +3997,7 @@
       "baseUrl": "Base URL",
       "baseUrlHelp": "Enter the API endpoint URL. Grok supports OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages.",
       "backendSearch": "Backend search",
+      "backendSearchHint": "Writes supports_backend_search for this provider.",
       "enableBackendSearch": "Enable backend search",
       "advancedConfig": "Advanced settings",
       "configTomlHelp": "Optional advanced non-model TOML. Base URL, API format, and model mappings are managed by the fields above.",
