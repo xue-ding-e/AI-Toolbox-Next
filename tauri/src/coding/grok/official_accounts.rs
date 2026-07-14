@@ -891,6 +891,101 @@ fn ensure_official_provider(db: &SqliteDbState, provider_id: &str) -> Result<(),
     Ok(())
 }
 
+/// Clear every Grok official-account applied marker (used when leaving official provider).
+pub async fn clear_all_grok_official_account_apply_status(
+    db: &SqliteDbState,
+) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::GrokOfficialAccount, None, &now)
+    })?;
+    Ok(())
+}
+
+/// Align account applied tags with the live auth.json identity for an official provider.
+pub async fn sync_grok_official_account_apply_status(
+    db: &SqliteDbState,
+    provider_id: &str,
+) -> Result<(), String> {
+    let auth_path = get_grok_auth_path_async(db).await?;
+    let runtime = read_auth_json_or_empty(&auth_path)?;
+    let matched_account_id = if find_xai_auth_entry(&runtime).is_ok() {
+        let (email, subject) = identity_from_snapshot(&runtime);
+        list_persisted_official_accounts(db, provider_id)?
+            .into_iter()
+            .find(|account| {
+                official_account_identity_matches(account, email.as_deref(), subject.as_deref())
+            })
+            .map(|account| account.id)
+    } else {
+        None
+    };
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(
+            conn,
+            DbTable::GrokOfficialAccount,
+            matched_account_id.as_deref(),
+            &now,
+        )
+    })?;
+    Ok(())
+}
+
+fn list_persisted_official_accounts(
+    db: &SqliteDbState,
+    provider_id: &str,
+) -> Result<Vec<GrokOfficialAccount>, String> {
+    let order = OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::created_at(OrderDirection::Asc),
+    ]);
+    db.with_conn(|conn| db_list(conn, DbTable::GrokOfficialAccount, Some(&order)))
+        .map(|values| {
+            values
+                .into_iter()
+                .filter(|value| {
+                    value.get("provider_id").and_then(Value::as_str) == Some(provider_id)
+                })
+                .map(account_from_db_value)
+                .collect()
+        })
+}
+
+fn official_account_identity_matches(
+    account: &GrokOfficialAccount,
+    email: Option<&str>,
+    subject: Option<&str>,
+) -> bool {
+    let account_email = account
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let account_subject = account
+        .subject
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let email = email
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let subject = subject
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match (account_subject, subject) {
+        (Some(left), Some(right)) if left == right => return true,
+        _ => {}
+    }
+    match (account_email, email) {
+        (Some(left), Some(right)) if left == right => true,
+        _ => false,
+    }
+}
+
 fn write_auth_json(path: &Path, value: &Value) -> Result<(), String> {
     let parent = path
         .parent()

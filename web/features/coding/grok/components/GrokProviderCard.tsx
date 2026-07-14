@@ -29,6 +29,7 @@ import {
 } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import {
+  extractGrokSettingsApiBackend,
   extractGrokSettingsBaseUrl,
   extractGrokSettingsModel,
   extractGrokSettingsReasoningEffort,
@@ -37,12 +38,12 @@ import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
 import {
   canApplyProviderWithGatewayProxy,
+  grokProviderNeedsGatewayProxy,
   grokWireApiFormatFromConfig,
   firstGatewayApiFormat,
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
   openAiApiFormatFromBaseUrl,
-  providerNeedsGatewayProxy,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
@@ -176,13 +177,33 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
     typeof settingsConfigApiFormat.api_format === 'string'
       ? settingsConfigApiFormat.api_format
       : undefined,
+    extractGrokSettingsApiBackend(settingsConfig),
     grokWireApiFormatFromConfig(settingsConfig.config),
     openAiApiFormatFromBaseUrl(baseUrl),
   );
+  const apiFormatLabel = React.useMemo(() => {
+    if (!providerApiFormat || isOfficialProvider) {
+      return null;
+    }
+    if (providerApiFormat === 'openai_responses') {
+      return t('grok.provider.apiFormatOpenAIResponses');
+    }
+    if (providerApiFormat === 'openai_chat') {
+      return t('grok.provider.apiFormatOpenAIChat');
+    }
+    if (providerApiFormat === 'anthropic_messages') {
+      return t('grok.provider.apiFormatAnthropicMessages');
+    }
+    if (providerApiFormat === 'gemini_native') {
+      return 'Gemini Native';
+    }
+    return providerApiFormat;
+  }, [isOfficialProvider, providerApiFormat, t]);
+  // Grok CLI natively speaks responses / chat / anthropic; only Gemini needs gateway.
   const needsGatewayProxy =
     !isOfficialProvider &&
     !isLocalProvider &&
-    providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
+    grokProviderNeedsGatewayProxy(providerApiFormat);
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -712,7 +733,12 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                       {displayModelName}
                     </Tag>
                   )}
-                  {(baseUrl || modelName) && maskedApiKey && (
+                  {apiFormatLabel && (
+                    <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>
+                      {apiFormatLabel}
+                    </Tag>
+                  )}
+                  {(baseUrl || modelName || apiFormatLabel) && maskedApiKey && (
                     <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
                   )}
                   {maskedApiKey && (
@@ -720,7 +746,7 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                       API Key: {maskedApiKey}
                     </Text>
                   )}
-                  {(baseUrl || modelName || maskedApiKey) && provider.notes && (
+                  {(baseUrl || modelName || apiFormatLabel || maskedApiKey) && provider.notes && (
                     <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
                   )}
                   {provider.notes && (

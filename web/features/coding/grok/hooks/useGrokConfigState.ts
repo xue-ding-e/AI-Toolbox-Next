@@ -30,6 +30,7 @@ export interface GrokSettingsConfigSnapshot {
   config?: string;
   catalogModels?: GrokCatalogModel[];
   apiFormat?: GrokApiFormat;
+  supportsBackendSearch?: boolean;
 }
 
 const DEFAULT_CONFIG_TOML = '';
@@ -63,6 +64,10 @@ function parseGrokCatalogModels(config: GrokSettingsConfig): GrokCatalogModel[] 
               : '',
         baseUrl: typeof compatibleItem.baseUrl === 'string' ? compatibleItem.baseUrl : undefined,
         apiBackend: typeof compatibleItem.apiBackend === 'string' ? compatibleItem.apiBackend : undefined,
+        supportsBackendSearch:
+          typeof compatibleItem.supportsBackendSearch === 'boolean'
+            ? compatibleItem.supportsBackendSearch
+            : undefined,
         supportsImage:
           typeof compatibleItem.supportsImage === 'boolean' ? compatibleItem.supportsImage : undefined,
         vision: typeof compatibleItem.vision === 'boolean' ? compatibleItem.vision : undefined,
@@ -356,6 +361,7 @@ export function useGrokConfigState({ initialData }: UseGrokConfigStateProps = {}
       baseUrl: finalBaseUrl,
       model: finalModel,
       apiFormat: snapshot.apiFormat,
+      supportsBackendSearch: snapshot.supportsBackendSearch,
       config: snapshot.config ?? grokConfig,
       catalogModels: snapshot.catalogModels ?? grokCatalogModels,
       auth: grokAuth,

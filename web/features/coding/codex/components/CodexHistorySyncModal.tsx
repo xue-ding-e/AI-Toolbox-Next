@@ -25,6 +25,18 @@ const resolveInitialHistorySourceMode = (sourceMode: CodexHistorySourceMode): Co
   sourceMode === 'wsl' ? 'wsl' : 'all'
 );
 
+const isCodexHistoryDatabaseLockedError = (errorMessage: string): boolean => {
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes('state_5.sqlite is locked')
+    || normalized.includes('database is locked')
+    || normalized.includes('database table is locked')
+    || normalized.includes('database is busy')
+    || normalized.includes('codex is writing history')
+    || normalized.includes('codex is writing local history')
+  );
+};
+
 const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
   open,
   sourceMode,
@@ -36,6 +48,14 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [actionLoading, setActionLoading] = React.useState<null | 'sync' | 'backup' | 'restore' | 'open'>(null);
   const [selectedSourceMode, setSelectedSourceMode] = React.useState<CodexHistorySourceMode>(() => resolveInitialHistorySourceMode(sourceMode));
+
+  const formatHistorySyncError = React.useCallback((error: unknown) => {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (isCodexHistoryDatabaseLockedError(errorMessage)) {
+      return t('codex.historySync.databaseLocked');
+    }
+    return errorMessage || t('common.error');
+  }, [t]);
 
   const loadStatus = React.useCallback(async (
     showSuccess = false,
@@ -49,12 +69,11 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
         message.success(t('codex.historySync.statusSuccess'));
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
+      message.error(formatHistorySyncError(error));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [formatHistorySyncError, t]);
 
   React.useEffect(() => {
     if (open) {
@@ -108,8 +127,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
       }
       message.success(t('codex.historySync.openBackupDirSuccess'));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
+      message.error(formatHistorySyncError(error));
     } finally {
       setActionLoading(null);
     }
@@ -122,8 +140,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
       message.success(t('codex.historySync.backupSuccess', { path: result.backupPath }));
       await loadStatus(false, selectedSourceMode);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
+      message.error(formatHistorySyncError(error));
     } finally {
       setActionLoading(null);
     }
@@ -171,8 +188,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
           setStatus(result.status);
           onChanged?.();
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          message.error(errorMessage || t('common.error'));
+          message.error(formatHistorySyncError(error));
         } finally {
           setActionLoading(null);
         }
@@ -204,8 +220,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
           setStatus(result.status);
           onChanged?.();
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          message.error(errorMessage || t('common.error'));
+          message.error(formatHistorySyncError(error));
         } finally {
           setActionLoading(null);
         }

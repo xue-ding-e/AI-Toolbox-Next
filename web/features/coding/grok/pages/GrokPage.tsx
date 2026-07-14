@@ -4,7 +4,6 @@ import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOu
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import {
   DndContext,
   closestCenter,
@@ -121,7 +120,6 @@ import SectionSidebarLayout, {
 import {
   extractGrokSettingsApiBackend,
   extractGrokSettingsBaseUrl,
-  extractGrokSettingsModel,
 } from '@/utils/grokConfigUtils';
 import { parseGrokSettingsConfig } from '../utils/grokSettingsConfig';
 import {
@@ -141,8 +139,9 @@ function buildGrokFavoriteProviderConfig(provider: GrokProvider) {
     (catalogModel) => catalogModel.key === defaultModelKey || catalogModel.model === defaultModelKey,
   ) || catalogModels[0];
   const baseUrl = selectedModel?.baseUrl?.trim() || extractGrokSettingsBaseUrl(settingsConfig)?.trim();
+  // Prefer upstream model IDs from catalog; never fall back to local keys like "custom".
   const modelIds = catalogModels.map((catalogModel) => catalogModel.model.trim()).filter(Boolean);
-  const fallbackModelId = defaultModelKey || extractGrokSettingsModel(settingsConfig)?.trim();
+  const fallbackModelId = selectedModel?.model?.trim();
 
   return buildFavoriteProviderOptions(
     {
@@ -408,24 +407,8 @@ const GrokPage: React.FC = () => {
     };
   }, [loadConfig]);
 
-  React.useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<string[]>('grok-config-warning', (event) => {
-      if (event.payload.length > 0) {
-        message.warning(t('grok.apply.preservedModelWarning', {
-          models: event.payload.map((modelKey) => `[model.${modelKey}]`).join(', '),
-        }));
-      }
-    }).then((dispose) => {
-      unlisten = dispose;
-    }).catch((error) => {
-      console.error('Failed to listen for Grok config warnings:', error);
-    });
-
-    return () => {
-      unlisten?.();
-    };
-  }, [t]);
+  // Provider-owned [model.<key>] tables are channel config and are always rewritten on
+  // apply/save. Backend no longer emits grok-config-warning for "preserved" models.
 
   React.useEffect(() => {
     const checkAllApiHubAvailability = async () => {

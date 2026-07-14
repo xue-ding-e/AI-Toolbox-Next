@@ -24,6 +24,7 @@
 
 ## Gotchas
 
+- 删除 prompt preset 只删 SQLite 记录，不改写/清空当前 runtime prompt 文件。产品语义是“删除已保存的提示词记录”，不是“清空本地 runtime 提示词”。
 - 内置 provider 即使没有写入 `auth.json` 或 `models.json`，也可能通过环境变量或 Pi `/login` 可用；不要显示为 missing。
 - `auth.json` OAuth token 是 Pi runtime-owned。AI Toolbox 可以识别和保留，但首版不编辑 token、不发起 `/login`。
 - `models.json` 允许 unknown top-level 和 provider/model unknown fields。读写必须 preserve unknown fields。

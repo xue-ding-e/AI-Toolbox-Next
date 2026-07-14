@@ -64,6 +64,15 @@ export const providerNeedsGatewayProxy = (
   );
 };
 
+/**
+ * Grok CLI natively supports openai_responses, openai_chat (chat_completions)
+ * and anthropic_messages. Only Gemini Native still needs Gateway conversion.
+ * Do NOT compare against a single native format like Codex/Claude.
+ */
+export const grokProviderNeedsGatewayProxy = (
+  targetFormat: string | null | undefined,
+) => normalizeGatewayApiFormat(targetFormat) === 'gemini_native';
+
 export const isGatewayConfigFlagEnabled = (value: unknown) => {
   if (typeof value === 'boolean') {
     return value;

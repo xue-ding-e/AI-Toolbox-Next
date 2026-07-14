@@ -21,10 +21,12 @@ const OFFICIAL_MODEL_PROVIDER_ID: &str = "openai";
 const SESSION_INDEX_FILE_NAME: &str = "session_index.jsonl";
 const SESSIONS_DIR_NAME: &str = "sessions";
 const BACKUP_DIR_NAME: &str = "history_sync_backups";
-const WRITE_LOCK_RETRY_LIMIT: usize = 40;
-const WRITE_LOCK_RETRY_DELAY: Duration = Duration::from_millis(250);
+const SQLITE_LOCK_RETRY_LIMIT: usize = 40;
+const SQLITE_LOCK_RETRY_DELAY: Duration = Duration::from_millis(250);
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 const FILE_RETRY_LIMIT: usize = 20;
 const FILE_RETRY_DELAY: Duration = Duration::from_millis(100);
+const SQLITE_LOCKED_USER_MESSAGE: &str = "Codex is writing history (state_5.sqlite is locked). Finish the current Codex response/session or close Codex in WSL/VS Code, then try again.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -176,24 +178,17 @@ struct IndexRebuildResult {
 pub fn get_status(codex_home: &Path) -> Result<CodexHistorySyncStatus, String> {
     let paths = resolve_paths(codex_home);
     let target = read_current_target(&paths)?;
-    let columns = read_thread_columns(&paths.db_path)?;
-    let thread_rows = read_visible_thread_rows(&paths.db_path, &columns)?;
-    let total_threads = read_total_thread_count(&paths.db_path)?;
-    let provider_mismatch_threads =
-        count_provider_mismatch_threads(&paths.db_path, &target.provider)?;
-    let model_column_exists = columns.contains("model");
-    // History sync intentionally preserves existing model values. Keep the field for
-    // API compatibility, but treat model differences as informational only.
-    let model_mismatch_threads = 0;
+    // Codex may hold state_5.sqlite while answering/autosaving (especially under WSL).
+    // Retry read-side inspection so opening the history sync modal is not a hard fail.
+    let db_snapshot = retry_sqlite_operation(|| read_status_db_snapshot(&paths, &target))?.value;
     let session_records = scan_session_records(&paths)?;
     let session_meta_mismatch_count = session_records
         .iter()
         .filter(|record| session_record_needs_sync(record, &target))
         .count();
     let session_index_entries = read_session_index(&paths.session_index_path)?;
-    let visible_thread_ids: BTreeSet<String> =
-        thread_rows.iter().map(|row| row.id.clone()).collect();
-    let missing_session_index_entries = visible_thread_ids
+    let missing_session_index_entries = db_snapshot
+        .visible_thread_ids
         .iter()
         .filter(|id| !session_index_entries.contains_key(*id))
         .count();
@@ -201,7 +196,7 @@ pub fn get_status(codex_home: &Path) -> Result<CodexHistorySyncStatus, String> {
     let latest_backup_path = backups
         .last()
         .map(|path| path.to_string_lossy().to_string());
-    let has_work = provider_mismatch_threads > 0
+    let has_work = db_snapshot.provider_mismatch_threads > 0
         || session_meta_mismatch_count > 0
         || missing_session_index_entries > 0;
 
@@ -214,10 +209,12 @@ pub fn get_status(codex_home: &Path) -> Result<CodexHistorySyncStatus, String> {
         backup_dir: paths.backup_dir.to_string_lossy().to_string(),
         current_provider: target.provider,
         current_model: target.model,
-        total_threads,
-        provider_mismatch_threads,
-        model_mismatch_threads,
-        model_column_exists,
+        total_threads: db_snapshot.total_threads,
+        provider_mismatch_threads: db_snapshot.provider_mismatch_threads,
+        // History sync intentionally preserves existing model values. Keep the field for
+        // API compatibility, but treat model differences as informational only.
+        model_mismatch_threads: 0,
+        model_column_exists: db_snapshot.model_column_exists,
         session_file_count: session_records.len(),
         session_meta_mismatch_count,
         indexed_threads: session_index_entries.len(),
@@ -250,9 +247,10 @@ pub fn sync(codex_home: &Path) -> Result<CodexHistorySyncResult, String> {
     ensure_environment(&paths)?;
     let backup = make_backup(&paths, "pre-sync")?;
 
-    let db_sync = retry_sqlite_write(|| sync_database(&paths.db_path, &target))?;
+    let db_sync = retry_sqlite_operation(|| sync_database(&paths.db_path, &target))?;
     let session_sync = sync_session_records(&paths, &target)?;
-    let index_result = rebuild_session_index(&paths)?;
+    let index_result =
+        retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
     let status = get_status(codex_home)?;
 
     Ok(CodexHistorySyncResult {
@@ -282,10 +280,11 @@ pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, St
         .ok_or_else(|| "No Codex history backup found".to_string())?;
     let safety_backup = make_backup(&paths, "pre-restore")?;
     let restore_db =
-        retry_sqlite_write(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
+        retry_sqlite_operation(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
     let (restored_session_meta_files, skipped_session_meta_files) =
         restore_metadata_sidecars(&paths, &latest_backup)?;
-    let index_result = rebuild_session_index(&paths)?;
+    let index_result =
+        retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
     let status = get_status(codex_home)?;
 
     Ok(CodexHistoryRestoreResult {
@@ -408,16 +407,50 @@ fn toml_string_value(value: Option<&toml::Value>) -> Option<&str> {
 }
 
 fn open_read_connection(db_path: &Path) -> Result<Connection, String> {
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|error| format!("Failed to open Codex history database: {error}"))
+    .map_err(|error| format!("Failed to open Codex history database: {error}"))?;
+    apply_sqlite_busy_timeout(&conn)?;
+    Ok(conn)
 }
 
 fn open_write_connection(db_path: &Path) -> Result<Connection, String> {
-    Connection::open(db_path)
-        .map_err(|error| format!("Failed to open Codex history database: {error}"))
+    let conn = Connection::open(db_path)
+        .map_err(|error| format!("Failed to open Codex history database: {error}"))?;
+    apply_sqlite_busy_timeout(&conn)?;
+    Ok(conn)
+}
+
+fn apply_sqlite_busy_timeout(conn: &Connection) -> Result<(), String> {
+    conn.busy_timeout(SQLITE_BUSY_TIMEOUT)
+        .map_err(|error| format!("Failed to set Codex database busy timeout: {error}"))
+}
+
+#[derive(Debug, Clone)]
+struct StatusDbSnapshot {
+    total_threads: usize,
+    provider_mismatch_threads: usize,
+    model_column_exists: bool,
+    visible_thread_ids: BTreeSet<String>,
+}
+
+fn read_status_db_snapshot(
+    paths: &Paths,
+    target: &CurrentTarget,
+) -> Result<StatusDbSnapshot, String> {
+    let columns = read_thread_columns(&paths.db_path)?;
+    let thread_rows = read_visible_thread_rows(&paths.db_path, &columns)?;
+    let total_threads = read_total_thread_count(&paths.db_path)?;
+    let provider_mismatch_threads =
+        count_provider_mismatch_threads(&paths.db_path, &target.provider)?;
+    Ok(StatusDbSnapshot {
+        total_threads,
+        provider_mismatch_threads,
+        model_column_exists: columns.contains("model"),
+        visible_thread_ids: thread_rows.into_iter().map(|row| row.id).collect(),
+    })
 }
 
 fn read_thread_columns(db_path: &Path) -> Result<BTreeSet<String>, String> {
@@ -518,8 +551,6 @@ fn read_optional_i64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<
 
 fn sync_database(db_path: &Path, target: &CurrentTarget) -> Result<usize, String> {
     let mut conn = open_write_connection(db_path)?;
-    conn.busy_timeout(Duration::from_millis(500))
-        .map_err(|error| format!("Failed to set Codex database busy timeout: {error}"))?;
     let transaction = conn
         .transaction()
         .map_err(|error| format!("Failed to begin Codex history sync transaction: {error}"))?;
@@ -536,7 +567,7 @@ fn sync_database(db_path: &Path, target: &CurrentTarget) -> Result<usize, String
     Ok(updated)
 }
 
-fn retry_sqlite_write<T>(
+fn retry_sqlite_operation<T>(
     mut operation: impl FnMut() -> Result<T, String>,
 ) -> Result<RetryStats<T>, String> {
     let mut attempts = 0;
@@ -551,17 +582,21 @@ fn retry_sqlite_write<T>(
                     lock_wait_ms: start.elapsed().as_millis(),
                 });
             }
-            Err(error) if is_sqlite_locked_error(&error) && attempts < WRITE_LOCK_RETRY_LIMIT => {
-                thread::sleep(WRITE_LOCK_RETRY_DELAY);
+            Err(error)
+                if is_sqlite_locked_error(&error) && attempts < SQLITE_LOCK_RETRY_LIMIT =>
+            {
+                thread::sleep(SQLITE_LOCK_RETRY_DELAY);
             }
             Err(error) if is_sqlite_locked_error(&error) => {
-                return Err(format!(
-                    "Codex is writing local history. Wait for the current response or autosave to finish, then try again. Last error: {error}"
-                ));
+                return Err(format_sqlite_locked_error(&error));
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+fn format_sqlite_locked_error(error: &str) -> String {
+    format!("{SQLITE_LOCKED_USER_MESSAGE} Last error: {error}")
 }
 
 fn is_sqlite_locked_error(error: &str) -> bool {
@@ -938,9 +973,12 @@ fn make_backup(paths: &Paths, label: &str) -> Result<BackupOutcome, String> {
 }
 
 fn backup_database_to_path(db_path: &Path, backup_path: &Path) -> Result<(), String> {
-    let conn = open_read_connection(db_path)?;
-    conn.backup(rusqlite::MAIN_DB, backup_path, None)
-        .map_err(|error| format!("Failed to backup Codex history database: {error}"))
+    retry_sqlite_operation(|| {
+        let conn = open_read_connection(db_path)?;
+        conn.backup(rusqlite::MAIN_DB, backup_path, None)
+            .map_err(|error| format!("Failed to backup Codex history database: {error}"))
+    })
+    .map(|_| ())
 }
 
 fn snapshot_metadata(paths: &Paths, backup_path: &Path) -> Result<(), String> {
@@ -992,6 +1030,7 @@ fn restore_database_from_backup(db_path: &Path, backup_path: &Path) -> Result<()
             backup_path.display()
         ));
     }
+    // Caller already wraps this in retry_sqlite_operation for lock wait stats.
     let source = open_read_connection(backup_path)?;
     source
         .backup(rusqlite::MAIN_DB, db_path, None)
@@ -1323,6 +1362,36 @@ model = "gpt-new"
         let error = get_status(&env.root).expect_err("status should fail");
 
         assert!(error.contains("Could not find model_provider"));
+    }
+
+    #[test]
+    fn sqlite_locked_error_message_is_actionable() {
+        let message = format_sqlite_locked_error(
+            "Failed to inspect Codex threads table: database is locked",
+        );
+        assert!(message.contains("state_5.sqlite is locked"));
+        assert!(message.contains("Finish the current Codex response/session"));
+        assert!(message.contains("database is locked"));
+        assert!(is_sqlite_locked_error(
+            "Failed to inspect Codex threads table: database is locked"
+        ));
+    }
+
+    #[test]
+    fn retry_sqlite_operation_recovers_from_transient_lock() {
+        let mut calls = 0usize;
+        let result = retry_sqlite_operation(|| {
+            calls += 1;
+            if calls < 3 {
+                Err("Failed to inspect Codex threads table: database is locked".to_string())
+            } else {
+                Ok(42)
+            }
+        })
+        .expect("retry should recover");
+        assert_eq!(result.value, 42);
+        assert_eq!(result.attempts, 3);
+        assert!(result.lock_wait_ms > 0);
     }
 
     #[test]

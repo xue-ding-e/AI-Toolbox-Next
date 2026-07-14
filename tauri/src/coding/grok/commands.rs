@@ -141,7 +141,7 @@ pub async fn fetch_grok_official_models(
 }
 
 fn bundled_grok_official_models(source: &str) -> GrokOfficialModelsResponse {
-    let models = ["grok-build", "grok-4.5"]
+    let models = ["grok-4.5", "grok-build"]
         .into_iter()
         .map(|model_id| GrokOfficialModel {
             id: model_id.to_string(),
@@ -243,12 +243,12 @@ async fn run_grok_models_command(db: &SqliteDbState) -> Result<String, String> {
 pub async fn read_grok_settings(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<GrokSettings, String> {
+    // Preview must show the exact live runtime files with no redaction.
     let db = state.db();
     let config_path = get_grok_config_path_async(db).await?;
     let auth_path = get_grok_auth_path_async(db).await?;
-    let config =
-        read_optional_text(&config_path)?.map(|config| redact_grok_config_for_preview(&config));
-    let auth = read_optional_json(&auth_path)?.map(redact_grok_auth_for_preview);
+    let config = read_optional_text(&config_path)?;
+    let auth = read_optional_json(&auth_path)?;
     Ok(GrokSettings { auth, config })
 }
 
@@ -285,7 +285,7 @@ pub async fn create_grok_provider(
     app: tauri::AppHandle,
     provider: GrokProviderInput,
 ) -> Result<GrokProvider, String> {
-    validate_provider_settings(&provider.settings_config)?;
+    validate_provider_settings(&provider.settings_config, &provider.category)?;
     let db = state.db();
     let now = Local::now().to_rfc3339();
     let sort_index = match provider.sort_index {
@@ -327,7 +327,7 @@ pub async fn update_grok_provider(
     app: tauri::AppHandle,
     provider: GrokProvider,
 ) -> Result<GrokProvider, String> {
-    validate_provider_settings(&provider.settings_config)?;
+    validate_provider_settings(&provider.settings_config, &provider.category)?;
     if provider.id == GROK_LOCAL_PROVIDER_ID {
         return Err("Local Grok provider must be saved before it can be updated".to_string());
     }
@@ -359,8 +359,7 @@ pub async fn update_grok_provider(
         )
     })?;
     if content.is_applied {
-        let preserved_model_keys = apply_grok_provider_to_file(db, &provider.id).await?;
-        emit_preserved_model_warning(&app, &preserved_model_keys);
+        apply_grok_provider_to_file(db, &provider.id).await?;
         emit_grok_sync(&app);
     }
     let _ = app.emit("config-changed", "window");
@@ -469,13 +468,19 @@ pub async fn select_grok_provider_internal_with_sync<R: tauri::Runtime>(
     if provider.is_disabled {
         return Err("Disabled Grok provider cannot be applied".to_string());
     }
-    let preserved_model_keys = apply_grok_provider_to_file(state, id).await?;
+    apply_grok_provider_to_file(state, id).await?;
     let now = Local::now().to_rfc3339();
     state.with_conn_mut(|conn| {
         db_update_applied_status(conn, DbTable::GrokProvider, Some(id), &now)
     })?;
+    // Mirror Codex: only official runtime can own account "applied" tags.
+    // Switching to custom/local must clear stale official-account applied markers.
+    if provider.category == "official" {
+        super::official_accounts::sync_grok_official_account_apply_status(state, id).await?;
+    } else {
+        super::official_accounts::clear_all_grok_official_account_apply_status(state).await?;
+    }
     if emit_events {
-        emit_preserved_model_warning(app, &preserved_model_keys);
         let _ = app.emit("config-changed", if from_tray { "tray" } else { "window" });
         emit_grok_sync(app);
     }
@@ -506,6 +511,9 @@ pub async fn select_grok_model_internal<R: tauri::Runtime>(
     }
     let mut settings: Value = serde_json::from_str(&provider.settings_config)
         .map_err(|error| format!("Invalid Grok provider settings JSON: {error}"))?;
+    // Official providers do not persist a custom modelCatalog; they only store
+    // defaultModelKey and project it to [models].default. Custom providers must
+    // keep the selected key inside modelCatalog.models.
     let model_exists = settings
         .pointer("/modelCatalog/models")
         .and_then(Value::as_array)
@@ -519,7 +527,7 @@ pub async fn select_grok_model_internal<R: tauri::Runtime>(
                     == Some(normalized_model_key)
             })
         });
-    if !model_exists {
+    if provider.category != "official" && !model_exists {
         return Err(format!(
             "Grok model '{normalized_model_key}' is not in the applied provider catalog"
         ));
@@ -527,7 +535,7 @@ pub async fn select_grok_model_internal<R: tauri::Runtime>(
     settings["defaultModelKey"] = Value::String(normalized_model_key.to_string());
     let next_settings_config = serde_json::to_string(&settings)
         .map_err(|error| format!("Failed to serialize Grok provider settings: {error}"))?;
-    validate_provider_settings(&next_settings_config)?;
+    validate_provider_settings(&next_settings_config, &provider.category)?;
     let updated_at = Local::now().to_rfc3339();
     state.with_conn(|conn| {
         db_patch_fields(
@@ -541,14 +549,14 @@ pub async fn select_grok_model_internal<R: tauri::Runtime>(
         )
         .map(|_| ())
     })?;
-    let preserved_model_keys = apply_grok_provider_to_file_with_previous_settings(
+    apply_grok_provider_to_file_with_previous_settings(
         state,
         &provider.id,
         Some(&provider.settings_config),
+        Some(provider.category.as_str()),
         None,
     )
     .await?;
-    emit_preserved_model_warning(app, &preserved_model_keys);
     let _ = app.emit("config-changed", "tray");
     emit_grok_sync(app);
     Ok(())
@@ -557,11 +565,12 @@ pub async fn select_grok_model_internal<R: tauri::Runtime>(
 pub async fn apply_grok_provider_to_file(
     db: &SqliteDbState,
     provider_id: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     let previous_common_config = get_common_config(db)?.map(|value| value.config);
     apply_grok_provider_to_file_with_previous_settings(
         db,
         provider_id,
+        None,
         None,
         previous_common_config.as_deref(),
     )
@@ -572,8 +581,9 @@ async fn apply_grok_provider_to_file_with_previous_settings(
     db: &SqliteDbState,
     provider_id: &str,
     previous_settings_config: Option<&str>,
+    previous_category: Option<&str>,
     previous_common_config: Option<&str>,
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     let provider = get_provider(db, provider_id)?
         .ok_or_else(|| format!("Grok provider '{provider_id}' not found"))?;
     let settings: Value = serde_json::from_str(&provider.settings_config)
@@ -588,28 +598,30 @@ async fn apply_grok_provider_to_file_with_previous_settings(
             .map_err(|error| format!("Invalid live Grok config.toml: {error}"))?
     };
 
-    let preserved_model_keys = if let Some(previous_settings_config) = previous_settings_config {
-        let preserved = remove_provider_model_tables(&mut document, previous_settings_config)?;
+    // settings_config never stores category (it lives on the provider row). Callers must
+    // pass previous_category; falling back to get_applied_provider also supplies it.
+    // Defaulting to "custom" would wrongly require modelCatalog when cleaning official.
+    //
+    // Provider-owned [model.<key>] tables ARE the channel config. Apply always removes
+    // previous catalog keys and rewrites next catalog — never "preserve user edits"
+    // for those keys, or switching/saving channels leaves stale base_url/api_backend.
+    // Truly local models (keys never in previous provider catalog) remain untouched.
+    if let Some(previous_settings_config) = previous_settings_config {
+        let previous_category = previous_category.unwrap_or("custom");
+        remove_provider_model_tables(
+            &mut document,
+            previous_settings_config,
+            previous_category,
+        )?;
         remove_previous_provider_config(&mut document, previous_settings_config)?;
-        preserved
     } else if let Some(previous) = get_applied_provider(db)? {
-        let preserved = remove_provider_model_tables(&mut document, &previous.settings_config)?;
+        remove_provider_model_tables(
+            &mut document,
+            &previous.settings_config,
+            &previous.category,
+        )?;
         remove_previous_provider_config(&mut document, &previous.settings_config)?;
-        preserved
-    } else {
-        Vec::new()
-    };
-    let preserved_model_tables = preserved_model_keys
-        .iter()
-        .filter_map(|key| {
-            document
-                .get("model")
-                .and_then(Item::as_table)
-                .and_then(|models| models.get(key))
-                .cloned()
-                .map(|item| (key.clone(), item))
-        })
-        .collect::<Vec<_>>();
+    }
     let common = get_common_config(db)?;
     let previous_common = previous_common_config
         .map(str::to_string)
@@ -622,34 +634,7 @@ async fn apply_grok_provider_to_file_with_previous_settings(
     }
     merge_provider_config(&mut document, &settings)?;
     project_provider_models(&mut document, &settings, &provider.category)?;
-    restore_preserved_model_tables(&mut document, preserved_model_tables)?;
     write_text_atomic(&config_path, &document.to_string())?;
-    Ok(preserved_model_keys)
-}
-
-fn emit_preserved_model_warning<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    preserved_model_keys: &[String],
-) {
-    if !preserved_model_keys.is_empty() {
-        let _ = app.emit("grok-config-warning", preserved_model_keys);
-    }
-}
-
-fn restore_preserved_model_tables(
-    document: &mut DocumentMut,
-    preserved_model_tables: Vec<(String, Item)>,
-) -> Result<(), String> {
-    if preserved_model_tables.is_empty() {
-        return Ok(());
-    }
-    let model_root = document["model"].or_insert(Item::Table(Table::new()));
-    let model_root = model_root
-        .as_table_mut()
-        .ok_or_else(|| "Live Grok [model] must be a table".to_string())?;
-    for (key, item) in preserved_model_tables {
-        model_root.insert(&key, item);
-    }
     Ok(())
 }
 
@@ -718,14 +703,14 @@ pub async fn save_grok_common_config(
     db.with_conn(|conn| db_put(conn, DbTable::GrokCommonConfig, "common", &value))?;
     runtime_location::refresh_runtime_location_cache_for_module_async(db, "grok").await?;
     if let Some(provider) = get_applied_provider(db)? {
-        let preserved_model_keys = apply_grok_provider_to_file_with_previous_settings(
+        apply_grok_provider_to_file_with_previous_settings(
             db,
             &provider.id,
+            None,
             None,
             previous_common_config.as_deref(),
         )
         .await?;
-        emit_preserved_model_warning(&app, &preserved_model_keys);
     } else {
         let path = get_grok_config_path_async(db).await?;
         write_text_atomic(&path, &input.config)?;
@@ -756,17 +741,18 @@ pub async fn save_grok_local_config(
         .as_ref()
         .map(|provider| provider.settings_config.clone())
         .unwrap_or_else(|| live_snapshot.settings_config.clone());
-    validate_provider_settings(&settings_config)?;
+    let provider_category = provider_input
+        .as_ref()
+        .map(|provider| provider.category.clone())
+        .unwrap_or_else(|| live_snapshot.category.clone());
+    validate_provider_settings(&settings_config, &provider_category)?;
     let now = Local::now().to_rfc3339();
     let provider_content = GrokProviderContent {
         name: provider_input
             .as_ref()
             .map(|provider| provider.name.clone())
             .unwrap_or(live_snapshot.name),
-        category: provider_input
-            .as_ref()
-            .map(|provider| provider.category.clone())
-            .unwrap_or(live_snapshot.category),
+        category: provider_category,
         settings_config,
         source_provider_id: provider_input
             .as_ref()
@@ -833,17 +819,22 @@ pub async fn save_grok_local_config(
         )
     })?;
     runtime_location::refresh_runtime_location_cache_for_module_async(db, "grok").await?;
-    let preserved_model_keys = apply_grok_provider_to_file_with_previous_settings(
+    apply_grok_provider_to_file_with_previous_settings(
         db,
         &provider_id,
         Some(&live_snapshot.settings_config),
+        Some(live_snapshot.category.as_str()),
         Some(&previous_common_config),
     )
     .await?;
-    emit_preserved_model_warning(&app, &preserved_model_keys);
     db.with_conn_mut(|conn| {
         db_update_applied_status(conn, DbTable::GrokProvider, Some(&provider_id), &now)
     })?;
+    if provider_content.category == "official" {
+        super::official_accounts::sync_grok_official_account_apply_status(db, &provider_id).await?;
+    } else {
+        super::official_accounts::clear_all_grok_official_account_apply_status(db).await?;
+    }
     resync_all_skills_if_tool_path_changed(
         app.clone(),
         state.inner(),
@@ -967,23 +958,13 @@ pub async fn delete_grok_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let applied = get_prompt(state.db(), &id)?.is_some_and(|value| value.is_applied);
+    // Only delete the DB prompt record.
+    // Keep the live AGENTS.md on disk so deleting a saved prompt never wipes the local runtime file.
+    // This matches Claude Code / OpenCode (DB-only delete) and avoids treating "delete record"
+    // as "delete local prompt file".
     state
         .db()
         .with_conn(|conn| db_delete(conn, DbTable::GrokPromptConfig, &id).map(|_| ()))?;
-    if applied {
-        // Normal WSL file sync skips missing sources; delete the remote target first.
-        #[cfg(target_os = "windows")]
-        {
-            let _ = crate::coding::wsl::remove_auto_synced_wsl_mapping_target(
-                state.inner(),
-                "grok-prompt",
-            )
-            .await;
-        }
-        remove_file_if_exists(&get_grok_prompt_path_async(state.db()).await?)?;
-        emit_grok_sync(&app);
-    }
     let _ = app.emit("config-changed", "window");
     Ok(())
 }
@@ -1099,6 +1080,10 @@ fn parse_local_grok_provider_snapshot(
         .map(str::to_string);
     let model_tables = document.get("model").and_then(Item::as_table);
     let mut catalog_models = Vec::new();
+    // Provider-level auth.API_KEY is the form field; live Grok stores api_key on each [model.*].
+    // Lift a shared model-level key into auth so Local Grok edit/save can round-trip it.
+    // Keep per-model keys out of modelCatalog/extraConfig. Only lift when every model has the same non-empty key.
+    let mut model_api_keys: Vec<Option<String>> = Vec::new();
 
     if let Some(model_tables) = model_tables {
         for (model_key, model_item) in model_tables.iter() {
@@ -1108,8 +1093,14 @@ fn parse_local_grok_provider_snapshot(
             let mut catalog_model = serde_json::Map::new();
             catalog_model.insert("key".to_string(), Value::String(model_key.to_string()));
             let mut extra_config = serde_json::Map::new();
+            let mut model_api_key: Option<String> = None;
             for (field, item) in model_table.iter() {
                 if field == "api_key" {
+                    model_api_key = item
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string);
                     continue;
                 }
                 let field_value = toml_item_to_json(item)?;
@@ -1145,6 +1136,7 @@ fn parse_local_grok_provider_snapshot(
             if !extra_config.is_empty() {
                 catalog_model.insert("extraConfig".to_string(), Value::Object(extra_config));
             }
+            model_api_keys.push(model_api_key);
             catalog_models.push(Value::Object(catalog_model));
         }
     }
@@ -1154,6 +1146,15 @@ fn parse_local_grok_provider_snapshot(
     } else {
         "custom"
     };
+    let shared_api_key = model_api_keys
+        .first()
+        .and_then(|first| first.as_ref())
+        .filter(|_| {
+            model_api_keys
+                .iter()
+                .all(|key| key.as_ref() == model_api_keys[0].as_ref())
+        })
+        .cloned();
     let mut settings = json!({
         "auth": {},
         "config": "",
@@ -1163,10 +1164,13 @@ fn parse_local_grok_provider_snapshot(
             settings["defaultModelKey"] = Value::String(default_model_key.to_string());
         }
         settings["modelCatalog"] = json!({ "models": catalog_models });
+        if let Some(api_key) = shared_api_key {
+            settings["auth"] = json!({ "API_KEY": api_key });
+        }
     }
     let settings_config = serde_json::to_string(&settings)
         .map_err(|error| format!("Failed to serialize local Grok provider: {error}"))?;
-    validate_provider_settings(&settings_config)?;
+    validate_provider_settings(&settings_config, category)?;
 
     let mut common_document = document;
     common_document.remove("model");
@@ -1299,7 +1303,7 @@ fn prompt_from_content(id: String, content: GrokPromptConfigContent) -> GrokProm
     }
 }
 
-fn validate_provider_settings(settings_config: &str) -> Result<(), String> {
+fn validate_provider_settings(settings_config: &str, category: &str) -> Result<(), String> {
     let settings: Value = serde_json::from_str(settings_config)
         .map_err(|error| format!("Invalid Grok provider settings JSON: {error}"))?;
     if let Some(config) = settings.get("config").and_then(Value::as_str) {
@@ -1310,12 +1314,19 @@ fn validate_provider_settings(settings_config: &str) -> Result<(), String> {
             validate_unmanaged_grok_config(&document, "provider")?;
         }
     }
-    if settings
+    // Official providers only store defaultModelKey and project it to [models].default.
+    // They must NOT require modelCatalog. Custom providers need catalog entries when a
+    // default model key is set so apply can write [model.<key>] tables.
+    let has_default_model_key = settings
+        .get("defaultModelKey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let has_model_catalog = settings
         .pointer("/modelCatalog/models")
         .and_then(Value::as_array)
-        .is_none()
-        && settings.get("defaultModelKey").is_some()
-    {
+        .is_some_and(|models| !models.is_empty());
+    if category != "official" && has_default_model_key && !has_model_catalog {
         return Err("Grok modelCatalog.models is required when defaultModelKey is set".to_string());
     }
     Ok(())
@@ -1354,46 +1365,40 @@ fn validate_unmanaged_grok_config(document: &DocumentMut, owner: &str) -> Result
 fn remove_provider_model_tables(
     document: &mut DocumentMut,
     settings_config: &str,
-) -> Result<Vec<String>, String> {
+    category: &str,
+) -> Result<(), String> {
     let settings: Value = serde_json::from_str(settings_config)
         .map_err(|error| format!("Invalid previous Grok provider settings JSON: {error}"))?;
+    // Official providers do not own [model.*] tables; only [models].default.
+    if category == "official" {
+        return Ok(());
+    }
+    // Always force-remove previous provider catalog keys. [model.<key>] is channel config;
+    // switching/saving must not keep "user-edited" tables for those keys.
     let keys = settings
         .pointer("/modelCatalog/models")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|model| model.get("key").and_then(Value::as_str))
-        .map(str::to_string)
+        .filter_map(|model| {
+            model
+                .get("key")
+                .or_else(|| model.get("model"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
         .collect::<Vec<_>>();
-    let mut expected_document = DocumentMut::new();
-    project_provider_models(
-        &mut expected_document,
-        &settings,
-        settings
-            .get("category")
-            .and_then(Value::as_str)
-            .unwrap_or("custom"),
-    )?;
-    let expected_models = expected_document.get("model").and_then(Item::as_table);
-    let mut preserved_keys = Vec::new();
     if let Some(model_tables) = document.get_mut("model").and_then(Item::as_table_mut) {
         for key in keys {
-            let current_matches_projection = model_tables.get(&key).is_some_and(|current| {
-                expected_models
-                    .and_then(|models| models.get(&key))
-                    .is_some_and(|expected| current.to_string() == expected.to_string())
-            });
-            if current_matches_projection {
-                model_tables.remove(&key);
-            } else if model_tables.contains_key(&key) {
-                preserved_keys.push(key);
-            }
+            model_tables.remove(&key);
         }
         if model_tables.is_empty() {
             document.remove("model");
         }
     }
-    Ok(preserved_keys)
+    Ok(())
 }
 
 fn remove_previous_provider_config(
@@ -1553,7 +1558,7 @@ fn project_provider_models(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("grok-build");
+        .unwrap_or("grok-4.5");
     document["models"]["default"] = value(default_model_key);
     if category == "official" {
         return Ok(());
@@ -1665,77 +1670,6 @@ fn read_optional_json(path: &Path) -> Result<Option<Value>, String> {
         .map_err(|error| format!("Failed to parse {}: {error}", path.display()))
 }
 
-fn is_sensitive_preview_key(key: &str) -> bool {
-    let normalized_key = key.to_ascii_lowercase().replace(['-', ' '], "_");
-    normalized_key.contains("token")
-        || normalized_key.contains("secret")
-        || normalized_key.contains("credential")
-        || normalized_key.contains("password")
-        || normalized_key.contains("authorization")
-        || normalized_key == "api_key"
-        || normalized_key == "apikey"
-        || normalized_key.ends_with("_api_key")
-        || normalized_key.ends_with("apikey")
-}
-
-fn redact_grok_config_for_preview(config: &str) -> String {
-    fn redact_value(value: &mut toml::Value) {
-        match value {
-            toml::Value::Table(table) => {
-                for (key, child_value) in table {
-                    if is_sensitive_preview_key(key) {
-                        *child_value = toml::Value::String("***".to_string());
-                    } else {
-                        redact_value(child_value);
-                    }
-                }
-            }
-            toml::Value::Array(items) => {
-                for item in items {
-                    redact_value(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let Ok(mut value) = toml::from_str::<toml::Value>(config) else {
-        return "# Grok config preview unavailable: config.toml is invalid TOML".to_string();
-    };
-    redact_value(&mut value);
-    toml::to_string_pretty(&value).unwrap_or_else(|_| {
-        "# Grok config preview unavailable: failed to serialize redacted TOML".to_string()
-    })
-}
-
-fn redact_grok_auth_for_preview(mut value: Value) -> Value {
-    fn redact_value(value: &mut Value, key: Option<&str>) {
-        let sensitive = key.is_some_and(is_sensitive_preview_key);
-        if sensitive {
-            if !value.is_null() {
-                *value = Value::String("***".to_string());
-            }
-            return;
-        }
-        match value {
-            Value::Object(object) => {
-                for (child_key, child_value) in object {
-                    redact_value(child_value, Some(child_key));
-                }
-            }
-            Value::Array(items) => {
-                for item in items {
-                    redact_value(item, None);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    redact_value(&mut value, None);
-    value
-}
-
 fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1750,14 +1684,6 @@ fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
     temporary
         .persist(path)
         .map_err(|error| format!("Failed to replace {}: {}", path.display(), error.error))?;
-    Ok(())
-}
-
-fn remove_file_if_exists(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        fs::remove_file(path)
-            .map_err(|error| format!("Failed to remove {}: {error}", path.display()))?;
-    }
     Ok(())
 }
 
@@ -1975,13 +1901,36 @@ Available models:
         let settings = json!({
             "config": "[models]\ndefault = \"must-not-be-managed-here\""
         });
-        let error = validate_provider_settings(&settings.to_string())
+        let error = validate_provider_settings(&settings.to_string(), "custom")
             .expect_err("managed default model must be rejected");
         assert!(error.contains("[models].default"));
     }
 
     #[test]
-    fn previous_provider_cleanup_removes_only_unchanged_projected_models() {
+    fn official_provider_allows_default_model_key_without_catalog() {
+        let settings = json!({
+            "auth": {},
+            "config": "",
+            "defaultModelKey": "grok-4.5"
+        });
+        validate_provider_settings(&settings.to_string(), "official")
+            .expect("official providers only need defaultModelKey");
+    }
+
+    #[test]
+    fn custom_provider_requires_catalog_when_default_model_key_is_set() {
+        let settings = json!({
+            "auth": { "API_KEY": "secret" },
+            "config": "",
+            "defaultModelKey": "custom"
+        });
+        let error = validate_provider_settings(&settings.to_string(), "custom")
+            .expect_err("custom providers need modelCatalog with defaultModelKey");
+        assert!(error.contains("modelCatalog.models"));
+    }
+
+    #[test]
+    fn previous_provider_cleanup_force_removes_projected_models_even_if_edited() {
         let settings = json!({
             "auth": { "API_KEY": "secret" },
             "defaultModelKey": "managed",
@@ -1994,25 +1943,23 @@ Available models:
         });
         let mut unchanged = DocumentMut::new();
         project_provider_models(&mut unchanged, &settings, "custom").expect("project provider");
-        let preserved = remove_provider_model_tables(&mut unchanged, &settings.to_string())
+        remove_provider_model_tables(&mut unchanged, &settings.to_string(), "custom")
             .expect("remove unchanged projection");
-        assert!(preserved.is_empty());
         assert!(unchanged.get("model").is_none());
 
         let mut edited = DocumentMut::new();
         project_provider_models(&mut edited, &settings, "custom").expect("project provider");
         edited["model"]["managed"]["name"] = value("User override");
-        let preserved = remove_provider_model_tables(&mut edited, &settings.to_string())
-            .expect("preserve edited projection");
-        assert_eq!(preserved, vec!["managed"]);
-        assert_eq!(
-            edited["model"]["managed"]["name"].as_str(),
-            Some("User override")
-        );
+        // Even "edited" catalog tables are channel config and must be removed on apply.
+        remove_provider_model_tables(&mut edited, &settings.to_string(), "custom")
+            .expect("remove edited projection");
+        assert!(edited.get("model").is_none());
     }
 
     #[test]
-    fn next_provider_does_not_overwrite_user_modified_model_with_same_key() {
+    fn next_provider_overwrites_same_key_from_previous_channel() {
+        // [model.custom]/[model.managed] is provider-owned channel config.
+        // Switching providers with the same key must rewrite fields, not keep old ones.
         let previous_settings = json!({
             "defaultModelKey": "managed",
             "modelCatalog": { "models": [{
@@ -2035,34 +1982,30 @@ Available models:
         project_provider_models(&mut document, &previous_settings, "custom")
             .expect("project previous provider");
         document["model"]["managed"]["name"] = value("User override");
+        // Unrelated local model key must survive cleanup of previous catalog keys.
+        document["model"]["user-local"]["model"] = value("keep-me");
 
-        let preserved_keys =
-            remove_provider_model_tables(&mut document, &previous_settings.to_string())
-                .expect("preserve modified table");
-        let preserved_tables = preserved_keys
-            .iter()
-            .filter_map(|key| {
-                document
-                    .get("model")
-                    .and_then(Item::as_table)
-                    .and_then(|models| models.get(key))
-                    .cloned()
-                    .map(|item| (key.clone(), item))
-            })
-            .collect();
+        remove_provider_model_tables(&mut document, &previous_settings.to_string(), "custom")
+            .expect("remove previous catalog keys");
         project_provider_models(&mut document, &next_settings, "custom")
             .expect("project next provider");
-        restore_preserved_model_tables(&mut document, preserved_tables)
-            .expect("restore user-modified table");
 
-        assert_eq!(preserved_keys, vec!["managed"]);
-        assert_eq!(
-            document["model"]["managed"]["name"].as_str(),
-            Some("User override")
-        );
         assert_eq!(
             document["model"]["managed"]["model"].as_str(),
-            Some("previous-upstream")
+            Some("next-upstream")
+        );
+        assert_eq!(
+            document["model"]["managed"]["base_url"].as_str(),
+            Some("https://next.example.com/v1")
+        );
+        assert_eq!(
+            document["model"]["managed"]["api_backend"].as_str(),
+            Some("chat_completions")
+        );
+        assert!(document["model"]["managed"].get("name").is_none());
+        assert_eq!(
+            document["model"]["user-local"]["model"].as_str(),
+            Some("keep-me")
         );
         assert_eq!(document["models"]["default"].as_str(), Some("managed"));
     }
@@ -2091,9 +2034,8 @@ Available models:
         project_provider_models(&mut document, &previous_settings, "custom")
             .expect("project previous provider");
 
-        let preserved = remove_provider_model_tables(&mut document, &previous_settings.to_string())
+        remove_provider_model_tables(&mut document, &previous_settings.to_string(), "custom")
             .expect("remove previous provider");
-        assert!(preserved.is_empty());
         project_provider_models(&mut document, &next_settings, "custom")
             .expect("project next provider");
 
@@ -2109,7 +2051,66 @@ Available models:
     }
 
     #[test]
-    fn local_provider_snapshot_splits_models_from_common_without_auth_json() {
+    fn removing_official_provider_models_does_not_require_catalog() {
+        // Official settings only store defaultModelKey; cleanup must not treat them as custom.
+        let official_settings = json!({
+            "auth": {},
+            "config": "",
+            "defaultModelKey": "grok-4.5"
+        });
+        let mut document = DocumentMut::new();
+        project_provider_models(&mut document, &official_settings, "official")
+            .expect("project official");
+        document["model"]["user-kept"]["model"] = value("keep-me");
+
+        remove_provider_model_tables(&mut document, &official_settings.to_string(), "official")
+            .expect("official cleanup must not require modelCatalog");
+        // Official never owns [model.*], so user-local tables stay untouched.
+        assert_eq!(
+            document["model"]["user-kept"]["model"].as_str(),
+            Some("keep-me")
+        );
+        assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
+    }
+
+    #[test]
+    fn applying_official_removes_previous_custom_models_even_if_edited() {
+        // Custom channel left [model.custom] with user-visible fields. Switching to official
+        // must drop those tables so base_url/api_key do not stick around under OAuth mode.
+        let previous_settings = json!({
+            "auth": { "API_KEY": "secret" },
+            "defaultModelKey": "custom",
+            "modelCatalog": { "models": [{
+                "key": "custom",
+                "model": "grok-4.5",
+                "baseUrl": "http://192.0.2.10/v1",
+                "apiBackend": "responses"
+            }]}
+        });
+        let official_settings = json!({
+            "auth": {},
+            "config": "",
+            "defaultModelKey": "grok-4.5"
+        });
+        let mut document = DocumentMut::new();
+        project_provider_models(&mut document, &previous_settings, "custom")
+            .expect("project custom");
+        document["model"]["custom"]["reasoning_efforts"] =
+            toml_edit::Item::Value(toml_edit::Value::Array(toml_edit::Array::from_iter([
+                "low", "medium", "high",
+            ])));
+
+        remove_provider_model_tables(&mut document, &previous_settings.to_string(), "custom")
+            .expect("remove previous custom models");
+        project_provider_models(&mut document, &official_settings, "official")
+            .expect("project official");
+
+        assert!(document.get("model").is_none());
+        assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
+    }
+
+    #[test]
+    fn local_provider_snapshot_lifts_shared_model_api_key_into_auth() {
         let snapshot = parse_local_grok_provider_snapshot(
             r#"
 [models]
@@ -2138,7 +2139,7 @@ command = "npx"
         let settings: Value =
             serde_json::from_str(&snapshot.settings_config).expect("parse provider settings");
         assert_eq!(settings["defaultModelKey"], "private-grok");
-        assert_eq!(settings["auth"], json!({}));
+        assert_eq!(settings["auth"]["API_KEY"], "secret");
         assert_eq!(
             settings["modelCatalog"]["models"][0]["baseUrl"],
             "https://api.example.com/v1"
@@ -2154,7 +2155,6 @@ command = "npx"
         assert!(settings["modelCatalog"]["models"][0]
             .get("apiKey")
             .is_none());
-        assert!(!snapshot.settings_config.contains("secret"));
         assert!(!snapshot.settings_config.contains("access_token"));
 
         let common: DocumentMut = snapshot.common_config.parse().expect("parse common");
@@ -2166,6 +2166,60 @@ command = "npx"
         assert_eq!(common["features"]["telemetry"].as_bool(), Some(false));
         assert!(common.get("model").is_none());
         assert!(common.get("mcp_servers").is_none());
+    }
+
+    #[test]
+    fn local_provider_snapshot_does_not_lift_divergent_model_api_keys() {
+        let snapshot = parse_local_grok_provider_snapshot(
+            r#"
+[models]
+default = "model-a"
+
+[model.model-a]
+model = "a"
+api_key = "secret-a"
+
+[model.model-b]
+model = "b"
+api_key = "secret-b"
+"#,
+        )
+        .expect("parse local snapshot");
+
+        let settings: Value =
+            serde_json::from_str(&snapshot.settings_config).expect("parse provider settings");
+        assert_eq!(settings["auth"], json!({}));
+        assert!(settings["modelCatalog"]["models"][0]
+            .get("apiKey")
+            .is_none());
+        assert!(settings["modelCatalog"]["models"][1]
+            .get("apiKey")
+            .is_none());
+        assert!(!snapshot.settings_config.contains("secret-a"));
+        assert!(!snapshot.settings_config.contains("secret-b"));
+    }
+
+    #[test]
+    fn local_provider_snapshot_does_not_lift_partial_model_api_keys() {
+        let snapshot = parse_local_grok_provider_snapshot(
+            r#"
+[models]
+default = "model-a"
+
+[model.model-a]
+model = "a"
+api_key = "secret"
+
+[model.model-b]
+model = "b"
+"#,
+        )
+        .expect("parse local snapshot");
+
+        let settings: Value =
+            serde_json::from_str(&snapshot.settings_config).expect("parse provider settings");
+        assert_eq!(settings["auth"], json!({}));
+        assert!(!snapshot.settings_config.contains("secret"));
     }
 
     #[test]
@@ -2189,61 +2243,4 @@ trace_upload = false
         assert!(snapshot.common_config.contains("trace_upload = false"));
     }
 
-    #[test]
-    fn auth_preview_redacts_credentials_recursively() {
-        let redacted = redact_grok_auth_for_preview(json!({
-            "access_token": "access",
-            "refresh-token": "refresh",
-            "nested": {
-                "id_token": "id",
-                "api_key": "key",
-                "email": "user@example.com"
-            },
-            "items": [{ "authorization": "Bearer secret" }]
-        }));
-
-        assert_eq!(redacted["access_token"], "***");
-        assert_eq!(redacted["refresh-token"], "***");
-        assert_eq!(redacted["nested"]["id_token"], "***");
-        assert_eq!(redacted["nested"]["api_key"], "***");
-        assert_eq!(redacted["nested"]["email"], "user@example.com");
-        assert_eq!(redacted["items"][0]["authorization"], "***");
     }
-
-    #[test]
-    fn config_preview_redacts_model_keys_headers_and_nested_secrets() {
-        let redacted = redact_grok_config_for_preview(
-            r#"
-[model.private]
-model = "grok-4"
-api_key = "model-secret"
-
-[model.private.extra_headers]
-Authorization = "Bearer secret"
-X-Visible = "keep"
-
-[custom]
-credential_file = "secret.json"
-enabled = true
-"#,
-        );
-        let document: DocumentMut = redacted.parse().expect("parse redacted config");
-
-        assert_eq!(
-            document["model"]["private"]["api_key"].as_str(),
-            Some("***")
-        );
-        assert_eq!(
-            document["model"]["private"]["extra_headers"]["Authorization"].as_str(),
-            Some("***")
-        );
-        assert_eq!(
-            document["model"]["private"]["extra_headers"]["X-Visible"].as_str(),
-            Some("keep")
-        );
-        assert_eq!(document["custom"]["credential_file"].as_str(), Some("***"));
-        assert_eq!(document["custom"]["enabled"].as_bool(), Some(true));
-        assert!(!redacted.contains("model-secret"));
-        assert!(!redacted.contains("Bearer secret"));
-    }
-}

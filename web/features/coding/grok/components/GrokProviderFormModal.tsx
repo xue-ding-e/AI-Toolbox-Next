@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete, Checkbox } from 'antd';
 import {
   CloudDownloadOutlined,
   DeleteOutlined,
@@ -17,7 +17,9 @@ import { fetchGrokOfficialModels } from '@/services/grokApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
+import { FileCode2 } from 'lucide-react';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -39,17 +41,20 @@ import {
   type GatewayProviderProfileReference,
 } from '@/features/coding/shared/gateway/providerProfiles';
 import {
+  extractGrokSettingsApiBackend,
   extractGrokSettingsBaseUrl,
   extractGrokSettingsModel,
 } from '@/utils/grokConfigUtils';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useGrokConfigState } from '../hooks/useGrokConfigState';
+import { DEFAULT_GROK_MODEL } from '../utils/grokSettingsConfig';
 import styles from './GrokProviderFormModal.module.less';
 
 const { Text } = Typography;
 
 const GROK_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
+  { id: DEFAULT_GROK_MODEL, name: 'Grok 4.5' },
   { id: 'grok-build', name: 'Grok Build' },
 ].map((model) => ({
   ...model,
@@ -61,8 +66,57 @@ const DEFAULT_GROK_API_FORMAT: GrokApiFormat = 'openai_chat';
 const OFFICIAL_PROVIDER_ENDPOINT_KEY = '__official__:';
 
 function normalizeGrokApiFormat(value?: string): GrokApiFormat {
-  if (value === 'openai_chat' || value === 'anthropic_messages') {
+  if (
+    value === 'openai_chat'
+    || value === 'openai_responses'
+    || value === 'anthropic_messages'
+  ) {
     return value;
+  }
+  return DEFAULT_GROK_API_FORMAT;
+}
+
+function mapGrokApiBackendToApiFormat(apiBackend?: string): GrokApiFormat | undefined {
+  const normalized = apiBackend?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === 'responses' || normalized === 'openai_responses') {
+    return 'openai_responses';
+  }
+  if (
+    normalized === 'anthropic'
+    || normalized === 'anthropic_messages'
+    || normalized === 'messages'
+  ) {
+    return 'anthropic_messages';
+  }
+  if (
+    normalized === 'chat'
+    || normalized === 'chat_completions'
+    || normalized === 'openai_chat'
+  ) {
+    return 'openai_chat';
+  }
+  return undefined;
+}
+
+function resolveGrokProviderApiFormat(
+  settingsConfig: GrokSettingsConfig,
+  provider?: GrokProvider | null,
+  providerEndpoint?: GatewayProviderEndpointProfile,
+): GrokApiFormat {
+  if (providerEndpoint?.apiFormat) {
+    return normalizeGrokApiFormat(providerEndpoint.apiFormat);
+  }
+  if (provider?.meta?.apiFormat) {
+    return normalizeGrokApiFormat(provider.meta.apiFormat);
+  }
+  const fromBackend = mapGrokApiBackendToApiFormat(
+    extractGrokSettingsApiBackend(settingsConfig),
+  );
+  if (fromBackend) {
+    return fromBackend;
   }
   return DEFAULT_GROK_API_FORMAT;
 }
@@ -160,6 +214,21 @@ function getGrokEndpointCatalogModels(
   return getDerivedAnthropicCatalogModels(profileId, endpoint);
 }
 
+function resolveCatalogBackendSearchFlag(
+  models: GrokCatalogModel[] | undefined,
+): boolean | undefined {
+  if (!Array.isArray(models) || models.length === 0) {
+    return undefined;
+  }
+  if (models.every((model) => model.supportsBackendSearch === true)) {
+    return true;
+  }
+  if (models.every((model) => model.supportsBackendSearch === false)) {
+    return false;
+  }
+  return undefined;
+}
+
 function applyEndpointToGrokSettingsConfig(
   settingsConfig: string,
   profileId: string | null | undefined,
@@ -177,11 +246,19 @@ function applyEndpointToGrokSettingsConfig(
       : normalizeGrokApiFormat(endpoint.apiFormat) === 'anthropic_messages'
         ? 'messages'
         : 'chat_completions';
+    // Keep the form-level backend-search toggle when endpoint catalog is reapplied.
+    const backendSearchFlag = resolveCatalogBackendSearchFlag(parsed.modelCatalog?.models);
+    const backendSearchFields = typeof backendSearchFlag === 'boolean'
+      ? { supportsBackendSearch: backendSearchFlag }
+      : {};
+    // Endpoint-selected apiFormat owns the provider protocol. Overwrite any stale
+    // per-model apiBackend (e.g. previous responses after switching to chat).
     const catalogModels = getGrokEndpointCatalogModels(profileId, endpoint).map((catalogModel) => ({
       ...catalogModel,
       key: catalogModel.key?.trim() || catalogModel.model,
       baseUrl: catalogModel.baseUrl?.trim() || endpoint.baseUrl,
-      apiBackend: catalogModel.apiBackend?.trim() || apiBackend,
+      apiBackend,
+      ...backendSearchFields,
     }));
     const defaultModel = selectedModel?.trim() || endpoint.model?.trim();
 
@@ -286,6 +363,11 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const wrapperCol = { span: 20 };
   const sectionWrapperCol = { span: 24 };
   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${mode}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
+  const [advancedConfigExpanded, setAdvancedConfigExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    setAdvancedConfigExpanded(false);
+  }, [notesCollapseResetKey]);
 
   // OpenCode import related state
   const [openCodeProviders, setOpenCodeProviders] = React.useState<OpenCodeProviderDisplay[]>([]);
@@ -296,6 +378,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [modelMappingExpanded, setModelMappingExpanded] = React.useState(false);
+  const [supportsBackendSearch, setSupportsBackendSearch] = React.useState(false);
   // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
@@ -376,18 +459,23 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     ];
   }, [canSelectProviderCategory, gatewayProviderProfilesVersion, isOfficialMode, t]);
 
-  const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
+  const parseProviderCatalogModels = React.useCallback((settingsConfig?: string): GrokCatalogModel[] => {
     if (!settingsConfig) {
-      return false;
+      return [];
     }
     try {
-      const parsed = JSON.parse(settingsConfig);
-      const models = parsed?.modelCatalog?.models;
-      return Array.isArray(models) && models.some((item) => typeof item?.model === 'string' && item.model.trim());
+      const parsed = JSON.parse(settingsConfig) as GrokSettingsConfig;
+      return Array.isArray(parsed.modelCatalog?.models) ? parsed.modelCatalog.models : [];
     } catch {
-      return false;
+      return [];
     }
   }, []);
+
+  const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
+    return parseProviderCatalogModels(settingsConfig).some(
+      (item) => typeof item?.model === 'string' && item.model.trim(),
+    );
+  }, [parseProviderCatalogModels]);
 
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
@@ -455,9 +543,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         providerEndpointId: providerEndpointSelection.providerEndpointId,
         baseUrl: baseUrl || providerEndpoint?.baseUrl || '',
         model: extractGrokSettingsModel(settingsConfig) || providerEndpoint?.model || '',
-        apiFormat: providerEndpoint
-          ? normalizeGrokApiFormat(providerEndpoint.apiFormat)
-          : normalizeGrokApiFormat(provider.meta?.apiFormat),
+        apiFormat: resolveGrokProviderApiFormat(settingsConfig, provider, providerEndpoint),
         notes: provider.notes || '',
       });
       setCurrentBaseUrl(baseUrl || providerEndpoint?.baseUrl || '');
@@ -483,12 +569,17 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     setAvailableModels([]);
     setFetchedModels([]);
     setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
+    setSupportsBackendSearch(
+      resolveCatalogBackendSearchFlag(
+        parseProviderCatalogModels(provider?.settingsConfig),
+      ) === true,
+    );
     setProcessedBaseUrl('');
     if (!provider) {
       setCurrentBaseUrl('');
     }
     formInitializedRef.current = true;
-  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, providerHasModelMapping, resetFromSettingsConfig]);
+  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, parseProviderCatalogModels, provider, providerHasModelMapping, resetFromSettingsConfig]);
 
   React.useEffect(() => {
     if (!open || !formInitializedRef.current) {
@@ -501,15 +592,21 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
       form.getFieldValue('providerEndpointId'),
     );
     const currentEndpointModel = currentEndpoint?.model;
+    let settingsConfig: GrokSettingsConfig = {};
+    if (provider?.settingsConfig) {
+      try {
+        settingsConfig = JSON.parse(provider.settingsConfig) as GrokSettingsConfig;
+      } catch {
+        settingsConfig = {};
+      }
+    }
     const nextFieldValues = provider
       ? {
           name: provider.name,
           apiKey: grokApiKey,
           baseUrl: grokBaseUrl || currentEndpoint?.baseUrl || '',
           model: grokModel || currentEndpointModel || '',
-          apiFormat: currentEndpoint
-            ? normalizeGrokApiFormat(currentEndpoint.apiFormat)
-            : normalizeGrokApiFormat(provider.meta?.apiFormat),
+          apiFormat: resolveGrokProviderApiFormat(settingsConfig, provider, currentEndpoint),
           configToml: grokConfig,
           notes: provider.notes || '',
         }
@@ -685,12 +782,26 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     }
 
     if (catalogModels.length > 0) {
-      setGrokCatalogModels(catalogModels);
+      const backendSearchFields = supportsBackendSearch
+        ? { supportsBackendSearch: true as const }
+        : {};
+      setGrokCatalogModels(catalogModels.map((catalogModel) => ({
+        ...catalogModel,
+        ...backendSearchFields,
+      })));
       setModelMappingExpanded(true);
     } else {
       setGrokCatalogModels([]);
       setModelMappingExpanded(false);
     }
+  };
+
+  const handleBackendSearchToggle = (checked: boolean) => {
+    setSupportsBackendSearch(checked);
+    setGrokCatalogModels((prev) => prev.map((catalogModel) => ({
+      ...catalogModel,
+      supportsBackendSearch: checked,
+    })));
   };
 
   const handleSubmit = async () => {
@@ -716,6 +827,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         baseUrl: submittedValues.baseUrl || '',
         model: submittedValues.model || '',
         apiFormat: normalizeGrokApiFormat(submittedValues.apiFormat),
+        supportsBackendSearch: selectedCategory === 'custom' ? supportsBackendSearch : undefined,
         config: submittedValues.configToml || '',
         catalogModels: grokCatalogModels,
       });
@@ -850,9 +962,10 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         model: '',
         displayName: '',
         contextWindow: '',
+        supportsBackendSearch,
       },
     ]);
-  }, [setGrokCatalogModels]);
+  }, [setGrokCatalogModels, supportsBackendSearch]);
 
   const handleUpdateModelMapping = React.useCallback((
     index: number,
@@ -1026,58 +1139,64 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
               placeholder="https://your-api-endpoint.com/v1"
             />
           </Form.Item>
+
+          <Form.Item
+            label={t('grok.provider.backendSearch')}
+            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.backendSearchHint')}</Text>}
+          >
+            <Checkbox
+              checked={supportsBackendSearch}
+              onChange={(event) => handleBackendSearchToggle(event.target.checked)}
+            >
+              {t('grok.provider.enableBackendSearch')}
+            </Checkbox>
+          </Form.Item>
         </>
       )}
 
-      <Form.Item
-        label={t('grok.provider.modelName')}
-        help={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.modelNameHelp')}</Text>}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <Form.Item name="model" noStyle>
-              <AutoComplete
-                options={modelOptions}
-                placeholder={t('grok.provider.modelNamePlaceholder')}
-                style={{ width: '100%' }}
-                filterOption={(inputValue, option) =>
-                  (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-                  option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
-                }
-              />
-            </Form.Item>
-          </div>
-          <Button
-            icon={<CloudDownloadOutlined />}
-            loading={loadingModels}
-            onClick={handleFetchModels}
-          >
-            {t('grok.fetchModels.button')}
-          </Button>
-          {!isOfficialMode && (
+      <Form.Item label={t('grok.provider.modelName')}>
+        <div className={styles.modelNameControl}>
+          <div className={styles.modelNameRow}>
+            <div className={styles.modelNameInput}>
+              <Form.Item name="model" noStyle>
+                <AutoComplete
+                  options={modelOptions}
+                  placeholder={t('grok.provider.modelNamePlaceholder')}
+                  style={{ width: '100%' }}
+                  filterOption={(inputValue, option) =>
+                    (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+                    option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+                  }
+                />
+              </Form.Item>
+            </div>
             <Button
-              icon={modelMappingExpanded ? <DownOutlined /> : <RightOutlined />}
-              onClick={() => setModelMappingExpanded((prev) => !prev)}
+              icon={<CloudDownloadOutlined />}
+              loading={loadingModels}
+              onClick={handleFetchModels}
             >
-              {t('grok.provider.modelMapping')}
+              {t('grok.fetchModels.button')}
             </Button>
-          )}
-          {fetchedModels.length > 0 && (
-            <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-              {t('grok.fetchModels.loaded', { count: fetchedModels.length })}
-            </Text>
-          )}
+            {!isOfficialMode && (
+              <Button
+                icon={modelMappingExpanded ? <DownOutlined /> : <RightOutlined />}
+                onClick={() => setModelMappingExpanded((prev) => !prev)}
+              >
+                {t('grok.provider.modelMapping')}
+              </Button>
+            )}
+            {fetchedModels.length > 0 && (
+              <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                {t('grok.fetchModels.loaded', { count: fetchedModels.length })}
+              </Text>
+            )}
+          </div>
+          <div className={styles.fieldHelp}>
+            {t('grok.provider.modelNameHelp')}
+          </div>
         </div>
         {!isOfficialMode && modelMappingExpanded && (
-          <div
-            style={{
-              marginTop: 12,
-              border: '1px solid var(--color-border)',
-              borderRadius: 8,
-              background: 'var(--color-bg-elevated)',
-              padding: 12,
-            }}
-          >
+          <div className={styles.modelMappingPanel}>
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('grok.provider.modelMappingHint')}
@@ -1139,15 +1258,25 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         )}
       </Form.Item>
 
-      <Form.Item 
-        name="configToml" 
-        label="config.toml"
-        extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.configTomlHelp')}</Text>}
-        rules={[validateTomlRule(t('grok.provider.configTomlInvalid'))]}
-      >
-        <TomlEditorFormItem 
-          placeholder={t('grok.provider.configTomlPlaceholder')}
-        />
+      <Form.Item wrapperCol={sectionWrapperCol}>
+        <ProviderConfigCollapse
+          title={t('grok.provider.advancedConfig')}
+          expanded={advancedConfigExpanded}
+          onExpandedChange={setAdvancedConfigExpanded}
+          icon={<FileCode2 />}
+        >
+          <Form.Item
+            name="configToml"
+            label="config.toml"
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.configTomlHelp')}</Text>}
+            rules={[validateTomlRule(t('grok.provider.configTomlInvalid'))]}
+            style={{ marginBottom: 0 }}
+          >
+            <TomlEditorFormItem
+              placeholder={t('grok.provider.configTomlPlaceholder')}
+            />
+          </Form.Item>
+        </ProviderConfigCollapse>
       </Form.Item>
 
       {!isOfficialMode && (
@@ -1257,15 +1386,25 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
           </>
         )}
 
-        <Form.Item 
-          name="configToml" 
-          label="config.toml"
-          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.configTomlHelp')}</Text>}
-          rules={[validateTomlRule(t('grok.provider.configTomlInvalid'))]}
-        >
-          <TomlEditorFormItem 
-            placeholder={t('grok.provider.configTomlPlaceholder')}
-          />
+        <Form.Item wrapperCol={sectionWrapperCol}>
+          <ProviderConfigCollapse
+            title={t('grok.provider.advancedConfig')}
+            expanded={advancedConfigExpanded}
+            onExpandedChange={setAdvancedConfigExpanded}
+            icon={<FileCode2 />}
+          >
+            <Form.Item
+              name="configToml"
+              label="config.toml"
+              extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.configTomlHelp')}</Text>}
+              rules={[validateTomlRule(t('grok.provider.configTomlInvalid'))]}
+              style={{ marginBottom: 0 }}
+            >
+              <TomlEditorFormItem
+                placeholder={t('grok.provider.configTomlPlaceholder')}
+              />
+            </Form.Item>
+          </ProviderConfigCollapse>
         </Form.Item>
 
         <Form.Item name="notes" wrapperCol={sectionWrapperCol}>

@@ -319,10 +319,17 @@ fn read_marketplace_manifest(repository_root: &Path) -> Option<Value> {
     None
 }
 
-fn is_curated_marketplace_name(name: &str) -> bool {
-    // Only the official xAI marketplace is curated.
-    // Claude-compatible marketplaces may still be installed, but they are not Grok official curated.
+fn is_official_xai_marketplace(name: &str, source_url: &str) -> bool {
+    // Official marketplace has two identifiers in practice:
+    // - manifest/catalog name: `xai-official`
+    // - CLI `plugin marketplace list` name after add: `plugin-marketplace`
+    // Also accept the official GitHub source URL so curated/hide-recommend logic
+    // still works if either name field drifts.
+    let name = name.trim();
+    let source = source_url.trim().to_ascii_lowercase();
     name == "xai-official"
+        || name == "plugin-marketplace"
+        || source.contains("xai-org/plugin-marketplace")
 }
 
 fn marketplace_install_source(repository_root: &Path, source: &Value) -> Option<String> {
@@ -395,16 +402,17 @@ pub async fn list_grok_marketplaces(
         .into_iter()
         .map(|v| {
             let name = v["name"].as_str().unwrap_or_default().to_string();
+            let path = v
+                .pointer("/source/url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             GrokPluginMarketplace {
-                path: v
-                    .pointer("/source/url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
+                path: path.clone(),
                 display_name: Some(name.clone()),
                 description: None,
                 plugin_count: plugin_counts.get(&name).copied().unwrap_or(0),
-                is_curated: is_curated_marketplace_name(&name),
+                is_curated: is_official_xai_marketplace(&name, &path),
                 name,
             }
         })
@@ -634,10 +642,19 @@ mod tests {
     }
 
     #[test]
-    fn curated_marketplace_name_is_only_xai_official() {
-        assert!(is_curated_marketplace_name("xai-official"));
-        assert!(!is_curated_marketplace_name("claude-plugins-official"));
-        assert!(!is_curated_marketplace_name("community-marketplace"));
+    fn curated_marketplace_matches_official_name_aliases_and_source() {
+        assert!(is_official_xai_marketplace("xai-official", ""));
+        assert!(is_official_xai_marketplace("plugin-marketplace", ""));
+        assert!(is_official_xai_marketplace(
+            "any-name",
+            "https://github.com/xai-org/plugin-marketplace.git",
+        ));
+        assert!(!is_official_xai_marketplace("claude-plugins-official", ""));
+        assert!(!is_official_xai_marketplace("community-marketplace", ""));
+        assert!(!is_official_xai_marketplace(
+            "claude-plugins-official",
+            "https://github.com/anthropics/claude-plugins-official.git",
+        ));
     }
 
     #[test]

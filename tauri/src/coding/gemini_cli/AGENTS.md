@@ -28,7 +28,7 @@
 - Custom gateway/API-key providers must be normalized on save and on apply: `security.auth.selectedType` is forced to `gemini-api-key`, while custom env keys such as `GEMINI_API_KEY`, `GOOGLE_GEMINI_BASE_URL`, and `GEMINI_MODEL` are preserved. Otherwise copied official settings can leave a custom gateway in OAuth mode.
 - Gemini CLI session `.jsonl` files are conversation records: metadata line, message records, `$set` updates, and `$rewindTo` rewrites. Session list/detail must parse this record stream instead of treating it as one JSON object.
 - Applying provider/common config may change `settings.context.fileName`; after writing `settings.json`, rewrite the currently applied prompt config to the newly resolved prompt file before emitting sync.
-- Deleting an applied prompt config must also rewrite the current runtime prompt file, then emit `wsl-sync-request-geminicli`. Removing only the database row leaves Gemini CLI and remote sync targets running stale prompt content.
+- Deleting a prompt config only removes the SQLite record. Do not rewrite or clear the live runtime prompt file. “Delete saved prompt record” is not “wipe local runtime prompt”; Claude Code / OpenCode / Grok / Codex / Pi share this rule. To change what Gemini CLI actually runs, edit/apply another prompt or edit the live prompt file directly.
 - WSL sync should emit `wsl-sync-request-geminicli`; SSH remains manual/config-driven through mappings.
 
 ## Minimal Verification

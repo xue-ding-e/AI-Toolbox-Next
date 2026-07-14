@@ -1831,14 +1831,11 @@ pub async fn delete_gemini_cli_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    // Only delete the DB prompt record.
+    // Keep the live prompt file on disk so deleting a saved prompt never wipes
+    // the local runtime file. Matches Claude Code / OpenCode / Grok / Codex.
     let db = state.db();
-    let prompt = get_gemini_prompt_from_sqlite(db, &id)?;
-    let was_applied = prompt.map(|prompt| prompt.is_applied).unwrap_or(false);
     db.with_conn(|conn| db_delete(conn, DbTable::GeminiCliPromptConfig, &id).map(|_| ()))?;
-    if was_applied {
-        write_prompt_content_to_file(Some(&db), None).await?;
-        emit_sync_requests(&app);
-    }
     let _ = app.emit("config-changed", "window");
     Ok(())
 }

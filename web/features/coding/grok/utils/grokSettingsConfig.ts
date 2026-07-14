@@ -8,12 +8,16 @@ import { normalizeGrokConfigForOfficialMode } from '../../../../utils/grokConfig
 import { isJsonObject } from '../../../../utils/json';
 import { normalizeGrokCatalogModels } from './grokCatalogModels';
 
+export const DEFAULT_GROK_MODEL = 'grok-4.5';
+
 export interface BuildGrokSettingsConfigInput {
   category: GrokProviderCategory;
   apiKey: string;
   baseUrl: string;
   model: string;
   apiFormat?: GrokApiFormat;
+  /** When set, force every projected [model.*] to this backend-search flag. */
+  supportsBackendSearch?: boolean;
   config: string;
   catalogModels: GrokCatalogModel[];
   auth: Record<string, unknown>;
@@ -37,6 +41,7 @@ export function buildGrokSettingsConfig({
   baseUrl,
   model,
   apiFormat,
+  supportsBackendSearch,
   config,
   catalogModels,
   auth,
@@ -45,13 +50,22 @@ export function buildGrokSettingsConfig({
     ? normalizeGrokConfigForOfficialMode(config)
     : config.trim();
   const normalizedApiKey = apiKey.trim();
-  const normalizedModel = model.trim();
   const normalizedBaseUrl = baseUrl.trim();
+  // Official channels default to the current Grok default model when the form is left empty.
+  // Custom channels also fall back so model mapping can be auto-created.
+  const normalizedModel = model.trim() || DEFAULT_GROK_MODEL;
+  // Form-level API format is the provider protocol source of truth. Model mapping
+  // UI does not edit per-model apiBackend, so always project the selected format.
+  // Keeping a previous "responses" value when the form is "chat" left live config
+  // with api_backend = "responses" after apply.
   const apiBackend = apiFormat === 'openai_responses'
     ? 'responses'
     : apiFormat === 'anthropic_messages'
       ? 'messages'
       : 'chat_completions';
+  const backendSearchFields = typeof supportsBackendSearch === 'boolean'
+    ? { supportsBackendSearch }
+    : {};
   let normalizedCatalogModels = normalizeGrokCatalogModels(catalogModels);
 
   if (category === 'custom') {
@@ -61,20 +75,35 @@ export function buildGrokSettingsConfig({
       ...(catalogModel.baseUrl?.trim() || !normalizedBaseUrl
         ? {}
         : { baseUrl: normalizedBaseUrl }),
-      ...(catalogModel.apiBackend?.trim() ? {} : { apiBackend }),
+      apiBackend,
+      ...backendSearchFields,
     }));
 
-    const selectedModelExists = normalizedCatalogModels.some(
-      (catalogModel) => catalogModel.key === normalizedModel || catalogModel.model === normalizedModel,
-    );
-    if (normalizedModel && !selectedModelExists) {
-      normalizedCatalogModels.push({
+    // If the user never filled model mapping, create a single default entry from
+    // the selected/default model so save/apply can project [model.<key>].
+    if (normalizedCatalogModels.length === 0) {
+      normalizedCatalogModels = [{
         key: normalizedModel,
         model: normalizedModel,
         displayName: normalizedModel,
         ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
         apiBackend,
-      });
+        ...backendSearchFields,
+      }];
+    } else {
+      const selectedModelExists = normalizedCatalogModels.some(
+        (catalogModel) => catalogModel.key === normalizedModel || catalogModel.model === normalizedModel,
+      );
+      if (!selectedModelExists) {
+        normalizedCatalogModels.push({
+          key: normalizedModel,
+          model: normalizedModel,
+          displayName: normalizedModel,
+          ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
+          apiBackend,
+          ...backendSearchFields,
+        });
+      }
     }
   }
 
@@ -88,9 +117,9 @@ export function buildGrokSettingsConfig({
   const settingsConfig: GrokSettingsConfig = {
     auth: finalAuth,
     config: finalConfig.trim(),
-    ...(normalizedModel ? { defaultModelKey: normalizedModel } : {}),
+    defaultModelKey: normalizedModel,
   };
-  if (category === 'custom' && normalizedCatalogModels.length > 0) {
+  if (category === 'custom') {
     settingsConfig.modelCatalog = {
       models: normalizedCatalogModels,
     };

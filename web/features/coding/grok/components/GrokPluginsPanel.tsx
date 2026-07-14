@@ -57,7 +57,15 @@ import styles from './GrokPluginsPanel.module.less';
 const { Text } = Typography;
 
 const GROK_OFFICIAL_MARKETPLACE_SOURCE = 'xai-org/plugin-marketplace';
-const GROK_OFFICIAL_MARKETPLACE_NAME = 'xai-official';
+const GROK_OFFICIAL_MARKETPLACE_NAMES = new Set(['xai-official', 'plugin-marketplace']);
+
+function isOfficialGrokMarketplace(marketplace: Pick<GrokPluginMarketplace, 'name' | 'path'>): boolean {
+  // CLI list uses `plugin-marketplace`; marketplace manifest uses `xai-official`.
+  // Source URL is the stable fallback when either name drifts.
+  const name = marketplace.name?.trim() || '';
+  const path = marketplace.path?.trim().toLowerCase() || '';
+  return GROK_OFFICIAL_MARKETPLACE_NAMES.has(name) || path.includes('xai-org/plugin-marketplace');
+}
 
 function isLocalMarketplacePath(path: string): boolean {
   const normalized = path.trim();
@@ -401,8 +409,8 @@ const GrokPluginsPanel: React.FC<GrokPluginsPanelProps> = ({ refreshToken = 0 })
     );
   }, [runAction, t]);
 
-  const hasOfficialMarketplace = marketplaces.some(
-    (marketplace) => marketplace.name === GROK_OFFICIAL_MARKETPLACE_NAME,
+  const hasOfficialMarketplace = marketplaces.some((marketplace) =>
+    isOfficialGrokMarketplace(marketplace),
   );
   // Backend currently mirrors known marketplaces into workspace roots.
   // Only keep true local directory paths to avoid duplicating remote marketplace entries.

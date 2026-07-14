@@ -117,11 +117,22 @@ export function buildCodexProviderConnectivityInfo(provider: CodexProvider): Pro
 
 export function buildGrokProviderConnectivityInfo(provider: GrokProvider): ProviderConnectivityInfo {
   const settingsConfig = parseJsonConfig<GrokSettingsConfig>(provider.settingsConfig, {});
-  const modelId = extractGrokSettingsModel(settingsConfig)?.trim();
-  const catalogModelIds = settingsConfig.modelCatalog?.models
-    .map((model) => model.model.trim())
-    .filter(Boolean) ?? [];
-  const modelIds = [...new Set([...(modelId ? [modelId] : []), ...catalogModelIds])];
+  const catalogModels = settingsConfig.modelCatalog?.models || [];
+  const defaultModelKey = settingsConfig.defaultModelKey?.trim() || extractGrokSettingsModel(settingsConfig)?.trim();
+  // Grok stores local catalog keys (e.g. "custom") separately from upstream model IDs.
+  // Connectivity tests must only send upstream model IDs, never the local key.
+  const selectedCatalogModel = catalogModels.find(
+    (model) => model.key?.trim() === defaultModelKey || model.model?.trim() === defaultModelKey,
+  ) || catalogModels[0];
+  const selectedUpstreamModelId = selectedCatalogModel?.model?.trim()
+    || (selectedCatalogModel ? undefined : defaultModelKey);
+  const catalogUpstreamModelIds = catalogModels
+    .map((model) => model.model?.trim())
+    .filter((modelId): modelId is string => Boolean(modelId));
+  const modelIds = [...new Set([
+    ...(selectedUpstreamModelId ? [selectedUpstreamModelId] : []),
+    ...catalogUpstreamModelIds,
+  ])];
   const apiKey = settingsConfig.auth?.API_KEY?.trim();
   const baseUrl = extractGrokSettingsBaseUrl(settingsConfig)?.trim() || DEFAULT_GROK_BASE_URL;
 

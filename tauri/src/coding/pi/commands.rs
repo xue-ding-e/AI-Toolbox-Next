@@ -977,17 +977,12 @@ pub async fn delete_pi_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    // Only delete the DB prompt record.
+    // Keep the live prompt file on disk so deleting a saved prompt never wipes
+    // the local runtime file. Matches Claude Code / OpenCode / Grok / Codex / Gemini.
     let db = state.db();
-    let was_applied = get_pi_prompt_from_sqlite(&db, &id)?
-        .map(|prompt| prompt.is_applied)
-        .unwrap_or(false);
     db.with_conn(|conn| db_delete(conn, DbTable::PiPromptConfig, &id).map(|_| ()))?;
-    if was_applied {
-        write_prompt_content_to_file(&db, None).await?;
-        emit_config_changed(&app, "window");
-    } else {
-        let _ = app.emit("config-changed", "window");
-    }
+    let _ = app.emit("config-changed", "window");
     Ok(())
 }
 

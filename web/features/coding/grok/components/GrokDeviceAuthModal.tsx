@@ -24,7 +24,18 @@ interface GrokDeviceAuthModalProps {
   onCompleted: () => Promise<void>;
 }
 
-const TERMINAL_STATUSES = new Set(['authorized', 'cancelled', 'expired', 'access_denied', 'error']);
+// Backend sequence: waiting_for_user -> authorized -> saving -> completed.
+// Only "completed" means the account row is fully written and safe to reload.
+const SUCCESS_STATUS = 'completed';
+const TERMINAL_STATUSES = new Set([
+  SUCCESS_STATUS,
+  'cancelled',
+  'expired',
+  'denied',
+  'access_denied',
+  'failed',
+  'error',
+]);
 
 const GrokDeviceAuthModal: React.FC<GrokDeviceAuthModalProps> = ({
   authSession,
@@ -34,13 +45,16 @@ const GrokDeviceAuthModal: React.FC<GrokDeviceAuthModalProps> = ({
   const { t } = useTranslation();
   const [status, setStatus] = React.useState('waiting_for_user');
   const [remainingSeconds, setRemainingSeconds] = React.useState(0);
+  const completedRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!authSession) {
       setStatus('waiting_for_user');
       setRemainingSeconds(0);
+      completedRef.current = false;
       return;
     }
+    completedRef.current = false;
     const updateRemaining = () => {
       setRemainingSeconds(Math.max(0, authSession.expiresAt - Math.floor(Date.now() / 1000)));
     };
@@ -56,10 +70,16 @@ const GrokDeviceAuthModal: React.FC<GrokDeviceAuthModalProps> = ({
     void listen<GrokAuthStatusEvent>('grok-auth-status', (event) => {
       if (disposed || event.payload.sessionId !== authSession.sessionId) return;
       setStatus(event.payload.status);
-      if (event.payload.status === 'authorized') {
+      if (event.payload.status === SUCCESS_STATUS) {
+        if (completedRef.current) return;
+        completedRef.current = true;
         message.success(t('grok.provider.officialAccountOauthSuccess'));
         void onCompleted();
-      } else if (TERMINAL_STATUSES.has(event.payload.status) && event.payload.status !== 'cancelled') {
+      } else if (
+        TERMINAL_STATUSES.has(event.payload.status)
+        && event.payload.status !== 'cancelled'
+        && event.payload.status !== SUCCESS_STATUS
+      ) {
         message.error(event.payload.message || t('common.error'));
       }
     }).then((stopListening) => {
