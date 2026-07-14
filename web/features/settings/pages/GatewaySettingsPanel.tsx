@@ -14,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import {
   checkProxyGatewayPortAvailable,
+  DEFAULT_RETRYABLE_STATUS_CODES,
   getProxyGatewayCliStatuses,
   getProxyGatewaySettings,
   getProxyGatewayStatus,
@@ -141,11 +142,19 @@ interface FieldRowProps {
   description?: string;
   help?: string;
   wide?: boolean;
+  /** Label stays compact and the control fills the remaining row space. */
+  follow?: boolean;
   children: React.ReactNode;
 }
 
-const FieldRow: React.FC<FieldRowProps> = ({ label, description, help, wide, children }) => (
-  <div className={joinClassNames(styles.fieldRow, wide && styles.fieldRowWide)}>
+const FieldRow: React.FC<FieldRowProps> = ({ label, description, help, wide, follow, children }) => (
+  <div
+    className={joinClassNames(
+      styles.fieldRow,
+      wide && styles.fieldRowWide,
+      follow && styles.fieldRowFollow,
+    )}
+  >
     <div className={styles.fieldMeta}>
       <span className={styles.fieldLabelRow}>
         <span className={styles.fieldLabel}>{label}</span>
@@ -716,6 +725,39 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                         )
                       }
                     />
+                  </FieldRow>
+                </div>
+                <div className={styles.fieldStack}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.retryableStatusCodes')}
+                    help={t('settings.gateway.fieldHelp.retryableStatusCodes')}
+                    follow
+                  >
+                    <div className={styles.inlineControlGroup}>
+                      <input
+                        className={styles.retryableStatusInput}
+                        value={draftSettings.retryable_status_codes ?? DEFAULT_RETRYABLE_STATUS_CODES}
+                        placeholder={DEFAULT_RETRYABLE_STATUS_CODES}
+                        onChange={(event) =>
+                          updateDraftSetting('retryable_status_codes', event.currentTarget.value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className={styles.textButton}
+                        disabled={
+                          (draftSettings.retryable_status_codes ?? '') === DEFAULT_RETRYABLE_STATUS_CODES
+                        }
+                        onClick={() =>
+                          updateDraftAndSave(
+                            'retryable_status_codes',
+                            DEFAULT_RETRYABLE_STATUS_CODES,
+                          )
+                        }
+                      >
+                        {t('settings.gateway.actions.restoreRetryableStatusDefaults')}
+                      </button>
+                    </div>
                   </FieldRow>
                 </div>
               </div>

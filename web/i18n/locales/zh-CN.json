@@ -493,7 +493,8 @@
         "stop": "停止",
         "health": "健康检查",
         "power": "启停",
-        "restart": "重启"
+        "restart": "重启",
+        "restoreRetryableStatusDefaults": "恢复默认"
       },
       "fields": {
         "host": "监听地址",
@@ -510,6 +511,7 @@
         "perProviderRetry": "单渠道重试次数",
         "maxRetry": "最大重试次数",
         "retryInterval": "单渠道重试间隔秒",
+        "retryableStatusCodes": "可重试错误码",
         "thinkingBudgetRectifier": "Thinking budget 修正",
         "cacheInjection": "Cache 注入",
         "firstByteTimeout": "首包超时秒",
@@ -527,6 +529,7 @@
         "perProviderRetry": "当前渠道失败后，最多在同一渠道额外重试多少次；达到后在故障转移模式下切到下一个渠道，单渠道代理则返回错误。",
         "maxRetry": "单次请求跨所有渠道累计允许的额外重试次数，用来限制整体耗时。",
         "retryInterval": "同一渠道重试前等待的时间；设为 0 表示立即重试。",
+        "retryableStatusCodes": "决定哪些上游 HTTP 状态码会触发同渠道重试或跨渠道故障转移。支持逗号分隔和区间，例如 400,429,500-599；仅允许 400-599。连接失败、超时和空响应不受此列表影响。",
         "firstByteTimeout": "流式上游返回 200 后，等待首个 chunk 的最长时间。",
         "idleTimeout": "流式响应过程中两次 chunk 之间允许的最长空闲时间。",
         "nonStreamingTimeout": "非流式请求等待完整上游响应的最长时间。",
@@ -3146,7 +3149,7 @@
     },
     "addLocal": {
       "pathLabel": "Skill 文件夹路径",
-      "pathHint": "如果文件夹包含多个 Skills，会自动识别并让你选择",
+      "pathHint": "支持 ~/...、%APPDATA%/... 和绝对路径；如果文件夹包含多个 Skills，会自动识别并让你选择",
       "pathPlaceholder": "选择包含 Skill 文件的文件夹"
     },
     "addGit": {

@@ -572,6 +572,20 @@ mod tests {
     }
 
     #[test]
+    fn expand_home_path_supports_tilde_alias() {
+        let _env_lock = crate::coding::test_env::lock();
+        let Some(home_dir) = dirs::home_dir() else {
+            return;
+        };
+
+        let resolved = expand_home_path("~/skills/demo").expect("expand tilde alias");
+        assert_eq!(resolved, home_dir.join("skills").join("demo"));
+
+        let home_only = expand_home_path("~").expect("expand bare tilde");
+        assert_eq!(home_only, home_dir);
+    }
+
+    #[test]
     fn settings_record_does_not_read_skill_preferences_shape() {
         let path = central_repo_path_from_settings_record(&json!({
             "preferred_tools": ["codex"],

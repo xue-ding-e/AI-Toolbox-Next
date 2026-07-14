@@ -157,6 +157,9 @@ pub struct ProxyGatewaySettings {
     pub per_provider_retry_count: u32,
     pub max_retry_count: u32,
     pub retry_interval_secs: u64,
+    /// Comma-separated HTTP status codes/ranges that may trigger same-provider
+    /// retry or cross-provider failover. Example: `400,401,429,500-599`.
+    pub retryable_status_codes: String,
     pub app_configs: HashMap<GatewayCliKey, AppProxyConfig>,
     pub model_failure_score_threshold: i32,
     pub model_failure_window_seconds: u64,
@@ -194,6 +197,8 @@ impl Default for ProxyGatewaySettings {
             per_provider_retry_count: 0,
             max_retry_count: 8,
             retry_interval_secs: 1,
+            retryable_status_codes:
+                super::retryable_status::default_retryable_status_codes_compact(),
             app_configs: HashMap::new(),
             model_failure_score_threshold: 5,
             model_failure_window_seconds: 300,

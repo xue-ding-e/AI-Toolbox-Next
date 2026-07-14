@@ -675,6 +675,17 @@ async fn forward_to_upstream(
 
     let settings = context.settings_snapshot();
     let app_config = settings.effective_app_config(route.cli_key);
+    // Settings are normalized before they reach runtime; parse errors here only
+    // cover corrupted in-memory state and should not be a normal save path.
+    let retryable_status_codes =
+        crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
+            &settings.retryable_status_codes,
+        )
+        .unwrap_or_else(|_| {
+            crate::coding::proxy_gateway::retryable_status::default_retryable_status_codes()
+                .into_iter()
+                .collect()
+        });
     let upstream_response_snapshot_limit = settings
         .store_response_body
         .then(|| settings.log_max_body_size_kb.saturating_mul(1024) as usize);
@@ -817,7 +828,11 @@ async fn forward_to_upstream(
                             health_changed |=
                                 record_health_failure(context, &health_key, failure_kind);
                         }
-                        if should_retry_failure(failure_kind) {
+                        if should_retry_status_or_kind(
+                            Some(response.status_code),
+                            failure_kind,
+                            &retryable_status_codes,
+                        ) {
                             provider_attempts.push(provider_attempt_log(&response));
                             last_failure_response = Some(response);
                             if can_retry_current_provider(
@@ -8362,7 +8377,9 @@ fn classify_status_failure(status_code: u16) -> Option<GatewayFailureKind> {
     match status_code {
         200..=399 => None,
         400 => Some(GatewayFailureKind::UpstreamBadRequest),
-        401 | 403 => Some(GatewayFailureKind::Auth),
+        // 402 Payment Required is a provider-side billing/quota failure, not a client
+        // request schema error. Treat it like auth so failover can switch providers.
+        401 | 402 | 403 => Some(GatewayFailureKind::Auth),
         404 => Some(GatewayFailureKind::ModelNotFound),
         408 => Some(GatewayFailureKind::Timeout),
         429 => Some(GatewayFailureKind::RateLimit),
@@ -8378,6 +8395,26 @@ fn should_retry_failure(kind: GatewayFailureKind) -> bool {
             | GatewayFailureKind::ClientCancelled
             | GatewayFailureKind::GatewayParse
     )
+}
+
+/// Decide whether a failure may trigger same-provider retry or failover.
+///
+/// HTTP status-code failures honor `retryable_status_codes` from gateway settings.
+/// Non-status failures (connection/timeout/empty 2xx) keep the historical kind rules.
+fn should_retry_status_or_kind(
+    status_code: Option<u16>,
+    kind: GatewayFailureKind,
+    retryable_status_codes: &std::collections::BTreeSet<u16>,
+) -> bool {
+    if kind == GatewayFailureKind::EmptyResponse {
+        return should_retry_failure(kind);
+    }
+    if let Some(status) = status_code {
+        if classify_status_failure(status).is_some() {
+            return retryable_status_codes.contains(&status);
+        }
+    }
+    should_retry_failure(kind)
 }
 
 async fn header_preserving_proxy(db: &SqliteDbState) -> Option<Option<String>> {
@@ -13551,6 +13588,19 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
     }
 
     #[test]
+    fn payment_required_is_retryable_provider_auth_failure() {
+        assert_eq!(
+            classify_status_failure(402),
+            Some(GatewayFailureKind::Auth)
+        );
+        assert!(should_retry_failure(GatewayFailureKind::Auth));
+        let weight = model_health::classify_failure(GatewayFailureKind::Auth);
+        assert_eq!(weight.scope, model_health::FailureScope::Provider);
+        assert_eq!(weight.score, 5);
+        assert_eq!(weight.category, "auth");
+    }
+
+    #[test]
     fn current_provider_retry_respects_per_provider_and_global_limits() {
         assert!(can_retry_current_provider(
             GatewayFailureKind::Connection,
@@ -13579,6 +13629,57 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             1,
             0,
             3
+        ));
+    }
+
+    #[test]
+    fn retryable_status_codes_gate_status_driven_retry() {
+        let defaults =
+            crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
+                crate::coding::proxy_gateway::retryable_status::DEFAULT_RETRYABLE_STATUS_CODES_COMPACT,
+            )
+            .expect("default set");
+        assert!(should_retry_status_or_kind(
+            Some(400),
+            GatewayFailureKind::UpstreamBadRequest,
+            &defaults
+        ));
+        assert!(should_retry_status_or_kind(
+            Some(429),
+            GatewayFailureKind::RateLimit,
+            &defaults
+        ));
+        assert!(!should_retry_status_or_kind(
+            Some(422),
+            GatewayFailureKind::RequestSchema,
+            &defaults
+        ));
+
+        let conservative =
+            crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
+                "429,500-599",
+            )
+            .expect("conservative set");
+        assert!(!should_retry_status_or_kind(
+            Some(400),
+            GatewayFailureKind::UpstreamBadRequest,
+            &conservative
+        ));
+        assert!(should_retry_status_or_kind(
+            Some(503),
+            GatewayFailureKind::Upstream5xx,
+            &conservative
+        ));
+        // Non-status failures stay on historical kind rules.
+        assert!(should_retry_status_or_kind(
+            None,
+            GatewayFailureKind::Connection,
+            &conservative
+        ));
+        assert!(should_retry_status_or_kind(
+            Some(200),
+            GatewayFailureKind::EmptyResponse,
+            &conservative
         ));
     }
 }

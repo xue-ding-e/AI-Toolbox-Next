@@ -493,7 +493,8 @@
         "stop": "Stop",
         "health": "Health",
         "power": "Start/Stop",
-        "restart": "Restart"
+        "restart": "Restart",
+        "restoreRetryableStatusDefaults": "Restore defaults"
       },
       "fields": {
         "host": "Host",
@@ -510,6 +511,7 @@
         "perProviderRetry": "Per-channel retries",
         "maxRetry": "Max retries",
         "retryInterval": "Per-channel retry interval sec",
+        "retryableStatusCodes": "Retryable status codes",
         "thinkingBudgetRectifier": "Thinking budget rectifier",
         "cacheInjection": "Cache injection",
         "firstByteTimeout": "First-byte timeout sec",
@@ -527,6 +529,7 @@
         "perProviderRetry": "Extra retries allowed on the same channel after it fails; after this limit, failover mode switches to the next channel and single-channel proxy returns an error.",
         "maxRetry": "Total extra retries allowed across all channels for one request, limiting overall latency.",
         "retryInterval": "Time to wait before retrying the same channel; set to 0 to retry immediately.",
+        "retryableStatusCodes": "Which upstream HTTP status codes may trigger same-channel retry or cross-channel failover. Supports comma-separated values and ranges such as 400,429,500-599; only 400-599 are allowed. Connection failures, timeouts, and empty responses are not controlled by this list.",
         "firstByteTimeout": "Maximum time to wait for the first upstream chunk after a streaming HTTP 200 response.",
         "idleTimeout": "Maximum idle time allowed between chunks during a streaming response.",
         "nonStreamingTimeout": "Maximum time to wait for a complete non-streaming upstream response.",
@@ -3149,7 +3152,7 @@
     },
     "addLocal": {
       "pathLabel": "Skill Folder Path",
-      "pathHint": "If the folder contains multiple Skills, they will be automatically detected and you can choose which to install",
+      "pathHint": "Supports ~/..., %APPDATA%/..., and absolute paths. If the folder contains multiple Skills, they will be automatically detected and you can choose which to install",
       "pathPlaceholder": "Select folder containing Skill files"
     },
     "addGit": {

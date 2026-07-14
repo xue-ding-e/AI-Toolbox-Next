@@ -2254,6 +2254,83 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
     }
 
     #[test]
+    fn route_request_fails_over_to_next_provider_after_payment_required() {
+        let (first_base_url, first_rx) = start_test_upstream_with_response(
+            402,
+            "Payment Required",
+            br#"{"error":"insufficient_quota"}"#,
+        );
+        let (second_base_url, second_rx) = start_test_upstream();
+        let body =
+            br#"{"model":"claude-opus-4-7","messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let first_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": first_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "first-key"
+                },
+                "opusModel": "first-opus"
+            })
+            .to_string();
+            let second_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": second_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "second-key"
+                },
+                "opusModel": "second-opus"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "First Upstream",
+                    "category": "custom",
+                    "settings_config": first_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 0,
+                }),
+            );
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Second Upstream",
+                    "category": "custom",
+                    "settings_config": second_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 1,
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.provider_name.as_deref(), Some("Second Upstream"));
+        assert_eq!(response.requested_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(response.upstream_model_id.as_deref(), Some("second-opus"));
+        assert!(response.failover);
+        assert_eq!(response.attempt_count, 2);
+        assert_eq!(response.provider_attempt_count, 1);
+
+        let first_captured = first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured first upstream request");
+        assert!(first_captured.contains(r#""model":"first-opus""#));
+
+        let second_captured = second_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured second upstream request");
+        assert!(second_captured.contains(r#""model":"second-opus""#));
+    }
+
+    #[test]
     fn gateway_connectivity_test_overrides_provider_without_failover() {
         let (_first_base_url, first_rx) =
             start_test_upstream_with_response(429, "Too Many Requests", br#"{"error":"limited"}"#);

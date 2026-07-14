@@ -62,18 +62,27 @@ pub async fn proxy_gateway_update_settings(
     sqlite_state: tauri::State<'_, SqliteDbState>,
     mut settings: ProxyGatewaySettings,
 ) -> Result<ProxyGatewaySettings, String> {
-    {
+    // Normalize/validate before touching runtime so invalid expressions never
+    // change live gateway behavior while the DB write fails.
+    let running = {
+        let manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.status().running
+    };
+    if running {
+        settings.enabled_on_startup = true;
+    }
+    let saved = settings::save_settings(&sqlite_state, settings)?;
+    if running {
         let mut manager = gateway_state
             .manager
             .lock()
             .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
-        let running = manager.status().running;
-        if running {
-            settings.enabled_on_startup = true;
-            manager.update_runtime_settings(settings.clone())?;
-        }
+        manager.update_runtime_settings(saved.clone())?;
     }
-    settings::save_settings(&sqlite_state, settings)
+    Ok(saved)
 }
 
 #[tauri::command]

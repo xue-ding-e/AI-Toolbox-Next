@@ -64,6 +64,8 @@ export interface ProxyGatewaySettings {
   per_provider_retry_count: number;
   max_retry_count: number;
   retry_interval_secs: number;
+  /** Comma-separated HTTP status codes/ranges, e.g. "400,401,429,500-599". */
+  retryable_status_codes: string;
   app_configs: Partial<Record<GatewayCliKey, AppProxyConfig>>;
   model_failure_score_threshold: number;
   model_failure_window_seconds: number;
@@ -71,6 +73,9 @@ export interface ProxyGatewaySettings {
   model_max_cooldown_seconds: number;
   half_open_success_required: number;
 }
+
+/** Compact default matching historical gateway retry status behavior. */
+export const DEFAULT_RETRYABLE_STATUS_CODES = '400,401,402,403,404,408,429,500-599';
 
 export interface ProxyGatewayStatus {
   running: boolean;

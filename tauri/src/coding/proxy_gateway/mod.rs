@@ -8,6 +8,7 @@ pub mod provider_profiles;
 pub(crate) mod provider_protocol;
 pub mod provider_switch;
 pub mod request_log;
+pub(crate) mod retryable_status;
 mod runtime;
 pub mod session_import;
 pub(crate) mod settings;

@@ -1442,6 +1442,12 @@ mod skill_source_tests {
 
 // --- Install Skills ---
 
+/// Resolve local skill source paths so `~/...` / `%APPDATA%/...` aliases work
+/// the same way as central-repo path inputs.
+fn resolve_local_source_path(source_path: &str) -> Result<PathBuf, String> {
+    expand_home_path(source_path).map_err(|e| format_error(e))
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn skills_install_local(
@@ -1450,10 +1456,11 @@ pub async fn skills_install_local(
     sourcePath: String,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
+    let source_path = resolve_local_source_path(&sourcePath)?;
     let result = install_local_skill(
         &app,
         &state,
-        std::path::Path::new(&sourcePath),
+        &source_path,
         overwrite.unwrap_or(false),
     )
     .await
@@ -1472,8 +1479,8 @@ pub async fn skills_install_local(
 pub async fn skills_list_local_skills(
     sourcePath: String,
 ) -> Result<Vec<GitSkillCandidate>, String> {
-    let source = std::path::Path::new(&sourcePath);
-    list_local_skills(source).map_err(|e| format_error(e))
+    let source_path = resolve_local_source_path(&sourcePath)?;
+    list_local_skills(&source_path).map_err(|e| format_error(e))
 }
 
 #[tauri::command]
@@ -1485,10 +1492,11 @@ pub async fn skills_install_local_selection(
     subpath: String,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
+    let source_path = resolve_local_source_path(&sourcePath)?;
     let result = install_local_skill_from_selection(
         &app,
         &state,
-        std::path::Path::new(&sourcePath),
+        &source_path,
         &subpath,
         overwrite.unwrap_or(false),
     )
@@ -1963,10 +1971,11 @@ pub async fn skills_import_existing(
     sourcePath: String,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
+    let source_path = resolve_local_source_path(&sourcePath)?;
     let result = install_local_skill(
         &app,
         &state,
-        std::path::Path::new(&sourcePath),
+        &source_path,
         overwrite.unwrap_or(false),
     )
     .await

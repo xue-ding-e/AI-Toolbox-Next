@@ -22,7 +22,7 @@ pub fn save_settings_to_sqlite_state(
     sqlite_state: &SqliteDbState,
     settings: ProxyGatewaySettings,
 ) -> Result<ProxyGatewaySettings, String> {
-    validate_settings(&settings)?;
+    let settings = normalize_settings(settings)?;
     let data = serde_json::to_value(&settings)
         .map_err(|error| format!("Failed to serialize proxy gateway settings: {error}"))?;
     sqlite_state
@@ -38,11 +38,17 @@ pub fn save_settings(
 }
 
 pub fn settings_from_value(value: Value) -> Result<ProxyGatewaySettings, String> {
-    let mut settings: ProxyGatewaySettings =
+    let settings: ProxyGatewaySettings =
         serde_json::from_value(value).unwrap_or_else(|_| ProxyGatewaySettings::default());
+    normalize_settings(settings)
+}
+
+pub fn normalize_settings(mut settings: ProxyGatewaySettings) -> Result<ProxyGatewaySettings, String> {
     if settings.enabled_cli_keys.is_empty() {
         settings.enabled_cli_keys = ProxyGatewaySettings::default().enabled_cli_keys;
     }
+    settings.retryable_status_codes =
+        super::retryable_status::normalize_retryable_status_codes(&settings.retryable_status_codes)?;
     validate_settings(&settings)?;
     Ok(settings)
 }
@@ -64,9 +70,30 @@ mod tests {
         assert_eq!(settings.per_provider_retry_count, 0);
         assert_eq!(settings.max_retry_count, 8);
         assert_eq!(settings.retry_interval_secs, 1);
+        assert_eq!(
+            settings.retryable_status_codes,
+            super::super::retryable_status::DEFAULT_RETRYABLE_STATUS_CODES_COMPACT
+        );
         assert!(settings.thinking_rectifier_enabled);
         assert!(settings.responses_encrypted_content_rectifier_enabled);
         assert!(!settings.lossy_rejection_enabled);
+    }
+
+    #[test]
+    fn retryable_status_codes_are_normalized_on_load() {
+        let settings = settings_from_value(json!({
+            "retryable_status_codes": "429, 400, 502-504",
+        }))
+        .unwrap();
+        assert_eq!(settings.retryable_status_codes, "400,429,502-504");
+    }
+
+    #[test]
+    fn invalid_retryable_status_codes_are_rejected() {
+        assert!(settings_from_value(json!({
+            "retryable_status_codes": "abc",
+        }))
+        .is_err());
     }
 
     #[test]

@@ -44,6 +44,8 @@ pub fn validate_settings(settings: &ProxyGatewaySettings) -> Result<(String, u16
     if settings.per_provider_retry_count > settings.max_retry_count {
         return Err("Gateway per-provider retry count cannot exceed max retry count".to_string());
     }
+    // Validate expression early so bad UI input fails at save time.
+    super::retryable_status::parse_retryable_status_codes(&settings.retryable_status_codes)?;
     for (cli_key, app_config) in &settings.app_configs {
         if let (Some(per_provider), Some(max_retry)) = (
             app_config.per_provider_retry_count,
