@@ -75,7 +75,7 @@ export interface ProxyGatewaySettings {
 }
 
 /** Compact default matching historical gateway retry status behavior. */
-export const DEFAULT_RETRYABLE_STATUS_CODES = '400,401,402,403,404,408,429,500-599';
+export const DEFAULT_RETRYABLE_STATUS_CODES = '400-404,408,429,500-599';
 
 export interface ProxyGatewayStatus {
   running: boolean;

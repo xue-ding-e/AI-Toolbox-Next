@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 /// Compact default matching historical gateway retry behavior.
+/// Prefer collapsed ranges so save/normalize keeps the same display form.
 pub const DEFAULT_RETRYABLE_STATUS_CODES_COMPACT: &str =
-    "400,401,402,403,404,408,429,500-599";
+    "400-404,408,429,500-599";
 
 // Only error statuses can enter retry/failover; 1xx-3xx never hit
 // classify_status_failure as failures, so they are not configurable here.
