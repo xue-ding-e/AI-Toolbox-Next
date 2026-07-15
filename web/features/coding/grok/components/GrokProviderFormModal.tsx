@@ -804,20 +804,37 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     })));
   };
 
-  const handleSubmit = async () => {
+  const shouldConfirmOpenAiBaseUrlV1 = (
+    baseUrl: string | undefined,
+    apiFormat: GrokApiFormat | undefined,
+  ): boolean => {
+    if (!baseUrl?.trim()) {
+      return false;
+    }
+    const format = normalizeGrokApiFormat(apiFormat);
+    if (format !== 'openai_chat' && format !== 'openai_responses') {
+      return false;
+    }
+
+    // Full-URL providers (AxonHub-style ## suffix) must not be rewritten or warned as base paths.
+    let normalizedBaseUrl = baseUrl.trim();
+    if (normalizedBaseUrl.endsWith('/')) {
+      normalizedBaseUrl = normalizedBaseUrl.slice(0, -1);
+    }
+    if (normalizedBaseUrl.endsWith('##')) {
+      return false;
+    }
+    return !normalizedBaseUrl.endsWith('/v1');
+  };
+
+  const submitProviderForm = async (submittedValues: GrokProviderFormValues & {
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    configToml?: string;
+  }) => {
+    setLoading(true);
     try {
-      const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
-
-      const values = await form.validateFields(fieldsToValidate);
-      const submittedValues = {
-        ...(form.getFieldsValue(true) as GrokProviderFormValues),
-        ...values,
-      };
-
-      setLoading(true);
-
       const selectedCategory = mode === 'import'
         ? 'custom'
         : (activeProviderCategory === 'official' ? 'official' : 'custom');
@@ -886,10 +903,53 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
       setSelectedProvider(null);
       setAvailableModels([]);
       onCancel();
-    } catch (error) {
-      console.error('Form validation failed:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const fieldsToValidate = mode === 'import'
+        ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
+
+      const values = await form.validateFields(fieldsToValidate);
+      const submittedValues = {
+        ...(form.getFieldsValue(true) as GrokProviderFormValues),
+        ...values,
+      };
+
+      const selectedCategory = mode === 'import'
+        ? 'custom'
+        : (activeProviderCategory === 'official' ? 'official' : 'custom');
+      const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+        ? undefined
+        : findGatewayProviderEndpoint(
+            submittedValues.providerProfileId,
+            'grok',
+            submittedValues.providerEndpointId,
+          );
+      const effectiveApiFormat = selectedCategory === 'official'
+        ? undefined
+        : selectedEndpoint
+          ? normalizeGrokApiFormat(selectedEndpoint.apiFormat)
+          : normalizeGrokApiFormat(submittedValues.apiFormat);
+
+      if (shouldConfirmOpenAiBaseUrlV1(submittedValues.baseUrl, effectiveApiFormat)) {
+        Modal.confirm({
+          title: t('common.confirm'),
+          content: t('grok.provider.baseUrlConfirmV1'),
+          okText: t('common.confirm'),
+          cancelText: t('common.cancel'),
+          onOk: () => submitProviderForm(submittedValues),
+        });
+        return;
+      }
+
+      await submitProviderForm(submittedValues);
+    } catch (error) {
+      console.error('Form validation failed:', error);
     }
   };
 
@@ -1136,7 +1196,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             help={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.baseUrlHelp')}</Text>}
           >
             <Input
-              placeholder="https://your-api-endpoint.com/v1"
+              placeholder="https://api.x.ai/v1"
             />
           </Form.Item>
 
