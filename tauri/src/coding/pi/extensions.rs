@@ -69,6 +69,7 @@ fn pi_wsl_path_prefix(linux_user_root: Option<&str>) -> String {
         format!("{linux_user_root}/.local/share/mise/shims"),
         format!("{linux_user_root}/.asdf/shims"),
         format!("{linux_user_root}/.local/bin"),
+        format!("{linux_user_root}/.bun/bin"),
         format!("{linux_user_root}/.volta/bin"),
         format!("{linux_user_root}/.local/share/fnm/aliases/default/bin"),
         format!("{linux_user_root}/.fnm/aliases/default/bin"),
@@ -522,6 +523,7 @@ mod tests {
             "/home/tester/.local/share/mise/shims:\
 /home/tester/.asdf/shims:\
 /home/tester/.local/bin:\
+/home/tester/.bun/bin:\
 /home/tester/.volta/bin:\
 /home/tester/.local/share/fnm/aliases/default/bin:\
 /home/tester/.fnm/aliases/default/bin:\
@@ -576,6 +578,7 @@ mod tests {
             "/home/test user/.local/share/mise/shims:\
 /home/test user/.asdf/shims:\
 /home/test user/.local/bin:\
+/home/test user/.bun/bin:\
 /home/test user/.volta/bin:\
 /home/test user/.local/share/fnm/aliases/default/bin:\
 /home/test user/.fnm/aliases/default/bin:\

@@ -112,7 +112,7 @@ pub fn build_local_tokio_command(program_path: &Path) -> TokioCommand {
 
 pub fn local_cli_missing_hint(command_name: &str) -> String {
     format!(
-        "未找到 `{command_name}` CLI。AI Toolbox 已检查当前 PATH、常见安装路径，以及 nvm、volta、fnm、nvm-windows 管理的 Node 全局 bin；macOS 从 Dock/Finder/Spotlight 启动时不会继承终端 shell PATH。请确认 CLI 已安装。"
+        "未找到 `{command_name}` CLI。AI Toolbox 已检查当前 PATH、常见安装路径，以及 nvm、volta、fnm、nvm-windows、bun 管理的全局 bin；macOS 从 Dock/Finder/Spotlight 启动时不会继承终端 shell PATH。请确认 CLI 已安装。"
     )
 }
 
@@ -532,7 +532,41 @@ fn append_node_global_candidates_with_home(
         append_fnm_candidates_from_dir(candidates, &fnm_dir, command_name);
     }
 
+    append_bun_candidates(candidates, command_name, home_dir);
     append_windows_node_candidates(candidates, command_name);
+}
+
+fn append_bun_candidates(
+    candidates: &mut Vec<PathBuf>,
+    command_name: &str,
+    home_dir: Option<&Path>,
+) {
+    for path in collect_bun_candidates(command_name, env_path("BUN_INSTALL").as_deref(), home_dir)
+    {
+        push_unique_candidate(candidates, path);
+    }
+}
+
+fn collect_bun_candidates(
+    command_name: &str,
+    bun_install: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(bun_install) = bun_install {
+        push_command_candidate(&mut candidates, bun_install.join("bin"), command_name);
+    }
+
+    if let Some(home_dir) = home_dir {
+        push_command_candidate(
+            &mut candidates,
+            home_dir.join(".bun").join("bin"),
+            command_name,
+        );
+    }
+
+    candidates
 }
 
 fn push_existing_dir(dirs: &mut Vec<PathBuf>, path: PathBuf) {
@@ -625,7 +659,10 @@ fn command_extension(program_path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_fnm_candidates, collect_nvm_candidates, normalize_node_version_dir};
+    use super::{
+        collect_bun_candidates, collect_fnm_candidates, collect_nvm_candidates,
+        normalize_node_version_dir,
+    };
 
     use std::env;
     use std::ffi::OsString;
@@ -716,6 +753,38 @@ mod tests {
 
         assert_eq!(candidates.first(), Some(&default_bin.join("opencode")));
         assert!(candidates.contains(&version_bin.join("opencode")));
+    }
+
+    #[test]
+    fn bun_install_candidate_precedes_default_home_bun_bin() {
+        let test_dir = TestDir::new("bun-install");
+        let bun_install = test_dir.path().join("custom-bun");
+        let home_dir = test_dir.path().join("home");
+        let custom_bin = bun_install.join("bin");
+        let default_bin = home_dir.join(".bun").join("bin");
+
+        fs::create_dir_all(&custom_bin).expect("failed to create custom bun bin");
+        fs::create_dir_all(&default_bin).expect("failed to create default bun bin");
+
+        let candidates = collect_bun_candidates("pi", Some(&bun_install), Some(&home_dir));
+
+        assert_eq!(candidates.first(), Some(&custom_bin.join("pi")));
+        assert!(candidates.contains(&default_bin.join("pi")));
+    }
+
+    #[test]
+    fn bun_default_home_bin_is_candidate_without_bun_install() {
+        let test_dir = TestDir::new("bun-default");
+        let home_dir = test_dir.path().join("home");
+        let default_bin = home_dir.join(".bun").join("bin");
+        fs::create_dir_all(&default_bin).expect("failed to create default bun bin");
+
+        let candidates = collect_bun_candidates("pi", None, Some(&home_dir));
+
+        assert!(candidates.contains(&default_bin.join("pi")));
+        assert!(!candidates
+            .iter()
+            .any(|path| path.to_string_lossy().contains("custom-bun")));
     }
 
     #[test]
