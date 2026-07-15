@@ -1,10 +1,116 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag, message, InputNumber } from 'antd';
-import { PlusOutlined, MinusCircleOutlined, ExportOutlined } from '@ant-design/icons';
+import type { FormListFieldData } from 'antd';
+import { PlusOutlined, MinusCircleOutlined, ExportOutlined, HolderOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { restrictToVerticalAxis, restrictToParentElement } from '@dnd-kit/modifiers';
+import { CSS } from '@dnd-kit/utilities';
 import * as mcpApi from '../../services/mcpApi';
 import type { CreateMcpServerInput, UpdateMcpServerInput, McpTool, McpServer, StdioConfig, HttpConfig } from '../../types';
 import styles from './AddMcpModal.module.less';
+
+function reorderFormListFields(
+  event: DragEndEvent,
+  fields: FormListFieldData[],
+  move: (from: number, to: number) => void,
+) {
+  const { active, over } = event;
+  if (!over || active.id === over.id) {
+    return;
+  }
+
+  const oldIndex = fields.findIndex((field) => field.key === active.id);
+  const newIndex = fields.findIndex((field) => field.key === over.id);
+  if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) {
+    return;
+  }
+
+  move(oldIndex, newIndex);
+}
+
+interface SortableFormListProps {
+  fields: FormListFieldData[];
+  move: (from: number, to: number) => void;
+  children: React.ReactNode;
+}
+
+const SortableFormList: React.FC<SortableFormListProps> = ({ fields, move, children }) => {
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragEnd={(event) => reorderFormListFields(event, fields, move)}
+    >
+      <SortableContext
+        items={fields.map((field) => field.key)}
+        strategy={verticalListSortingStrategy}
+      >
+        {children}
+      </SortableContext>
+    </DndContext>
+  );
+};
+
+interface SortableFormRowProps {
+  id: string | number;
+  className?: string;
+  children: React.ReactNode;
+}
+
+const SortableFormRow: React.FC<SortableFormRowProps> = ({ id, className, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: 'relative',
+    zIndex: isDragging ? 1 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className={className}>
+      <span className={styles.dragHandle} {...attributes} {...listeners}>
+        <HolderOutlined />
+      </span>
+      {children}
+    </div>
+  );
+};
 
 interface AddMcpModalProps {
   open: boolean;
@@ -501,16 +607,18 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
             <Form.Item label={t('mcp.args')}>
               <Form.List name="args">
-                {(fields, { add, remove }) => (
+                {(fields, { add, remove, move }) => (
                   <>
-                    {fields.map((field, index) => (
-                      <Space key={field.key} className={styles.argRow}>
-                        <Form.Item {...field} noStyle>
-                          <Input placeholder={`${t('mcp.arg')} ${index + 1}`} />
-                        </Form.Item>
-                        <MinusCircleOutlined onClick={() => remove(field.name)} />
-                      </Space>
-                    ))}
+                    <SortableFormList fields={fields} move={move}>
+                      {fields.map((field, index) => (
+                        <SortableFormRow key={field.key} id={field.key} className={styles.argRow}>
+                          <Form.Item {...field} noStyle>
+                            <Input placeholder={`${t('mcp.arg')} ${index + 1}`} />
+                          </Form.Item>
+                          <MinusCircleOutlined onClick={() => remove(field.name)} />
+                        </SortableFormRow>
+                      ))}
+                    </SortableFormList>
                     <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
                       {t('mcp.addArg')}
                     </Button>
@@ -521,27 +629,29 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
             <Form.Item label={t('mcp.env')}>
               <Form.List name="env">
-                {(fields, { add, remove }) => (
+                {(fields, { add, remove, move }) => (
                   <>
-                    {fields.map((field) => (
-                      <div key={field.key} className={styles.kvRow}>
-                        <Form.Item
-                          {...field}
-                          name={[field.name, 'key']}
-                          noStyle
-                        >
-                          <Input placeholder={t('mcp.envKey')} className={styles.kvKey} />
-                        </Form.Item>
-                        <Form.Item
-                          {...field}
-                          name={[field.name, 'value']}
-                          noStyle
-                        >
-                          <Input placeholder={t('mcp.envValue')} className={styles.kvValue} />
-                        </Form.Item>
-                        <MinusCircleOutlined onClick={() => remove(field.name)} />
-                      </div>
-                    ))}
+                    <SortableFormList fields={fields} move={move}>
+                      {fields.map((field) => (
+                        <SortableFormRow key={field.key} id={field.key} className={styles.kvRow}>
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'key']}
+                            noStyle
+                          >
+                            <Input placeholder={t('mcp.envKey')} className={styles.kvKey} />
+                          </Form.Item>
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'value']}
+                            noStyle
+                          >
+                            <Input placeholder={t('mcp.envValue')} className={styles.kvValue} />
+                          </Form.Item>
+                          <MinusCircleOutlined onClick={() => remove(field.name)} />
+                        </SortableFormRow>
+                      ))}
+                    </SortableFormList>
                     <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
                       {t('mcp.addEnv')}
                     </Button>
@@ -566,27 +676,29 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
             <Form.Item label={t('mcp.headers')}>
               <Form.List name="headers">
-                {(fields, { add, remove }) => (
+                {(fields, { add, remove, move }) => (
                   <>
-                    {fields.map((field) => (
-                      <div key={field.key} className={styles.kvRow}>
-                        <Form.Item
-                          {...field}
-                          name={[field.name, 'key']}
-                          noStyle
-                        >
-                          <Input placeholder={t('mcp.headerKey')} className={styles.kvKey} />
-                        </Form.Item>
-                        <Form.Item
-                          {...field}
-                          name={[field.name, 'value']}
-                          noStyle
-                        >
-                          <Input placeholder={t('mcp.headerValue')} className={styles.kvValue} />
-                        </Form.Item>
-                        <MinusCircleOutlined onClick={() => remove(field.name)} />
-                      </div>
-                    ))}
+                    <SortableFormList fields={fields} move={move}>
+                      {fields.map((field) => (
+                        <SortableFormRow key={field.key} id={field.key} className={styles.kvRow}>
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'key']}
+                            noStyle
+                          >
+                            <Input placeholder={t('mcp.headerKey')} className={styles.kvKey} />
+                          </Form.Item>
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'value']}
+                            noStyle
+                          >
+                            <Input placeholder={t('mcp.headerValue')} className={styles.kvValue} />
+                          </Form.Item>
+                          <MinusCircleOutlined onClick={() => remove(field.name)} />
+                        </SortableFormRow>
+                      ))}
+                    </SortableFormList>
                     <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
                       {t('mcp.addHeader')}
                     </Button>

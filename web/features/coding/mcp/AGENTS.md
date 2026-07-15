@@ -46,6 +46,7 @@ sequenceDiagram
 - `preferred_tools` 是添加/导入 MCP 时的默认同步目标；“添加更多仅显示常用工具”只限制普通 MCP 卡片 `+` 菜单的候选工具，不自动移除已启用工具，也不收窄批量添加或分组工具模式这类管理入口。
 - MCP 管理页可能出现几百个 server，平铺和分组展开都应使用 shared `management/VirtualGrid` 这类可视区渲染；拖拽排序模式保持完整列表渲染，避免虚拟化与 dnd-kit 排序语义冲突。
 - MCP 管理页、列表、分组和卡片的主交互面应保持轻量原生控件风格，不要重新把 AntD `Button/Input/Segmented/Dropdown/Tooltip/Collapse/Empty/Spin/Tag/Checkbox` 引回这些高频列表 surface；复杂 modal 表单可另行按 modal 规则处理。
+- 新增/编辑弹窗里 stdio 的 `args`（以及表单中的 `env`/`headers` 列表）支持 dnd-kit 拖拽排序，因为 CLI 参数顺序会影响执行；排序只改 Form.List 顺序，保存时仍按数组原样写入 `server_config`，不要在提交时 re-sort。
 
 ## 跨模块依赖
 
