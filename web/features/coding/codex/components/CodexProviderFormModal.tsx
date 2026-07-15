@@ -697,20 +697,37 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
   };
 
-  const handleSubmit = async () => {
+  const shouldConfirmOpenAiBaseUrlV1 = (
+    baseUrl: string | undefined,
+    apiFormat: CodexApiFormat | undefined,
+  ): boolean => {
+    if (!baseUrl?.trim()) {
+      return false;
+    }
+    const format = normalizeCodexApiFormat(apiFormat);
+    if (format !== 'openai_chat' && format !== 'openai_responses') {
+      return false;
+    }
+
+    // Full-URL providers (AxonHub-style ## suffix) must not be rewritten or warned as base paths.
+    let normalizedBaseUrl = baseUrl.trim();
+    if (normalizedBaseUrl.endsWith('/')) {
+      normalizedBaseUrl = normalizedBaseUrl.slice(0, -1);
+    }
+    if (normalizedBaseUrl.endsWith('##')) {
+      return false;
+    }
+    return !normalizedBaseUrl.endsWith('/v1');
+  };
+
+  const submitProviderForm = async (submittedValues: CodexProviderFormValues & {
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    configToml?: string;
+  }) => {
+    setLoading(true);
     try {
-      const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
-
-      const values = await form.validateFields(fieldsToValidate);
-      const submittedValues = {
-        ...(form.getFieldsValue(true) as CodexProviderFormValues),
-        ...values,
-      };
-
-      setLoading(true);
-
       const selectedCategory = mode === 'import'
         ? 'custom'
         : (activeProviderCategory === 'official' ? 'official' : 'custom');
@@ -777,10 +794,53 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       setSelectedProvider(null);
       setAvailableModels([]);
       onCancel();
-    } catch (error) {
-      console.error('Form validation failed:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const fieldsToValidate = mode === 'import'
+        ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
+
+      const values = await form.validateFields(fieldsToValidate);
+      const submittedValues = {
+        ...(form.getFieldsValue(true) as CodexProviderFormValues),
+        ...values,
+      };
+
+      const selectedCategory = mode === 'import'
+        ? 'custom'
+        : (activeProviderCategory === 'official' ? 'official' : 'custom');
+      const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+        ? undefined
+        : findGatewayProviderEndpoint(
+            submittedValues.providerProfileId,
+            'codex',
+            submittedValues.providerEndpointId,
+          );
+      const effectiveApiFormat = selectedCategory === 'official'
+        ? undefined
+        : selectedEndpoint
+          ? normalizeCodexApiFormat(selectedEndpoint.apiFormat)
+          : normalizeCodexApiFormat(submittedValues.apiFormat);
+
+      if (shouldConfirmOpenAiBaseUrlV1(submittedValues.baseUrl, effectiveApiFormat)) {
+        Modal.confirm({
+          title: t('common.confirm'),
+          content: t('codex.provider.baseUrlConfirmV1'),
+          okText: t('common.confirm'),
+          cancelText: t('common.cancel'),
+          onOk: () => submitProviderForm(submittedValues),
+        });
+        return;
+      }
+
+      await submitProviderForm(submittedValues);
+    } catch (error) {
+      console.error('Form validation failed:', error);
     }
   };
 
