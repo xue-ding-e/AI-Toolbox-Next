@@ -619,7 +619,6 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                 <Button
                   size="small"
                   icon={<PlusOutlined />}
-                  disabled={!currentBackupCliConfigFilesEnabled}
                   onClick={() => handleOpenFilterRuleModal()}
                 >
                   {t('settings.backupSettings.fileFilterRules.add')}
@@ -648,7 +647,6 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                                 size="small"
                                 icon={<DeleteOutlined />}
                                 aria-label={t('settings.backupSettings.fileFilterRules.delete')}
-                                disabled={!currentBackupCliConfigFilesEnabled}
                               />
                             </Tooltip>
                           </Popconfirm>,

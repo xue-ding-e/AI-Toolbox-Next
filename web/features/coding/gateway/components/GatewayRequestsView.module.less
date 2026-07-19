@@ -159,7 +159,7 @@
   font-size: 13px;
   font-weight: 650;
 
-  span {
+  > span {
     display: inline-flex;
     min-width: 0;
     align-items: center;
@@ -167,11 +167,34 @@
   }
 }
 
+.panelHeaderActions {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  font-weight: 400;
+
+  :global(.ant-checkbox-wrapper) {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+}
+
+.panelHeaderDivider {
+  width: 1px;
+  height: 14px;
+  flex: 0 0 auto;
+  background: var(--color-border);
+}
+
 .panelCount {
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .tableMainCell {

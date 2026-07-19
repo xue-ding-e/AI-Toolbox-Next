@@ -516,6 +516,8 @@ pub struct GatewayRequestLogFilters {
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
+    /// When true, exclude GET/HEAD model-list requests from request log queries.
+    pub exclude_model_list: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

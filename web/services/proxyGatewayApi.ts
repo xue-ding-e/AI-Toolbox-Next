@@ -176,6 +176,8 @@ export interface GatewayRequestLogFilters {
   status_code?: number | null;
   start_date?: number | null;
   end_date?: number | null;
+  /** When true, backend excludes GET/HEAD model-list requests from the result set. */
+  exclude_model_list?: boolean | null;
 }
 
 export interface GatewayPaginatedRequestLogs {

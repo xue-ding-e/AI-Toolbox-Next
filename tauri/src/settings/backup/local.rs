@@ -15,8 +15,9 @@ use super::utils::{
     resolve_skills_restore_output_path, restore_claude_external_config_file,
     restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
     sanitize_restored_claude_database_for_current_os, should_filter_external_config_entry,
-    should_reapply_applied_runtime, should_use_backup_root_overrides, write_backup_zip_contents,
-    write_post_restore_flags, RestoreResult,
+    should_reapply_applied_runtime, should_skip_external_config_on_restore,
+    should_use_root_override_for_tool, write_backup_zip_contents, write_post_restore_flags,
+    RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
@@ -133,7 +134,9 @@ pub async fn restore_database(
             Err(_) => (default_backup_file_filter_rules(), true),
         }
     };
-    let skipped_external_configs = !include_cli_config_files;
+    // When false, only optional (DB-backed) CLI runtime files are skipped on restore.
+    // OpenCode / OpenClaw / Pi remain always-restored when present in the zip.
+    let skipped_optional_cli_runtime = !include_cli_config_files;
     let backup_meta = read_backup_meta_from_archive(&mut archive);
 
     let restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
@@ -158,31 +161,57 @@ pub async fn restore_database(
         .map_err(|e| format!("Failed to create database directory: {}", e))?;
 
     let home_dir = get_home_dir()?;
-    // root-dir.txt is part of the external runtime snapshot. Do not even read it when
-    // runtime files are skipped, or when the user explicitly requested local/default roots.
-    let use_backup_root_overrides =
-        should_use_backup_root_overrides(skipped_external_configs, skip_cli_custom_roots);
-    let opencode_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt"))
-        .flatten();
-    let claude_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt"))
-        .flatten();
-    let codex_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt"))
-        .flatten();
-    let grok_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
-        .flatten();
-    let openclaw_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt"))
-        .flatten();
-    let gemini_cli_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt"))
-        .flatten();
-    let pi_restore_dir_override = use_backup_root_overrides
-        .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
-        .flatten();
+    // Always-include tools may still read root-dir.txt when optional CLI files are skipped.
+    // Never read overrides when the user explicitly requested local/default roots.
+    let opencode_restore_dir_override = should_use_root_override_for_tool(
+        "opencode",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt"))
+    .flatten();
+    let claude_restore_dir_override = should_use_root_override_for_tool(
+        "claude",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt"))
+    .flatten();
+    let codex_restore_dir_override = should_use_root_override_for_tool(
+        "codex",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt"))
+    .flatten();
+    let grok_restore_dir_override = should_use_root_override_for_tool(
+        "grok",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
+    .flatten();
+    let openclaw_restore_dir_override = should_use_root_override_for_tool(
+        "openclaw",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt"))
+    .flatten();
+    let gemini_cli_restore_dir_override = should_use_root_override_for_tool(
+        "geminicli",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt"))
+    .flatten();
+    let pi_restore_dir_override = should_use_root_override_for_tool(
+        "pi",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
+    .flatten();
     let mut restore_result = RestoreResult::default();
     let mut restored_wsl_modules = Vec::new();
 
@@ -262,8 +291,9 @@ pub async fn restore_database(
         if file_name == "backup_meta.json" {
             continue;
         }
-        // Skip all CLI runtime configs when the pre-restore setting disables them.
-        if skipped_external_configs && file_name.starts_with("external-configs/") {
+        // Skip optional (DB-backed) CLI runtime configs when the pre-restore setting disables them.
+        // OpenCode / OpenClaw / Pi always restore when present.
+        if should_skip_external_config_on_restore(include_cli_config_files, &file_name) {
             continue;
         }
 
@@ -674,7 +704,7 @@ pub async fn restore_database(
     restore_custom_backup_entries(&mut archive)?;
 
     let need_reapply =
-        should_reapply_applied_runtime(skipped_external_configs, backup_meta.as_ref());
+        should_reapply_applied_runtime(skipped_optional_cli_runtime, backup_meta.as_ref());
     restore_result.will_reapply_applied = need_reapply;
     write_post_restore_flags(&app_handle, need_reapply, &restored_wsl_modules)?;
 

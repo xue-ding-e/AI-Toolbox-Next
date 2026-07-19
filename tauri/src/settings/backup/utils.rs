@@ -950,15 +950,71 @@ pub fn read_backup_meta_from_archive<R: Read + Seek>(
     serde_json::from_str(&content).ok()
 }
 
+/// Runtime-file-owned CLIs: always packaged/restored under external-configs/.
+const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi"];
+/// DB-backed CLIs: gated by `backup_cli_config_files_enabled`.
+const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "geminicli"];
+
+pub fn is_always_backup_cli_tool(tool: &str) -> bool {
+    ALWAYS_BACKUP_CLI_TOOLS.contains(&tool)
+}
+
+pub fn is_optional_backup_cli_tool(tool: &str) -> bool {
+    OPTIONAL_BACKUP_CLI_TOOLS.contains(&tool)
+}
+
+/// Extract `<tool>` from `external-configs/<tool>/...`.
+pub fn external_config_tool_from_zip_entry(file_name: &str) -> Option<&str> {
+    let rest = file_name.strip_prefix("external-configs/")?;
+    let tool = rest.split('/').next().filter(|segment| !segment.is_empty())?;
+    Some(tool)
+}
+
+/// When optional CLI runtime backup is off, only skip optional (DB-backed) tools.
+/// OpenCode / OpenClaw / Pi always restore from the zip when present.
+pub fn should_skip_external_config_on_restore(
+    include_optional_cli_runtime: bool,
+    file_name: &str,
+) -> bool {
+    if !file_name.starts_with("external-configs/") {
+        return false;
+    }
+    if include_optional_cli_runtime {
+        return false;
+    }
+    match external_config_tool_from_zip_entry(file_name) {
+        Some(tool) if is_always_backup_cli_tool(tool) => false,
+        // Optional tools and unknown prefixes are skipped when the switch is off.
+        _ => true,
+    }
+}
+
+/// Whether to read `root-dir.txt` for a tool during restore.
+pub fn should_use_root_override_for_tool(
+    tool: &str,
+    include_optional_cli_runtime: bool,
+    skip_cli_custom_roots: bool,
+) -> bool {
+    if skip_cli_custom_roots {
+        return false;
+    }
+    if is_always_backup_cli_tool(tool) {
+        return true;
+    }
+    include_optional_cli_runtime
+}
+
 pub fn should_reapply_applied_runtime(
-    skipped_external_configs_this_restore: bool,
+    skipped_optional_cli_runtime_this_restore: bool,
     backup_meta: Option<&BackupMeta>,
 ) -> bool {
-    if skipped_external_configs_this_restore {
+    // Re-apply rebuilds DB-backed CLI providers/prompts when optional runtime files
+    // were skipped this restore, or when the package explicitly omitted them.
+    if skipped_optional_cli_runtime_this_restore {
         return true;
     }
     if let Some(meta) = backup_meta {
-        // Explicit marker from the package that CLI configs were not included.
+        // Explicit marker: optional (DB-backed) CLI runtime files were not packaged.
         return !meta.cli_config_files_included;
     }
     // Legacy zip without meta: do not infer need_reapply from missing external-configs alone.
@@ -966,11 +1022,14 @@ pub fn should_reapply_applied_runtime(
     false
 }
 
+/// True when optional CLI runtime is restored and custom roots are not skipped.
+/// Prefer [`should_use_root_override_for_tool`] for per-tool root-dir decisions
+/// (always-include tools may still use overrides when optional files are skipped).
 pub fn should_use_backup_root_overrides(
-    skipped_external_configs_this_restore: bool,
+    skipped_optional_cli_runtime_this_restore: bool,
     skip_cli_custom_roots: bool,
 ) -> bool {
-    !skipped_external_configs_this_restore && !skip_cli_custom_roots
+    !skipped_optional_cli_runtime_this_restore && !skip_cli_custom_roots
 }
 
 pub fn record_restored_external_config_wsl_module(
@@ -2229,6 +2288,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
     filter_rules: &[BackupFileFilterRule],
     options: SimpleFileOptions,
     added_zip_directories: &mut HashSet<String>,
+    include_optional_cli_runtime: bool,
 ) -> Result<(), String> {
     // Add external-configs directory
     add_directory_to_zip_once(
@@ -2239,6 +2299,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
         "external-configs directory",
     )?;
 
+    // OpenCode is runtime-file-owned and always packaged (subject to filter rules).
     if let Some(custom_dir) = get_custom_root_dir_path_info(db, "opencode").await {
         add_directory_to_zip_once(
             zip,
@@ -2297,176 +2358,180 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "claude").await {
-        add_directory_to_zip_once(
-            zip,
-            added_zip_directories,
-            "external-configs/claude/",
-            options,
-            "claude directory",
-        )?;
-        add_text_to_zip(
-            zip,
-            "external-configs/claude/root-dir.txt",
-            &custom_root_dir,
-            options,
-        )?;
-    }
+    // Claude / Codex / Grok: DB-backed optional tools, gated by the switch.
+    if include_optional_cli_runtime {
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "claude").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/claude/",
+                options,
+                "claude directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/claude/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
 
-    // Backup Claude settings.json if exists
-    if let Some(claude_path) = get_claude_settings_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &claude_path,
-            "claude",
-            "settings.json",
-            filter_rules,
-            options,
-        )?;
-    }
+        // Backup Claude settings.json if exists
+        if let Some(claude_path) = get_claude_settings_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &claude_path,
+                "claude",
+                "settings.json",
+                filter_rules,
+                options,
+            )?;
+        }
 
-    if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &claude_prompt_path,
-            "claude",
-            "CLAUDE.md",
-            filter_rules,
-            options,
-        )?;
-    }
+        if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &claude_prompt_path,
+                "claude",
+                "CLAUDE.md",
+                filter_rules,
+                options,
+            )?;
+        }
 
-    if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &claude_mcp_path,
-            "claude",
-            ".claude.json",
-            filter_rules,
-            options,
-        )?;
-    }
+        if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &claude_mcp_path,
+                "claude",
+                ".claude.json",
+                filter_rules,
+                options,
+            )?;
+        }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "codex").await {
-        add_directory_to_zip_once(
-            zip,
-            added_zip_directories,
-            "external-configs/codex/",
-            options,
-            "codex directory",
-        )?;
-        add_text_to_zip(
-            zip,
-            "external-configs/codex/root-dir.txt",
-            &custom_root_dir,
-            options,
-        )?;
-    }
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "codex").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/codex/",
+                options,
+                "codex directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/codex/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
 
-    // Backup Codex auth.json if exists (check filter rules)
-    if let Some(codex_auth_path) = get_codex_auth_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &codex_auth_path,
-            "codex",
-            "auth.json",
-            filter_rules,
-            options,
-        )?;
-    }
+        // Backup Codex auth.json if exists (check filter rules)
+        if let Some(codex_auth_path) = get_codex_auth_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &codex_auth_path,
+                "codex",
+                "auth.json",
+                filter_rules,
+                options,
+            )?;
+        }
 
-    // Backup Codex config.toml if exists
-    if let Some(codex_config_path) = get_codex_config_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &codex_config_path,
-            "codex",
-            "config.toml",
-            filter_rules,
-            options,
-        )?;
-    }
+        // Backup Codex config.toml if exists
+        if let Some(codex_config_path) = get_codex_config_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &codex_config_path,
+                "codex",
+                "config.toml",
+                filter_rules,
+                options,
+            )?;
+        }
 
-    for codex_prompt_path in get_codex_prompt_paths_from_db(db).await? {
-        let zip_path = get_codex_prompt_backup_zip_path(&codex_prompt_path);
-        let relative_path = zip_path.trim_start_matches("external-configs/codex/");
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &codex_prompt_path,
-            "codex",
-            relative_path,
-            filter_rules,
-            options,
-        )?;
-    }
+        for codex_prompt_path in get_codex_prompt_paths_from_db(db).await? {
+            let zip_path = get_codex_prompt_backup_zip_path(&codex_prompt_path);
+            let relative_path = zip_path.trim_start_matches("external-configs/codex/");
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &codex_prompt_path,
+                "codex",
+                relative_path,
+                filter_rules,
+                options,
+            )?;
+        }
 
-    if let Some(custom_dir) = get_custom_root_dir_path_info(db, "grok").await {
-        add_directory_to_zip_once(
+        if let Some(custom_dir) = get_custom_root_dir_path_info(db, "grok").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/grok/",
+                options,
+                "grok directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/grok/root-dir.txt",
+                &custom_dir,
+                options,
+            )?;
+        }
+        if let Some(path) = get_grok_auth_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "grok",
+                "auth.json",
+                filter_rules,
+                options,
+            )?;
+        }
+        if let Some(path) = get_grok_config_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "grok",
+                "config.toml",
+                filter_rules,
+                options,
+            )?;
+        }
+        if let Some(path) = get_grok_prompt_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "grok",
+                "AGENTS.md",
+                filter_rules,
+                options,
+            )?;
+        }
+        let grok_plugins_dir = runtime_location::get_grok_runtime_location_async(db)
+            .await?
+            .host_path
+            .join("plugins");
+        add_external_config_directory_contents_to_zip(
             zip,
-            added_zip_directories,
-            "external-configs/grok/",
-            options,
-            "grok directory",
-        )?;
-        add_text_to_zip(
-            zip,
-            "external-configs/grok/root-dir.txt",
-            &custom_dir,
-            options,
-        )?;
-    }
-    if let Some(path) = get_grok_auth_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &path,
+            &grok_plugins_dir,
             "grok",
-            "auth.json",
+            "plugins",
             filter_rules,
             options,
         )?;
     }
-    if let Some(path) = get_grok_config_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &path,
-            "grok",
-            "config.toml",
-            filter_rules,
-            options,
-        )?;
-    }
-    if let Some(path) = get_grok_prompt_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &path,
-            "grok",
-            "AGENTS.md",
-            filter_rules,
-            options,
-        )?;
-    }
-    let grok_plugins_dir = runtime_location::get_grok_runtime_location_async(db)
-        .await?
-        .host_path
-        .join("plugins");
-    add_external_config_directory_contents_to_zip(
-        zip,
-        &grok_plugins_dir,
-        "grok",
-        "plugins",
-        filter_rules,
-        options,
-    )?;
 
+    // OpenClaw is runtime-file-owned and always packaged (subject to filter rules).
     if let Some(custom_dir) = get_custom_root_dir_path_info(db, "openclaw").await {
         add_directory_to_zip_once(
             zip,
@@ -2495,83 +2560,87 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "geminicli").await {
-        add_directory_to_zip_once(
-            zip,
-            added_zip_directories,
-            "external-configs/geminicli/",
-            options,
-            "Gemini CLI directory",
-        )?;
-        add_text_to_zip(
-            zip,
-            "external-configs/geminicli/root-dir.txt",
-            &custom_root_dir,
-            options,
-        )?;
+    // Gemini CLI is DB-backed optional tool, gated by the switch.
+    if include_optional_cli_runtime {
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "geminicli").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/geminicli/",
+                options,
+                "Gemini CLI directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/geminicli/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &gemini_env_path,
+                "geminicli",
+                ".env",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &gemini_settings_path,
+                "geminicli",
+                "settings.json",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(db).await? {
+            let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
+            let relative_path = zip_path.trim_start_matches("external-configs/geminicli/");
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &gemini_prompt_path,
+                "geminicli",
+                relative_path,
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &gemini_oauth_path,
+                "geminicli",
+                "oauth_creds.json",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
+            add_external_config_directory_contents_to_zip(
+                zip,
+                &gemini_tmp_dir,
+                "geminicli",
+                "tmp",
+                filter_rules,
+                options,
+            )?;
+        }
     }
 
-    if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &gemini_env_path,
-            "geminicli",
-            ".env",
-            filter_rules,
-            options,
-        )?;
-    }
-
-    if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &gemini_settings_path,
-            "geminicli",
-            "settings.json",
-            filter_rules,
-            options,
-        )?;
-    }
-
-    if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(db).await? {
-        let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
-        let relative_path = zip_path.trim_start_matches("external-configs/geminicli/");
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &gemini_prompt_path,
-            "geminicli",
-            relative_path,
-            filter_rules,
-            options,
-        )?;
-    }
-
-    if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(db).await? {
-        add_external_config_file_to_zip(
-            zip,
-            added_zip_directories,
-            &gemini_oauth_path,
-            "geminicli",
-            "oauth_creds.json",
-            filter_rules,
-            options,
-        )?;
-    }
-
-    if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
-        add_external_config_directory_contents_to_zip(
-            zip,
-            &gemini_tmp_dir,
-            "geminicli",
-            "tmp",
-            filter_rules,
-            options,
-        )?;
-    }
-
+    // Pi is runtime-file-owned and always packaged (subject to filter rules).
     if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "pi").await {
         add_directory_to_zip_once(
             zip,
@@ -2629,6 +2698,8 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
 
     add_sqlite_database_snapshot_to_zip(zip, app_handle, options)?;
 
+    // cli_config_files_included marks whether optional (DB-backed) CLI runtime files
+    // were packaged. Always-include tools (OpenCode/OpenClaw/Pi) are written regardless.
     let backup_meta = build_backup_meta(include_cli_config_files);
     add_text_to_zip(
         zip,
@@ -2638,16 +2709,15 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         options,
     )?;
 
-    if include_cli_config_files {
-        write_external_configs_to_backup_zip(
-            zip,
-            &db,
-            filter_rules,
-            options,
-            &mut added_zip_directories,
-        )
-        .await?;
-    }
+    write_external_configs_to_backup_zip(
+        zip,
+        &db,
+        filter_rules,
+        options,
+        &mut added_zip_directories,
+        include_cli_config_files,
+    )
+    .await?;
 
     // models / skills / image assets / custom backup entries always included
     // Backup models.dev.json cache if exists
@@ -2767,14 +2837,15 @@ mod tests {
         add_custom_backup_entries_to_zip, add_directory_to_zip_once,
         add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
         add_legacy_database_snapshot_to_zip, add_text_to_zip, build_backup_meta, build_db_manifest,
-        clear_restored_cli_custom_roots, get_codex_prompt_backup_zip_path,
-        get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
-        harden_restored_sensitive_file, is_filesystem_root_directory,
-        normalize_backup_storage_path, normalize_restore_entry_name,
+        clear_restored_cli_custom_roots, external_config_tool_from_zip_entry,
+        get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
+        get_gemini_cli_prompt_backup_zip_path, is_always_backup_cli_tool, is_filesystem_root_directory,
+        is_optional_backup_cli_tool, normalize_backup_storage_path, normalize_restore_entry_name,
         parse_post_restore_resync_wsl_modules, record_restored_external_config_wsl_module,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
         should_exclude_from_backup, should_filter_external_config_entry,
-        should_reapply_applied_runtime, should_use_backup_root_overrides,
+        should_reapply_applied_runtime, should_skip_external_config_on_restore,
+        should_use_backup_root_overrides, should_use_root_override_for_tool,
         CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
     use crate::db::helpers::{db_get, db_put};
@@ -2887,6 +2958,84 @@ mod tests {
         assert!(!should_use_backup_root_overrides(true, false));
         assert!(!should_use_backup_root_overrides(false, true));
         assert!(!should_use_backup_root_overrides(true, true));
+    }
+
+    #[test]
+    fn always_and_optional_cli_tool_classification() {
+        assert!(is_always_backup_cli_tool("opencode"));
+        assert!(is_always_backup_cli_tool("openclaw"));
+        assert!(is_always_backup_cli_tool("pi"));
+        assert!(!is_always_backup_cli_tool("codex"));
+        assert!(is_optional_backup_cli_tool("claude"));
+        assert!(is_optional_backup_cli_tool("codex"));
+        assert!(is_optional_backup_cli_tool("grok"));
+        assert!(is_optional_backup_cli_tool("geminicli"));
+        assert!(!is_optional_backup_cli_tool("opencode"));
+    }
+
+    #[test]
+    fn external_config_tool_is_parsed_from_zip_entry() {
+        assert_eq!(
+            external_config_tool_from_zip_entry("external-configs/opencode/auth.json"),
+            Some("opencode")
+        );
+        assert_eq!(
+            external_config_tool_from_zip_entry("external-configs/codex/config.toml"),
+            Some("codex")
+        );
+        assert_eq!(external_config_tool_from_zip_entry("sqlite/ai-toolbox.db"), None);
+        assert_eq!(external_config_tool_from_zip_entry("external-configs/"), None);
+    }
+
+    #[test]
+    fn restore_skip_keeps_always_tools_when_optional_cli_runtime_is_disabled() {
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "external-configs/opencode/auth.json"
+        ));
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "external-configs/openclaw/openclaw.json"
+        ));
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "external-configs/pi/settings.json"
+        ));
+        assert!(should_skip_external_config_on_restore(
+            false,
+            "external-configs/codex/config.toml"
+        ));
+        assert!(should_skip_external_config_on_restore(
+            false,
+            "external-configs/claude/settings.json"
+        ));
+        assert!(should_skip_external_config_on_restore(
+            false,
+            "external-configs/grok/auth.json"
+        ));
+        assert!(should_skip_external_config_on_restore(
+            false,
+            "external-configs/geminicli/settings.json"
+        ));
+        assert!(!should_skip_external_config_on_restore(
+            true,
+            "external-configs/codex/config.toml"
+        ));
+        assert!(!should_skip_external_config_on_restore(false, "skills/foo/SKILL.md"));
+    }
+
+    #[test]
+    fn root_override_policy_differs_for_always_and_optional_tools() {
+        // Always tools keep root overrides even when optional runtime is off.
+        assert!(should_use_root_override_for_tool("opencode", false, false));
+        assert!(should_use_root_override_for_tool("openclaw", false, false));
+        assert!(should_use_root_override_for_tool("pi", false, false));
+        // Optional tools only when switch is on.
+        assert!(!should_use_root_override_for_tool("codex", false, false));
+        assert!(should_use_root_override_for_tool("codex", true, false));
+        // Explicit local roots win for every tool.
+        assert!(!should_use_root_override_for_tool("opencode", true, true));
+        assert!(!should_use_root_override_for_tool("codex", true, true));
     }
 
     #[test]

@@ -134,6 +134,7 @@
       },
       "requests": {
         "records": "Request records",
+        "totalCount": "{{total}} total",
         "detail": "Request detail",
         "empty": "No request records",
         "detailEmpty": "Select a request to view details",
@@ -179,7 +180,8 @@
         "filters": {
           "allCli": "All CLIs",
           "providerPlaceholder": "Search provider",
-          "modelPlaceholder": "Search model"
+          "modelPlaceholder": "Search model",
+          "excludeModelList": "Hide model list requests"
         },
         "columns": {
           "time": "Time",
@@ -637,11 +639,11 @@
       "openDataDir": "Open Data Directory",
       "scopeSectionTitle": "Backup Scope",
       "imageAssets": "Back up generated images",
-      "cliConfigFiles": "Back up CLI runtime files",
-      "cliConfigFilesDesc": "Includes each CLI's local runtime files, such as Codex config.toml, Claude settings.json, auth, and prompts. When disabled, these files are neither packaged nor restored; for CLI state, only records already stored in SQLite are restored. Database-backed providers for Codex, Claude, Grok, and Gemini CLI are re-applied after restart. OpenCode, OpenClaw, and Pi providers, models, and main configs are runtime-file-owned and will not migrate in this mode.",
+      "cliConfigFiles": "Back up database-backed CLI runtime files",
+      "cliConfigFilesDesc": "Controls backup/restore of Codex, Claude, Grok, and Gemini CLI local runtime files (config, auth, prompts, etc.). When off, those files are not packaged or restored; providers and prompts can still be re-applied from SQLite after restart. OpenCode, OpenClaw, and Pi are runtime-file-owned and are always included in backup/restore (individual files can still be excluded via filter rules).",
       "skipCliCustomRoots": "Do not restore CLI custom root directories",
       "skipCliCustomRootsDesc": "Clears custom root/config paths from the restored database so this machine uses defaults or env paths. Recommended across devices.",
-      "restoreWillReapply": "CLI runtime files were skipped or missing from the backup. After restart, providers and prompts that can be rebuilt from the database will be re-applied.",
+      "restoreWillReapply": "Database-backed CLI (Codex/Claude/Grok/Gemini) runtime files were skipped or missing from the backup. After restart, providers and prompts will be re-applied from SQLite. OpenCode, OpenClaw, and Pi still use runtime files from the backup when present.",
       "customEntries": {
         "title": "Custom Backup Items",
         "description": "Include extra local files or folders in backups.",
@@ -682,7 +684,7 @@
         "filePathPlaceholder": "Select a backup path to exclude",
         "selectToolFirst": "Select a tool first",
         "addTitle": "Add Filter Rule",
-        "disabledByCliConfigFiles": "CLI runtime file backup is disabled, so individual file filter rules are currently inactive."
+        "disabledByCliConfigFiles": "When database-backed CLI runtime backup is off, filter rules for Codex/Claude/Grok/Gemini have no effect; OpenCode/OpenClaw/Pi filter rules still apply."
       },
       "noPathConfigured": "Please configure backup path first",
       "noWebDAVConfigured": "Please configure WebDAV server first",

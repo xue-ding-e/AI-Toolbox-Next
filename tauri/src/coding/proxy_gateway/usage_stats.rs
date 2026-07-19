@@ -1114,6 +1114,9 @@ fn build_detail_where(
         }
         conditions.push(format!("({})", parts.join(" OR ")));
     }
+    if filters.exclude_model_list.unwrap_or(false) {
+        conditions.push(format!("NOT {}", model_list_request_sql_condition("l")));
+    }
 
     if conditions.is_empty() {
         Ok(String::new())
@@ -1282,6 +1285,32 @@ fn compact_request_sql_condition(alias: &str) -> String {
         "(UPPER(TRIM(COALESCE({alias}.method, ''))) = 'POST' \
          AND (LOWER(COALESCE({alias}.path, '')) LIKE '%/responses/compact' \
               OR LOWER(COALESCE({alias}.path, '')) LIKE '%/responses/compact?%'))"
+    )
+}
+
+/// Matches gateway "model list" requests: GET/HEAD to .../models or .../models:listModels.
+/// Keep this aligned with frontend `gatewayRequestDisplayKind` modelList detection.
+fn model_list_request_sql_condition(alias: &str) -> String {
+    // Strip query string and trailing slashes, then require the final segment to be
+    // `models` or `models:listmodels` (case-insensitive).
+    let path_only = format!(
+        "RTRIM( \
+           CASE \
+             WHEN INSTR(LOWER(COALESCE({alias}.path, '')), '?') > 0 \
+               THEN SUBSTR(LOWER(COALESCE({alias}.path, '')), 1, INSTR(LOWER(COALESCE({alias}.path, '')), '?') - 1) \
+             ELSE LOWER(TRIM(COALESCE({alias}.path, ''))) \
+           END, \
+           '/' \
+         )"
+    );
+    format!(
+        "(UPPER(TRIM(COALESCE({alias}.method, ''))) IN ('GET', 'HEAD') \
+         AND ( \
+           {path_only} = 'models' \
+           OR {path_only} LIKE '%/models' \
+           OR {path_only} = 'models:listmodels' \
+           OR {path_only} LIKE '%/models:listmodels' \
+         ))"
     )
 }
 
@@ -2195,6 +2224,58 @@ mod tests {
 
         assert_eq!(logs.total, 1);
         assert_eq!(logs.data[0].provider_id, "provider-alpha");
+    }
+
+    #[test]
+    fn request_logs_can_exclude_model_list_requests() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings::default();
+
+        let mut model_list = make_detail("trace-model-list", "provider-alpha", 200, 0, 0);
+        model_list.summary.method = "GET".to_string();
+        model_list.summary.path = "/v1/models".to_string();
+        model_list.summary.requested_model = None;
+        model_list.summary.upstream_model_id = None;
+        record_request_summary(&db, &settings, &model_list).expect("record model list");
+
+        let mut model_list_with_query =
+            make_detail("trace-model-list-query", "provider-alpha", 200, 0, 0);
+        model_list_with_query.summary.method = "GET".to_string();
+        model_list_with_query.summary.path = "/v1beta/models?key=secret".to_string();
+        model_list_with_query.summary.requested_model = None;
+        model_list_with_query.summary.upstream_model_id = None;
+        record_request_summary(&db, &settings, &model_list_with_query)
+            .expect("record model list with query");
+
+        let mut list_models = make_detail("trace-list-models", "provider-alpha", 200, 0, 0);
+        list_models.summary.method = "GET".to_string();
+        list_models.summary.path = "/v1beta/models:listModels".to_string();
+        list_models.summary.requested_model = None;
+        list_models.summary.upstream_model_id = None;
+        record_request_summary(&db, &settings, &list_models).expect("record listModels");
+
+        let chat = make_detail("trace-chat", "provider-alpha", 200, 10, 20);
+        record_request_summary(&db, &settings, &chat).expect("record chat");
+
+        let all_logs = request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10)
+            .expect("all request logs");
+        assert_eq!(all_logs.total, 4);
+
+        let filtered = request_logs(
+            &db,
+            &GatewayRequestLogFilters {
+                exclude_model_list: Some(true),
+                ..GatewayRequestLogFilters::default()
+            },
+            0,
+            10,
+        )
+        .expect("filtered request logs");
+
+        assert_eq!(filtered.total, 1);
+        assert_eq!(filtered.data.len(), 1);
+        assert_eq!(filtered.data[0].trace_id, "trace-chat");
+        assert_eq!(filtered.data[0].method.as_deref(), Some("POST"));
     }
 
     #[test]

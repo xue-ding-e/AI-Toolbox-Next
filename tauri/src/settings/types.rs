@@ -95,8 +95,10 @@ pub struct AppSettings {
     pub last_backup_time: Option<String>,
     /// Include generated image files in backup zip (default: true)
     pub backup_image_assets_enabled: bool,
-    /// Include CLI runtime config files under external-configs/ in backup zip (default: true).
-    /// When false, backup/restore skip all CLI config files (channels stay in SQLite only).
+    /// Include optional (DB-backed) CLI runtime files under external-configs/ in backup zip
+    /// (Codex / Claude / Grok / Gemini CLI; default: true).
+    /// When false, those tools skip packaging/restore and re-apply from SQLite after restore.
+    /// OpenCode / OpenClaw / Pi are always packaged and restored (subject to file filter rules).
     pub backup_cli_config_files_enabled: bool,
     /// User-defined files/directories to include in backup zip
     pub backup_custom_entries: Vec<BackupCustomEntry>,

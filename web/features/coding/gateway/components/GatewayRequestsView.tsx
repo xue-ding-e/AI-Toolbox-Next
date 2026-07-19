@@ -1,5 +1,5 @@
 import React from 'react';
-import { DatePicker, Empty, Input, Pagination, Select, Table } from 'antd';
+import { Checkbox, DatePicker, Empty, Input, Pagination, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { save } from '@tauri-apps/plugin-dialog';
 import {
@@ -59,6 +59,27 @@ const COLLAPSED_LINE_LIMIT = 10;
 const COLLAPSED_CHARACTER_LIMIT = 8_000;
 const PAGE_SIZE = 20;
 const EXPORT_NOTICE_DURATION_MS = 3000;
+const EXCLUDE_MODEL_LIST_STORAGE_KEY = 'gateway.requests.excludeModelList';
+
+const readExcludeModelListPreference = (): boolean => {
+  try {
+    return window.localStorage.getItem(EXCLUDE_MODEL_LIST_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const writeExcludeModelListPreference = (checked: boolean) => {
+  try {
+    if (checked) {
+      window.localStorage.setItem(EXCLUDE_MODEL_LIST_STORAGE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(EXCLUDE_MODEL_LIST_STORAGE_KEY);
+    }
+  } catch {
+    // ignore quota / private-mode failures
+  }
+};
 
 interface GatewayRequestsViewProps {
   refreshKey?: number;
@@ -239,7 +260,9 @@ const CollapsiblePre: React.FC<CollapsiblePreProps> = ({ content, fallback }) =>
 const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 0 }) => {
   const { t } = useTranslation();
   const [draft, setDraft] = React.useState<RequestFilterDraft>(defaultDraft);
-  const [filters, setFilters] = React.useState<GatewayRequestLogFilters>({});
+  const [filters, setFilters] = React.useState<GatewayRequestLogFilters>(() => ({
+    exclude_model_list: readExcludeModelListPreference() ? true : null,
+  }));
   const [page, setPage] = React.useState(1);
   const [logs, setLogs] = React.useState<GatewayRequestLogItem[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -317,13 +340,28 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   }, [loadRequests, refreshKey]);
 
   const applyFilters = () => {
-    setFilters(buildFilters(draft));
+    setFilters((current) => ({
+      ...buildFilters(draft),
+      // Title-bar switch is independent from the search form.
+      exclude_model_list: current.exclude_model_list,
+    }));
     setPage(1);
   };
 
   const resetFilters = () => {
     setDraft(defaultDraft);
-    setFilters({});
+    setFilters((current) => ({
+      exclude_model_list: current.exclude_model_list,
+    }));
+    setPage(1);
+  };
+
+  const handleExcludeModelListChange = (checked: boolean) => {
+    writeExcludeModelListPreference(checked);
+    setFilters((current) => ({
+      ...current,
+      exclude_model_list: checked ? true : null,
+    }));
     setPage(1);
   };
 
@@ -733,7 +771,18 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             <Network size={14} aria-hidden="true" />
             {t('gateway.page.requests.records')}
           </span>
-          <span className={styles.panelCount}>{formatInteger(total)}</span>
+          <div className={styles.panelHeaderActions}>
+            <Checkbox
+              checked={Boolean(filters.exclude_model_list)}
+              onChange={(event) => handleExcludeModelListChange(event.target.checked)}
+            >
+              {t('gateway.page.requests.filters.excludeModelList')}
+            </Checkbox>
+            <span className={styles.panelHeaderDivider} aria-hidden="true" />
+            <span className={styles.panelCount}>
+              {t('gateway.page.requests.totalCount', { total: formatInteger(total) })}
+            </span>
+          </div>
         </div>
         <Table
           rowKey="trace_id"

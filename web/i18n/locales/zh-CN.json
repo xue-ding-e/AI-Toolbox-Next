@@ -134,6 +134,7 @@
       },
       "requests": {
         "records": "请求记录",
+        "totalCount": "共 {{total}} 条",
         "detail": "请求明细",
         "empty": "暂无请求记录",
         "detailEmpty": "选择请求后查看明细",
@@ -179,7 +180,8 @@
         "filters": {
           "allCli": "全部 CLI",
           "providerPlaceholder": "搜索供应商",
-          "modelPlaceholder": "搜索模型"
+          "modelPlaceholder": "搜索模型",
+          "excludeModelList": "过滤获取模型列表"
         },
         "columns": {
           "time": "时间",
@@ -637,11 +639,11 @@
       "openDataDir": "打开数据目录",
       "scopeSectionTitle": "备份范围",
       "imageAssets": "备份生图图片",
-      "cliConfigFiles": "备份 CLI 运行时文件",
-      "cliConfigFilesDesc": "包含各 CLI 的本机运行时文件（如 Codex config.toml、Claude settings.json、auth、prompt 等）。关闭后不会打包或恢复这些文件；CLI 相关状态仅恢复 SQLite 中已有的记录，Codex、Claude、Grok、Gemini CLI 等数据库渠道会在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型和主配置以运行时文件为主，关闭后不会随备份迁移。",
+      "cliConfigFiles": "备份 DB 型 CLI 运行时文件",
+      "cliConfigFilesDesc": "控制是否备份/恢复 Codex、Claude、Grok、Gemini CLI 的本机运行时文件（config、auth、prompt 等）。关闭后这些文件不进包、不覆盖本机；其渠道与提示词仍可由 SQLite 在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型与主配置以运行时文件为主数据，始终随备份迁移（仍可用下方「文件过滤规则」排除单个敏感文件）。",
       "skipCliCustomRoots": "不恢复各 CLI 自定义根目录",
       "skipCliCustomRootsDesc": "勾选后清空备份库中的自定义 root/config 路径，改用本机默认或环境变量路径。跨设备恢复时建议勾选。",
-      "restoreWillReapply": "已跳过 CLI 运行时文件或备份未包含它们：重启后将重新应用可由数据库重建的渠道和提示词。",
+      "restoreWillReapply": "已跳过或备份未包含 DB 型 CLI（Codex/Claude/Grok/Gemini）运行时文件：重启后将从数据库重新应用渠道与提示词。OpenCode、OpenClaw、Pi 仍以备份中的运行时文件为准。",
       "customEntries": {
         "title": "自定义备份项",
         "description": "将额外的本地文件或目录加入备份。",
@@ -682,7 +684,7 @@
         "filePathPlaceholder": "选择要排除的备份路径",
         "selectToolFirst": "请先选择工具",
         "addTitle": "添加过滤规则",
-        "disabledByCliConfigFiles": "当前未备份 CLI 运行时文件，单文件过滤规则暂不生效。"
+        "disabledByCliConfigFiles": "当前未备份 DB 型 CLI 运行时文件时，Codex/Claude/Grok/Gemini 的过滤规则无对象；OpenCode/OpenClaw/Pi 的过滤规则仍生效。"
       },
       "noPathConfigured": "请先配置备份路径",
       "noWebDAVConfigured": "请先配置 WebDAV 服务器",
