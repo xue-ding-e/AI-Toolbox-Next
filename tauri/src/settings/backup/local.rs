@@ -6,15 +6,17 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
-    get_gemini_cli_restore_dir, get_grok_restore_dir, get_image_assets_dir,
-    get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
-    harden_restored_sensitive_file, push_restore_warning, read_root_dir_override,
+    clear_restored_cli_custom_roots, get_claude_mcp_restore_path, get_claude_restore_dir,
+    get_codex_restore_dir, get_db_path, get_gemini_cli_restore_dir, get_grok_restore_dir,
+    get_image_assets_dir, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
+    harden_restored_sensitive_file, push_restore_warning, read_backup_meta_from_archive,
+    read_root_dir_override, record_restored_external_config_wsl_module,
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
     resolve_skills_restore_output_path, restore_claude_external_config_file,
     restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
     sanitize_restored_claude_database_for_current_os, should_filter_external_config_entry,
-    write_backup_zip_contents, RestoreResult,
+    should_reapply_applied_runtime, should_use_backup_root_overrides, write_backup_zip_contents,
+    write_post_restore_flags, RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
@@ -50,6 +52,7 @@ pub async fn backup_database(
     let sqlite_state = app_handle.state::<SqliteDbState>();
     let settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
     let backup_image_assets_enabled = settings.backup_image_assets_enabled;
+    let backup_cli_config_files_enabled = settings.backup_cli_config_files_enabled;
     let filter_rules = settings.backup_file_filter_rules.clone();
 
     // Ensure database directory exists
@@ -79,6 +82,7 @@ pub async fn backup_database(
         &app_handle,
         &db_path,
         backup_image_assets_enabled,
+        backup_cli_config_files_enabled,
         &filter_rules,
         options,
     )
@@ -94,9 +98,11 @@ pub async fn backup_database(
 pub async fn restore_database(
     app_handle: tauri::AppHandle,
     zip_file_path: String,
+    skip_cli_custom_roots: Option<bool>,
 ) -> Result<RestoreResult, String> {
     let db_path = get_db_path(&app_handle)?;
     let zip_path = Path::new(&zip_file_path);
+    let skip_cli_custom_roots = skip_cli_custom_roots.unwrap_or(false);
 
     if !zip_path.exists() {
         return Err("Backup file does not exist".to_string());
@@ -115,18 +121,30 @@ pub async fn restore_database(
             .unwrap_or(false)
     });
 
-    // Use the currently configured rules for this restore operation so excluded
-    // local tool paths are not overwritten by older backup settings.
-    let filter_rules = {
+    // Read pre-restore settings BEFORE overwriting SQLite so skip/filter decisions
+    // are not taken from the restored machine's settings document.
+    let (filter_rules, include_cli_config_files) = {
         let sqlite_state = app_handle.state::<SqliteDbState>();
-        store::load_settings_from_sqlite_state(&sqlite_state)
-            .map(|settings| settings.backup_file_filter_rules)
-            .unwrap_or_else(|_| default_backup_file_filter_rules())
+        match store::load_settings_from_sqlite_state(&sqlite_state) {
+            Ok(settings) => (
+                settings.backup_file_filter_rules,
+                settings.backup_cli_config_files_enabled,
+            ),
+            Err(_) => (default_backup_file_filter_rules(), true),
+        }
     };
+    let skipped_external_configs = !include_cli_config_files;
+    let backup_meta = read_backup_meta_from_archive(&mut archive);
 
     let restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
     if restored_sqlite {
         sanitize_restored_claude_database_for_current_os(&app_handle)?;
+        // Only clear roots on the restored snapshot — never mutate the live DB when
+        // the backup did not include/replace sqlite/.
+        if skip_cli_custom_roots {
+            let sqlite_state = app_handle.state::<SqliteDbState>();
+            clear_restored_cli_custom_roots(&sqlite_state)?;
+        }
     }
 
     // Remove existing database directory
@@ -140,21 +158,33 @@ pub async fn restore_database(
         .map_err(|e| format!("Failed to create database directory: {}", e))?;
 
     let home_dir = get_home_dir()?;
-    let opencode_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt");
-    let claude_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt");
-    let codex_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
-    let grok_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt");
-    let openclaw_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
-    let gemini_cli_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt");
-    let pi_restore_dir_override =
-        read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt");
+    // root-dir.txt is part of the external runtime snapshot. Do not even read it when
+    // runtime files are skipped, or when the user explicitly requested local/default roots.
+    let use_backup_root_overrides =
+        should_use_backup_root_overrides(skipped_external_configs, skip_cli_custom_roots);
+    let opencode_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt"))
+        .flatten();
+    let claude_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt"))
+        .flatten();
+    let codex_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt"))
+        .flatten();
+    let grok_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
+        .flatten();
+    let openclaw_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt"))
+        .flatten();
+    let gemini_cli_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt"))
+        .flatten();
+    let pi_restore_dir_override = use_backup_root_overrides
+        .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
+        .flatten();
     let mut restore_result = RestoreResult::default();
+    let mut restored_wsl_modules = Vec::new();
 
     let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
         "opencode",
@@ -229,6 +259,13 @@ pub async fn restore_database(
         if file_name == ".backup_marker" || file_name == "db/.backup_marker" {
             continue;
         }
+        if file_name == "backup_meta.json" {
+            continue;
+        }
+        // Skip all CLI runtime configs when the pre-restore setting disables them.
+        if skipped_external_configs && file_name.starts_with("external-configs/") {
+            continue;
+        }
 
         // Handle database files
         if is_new_format {
@@ -258,13 +295,17 @@ pub async fn restore_database(
             } else if file_name.starts_with("external-configs/opencode/") {
                 // Restore OpenCode config to the appropriate directory based on env/shell/default
                 let relative_path = &file_name[26..]; // Remove "external-configs/opencode/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
                     continue;
                 }
 
                 if should_filter_external_config_entry(&filter_rules, "opencode", relative_path) {
                     continue;
                 }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "opencode");
 
                 if relative_path == "auth.json" {
                     let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
@@ -281,9 +322,6 @@ pub async fn restore_database(
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 } else {
-                    if relative_path == "root-dir.txt" {
-                        continue;
-                    }
                     if !opencode_restore_dir.exists() {
                         fs::create_dir_all(&opencode_restore_dir).map_err(|e| {
                             format!("Failed to create opencode config directory: {}", e)
@@ -312,6 +350,7 @@ pub async fn restore_database(
                 if should_filter_external_config_entry(&filter_rules, "claude", relative_path) {
                     continue;
                 }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "claude");
 
                 let outpath = if relative_path == ".claude.json" {
                     get_claude_mcp_restore_path(Some(&claude_restore_dir))?
@@ -338,6 +377,7 @@ pub async fn restore_database(
                 if should_filter_external_config_entry(&filter_rules, "openclaw", relative_path) {
                     continue;
                 }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "openclaw");
 
                 if !openclaw_restore_dir.exists() {
                     fs::create_dir_all(&openclaw_restore_dir).map_err(|e| {
@@ -366,6 +406,7 @@ pub async fn restore_database(
                 if should_filter_external_config_entry(&filter_rules, "codex", relative_path) {
                     continue;
                 }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "codex");
 
                 if !codex_restore_dir.exists() {
                     fs::create_dir_all(&codex_restore_dir)
@@ -399,6 +440,7 @@ pub async fn restore_database(
                 else {
                     continue;
                 };
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "grok");
                 if let Some(parent) = outpath.parent() {
                     fs::create_dir_all(parent)
                         .map_err(|e| format!("Failed to create Grok restore directory: {}", e))?;
@@ -436,6 +478,7 @@ pub async fn restore_database(
                 else {
                     continue;
                 };
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "geminicli");
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -470,6 +513,7 @@ pub async fn restore_database(
                 else {
                     continue;
                 };
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "pi");
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -629,13 +673,10 @@ pub async fn restore_database(
 
     restore_custom_backup_entries(&mut archive)?;
 
-    // Create resync flag file to trigger skills and MCP resync on next startup
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    let resync_flag = app_data_dir.join(".resync_required");
-    let _ = fs::write(&resync_flag, "1");
+    let need_reapply =
+        should_reapply_applied_runtime(skipped_external_configs, backup_meta.as_ref());
+    restore_result.will_reapply_applied = need_reapply;
+    write_post_restore_flags(&app_handle, need_reapply, &restored_wsl_modules)?;
 
     Ok(restore_result)
 }

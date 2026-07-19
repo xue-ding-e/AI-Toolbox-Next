@@ -48,7 +48,11 @@ import {
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useGrokConfigState } from '../hooks/useGrokConfigState';
-import { DEFAULT_GROK_MODEL } from '../utils/grokSettingsConfig';
+import {
+  applyGrokEndpointSettingsConfig,
+  DEFAULT_GROK_MODEL,
+  resolveGrokCatalogBackendSearchFlag,
+} from '../utils/grokSettingsConfig';
 import styles from './GrokProviderFormModal.module.less';
 
 const { Text } = Typography;
@@ -212,69 +216,6 @@ function getGrokEndpointCatalogModels(
     return endpointCatalogModels;
   }
   return getDerivedAnthropicCatalogModels(profileId, endpoint);
-}
-
-function resolveCatalogBackendSearchFlag(
-  models: GrokCatalogModel[] | undefined,
-): boolean | undefined {
-  if (!Array.isArray(models) || models.length === 0) {
-    return undefined;
-  }
-  if (models.every((model) => model.supportsBackendSearch === true)) {
-    return true;
-  }
-  if (models.every((model) => model.supportsBackendSearch === false)) {
-    return false;
-  }
-  return undefined;
-}
-
-function applyEndpointToGrokSettingsConfig(
-  settingsConfig: string,
-  profileId: string | null | undefined,
-  endpoint: GatewayProviderEndpointProfile | undefined,
-  selectedModel?: string,
-): string {
-  if (!endpoint) {
-    return settingsConfig;
-  }
-
-  try {
-    const parsed = JSON.parse(settingsConfig || '{}') as GrokSettingsConfig;
-    const apiBackend = normalizeGrokApiFormat(endpoint.apiFormat) === 'openai_responses'
-      ? 'responses'
-      : normalizeGrokApiFormat(endpoint.apiFormat) === 'anthropic_messages'
-        ? 'messages'
-        : 'chat_completions';
-    // Keep the form-level backend-search toggle when endpoint catalog is reapplied.
-    const backendSearchFlag = resolveCatalogBackendSearchFlag(parsed.modelCatalog?.models);
-    const backendSearchFields = typeof backendSearchFlag === 'boolean'
-      ? { supportsBackendSearch: backendSearchFlag }
-      : {};
-    // Endpoint-selected apiFormat owns the provider protocol. Overwrite any stale
-    // per-model apiBackend (e.g. previous responses after switching to chat).
-    const catalogModels = getGrokEndpointCatalogModels(profileId, endpoint).map((catalogModel) => ({
-      ...catalogModel,
-      key: catalogModel.key?.trim() || catalogModel.model,
-      baseUrl: catalogModel.baseUrl?.trim() || endpoint.baseUrl,
-      apiBackend,
-      ...backendSearchFields,
-    }));
-    const defaultModel = selectedModel?.trim() || endpoint.model?.trim();
-
-    const nextSettingsConfig: GrokSettingsConfig = {
-      ...parsed,
-      ...(defaultModel ? { defaultModelKey: defaultModel } : {}),
-    };
-    if (catalogModels.length > 0) {
-      nextSettingsConfig.modelCatalog = { models: catalogModels };
-    } else {
-      delete nextSettingsConfig.modelCatalog;
-    }
-    return JSON.stringify(nextSettingsConfig);
-  } catch {
-    return settingsConfig;
-  }
 }
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
@@ -570,7 +511,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     setFetchedModels([]);
     setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
     setSupportsBackendSearch(
-      resolveCatalogBackendSearchFlag(
+      resolveGrokCatalogBackendSearchFlag(
         parseProviderCatalogModels(provider?.settingsConfig),
       ) === true,
     );
@@ -865,12 +806,18 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         : undefined;
       const finalSettingsConfig = selectedCategory === 'official'
         ? settingsConfig
-        : applyEndpointToGrokSettingsConfig(
-            settingsConfig,
-            submittedValues.providerProfileId,
-            selectedEndpoint,
-            submittedValues.model,
-          );
+        : selectedEndpoint
+          ? applyGrokEndpointSettingsConfig({
+              settingsConfig,
+              apiFormat: normalizeGrokApiFormat(selectedEndpoint.apiFormat),
+              endpointBaseUrl: selectedEndpoint.baseUrl,
+              endpointModel: selectedEndpoint.model,
+              endpointCatalogModels: getGrokEndpointCatalogModels(
+                submittedValues.providerProfileId,
+                selectedEndpoint,
+              ),
+            })
+          : settingsConfig;
 
       const formValues: GrokProviderFormValues = {
         name: submittedValues.name,
@@ -1250,9 +1197,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
                 {t('grok.fetchModels.loaded', { count: fetchedModels.length })}
               </Text>
             )}
-          </div>
-          <div className={styles.fieldHelp}>
-            {t('grok.provider.modelNameHelp')}
           </div>
         </div>
         {!isOfficialMode && modelMappingExpanded && (

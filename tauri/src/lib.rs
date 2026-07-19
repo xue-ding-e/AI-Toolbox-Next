@@ -1496,6 +1496,21 @@ pub fn run() {
                 let app_clone = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(2)).await;
+
+                    // A restore-specific recovery task starts one second later and owns the
+                    // ordering of local re-apply -> Skills -> MCP -> WSL. Do not race it with the
+                    // normal startup full sync while either restore flag is still present.
+                    if let Ok(app_data_dir) = app_clone.path().app_data_dir() {
+                        let resync_flag = app_data_dir
+                            .join(settings::backup::utils::RESYNC_REQUIRED_FLAG_FILENAME);
+                        let reapply_flag =
+                            coding::reapply_applied_runtime::reapply_flag_path(&app_data_dir);
+                        if resync_flag.exists() || reapply_flag.exists() {
+                            info!("WSL startup sync deferred to post-restore recovery");
+                            return;
+                        }
+                    }
+
                     let db_state = app_clone.state::<crate::SqliteDbState>();
                     if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                         return;
@@ -1603,7 +1618,7 @@ pub fn run() {
                 });
             }
 
-            // Check for resync flag after restore (delayed to ensure DB is ready)
+            // Check for resync / re-apply flags after restore (delayed to ensure DB is ready)
             {
                 let app_clone = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1614,24 +1629,74 @@ pub fn run() {
                         Ok(dir) => dir,
                         Err(_) => return,
                     };
-                    let resync_flag = app_data_dir.join(".resync_required");
+                    let resync_flag =
+                        app_data_dir.join(settings::backup::utils::RESYNC_REQUIRED_FLAG_FILENAME);
+                    let reapply_flag =
+                        coding::reapply_applied_runtime::reapply_flag_path(&app_data_dir);
+                    let need_resync = resync_flag.exists();
+                    let need_reapply = reapply_flag.exists();
+                    let restored_wsl_modules = if need_resync {
+                        settings::backup::utils::read_post_restore_resync_wsl_modules(&resync_flag)
+                    } else {
+                        Vec::new()
+                    };
 
-                    if resync_flag.exists() {
-                        info!("Resync flag detected, starting skills and MCP resync...");
+                    if !need_resync && !need_reapply {
+                        return;
+                    }
 
-                        // Remove the flag file first to prevent repeated resync
+                    // Remove flags first to prevent repeated loops on failure.
+                    if need_reapply {
+                        let _ = fs::remove_file(&reapply_flag);
+                    }
+                    if need_resync {
                         let _ = fs::remove_file(&resync_flag);
+                    }
 
-                        let db_state = app_clone.state::<crate::SqliteDbState>();
-                        if let Err(e) =
-                            coding::runtime_location::refresh_runtime_location_cache_async(
-                                &db_state.db(),
+                    info!(
+                        "Post-restore flags detected (reapply={}, resync={}, restored_wsl_modules={:?}), starting serial recovery...",
+                        need_reapply, need_resync, restored_wsl_modules
+                    );
+
+                    let db_state = app_clone.state::<crate::SqliteDbState>();
+                    if let Err(e) =
+                        coding::runtime_location::refresh_runtime_location_cache_async(
+                            &db_state.db(),
+                        )
+                        .await
+                    {
+                        warn!("Post-restore runtime location cache refresh failed: {}", e);
+                    }
+
+                    // Re-apply applied providers/prompts before skills/MCP so MCP can write into
+                    // the freshly aligned CLI configs.
+                    let mut changed_wsl_modules = restored_wsl_modules;
+                    if need_reapply {
+                        let summary =
+                            coding::reapply_applied_runtime::reapply_applied_runtime_after_restore(
+                                &app_clone,
                             )
-                            .await
-                        {
-                            warn!("Post-restore runtime location cache refresh failed: {}", e);
+                            .await;
+                        for module in &summary.changed_modules {
+                            if !changed_wsl_modules
+                                .iter()
+                                .any(|existing| existing == module)
+                            {
+                                changed_wsl_modules.push(module.clone());
+                            }
                         }
+                        info!(
+                            "Post-restore re-apply completed: applied={}, warnings={}, changed_wsl_modules={:?}",
+                            summary.applied.len(),
+                            summary.warnings.len(),
+                            changed_wsl_modules
+                        );
+                        for warning in summary.warnings {
+                            warn!("Post-restore re-apply warning: {}", warning);
+                        }
+                    }
 
+                    if need_resync {
                         // Resync skills
                         match coding::skills::commands::skills_resync_all(
                             app_clone.clone(),
@@ -1648,7 +1713,11 @@ pub fn run() {
                         }
 
                         // Resync MCP servers
-                        match coding::mcp::commands::mcp_sync_all(app_clone.clone(), db_state).await
+                        match coding::mcp::commands::mcp_sync_all_without_events(
+                            app_clone.clone(),
+                            db_state.inner(),
+                        )
+                        .await
                         {
                             Ok(results) => {
                                 let success_count = results.iter().filter(|r| r.success).count();
@@ -1662,9 +1731,46 @@ pub fn run() {
                                 warn!("MCP resync failed: {}", e);
                             }
                         }
-
-                        info!("Post-restore resync completed");
                     }
+
+                    // Keep restore recovery single-threaded through the final WSL projection.
+                    // A full-sync call is used so MCP/Skills are propagated once, while unchanged
+                    // CLI modules are excluded to preserve their local runtime files.
+                    if cfg!(target_os = "windows")
+                        && coding::wsl::is_wsl_auto_sync_enabled(&db_state).await
+                    {
+                        let skip_modules =
+                            coding::reapply_applied_runtime::unchanged_wsl_modules(
+                                &changed_wsl_modules,
+                            );
+                        match coding::wsl::wsl_sync(
+                            db_state,
+                            app_clone.clone(),
+                            None,
+                            Some(skip_modules),
+                        )
+                        .await
+                        {
+                            Ok(result) if result.success => {
+                                info!(
+                                    "Post-restore WSL sync completed: {} file(s) synced",
+                                    result.synced_files.len()
+                                );
+                            }
+                            Ok(result) => {
+                                warn!(
+                                    "Post-restore WSL sync completed with {} error(s): {:?}",
+                                    result.errors.len(),
+                                    result.errors
+                                );
+                            }
+                            Err(error) => {
+                                warn!("Post-restore WSL sync failed: {}", error);
+                            }
+                        }
+                    }
+
+                    info!("Post-restore recovery completed");
                 });
             }
 

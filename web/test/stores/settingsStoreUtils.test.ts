@@ -30,6 +30,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     },
     last_backup_time: null,
     backup_image_assets_enabled: true,
+    backup_cli_config_files_enabled: true,
     backup_custom_entries: [],
     backup_file_filter_rules: [],
     launch_on_startup: true,

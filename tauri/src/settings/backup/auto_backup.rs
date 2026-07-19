@@ -156,6 +156,7 @@ async fn perform_webdav_backup(
         app_handle,
         &db_path,
         settings.backup_image_assets_enabled,
+        settings.backup_cli_config_files_enabled,
         &settings.backup_file_filter_rules,
     )
     .await?;
@@ -213,6 +214,7 @@ async fn perform_local_backup(
         app_handle,
         &db_path,
         settings.backup_image_assets_enabled,
+        settings.backup_cli_config_files_enabled,
         &settings.backup_file_filter_rules,
     )
     .await?;

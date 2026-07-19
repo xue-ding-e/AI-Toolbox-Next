@@ -635,7 +635,13 @@
       "backupNow": "Backup Now",
       "restoreBackup": "Restore Backup",
       "openDataDir": "Open Data Directory",
+      "scopeSectionTitle": "Backup Scope",
       "imageAssets": "Back up generated images",
+      "cliConfigFiles": "Back up CLI runtime files",
+      "cliConfigFilesDesc": "Includes each CLI's local runtime files, such as Codex config.toml, Claude settings.json, auth, and prompts. When disabled, these files are neither packaged nor restored; for CLI state, only records already stored in SQLite are restored. Database-backed providers for Codex, Claude, Grok, and Gemini CLI are re-applied after restart. OpenCode, OpenClaw, and Pi providers, models, and main configs are runtime-file-owned and will not migrate in this mode.",
+      "skipCliCustomRoots": "Do not restore CLI custom root directories",
+      "skipCliCustomRootsDesc": "Clears custom root/config paths from the restored database so this machine uses defaults or env paths. Recommended across devices.",
+      "restoreWillReapply": "CLI runtime files were skipped or missing from the backup. After restart, providers and prompts that can be rebuilt from the database will be re-applied.",
       "customEntries": {
         "title": "Custom Backup Items",
         "description": "Include extra local files or folders in backups.",
@@ -675,7 +681,8 @@
         "filePathRequired": "Please select a path",
         "filePathPlaceholder": "Select a backup path to exclude",
         "selectToolFirst": "Select a tool first",
-        "addTitle": "Add Filter Rule"
+        "addTitle": "Add Filter Rule",
+        "disabledByCliConfigFiles": "CLI runtime file backup is disabled, so individual file filter rules are currently inactive."
       },
       "noPathConfigured": "Please configure backup path first",
       "noWebDAVConfigured": "Please configure WebDAV server first",
@@ -4025,7 +4032,6 @@
       "modelMappingModelPlaceholder": "Request model",
       "modelMappingRemove": "Remove model mapping",
       "modelName": "Model Name",
-      "modelNameHelp": "Default model key written to [models].default and model mapping on save.",
       "modelNamePlaceholder": "e.g., grok-4.5",
       "name": "Provider Name",
       "namePlaceholder": "e.g., My xAI Channel",

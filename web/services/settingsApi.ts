@@ -99,6 +99,7 @@ export interface AppSettings {
   s3: S3Config;
   last_backup_time: string | null;
   backup_image_assets_enabled: boolean;
+  backup_cli_config_files_enabled: boolean;
   backup_custom_entries: BackupCustomEntry[];
   backup_file_filter_rules: BackupFileFilterRule[];
   launch_on_startup: boolean;
@@ -145,6 +146,7 @@ export const defaultSettings: AppSettings = {
   },
   last_backup_time: null,
   backup_image_assets_enabled: true,
+  backup_cli_config_files_enabled: true,
   backup_custom_entries: [],
   backup_file_filter_rules: [],
   launch_on_startup: true,
@@ -177,6 +179,7 @@ export const getSettings = async (): Promise<AppSettings> => {
       ...settings,
       backup_custom_entries: settings.backup_custom_entries ?? [],
       backup_file_filter_rules: settings.backup_file_filter_rules ?? [],
+      backup_cli_config_files_enabled: settings.backup_cli_config_files_enabled ?? true,
       codex_preserve_official_auth_on_switch: settings.codex_preserve_official_auth_on_switch ?? false,
       codex_unified_session_history_enabled: settings.codex_unified_session_history_enabled ?? false,
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(

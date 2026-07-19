@@ -15,6 +15,7 @@
 
 - MCP 采用“中心存储 + 同步到工具配置”的模型，避免用户分别改 Claude/Codex/OpenCode/OpenClaw 的各自配置。
 - 创建、更新、删除 server 后立即同步到所有启用工具，并统一发 `config-changed` + `mcp-changed`，这样托盘和 WSL 自动同步都能跟上。
+- 备份恢复是例外：恢复编排必须调用不发事件的 MCP 全量同步入口，等本机 re-apply、Skills、MCP 全部串行完成后再由恢复任务统一执行一次 WSL 同步，避免 `mcp-changed` 在中途启动并发同步。
 - 导入已有配置时应尽量走共享 config sync 能力，而不是为每个工具复制一套解析逻辑。
 - 更新 `user_group/user_note` 只改变 AI Toolbox 内部列表组织信息，不应走 server CRUD 重同步链路。
 
@@ -40,6 +41,7 @@ sequenceDiagram
 - 不要把工具配置文件当作 MCP 的 source of truth。真正要改的是中心存储，再同步下发。
 - 改同步逻辑时要同时考虑“启用工具集合变化”“opencode disabled sync 特例”“删除时清理工具配置”三类路径，不要只修新增路径。
 - WSL 自动同步依赖 `mcp-changed` 事件；如果只更新数据库、不发事件，WSL 侧不会跟进。
+- 不要把恢复专用 no-event 入口复用到普通 CRUD/手动同步路径；它只用于已有外层编排明确负责最终 WSL 投影的场景。
 - Windows 下给 `npx` / `npm` / `node` 等 stdio command 加 `cmd /c` 时，判断依据必须是目标配置文件的运行平台，不是 AI Toolbox 进程平台。普通 Windows 本机目标需要包装；WSL UNC / WSL Direct 目标不能包装，否则远端 Linux CLI 会读到无效的 `cmd`。
 - Grok 是明确例外：官方 Grok MCP schema 在 Windows 本机、WSL 和 SSH 都保持裸 `npx`，不写 `cmd /c`；同时使用 `headers` 而非 Codex 的 `http_headers`，不写 `type`，并保留 `cwd/enabled/startup_timeout_sec/tool_timeout_sec/tool_timeouts/bearer_token_env_var`。
 - Pi 的 MCP 目标不是 Pi 原生能力，而是 `pi-mcp-adapter` 扩展读取的 `<Pi runtime root>/mcp.json`。同步时仍以中心 MCP 存储为 source of truth，只把标准 JSON `mcpServers` 写入该派生配置文件。

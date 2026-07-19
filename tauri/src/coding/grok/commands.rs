@@ -334,6 +334,8 @@ pub async fn update_grok_provider(
     let db = state.db();
     let existing = get_provider(db, &provider.id)?
         .ok_or_else(|| format!("Grok provider '{}' not found", provider.id))?;
+    let previous_settings_config = existing.settings_config.clone();
+    let previous_category = existing.category.clone();
     let content = GrokProviderContent {
         name: provider.name,
         category: provider.category,
@@ -359,7 +361,14 @@ pub async fn update_grok_provider(
         )
     })?;
     if content.is_applied {
-        apply_grok_provider_to_file(db, &provider.id).await?;
+        apply_grok_provider_to_file_with_previous_settings(
+            db,
+            &provider.id,
+            Some(&previous_settings_config),
+            Some(&previous_category),
+            None,
+        )
+        .await?;
         emit_grok_sync(&app);
     }
     let _ = app.emit("config-changed", "window");
@@ -608,18 +617,10 @@ async fn apply_grok_provider_to_file_with_previous_settings(
     // Truly local models (keys never in previous provider catalog) remain untouched.
     if let Some(previous_settings_config) = previous_settings_config {
         let previous_category = previous_category.unwrap_or("custom");
-        remove_provider_model_tables(
-            &mut document,
-            previous_settings_config,
-            previous_category,
-        )?;
+        remove_provider_model_tables(&mut document, previous_settings_config, previous_category)?;
         remove_previous_provider_config(&mut document, previous_settings_config)?;
     } else if let Some(previous) = get_applied_provider(db)? {
-        remove_provider_model_tables(
-            &mut document,
-            &previous.settings_config,
-            &previous.category,
-        )?;
+        remove_provider_model_tables(&mut document, &previous.settings_config, &previous.category)?;
         remove_previous_provider_config(&mut document, &previous.settings_config)?;
     }
     let common = get_common_config(db)?;
@@ -1013,6 +1014,23 @@ pub async fn apply_grok_prompt_config_internal<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     config_id: &str,
 ) -> Result<(), String> {
+    apply_grok_prompt_config_internal_with_events(state, app, config_id, true).await
+}
+
+pub async fn apply_grok_prompt_config_internal_without_events<R: tauri::Runtime>(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    apply_grok_prompt_config_internal_with_events(state, app, config_id, false).await
+}
+
+async fn apply_grok_prompt_config_internal_with_events<R: tauri::Runtime>(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+    emit_events: bool,
+) -> Result<(), String> {
     let prompt = get_prompt(state, config_id)?
         .ok_or_else(|| format!("Grok prompt '{config_id}' not found"))?;
     write_text_atomic(&get_grok_prompt_path_async(state).await?, &prompt.content)?;
@@ -1020,8 +1038,10 @@ pub async fn apply_grok_prompt_config_internal<R: tauri::Runtime>(
     state.with_conn_mut(|conn| {
         db_update_applied_status(conn, DbTable::GrokPromptConfig, Some(config_id), &now)
     })?;
-    let _ = app.emit("config-changed", "window");
-    emit_grok_sync(app);
+    if emit_events {
+        let _ = app.emit("config-changed", "window");
+        emit_grok_sync(app);
+    }
     Ok(())
 }
 
@@ -1470,9 +1490,7 @@ fn remove_matching_table_items(target: &mut Table, previous: &Table) {
     }
 }
 
-async fn get_local_prompt_config(
-    db: &SqliteDbState,
-) -> Result<Option<GrokPromptConfig>, String> {
+async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<GrokPromptConfig>, String> {
     let prompt_path = get_grok_prompt_path_async(db).await?;
     let Some(content) = read_optional_text(&prompt_path)? else {
         return Ok(None);
@@ -1876,6 +1894,59 @@ runtime_owned = "preserve"
     }
 
     #[test]
+    fn applied_provider_update_replaces_previous_models_and_advanced_config() {
+        let previous_settings = json!({
+            "config": "[ui]\nsimple_mode = true",
+            "defaultModelKey": "old-model",
+            "modelCatalog": { "models": [{
+                "key": "old-model",
+                "model": "old-upstream",
+                "baseUrl": "https://old.example.com/v1",
+                "apiBackend": "responses"
+            }]}
+        });
+        let next_settings = json!({
+            "config": "",
+            "defaultModelKey": "new-model",
+            "modelCatalog": { "models": [{
+                "key": "new-model",
+                "model": "new-upstream",
+                "baseUrl": "https://new.example.com/v1",
+                "apiBackend": "chat_completions"
+            }]}
+        });
+        let mut document = DocumentMut::new();
+        merge_provider_config(&mut document, &previous_settings).expect("merge previous config");
+        project_provider_models(&mut document, &previous_settings, "custom")
+            .expect("project previous models");
+        document["ui"]["runtime_owned"] = value("preserve");
+
+        remove_provider_model_tables(&mut document, &previous_settings.to_string(), "custom")
+            .expect("remove previous models");
+        remove_previous_provider_config(&mut document, &previous_settings.to_string())
+            .expect("remove previous config");
+        merge_provider_config(&mut document, &next_settings).expect("merge next config");
+        project_provider_models(&mut document, &next_settings, "custom")
+            .expect("project next models");
+
+        assert!(document
+            .get("model")
+            .and_then(Item::as_table)
+            .is_some_and(|models| !models.contains_key("old-model")));
+        assert_eq!(
+            document["model"]["new-model"]["model"].as_str(),
+            Some("new-upstream")
+        );
+        assert_eq!(
+            document["model"]["new-model"]["base_url"].as_str(),
+            Some("https://new.example.com/v1")
+        );
+        assert_eq!(document["models"]["default"].as_str(), Some("new-model"));
+        assert!(document["ui"].get("simple_mode").is_none());
+        assert_eq!(document["ui"]["runtime_owned"].as_str(), Some("preserve"));
+    }
+
+    #[test]
     fn parse_grok_models_output_reads_available_list() {
         let output = r#"
 Model 'custom' is using its own API key.
@@ -2242,5 +2313,4 @@ trace_upload = false
         assert!(settings.get("modelCatalog").is_none());
         assert!(snapshot.common_config.contains("trace_upload = false"));
     }
-
-    }
+}

@@ -992,13 +992,33 @@ pub async fn apply_pi_prompt_config_internal<R: Runtime>(
     config_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
+    apply_pi_prompt_config_internal_with_events(state, app, config_id, from_tray, true).await
+}
+
+pub async fn apply_pi_prompt_config_internal_without_events<R: Runtime>(
+    state: tauri::State<'_, SqliteDbState>,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    apply_pi_prompt_config_internal_with_events(state, app, config_id, false, false).await
+}
+
+async fn apply_pi_prompt_config_internal_with_events<R: Runtime>(
+    state: tauri::State<'_, SqliteDbState>,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+    from_tray: bool,
+    emit_events: bool,
+) -> Result<(), String> {
     let db = state.db();
     if config_id == "__local__" {
         let local_prompt = get_local_prompt_config(&db)
             .await?
             .ok_or_else(|| "Local Pi prompt not found".to_string())?;
         write_prompt_content_to_file(&db, Some(local_prompt.content.as_str())).await?;
-        emit_config_changed(app, if from_tray { "tray" } else { "window" });
+        if emit_events {
+            emit_config_changed(app, if from_tray { "tray" } else { "window" });
+        }
         return Ok(());
     }
 
@@ -1009,7 +1029,9 @@ pub async fn apply_pi_prompt_config_internal<R: Runtime>(
         db_update_applied_status(conn, DbTable::PiPromptConfig, Some(config_id), &now)
     })?;
     write_prompt_content_to_file(&db, Some(prompt.content.as_str())).await?;
-    emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    if emit_events {
+        emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    }
     Ok(())
 }
 

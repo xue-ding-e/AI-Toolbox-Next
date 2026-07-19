@@ -25,6 +25,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
 
         last_backup_time: get_opt_str(&value, "last_backup_time"),
         backup_image_assets_enabled: get_bool(&value, "backup_image_assets_enabled", true),
+        backup_cli_config_files_enabled: get_bool(&value, "backup_cli_config_files_enabled", true),
         backup_custom_entries: get_backup_custom_entries(&value),
         launch_on_startup: get_bool(&value, "launch_on_startup", true),
         minimize_to_tray_on_close: get_bool(&value, "minimize_to_tray_on_close", true),
@@ -368,6 +369,22 @@ mod tests {
         }));
 
         assert!(!settings.backup_image_assets_enabled);
+    }
+
+    #[test]
+    fn backup_cli_config_files_enabled_defaults_to_true() {
+        let settings = from_db_value(json!({}));
+
+        assert!(settings.backup_cli_config_files_enabled);
+    }
+
+    #[test]
+    fn backup_cli_config_files_enabled_preserves_explicit_false() {
+        let settings = from_db_value(json!({
+            "backup_cli_config_files_enabled": false,
+        }));
+
+        assert!(!settings.backup_cli_config_files_enabled);
     }
 
     #[test]

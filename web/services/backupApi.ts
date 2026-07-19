@@ -23,6 +23,11 @@ export interface RestoreWarning {
 
 export interface RestoreResult {
   warnings: RestoreWarning[];
+  willReapplyApplied?: boolean;
+}
+
+export interface RestoreOptions {
+  skipCliCustomRoots?: boolean;
 }
 
 /**
@@ -43,8 +48,14 @@ export const backupDatabase = async (backupPath: string): Promise<string> => {
  * Restore database from a local zip file
  * @param zipFilePath - The path to the backup zip file
  */
-export const restoreDatabase = async (zipFilePath: string): Promise<RestoreResult> => {
-  return await invoke<RestoreResult>('restore_database', { zipFilePath });
+export const restoreDatabase = async (
+  zipFilePath: string,
+  options?: RestoreOptions
+): Promise<RestoreResult> => {
+  return await invoke<RestoreResult>('restore_database', {
+    zipFilePath,
+    skipCliCustomRoots: options?.skipCliCustomRoots ?? false,
+  });
 };
 
 /**
@@ -120,7 +131,8 @@ export const restoreFromWebDAV = async (
   username: string,
   password: string,
   remotePath: string,
-  filename: string
+  filename: string,
+  options?: RestoreOptions
 ): Promise<RestoreResult> => {
   return await invoke<RestoreResult>('restore_from_webdav', {
     url,
@@ -128,6 +140,7 @@ export const restoreFromWebDAV = async (
     password,
     remotePath,
     filename,
+    skipCliCustomRoots: options?.skipCliCustomRoots ?? false,
   });
 };
 

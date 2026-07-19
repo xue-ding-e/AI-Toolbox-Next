@@ -3,12 +3,10 @@ import {
   Modal,
   Form,
   Input,
-  Radio,
   Space,
   Button,
   InputNumber,
   Switch,
-  Divider,
   message,
   List,
   Tag,
@@ -16,7 +14,6 @@ import {
   Select,
   Popconfirm,
   Typography,
-  type RadioChangeEvent,
 } from 'antd';
 import {
   DeleteOutlined,
@@ -38,6 +35,8 @@ import {
   type BackupFileFilterPathOption,
   type BackupFileFilterRule,
 } from '@/services';
+import { ManagementSegmented } from '@/features/coding/shared/management';
+import styles from './BackupSettingsModal.module.less';
 
 interface BackupSettingsModalProps {
   open: boolean;
@@ -70,6 +69,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     localBackupPath,
     webdav,
     backupImageAssetsEnabled,
+    backupCliConfigFilesEnabled,
     backupCustomEntries,
     backupFileFilterRules,
     setBackupSettings,
@@ -84,6 +84,8 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   const [testingConnection, setTestingConnection] = React.useState(false);
   const [currentBackupImageAssetsEnabled, setCurrentBackupImageAssetsEnabled] =
     React.useState(backupImageAssetsEnabled);
+  const [currentBackupCliConfigFilesEnabled, setCurrentBackupCliConfigFilesEnabled] =
+    React.useState(backupCliConfigFilesEnabled);
   const [currentAutoBackupEnabled, setCurrentAutoBackupEnabled] = React.useState(autoBackupEnabled);
   const [currentIntervalDays, setCurrentIntervalDays] = React.useState(autoBackupIntervalDays);
   const [currentMaxKeep, setCurrentMaxKeep] = React.useState(autoBackupMaxKeep);
@@ -153,6 +155,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       setCurrentBackupType(backupType);
       setCurrentLocalPath(localBackupPath);
       setCurrentBackupImageAssetsEnabled(backupImageAssetsEnabled);
+      setCurrentBackupCliConfigFilesEnabled(backupCliConfigFilesEnabled);
       setCurrentAutoBackupEnabled(autoBackupEnabled);
       setCurrentIntervalDays(autoBackupIntervalDays);
       setCurrentMaxKeep(autoBackupMaxKeep);
@@ -170,6 +173,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     localBackupPath,
     webdav,
     backupImageAssetsEnabled,
+    backupCliConfigFilesEnabled,
     backupCustomEntries,
     backupFileFilterRules,
     autoBackupEnabled,
@@ -202,6 +206,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         localBackupPath: currentLocalPath,
         webdav: values.webdav as Partial<WebDAVConfigFE>,
         backupImageAssetsEnabled: currentBackupImageAssetsEnabled,
+        backupCliConfigFilesEnabled: currentBackupCliConfigFilesEnabled,
         backupCustomEntries: currentBackupCustomEntries,
         backupFileFilterRules: currentFileFilterRules,
       });
@@ -216,8 +221,8 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     }
   };
 
-  const handleBackupTypeChange = (e: RadioChangeEvent) => {
-    setCurrentBackupType(e.target.value as 'local' | 'webdav');
+  const handleBackupTypeChange = (value: 'local' | 'webdav') => {
+    setCurrentBackupType(value);
   };
 
   const normalizeCustomEntryPath = async (path: string): Promise<string> => {
@@ -379,286 +384,335 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       open={isOpen}
       onOk={handleSave}
       onCancel={onClose}
-      width={640}
+      width={680}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
+      destroyOnHidden
     >
-      <Form form={form} layout="horizontal" size="small" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
-        <Form.Item label={t('settings.backupSettings.storageType')}>
-          <Radio.Group value={currentBackupType} onChange={handleBackupTypeChange}>
-            <Radio value="local">{t('settings.backupSettings.local')}</Radio>
-            <Radio value="webdav">{t('settings.backupSettings.webdav')}</Radio>
-          </Radio.Group>
-        </Form.Item>
-
-        {currentBackupType === 'local' && (
-          <Form.Item label={t('settings.backupSettings.localPath')}>
-            <Space.Compact style={{ width: '100%' }}>
-              <Input
-                value={currentLocalPath}
-                readOnly
-                placeholder={t('settings.backupSettings.selectFolder')}
-                style={{ flex: 1 }}
+      <Form
+        form={form}
+        layout="horizontal"
+        size="small"
+        labelCol={{ flex: '108px' }}
+        wrapperCol={{ flex: '1' }}
+        labelAlign="left"
+        colon
+        className={styles.form}
+      >
+        <div className={styles.body}>
+          <section className={styles.sectionCard}>
+            <div className={styles.sectionToolbar}>
+              <h3 className={styles.sectionTitle} style={{ marginBottom: 0 }}>
+                {t('settings.backupSettings.storageType')}
+              </h3>
+              <ManagementSegmented<'local' | 'webdav'>
+                value={currentBackupType}
+                onChange={handleBackupTypeChange}
+                ariaLabel={t('settings.backupSettings.storageType')}
+                options={[
+                  { value: 'local', label: t('settings.backupSettings.local') },
+                  { value: 'webdav', label: t('settings.backupSettings.webdav') },
+                ]}
               />
-              <Button icon={<FolderOpenOutlined />} onClick={handleSelectFolder} style={{ fontSize: 14 }}>
-                {t('common.browse')}
-              </Button>
-            </Space.Compact>
-          </Form.Item>
-        )}
-
-        {currentBackupType === 'webdav' && (
-          <>
-            <Form.Item label={t('settings.webdav.url')} name={['webdav', 'url']}>
-              <Input placeholder="https://dav.example.com" />
-            </Form.Item>
-            <Form.Item label={t('settings.webdav.username')} name={['webdav', 'username']}>
-              <Input />
-            </Form.Item>
-            <Form.Item label={t('settings.webdav.password')} name={['webdav', 'password']}>
-              <Input.Password visibilityToggle />
-            </Form.Item>
-            <Form.Item label={t('settings.webdav.remotePath')} name={['webdav', 'remotePath']}>
-              <Input placeholder="/backup" />
-            </Form.Item>
-            <Form.Item label={t('settings.webdav.hostLabel')} name={['webdav', 'hostLabel']}>
-              <Input placeholder={t('settings.webdav.hostLabelPlaceholder')} />
-            </Form.Item>
-            <Form.Item wrapperCol={{ offset: 6, span: 18 }}>
-              <Button
-                onClick={handleTestConnection}
-                loading={testingConnection}
-              >
-                {testingConnection ? t('settings.webdav.testing') : t('settings.webdav.testConnection')}
-              </Button>
-            </Form.Item>
-          </>
-        )}
-
-        <Form.Item label={t('settings.backupSettings.imageAssets')}>
-          <Switch
-            checked={currentBackupImageAssetsEnabled}
-            onChange={setCurrentBackupImageAssetsEnabled}
-          />
-        </Form.Item>
-
-        <Form.Item
-          label={t('settings.backupSettings.customEntries.title')}
-          colon={false}
-        >
-          <Space direction="vertical" style={{ width: '100%' }} size="small">
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}>
-              <Space direction="vertical" size={0} style={{ minWidth: 0 }}>
-                <Typography.Text type="secondary">
-                  {t('settings.backupSettings.customEntries.description')}
-                </Typography.Text>
-                {currentBackupCustomEntries.length === 0 && (
-                  <Typography.Text type="secondary">
-                    {t('settings.backupSettings.customEntries.empty')}
-                  </Typography.Text>
-                )}
-              </Space>
-              <Button
-                size="small"
-                icon={<PlusOutlined />}
-                onClick={() => handleOpenCustomEntryModal()}
-              >
-                {t('settings.backupSettings.customEntries.add')}
-              </Button>
             </div>
-            {currentBackupCustomEntries.length > 0 && (
-              <List
-                size="small"
-                bordered
-                dataSource={currentBackupCustomEntries}
-                renderItem={(entry) => (
-                  <List.Item
-                    actions={[
-                      <Switch
-                        key="enabled"
-                        size="small"
-                        checked={entry.enabled}
-                        onChange={(checked) => handleToggleCustomEntry(entry.id, checked)}
-                      />,
-                      <Tooltip
-                        key="edit"
-                        title={t('settings.backupSettings.customEntries.edit')}
-                      >
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<EditOutlined />}
-                          aria-label={t('settings.backupSettings.customEntries.edit')}
-                          onClick={() => handleOpenCustomEntryModal(entry)}
-                        />
-                      </Tooltip>,
-                      <Popconfirm
-                        key="delete"
-                        title={t('settings.backupSettings.customEntries.deleteConfirm')}
-                        onConfirm={() => handleDeleteCustomEntry(entry.id)}
-                        okText={t('common.delete')}
-                        cancelText={t('common.cancel')}
-                      >
-                        <Tooltip title={t('settings.backupSettings.customEntries.delete')}>
-                          <Button
-                            danger
-                            type="text"
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            aria-label={t('settings.backupSettings.customEntries.delete')}
-                          />
-                        </Tooltip>
-                      </Popconfirm>,
-                    ]}
+
+            {currentBackupType === 'local' && (
+              <Form.Item label={t('settings.backupSettings.localPath')} style={{ marginTop: 10, marginBottom: 0 }}>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input
+                    value={currentLocalPath}
+                    readOnly
+                    placeholder={t('settings.backupSettings.selectFolder')}
+                    style={{ flex: 1 }}
+                  />
+                  <Button icon={<FolderOpenOutlined />} onClick={handleSelectFolder}>
+                    {t('common.browse')}
+                  </Button>
+                </Space.Compact>
+              </Form.Item>
+            )}
+
+            {currentBackupType === 'webdav' && (
+              <div style={{ marginTop: 10 }}>
+                <Form.Item label={t('settings.webdav.url')} name={['webdav', 'url']}>
+                  <Input placeholder="https://dav.example.com" />
+                </Form.Item>
+                <Form.Item label={t('settings.webdav.username')} name={['webdav', 'username']}>
+                  <Input />
+                </Form.Item>
+                <Form.Item label={t('settings.webdav.password')} name={['webdav', 'password']}>
+                  <Input.Password visibilityToggle />
+                </Form.Item>
+                <Form.Item label={t('settings.webdav.remotePath')} name={['webdav', 'remotePath']}>
+                  <Input placeholder="/backup" />
+                </Form.Item>
+                <Form.Item label={t('settings.webdav.hostLabel')} name={['webdav', 'hostLabel']}>
+                  <Input placeholder={t('settings.webdav.hostLabelPlaceholder')} />
+                </Form.Item>
+                <div className={styles.testConnectionRow}>
+                  <Button
+                    onClick={handleTestConnection}
+                    loading={testingConnection}
                   >
-                    <List.Item.Meta
-                      avatar={entry.entry_type === 'directory' ? <FolderOutlined /> : <FileOutlined />}
-                      title={(
-                        <Space size="small" wrap>
-                          <span>{entry.name}</span>
-                          <Tag>
-                            {entry.entry_type === 'directory'
-                              ? t('settings.backupSettings.customEntries.directory')
-                              : t('settings.backupSettings.customEntries.file')}
-                          </Tag>
-                        </Space>
-                      )}
-                      description={(
-                        <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                          <Typography.Text type="secondary" ellipsis={{ tooltip: entry.source_path }}>
-                            {t('settings.backupSettings.customEntries.sourcePathShort')}: {entry.source_path}
-                          </Typography.Text>
-                          {entry.restore_path && (
-                            <Typography.Text type="secondary" ellipsis={{ tooltip: entry.restore_path }}>
-                              {t('settings.backupSettings.customEntries.restorePathShort')}: {entry.restore_path}
-                            </Typography.Text>
+                    {testingConnection ? t('settings.webdav.testing') : t('settings.webdav.testConnection')}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className={styles.sectionCard}>
+            <h3 className={styles.sectionTitle}>{t('settings.backupSettings.scopeSectionTitle')}</h3>
+
+            <div className={styles.switchBlock}>
+              <div className={styles.switchRow}>
+                <span className={styles.switchLabel}>{t('settings.backupSettings.imageAssets')}</span>
+                <Switch
+                  checked={currentBackupImageAssetsEnabled}
+                  onChange={setCurrentBackupImageAssetsEnabled}
+                  aria-label={t('settings.backupSettings.imageAssets')}
+                />
+              </div>
+            </div>
+
+            <div className={styles.switchBlock}>
+              <div className={styles.switchRow}>
+                <span className={styles.switchLabel}>{t('settings.backupSettings.cliConfigFiles')}</span>
+                <Switch
+                  checked={currentBackupCliConfigFilesEnabled}
+                  onChange={setCurrentBackupCliConfigFilesEnabled}
+                  aria-label={t('settings.backupSettings.cliConfigFiles')}
+                />
+              </div>
+              <Typography.Text className={styles.helperText}>
+                {t('settings.backupSettings.cliConfigFilesDesc')}
+              </Typography.Text>
+            </div>
+
+            <div className={styles.subBlock}>
+              <div className={styles.sectionToolbar}>
+                <div className={styles.sectionMeta}>
+                  <h4 className={styles.subTitle}>
+                    {t('settings.backupSettings.customEntries.title')}
+                  </h4>
+                  <Typography.Text className={styles.helperText}>
+                    {t('settings.backupSettings.customEntries.description')}
+                  </Typography.Text>
+                  {currentBackupCustomEntries.length === 0 && (
+                    <span className={styles.listEmpty}>
+                      {t('settings.backupSettings.customEntries.empty')}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => handleOpenCustomEntryModal()}
+                >
+                  {t('settings.backupSettings.customEntries.add')}
+                </Button>
+              </div>
+              {currentBackupCustomEntries.length > 0 && (
+                <div className={styles.list}>
+                  <List
+                    size="small"
+                    bordered
+                    dataSource={currentBackupCustomEntries}
+                    renderItem={(entry) => (
+                      <List.Item
+                        actions={[
+                          <Switch
+                            key="enabled"
+                            size="small"
+                            checked={entry.enabled}
+                            onChange={(checked) => handleToggleCustomEntry(entry.id, checked)}
+                          />,
+                          <Tooltip
+                            key="edit"
+                            title={t('settings.backupSettings.customEntries.edit')}
+                          >
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<EditOutlined />}
+                              aria-label={t('settings.backupSettings.customEntries.edit')}
+                              onClick={() => handleOpenCustomEntryModal(entry)}
+                            />
+                          </Tooltip>,
+                          <Popconfirm
+                            key="delete"
+                            title={t('settings.backupSettings.customEntries.deleteConfirm')}
+                            onConfirm={() => handleDeleteCustomEntry(entry.id)}
+                            okText={t('common.delete')}
+                            cancelText={t('common.cancel')}
+                          >
+                            <Tooltip title={t('settings.backupSettings.customEntries.delete')}>
+                              <Button
+                                danger
+                                type="text"
+                                size="small"
+                                icon={<DeleteOutlined />}
+                                aria-label={t('settings.backupSettings.customEntries.delete')}
+                              />
+                            </Tooltip>
+                          </Popconfirm>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          avatar={entry.entry_type === 'directory' ? <FolderOutlined /> : <FileOutlined />}
+                          title={(
+                            <Space size="small" wrap>
+                              <span>{entry.name}</span>
+                              <Tag>
+                                {entry.entry_type === 'directory'
+                                  ? t('settings.backupSettings.customEntries.directory')
+                                  : t('settings.backupSettings.customEntries.file')}
+                              </Tag>
+                            </Space>
                           )}
-                        </Space>
-                      )}
-                    />
-                  </List.Item>
-                )}
-              />
-            )}
-          </Space>
-        </Form.Item>
-
-        <Form.Item
-          label={t('settings.backupSettings.fileFilterRules.title')}
-          colon={false}
-        >
-          <Space direction="vertical" style={{ width: '100%' }} size="small">
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}>
-              <Space direction="vertical" size={0} style={{ minWidth: 0 }}>
-                <Typography.Text type="secondary">
-                  {t('settings.backupSettings.fileFilterRules.description')}
-                </Typography.Text>
-                {currentFileFilterRules.length === 0 && (
-                  <Typography.Text type="secondary">
-                    {t('settings.backupSettings.fileFilterRules.empty')}
-                  </Typography.Text>
-                )}
-              </Space>
-              <Button
-                size="small"
-                icon={<PlusOutlined />}
-                onClick={() => handleOpenFilterRuleModal()}
-              >
-                {t('settings.backupSettings.fileFilterRules.add')}
-              </Button>
-            </div>
-            {currentFileFilterRules.length > 0 && (
-              <List
-                size="small"
-                bordered
-                dataSource={currentFileFilterRules}
-                renderItem={(rule, index) => (
-                  <List.Item
-                    actions={[
-                      <Popconfirm
-                        key="delete"
-                        title={t('settings.backupSettings.fileFilterRules.deleteConfirm')}
-                        onConfirm={() => handleDeleteFilterRule(index)}
-                        okText={t('common.delete')}
-                        cancelText={t('common.cancel')}
-                      >
-                        <Tooltip title={t('settings.backupSettings.fileFilterRules.delete')}>
-                          <Button
-                            danger
-                            type="text"
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            aria-label={t('settings.backupSettings.fileFilterRules.delete')}
-                          />
-                        </Tooltip>
-                      </Popconfirm>,
-                    ]}
-                  >
-                    <List.Item.Meta
-                      avatar={<FileOutlined />}
-                      title={
-                        <Space size="small" wrap>
-                          <span>{rule.tool}</span>
-                          <Tag>{rule.file_path}</Tag>
-                        </Space>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
-            )}
-          </Space>
-        </Form.Item>
-
-        <Divider />
-
-        <Form.Item label={t('settings.autoBackup.title')}>
-          <Switch
-            checked={currentAutoBackupEnabled}
-            onChange={setCurrentAutoBackupEnabled}
-          />
-        </Form.Item>
-        {currentAutoBackupEnabled && (
-          <>
-            <Form.Item label={t('settings.autoBackup.interval')}>
-              <InputNumber
-                value={currentIntervalDays}
-                onChange={(v) => setCurrentIntervalDays(v && v >= 1 ? Math.floor(v) : 1)}
-                min={1}
-                precision={0}
-                style={{ width: 60 }}
-                addonAfter={t('settings.autoBackup.days')}
-              />
-            </Form.Item>
-            <Form.Item label={t('settings.autoBackup.maxKeep')}>
-              <InputNumber
-                value={currentMaxKeep}
-                onChange={(v) => setCurrentMaxKeep(v != null && v >= 0 ? Math.floor(v) : 0)}
-                min={0}
-                precision={0}
-                style={{ width: 60 }}
-                addonAfter={t('settings.autoBackup.count')}
-              />
-              {currentMaxKeep === 0 && (
-                <div style={{ marginTop: 4 }}>
-                  <Typography.Text type="warning">
-                    {t('settings.autoBackup.unlimitedHint')}
-                  </Typography.Text>
+                          description={(
+                            <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                              <Typography.Text
+                                className={styles.pathLine}
+                                ellipsis={{ tooltip: entry.source_path }}
+                              >
+                                {t('settings.backupSettings.customEntries.sourcePathShort')}: {entry.source_path}
+                              </Typography.Text>
+                              {entry.restore_path && (
+                                <Typography.Text
+                                  className={styles.pathLine}
+                                  ellipsis={{ tooltip: entry.restore_path }}
+                                >
+                                  {t('settings.backupSettings.customEntries.restorePathShort')}: {entry.restore_path}
+                                </Typography.Text>
+                              )}
+                            </Space>
+                          )}
+                        />
+                      </List.Item>
+                    )}
+                  />
                 </div>
               )}
-            </Form.Item>
-          </>
-        )}
+            </div>
+
+            <div className={styles.subBlock}>
+              <div className={styles.sectionToolbar}>
+                <div className={styles.sectionMeta}>
+                  <h4 className={styles.subTitle}>
+                    {t('settings.backupSettings.fileFilterRules.title')}
+                  </h4>
+                  <Typography.Text className={styles.helperText}>
+                    {t('settings.backupSettings.fileFilterRules.description')}
+                  </Typography.Text>
+                  {currentFileFilterRules.length === 0 && (
+                    <span className={styles.listEmpty}>
+                      {t('settings.backupSettings.fileFilterRules.empty')}
+                    </span>
+                  )}
+                  {!currentBackupCliConfigFilesEnabled && (
+                    <Typography.Text className={styles.helperText}>
+                      {t('settings.backupSettings.fileFilterRules.disabledByCliConfigFiles')}
+                    </Typography.Text>
+                  )}
+                </div>
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  disabled={!currentBackupCliConfigFilesEnabled}
+                  onClick={() => handleOpenFilterRuleModal()}
+                >
+                  {t('settings.backupSettings.fileFilterRules.add')}
+                </Button>
+              </div>
+              {currentFileFilterRules.length > 0 && (
+                <div className={styles.list}>
+                  <List
+                    size="small"
+                    bordered
+                    dataSource={currentFileFilterRules}
+                    renderItem={(rule, index) => (
+                      <List.Item
+                        actions={[
+                          <Popconfirm
+                            key="delete"
+                            title={t('settings.backupSettings.fileFilterRules.deleteConfirm')}
+                            onConfirm={() => handleDeleteFilterRule(index)}
+                            okText={t('common.delete')}
+                            cancelText={t('common.cancel')}
+                          >
+                            <Tooltip title={t('settings.backupSettings.fileFilterRules.delete')}>
+                              <Button
+                                danger
+                                type="text"
+                                size="small"
+                                icon={<DeleteOutlined />}
+                                aria-label={t('settings.backupSettings.fileFilterRules.delete')}
+                                disabled={!currentBackupCliConfigFilesEnabled}
+                              />
+                            </Tooltip>
+                          </Popconfirm>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          avatar={<FileOutlined />}
+                          title={
+                            <Space size="small" wrap>
+                              <span>{rule.tool}</span>
+                              <Tag>{rule.file_path}</Tag>
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className={styles.sectionCard}>
+            <div className={styles.switchRow}>
+              <span className={styles.switchLabel} style={{ fontWeight: 600 }}>
+                {t('settings.autoBackup.title')}
+              </span>
+              <Switch
+                checked={currentAutoBackupEnabled}
+                onChange={setCurrentAutoBackupEnabled}
+                aria-label={t('settings.autoBackup.title')}
+              />
+            </div>
+            {currentAutoBackupEnabled && (
+              <div className={styles.autoBackupFields}>
+                <Form.Item label={t('settings.autoBackup.interval')} style={{ marginBottom: 0 }}>
+                  <InputNumber
+                    value={currentIntervalDays}
+                    onChange={(v) => setCurrentIntervalDays(v && v >= 1 ? Math.floor(v) : 1)}
+                    min={1}
+                    precision={0}
+                    style={{ width: 120 }}
+                    addonAfter={t('settings.autoBackup.days')}
+                  />
+                </Form.Item>
+                <Form.Item label={t('settings.autoBackup.maxKeep')} style={{ marginBottom: 0 }}>
+                  <InputNumber
+                    value={currentMaxKeep}
+                    onChange={(v) => setCurrentMaxKeep(v != null && v >= 0 ? Math.floor(v) : 0)}
+                    min={0}
+                    precision={0}
+                    style={{ width: 120 }}
+                    addonAfter={t('settings.autoBackup.count')}
+                  />
+                  {currentMaxKeep === 0 && (
+                    <Typography.Text className={styles.warningHint}>
+                      {t('settings.autoBackup.unlimitedHint')}
+                    </Typography.Text>
+                  )}
+                </Form.Item>
+              </div>
+            )}
+          </section>
+        </div>
       </Form>
     </Modal>
     <Modal
@@ -671,13 +725,16 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
       width={640}
+      destroyOnHidden
     >
       <Form
         form={customEntryForm}
         layout="horizontal"
         size="small"
-        labelCol={{ span: 6 }}
-        wrapperCol={{ span: 18 }}
+        labelCol={{ flex: '108px' }}
+        wrapperCol={{ flex: '1' }}
+        labelAlign="left"
+        className={styles.nestedForm}
       >
         <Form.Item
           label={t('settings.backupSettings.customEntries.name')}
@@ -746,13 +803,16 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
       width={480}
+      destroyOnHidden
     >
       <Form
         form={filterRuleForm}
         layout="horizontal"
         size="small"
-        labelCol={{ span: 6 }}
-        wrapperCol={{ span: 18 }}
+        labelCol={{ flex: '108px' }}
+        wrapperCol={{ flex: '1' }}
+        labelAlign="left"
+        className={styles.nestedForm}
       >
         <Form.Item
           label={t('settings.backupSettings.fileFilterRules.tool')}

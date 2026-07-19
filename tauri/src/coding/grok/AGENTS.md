@@ -21,6 +21,7 @@
 - Provider 受管 `[model.<key>]` **就是渠道配置**。切换/保存/应用时始终删除上一渠道 catalog 里的 key，再写入新渠道投影；不得按“用户手改”保留 `base_url`/`api_key`/`api_backend`，也不得发 `grok-config-warning` 假装保留。
 - 真正本地、从未出现在上一渠道 catalog 的 `[model.*]` 才保留。官方渠道只拥有 `[models].default`，应用官方时清理上一 custom catalog keys 后不得再写任何 `[model.*]`。
 - `apply_grok_provider_to_file` 默认应带上当前 common config 作为 previous，避免 common 字段在只切 Provider 时残留。
+- 更新已应用 Provider 时，必须在覆盖 SQLite 记录前捕获旧 `settings_config` 和 `category`，并显式传给运行时重应用链路。写库后再查询 applied provider 得到的是新快照，会导致被删除的 `[model.<key>]` 和高级配置字段残留。
 - `settings_config` 不存 `category`（category 在 provider 行）。清理前一 provider 的 `[model.*]` 时必须传入真实 `previous.category`；官方渠道只拥有 `[models].default`，清理时不得当 custom 去要求 `modelCatalog.models`。
 - 应用 provider 时对齐 Codex 官方账号标记：官方 provider → `sync_grok_official_account_apply_status`；非官方 → `clear_all_grok_official_account_apply_status`，避免切到自定义后账号仍显示「已应用」。
 - 删除 prompt 配置只删 SQLite 记录，不删除/清空当前 `AGENTS.md`。产品语义是“删除已保存的提示词记录”，不是“删除本地 runtime 提示词文件”；Claude Code / OpenCode / Codex / Gemini / Pi 统一此规则。

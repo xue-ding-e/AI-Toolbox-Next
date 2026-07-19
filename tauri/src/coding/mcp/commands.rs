@@ -450,11 +450,28 @@ pub async fn mcp_sync_all<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, SqliteDbState>,
 ) -> Result<Vec<McpSyncResultDto>, String> {
-    let custom_tools = custom_store::get_custom_tools(&state)
+    mcp_sync_all_internal(app, state.inner(), true).await
+}
+
+/// Restore-only MCP projection that avoids starting event-driven WSL sync midway through the
+/// serial post-restore recovery pipeline.
+pub async fn mcp_sync_all_without_events<R: Runtime>(
+    app: AppHandle<R>,
+    state: &SqliteDbState,
+) -> Result<Vec<McpSyncResultDto>, String> {
+    mcp_sync_all_internal(app, state, false).await
+}
+
+async fn mcp_sync_all_internal<R: Runtime>(
+    app: AppHandle<R>,
+    state: &SqliteDbState,
+    emit_events: bool,
+) -> Result<Vec<McpSyncResultDto>, String> {
+    let custom_tools = custom_store::get_custom_tools(state)
         .await
         .unwrap_or_default();
     let db = state.db();
-    let servers = mcp_store::get_mcp_servers(&state).await?;
+    let servers = mcp_store::get_mcp_servers(state).await?;
     let mut results = Vec::new();
 
     for server in servers {
@@ -469,7 +486,7 @@ pub async fn mcp_sync_all<R: Runtime>(
 
             match sync_server_to_tool_async(&db, &server, &tool).await {
                 Ok(detail) => {
-                    mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
+                    mcp_store::update_sync_detail(state, &server.id, &detail).await?;
                     results.push(McpSyncResultDto {
                         tool: tool_key.clone(),
                         success: true,
@@ -483,7 +500,7 @@ pub async fn mcp_sync_all<R: Runtime>(
                         synced_at: Some(now_ms()),
                         error_message: Some(e.clone()),
                     };
-                    mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
+                    mcp_store::update_sync_detail(state, &server.id, &detail).await?;
                     results.push(McpSyncResultDto {
                         tool: tool_key.clone(),
                         success: false,
@@ -495,17 +512,18 @@ pub async fn mcp_sync_all<R: Runtime>(
     }
 
     // Also sync disabled servers to opencode if switch is ON
-    let prefs = mcp_store::get_mcp_preferences(&state)
+    let prefs = mcp_store::get_mcp_preferences(state)
         .await
         .unwrap_or_default();
     if prefs.sync_disabled_to_opencode {
-        let all_servers = mcp_store::get_mcp_servers(&state).await.unwrap_or_default();
+        let all_servers = mcp_store::get_mcp_servers(state).await.unwrap_or_default();
         sync_opencode_disabled(&db, &all_servers, &custom_tools).await;
     }
 
-    // Emit config-changed and mcp-changed events
-    let _ = app.emit("config-changed", "window");
-    let _ = app.emit("mcp-changed", "window");
+    if emit_events {
+        let _ = app.emit("config-changed", "window");
+        let _ = app.emit("mcp-changed", "window");
+    }
 
     Ok(results)
 }

@@ -100,9 +100,16 @@ function parseInitialGrokState(initialData?: { settingsConfig?: string }) {
     const apiKey = typeof authObj.API_KEY === 'string' ? authObj.API_KEY : '';
     const configStr = config.config || '';
     const catalogModels = parseGrokCatalogModels(config);
-    const model = config.defaultModelKey?.trim() || extractGrokModel(configStr) || '';
-    const selectedCatalogModel = catalogModels.find((item) => item.key === model || item.model === model)
+    // Form "model name" is the upstream model ID, not the local catalog key.
+    // Custom providers fix key="custom" in defaultModelKey; read .model from that slot.
+    const defaultModelKey = config.defaultModelKey?.trim() || '';
+    const selectedCatalogModel = catalogModels.find((item) => item.key === defaultModelKey)
+      || catalogModels.find((item) => item.model === defaultModelKey)
       || catalogModels[0];
+    const model = selectedCatalogModel?.model?.trim()
+      || (defaultModelKey && defaultModelKey !== 'custom' ? defaultModelKey : '')
+      || extractGrokModel(configStr)
+      || '';
     const baseUrl = selectedCatalogModel?.baseUrl?.trim() || extractGrokBaseUrl(configStr) || '';
     const category: GrokProviderCategory = apiKey.trim() || baseUrl.trim() ? 'custom' : 'official';
 

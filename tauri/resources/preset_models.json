@@ -241,6 +241,25 @@
       "attachment": false
     },
     {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "contextLimit": 1048576,
+      "outputLimit": 1048576,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "attachment": true
+    },
+    {
       "id": "kimi-k2.7-code",
       "name": "Kimi K2.7 Code",
       "contextLimit": 262144,

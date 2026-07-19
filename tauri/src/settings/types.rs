@@ -95,6 +95,9 @@ pub struct AppSettings {
     pub last_backup_time: Option<String>,
     /// Include generated image files in backup zip (default: true)
     pub backup_image_assets_enabled: bool,
+    /// Include CLI runtime config files under external-configs/ in backup zip (default: true).
+    /// When false, backup/restore skip all CLI config files (channels stay in SQLite only).
+    pub backup_cli_config_files_enabled: bool,
     /// User-defined files/directories to include in backup zip
     pub backup_custom_entries: Vec<BackupCustomEntry>,
     /// Launch on startup (default: true)
@@ -145,6 +148,7 @@ impl Default for AppSettings {
             s3: S3Config::default(),
             last_backup_time: None,
             backup_image_assets_enabled: true,
+            backup_cli_config_files_enabled: true,
             backup_custom_entries: Vec::new(),
             launch_on_startup: true,
             minimize_to_tray_on_close: true,

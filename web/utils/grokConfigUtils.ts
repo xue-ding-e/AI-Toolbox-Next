@@ -138,34 +138,59 @@ export function extractGrokReasoningEffort(
   }
 }
 
+function getSelectedGrokCatalogModel(settings: GrokSettingsLike) {
+  const catalogModels = settings.modelCatalog?.models || [];
+  if (catalogModels.length === 0) {
+    return undefined;
+  }
+  // Prefer the local catalog key pointed to by defaultModelKey (custom providers use
+  // fixed key "custom"). Fall back to a match on upstream model id, then first entry.
+  const defaultModelKey = settings.defaultModelKey?.trim();
+  if (defaultModelKey) {
+    const byKey = catalogModels.find((model) => model.key?.trim() === defaultModelKey);
+    if (byKey) {
+      return byKey;
+    }
+    const byUpstreamModel = catalogModels.find((model) => model.model?.trim() === defaultModelKey);
+    if (byUpstreamModel) {
+      return byUpstreamModel;
+    }
+  }
+  return catalogModels[0];
+}
+
+/**
+ * Upstream model ID for the selected default slot.
+ * Custom providers store local key in defaultModelKey (usually "custom") and the
+ * real request model on modelCatalog.models[].model — never surface the key as the
+ * form "model name".
+ */
 export function extractGrokSettingsModel(settings: GrokSettingsLike): string | undefined {
-  return settings.defaultModelKey?.trim() || extractGrokModel(settings.config);
+  const selectedModel = getSelectedGrokCatalogModel(settings);
+  const upstreamModel = selectedModel?.model?.trim();
+  if (upstreamModel) {
+    return upstreamModel;
+  }
+  // Official providers only store defaultModelKey as the model id (no catalog).
+  const defaultModelKey = settings.defaultModelKey?.trim();
+  if (defaultModelKey && defaultModelKey !== 'custom') {
+    return defaultModelKey;
+  }
+  return extractGrokModel(settings.config);
 }
 
 export function extractGrokSettingsBaseUrl(settings: GrokSettingsLike): string | undefined {
-  const defaultModelKey = extractGrokSettingsModel(settings);
-  const catalogModels = settings.modelCatalog?.models || [];
-  const selectedModel = catalogModels.find(
-    (model) => model.key?.trim() === defaultModelKey || model.model?.trim() === defaultModelKey,
-  ) || catalogModels[0];
+  const selectedModel = getSelectedGrokCatalogModel(settings);
   return selectedModel?.baseUrl?.trim() || extractGrokBaseUrl(settings.config);
 }
 
 export function extractGrokSettingsApiBackend(settings: GrokSettingsLike): string | undefined {
-  const defaultModelKey = extractGrokSettingsModel(settings);
-  const catalogModels = settings.modelCatalog?.models || [];
-  const selectedModel = catalogModels.find(
-    (model) => model.key?.trim() === defaultModelKey || model.model?.trim() === defaultModelKey,
-  ) || catalogModels[0];
+  const selectedModel = getSelectedGrokCatalogModel(settings);
   return selectedModel?.apiBackend?.trim();
 }
 
 export function extractGrokSettingsReasoningEffort(settings: GrokSettingsLike): string | undefined {
-  const defaultModelKey = extractGrokSettingsModel(settings);
-  const catalogModels = settings.modelCatalog?.models || [];
-  const selectedModel = catalogModels.find(
-    (model) => model.key?.trim() === defaultModelKey || model.model?.trim() === defaultModelKey,
-  ) || catalogModels[0];
+  const selectedModel = getSelectedGrokCatalogModel(settings);
   return selectedModel?.reasoningEffort?.trim() || extractGrokReasoningEffort(settings.config);
 }
 

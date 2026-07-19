@@ -1020,11 +1020,16 @@ const GrokPage: React.FC = () => {
                 config: values.configToml || '',
               };
 
-        if (values.category !== 'official' && values.model) {
-          settingsConfigObj.defaultModelKey = values.model;
+        if (values.category === 'official') {
+          if (values.model) {
+            settingsConfigObj.defaultModelKey = values.model;
+          }
+        } else if (values.model) {
+          // Custom: fixed local key "custom"; form model name is upstream model ID only.
+          settingsConfigObj.defaultModelKey = 'custom';
           settingsConfigObj.modelCatalog = {
             models: [{
-              key: values.model,
+              key: 'custom',
               model: values.model,
               displayName: values.model,
               ...(values.baseUrl ? { baseUrl: values.baseUrl } : {}),
@@ -1149,11 +1154,16 @@ const GrokPage: React.FC = () => {
                 config: values.configToml || '',
               };
 
-        if (values.category !== 'official' && values.model) {
-          settingsConfigObj.defaultModelKey = values.model;
+        if (values.category === 'official') {
+          if (values.model) {
+            settingsConfigObj.defaultModelKey = values.model;
+          }
+        } else if (values.model) {
+          // Custom: fixed local key "custom"; form model name is upstream model ID only.
+          settingsConfigObj.defaultModelKey = 'custom';
           settingsConfigObj.modelCatalog = {
             models: [{
-              key: values.model,
+              key: 'custom',
               model: values.model,
               displayName: values.model,
               ...(values.baseUrl ? { baseUrl: values.baseUrl } : {}),

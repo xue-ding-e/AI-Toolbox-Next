@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider } from 'antd';
+import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider, Checkbox } from 'antd';
 import {
   EditOutlined,
   CloudUploadOutlined,
@@ -72,6 +72,49 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   openclaw: 'subModules.openclaw',
   geminicli: 'subModules.geminicli',
 };
+
+/** Local mutable holder so Modal.confirm content can toggle without reopening. */
+const createSkipCliCustomRootsHolder = () => {
+  const holder = { value: false };
+  return holder;
+};
+
+const buildRestoreConfirmContent = (
+  description: React.ReactNode,
+  holder: { value: boolean },
+  t: (key: string) => string
+) => (
+  <div>
+    <div style={{ marginBottom: 12 }}>{description}</div>
+    <Checkbox
+      defaultChecked={false}
+      onChange={(event) => {
+        holder.value = event.target.checked;
+      }}
+    >
+      <Space direction="vertical" size={0}>
+        <span>{t('settings.backupSettings.skipCliCustomRoots')}</span>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {t('settings.backupSettings.skipCliCustomRootsDesc')}
+        </Text>
+      </Space>
+    </Checkbox>
+  </div>
+);
+
+const buildRestoreSuccessContent = (
+  restoreResult: RestoreResult,
+  t: (key: string) => string
+) => (
+  <div>
+    <div>{t('settings.backupSettings.restoreSuccessReload')}</div>
+    {restoreResult.willReapplyApplied ? (
+      <div style={{ marginTop: 8 }}>
+        <Text type="secondary">{t('settings.backupSettings.restoreWillReapply')}</Text>
+      </div>
+    ) : null}
+  </div>
+);
 
 interface SortableCodingChipProps {
   id: string;
@@ -413,18 +456,25 @@ const GeneralSettingsPage: React.FC = () => {
           return;
         }
 
+        const skipCliCustomRootsHolder = createSkipCliCustomRootsHolder();
         Modal.confirm({
           title: t('settings.backupSettings.confirmRestore'),
-          content: t('settings.backupSettings.confirmRestoreDesc'),
+          content: buildRestoreConfirmContent(
+            t('settings.backupSettings.confirmRestoreDesc'),
+            skipCliCustomRootsHolder,
+            t
+          ),
           okText: t('common.confirm'),
           cancelText: t('common.cancel'),
           onOk: async () => {
             try {
-              const restoreResult = await restoreDatabase(zipFilePath);
+              const restoreResult = await restoreDatabase(zipFilePath, {
+                skipCliCustomRoots: skipCliCustomRootsHolder.value,
+              });
               // 恢复成功后弹出重启对话框
               Modal.info({
                 title: t('settings.backupSettings.restoreSuccess'),
-                content: t('settings.backupSettings.restoreSuccessReload'),
+                content: buildRestoreSuccessContent(restoreResult, t),
                 okText: t('common.restart'),
                 closable: false,
                 maskClosable: false,
@@ -489,9 +539,10 @@ const GeneralSettingsPage: React.FC = () => {
             })
           : t('settings.backupSettings.confirmRestoreDesc');
 
+    const skipCliCustomRootsHolder = createSkipCliCustomRootsHolder();
     Modal.confirm({
       title: t('settings.backupSettings.confirmRestore'),
-      content: restoreDescription,
+      content: buildRestoreConfirmContent(restoreDescription, skipCliCustomRootsHolder, t),
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {
@@ -502,12 +553,13 @@ const GeneralSettingsPage: React.FC = () => {
             webdav.username,
             webdav.password,
             webdav.remotePath,
-            selection.filename
+            selection.filename,
+            { skipCliCustomRoots: skipCliCustomRootsHolder.value }
           );
           // 恢复成功后弹出重启对话框
           Modal.info({
             title: t('settings.backupSettings.restoreSuccess'),
-            content: t('settings.backupSettings.restoreSuccessReload'),
+            content: buildRestoreSuccessContent(restoreResult, t),
             okText: t('common.restart'),
             closable: false,
             maskClosable: false,

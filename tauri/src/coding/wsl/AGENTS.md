@@ -16,6 +16,7 @@
 - 读写 WSL 配置时必须直接走 SQLite；`last_sync_*` 状态更新、默认 mapping backfill 和用户 mapping CRUD 都要更新 SQLite，不能写回旧 SurrealDB。
 - `module_statuses` 由运行时路径统一产出，这样 WSL 设置页和 SSH 设置页都能基于相同事实源显示 WSL Direct 状态。
 - 启用 WSL sync 时会触发一次全量同步，减少“刚打开但远端还是旧状态”的初始分叉。
+- 备份恢复后的同步由恢复编排独占：普通启动全量同步看到 `.resync_required` / `.reapply_applied_required` 时必须让位；恢复任务按本机 re-apply → Skills → MCP 的顺序完成后，只调用一次 WSL full sync，并通过 `skip_modules` 排除本轮未改写的 CLI 模块。这里的“本轮已改写”必须同时包含 `.resync_required` payload 记录的 direct external-configs restore 模块，以及 re-apply summary 里的模块；不能只看 re-apply 结果，否则正常恢复会跳过所有 CLI WSL 映射。
 
 ## 关键流程
 
@@ -36,6 +37,7 @@ sequenceDiagram
 ## 易错点与历史坑（Gotchas）
 
 - 不要把 WSL 自动同步理解成“保存数据库就自动发生”。真正触发点是事件监听器。
+- 恢复期间不能同时依赖启动同步、业务事件同步和恢复收尾同步。三条链路并发会让旧文件、半完成配置和新配置互相覆盖；恢复专用入口应抑制中间事件，启动同步应识别 restore flag，最终只保留恢复收尾的一次串行同步。
 - `moduleStatuses.is_wsl_direct=true` 的模块，在 WSL 设置页里应视为“已直接运行在 WSL”，手动 WSL 同步要跳过这些模块，而不是继续把 Windows 本地映射强塞过去。
 - WSL Direct 判断不要从页面上的 `source=custom` 反推。`custom`、`env`、`shell`、`default` 与是否 WSL Direct 是两个独立维度。
 - 对 Skills，WSL 自动同步的源目录仍然是中央仓库 `central_repo_path`，不是工具当前运行时 skills 目录。当前运行时目录只决定目标写到哪里。

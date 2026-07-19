@@ -15,6 +15,7 @@ pub mod open_code;
 pub mod pi;
 pub mod preset_models;
 pub mod proxy_gateway;
+pub mod reapply_applied_runtime;
 pub mod runtime_location;
 pub mod session_manager;
 pub mod skills;

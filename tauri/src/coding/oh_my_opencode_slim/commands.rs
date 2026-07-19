@@ -605,6 +605,24 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     config_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, config_id, from_tray, true).await
+}
+
+pub async fn apply_config_internal_without_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, config_id, false, false).await
+}
+
+async fn apply_config_internal_with_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+    from_tray: bool,
+    emit_events: bool,
+) -> Result<(), String> {
     apply_config_to_file(db, config_id).await?;
 
     let now = Local::now().to_rfc3339();
@@ -613,11 +631,13 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         db_update_applied_status(conn, DbTable::OhMyOpenCodeSlimConfig, Some(config_id), &now)
     })?;
 
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
+    if emit_events {
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
 
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-opencode", ());
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-opencode", ());
+    }
 
     Ok(())
 }

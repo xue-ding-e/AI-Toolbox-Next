@@ -635,7 +635,13 @@
       "backupNow": "立即备份",
       "restoreBackup": "恢复备份",
       "openDataDir": "打开数据目录",
+      "scopeSectionTitle": "备份范围",
       "imageAssets": "备份生图图片",
+      "cliConfigFiles": "备份 CLI 运行时文件",
+      "cliConfigFilesDesc": "包含各 CLI 的本机运行时文件（如 Codex config.toml、Claude settings.json、auth、prompt 等）。关闭后不会打包或恢复这些文件；CLI 相关状态仅恢复 SQLite 中已有的记录，Codex、Claude、Grok、Gemini CLI 等数据库渠道会在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型和主配置以运行时文件为主，关闭后不会随备份迁移。",
+      "skipCliCustomRoots": "不恢复各 CLI 自定义根目录",
+      "skipCliCustomRootsDesc": "勾选后清空备份库中的自定义 root/config 路径，改用本机默认或环境变量路径。跨设备恢复时建议勾选。",
+      "restoreWillReapply": "已跳过 CLI 运行时文件或备份未包含它们：重启后将重新应用可由数据库重建的渠道和提示词。",
       "customEntries": {
         "title": "自定义备份项",
         "description": "将额外的本地文件或目录加入备份。",
@@ -675,7 +681,8 @@
         "filePathRequired": "请选择路径",
         "filePathPlaceholder": "选择要排除的备份路径",
         "selectToolFirst": "请先选择工具",
-        "addTitle": "添加过滤规则"
+        "addTitle": "添加过滤规则",
+        "disabledByCliConfigFiles": "当前未备份 CLI 运行时文件，单文件过滤规则暂不生效。"
       },
       "noPathConfigured": "请先配置备份路径",
       "noWebDAVConfigured": "请先配置 WebDAV 服务器",
@@ -4022,7 +4029,6 @@
       "modelMappingModelPlaceholder": "实际请求模型",
       "modelMappingRemove": "删除模型映射",
       "modelName": "模型名称",
-      "modelNameHelp": "指定默认模型 key，保存时写入 [models].default 与模型映射。",
       "modelNamePlaceholder": "如：grok-4.5",
       "name": "供应商名称",
       "namePlaceholder": "如：我的 xAI 渠道",

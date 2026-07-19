@@ -895,15 +895,35 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
     config_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
+    apply_prompt_config_internal_with_events(state, app, config_id, from_tray, true).await
+}
+
+pub async fn apply_prompt_config_internal_without_events<R: tauri::Runtime>(
+    state: tauri::State<'_, SqliteDbState>,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    apply_prompt_config_internal_with_events(state, app, config_id, false, false).await
+}
+
+async fn apply_prompt_config_internal_with_events<R: tauri::Runtime>(
+    state: tauri::State<'_, SqliteDbState>,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+    from_tray: bool,
+    emit_events: bool,
+) -> Result<(), String> {
     if config_id == "__local__" {
         let local_prompt = get_local_prompt_config(state.clone())
             .await?
             .ok_or_else(|| "Local default prompt not found".to_string())?;
         write_prompt_content_to_file(state, Some(local_prompt.content.as_str())).await?;
 
-        let payload = if from_tray { "tray" } else { "window" };
-        let _ = app.emit("config-changed", payload);
-        emit_prompt_sync_requests(app);
+        if emit_events {
+            let payload = if from_tray { "tray" } else { "window" };
+            let _ = app.emit("config-changed", payload);
+            emit_prompt_sync_requests(app);
+        }
 
         return Ok(());
     }
@@ -919,9 +939,11 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     write_prompt_content_to_file(state.clone(), Some(prompt_config.content.as_str())).await?;
 
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
-    emit_prompt_sync_requests(app);
+    if emit_events {
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+        emit_prompt_sync_requests(app);
+    }
 
     Ok(())
 }

@@ -912,6 +912,173 @@ pub struct RestoreWarning {
 #[serde(rename_all = "camelCase")]
 pub struct RestoreResult {
     pub warnings: Vec<RestoreWarning>,
+    /// True when post-restore startup should re-apply applied providers/prompts.
+    #[serde(default)]
+    pub will_reapply_applied: bool,
+}
+
+pub const BACKUP_META_ZIP_PATH: &str = "backup_meta.json";
+pub const REAPPLY_APPLIED_FLAG_FILENAME: &str = ".reapply_applied_required";
+pub const RESYNC_REQUIRED_FLAG_FILENAME: &str = ".resync_required";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupMeta {
+    pub version: u32,
+    pub cli_config_files_included: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PostRestoreResyncFlag {
+    #[serde(default)]
+    restored_wsl_modules: Vec<String>,
+}
+
+pub fn build_backup_meta(cli_config_files_included: bool) -> BackupMeta {
+    BackupMeta {
+        version: 1,
+        cli_config_files_included,
+    }
+}
+
+pub fn read_backup_meta_from_archive<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Option<BackupMeta> {
+    let mut entry = archive.by_name(BACKUP_META_ZIP_PATH).ok()?;
+    let mut content = String::new();
+    entry.read_to_string(&mut content).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+pub fn should_reapply_applied_runtime(
+    skipped_external_configs_this_restore: bool,
+    backup_meta: Option<&BackupMeta>,
+) -> bool {
+    if skipped_external_configs_this_restore {
+        return true;
+    }
+    if let Some(meta) = backup_meta {
+        // Explicit marker from the package that CLI configs were not included.
+        return !meta.cli_config_files_included;
+    }
+    // Legacy zip without meta: do not infer need_reapply from missing external-configs alone.
+    // Incomplete old packages would otherwise rewrite local configs unexpectedly.
+    false
+}
+
+pub fn should_use_backup_root_overrides(
+    skipped_external_configs_this_restore: bool,
+    skip_cli_custom_roots: bool,
+) -> bool {
+    !skipped_external_configs_this_restore && !skip_cli_custom_roots
+}
+
+pub fn record_restored_external_config_wsl_module(
+    restored_wsl_modules: &mut Vec<String>,
+    tool: &str,
+) {
+    let Some(module) = wsl_module_for_external_config_tool(tool) else {
+        return;
+    };
+    if !restored_wsl_modules
+        .iter()
+        .any(|existing| existing == module)
+    {
+        restored_wsl_modules.push(module.to_string());
+    }
+}
+
+fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
+    match tool {
+        "opencode" => Some("opencode"),
+        "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        "grok" => Some("grok"),
+        "openclaw" => Some("openclaw"),
+        "geminicli" => Some("geminicli"),
+        "pi" => Some("pi"),
+        _ => None,
+    }
+}
+
+fn build_post_restore_resync_flag(restored_wsl_modules: &[String]) -> String {
+    let payload = PostRestoreResyncFlag {
+        restored_wsl_modules: restored_wsl_modules.to_vec(),
+    };
+    serde_json::to_string(&payload).unwrap_or_else(|_| "1".to_string())
+}
+
+pub fn parse_post_restore_resync_wsl_modules(content: &str) -> Vec<String> {
+    serde_json::from_str::<PostRestoreResyncFlag>(content)
+        .map(|payload| payload.restored_wsl_modules)
+        .unwrap_or_default()
+}
+
+pub fn read_post_restore_resync_wsl_modules(resync_flag: &Path) -> Vec<String> {
+    std::fs::read_to_string(resync_flag)
+        .map(|content| parse_post_restore_resync_wsl_modules(&content))
+        .unwrap_or_default()
+}
+
+/// Clear custom CLI root/config paths from the restored database.
+/// Used when the user opts out of restoring cross-machine custom roots.
+pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<(), String> {
+    use crate::db::helpers::{db_get, db_put};
+    use crate::db::schema::DbTable;
+
+    const PATH_KEYS: &[&str] = &["root_dir", "config_path", "rootDir", "configPath"];
+
+    let clear_table = |conn: &rusqlite::Connection, table: DbTable| -> Result<(), String> {
+        let Some(mut record) = db_get(conn, table, "common")? else {
+            return Ok(());
+        };
+        let mut changed = false;
+        for key in PATH_KEYS {
+            if record
+                .get(*key)
+                .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
+            {
+                record[*key] = serde_json::Value::Null;
+                changed = true;
+            }
+        }
+        if changed {
+            db_put(conn, table, "common", &record)?;
+        }
+        Ok(())
+    };
+
+    db.with_conn(|conn| {
+        clear_table(conn, DbTable::CodexCommonConfig)?;
+        clear_table(conn, DbTable::ClaudeCommonConfig)?;
+        clear_table(conn, DbTable::GrokCommonConfig)?;
+        clear_table(conn, DbTable::GeminiCliCommonConfig)?;
+        clear_table(conn, DbTable::PiSettingsConfig)?;
+        clear_table(conn, DbTable::OpenCodeCommonConfig)?;
+        clear_table(conn, DbTable::OpenClawCommonConfig)?;
+        Ok(())
+    })
+}
+
+pub fn write_post_restore_flags(
+    app_handle: &tauri::AppHandle,
+    need_reapply: bool,
+    restored_wsl_modules: &[String],
+) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let resync_flag = app_data_dir.join(RESYNC_REQUIRED_FLAG_FILENAME);
+    let _ = std::fs::write(
+        &resync_flag,
+        build_post_restore_resync_flag(restored_wsl_modules),
+    );
+    if need_reapply {
+        let reapply_flag = app_data_dir.join(REAPPLY_APPLIED_FLAG_FILENAME);
+        let _ = std::fs::write(&reapply_flag, "1");
+    }
+    Ok(())
 }
 
 pub fn push_restore_warning(restore_result: &mut RestoreResult, warning: RestoreWarning) {
@@ -2056,35 +2223,26 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
     Ok(())
 }
 
-pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
+async fn write_external_configs_to_backup_zip<W: Write + Seek>(
     zip: &mut ZipWriter<W>,
-    app_handle: &tauri::AppHandle,
-    db_path: &Path,
-    include_image_assets: bool,
+    db: &crate::db::SqliteDbState,
     filter_rules: &[BackupFileFilterRule],
     options: SimpleFileOptions,
+    added_zip_directories: &mut HashSet<String>,
 ) -> Result<(), String> {
-    let db_state = app_handle.state::<crate::SqliteDbState>();
-    let db = db_state.db();
-    let mut added_zip_directories = HashSet::new();
-
-    add_legacy_database_snapshot_to_zip(zip, db_path, options)?;
-
-    add_sqlite_database_snapshot_to_zip(zip, app_handle, options)?;
-
     // Add external-configs directory
     add_directory_to_zip_once(
         zip,
-        &mut added_zip_directories,
+        added_zip_directories,
         "external-configs/",
         options,
         "external-configs directory",
     )?;
 
-    if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "opencode").await {
+    if let Some(custom_dir) = get_custom_root_dir_path_info(db, "opencode").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/opencode/",
             options,
             "opencode directory",
@@ -2098,14 +2256,14 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup OpenCode config if exists
-    if let Some(opencode_path) = get_opencode_config_path_from_db(&db).await? {
+    if let Some(opencode_path) = get_opencode_config_path_from_db(db).await? {
         let file_name = opencode_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "opencode.json".to_string());
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &opencode_path,
             "opencode",
             &file_name,
@@ -2115,10 +2273,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup OpenCode auth.json if exists (check filter rules)
-    if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(&db).await? {
+    if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &opencode_auth_path,
             "opencode",
             "auth.json",
@@ -2127,10 +2285,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(opencode_prompt_path) = get_opencode_prompt_path_from_db(&db).await? {
+    if let Some(opencode_prompt_path) = get_opencode_prompt_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &opencode_prompt_path,
             "opencode",
             "AGENTS.md",
@@ -2139,10 +2297,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "claude").await {
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "claude").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/claude/",
             options,
             "claude directory",
@@ -2156,10 +2314,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup Claude settings.json if exists
-    if let Some(claude_path) = get_claude_settings_path_from_db(&db).await? {
+    if let Some(claude_path) = get_claude_settings_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &claude_path,
             "claude",
             "settings.json",
@@ -2168,10 +2326,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(&db).await? {
+    if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &claude_prompt_path,
             "claude",
             "CLAUDE.md",
@@ -2180,10 +2338,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(&db).await? {
+    if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &claude_mcp_path,
             "claude",
             ".claude.json",
@@ -2192,10 +2350,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "codex").await {
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "codex").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/codex/",
             options,
             "codex directory",
@@ -2209,10 +2367,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup Codex auth.json if exists (check filter rules)
-    if let Some(codex_auth_path) = get_codex_auth_path_from_db(&db).await? {
+    if let Some(codex_auth_path) = get_codex_auth_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &codex_auth_path,
             "codex",
             "auth.json",
@@ -2222,10 +2380,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup Codex config.toml if exists
-    if let Some(codex_config_path) = get_codex_config_path_from_db(&db).await? {
+    if let Some(codex_config_path) = get_codex_config_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &codex_config_path,
             "codex",
             "config.toml",
@@ -2234,12 +2392,12 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    for codex_prompt_path in get_codex_prompt_paths_from_db(&db).await? {
+    for codex_prompt_path in get_codex_prompt_paths_from_db(db).await? {
         let zip_path = get_codex_prompt_backup_zip_path(&codex_prompt_path);
         let relative_path = zip_path.trim_start_matches("external-configs/codex/");
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &codex_prompt_path,
             "codex",
             relative_path,
@@ -2248,10 +2406,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "grok").await {
+    if let Some(custom_dir) = get_custom_root_dir_path_info(db, "grok").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/grok/",
             options,
             "grok directory",
@@ -2263,10 +2421,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             options,
         )?;
     }
-    if let Some(path) = get_grok_auth_path_from_db(&db).await? {
+    if let Some(path) = get_grok_auth_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &path,
             "grok",
             "auth.json",
@@ -2274,10 +2432,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             options,
         )?;
     }
-    if let Some(path) = get_grok_config_path_from_db(&db).await? {
+    if let Some(path) = get_grok_config_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &path,
             "grok",
             "config.toml",
@@ -2285,10 +2443,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             options,
         )?;
     }
-    if let Some(path) = get_grok_prompt_path_from_db(&db).await? {
+    if let Some(path) = get_grok_prompt_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &path,
             "grok",
             "AGENTS.md",
@@ -2296,7 +2454,7 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             options,
         )?;
     }
-    let grok_plugins_dir = runtime_location::get_grok_runtime_location_async(&db)
+    let grok_plugins_dir = runtime_location::get_grok_runtime_location_async(db)
         .await?
         .host_path
         .join("plugins");
@@ -2309,10 +2467,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         options,
     )?;
 
-    if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "openclaw").await {
+    if let Some(custom_dir) = get_custom_root_dir_path_info(db, "openclaw").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/openclaw/",
             options,
             "openclaw directory",
@@ -2325,10 +2483,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(openclaw_config_path) = get_openclaw_config_path_from_db(&db).await? {
+    if let Some(openclaw_config_path) = get_openclaw_config_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &openclaw_config_path,
             "openclaw",
             "openclaw.json",
@@ -2337,10 +2495,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "geminicli").await {
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "geminicli").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/geminicli/",
             options,
             "Gemini CLI directory",
@@ -2353,10 +2511,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(&db).await? {
+    if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &gemini_env_path,
             "geminicli",
             ".env",
@@ -2365,10 +2523,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(&db).await? {
+    if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &gemini_settings_path,
             "geminicli",
             "settings.json",
@@ -2377,12 +2535,12 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(&db).await? {
+    if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(db).await? {
         let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
         let relative_path = zip_path.trim_start_matches("external-configs/geminicli/");
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &gemini_prompt_path,
             "geminicli",
             relative_path,
@@ -2391,10 +2549,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(&db).await? {
+    if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(db).await? {
         add_external_config_file_to_zip(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             &gemini_oauth_path,
             "geminicli",
             "oauth_creds.json",
@@ -2403,7 +2561,7 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(&db).await? {
+    if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
         add_external_config_directory_contents_to_zip(
             zip,
             &gemini_tmp_dir,
@@ -2414,10 +2572,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "pi").await {
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "pi").await {
         add_directory_to_zip_once(
             zip,
-            &mut added_zip_directories,
+            added_zip_directories,
             "external-configs/pi/",
             options,
             "Pi directory",
@@ -2439,10 +2597,10 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         "APPEND_SYSTEM.md",
         "trust.json",
     ] {
-        if let Some(path) = get_pi_runtime_file_path_from_db(&db, file_name).await? {
+        if let Some(path) = get_pi_runtime_file_path_from_db(db, file_name).await? {
             add_external_config_file_to_zip(
                 zip,
-                &mut added_zip_directories,
+                added_zip_directories,
                 &path,
                 "pi",
                 file_name,
@@ -2451,7 +2609,47 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             )?;
         }
     }
+    Ok(())
+}
 
+pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    app_handle: &tauri::AppHandle,
+    db_path: &Path,
+    include_image_assets: bool,
+    include_cli_config_files: bool,
+    filter_rules: &[BackupFileFilterRule],
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let db_state = app_handle.state::<crate::SqliteDbState>();
+    let db = db_state.db();
+    let mut added_zip_directories = HashSet::new();
+
+    add_legacy_database_snapshot_to_zip(zip, db_path, options)?;
+
+    add_sqlite_database_snapshot_to_zip(zip, app_handle, options)?;
+
+    let backup_meta = build_backup_meta(include_cli_config_files);
+    add_text_to_zip(
+        zip,
+        BACKUP_META_ZIP_PATH,
+        &serde_json::to_string_pretty(&backup_meta)
+            .map_err(|error| format!("Failed to serialize backup meta: {error}"))?,
+        options,
+    )?;
+
+    if include_cli_config_files {
+        write_external_configs_to_backup_zip(
+            zip,
+            &db,
+            filter_rules,
+            options,
+            &mut added_zip_directories,
+        )
+        .await?;
+    }
+
+    // models / skills / image assets / custom backup entries always included
     // Backup models.dev.json cache if exists
     if let Some(models_cache_path) = get_models_cache_file() {
         add_file_to_zip(zip, &models_cache_path, "models.dev.json", options)?;
@@ -2536,6 +2734,7 @@ pub async fn create_backup_zip(
     app_handle: &tauri::AppHandle,
     db_path: &Path,
     include_image_assets: bool,
+    include_cli_config_files: bool,
     filter_rules: &[BackupFileFilterRule],
 ) -> Result<Vec<u8>, String> {
     use std::io::Cursor;
@@ -2550,6 +2749,7 @@ pub async fn create_backup_zip(
             app_handle,
             db_path,
             include_image_assets,
+            include_cli_config_files,
             filter_rules,
             options,
         )
@@ -2566,14 +2766,20 @@ mod tests {
     use super::{
         add_custom_backup_entries_to_zip, add_directory_to_zip_once,
         add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
-        add_legacy_database_snapshot_to_zip, add_text_to_zip, build_db_manifest,
-        get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
-        get_gemini_cli_prompt_backup_zip_path, harden_restored_sensitive_file,
-        is_filesystem_root_directory, normalize_backup_storage_path, normalize_restore_entry_name,
+        add_legacy_database_snapshot_to_zip, add_text_to_zip, build_backup_meta, build_db_manifest,
+        clear_restored_cli_custom_roots, get_codex_prompt_backup_zip_path,
+        get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
+        harden_restored_sensitive_file, is_filesystem_root_directory,
+        normalize_backup_storage_path, normalize_restore_entry_name,
+        parse_post_restore_resync_wsl_modules, record_restored_external_config_wsl_module,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
         should_exclude_from_backup, should_filter_external_config_entry,
+        should_reapply_applied_runtime, should_use_backup_root_overrides,
         CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
+    use crate::db::helpers::{db_get, db_put};
+    use crate::db::schema::DbTable;
+    use crate::db::SqliteDbState;
     use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType, BackupFileFilterRule};
     use std::collections::HashSet;
     use std::fs;
@@ -2651,6 +2857,120 @@ mod tests {
             .count();
 
         assert_eq!(opencode_directory_count, 1);
+    }
+
+    #[test]
+    fn backup_meta_records_cli_runtime_file_policy() {
+        let included_meta = build_backup_meta(true);
+        let excluded_meta = build_backup_meta(false);
+
+        assert_eq!(included_meta.version, 1);
+        assert!(included_meta.cli_config_files_included);
+        assert_eq!(excluded_meta.version, 1);
+        assert!(!excluded_meta.cli_config_files_included);
+    }
+
+    #[test]
+    fn reapply_decision_prefers_current_restore_policy_and_explicit_meta() {
+        let included_meta = build_backup_meta(true);
+        let excluded_meta = build_backup_meta(false);
+
+        assert!(should_reapply_applied_runtime(true, Some(&included_meta)));
+        assert!(!should_reapply_applied_runtime(false, Some(&included_meta)));
+        assert!(should_reapply_applied_runtime(false, Some(&excluded_meta)));
+        assert!(!should_reapply_applied_runtime(false, None));
+    }
+
+    #[test]
+    fn backup_root_overrides_are_disabled_when_runtime_files_or_custom_roots_are_skipped() {
+        assert!(should_use_backup_root_overrides(false, false));
+        assert!(!should_use_backup_root_overrides(true, false));
+        assert!(!should_use_backup_root_overrides(false, true));
+        assert!(!should_use_backup_root_overrides(true, true));
+    }
+
+    #[test]
+    fn restored_external_config_modules_are_recorded_for_wsl_resync() {
+        let mut restored_wsl_modules = Vec::new();
+
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "codex");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "codex");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "geminicli");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "unknown");
+
+        assert_eq!(
+            restored_wsl_modules,
+            vec!["codex".to_string(), "geminicli".to_string()]
+        );
+    }
+
+    #[test]
+    fn post_restore_resync_flag_parses_restored_wsl_modules() {
+        let modules =
+            parse_post_restore_resync_wsl_modules(r#"{"restoredWslModules":["codex","claude"]}"#);
+
+        assert_eq!(modules, vec!["codex".to_string(), "claude".to_string()]);
+        assert!(parse_post_restore_resync_wsl_modules("1").is_empty());
+    }
+
+    #[test]
+    fn post_restore_resync_modules_keep_restored_cli_mappings_enabled() {
+        let changed_modules =
+            parse_post_restore_resync_wsl_modules(r#"{"restoredWslModules":["codex"]}"#);
+        let skipped_modules =
+            crate::coding::reapply_applied_runtime::unchanged_wsl_modules(&changed_modules);
+
+        assert!(!skipped_modules.contains(&"codex".to_string()));
+        assert!(skipped_modules.contains(&"claude".to_string()));
+    }
+
+    #[test]
+    fn clearing_restored_cli_roots_removes_snake_and_camel_case_paths() {
+        let db = SqliteDbState::in_memory_for_test().expect("sqlite state");
+        db.with_conn(|connection| {
+            db_put(
+                connection,
+                DbTable::CodexCommonConfig,
+                "common",
+                &serde_json::json!({
+                    "id": "common",
+                    "root_dir": "/old/codex",
+                    "other": "preserved"
+                }),
+            )?;
+            db_put(
+                connection,
+                DbTable::OpenCodeCommonConfig,
+                "common",
+                &serde_json::json!({
+                    "id": "common",
+                    "configPath": "C:/old/opencode.jsonc"
+                }),
+            )?;
+            Ok(())
+        })
+        .expect("seed common configs");
+
+        clear_restored_cli_custom_roots(&db).expect("clear restored roots");
+
+        db.with_conn(|connection| {
+            let codex =
+                db_get(connection, DbTable::CodexCommonConfig, "common")?.expect("codex common");
+            let opencode = db_get(connection, DbTable::OpenCodeCommonConfig, "common")?
+                .expect("opencode common");
+            assert!(codex
+                .get("root_dir")
+                .is_some_and(serde_json::Value::is_null));
+            assert_eq!(
+                codex.get("other").and_then(|value| value.as_str()),
+                Some("preserved")
+            );
+            assert!(opencode
+                .get("configPath")
+                .is_some_and(serde_json::Value::is_null));
+            Ok(())
+        })
+        .expect("verify cleared roots");
     }
 
     #[test]
