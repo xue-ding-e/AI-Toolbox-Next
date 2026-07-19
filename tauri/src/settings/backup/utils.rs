@@ -306,6 +306,10 @@ pub fn harden_restored_sensitive_file(path: &Path) -> Result<(), String> {
             )
         })?;
     }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
     Ok(())
 }
 
@@ -2848,6 +2852,9 @@ mod tests {
         should_use_backup_root_overrides, should_use_root_override_for_tool,
         CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
+    // Used by unix-only permission hardening tests.
+    #[cfg(unix)]
+    use super::harden_restored_sensitive_file;
     use crate::db::helpers::{db_get, db_put};
     use crate::db::schema::DbTable;
     use crate::db::SqliteDbState;
