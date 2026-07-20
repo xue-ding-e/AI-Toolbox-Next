@@ -650,8 +650,10 @@ pub async fn get_grok_common_config(
 pub async fn extract_grok_common_config_from_current_file(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<GrokCommonConfig, String> {
+    // Read only config.toml with timeout; do not touch auth.json.
     let path = get_grok_config_path_async(state.db()).await?;
-    let current = read_optional_text(&path)?.unwrap_or_default();
+    let current =
+        crate::coding::file_io::read_text_file_with_timeout(path, "Grok config.toml").await?;
     let mut document = if current.trim().is_empty() {
         DocumentMut::new()
     } else {

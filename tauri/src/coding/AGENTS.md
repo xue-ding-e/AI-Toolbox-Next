@@ -41,6 +41,7 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 通用配置「从当前文件提取」以及 DB 为空时的磁盘 common 回退 / save-local base_common，都会直接读 WSL UNC / 网络根目录下的 runtime 文件。`Path::exists` / `fs::read_to_string` 在不可达路径上可能长时间阻塞；这些路径必须用 `coding::file_io` 做 `spawn_blocking` + 超时读，前端 extract 也要有兜底超时（`web/utils/withTimeout.ts`）。不要把 extract 复用成“读完整 settings（含 auth）”的 helper。`tokio::time::timeout` 只保证 await 返回，不会取消已卡住的 OS 读；超时后 blocking 线程仍可能短暂占用，应避免在不可达路径上连续重试打满线程池。
 - 不要把“页面上显示的 `source`”和“WSL/SSH 设置页里的 `moduleStatuses.is_wsl_direct`”混为一谈。前者是路径来源标签，后者是对当前生效运行时路径的统一诊断结果。
 - 不要把 OpenCode/OpenClaw 与 Claude/Codex 按同一种“自定义配置”处理。前两者改的是文件路径，后两者改的是根目录；一旦混写，后续所有派生路径都会偏掉。
 - Claude Code 2.1.126 本机实测路径语义：未设置 `CLAUDE_CONFIG_DIR` 时，`settings.json` / `CLAUDE.md` / `config.json` / `plugins/` / `skills/` 位于 `~/.claude/` 下，MCP 与 onboarding 使用用户 home 下的 `~/.claude.json`；显式 `root_dir` / `CLAUDE_CONFIG_DIR` / shell 配置目录后，上述目录和 `.claude.json` 都位于该配置目录内。即使显式配置目录正好是 `~/.claude`，`.claude.json` 也应按显式目录解析为 `~/.claude/.claude.json`，不能只按路径值等于默认目录来判断。

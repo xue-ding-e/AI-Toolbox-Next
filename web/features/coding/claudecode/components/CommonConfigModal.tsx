@@ -9,6 +9,10 @@ import {
 } from '@/services/claudeCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
 import { isJsonObject } from '@/utils/json';
+import {
+  COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+  withTimeout,
+} from '@/utils/withTimeout';
 import styles from './CommonConfigModal.module.less';
 
 interface CommonConfigModalProps {
@@ -79,7 +83,11 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   const handleExtractFromCurrentConfig = async () => {
     setLoading(true);
     try {
-      const extractedConfig = await extractClaudeCommonConfigFromCurrentFile();
+      const extractedConfig = await withTimeout(
+        extractClaudeCommonConfigFromCurrentFile(),
+        COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+        t('claudecode.commonConfig.extractTimeout'),
+      );
       const extractedValue = extractedConfig.config
         ? JSON.parse(extractedConfig.config) as unknown
         : {};

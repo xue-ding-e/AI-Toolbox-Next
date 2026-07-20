@@ -26,6 +26,7 @@ pub(crate) mod url_utils;
 pub mod wsl;
 
 mod db_id;
+pub(crate) mod file_io;
 #[cfg(test)]
 pub(crate) mod test_env {
     use std::sync::{LazyLock, Mutex, MutexGuard};

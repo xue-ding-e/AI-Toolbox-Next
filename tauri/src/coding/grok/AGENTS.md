@@ -29,6 +29,7 @@
 
 ## Gotchas
 
+- `extract_grok_common_config_from_current_file` 只能读当前根目录 `config.toml`，不要碰 `auth.json`。WSL UNC / 网络路径上同步文件 I/O 可能长时间阻塞；extract 必须走 `coding::file_io` 的 `spawn_blocking` + 超时读，超时错误要带实际路径。
 - 不要整段删除 `[models]` 或全部 `[model.*]`。
 - 模型 schema 必须保留 `env_key`、显式 `false`、sampling、retry、timeout、reasoning、`extra_headers` 和未知合法字段。
 - Grok MCP 使用 `headers`，不是 Codex 的 `http_headers`；不写 `type`，Windows/WSL/SSH 都不添加 `cmd /c`。

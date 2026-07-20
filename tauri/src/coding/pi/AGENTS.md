@@ -20,7 +20,7 @@
 - Pi 原生支持多 provider / model，产品形态按 OpenCode 的“运行时配置可视化”处理。
 - 保存 provider 时只 upsert 当前 exact runtime key；如果 key 是 `anthropic`、`openrouter` 等官方内置 key，也是在原 key 上覆盖/补充，不生成 `ai-toolbox-*` 包装 provider。
 - `defaultModel` 写 Pi 官方 settings 的裸 model id。model id 本身可能包含 `/`，不要拼成 OpenCode 风格的 `provider_id/model_id`。
-- 扩展管理优先通过 Pi CLI 执行 `list/install/remove/update --no-approve`，本地 `.ts` 文件扩展只扫描当前 runtime root 派生的 `extensions/` 目录。
+- 扩展管理优先通过 Pi CLI 执行 `list/install/remove/update`，并优先附带 `--no-approve`，避免非交互环境下 project trust 提示卡住；若用户 Pi CLI 过旧或不识别该 flag（例如 `Unknown option --no-approve for "list"`），必须降级重试一次不带该 flag。本地 `.ts` 文件扩展只扫描当前 runtime root 派生的 `extensions/` 目录。
 
 ## Gotchas
 
@@ -43,6 +43,7 @@
 - 保存 `models.json.providers.<key>` 只覆盖该 key，其他 providers 和 unknown top-level 字段原样保留。
 - 自定义 Pi root 下的扩展列表应扫描 `<custom-root>/extensions`，不是默认 home 目录。
 - WSL Direct Pi root 或扩展 source 含空格和 Shell 元字符时，`list/install/remove/update` 的命令参数边界必须保持不变，且补充 shim 后仍保留原 WSL `$PATH`。
-- `pi list --no-approve` 中的 package 扩展和 `extensions/*.ts` / `extensions/<dir>/index.ts` 本地扩展应合并展示。
+- `pi list`（优先带 `--no-approve`，不支持时回退）返回的 package 扩展和 `extensions/*.ts` / `extensions/<dir>/index.ts` 本地扩展应合并展示。
+- 扩展命令遇到 `Unknown option --no-approve` 时不能把该错误直接当作最终失败；应去掉 flag 重试，并在 UI/错误里仍允许后续提示用户升级官方 Pi CLI。
 - `settings.json` 中已有 `packages` 时，`read_pi_runtime_config().other_settings` 不返回该字段，`save_pi_other_settings` 也不会删除或覆盖它。
 - Pi 0.80.6 起共享 thinking ladder 是 `off/minimal/low/medium/high/xhigh/max`。AI Toolbox 的前端选项、preset `thinkingLevelMap` 转换和后端校验白名单必须同步维护这七档；缺省的标准档 `off/minimal/low/medium/high` 按 identity mapping 支持，扩展档 `xhigh/max` 必须由模型显式提供非 `null` 映射才算支持。`ultra` 属于 Codex 的主动多智能体档位，不是 Pi thinking level，不能加入 Pi settings 或模型映射。

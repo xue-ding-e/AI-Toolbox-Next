@@ -2148,7 +2148,8 @@
       "effortMax": "最大强度思考",
       "disableAutoUpgrade": "禁用自动升级",
       "extractFromCurrent": "从当前配置提取",
-      "extractSuccess": "已从当前 Claude 配置提取通用配置"
+      "extractSuccess": "已从当前 Claude 配置提取通用配置",
+      "extractTimeout": "读取当前 Claude 配置超时。若根目录是 WSL 或网络路径，请确认发行版/共享可访问后重试。"
     },
     "rootPathSource": {
       "customize": "自定义配置目录",
@@ -2431,6 +2432,7 @@
       "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
       "extractFromCurrent": "从当前配置提取",
       "extractSuccess": "已从当前 Codex 配置提取通用配置",
+      "extractTimeout": "读取当前 Codex 配置超时。若根目录是 WSL 或网络路径，请确认发行版/共享可访问后重试。",
       "enableGoalMode": "启用 Goal mode",
       "enableRemoteCompaction": "启用远程压缩",
       "remoteCompactionHint": "需要当前 TOML 声明非内置自定义 model_provider",
@@ -2740,6 +2742,7 @@
       "description": "这些 JSON 字段会与供应商配置合并后写入 Gemini CLI 的 settings.json。供应商 env 会写入 .env。",
       "extractFromCurrent": "从当前配置提取",
       "extractSuccess": "已从当前 Gemini 配置提取通用配置",
+      "extractTimeout": "读取当前 Gemini 配置超时。若根目录是 WSL 或网络路径，请确认发行版/共享可访问后重试。",
       "configInvalid": "通用配置格式不正确"
     },
     "apply": {
@@ -3843,6 +3846,7 @@
       "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
       "extractFromCurrent": "从当前配置提取",
       "extractSuccess": "已从当前 Grok 配置提取通用配置",
+      "extractTimeout": "读取当前 Grok 配置超时。若根目录是 WSL 或网络路径，请确认发行版/共享可访问后重试。",
       "protectedWarningDescription": "以下配置由其它页面或 Grok 运行时管理，保存时会保留当前 config.toml 中的值，不会用这里的内容覆盖：{{keys}}",
       "protectedWarningTitle": "部分配置不会从通用配置写入",
       "title": "通用配置",

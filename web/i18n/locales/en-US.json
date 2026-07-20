@@ -2151,7 +2151,8 @@
       "effortMax": "Max effort thinking",
       "disableAutoUpgrade": "Disable auto upgrade",
       "extractFromCurrent": "Extract From Current",
-      "extractSuccess": "Extracted common config from current Claude settings"
+      "extractSuccess": "Extracted common config from current Claude settings",
+      "extractTimeout": "Timed out while reading the current Claude config. If the root is a WSL or network path, check that the distro/share is accessible and try again."
     },
     "rootPathSource": {
       "customize": "Customize Root Directory",
@@ -2434,6 +2435,7 @@
       "description": "These settings will be appended to the end of config.toml for all providers.",
       "extractFromCurrent": "Extract From Current",
       "extractSuccess": "Extracted common config from current Codex settings",
+      "extractTimeout": "Timed out while reading the current Codex config. If the root is a WSL or network path, check that the distro/share is accessible and try again.",
       "enableGoalMode": "Enable Goal mode",
       "enableRemoteCompaction": "Enable remote compaction",
       "remoteCompactionHint": "Requires a non-built-in custom model_provider in the current TOML",
@@ -2743,6 +2745,7 @@
       "description": "These JSON fields are merged with provider config and written to Gemini CLI settings.json. Provider env values are written to .env.",
       "extractFromCurrent": "Extract From Current Config",
       "extractSuccess": "Common config extracted from current Gemini config",
+      "extractTimeout": "Timed out while reading the current Gemini config. If the root is a WSL or network path, check that the distro/share is accessible and try again.",
       "configInvalid": "Common config must be valid JSON"
     },
     "apply": {
@@ -3846,6 +3849,7 @@
       "description": "These settings will be appended to the end of config.toml for all providers.",
       "extractFromCurrent": "Extract From Current",
       "extractSuccess": "Extracted common config from current Grok settings",
+      "extractTimeout": "Timed out while reading the current Grok config. If the root is a WSL or network path, check that the distro/share is accessible and try again.",
       "protectedWarningDescription": "These settings are managed by another page or the Grok runtime. Saving keeps the current config.toml values instead of overwriting them from here: {{keys}}",
       "protectedWarningTitle": "Some settings are not written from common config",
       "title": "Common Configuration",

@@ -198,6 +198,25 @@ async fn read_current_claude_settings_value_async(
     Ok(Some(parsed_value))
 }
 
+/// Timed read of settings.json for disk-backed common-config fallbacks
+/// (extract, get-when-DB-empty, save-local base_common). WSL UNC can block forever without this.
+async fn read_current_claude_settings_value_with_timeout(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<Value>, String> {
+    let settings_path = get_claude_settings_path_from_db_async(db).await?;
+    let Some(raw_content) = crate::coding::file_io::read_optional_text_file_with_timeout(
+        settings_path,
+        "Claude settings.json",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let parsed_value = serde_json::from_str::<Value>(&raw_content)
+        .map_err(|error| format!("Failed to parse settings file: {}", error))?;
+    Ok(Some(parsed_value))
+}
+
 async fn write_claude_settings_value_async(
     db: &crate::db::SqliteDbState,
     settings_value: &Value,
@@ -305,7 +324,7 @@ fn is_third_party_claude_provider_settings(provider_settings: &Value) -> bool {
 async fn load_temp_common_config_from_file_with_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<ClaudeCommonConfig, String> {
-    let settings_value = read_current_claude_settings_value_async(db)
+    let settings_value = read_current_claude_settings_value_with_timeout(db)
         .await?
         .ok_or_else(|| "No settings file found".to_string())?;
 

@@ -1468,8 +1468,12 @@ async fn normalize_provider_settings_for_storage(
 async fn extract_codex_common_config_from_current_files_with_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<CodexCommonConfig, String> {
-    let settings = read_codex_settings_from_disk(Some(db)).await?;
-    let config_toml = settings.config.unwrap_or_default();
+    // Resolve root once and read only config.toml. Do not reuse read_codex_settings_from_disk:
+    // that path also opens auth.json, which is unused here and can hang on unreachable WSL UNC.
+    let config_path = get_codex_config_path_from_db_async(db).await?;
+    let config_toml =
+        crate::coding::file_io::read_text_file_with_timeout(config_path, "Codex config.toml")
+            .await?;
     let common_toml = extract_codex_common_config_from_settings_toml(&config_toml)?;
     let now = Local::now().to_rfc3339();
 

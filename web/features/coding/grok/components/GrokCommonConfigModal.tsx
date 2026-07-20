@@ -14,6 +14,10 @@ import {
   isGrokPrivacyProtectionEnabled,
   setGrokPrivacyProtection,
 } from '@/utils/grokConfigUtils';
+import {
+  COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+  withTimeout,
+} from '@/utils/withTimeout';
 import styles from './GrokCommonConfigModal.module.less';
 
 interface GrokCommonConfigModalProps {
@@ -139,7 +143,11 @@ const GrokCommonConfigModal: React.FC<GrokCommonConfigModalProps> = ({
   const handleExtractFromCurrentConfig = async () => {
     setLoading(true);
     try {
-      const extractedConfig = await extractGrokCommonConfigFromCurrentFile();
+      const extractedConfig = await withTimeout(
+        extractGrokCommonConfigFromCurrentFile(),
+        COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+        t('grok.commonConfig.extractTimeout'),
+      );
       const nextConfig = extractedConfig.config || '';
       setConfigValue(nextConfig);
       setRootDir(extractedConfig.rootDir ?? null);

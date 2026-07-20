@@ -17,6 +17,7 @@
 
 ## Gotchas
 
+- `extract_gemini_cli_common_config_from_current_file` only reads `settings.json` (not `.env` / `oauth_creds.json`). On WSL UNC / network roots, `Path::exists` / `fs::read_to_string` can block for a long time; extract must use `coding::file_io` timed `spawn_blocking` reads and include the real path in timeout errors.
 - MCP and Skills are separate modules. Do not add Gemini CLI to `get_tool_skills_path_*` or `get_tool_mcp_config_path_*`.
 - Applying a provider rewrites only AI Toolbox managed env keys in `.env` and merges provider config into `settings.json`.
 - Managed env keys must include Gemini CLI auth-selector and request-shaping variables such as `GOOGLE_GENAI_USE_GCA`, `GOOGLE_GENAI_USE_VERTEXAI`, `GEMINI_CLI_USE_COMPUTE_ADC`, and `GEMINI_CLI_CUSTOM_HEADERS`; stale values can override or contaminate the selected OAuth/API-key provider.

@@ -17,6 +17,10 @@ import {
   setCodexGoalMode,
   setCodexRemoteCompaction,
 } from '@/utils/codexConfigUtils';
+import {
+  COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+  withTimeout,
+} from '@/utils/withTimeout';
 import styles from './CodexCommonConfigModal.module.less';
 
 interface CodexCommonConfigModalProps {
@@ -156,7 +160,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   const handleExtractFromCurrentConfig = async () => {
     setLoading(true);
     try {
-      const extractedConfig = await extractCodexCommonConfigFromCurrentFile();
+      const extractedConfig = await withTimeout(
+        extractCodexCommonConfigFromCurrentFile(),
+        COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+        t('codex.commonConfig.extractTimeout'),
+      );
       const nextConfig = extractedConfig.config || '';
       setConfigValue(nextConfig);
       setRootDir(extractedConfig.rootDir ?? null);

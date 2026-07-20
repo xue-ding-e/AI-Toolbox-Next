@@ -8,6 +8,10 @@ import {
   saveGeminiCliCommonConfig,
   saveGeminiCliLocalConfig,
 } from '@/services/geminiCliApi';
+import {
+  COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+  withTimeout,
+} from '@/utils/withTimeout';
 
 interface GeminiCliCommonConfigModalProps {
   open: boolean;
@@ -98,7 +102,11 @@ const GeminiCliCommonConfigModal: React.FC<GeminiCliCommonConfigModalProps> = ({
   const handleExtractFromCurrentConfig = async () => {
     setLoading(true);
     try {
-      const extractedConfig = await extractGeminiCliCommonConfigFromCurrentFile();
+      const extractedConfig = await withTimeout(
+        extractGeminiCliCommonConfigFromCurrentFile(),
+        COMMON_CONFIG_EXTRACT_TIMEOUT_MS,
+        t('geminicli.commonConfig.extractTimeout'),
+      );
       setConfigValue(parseJsonConfig(extractedConfig.config));
       setRootDir(extractedConfig.rootDir ?? null);
       setConfigValid(true);

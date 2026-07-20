@@ -559,6 +559,25 @@ async fn read_settings_value_from_db_async(
     Ok(Some(parsed))
 }
 
+/// Timed read of settings.json for disk-backed common-config fallbacks
+/// (extract, get-when-DB-empty, save-local base_common). WSL UNC can block forever without this.
+async fn read_settings_value_from_db_with_timeout(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<Value>, String> {
+    let settings_path = get_gemini_cli_settings_path_from_db_async(db).await?;
+    let Some(content) = crate::coding::file_io::read_optional_text_file_with_timeout(
+        settings_path,
+        "Gemini CLI settings.json",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let parsed = serde_json::from_str::<Value>(&content)
+        .map_err(|error| format!("Failed to parse Gemini CLI settings.json: {}", error))?;
+    Ok(Some(parsed))
+}
+
 async fn write_settings_value_to_db_async(
     db: &crate::db::SqliteDbState,
     value: &Value,
@@ -708,7 +727,7 @@ async fn load_temp_provider_from_files_with_db(
 async fn load_temp_common_config_from_file_with_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<GeminiCliCommonConfig, String> {
-    let settings = read_settings_value_from_db_async(db)
+    let settings = read_settings_value_from_db_with_timeout(db)
         .await?
         .unwrap_or_else(|| Value::Object(Map::new()));
     let common_settings = settings_value_without_managed_auth(&settings);

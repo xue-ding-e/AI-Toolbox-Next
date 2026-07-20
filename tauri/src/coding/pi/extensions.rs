@@ -177,7 +177,60 @@ async fn run_pi_command(
     })
 }
 
-fn format_pi_command(args: &[&str]) -> String {
+fn is_unknown_no_approve_option_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let mentions_unknown_option = lower.contains("unknown option")
+        || lower.contains("unknown argument")
+        || lower.contains("unrecognized option");
+    let mentions_no_approve = lower.contains("--no-approve")
+        || lower.contains("-no-approve")
+        || lower.contains("'-na'")
+        || lower.contains("\"-na\"")
+        || lower.split_whitespace().any(|token| {
+            token.trim_matches(|c| c == '\'' || c == '"' || c == ',' || c == '.') == "-na"
+        });
+    mentions_unknown_option && mentions_no_approve
+}
+
+fn args_without_no_approve<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    args.iter()
+        .copied()
+        .filter(|arg| *arg != "--no-approve" && *arg != "-na")
+        .collect()
+}
+
+/// Prefer `--no-approve` so non-interactive extension ops skip project-trust prompts.
+/// Older / non-official `pi` builds may reject the flag on some subcommands (e.g. `list`);
+/// fall back once without it so the UI still works.
+async fn run_pi_command_preferring_no_approve(
+    runtime_location: &RuntimeLocationInfo,
+    args: &[&str],
+    offline: bool,
+) -> Result<(String, Vec<String>), String> {
+    let used_args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    match run_pi_command(runtime_location, args, offline).await {
+        Ok(output) => Ok((output, used_args)),
+        Err(error)
+            if args
+                .iter()
+                .any(|arg| *arg == "--no-approve" || *arg == "-na")
+                && is_unknown_no_approve_option_error(&error) =>
+        {
+            let fallback_args = args_without_no_approve(args);
+            let output = run_pi_command(runtime_location, &fallback_args, offline).await?;
+            Ok((
+                output,
+                fallback_args
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect(),
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn format_pi_command_owned(args: &[String]) -> String {
     format!("pi {}", args.join(" "))
 }
 
@@ -419,7 +472,9 @@ pub async fn list_pi_extensions(
     let runtime_location = runtime_location::get_pi_runtime_location_async(&db).await?;
     let extensions_path = get_pi_extensions_path_from_root(&runtime_location.host_path);
     let packages_path = get_pi_packages_path_from_root(&runtime_location.host_path);
-    let raw = run_pi_command(&runtime_location, &["list", "--no-approve"], true).await?;
+    let (raw, _) =
+        run_pi_command_preferring_no_approve(&runtime_location, &["list", "--no-approve"], true)
+            .await?;
     let pi_extensions = enrich_current_versions(parse_list_output(&raw));
     let local_extensions = scan_local_extensions(&extensions_path)?;
 
@@ -445,11 +500,12 @@ pub async fn install_pi_extension(
     let db = state.db();
     let runtime_location = runtime_location::get_pi_runtime_location_async(&db).await?;
     let args = ["install", source, "--no-approve"];
-    let output = run_pi_command(&runtime_location, &args, true).await?;
+    let (output, used_args) =
+        run_pi_command_preferring_no_approve(&runtime_location, &args, true).await?;
     emit_extensions_changed(&app, "pi-extensions");
 
     Ok(PiExtensionCommandResult {
-        command: format_pi_command(&args),
+        command: format_pi_command_owned(&used_args),
         output: output.trim().to_string(),
     })
 }
@@ -485,11 +541,12 @@ pub async fn uninstall_pi_extension(
     }
     args.push("--no-approve");
 
-    let output = run_pi_command(&runtime_location, &args, true).await?;
+    let (output, used_args) =
+        run_pi_command_preferring_no_approve(&runtime_location, &args, true).await?;
     emit_extensions_changed(&app, "pi-extensions");
 
     Ok(PiExtensionCommandResult {
-        command: format_pi_command(&args),
+        command: format_pi_command_owned(&used_args),
         output: output.trim().to_string(),
     })
 }
@@ -501,12 +558,14 @@ pub async fn update_pi_extensions(
 ) -> Result<PiExtensionCommandResult, String> {
     let db = state.db();
     let runtime_location = runtime_location::get_pi_runtime_location_async(&db).await?;
+    // Prefer --no-approve for CLI builds that still accept it on update; fall back if rejected.
     let args = ["update", "--extensions", "--no-approve"];
-    let output = run_pi_command(&runtime_location, &args, false).await?;
+    let (output, used_args) =
+        run_pi_command_preferring_no_approve(&runtime_location, &args, false).await?;
     emit_extensions_changed(&app, "pi-extensions");
 
     Ok(PiExtensionCommandResult {
-        command: format_pi_command(&args),
+        command: format_pi_command_owned(&used_args),
         output: output.trim().to_string(),
     })
 }
@@ -626,6 +685,38 @@ Project packages:
         );
         assert_eq!(extensions[1].source, "github:owner/repo");
         assert_eq!(extensions[1].scope, PiExtensionScope::Project);
+    }
+
+    #[test]
+    fn detects_unknown_no_approve_option_errors() {
+        assert!(is_unknown_no_approve_option_error(
+            "Unknown option --no-approve for \"list\". Use \"pi --help\" or \"pi list\"."
+        ));
+        assert!(is_unknown_no_approve_option_error(
+            "error: unknown option '-na'"
+        ));
+        assert!(!is_unknown_no_approve_option_error(
+            "Failed to install package npm:foo"
+        ));
+        assert!(!is_unknown_no_approve_option_error(
+            "Unknown option --offline for \"list\"."
+        ));
+    }
+
+    #[test]
+    fn strips_no_approve_flags_from_args() {
+        assert_eq!(
+            args_without_no_approve(&["list", "--no-approve"]),
+            vec!["list"]
+        );
+        assert_eq!(
+            args_without_no_approve(&["remove", "npm:foo", "-l", "-na"]),
+            vec!["remove", "npm:foo", "-l"]
+        );
+        assert_eq!(
+            args_without_no_approve(&["update", "--extensions"]),
+            vec!["update", "--extensions"]
+        );
     }
 
     #[test]
