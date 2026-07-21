@@ -6,6 +6,7 @@ import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
 import { parse as parseToml } from 'smol-toml';
 import { useThemeStore } from '@/stores/themeStore';
+import { INVALID_UNCLOSED_DOUBLE_QUOTE_STRING_PATTERN } from './invalidDoubleQuoteStringPattern';
 
 export interface TomlEditorProps {
   /** TOML 内容值 */
@@ -109,7 +110,7 @@ const registerTomlLanguage = () => {
         [/\./, 'delimiter'],
         [/'[^']*$/, `${tokenClass}.invalid`],
         [/'/, { token: singleQuoteClass, next: `@${singleQuotedState}` }],
-        [/"(\\.|[^"])*$/, `${tokenClass}.invalid`],
+        [INVALID_UNCLOSED_DOUBLE_QUOTE_STRING_PATTERN, `${tokenClass}.invalid`],
         [/"/, { token: doubleQuoteClass, next: `@${doubleQuotedState}` }],
         [/./, '@rematch', '@pop'],
       ],
@@ -261,7 +262,7 @@ const registerTomlLanguage = () => {
       'value.cases': [
         // 多行双引号字符串
         [/"""/, { token: 'string.multi', switchTo: '@value.string.multi.doubleQuoted' }],
-        [/"(\\.|[^"])*$/, 'string.invalid'],
+        [INVALID_UNCLOSED_DOUBLE_QUOTE_STRING_PATTERN, 'string.invalid'],
         [/"/, { token: 'string', switchTo: '@value.string.doubleQuoted' }],
 
         // 多行单引号字符串
