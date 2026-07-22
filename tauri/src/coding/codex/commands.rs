@@ -27,7 +27,7 @@ use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::proxy_gateway::{
-    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, types::GatewayCliKey,
+    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, provider_switch, types::GatewayCliKey,
 };
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
@@ -1168,6 +1168,70 @@ pub async fn set_codex_unified_session_history(
     Ok(CodexUnifiedSessionHistoryUpdateResult {
         enabled: input.enabled,
         migration,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPreserveOfficialAuthOnSwitchInput {
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPreserveOfficialAuthOnSwitchUpdateResult {
+    pub enabled: bool,
+}
+
+/// Toggle "keep official login when switching third-party providers".
+///
+/// Writes the setting first, then re-applies the current provider (if any) so
+/// live `auth.json` / `config.toml` pick up the new projection immediately.
+/// Gateway takeover reuses `apply_or_switch_provider` (restore direct → apply →
+/// re-engage single/failover).
+#[tauri::command]
+pub async fn set_codex_preserve_official_auth_on_switch(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    input: CodexPreserveOfficialAuthOnSwitchInput,
+) -> Result<CodexPreserveOfficialAuthOnSwitchUpdateResult, String> {
+    let db = state.db();
+    let existing_settings = crate::settings::store::load_settings_from_sqlite_state(&db)?;
+    if existing_settings.codex_preserve_official_auth_on_switch == input.enabled {
+        return Ok(CodexPreserveOfficialAuthOnSwitchUpdateResult {
+            enabled: input.enabled,
+        });
+    }
+
+    let applied_provider = get_applied_codex_provider(&db).await?;
+    let mut next_settings = existing_settings.clone();
+    next_settings.codex_preserve_official_auth_on_switch = input.enabled;
+    crate::settings::store::save_settings_to_sqlite_state(&db, &next_settings)?;
+
+    if let Some(provider) = applied_provider {
+        if let Err(error) = provider_switch::apply_or_switch_provider(
+            &app,
+            GatewayCliKey::Codex,
+            &provider.id,
+            false,
+        )
+        .await
+        {
+            if let Err(rollback_error) =
+                crate::settings::store::save_settings_to_sqlite_state(&db, &existing_settings)
+            {
+                log::error!(
+                    "Failed to roll back Codex preserve official auth setting: {rollback_error}"
+                );
+            }
+            return Err(format!(
+                "切换第三方时保留官方登录设置未生效（live 配置重写失败）: {error}"
+            ));
+        }
+    }
+
+    Ok(CodexPreserveOfficialAuthOnSwitchUpdateResult {
+        enabled: input.enabled,
     })
 }
 

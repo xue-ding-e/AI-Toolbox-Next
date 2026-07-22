@@ -13,6 +13,7 @@ import {
   type SidebarHiddenByPage,
   normalizeSidebarHiddenByPage,
 } from '@/services';
+import { setCodexPreserveOfficialAuthOnSwitch as setCodexPreserveOfficialAuthOnSwitchApi } from '@/services/codexApi';
 import { buildLaunchOnStartupSettings } from './settingsStoreUtils';
 
 // Re-export types for convenience (using camelCase for frontend)
@@ -465,14 +466,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setCodexPreserveOfficialAuthOnSwitch: async (enabled) => {
-    set({ codexPreserveOfficialAuthOnSwitch: enabled });
-
-    const currentSettings = await getSettings();
-    const newSettings: AppSettings = {
-      ...currentSettings,
-      codex_preserve_official_auth_on_switch: enabled,
-    };
-    await saveSettings(newSettings);
+    // Persist + re-project the currently applied Codex provider via the dedicated
+    // backend command (direct apply, or restore → apply → re-engage under Gateway).
+    const result = await setCodexPreserveOfficialAuthOnSwitchApi(enabled);
+    set({ codexPreserveOfficialAuthOnSwitch: result.enabled });
   },
 
   setCodexUnifiedSessionHistoryEnabled: (enabled) => {

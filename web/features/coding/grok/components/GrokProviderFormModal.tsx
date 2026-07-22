@@ -1,13 +1,9 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete, Checkbox } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
 import {
   CloudDownloadOutlined,
-  DeleteOutlined,
-  DownOutlined,
   EyeInvisibleOutlined,
   EyeOutlined,
-  PlusOutlined,
-  RightOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -52,7 +48,6 @@ import {
   applyGrokEndpointSettingsConfig,
   DEFAULT_GROK_MODEL,
   GROK_REASONING_EFFORT_OPTIONS,
-  resolveGrokCatalogBackendSearchFlag,
 } from '../utils/grokSettingsConfig';
 import styles from './GrokProviderFormModal.module.less';
 
@@ -319,8 +314,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
-  const [modelMappingExpanded, setModelMappingExpanded] = React.useState(false);
-  const [supportsBackendSearch, setSupportsBackendSearch] = React.useState(false);
   // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
@@ -372,7 +365,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const activeProviderCategory = canSelectProviderCategory ? providerCategory : lockedProviderCategory;
   const isOfficialMode = activeProviderCategory === 'official';
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
-  const selectedApiFormat = Form.useWatch('apiFormat', watchOptions) as GrokApiFormat | undefined;
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
 
@@ -414,12 +406,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
       return [];
     }
   }, []);
-
-  const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
-    return parseProviderCatalogModels(settingsConfig).some(
-      (item) => typeof item?.model === 'string' && item.model.trim(),
-    );
-  }, [parseProviderCatalogModels]);
 
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
@@ -512,18 +498,42 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     setSelectedProvider(null);
     setAvailableModels([]);
     setFetchedModels([]);
-    setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
-    setSupportsBackendSearch(
-      resolveGrokCatalogBackendSearchFlag(
-        parseProviderCatalogModels(provider?.settingsConfig),
-      ) === true,
-    );
-    setProcessedBaseUrl('');
+    // Create flow: prefill grok-4.5 + high, but keep both editable.
     if (!provider) {
+      handleModelChange(DEFAULT_GROK_MODEL);
+      handleReasoningEffortChange('high');
+      form.setFieldValue('model', DEFAULT_GROK_MODEL);
       setCurrentBaseUrl('');
+    } else {
+      // Edit flow: keep existing catalog; effort is the default model's effort.
+      const catalog = parseProviderCatalogModels(provider.settingsConfig);
+      const settingsConfig = (() => {
+        try {
+          return JSON.parse(provider.settingsConfig || '{}') as GrokSettingsConfig;
+        } catch {
+          return {} as GrokSettingsConfig;
+        }
+      })();
+      const defaultKey = settingsConfig.defaultModelKey?.trim();
+      const defaultModel = catalog.find((item) => (item.key?.trim() || item.model) === defaultKey)
+        || catalog[0];
+      if (defaultModel?.reasoningEffort) {
+        handleReasoningEffortChange(defaultModel.reasoningEffort);
+      }
     }
+    setProcessedBaseUrl('');
     formInitializedRef.current = true;
-  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, parseProviderCatalogModels, provider, providerHasModelMapping, resetFromSettingsConfig]);
+  }, [
+    form,
+    handleModelChange,
+    handleProviderCategoryChange,
+    handleReasoningEffortChange,
+    lockedProviderCategory,
+    open,
+    parseProviderCatalogModels,
+    provider,
+    resetFromSettingsConfig,
+  ]);
 
   React.useEffect(() => {
     if (!open || !formInitializedRef.current) {
@@ -573,15 +583,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     open,
     provider,
   ]);
-
-  React.useEffect(() => {
-    if (!open || mode !== 'manual' || isOfficialMode) {
-      return;
-    }
-    if (normalizeGrokApiFormat(selectedApiFormat) !== DEFAULT_GROK_API_FORMAT) {
-      setModelMappingExpanded(true);
-    }
-  }, [isOfficialMode, mode, open, selectedApiFormat]);
 
   // 同步 Hook 的 grokConfig 到 Form 的 configToml 字段
   // 当用户在 baseUrl 或 model 输入框输入时，需要实时更新 TOML 编辑器
@@ -725,28 +726,10 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
       handleModelChange(nextModel);
     }
 
-    if (catalogModels.length > 0) {
-      const backendSearchFields = supportsBackendSearch
-        ? { supportsBackendSearch: true as const }
-        : {};
-      setGrokCatalogModels(catalogModels.map((catalogModel) => ({
-        ...catalogModel,
-        ...backendSearchFields,
-      })));
-      setModelMappingExpanded(true);
-    } else {
-      setGrokCatalogModels([]);
-      setModelMappingExpanded(false);
-    }
+    // Preserve endpoint/catalog model fields as-is; backend-search is per-model only.
+    setGrokCatalogModels(catalogModels);
   };
 
-  const handleBackendSearchToggle = (checked: boolean) => {
-    setSupportsBackendSearch(checked);
-    setGrokCatalogModels((prev) => prev.map((catalogModel) => ({
-      ...catalogModel,
-      supportsBackendSearch: checked,
-    })));
-  };
 
   const shouldConfirmOpenAiBaseUrlV1 = (
     baseUrl: string | undefined,
@@ -782,16 +765,64 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
       const selectedCategory = mode === 'import'
         ? 'custom'
         : (activeProviderCategory === 'official' ? 'official' : 'custom');
+      // Create/edit both use form values. Create prefills grok-4.5 + high but stays editable.
+      const selectedModelValue = (submittedValues.model || '').trim() || DEFAULT_GROK_MODEL;
+      const selectedEffort = grokReasoningEffort || (!isEdit ? 'high' : undefined);
+      let catalogForSave = grokCatalogModels;
+      let preferredDefaultKey: string | undefined;
+      if (selectedCategory === 'custom' && isEdit) {
+        const matched = grokCatalogModels.find((item) => (
+          (item.key?.trim() || item.model) === selectedModelValue
+          || item.model === selectedModelValue
+        ));
+        preferredDefaultKey = matched?.key?.trim() || matched?.model || selectedModelValue || undefined;
+        if (matched && selectedEffort) {
+          catalogForSave = grokCatalogModels.map((item) => {
+            const key = item.key?.trim() || item.model;
+            if (key !== preferredDefaultKey) {
+              return item;
+            }
+            const efforts = Array.isArray(item.reasoningEfforts) && item.reasoningEfforts.length > 0
+              ? item.reasoningEfforts
+              : ['low', 'medium', 'high', 'xhigh'];
+            return {
+              ...item,
+              supportsReasoningEffort: true,
+              reasoningEfforts: efforts,
+              reasoningEffort: efforts.includes(selectedEffort)
+                ? selectedEffort
+                : efforts[0],
+            };
+          });
+        }
+      } else if (selectedCategory === 'custom' && !isEdit) {
+        // Bootstrap one default model: key and upstream model id are the same string
+        // (form "模型名称"), matching the multi-model editor rule.
+        const bootstrapKey = selectedModelValue;
+        const bootstrapEffort = selectedEffort || 'high';
+        catalogForSave = [{
+          key: bootstrapKey,
+          model: bootstrapKey,
+          displayName: bootstrapKey,
+          supportsReasoningEffort: true,
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          reasoningEffort: bootstrapEffort,
+        }];
+        preferredDefaultKey = bootstrapKey;
+      }
+
       const settingsConfig = getFinalSettingsConfig({
         category: selectedCategory,
         apiKey: submittedValues.apiKey || '',
         baseUrl: submittedValues.baseUrl || '',
-        model: submittedValues.model || '',
+        model: selectedModelValue,
         apiFormat: normalizeGrokApiFormat(submittedValues.apiFormat),
-        supportsBackendSearch: selectedCategory === 'custom' ? supportsBackendSearch : undefined,
-        reasoningEffort: grokReasoningEffort,
+        // Channel form no longer owns backend-search toggle; preserve per-model flags already on catalog.
+        supportsBackendSearch: undefined,
+        reasoningEffort: selectedEffort,
+        defaultModelKey: preferredDefaultKey,
         config: submittedValues.configToml || '',
-        catalogModels: grokCatalogModels,
+        catalogModels: catalogForSave,
       });
       const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
         ? undefined
@@ -965,32 +996,6 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     }
   };
 
-  const handleAddModelMapping = React.useCallback(() => {
-    setModelMappingExpanded(true);
-    setGrokCatalogModels((prev) => [
-      ...prev,
-      {
-        model: '',
-        displayName: '',
-        contextWindow: '',
-        supportsBackendSearch,
-      },
-    ]);
-  }, [setGrokCatalogModels, supportsBackendSearch]);
-
-  const handleUpdateModelMapping = React.useCallback((
-    index: number,
-    patch: Partial<GrokCatalogModel>,
-  ) => {
-    setGrokCatalogModels((prev) => prev.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, ...patch } : item
-    )));
-  }, [setGrokCatalogModels]);
-
-  const handleRemoveModelMapping = React.useCallback((index: number) => {
-    setGrokCatalogModels((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
-  }, [setGrokCatalogModels]);
-
   // 根据 baseUrl 辅助匹配 OpenCode 导入候选的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
@@ -1151,64 +1156,77 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             />
           </Form.Item>
 
-          <Form.Item
-            label={t('grok.provider.backendSearch')}
-            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('grok.provider.backendSearchHint')}</Text>}
-          >
-            <Checkbox
-              checked={supportsBackendSearch}
-              onChange={(event) => handleBackendSearchToggle(event.target.checked)}
-            >
-              {t('grok.provider.enableBackendSearch')}
-            </Checkbox>
-          </Form.Item>
         </>
       )}
 
+      {/* Model + effort: create prefills grok-4.5/high (editable); edit custom picks from card catalog. */}
       <Form.Item
-        label={t('grok.provider.reasoningEffort')}
+        label={t('grok.provider.modelName')}
         help={(
           <Text type="secondary" style={{ fontSize: 12 }}>
             {isOfficialMode
-              ? t('grok.provider.reasoningEffortOfficialHint')
-              : t('grok.provider.reasoningEffortCustomHint')}
+              ? t('grok.provider.modelNameOfficialHint')
+              : isEdit
+                ? t('grok.provider.modelNameEditHint')
+                : t('grok.provider.modelNameCreateHint')}
           </Text>
         )}
       >
-        <Select
-          allowClear
-          placeholder={t('grok.provider.reasoningEffortPlaceholder')}
-          value={grokReasoningEffort}
-          onChange={(value) => handleReasoningEffortChange(
-            typeof value === 'string' ? value : undefined,
-          )}
-          options={GROK_REASONING_EFFORT_OPTIONS.map((value) => ({
-            value,
-            label: value === 'low'
-              ? t('grok.provider.reasoningEffortLow')
-              : value === 'medium'
-                ? t('grok.provider.reasoningEffortMedium')
-                : t('grok.provider.reasoningEffortHigh'),
-          }))}
-        />
-      </Form.Item>
-
-      <Form.Item label={t('grok.provider.modelName')}>
-        <div className={styles.modelNameControl}>
-          <div className={styles.modelNameRow}>
-            <div className={styles.modelNameInput}>
-              <Form.Item name="model" noStyle>
-                <AutoComplete
-                  options={modelOptions}
-                  placeholder={t('grok.provider.modelNamePlaceholder')}
-                  style={{ width: '100%' }}
-                  filterOption={(inputValue, option) =>
-                    (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-                    option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+        <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+          {isOfficialMode || !isEdit ? (
+            <Form.Item name="model" noStyle initialValue={DEFAULT_GROK_MODEL}>
+              <AutoComplete
+                options={modelOptions}
+                placeholder={t('grok.provider.modelNamePlaceholder')}
+                style={{ flex: 1, minWidth: 0 }}
+                filterOption={(inputValue, option) =>
+                  (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+                  option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+                }
+                onChange={(value) => handleModelChange(String(value || ''))}
+              />
+            </Form.Item>
+          ) : (
+            <Form.Item name="model" noStyle>
+              <Select
+                style={{ flex: 1, minWidth: 0 }}
+                placeholder={t('grok.provider.modelNamePlaceholder')}
+                options={grokCatalogModels.map((item) => {
+                  const key = item.key?.trim() || item.model;
+                  const label = item.displayName || item.model || key;
+                  return {
+                    value: key,
+                    label: item.model && item.model !== key
+                      ? `${label} (${item.model})`
+                      : label,
+                  };
+                })}
+                onChange={(value) => {
+                  handleModelChange(String(value || ''));
+                  const selected = grokCatalogModels.find((item) => (
+                    (item.key?.trim() || item.model) === value
+                  ));
+                  if (selected?.reasoningEffort) {
+                    handleReasoningEffortChange(selected.reasoningEffort);
                   }
-                />
-              </Form.Item>
-            </div>
+                }}
+              />
+            </Form.Item>
+          )}
+          <Select
+            style={{ width: 168, flexShrink: 0 }}
+            allowClear
+            placeholder={t('grok.provider.reasoningEffortPlaceholder')}
+            value={grokReasoningEffort || undefined}
+            onChange={(value) => handleReasoningEffortChange(
+              typeof value === 'string' ? value : undefined,
+            )}
+            options={GROK_REASONING_EFFORT_OPTIONS.map((value) => ({
+              value,
+              label: value,
+            }))}
+          />
+          {isOfficialMode && (
             <Button
               icon={<CloudDownloadOutlined />}
               loading={loadingModels}
@@ -1216,82 +1234,8 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             >
               {t('grok.fetchModels.button')}
             </Button>
-            {!isOfficialMode && (
-              <Button
-                icon={modelMappingExpanded ? <DownOutlined /> : <RightOutlined />}
-                onClick={() => setModelMappingExpanded((prev) => !prev)}
-              >
-                {t('grok.provider.modelMapping')}
-              </Button>
-            )}
-            {fetchedModels.length > 0 && (
-              <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-                {t('grok.fetchModels.loaded', { count: fetchedModels.length })}
-              </Text>
-            )}
-          </div>
+          )}
         </div>
-        {!isOfficialMode && modelMappingExpanded && (
-          <div className={styles.modelMappingPanel}>
-            <Space direction="vertical" size={10} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('grok.provider.modelMappingHint')}
-              </Text>
-              {grokCatalogModels.map((item, index) => (
-                <div
-                  key={index}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(120px, 1fr) minmax(160px, 1.2fr) 120px 32px',
-                    gap: 8,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Input
-                    value={item.displayName ?? ''}
-                    placeholder={t('grok.provider.modelMappingDisplayNamePlaceholder')}
-                    aria-label={t('grok.provider.modelMappingDisplayName')}
-                    onChange={(event) => handleUpdateModelMapping(index, { displayName: event.target.value })}
-                  />
-                  <AutoComplete
-                    value={item.model}
-                    options={modelOptions}
-                    placeholder={t('grok.provider.modelMappingModelPlaceholder')}
-                    aria-label={t('grok.provider.modelMappingModel')}
-                    filterOption={(inputValue, option) =>
-                      (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-                      option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
-                    }
-                    onChange={(value) => handleUpdateModelMapping(index, { model: value })}
-                  />
-                  <Input
-                    value={item.contextWindow ?? ''}
-                    inputMode="numeric"
-                    placeholder={t('grok.provider.modelMappingContextWindowPlaceholder')}
-                    aria-label={t('grok.provider.modelMappingContextWindow')}
-                    onChange={(event) => handleUpdateModelMapping(index, {
-                      contextWindow: event.target.value.replace(/[^\d]/g, ''),
-                    })}
-                  />
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    aria-label={t('grok.provider.modelMappingRemove')}
-                    onClick={() => handleRemoveModelMapping(index)}
-                  />
-                </div>
-              ))}
-              <Button
-                type="dashed"
-                icon={<PlusOutlined />}
-                onClick={handleAddModelMapping}
-              >
-                {t('grok.provider.modelMappingAdd')}
-              </Button>
-            </Space>
-          </div>
-        )}
       </Form.Item>
 
       <Form.Item wrapperCol={sectionWrapperCol}>

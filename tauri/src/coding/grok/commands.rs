@@ -1145,6 +1145,7 @@ fn parse_local_grok_provider_snapshot(
                     "supports_backend_search" => Some("supportsBackendSearch"),
                     "supports_reasoning_effort" => Some("supportsReasoningEffort"),
                     "reasoning_effort" => Some("reasoningEffort"),
+                    "reasoning_efforts" => Some("reasoningEfforts"),
                     "stream_tool_calls" => Some("streamToolCalls"),
                     "max_retries" => Some("maxRetries"),
                     "inference_idle_timeout_secs" => Some("inferenceIdleTimeoutSecs"),
@@ -1683,6 +1684,7 @@ fn insert_known_model_fields(
         ("supportsBackendSearch", "supports_backend_search"),
         ("supportsReasoningEffort", "supports_reasoning_effort"),
         ("reasoningEffort", "reasoning_effort"),
+        ("reasoningEfforts", "reasoning_efforts"),
         ("streamToolCalls", "stream_tool_calls"),
         ("maxRetries", "max_retries"),
         ("inferenceIdleTimeoutSecs", "inference_idle_timeout_secs"),
@@ -1783,6 +1785,7 @@ mod tests {
                 "supportsBackendSearch": false,
                 "supportsReasoningEffort": true,
                 "reasoningEffort": "high",
+                "reasoningEfforts": ["low", "medium", "high", "xhigh"],
                 "streamToolCalls": false,
                 "maxRetries": 4,
                 "inferenceIdleTimeoutSecs": 120,
@@ -1802,6 +1805,8 @@ mod tests {
         assert!(text.contains("supports_backend_search = false"));
         assert!(text.contains("supports_reasoning_effort = true"));
         assert!(text.contains("reasoning_effort = \"high\""));
+        assert!(text.contains("reasoning_efforts"));
+        assert!(text.contains("\"xhigh\""));
         assert!(!text.contains("default_reasoning_effort"));
         assert!(text.contains("stream_tool_calls = false"));
         assert!(text.contains("max_retries = 4"));

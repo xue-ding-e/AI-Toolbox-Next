@@ -53,6 +53,12 @@ export interface GrokCatalogModel {
   topP?: number;
   supportsBackendSearch?: boolean;
   supportsReasoningEffort?: boolean;
+  /**
+   * Supported effort menu for this model (Grok Build SoT).
+   * Projects to `[model.<key>].reasoning_efforts`.
+   */
+  reasoningEfforts?: string[];
+  /** Default/selected effort for this model. Projects to `reasoning_effort`. */
   reasoningEffort?: string;
   streamToolCalls?: boolean;
   maxRetries?: number;

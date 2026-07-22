@@ -66,6 +66,19 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import GrokPluginsPanel from '../components/GrokPluginsPanel';
 import GrokDeviceAuthModal from '../components/GrokDeviceAuthModal';
 import { GROK_LOCAL_PROVIDER_ID, shouldLoadGrokOfficialAccounts } from '../utils/localProvider';
+import GrokModelFormModal from '../components/GrokModelFormModal';
+import {
+  buildGrokProviderSettingsWithModels,
+  fromGrokModelFormValues,
+  getGrokProviderCatalogModels,
+  getGrokProviderDefaultModelKey,
+  removeGrokCatalogModel,
+  toGrokModelFormValues,
+  upsertGrokCatalogModel,
+  type GrokModelFormValues,
+} from '../utils/grokProviderModels';
+import FetchModelsModal from '@/components/common/FetchModelsModal';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import GrokConfigPreviewModal from '@/components/common/GrokConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
@@ -228,6 +241,12 @@ const GrokPage: React.FC = () => {
   const [editingProvider, setEditingProvider] = React.useState<GrokProvider | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [providerModalMode, setProviderModalMode] = React.useState<'manual' | 'import'>('manual');
+  const [modelModalOpen, setModelModalOpen] = React.useState(false);
+  const [modelModalProvider, setModelModalProvider] = React.useState<GrokProvider | null>(null);
+  const [modelModalKey, setModelModalKey] = React.useState<string>('');
+  const [modelModalInitialValues, setModelModalInitialValues] = React.useState<Partial<GrokModelFormValues> | undefined>();
+  const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
+  const [fetchModelsProvider, setFetchModelsProvider] = React.useState<GrokProvider | null>(null);
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [deviceAuthSession, setDeviceAuthSession] = React.useState<GrokDeviceAuthStartResult | null>(null);
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
@@ -473,6 +492,168 @@ const GrokPage: React.FC = () => {
       message.error(errorMsg || t('common.error'));
     }
   };
+
+  const persistProviderCatalog = React.useCallback(async (
+    provider: GrokProvider,
+    models: ReturnType<typeof getGrokProviderCatalogModels>,
+    defaultModelKey?: string,
+  ) => {
+    const nextSettingsConfig = buildGrokProviderSettingsWithModels(
+      provider,
+      models,
+      defaultModelKey,
+    );
+    await updateGrokProvider({
+      ...provider,
+      settingsConfig: nextSettingsConfig,
+    });
+    await loadConfig(true);
+    await refreshTrayMenu();
+  }, [loadConfig]);
+
+  const handleAddModel = React.useCallback((provider: GrokProvider) => {
+    if (provider.category === 'official' || provider.id === GROK_LOCAL_PROVIDER_ID) {
+      return;
+    }
+    setModelModalProvider(provider);
+    setModelModalKey('');
+    setModelModalInitialValues(undefined);
+    setModelModalOpen(true);
+  }, []);
+
+  const handleEditModel = React.useCallback((provider: GrokProvider, modelKey: string) => {
+    const models = getGrokProviderCatalogModels(provider);
+    const model = models.find((item) => (item.key?.trim() || item.model) === modelKey);
+    if (!model) {
+      return;
+    }
+    setModelModalProvider(provider);
+    setModelModalKey(modelKey);
+    setModelModalInitialValues(toGrokModelFormValues(model));
+    setModelModalOpen(true);
+  }, []);
+
+  const handleDeleteModel = React.useCallback(async (provider: GrokProvider, modelKey: string) => {
+    try {
+      const models = removeGrokCatalogModel(getGrokProviderCatalogModels(provider), modelKey);
+      const currentDefault = getGrokProviderDefaultModelKey(provider);
+      const nextDefault = currentDefault === modelKey
+        ? (models[0]?.key || models[0]?.model)
+        : currentDefault;
+      await persistProviderCatalog(provider, models, nextDefault);
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to delete Grok model:', error);
+      message.error(t('common.error'));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleSetDefaultModel = React.useCallback(async (provider: GrokProvider, modelKey: string) => {
+    try {
+      const models = getGrokProviderCatalogModels(provider);
+      await persistProviderCatalog(provider, models, modelKey);
+      const model = models.find((item) => (item.key?.trim() || item.model) === modelKey);
+      message.success(t('grok.model.setAsPrimarySuccess', {
+        name: model?.displayName || model?.model || modelKey,
+      }));
+    } catch (error) {
+      console.error('Failed to set Grok default model:', error);
+      message.error(t('common.error'));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleOpenFetchModels = React.useCallback((provider: GrokProvider) => {
+    if (provider.category === 'official' || provider.id === GROK_LOCAL_PROVIDER_ID) {
+      return;
+    }
+    setFetchModelsProvider(provider);
+    setFetchModelsModalOpen(true);
+  }, []);
+
+  const handleFetchModelsApply = React.useCallback(async (result: FetchModelsApplyResult) => {
+    if (!fetchModelsProvider) {
+      return;
+    }
+    try {
+      const settings = (() => {
+        try {
+          return JSON.parse(fetchModelsProvider.settingsConfig || '{}') as GrokSettingsConfig;
+        } catch {
+          return {} as GrokSettingsConfig;
+        }
+      })();
+      const baseUrl = extractGrokSettingsBaseUrl(settings);
+      const apiBackend = extractGrokSettingsApiBackend(settings);
+      let models = getGrokProviderCatalogModels(fetchModelsProvider);
+      const removed = new Set(result.removedModelIds || []);
+      if (removed.size > 0) {
+        models = models.filter((model) => !removed.has(model.key?.trim() || model.model));
+      }
+
+      for (const fetched of result.selectedModels) {
+        const key = fetched.id.trim();
+        if (!key) {
+          continue;
+        }
+        const existing = models.find((model) => (model.key?.trim() || model.model) === key);
+        models = upsertGrokCatalogModel(models, {
+          ...existing,
+          key,
+          model: key,
+          displayName: fetched.name || existing?.displayName || key,
+          ...(baseUrl ? { baseUrl } : {}),
+          ...(apiBackend ? { apiBackend } : {}),
+        }, existing?.key);
+      }
+
+      const currentDefault = getGrokProviderDefaultModelKey(fetchModelsProvider);
+      const nextDefault = currentDefault && models.some((model) => (model.key?.trim() || model.model) === currentDefault)
+        ? currentDefault
+        : (models[0]?.key || models[0]?.model);
+      await persistProviderCatalog(fetchModelsProvider, models, nextDefault);
+      setFetchModelsModalOpen(false);
+      setFetchModelsProvider(null);
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to apply fetched Grok models:', error);
+      message.error(t('common.error'));
+    }
+  }, [fetchModelsProvider, persistProviderCatalog, t]);
+
+  const handleModelFormSubmit = React.useCallback(async (values: GrokModelFormValues) => {
+    if (!modelModalProvider) {
+      return;
+    }
+    try {
+      const models = getGrokProviderCatalogModels(modelModalProvider);
+      const existing = models.find((item) => (item.key?.trim() || item.model) === modelModalKey);
+      const settings = (() => {
+        try {
+          return JSON.parse(modelModalProvider.settingsConfig || '{}') as GrokSettingsConfig;
+        } catch {
+          return {} as GrokSettingsConfig;
+        }
+      })();
+      const nextModel = fromGrokModelFormValues(values, existing, {
+        baseUrl: extractGrokSettingsBaseUrl(settings),
+        apiBackend: extractGrokSettingsApiBackend(settings),
+      });
+      const nextModels = upsertGrokCatalogModel(models, nextModel, modelModalKey || undefined);
+      const currentDefault = getGrokProviderDefaultModelKey(modelModalProvider);
+      const nextDefault = modelModalKey && currentDefault === modelModalKey
+        ? nextModel.key
+        : (currentDefault || nextModel.key);
+      await persistProviderCatalog(modelModalProvider, nextModels, nextDefault);
+      setModelModalOpen(false);
+      setModelModalProvider(null);
+      setModelModalKey('');
+      setModelModalInitialValues(undefined);
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to save Grok model:', error);
+      message.error(t('common.error'));
+    }
+  }, [modelModalKey, modelModalProvider, persistProviderCatalog, t]);
 
   const handleToggleDisabled = async (provider: GrokProvider, isDisabled: boolean) => {
     try {
@@ -1451,6 +1632,15 @@ const GrokPage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                onAddModel={handleAddModel}
+                                onEditModel={handleEditModel}
+                                onDeleteModel={(provider, modelKey) => {
+                                  void handleDeleteModel(provider, modelKey);
+                                }}
+                                onSetDefaultModel={(provider, modelKey) => {
+                                  void handleSetDefaultModel(provider, modelKey);
+                                }}
+                                onFetchModels={handleOpenFetchModels}
                                 onOfficialAccountLogin={handleStartOfficialAccountOauth}
                                 onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}
                                 onOfficialAccountApply={handleApplyOfficialAccount}
@@ -1600,6 +1790,52 @@ const GrokPage: React.FC = () => {
               setIsCopyMode(false);
             }}
             onSubmit={handleProviderSubmit}
+          />
+        )}
+
+        <GrokModelFormModal
+          open={modelModalOpen}
+          isEdit={Boolean(modelModalKey)}
+          initialValues={modelModalInitialValues}
+          existingKeys={modelModalProvider
+            ? getGrokProviderCatalogModels(modelModalProvider)
+                .map((model) => model.key?.trim() || model.model)
+                .filter(Boolean)
+            : []}
+          onCancel={() => {
+            setModelModalOpen(false);
+            setModelModalProvider(null);
+            setModelModalKey('');
+            setModelModalInitialValues(undefined);
+          }}
+          onSubmit={handleModelFormSubmit}
+        />
+
+        {fetchModelsProvider && (
+          <FetchModelsModal
+            open={fetchModelsModalOpen}
+            providerId={fetchModelsProvider.id}
+            providerName={fetchModelsProvider.name}
+            baseUrl={extractGrokSettingsBaseUrl(parseGrokSettingsConfig(fetchModelsProvider.settingsConfig)) || ''}
+            apiKey={(() => {
+              try {
+                const settings = JSON.parse(fetchModelsProvider.settingsConfig || '{}') as GrokSettingsConfig;
+                return settings.auth?.API_KEY || '';
+              } catch {
+                return '';
+              }
+            })()}
+            sdkType="@ai-sdk/openai"
+            existingModelIds={getGrokProviderCatalogModels(fetchModelsProvider)
+              .map((model) => model.key?.trim() || model.model)
+              .filter(Boolean)}
+            onCancel={() => {
+              setFetchModelsModalOpen(false);
+              setFetchModelsProvider(null);
+            }}
+            onSuccess={(result) => {
+              void handleFetchModelsApply(result);
+            }}
           />
         )}
 

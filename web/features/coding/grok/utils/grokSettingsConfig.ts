@@ -15,26 +15,28 @@ export const DEFAULT_GROK_MODEL = 'grok-4.5';
 /** Fixed local catalog key for custom providers. Users never edit this. */
 export const CUSTOM_GROK_MODEL_KEY = 'custom';
 
-/** Official Grok Build effort levels for config.toml (API primary set). */
-export const GROK_REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high'] as const;
+/** Official / default effort levels commonly used in Grok Build menus. */
+export const GROK_REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh'] as const;
 export type GrokReasoningEffort = (typeof GROK_REASONING_EFFORT_OPTIONS)[number];
 
 export interface BuildGrokSettingsConfigInput {
   category: GrokProviderCategory;
   apiKey: string;
   baseUrl: string;
-  /** Upstream model ID for the default slot (not the local catalog key). */
+  /** Upstream model ID for bootstrap / official default (not always the local catalog key). */
   model: string;
   apiFormat?: GrokApiFormat;
   /** When set, force every projected [model.*] to this backend-search flag. */
   supportsBackendSearch?: boolean;
   /**
-   * Channel-level reasoning effort.
+   * Channel-level default reasoning effort.
    * - official → `defaultReasoningEffort` → `[models].default_reasoning_effort`
-   * - custom → every catalog model `reasoningEffort` + `supportsReasoningEffort=true`
+   * - custom → only stamps the default catalog model when that model has no menu yet
    * - empty/undefined → omit (follow CLI/model default)
    */
   reasoningEffort?: string;
+  /** Preferred default catalog key when multi-model catalog is managed outside the channel form. */
+  defaultModelKey?: string;
   config: string;
   catalogModels: GrokCatalogModel[];
   auth: Record<string, unknown>;
@@ -111,91 +113,92 @@ export function parseGrokSettingsConfig(rawConfig: string | undefined): GrokSett
 }
 
 /**
- * Project form-owned fields onto the fixed `custom` default slot.
- * - Form "model name" = upstream model ID → catalog entry model field only.
- * - Local key is always `custom` (user never edits it).
- * - Mapping displayName is owned by the mapping UI; do not rewrite it here.
+ * Project channel-owned fields onto the model catalog without collapsing multi-model keys.
+ * - Base URL / API format / backend search remain channel-level and apply to every model.
+ * - Catalog keys stay free (no longer forced to `custom`).
+ * - Empty catalog bootstraps one model from the form upstream model id.
  */
-function projectCustomDefaultCatalogModels(
+function projectCustomChannelOntoCatalogModels(
   catalogModels: GrokCatalogModel[],
   upstreamModel: string,
   normalizedBaseUrl: string,
   apiBackend: string,
   backendSearchFields: { supportsBackendSearch?: boolean },
-  reasoningEffortFields: {
-    supportsReasoningEffort?: boolean;
-    reasoningEffort?: string;
-  },
 ): GrokCatalogModel[] {
-  let models = catalogModels.map((catalogModel) => {
-    const next: GrokCatalogModel = {
-      ...catalogModel,
-      key: catalogModel.key?.trim() || catalogModel.model,
-      ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
-      apiBackend,
-      ...backendSearchFields,
-    };
-    if (reasoningEffortFields.reasoningEffort) {
-      next.supportsReasoningEffort = true;
-      next.reasoningEffort = reasoningEffortFields.reasoningEffort;
-    } else {
-      delete next.supportsReasoningEffort;
-      delete next.reasoningEffort;
-    }
-    return next;
-  });
-
-  if (models.length === 0) {
+  if (catalogModels.length === 0) {
     return [{
-      key: CUSTOM_GROK_MODEL_KEY,
-      model: upstreamModel,
-      displayName: upstreamModel,
+      key: upstreamModel || CUSTOM_GROK_MODEL_KEY,
+      model: upstreamModel || DEFAULT_GROK_MODEL,
+      displayName: upstreamModel || DEFAULT_GROK_MODEL,
       ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
       apiBackend,
       ...backendSearchFields,
-      ...reasoningEffortFields,
     }];
   }
 
-  let defaultIndex = models.findIndex(
-    (catalogModel) => catalogModel.key === CUSTOM_GROK_MODEL_KEY,
-  );
-  if (defaultIndex < 0) {
-    // Migrate legacy catalogs that used the upstream id (or other values) as key.
-    defaultIndex = models.findIndex(
-      (catalogModel) => (
-        catalogModel.model === upstreamModel || catalogModel.key === upstreamModel
-      ),
-    );
-    if (defaultIndex < 0 && models.length === 1) {
-      defaultIndex = 0;
-    }
+  return catalogModels.map((catalogModel) => ({
+    ...catalogModel,
+    key: catalogModel.key?.trim() || catalogModel.model,
+    ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
+    apiBackend,
+    ...backendSearchFields,
+  }));
+}
+
+function resolveCustomDefaultModelKey(
+  models: GrokCatalogModel[],
+  preferredKey?: string,
+): string {
+  const preferred = preferredKey?.trim();
+  if (preferred && models.some((model) => model.key === preferred || model.model === preferred)) {
+    const matched = models.find((model) => model.key === preferred || model.model === preferred);
+    return matched?.key?.trim() || matched?.model || preferred;
+  }
+  // Legacy single-slot catalogs used fixed key "custom". Prefer that slot's
+  // upstream model id as the default pointer when present.
+  const legacyCustom = models.find((model) => model.key === CUSTOM_GROK_MODEL_KEY);
+  if (legacyCustom) {
+    return legacyCustom.key?.trim() || legacyCustom.model || CUSTOM_GROK_MODEL_KEY;
+  }
+  return models[0]?.key?.trim() || models[0]?.model || CUSTOM_GROK_MODEL_KEY;
+}
+
+/**
+ * Soft-migrate legacy fixed-key "custom" catalogs so UI/default pointers keep working
+ * while still accepting old saved provider JSON without rewrite until next save.
+ */
+function softMigrateLegacyCustomCatalog(
+  models: GrokCatalogModel[],
+  preferredDefaultKey?: string,
+): { models: GrokCatalogModel[]; defaultModelKey: string } {
+  const normalized = normalizeGrokCatalogModels(models);
+  if (normalized.length === 0) {
+    const fallback = preferredDefaultKey?.trim() || CUSTOM_GROK_MODEL_KEY;
+    return { models: normalized, defaultModelKey: fallback };
   }
 
-  if (defaultIndex < 0) {
-    models = [
-      ...models,
-      {
-        key: CUSTOM_GROK_MODEL_KEY,
-        model: upstreamModel,
-        displayName: upstreamModel,
-        ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
-        apiBackend,
-        ...backendSearchFields,
-        ...reasoningEffortFields,
-      },
-    ];
-    return models;
+  // If there is exactly one legacy "custom" slot, rewrite key to upstream model id.
+  if (
+    normalized.length === 1
+    && (normalized[0].key === CUSTOM_GROK_MODEL_KEY || preferredDefaultKey === CUSTOM_GROK_MODEL_KEY)
+  ) {
+    const upstream = normalized[0].model?.trim() || CUSTOM_GROK_MODEL_KEY;
+    const migrated = [{
+      ...normalized[0],
+      key: upstream,
+      model: upstream,
+      displayName: normalized[0].displayName || upstream,
+    }];
+    return {
+      models: migrated,
+      defaultModelKey: upstream,
+    };
   }
 
-  const existing = models[defaultIndex];
-  models[defaultIndex] = {
-    ...existing,
-    key: CUSTOM_GROK_MODEL_KEY,
-    model: upstreamModel,
-    // Keep mapping displayName untouched when the form model name changes.
+  return {
+    models: normalized,
+    defaultModelKey: resolveCustomDefaultModelKey(normalized, preferredDefaultKey),
   };
-  return models;
 }
 
 export function buildGrokSettingsConfig({
@@ -206,6 +209,7 @@ export function buildGrokSettingsConfig({
   apiFormat,
   supportsBackendSearch,
   reasoningEffort,
+  defaultModelKey: preferredDefaultModelKey,
   config,
   catalogModels,
   auth,
@@ -215,46 +219,42 @@ export function buildGrokSettingsConfig({
     : config.trim();
   const normalizedApiKey = apiKey.trim();
   const normalizedBaseUrl = baseUrl.trim();
-  // Form model name = upstream model ID. Official and custom both fall back to the
-  // current Grok default when the field is left empty.
+  // Form model name = upstream model ID. Official and empty custom catalogs fall back
+  // to the current Grok default when the field is left empty.
   const normalizedUpstreamModel = model.trim() || DEFAULT_GROK_MODEL;
-  // Form-level API format is the provider protocol source of truth. Model mapping
-  // UI does not edit per-model apiBackend, so always project the selected format.
-  // Keeping a previous "responses" value when the form is "chat" left live config
-  // with api_backend = "responses" after apply.
+  // Form-level API format is the provider protocol source of truth. Always project the
+  // selected format onto catalog models so live api_backend does not go stale.
   const apiBackend = mapGrokApiFormatToBackend(apiFormat);
   const backendSearchFields = typeof supportsBackendSearch === 'boolean'
     ? { supportsBackendSearch }
     : {};
   const normalizedReasoningEffort = normalizeGrokReasoningEffort(reasoningEffort);
-  const reasoningEffortFields = normalizedReasoningEffort
-    ? {
-        supportsReasoningEffort: true as const,
-        reasoningEffort: normalizedReasoningEffort,
-      }
-    : {};
   let normalizedCatalogModels = normalizeGrokCatalogModels(catalogModels);
+  let defaultModelKey = category === 'custom'
+    ? resolveCustomDefaultModelKey(normalizedCatalogModels, preferredDefaultModelKey)
+    : normalizedUpstreamModel;
 
   if (category === 'custom') {
-    // Form-level Base URL is the channel SoT (model-mapping UI cannot edit per-model
-    // baseUrl). Always overwrite catalog baseUrl when the form value is non-empty —
-    // same rule as apiBackend / supportsBackendSearch. Keeping a previous catalog
-    // baseUrl left live [model.<key>].base_url stale after the user edited Base URL
-    // and saved (issue #256).
-    //
-    // Local catalog key for the default slot is fixed to `custom`. Form "model name"
-    // only updates the upstream model field on that slot; mapping displayName stays
-    // under mapping-UI control.
-    //
-    // Channel-level reasoning effort mirrors backend search: when set, overwrite every
-    // catalog model; when unset, strip so apply omits official reasoning_effort fields.
-    normalizedCatalogModels = projectCustomDefaultCatalogModels(
+    // Soft-migrate historical fixed key "custom" when building settings for save/apply.
+    const migrated = softMigrateLegacyCustomCatalog(
+      normalizedCatalogModels,
+      preferredDefaultModelKey || defaultModelKey,
+    );
+    normalizedCatalogModels = migrated.models;
+    defaultModelKey = migrated.defaultModelKey;
+
+    // Channel SoT for Base URL / API format / optional backend-search projection.
+    // Multi-model keys and per-model reasoning menus are owned by the model list UI.
+    normalizedCatalogModels = projectCustomChannelOntoCatalogModels(
       normalizedCatalogModels,
       normalizedUpstreamModel,
       normalizedBaseUrl,
       apiBackend,
       backendSearchFields,
-      reasoningEffortFields,
+    );
+    defaultModelKey = resolveCustomDefaultModelKey(
+      normalizedCatalogModels,
+      defaultModelKey,
     );
   }
 
@@ -265,11 +265,29 @@ export function buildGrokSettingsConfig({
     delete finalAuth.API_KEY;
   }
 
-  // Custom providers always select the fixed local key. Official stores the model id
-  // directly as defaultModelKey (no modelCatalog).
-  const defaultModelKey = category === 'custom'
-    ? CUSTOM_GROK_MODEL_KEY
-    : normalizedUpstreamModel;
+  // Optional channel-level effort only bootstraps the default model when that model
+  // does not already own a reasoning menu (model list is the multi-model SoT).
+  if (category === 'custom' && normalizedReasoningEffort) {
+    normalizedCatalogModels = normalizedCatalogModels.map((catalogModel) => {
+      if (catalogModel.key !== defaultModelKey) {
+        return catalogModel;
+      }
+      if (Array.isArray(catalogModel.reasoningEfforts) && catalogModel.reasoningEfforts.length > 0) {
+        return {
+          ...catalogModel,
+          supportsReasoningEffort: true,
+          reasoningEffort: catalogModel.reasoningEfforts.includes(normalizedReasoningEffort)
+            ? normalizedReasoningEffort
+            : catalogModel.reasoningEffort,
+        };
+      }
+      return {
+        ...catalogModel,
+        supportsReasoningEffort: true,
+        reasoningEffort: normalizedReasoningEffort,
+      };
+    });
+  }
 
   const settingsConfig: GrokSettingsConfig = {
     auth: finalAuth,
@@ -310,39 +328,35 @@ export function applyGrokEndpointSettingsConfig({
   const backendSearchFields = typeof backendSearchFlag === 'boolean'
     ? { supportsBackendSearch: backendSearchFlag }
     : {};
-  const catalogReasoningEffort = normalizeGrokReasoningEffort(
-    resolveGrokCatalogReasoningEffort(seededCatalogModels),
-  );
-  const reasoningEffortFields = catalogReasoningEffort
-    ? {
-        supportsReasoningEffort: true as const,
-        reasoningEffort: catalogReasoningEffort,
-      }
-    : {};
   // Built-in endpoints lock API format, but Base URL stays editable. Prefer the
   // form-level baseUrl already projected by buildGrokSettingsConfig (issue #256).
   const formBaseUrl = extractGrokSettingsBaseUrl(parsed)?.trim() || '';
   const normalizedBaseUrl = formBaseUrl || endpointBaseUrl.trim();
-  // Upstream model comes from the form-built custom slot, not defaultModelKey (always "custom").
+  const preferredDefaultKey = parsed.defaultModelKey?.trim();
   const customEntry = seededCatalogModels.find(
+    (catalogModel) => catalogModel.key?.trim() === preferredDefaultKey,
+  ) || seededCatalogModels.find(
     (catalogModel) => catalogModel.key?.trim() === CUSTOM_GROK_MODEL_KEY,
   ) || seededCatalogModels[0];
   const upstreamModel = customEntry?.model?.trim()
     || endpointModel?.trim()
     || DEFAULT_GROK_MODEL;
 
-  const normalizedCatalogModels = projectCustomDefaultCatalogModels(
+  const normalizedCatalogModels = projectCustomChannelOntoCatalogModels(
     seededCatalogModels,
     upstreamModel,
     normalizedBaseUrl,
     apiBackend,
     backendSearchFields,
-    reasoningEffortFields,
+  );
+  const defaultModelKey = resolveCustomDefaultModelKey(
+    normalizedCatalogModels,
+    preferredDefaultKey,
   );
 
   return JSON.stringify({
     ...parsed,
-    defaultModelKey: CUSTOM_GROK_MODEL_KEY,
+    defaultModelKey,
     modelCatalog: {
       models: normalizedCatalogModels,
     },

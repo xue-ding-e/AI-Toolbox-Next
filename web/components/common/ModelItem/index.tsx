@@ -11,12 +11,12 @@ const { Text } = Typography;
 
 interface ModelItemProps {
   model: ModelDisplayData;
-  
+
   /** Whether the item is draggable */
   draggable?: boolean;
   /** Unique ID for sortable (defaults to model.id) */
   sortableId?: string;
-  
+
   /** Callbacks */
   onEdit?: () => void;
   onCopy?: () => void;
@@ -25,9 +25,14 @@ interface ModelItemProps {
   selectionMode?: boolean;
   selected?: boolean;
   onSelectChange?: (selected: boolean) => void;
-  
+
   /** i18n prefix for translations */
   i18nPrefix?: I18nPrefix;
+  /**
+   * When true, content fill is transparent so a selected parent card tint shows
+   * through. Borders stay. Used by Grok multi-model lists.
+   */
+  transparentBackground?: boolean;
 }
 
 /**
@@ -45,9 +50,10 @@ const ModelItem: React.FC<ModelItemProps> = ({
   selected = false,
   onSelectChange,
   i18nPrefix = 'settings',
+  transparentBackground = false,
 }) => {
   const { t } = useTranslation();
-  
+
   const {
     attributes,
     listeners,
@@ -55,7 +61,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ 
+  } = useSortable({
     id: sortableId || model.id,
     disabled: !draggable,
   });
@@ -64,7 +70,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    background: 'var(--color-bg-container)',
+    background: transparentBackground ? 'transparent' : 'var(--color-bg-container)',
     border: selected ? '1px solid var(--ant-color-primary)' : '1px solid var(--color-border-secondary)',
     borderRadius: 4,
     padding: '8px 12px',

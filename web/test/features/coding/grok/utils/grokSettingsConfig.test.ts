@@ -94,8 +94,9 @@ test('buildGrokSettingsConfig overwrites stale model apiBackend with form apiFor
     auth: {},
   }));
 
-  assert.equal(settingsConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
-  assert.equal(settingsConfig.modelCatalog.models[0].key, CUSTOM_GROK_MODEL_KEY);
+  // Single-slot legacy key "custom" soft-migrates to the upstream model id.
+  assert.equal(settingsConfig.defaultModelKey, 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].key, 'grok-4.5');
   assert.equal(settingsConfig.modelCatalog.models[0].model, 'grok-4.5');
   assert.equal(settingsConfig.modelCatalog.models[0].apiBackend, 'chat_completions');
 });
@@ -126,7 +127,9 @@ test('buildGrokSettingsConfig overwrites stale catalog baseUrl with form baseUrl
     auth: {},
   }));
 
+  // Multi-model catalogs keep free keys (including legacy "custom" slot) untouched.
   assert.equal(settingsConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
+  assert.equal(settingsConfig.modelCatalog.models[0].key, CUSTOM_GROK_MODEL_KEY);
   assert.equal(settingsConfig.modelCatalog.models[0].baseUrl, 'https://grok2api.test.com/v1');
   assert.equal(settingsConfig.modelCatalog.models[1].baseUrl, 'https://grok2api.test.com/v1');
   assert.equal(settingsConfig.modelCatalog.models[0].apiBackend, 'responses');
@@ -148,12 +151,14 @@ test('buildGrokSettingsConfig leaves catalog baseUrl when form baseUrl is empty'
     auth: {},
   }));
 
+  assert.equal(settingsConfig.defaultModelKey, 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].key, 'grok-4.5');
   assert.equal(settingsConfig.modelCatalog.models[0].baseUrl, 'https://keep.example.com/v1');
 });
 
-test('buildGrokSettingsConfig form model name updates upstream model but not displayName', () => {
-  // Form "model name" is upstream model ID. Local key is fixed "custom".
-  // Mapping displayName is owned by the mapping UI and must not be rewritten.
+test('buildGrokSettingsConfig keeps multi-model keys and displayName under model-list ownership', () => {
+  // Channel form projects baseUrl/apiBackend only. Free multi-model keys and displayName
+  // stay under model-list ownership (not rewritten by the channel "model name" field).
   const settingsConfig = JSON.parse(buildGrokSettingsConfig({
     category: 'custom',
     apiKey: 'secret',
@@ -162,21 +167,22 @@ test('buildGrokSettingsConfig form model name updates upstream model but not dis
     apiFormat: 'openai_responses',
     config: '',
     catalogModels: [{
-      key: 'custom',
+      key: 'old-upstream',
       model: 'old-upstream',
       displayName: 'My Menu Label',
     }],
     auth: {},
   }));
 
-  assert.equal(settingsConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
-  assert.equal(settingsConfig.modelCatalog.models[0].key, CUSTOM_GROK_MODEL_KEY);
-  assert.equal(settingsConfig.modelCatalog.models[0].model, 'grok-4.5');
+  assert.equal(settingsConfig.defaultModelKey, 'old-upstream');
+  assert.equal(settingsConfig.modelCatalog.models[0].key, 'old-upstream');
+  assert.equal(settingsConfig.modelCatalog.models[0].model, 'old-upstream');
   assert.equal(settingsConfig.modelCatalog.models[0].displayName, 'My Menu Label');
-  assert.equal(extractGrokSettingsModel(settingsConfig), 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].apiBackend, 'responses');
+  assert.equal(extractGrokSettingsModel(settingsConfig), 'old-upstream');
 });
 
-test('buildGrokSettingsConfig migrates legacy non-custom keys to fixed custom key', () => {
+test('buildGrokSettingsConfig preserves free multi-model catalog keys', () => {
   const settingsConfig = JSON.parse(buildGrokSettingsConfig({
     category: 'custom',
     apiKey: 'secret',
@@ -192,8 +198,8 @@ test('buildGrokSettingsConfig migrates legacy non-custom keys to fixed custom ke
     auth: {},
   }));
 
-  assert.equal(settingsConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
-  assert.equal(settingsConfig.modelCatalog.models[0].key, CUSTOM_GROK_MODEL_KEY);
+  assert.equal(settingsConfig.defaultModelKey, 'local-model-key');
+  assert.equal(settingsConfig.modelCatalog.models[0].key, 'local-model-key');
   assert.equal(settingsConfig.modelCatalog.models[0].model, 'upstream-model');
   assert.equal(settingsConfig.modelCatalog.models[0].displayName, 'Keep Display');
 });
@@ -234,11 +240,12 @@ test('applyGrokEndpointSettingsConfig preserves edited mappings and form-owned f
     }],
   }));
 
-  assert.equal(settingsConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
+  // Legacy fixed key "custom" soft-migrates to the upstream model id on save.
+  assert.equal(settingsConfig.defaultModelKey, 'edited-upstream-model');
   assert.equal(settingsConfig.config, '[ui]\nsimple_mode = true');
   assert.equal(settingsConfig.modelCatalog.models.length, 1);
   assert.deepEqual(settingsConfig.modelCatalog.models[0], {
-    key: CUSTOM_GROK_MODEL_KEY,
+    key: 'edited-upstream-model',
     model: 'edited-upstream-model',
     displayName: 'Edited Grok',
     baseUrl: 'https://edited.example.com/v1',
@@ -310,7 +317,7 @@ test('buildGrokSettingsConfig permanently clears legacy official reasoning effor
   assert.equal(extractGrokSettingsReasoningEffort(settingsConfig), undefined);
 });
 
-test('buildGrokSettingsConfig projects channel reasoningEffort onto custom catalog', () => {
+test('buildGrokSettingsConfig stamps channel reasoningEffort only on default model without menu', () => {
   const enabledConfig = JSON.parse(buildGrokSettingsConfig({
     category: 'custom',
     apiKey: 'secret',
@@ -328,10 +335,31 @@ test('buildGrokSettingsConfig projects channel reasoningEffort onto custom catal
   assert.equal(enabledConfig.defaultReasoningEffort, undefined);
   assert.equal(enabledConfig.modelCatalog.models[0].reasoningEffort, 'medium');
   assert.equal(enabledConfig.modelCatalog.models[0].supportsReasoningEffort, true);
-  assert.equal(enabledConfig.modelCatalog.models[1].reasoningEffort, 'medium');
-  assert.equal(enabledConfig.modelCatalog.models[1].supportsReasoningEffort, true);
+  // Non-default models keep their own effort ownership.
+  assert.equal(enabledConfig.modelCatalog.models[1].reasoningEffort, undefined);
+  assert.equal(enabledConfig.modelCatalog.models[1].supportsReasoningEffort, undefined);
 
-  const clearedConfig = JSON.parse(buildGrokSettingsConfig({
+  const withMenu = JSON.parse(buildGrokSettingsConfig({
+    category: 'custom',
+    apiKey: 'secret',
+    baseUrl: 'https://api.example.com/v1',
+    model: 'claude-opus-4-6',
+    apiFormat: 'anthropic_messages',
+    reasoningEffort: 'medium',
+    config: '',
+    catalogModels: [{
+      key: 'custom',
+      model: 'claude-opus-4-6',
+      reasoningEfforts: ['low', 'high'],
+      reasoningEffort: 'high',
+    }],
+    auth: {},
+  }));
+  // Menu is model-list SoT; channel effort only applies when it is in the menu.
+  assert.equal(withMenu.modelCatalog.models[0].reasoningEffort, 'high');
+  assert.deepEqual(withMenu.modelCatalog.models[0].reasoningEfforts, ['low', 'high']);
+
+  const preservedConfig = JSON.parse(buildGrokSettingsConfig({
     category: 'custom',
     apiKey: 'secret',
     baseUrl: 'https://api.example.com/v1',
@@ -346,8 +374,9 @@ test('buildGrokSettingsConfig projects channel reasoningEffort onto custom catal
     }],
     auth: {},
   }));
-  assert.equal(clearedConfig.modelCatalog.models[0].reasoningEffort, undefined);
-  assert.equal(clearedConfig.modelCatalog.models[0].supportsReasoningEffort, undefined);
+  // Clearing channel effort no longer strips per-model effort.
+  assert.equal(preservedConfig.modelCatalog.models[0].reasoningEffort, 'high');
+  assert.equal(preservedConfig.modelCatalog.models[0].supportsReasoningEffort, true);
 });
 
 test('buildGrokSettingsConfig projects anthropic and responses form formats', () => {
@@ -374,7 +403,9 @@ test('buildGrokSettingsConfig projects anthropic and responses form formats', ()
     auth: {},
   }));
   assert.equal(anthropicConfig.modelCatalog.models[0].apiBackend, 'messages');
-  assert.equal(anthropicConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
+  // Single-slot legacy "custom" key soft-migrates to the upstream model id.
+  assert.equal(anthropicConfig.defaultModelKey, 'claude-sonnet');
+  assert.equal(anthropicConfig.modelCatalog.models[0].key, 'claude-sonnet');
 });
 
 test('buildGrokSettingsConfig forces supportsBackendSearch across catalog models', () => {
@@ -406,8 +437,9 @@ test('buildGrokSettingsConfig forces supportsBackendSearch across catalog models
     catalogModels: [],
     auth: {},
   }));
-  assert.equal(emptyCatalogConfig.defaultModelKey, CUSTOM_GROK_MODEL_KEY);
-  assert.equal(emptyCatalogConfig.modelCatalog.models[0].key, CUSTOM_GROK_MODEL_KEY);
+  // Empty catalog bootstraps from the form upstream model id as both key and model.
+  assert.equal(emptyCatalogConfig.defaultModelKey, 'cpa-grok45');
+  assert.equal(emptyCatalogConfig.modelCatalog.models[0].key, 'cpa-grok45');
   assert.equal(emptyCatalogConfig.modelCatalog.models[0].model, 'cpa-grok45');
   assert.equal(emptyCatalogConfig.modelCatalog.models[0].supportsBackendSearch, true);
 
@@ -437,4 +469,28 @@ test('extractGrokSettingsModel returns upstream model not local custom key', () 
   assert.equal(extractGrokSettingsModel({
     defaultModelKey: 'grok-4.5',
   }), 'grok-4.5');
+});
+
+test('buildGrokSettingsConfig soft-migrates legacy custom key catalogs on save', () => {
+  const settingsConfig = JSON.parse(buildGrokSettingsConfig({
+    category: 'custom',
+    apiKey: 'secret',
+    baseUrl: 'https://api.example.com/v1',
+    model: 'grok-4.5',
+    apiFormat: 'openai_chat',
+    config: '',
+    catalogModels: [{
+      key: 'custom',
+      model: 'grok-4.5',
+      displayName: 'Grok 4.5',
+      reasoningEffort: 'high',
+    }],
+    auth: {},
+  }));
+
+  assert.equal(settingsConfig.defaultModelKey, 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].key, 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].model, 'grok-4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].displayName, 'Grok 4.5');
+  assert.equal(settingsConfig.modelCatalog.models[0].reasoningEffort, 'high');
 });

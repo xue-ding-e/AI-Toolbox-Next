@@ -88,6 +88,14 @@ export const setCodexUnifiedSessionHistory = async (
   });
 };
 
+export const setCodexPreserveOfficialAuthOnSwitch = async (
+  enabled: boolean,
+): Promise<{ enabled: boolean }> => {
+  return await invoke<{ enabled: boolean }>('set_codex_preserve_official_auth_on_switch', {
+    input: { enabled },
+  });
+};
+
 export const hasCodexUnifiedHistoryBackup = async (): Promise<boolean> => {
   return await invoke<boolean>('has_codex_unified_history_backup');
 };

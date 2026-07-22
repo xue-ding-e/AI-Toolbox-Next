@@ -37,6 +37,8 @@ export interface GrokSettingsConfigSnapshot {
   apiFormat?: GrokApiFormat;
   supportsBackendSearch?: boolean;
   reasoningEffort?: string;
+  /** Preferred default catalog key for multi-model custom providers. */
+  defaultModelKey?: string;
 }
 
 const DEFAULT_CONFIG_TOML = '';
@@ -108,7 +110,7 @@ function parseInitialGrokState(initialData?: { settingsConfig?: string }) {
     const configStr = config.config || '';
     const catalogModels = parseGrokCatalogModels(config);
     // Form "model name" is the upstream model ID, not the local catalog key.
-    // Custom providers fix key="custom" in defaultModelKey; read .model from that slot.
+    // Custom providers may still have legacy key="custom"; prefer that slot model id when present.
     const defaultModelKey = config.defaultModelKey?.trim() || '';
     const selectedCatalogModel = catalogModels.find((item) => item.key === defaultModelKey)
       || catalogModels.find((item) => item.model === defaultModelKey)
@@ -397,6 +399,7 @@ export function useGrokConfigState({ initialData }: UseGrokConfigStateProps = {}
       apiFormat: snapshot.apiFormat,
       supportsBackendSearch: snapshot.supportsBackendSearch,
       reasoningEffort: snapshot.reasoningEffort ?? grokReasoningEffort,
+      defaultModelKey: snapshot.defaultModelKey,
       config: snapshot.config ?? grokConfig,
       catalogModels: snapshot.catalogModels ?? grokCatalogModels,
       auth: grokAuth,

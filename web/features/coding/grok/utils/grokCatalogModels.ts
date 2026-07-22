@@ -63,6 +63,13 @@ export function normalizeGrokCatalogModels(models: GrokCatalogModel[]): GrokCata
       ...(typeof item.topP === 'number' ? { topP: item.topP } : {}),
       ...(typeof item.supportsBackendSearch === 'boolean' ? { supportsBackendSearch: item.supportsBackendSearch } : {}),
       ...(typeof item.supportsReasoningEffort === 'boolean' ? { supportsReasoningEffort: item.supportsReasoningEffort } : {}),
+      ...(Array.isArray(item.reasoningEfforts) && item.reasoningEfforts.length > 0
+        ? {
+            reasoningEfforts: item.reasoningEfforts
+              .map((effort) => (typeof effort === 'string' ? effort.trim() : ''))
+              .filter((effort) => effort.length > 0),
+          }
+        : {}),
       ...(item.reasoningEffort?.trim() ? { reasoningEffort: item.reasoningEffort.trim() } : {}),
       ...(typeof item.streamToolCalls === 'boolean' ? { streamToolCalls: item.streamToolCalls } : {}),
       ...(typeof item.maxRetries === 'number' ? { maxRetries: item.maxRetries } : {}),

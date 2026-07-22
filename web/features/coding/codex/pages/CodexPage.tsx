@@ -1403,7 +1403,7 @@ const CodexPage: React.FC = () => {
           : t('codex.settings.preserveOfficialAuthOnSwitchDisabled'),
       );
     } catch (error) {
-      await setCodexPreserveOfficialAuthOnSwitch(!enabled).catch(() => undefined);
+      // Store only updates after the backend succeeds; no local optimistic flip to undo.
       console.error('Failed to update Codex auth preservation setting:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));

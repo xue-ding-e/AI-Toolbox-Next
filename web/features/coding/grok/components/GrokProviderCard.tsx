@@ -1,5 +1,6 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, message } from 'antd';
+import './GrokProviderCard.less';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, message, Collapse, Empty } from 'antd';
 import {
   ApiOutlined,
   CheckOutlined,
@@ -13,6 +14,8 @@ import {
   LinkOutlined,
   SyncOutlined,
   EyeOutlined,
+  PlusOutlined,
+  CloudDownloadOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { BarChart2 } from 'lucide-react';
@@ -47,12 +50,17 @@ import {
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
-import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import type { ModelDisplayData, ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import ModelItem from '@/components/common/ModelItem';
 import {
   GROK_LOCAL_PROVIDER_ID,
   isGrokLocalProviderId,
   shouldShowGrokOfficialAccounts,
 } from '../utils/localProvider';
+import {
+  getGrokProviderCatalogModels,
+  getGrokProviderDefaultModelKey,
+} from '../utils/grokProviderModels';
 
 const { Text } = Typography;
 
@@ -65,6 +73,11 @@ interface GrokProviderCardProps {
   onTest: (provider: GrokProvider) => void;
   onSelect: (provider: GrokProvider) => void;
   onToggleDisabled: (provider: GrokProvider, isDisabled: boolean) => void;
+  onAddModel?: (provider: GrokProvider) => void;
+  onEditModel?: (provider: GrokProvider, modelKey: string) => void;
+  onDeleteModel?: (provider: GrokProvider, modelKey: string) => void;
+  onSetDefaultModel?: (provider: GrokProvider, modelKey: string) => void;
+  onFetchModels?: (provider: GrokProvider) => void;
   officialAccounts?: GrokOfficialAccount[];
   onOfficialAccountLogin?: (provider: GrokProvider) => void;
   onOfficialLocalAccountSave?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
@@ -89,6 +102,11 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
   onTest,
   onSelect,
   onToggleDisabled,
+  onAddModel,
+  onEditModel,
+  onDeleteModel,
+  onSetDefaultModel,
+  onFetchModels,
   officialAccounts = [],
   onOfficialAccountLogin,
   onOfficialLocalAccountSave,
@@ -151,8 +169,38 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
   const reasoningEffort = React.useMemo(() => {
     return extractGrokSettingsReasoningEffort(settingsConfig);
   }, [settingsConfig]);
+  const catalogModels = React.useMemo(
+    () => getGrokProviderCatalogModels(provider),
+    [provider],
+  );
+  const defaultModelKey = React.useMemo(
+    () => getGrokProviderDefaultModelKey(provider),
+    [provider],
+  );
+  const modelListItems = React.useMemo<ModelDisplayData[]>(() => {
+    return catalogModels.map((catalogModel) => {
+      const key = catalogModel.key?.trim() || catalogModel.model;
+      const efforts = Array.isArray(catalogModel.reasoningEfforts)
+        ? catalogModel.reasoningEfforts
+        : [];
+      const effortLabel = catalogModel.reasoningEffort
+        || (efforts.length > 0 ? efforts.join('/') : undefined);
+      const displayName = catalogModel.displayName || catalogModel.model || key;
+      return {
+        id: key,
+        name: effortLabel ? `${displayName} (${effortLabel})` : displayName,
+        contextLimit: typeof catalogModel.contextWindow === 'number'
+          ? catalogModel.contextWindow
+          : (catalogModel.contextWindow
+            ? Number(catalogModel.contextWindow) || undefined
+            : undefined),
+        isPrimary: key === defaultModelKey,
+      };
+    });
+  }, [catalogModels, defaultModelKey]);
   const isOfficialProvider = provider.category === 'official';
   const isLocalProvider = isGrokLocalProviderId(provider.id);
+  const showModelList = !isOfficialProvider && !isLocalProvider;
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showRuntimeApplied = isApplied && !isLocalProvider;
   const settingsConfigApiFormat = settingsConfig as GrokSettingsConfig & {
@@ -886,6 +934,83 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
           </div>
       </div>
         {renderOfficialAccounts()}
+        {showModelList && (
+          <Collapse
+            defaultActiveKey={[]}
+            ghost
+            className="grok-model-list-collapse"
+            style={{ marginTop: 12, background: 'transparent' }}
+            items={[{
+              key: `models-${provider.id}`,
+              label: (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    width: '100%',
+                    background: 'transparent',
+                  }}
+                >
+                  <Text strong style={{ fontSize: 13 }}>
+                    {t('grok.model.title')} ({modelListItems.length})
+                  </Text>
+                  <Space size={4} onClick={(event) => event.stopPropagation()}>
+                    {onFetchModels && (
+                      <Button
+                        size="small"
+                        type="text"
+                        style={{ fontSize: 12 }}
+                        onClick={() => onFetchModels(provider)}
+                      >
+                        <CloudDownloadOutlined style={{ marginRight: 4 }} />
+                        {t('grok.fetchModels.button')}
+                      </Button>
+                    )}
+                    {onAddModel && (
+                      <Button
+                        size="small"
+                        type="text"
+                        style={{ fontSize: 12 }}
+                        onClick={() => onAddModel(provider)}
+                      >
+                        <PlusOutlined style={{ marginRight: 0 }} />
+                        {t('grok.model.addModel')}
+                      </Button>
+                    )}
+                  </Space>
+                </div>
+              ),
+              children: (
+                <div style={{ background: 'transparent' }}>
+                  {modelListItems.length > 0 ? (
+                    <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                      {modelListItems.map((model) => (
+                        <ModelItem
+                          key={model.id}
+                          model={model}
+                          i18nPrefix="grok"
+                          transparentBackground
+                          onEdit={onEditModel ? () => onEditModel(provider, model.id) : undefined}
+                          onDelete={onDeleteModel ? () => onDeleteModel(provider, model.id) : undefined}
+                          onSetPrimary={onSetDefaultModel
+                            ? () => onSetDefaultModel(provider, model.id)
+                            : undefined}
+                        />
+                      ))}
+                    </Space>
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={t('grok.model.emptyText')}
+                      style={{ margin: '8px 0', background: 'transparent' }}
+                    />
+                  )}
+                </div>
+              ),
+            }]}
+          />
+        )}
     </Card>
     </div>
   );
