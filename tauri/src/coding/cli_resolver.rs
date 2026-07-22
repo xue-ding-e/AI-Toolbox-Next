@@ -492,7 +492,7 @@ fn build_local_command_path(program_path: &Path, current_path: Option<&OsStr>) -
     }
 
     append_node_runtime_dirs(&mut dirs);
-    append_mise_asdf_runtime_dirs(&mut dirs, dirs::home_dir().as_deref());
+    append_mise_asdf_runtime_dirs_from_env(&mut dirs, dirs::home_dir().as_deref());
 
     if let Some(current_path) = current_path {
         for path in env::split_paths(current_path) {
@@ -531,34 +531,64 @@ fn append_node_runtime_dirs_with_home(dirs: &mut Vec<PathBuf>, home_dir: Option<
     }
 }
 
+/// Production entry: resolve mise/asdf data dirs from env + defaults, then inject runtime PATH.
+fn append_mise_asdf_runtime_dirs_from_env(dirs: &mut Vec<PathBuf>, home_dir: Option<&Path>) {
+    let mise_data_dir = env_path("MISE_DATA_DIR");
+    let asdf_data_dir = env_path("ASDF_DATA_DIR");
+    let xdg_data_home = env_path("XDG_DATA_HOME");
+    let local_app_data = env_path("LOCALAPPDATA");
+    let mise_roots = collect_mise_data_dirs(
+        mise_data_dir.as_deref(),
+        xdg_data_home.as_deref(),
+        local_app_data.as_deref(),
+        home_dir,
+    );
+    let asdf_roots = collect_asdf_data_dirs(asdf_data_dir.as_deref(), home_dir);
+    append_mise_asdf_runtime_dirs(dirs, home_dir, &mise_roots, &asdf_roots);
+}
+
 /// Append mise / asdf runtime dirs to the child process PATH.
 ///
 /// mise/asdf shims are thin wrappers that `exec mise` / `exec asdf`, so they need the
 /// manager binary itself on PATH. GUI-launched children lack `~/.local/bin` (where mise is
 /// curl-installed) and Homebrew prefixes. Inject only when mise/asdf shims actually exist,
 /// so non-mise/asdf environments are left untouched.
-fn append_mise_asdf_runtime_dirs(dirs: &mut Vec<PathBuf>, home_dir: Option<&Path>) {
+///
+/// `mise_data_dirs` / `asdf_data_dirs` are injectable so unit tests do not depend on host
+/// `MISE_DATA_DIR` / `ASDF_DATA_DIR`.
+fn append_mise_asdf_runtime_dirs(
+    dirs: &mut Vec<PathBuf>,
+    home_dir: Option<&Path>,
+    mise_data_dirs: &[PathBuf],
+    asdf_data_dirs: &[PathBuf],
+) {
     let Some(home) = home_dir else {
         return;
     };
-    let mise_data =
-        env_path("MISE_DATA_DIR").unwrap_or_else(|| home.join(".local").join("share").join("mise"));
-    let asdf_data = env_path("ASDF_DATA_DIR").unwrap_or_else(|| home.join(".asdf"));
-    let mise_shims = mise_data.join("shims");
-    let asdf_shims = asdf_data.join("shims");
 
-    if mise_shims.is_dir() {
-        push_existing_dir(dirs, mise_shims);
-        push_existing_dir(dirs, home.join(".local").join("bin"));
-        push_existing_dir(dirs, PathBuf::from("/opt/homebrew/bin"));
-        push_existing_dir(dirs, PathBuf::from("/usr/local/bin"));
+    let mut need_manager_bins = false;
+    for root in mise_data_dirs {
+        let shims = root.join("shims");
+        if shims.is_dir() {
+            push_existing_dir(dirs, shims);
+            need_manager_bins = true;
+        }
     }
-    if asdf_shims.is_dir() {
-        push_existing_dir(dirs, asdf_shims);
-        push_existing_dir(dirs, home.join(".local").join("bin"));
-        push_existing_dir(dirs, PathBuf::from("/opt/homebrew/bin"));
-        push_existing_dir(dirs, PathBuf::from("/usr/local/bin"));
+    for root in asdf_data_dirs {
+        let shims = root.join("shims");
+        if shims.is_dir() {
+            push_existing_dir(dirs, shims);
+            need_manager_bins = true;
+        }
     }
+
+    if !need_manager_bins {
+        return;
+    }
+
+    push_existing_dir(dirs, home.join(".local").join("bin"));
+    push_existing_dir(dirs, PathBuf::from("/opt/homebrew/bin"));
+    push_existing_dir(dirs, PathBuf::from("/usr/local/bin"));
 }
 
 fn append_node_global_candidates_with_home(
@@ -629,23 +659,89 @@ fn collect_bun_candidates(
     candidates
 }
 
-/// Append mise / asdf managed CLI candidates.
+/// Collect mise data directories for candidate / runtime scanning.
 ///
-/// Covers both the version-pinned node install bin (for `mise use node` + `npm -g` installs)
-/// and the shim directory — the stable entry point for mise/asdf backend tools, including
-/// `npm:` backend packages whose real bin path embeds the package name and cannot be
-/// generalized. Respects `$MISE_DATA_DIR` / `$ASDF_DATA_DIR` with `~/.local/share/mise` /
-/// `~/.asdf` fallbacks.
+/// Order: `$MISE_DATA_DIR` → `$XDG_DATA_HOME/mise` → `~/.local/share/mise` →
+/// `%LOCALAPPDATA%\mise` (Windows). Duplicates are dropped.
+fn collect_mise_data_dirs(
+    mise_data_dir: Option<&Path>,
+    xdg_data_home: Option<&Path>,
+    local_app_data: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(mise_data_dir) = mise_data_dir {
+        push_unique_path(&mut roots, mise_data_dir.to_path_buf());
+    }
+    if let Some(xdg_data_home) = xdg_data_home {
+        push_unique_path(&mut roots, xdg_data_home.join("mise"));
+    }
+    if let Some(home_dir) = home_dir {
+        push_unique_path(
+            &mut roots,
+            home_dir.join(".local").join("share").join("mise"),
+        );
+    }
+    if let Some(local_app_data) = local_app_data {
+        push_unique_path(&mut roots, local_app_data.join("mise"));
+    }
+    roots
+}
+
+/// Collect asdf data directories. Order: `$ASDF_DATA_DIR` → `~/.asdf`.
+fn collect_asdf_data_dirs(
+    asdf_data_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(asdf_data_dir) = asdf_data_dir {
+        push_unique_path(&mut roots, asdf_data_dir.to_path_buf());
+    }
+    if let Some(home_dir) = home_dir {
+        push_unique_path(&mut roots, home_dir.join(".asdf"));
+    }
+    roots
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+/// Production entry for mise/asdf CLI candidates (reads env for data dirs).
 fn append_mise_asdf_candidates(
     candidates: &mut Vec<PathBuf>,
     command_name: &str,
     home_dir: Option<&Path>,
 ) {
-    let mise_roots = env_path("MISE_DATA_DIR")
-        .into_iter()
-        .chain(home_dir.map(|home| home.join(".local").join("share").join("mise")))
-        .collect::<Vec<_>>();
-    for root in &mise_roots {
+    let mise_data_dir = env_path("MISE_DATA_DIR");
+    let asdf_data_dir = env_path("ASDF_DATA_DIR");
+    let xdg_data_home = env_path("XDG_DATA_HOME");
+    let local_app_data = env_path("LOCALAPPDATA");
+    let mise_roots = collect_mise_data_dirs(
+        mise_data_dir.as_deref(),
+        xdg_data_home.as_deref(),
+        local_app_data.as_deref(),
+        home_dir,
+    );
+    let asdf_roots = collect_asdf_data_dirs(asdf_data_dir.as_deref(), home_dir);
+    append_mise_asdf_candidates_with_roots(candidates, command_name, &mise_roots, &asdf_roots);
+}
+
+/// Append mise / asdf managed CLI candidates from explicit data roots.
+///
+/// Covers both the version-pinned node install bin (for `mise use node` + `npm -g` installs)
+/// and the shim directory — the stable entry point for mise/asdf backend tools, including
+/// `npm:` backend packages whose real bin path embeds the package name and cannot be
+/// generalized.
+fn append_mise_asdf_candidates_with_roots(
+    candidates: &mut Vec<PathBuf>,
+    command_name: &str,
+    mise_roots: &[PathBuf],
+    asdf_roots: &[PathBuf],
+) {
+    for root in mise_roots {
         append_node_version_bins(
             candidates,
             &root.join("installs").join("node"),
@@ -654,11 +750,7 @@ fn append_mise_asdf_candidates(
         push_command_candidate(candidates, root.join("shims"), command_name);
     }
 
-    let asdf_roots = env_path("ASDF_DATA_DIR")
-        .into_iter()
-        .chain(home_dir.map(|home| home.join(".asdf")))
-        .collect::<Vec<_>>();
-    for root in &asdf_roots {
+    for root in asdf_roots {
         append_node_version_bins(
             candidates,
             &root.join("installs").join("nodejs"),
@@ -936,15 +1028,9 @@ mod tests {
     fn mise_shims_and_node_install_bins_are_candidates() {
         let test_dir = TestDir::new("mise");
         let home_dir = test_dir.path().join("home");
-        let shims_dir = home_dir
-            .join(".local")
-            .join("share")
-            .join("mise")
-            .join("shims");
-        let node_bin = home_dir
-            .join(".local")
-            .join("share")
-            .join("mise")
+        let mise_root = home_dir.join(".local").join("share").join("mise");
+        let shims_dir = mise_root.join("shims");
+        let node_bin = mise_root
             .join("installs")
             .join("node")
             .join("22.18.0")
@@ -953,7 +1039,12 @@ mod tests {
         fs::create_dir_all(&node_bin).expect("failed to create mise node bin dir");
 
         let mut candidates = Vec::new();
-        super::append_mise_asdf_candidates(&mut candidates, "pi", Some(&home_dir));
+        super::append_mise_asdf_candidates_with_roots(
+            &mut candidates,
+            "pi",
+            &[mise_root],
+            &[],
+        );
 
         assert!(candidates.contains(&shims_dir.join("pi")));
         assert!(candidates.contains(&node_bin.join("pi")));
@@ -963,9 +1054,9 @@ mod tests {
     fn asdf_shims_and_node_install_bins_are_candidates() {
         let test_dir = TestDir::new("asdf");
         let home_dir = test_dir.path().join("home");
-        let shims_dir = home_dir.join(".asdf").join("shims");
-        let node_bin = home_dir
-            .join(".asdf")
+        let asdf_root = home_dir.join(".asdf");
+        let shims_dir = asdf_root.join("shims");
+        let node_bin = asdf_root
             .join("installs")
             .join("nodejs")
             .join("22.18.0")
@@ -974,34 +1065,146 @@ mod tests {
         fs::create_dir_all(&node_bin).expect("failed to create asdf node bin dir");
 
         let mut candidates = Vec::new();
-        super::append_mise_asdf_candidates(&mut candidates, "pi", Some(&home_dir));
+        super::append_mise_asdf_candidates_with_roots(
+            &mut candidates,
+            "pi",
+            &[],
+            &[asdf_root],
+        );
 
         assert!(candidates.contains(&shims_dir.join("pi")));
         assert!(candidates.contains(&node_bin.join("pi")));
     }
 
     #[test]
+    fn mise_data_dir_env_precedes_default_home_and_xdg() {
+        let test_dir = TestDir::new("mise-roots");
+        let home_dir = test_dir.path().join("home");
+        let custom = test_dir.path().join("custom-mise");
+        let xdg = test_dir.path().join("xdg");
+        let local_app_data = test_dir.path().join("localappdata");
+
+        let roots = super::collect_mise_data_dirs(
+            Some(&custom),
+            Some(&xdg),
+            Some(&local_app_data),
+            Some(&home_dir),
+        );
+
+        assert_eq!(roots.first(), Some(&custom));
+        assert!(roots.contains(&xdg.join("mise")));
+        assert!(roots.contains(&home_dir.join(".local").join("share").join("mise")));
+        assert!(roots.contains(&local_app_data.join("mise")));
+    }
+
+    #[test]
+    fn asdf_data_dir_env_precedes_default_home() {
+        let test_dir = TestDir::new("asdf-roots");
+        let home_dir = test_dir.path().join("home");
+        let custom = test_dir.path().join("custom-asdf");
+
+        let roots = super::collect_asdf_data_dirs(Some(&custom), Some(&home_dir));
+
+        assert_eq!(roots.first(), Some(&custom));
+        assert!(roots.contains(&home_dir.join(".asdf")));
+    }
+
+    #[test]
     fn mise_runtime_dirs_added_only_when_shims_present() {
         let test_dir = TestDir::new("mise-runtime");
         let home_dir = test_dir.path().join("home");
-        let mise_shims = home_dir
-            .join(".local")
-            .join("share")
-            .join("mise")
-            .join("shims");
+        let mise_root = home_dir.join(".local").join("share").join("mise");
+        let mise_shims = mise_root.join("shims");
         let local_bin = home_dir.join(".local").join("bin");
 
-        // No mise shims yet -> nothing injected.
+        // No mise shims yet -> nothing injected (even with a data root listed).
         let mut dirs = Vec::new();
-        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir));
+        super::append_mise_asdf_runtime_dirs(
+            &mut dirs,
+            Some(&home_dir),
+            &[mise_root.clone()],
+            &[],
+        );
         assert!(dirs.is_empty());
 
         // With shims present -> shims + manager bin dirs injected.
         fs::create_dir_all(&mise_shims).expect("failed to create mise shims dir");
         fs::create_dir_all(&local_bin).expect("failed to create local bin dir");
-        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir));
+        super::append_mise_asdf_runtime_dirs(
+            &mut dirs,
+            Some(&home_dir),
+            &[mise_root],
+            &[],
+        );
 
         assert!(dirs.contains(&mise_shims));
+        assert!(dirs.contains(&local_bin));
+    }
+
+    #[test]
+    fn asdf_runtime_dirs_added_only_when_shims_present() {
+        let test_dir = TestDir::new("asdf-runtime");
+        let home_dir = test_dir.path().join("home");
+        let asdf_root = home_dir.join(".asdf");
+        let asdf_shims = asdf_root.join("shims");
+        let local_bin = home_dir.join(".local").join("bin");
+
+        let mut dirs = Vec::new();
+        super::append_mise_asdf_runtime_dirs(
+            &mut dirs,
+            Some(&home_dir),
+            &[],
+            &[asdf_root.clone()],
+        );
+        assert!(dirs.is_empty());
+
+        fs::create_dir_all(&asdf_shims).expect("failed to create asdf shims dir");
+        fs::create_dir_all(&local_bin).expect("failed to create local bin dir");
+        super::append_mise_asdf_runtime_dirs(
+            &mut dirs,
+            Some(&home_dir),
+            &[],
+            &[asdf_root],
+        );
+
+        assert!(dirs.contains(&asdf_shims));
+        assert!(dirs.contains(&local_bin));
+    }
+
+    #[test]
+    fn custom_mise_data_dir_candidates_and_runtime_use_injected_root() {
+        let test_dir = TestDir::new("custom-mise-data");
+        let home_dir = test_dir.path().join("home");
+        let custom_root = test_dir.path().join("custom-mise");
+        let shims = custom_root.join("shims");
+        let node_bin = custom_root
+            .join("installs")
+            .join("node")
+            .join("22.18.0")
+            .join("bin");
+        let local_bin = home_dir.join(".local").join("bin");
+        fs::create_dir_all(&shims).expect("failed to create custom mise shims");
+        fs::create_dir_all(&node_bin).expect("failed to create custom mise node bin");
+        fs::create_dir_all(&local_bin).expect("failed to create local bin");
+
+        let mut candidates = Vec::new();
+        super::append_mise_asdf_candidates_with_roots(
+            &mut candidates,
+            "pi",
+            &[custom_root.clone()],
+            &[],
+        );
+        assert!(candidates.contains(&shims.join("pi")));
+        assert!(candidates.contains(&node_bin.join("pi")));
+
+        let mut dirs = Vec::new();
+        super::append_mise_asdf_runtime_dirs(
+            &mut dirs,
+            Some(&home_dir),
+            &[custom_root],
+            &[],
+        );
+        assert!(dirs.contains(&shims));
         assert!(dirs.contains(&local_bin));
     }
 
