@@ -6,9 +6,9 @@ use super::super::llm::{
 };
 use super::super::shared::{
     content_text, extract_error_code, extract_error_message, extract_error_param,
-    extract_error_type, extract_reasoning_field_text, should_emit_openai_request_metadata,
-    split_leading_think_block, stop_from_value, stop_to_value, tool_choice_from_openai,
-    tool_choice_to_openai,
+    extract_error_type, extract_reasoning_field_text, normalize_function_parameters_owned,
+    should_emit_openai_request_metadata, split_leading_think_block, stop_from_value, stop_to_value,
+    tool_choice_from_openai, tool_choice_to_openai,
 };
 use super::super::traits::{InboundTransformer, OutboundTransformer};
 use super::super::types::AiProtocol;
@@ -446,7 +446,7 @@ pub fn llm_request_to_chat(request: Request) -> Value {
             function_object.insert("description".to_string(), json!(function.description));
             function_object.insert(
                 "parameters".to_string(),
-                function.parameters.unwrap_or_else(|| json!({})),
+                normalize_function_parameters_owned(function.parameters),
             );
             if let Some(strict) = function.strict {
                 function_object.insert("strict".to_string(), json!(strict));

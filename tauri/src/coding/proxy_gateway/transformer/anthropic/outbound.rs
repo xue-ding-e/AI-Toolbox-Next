@@ -5,8 +5,8 @@ use super::super::llm::{
 };
 use super::super::shared::signature::{decode_signature_for, SignatureProvider};
 use super::super::shared::{
-    reasoning_effort_to_budget_tokens, stop_to_value, tool_arguments_value,
-    tool_choice_to_anthropic,
+    normalize_function_parameters_owned, reasoning_effort_to_budget_tokens, stop_to_value,
+    tool_arguments_value, tool_choice_to_anthropic,
 };
 use super::super::traits::OutboundTransformer;
 use super::super::types::AiProtocol;
@@ -229,7 +229,7 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
             Some(json!({
                 "name": function.name,
                 "description": function.description,
-                "input_schema": function.parameters.unwrap_or_else(|| json!({}))
+                "input_schema": normalize_function_parameters_owned(function.parameters)
             }))
         })
         .collect::<Vec<_>>();

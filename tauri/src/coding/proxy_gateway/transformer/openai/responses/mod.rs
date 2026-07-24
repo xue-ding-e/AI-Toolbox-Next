@@ -10,8 +10,8 @@ use crate::coding::proxy_gateway::transformer::shared::signature::{
 };
 use crate::coding::proxy_gateway::transformer::shared::{
     extract_error_code, extract_error_message, extract_error_param, extract_error_type,
-    should_emit_openai_request_metadata, stop_from_value, stop_to_value, tool_choice_from_openai,
-    tool_choice_to_responses,
+    normalize_function_parameters_owned, should_emit_openai_request_metadata, stop_from_value,
+    stop_to_value, tool_choice_from_openai, tool_choice_to_responses,
 };
 use crate::coding::proxy_gateway::transformer::traits::{InboundTransformer, OutboundTransformer};
 use crate::coding::proxy_gateway::transformer::types::AiProtocol;
@@ -1517,7 +1517,7 @@ fn response_format_to_responses_format(response_format: Value) -> Value {
 }
 
 fn responses_function_parameters(parameters: Option<Value>, strict: Option<bool>) -> Value {
-    let mut parameters = parameters.unwrap_or_else(|| json!({}));
+    let mut parameters = normalize_function_parameters_owned(parameters);
     let Some(object) = parameters.as_object_mut() else {
         return parameters;
     };

@@ -1,10 +1,11 @@
+use crate::coding::proxy_gateway::transformer::shared::{
+    flatten_namespace_tool_name, normalize_function_parameters,
+};
 use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
-const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
@@ -599,6 +600,8 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             "function": function.clone()
         });
         if let Some(object) = chat_tool.get_mut("function").and_then(Value::as_object_mut) {
+            let parameters = normalize_function_parameters(object.get("parameters"));
+            object.insert("parameters".to_string(), parameters);
             object.insert("name".to_string(), json!(chat_name));
             if let Some(strict) = tool.get("strict").cloned() {
                 object.entry("strict".to_string()).or_insert(strict);
@@ -610,7 +613,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
@@ -676,30 +679,3 @@ fn responses_custom_tool_call_item_id(call_id: &str) -> String {
     }
 }
 
-fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
-    let full_name = format!("{namespace}__{name}");
-    if full_name.len() <= CHAT_TOOL_NAME_MAX_LEN {
-        return full_name;
-    }
-
-    let hash = short_sha256_hex(full_name.as_bytes());
-    let suffix = format!("__{hash}");
-    let prefix_len = CHAT_TOOL_NAME_MAX_LEN.saturating_sub(suffix.len());
-    let mut prefix = String::new();
-    for ch in full_name.chars() {
-        if prefix.len() + ch.len_utf8() > prefix_len {
-            break;
-        }
-        prefix.push(ch);
-    }
-    format!("{prefix}{suffix}")
-}
-
-fn short_sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest
-        .iter()
-        .take(4)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}

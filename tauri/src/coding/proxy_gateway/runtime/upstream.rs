@@ -1,6 +1,10 @@
 use super::compat::codex_responses_compact::{
     CodexResponsesCompactCompat, CODEX_RESPONSES_COMPACT_COMPAT_HEADER,
 };
+use super::compat::xai_responses::{
+    apply_xai_responses_passthrough, namespace_restore_map, restore_response_namespaces,
+    wrap_namespace_restore_sse_stream, NamespacedName,
+};
 use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
     PreservedHeader,
@@ -1006,6 +1010,7 @@ async fn send_upstream_request(
         false,
         cache_injection_enabled,
         route.cli_key,
+        source_protocol,
         provider.target_protocol,
         conversion_route,
         Some(&provider.meta),
@@ -1016,6 +1021,7 @@ async fn send_upstream_request(
     )?;
     let mut upstream_body = prepared_upstream_body.body;
     let conversion_context = prepared_upstream_body.conversion_context;
+    let xai_namespace_restore_map = prepared_upstream_body.xai_namespace_restore_map;
     if should_filter_known_invalid_responses_ciphers(
         responses_encrypted_content_rectifier_enabled,
         provider.target_protocol,
@@ -1130,6 +1136,7 @@ async fn send_upstream_request(
                 upstream_model_id,
                 cache_injection_enabled,
                 route,
+                source_protocol,
                 provider.target_protocol,
                 conversion_route,
                 Some(&provider.meta),
@@ -1167,6 +1174,7 @@ async fn send_upstream_request(
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
+                    xai_namespace_restore_map.clone(),
                 )
                 .await;
             }
@@ -1213,6 +1221,7 @@ async fn send_upstream_request(
                         upstream_response_snapshot_limit,
                         Some(context),
                         compact_compat,
+                        xai_namespace_restore_map.clone(),
                     )
                     .await;
                 }
@@ -1251,6 +1260,7 @@ async fn send_upstream_request(
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
+                    xai_namespace_restore_map.clone(),
                 )
                 .await;
             }
@@ -1288,6 +1298,7 @@ async fn send_upstream_request(
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
+                    xai_namespace_restore_map.clone(),
                 )
                 .await;
             }
@@ -1327,6 +1338,7 @@ async fn send_upstream_request(
         upstream_response_snapshot_limit,
         Some(context),
         compact_compat,
+        xai_namespace_restore_map,
     )
     .await
 }
@@ -1389,6 +1401,7 @@ async fn build_gateway_response(
     upstream_response_snapshot_limit: Option<usize>,
     context: Option<&GatewayRuntimeContext>,
     compact_compat: CodexResponsesCompactCompat,
+    xai_namespace_restore_map: HashMap<String, NamespacedName>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let status = response.status();
     let mut response_headers = filtered_response_headers(response.headers());
@@ -1397,6 +1410,8 @@ async fn build_gateway_response(
         ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol);
     let should_stream = should_stream_response(request, route, response.headers(), status.as_u16());
     let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
+    let should_restore_xai_namespaces =
+        (200..400).contains(&status.as_u16()) && !xai_namespace_restore_map.is_empty();
 
     if let Some(aggregate_kind) = sse_aggregation_kind_for_non_streaming_client(
         request,
@@ -1433,6 +1448,9 @@ async fn build_gateway_response(
                     upstream_response_body: Some(upstream_response_body.clone()),
                     upstream_response_body_bytes,
                 })?;
+        }
+        if should_restore_xai_namespaces {
+            body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
         }
         set_response_content_type(&mut response_headers, "application/json");
         append_compact_compat_header(&mut response_headers, compact_compat);
@@ -1504,6 +1522,12 @@ async fn build_gateway_response(
         let raw_body_stream = match upstream_response_body_stream_snapshot.clone() {
             Some(snapshot) => snapshot_response_stream(response.bytes_stream(), snapshot),
             None => response.bytes_stream(),
+        };
+        // Restore before other stream wrappers (native Responses passthrough only).
+        let raw_body_stream = if should_restore_xai_namespaces {
+            wrap_namespace_restore_sse_stream(raw_body_stream, xai_namespace_restore_map)
+        } else {
+            raw_body_stream
         };
         let raw_body_stream = maybe_record_gemini_sse_stream(
             raw_body_stream,
@@ -1621,6 +1645,9 @@ async fn build_gateway_response(
                 set_response_content_type(&mut response_headers, "application/json");
             }
         }
+    }
+    if should_restore_xai_namespaces {
+        body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
     }
     append_compact_compat_header(&mut response_headers, compact_compat);
     record_side_store_response(
@@ -4241,6 +4268,7 @@ fn build_upstream_body(
         strip_thinking_for_retry,
         cache_injection_enabled,
         cli_key,
+        conversion_route.map(|route| route.source).or(Some(target_protocol)),
         target_protocol,
         conversion_route,
         None,
@@ -4256,6 +4284,9 @@ fn build_upstream_body(
 struct PreparedUpstreamBody {
     body: Vec<u8>,
     conversion_context: ConversionContext,
+    /// Request-scoped only: flat tool name → namespace identity for native xAI
+    /// Responses passthrough restore. Empty when not applicable.
+    xai_namespace_restore_map: HashMap<String, NamespacedName>,
 }
 
 fn build_upstream_body_for_provider(
@@ -4265,6 +4296,7 @@ fn build_upstream_body_for_provider(
     strip_thinking_for_retry: bool,
     cache_injection_enabled: bool,
     cli_key: GatewayCliKey,
+    source_protocol: Option<AiProtocol>,
     target_protocol: AiProtocol,
     conversion_route: Option<ConversionRoute>,
     provider_meta: Option<&ProviderGatewayMeta>,
@@ -4279,6 +4311,7 @@ fn build_upstream_body_for_provider(
                 .map(|converted| PreparedUpstreamBody {
                     body: converted.body,
                     conversion_context: converted.context,
+                    xai_namespace_restore_map: HashMap::new(),
                 })
                 .map_err(|error| GatewayForwardError {
                     message: error.to_string(),
@@ -4291,6 +4324,7 @@ fn build_upstream_body_for_provider(
         return Ok(PreparedUpstreamBody {
             body: request.body.clone(),
             conversion_context: ConversionContext::default(),
+            xai_namespace_restore_map: HashMap::new(),
         });
     };
     let pipeline = build_provider_pipeline(
@@ -4391,22 +4425,109 @@ fn build_upstream_body_for_provider(
     if target_protocol == AiProtocol::OpenAiResponses {
         upstream_body = apply_openai_responses_prompt_cache_key_fallback(request, &upstream_body)?;
     }
-    let upstream_body = apply_provider_pipeline_outbound_body(
+    let mut upstream_body = apply_provider_pipeline_outbound_body(
         upstream_body,
         &pipeline,
         &pipeline_context,
         request.body.clone(),
     )?;
+    // Native OpenAI Responses → xAI only: flatten namespace tools then scrub private
+    // fields. Conversion paths (source!=target) rely on IR and must not run this.
+    let xai_namespace_restore_map = apply_xai_responses_passthrough_if_needed(
+        &mut upstream_body,
+        source_protocol,
+        conversion_route,
+        target_protocol,
+        provider_meta,
+    )?;
     if cache_injection_enabled && target_protocol == AiProtocol::AnthropicMessages {
         return inject_cache_control_into_body(upstream_body).map(|body| PreparedUpstreamBody {
             body,
             conversion_context,
+            xai_namespace_restore_map: HashMap::new(),
         });
     }
     Ok(PreparedUpstreamBody {
         body: upstream_body,
         conversion_context,
+        xai_namespace_restore_map,
     })
+}
+
+/// Gate: native Responses → xAI only.
+///
+/// Requires explicit `source == OpenAiResponses` (not merely `conversion_route`
+/// absent — that would also fire when the source protocol is unknown). Runtime
+/// binds via `providerType=xai` (`ProviderBodyCompat::Xai`); profile catalog
+/// rule `xai_responses_passthrough` is registration/docs only (same pattern as
+/// existing xAI Chat scrub rules).
+fn should_apply_xai_responses_passthrough(
+    source_protocol: Option<AiProtocol>,
+    conversion_route: Option<ConversionRoute>,
+    target_protocol: AiProtocol,
+    provider_meta: Option<&ProviderGatewayMeta>,
+) -> bool {
+    source_protocol == Some(AiProtocol::OpenAiResponses)
+        && conversion_route.is_none()
+        && target_protocol == AiProtocol::OpenAiResponses
+        && ProviderBodyCompat::from_provider_meta(provider_meta, target_protocol)
+            == Some(ProviderBodyCompat::Xai)
+}
+
+/// Returns the restore map derived from the body **before** flatten (empty when
+/// not gated or no namespace tools). Mutates `upstream_body` in place on success.
+fn apply_xai_responses_passthrough_if_needed(
+    upstream_body: &mut Vec<u8>,
+    source_protocol: Option<AiProtocol>,
+    conversion_route: Option<ConversionRoute>,
+    target_protocol: AiProtocol,
+    provider_meta: Option<&ProviderGatewayMeta>,
+) -> Result<HashMap<String, NamespacedName>, GatewayForwardError> {
+    if !should_apply_xai_responses_passthrough(
+        source_protocol,
+        conversion_route,
+        target_protocol,
+        provider_meta,
+    ) {
+        return Ok(HashMap::new());
+    }
+    let Ok(mut value) = serde_json::from_slice::<Value>(upstream_body) else {
+        return Ok(HashMap::new());
+    };
+    // Map from pre-flatten tools so restore matches Chat naming without threading
+    // state through ConversionContext.
+    let restore_map = namespace_restore_map(&value);
+    apply_xai_responses_passthrough(&mut value).map_err(|message| GatewayForwardError {
+        message: format!("xAI Responses passthrough failed: {message}"),
+        kind: GatewayFailureKind::RequestSchema,
+        upstream_request_body: Some(upstream_body.clone()),
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+    })?;
+    *upstream_body = serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!("Failed to serialize xAI Responses passthrough body: {error}"),
+        kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body: Some(upstream_body.clone()),
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+    })?;
+    Ok(restore_map)
+}
+
+fn restore_xai_namespace_json_body(
+    body: &[u8],
+    map: &HashMap<String, NamespacedName>,
+) -> Vec<u8> {
+    if map.is_empty() {
+        return body.to_vec();
+    }
+    let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
+        return body.to_vec();
+    };
+    if !restore_response_namespaces(&mut value, map) {
+        return body.to_vec();
+    }
+    serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
 }
 
 fn should_enrich_codex_history_before_conversion(route: ConversionRoute) -> bool {
@@ -6857,6 +6978,7 @@ fn build_thinking_signature_rectified_upstream_body(
     upstream_model_id: &str,
     cache_injection_enabled: bool,
     route: &GatewayRoute,
+    source_protocol: Option<AiProtocol>,
     target_protocol: AiProtocol,
     conversion_route: Option<ConversionRoute>,
     provider_meta: Option<&ProviderGatewayMeta>,
@@ -6873,6 +6995,7 @@ fn build_thinking_signature_rectified_upstream_body(
         true,
         cache_injection_enabled,
         route.cli_key,
+        source_protocol,
         target_protocol,
         conversion_route,
         provider_meta,
@@ -9134,6 +9257,7 @@ mod tests {
             false,
             false,
             GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiChat),
             AiProtocol::OpenAiChat,
             None,
             Some(&meta),
@@ -9173,6 +9297,7 @@ mod tests {
             false,
             false,
             GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiChat),
             AiProtocol::OpenAiChat,
             None,
             Some(&meta),
@@ -9204,6 +9329,7 @@ mod tests {
             false,
             false,
             GatewayCliKey::Claude,
+            Some(AiProtocol::AnthropicMessages),
             AiProtocol::OpenAiChat,
             Some(ConversionRoute::new(
                 AiProtocol::AnthropicMessages,
@@ -9241,6 +9367,7 @@ mod tests {
             false,
             false,
             GatewayCliKey::Claude,
+            Some(AiProtocol::AnthropicMessages),
             AiProtocol::AnthropicMessages,
             None,
             None,
@@ -9255,6 +9382,149 @@ mod tests {
 
         assert!(system_text.contains("cc_version=2.1.42"));
         assert!(system_text.contains("cch=abc"));
+    }
+
+    #[test]
+    fn xai_responses_passthrough_gate_requires_explicit_responses_source() {
+        let xai_meta = ProviderGatewayMeta {
+            provider_type: Some("xai".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        assert!(should_apply_xai_responses_passthrough(
+            Some(AiProtocol::OpenAiResponses),
+            None,
+            AiProtocol::OpenAiResponses,
+            Some(&xai_meta),
+        ));
+        // Unknown source must not scrub even when target is xAI Responses.
+        assert!(!should_apply_xai_responses_passthrough(
+            None,
+            None,
+            AiProtocol::OpenAiResponses,
+            Some(&xai_meta),
+        ));
+        // Conversion path must not scrub.
+        assert!(!should_apply_xai_responses_passthrough(
+            Some(AiProtocol::OpenAiResponses),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+            Some(&xai_meta),
+        ));
+        // Non-xAI provider type must not scrub.
+        let deepseek_meta = ProviderGatewayMeta {
+            provider_type: Some("deepseek".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        assert!(!should_apply_xai_responses_passthrough(
+            Some(AiProtocol::OpenAiResponses),
+            None,
+            AiProtocol::OpenAiResponses,
+            Some(&deepseek_meta),
+        ));
+    }
+
+    #[test]
+    fn xai_responses_passthrough_scrubs_native_responses_body() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/responses".to_string(),
+            headers: Vec::new(),
+            body: br#"{
+                "model":"grok-4.5",
+                "prompt_cache_retention":"24h",
+                "tools":[
+                    {"type":"namespace","name":"mcp__files__","tools":[
+                        {"type":"function","name":"read","parameters":{}}
+                    ]},
+                    {"type":"tool_search"},
+                    {"type":"function","name":"plain","parameters":{}}
+                ],
+                "input":[{"type":"function_call","name":"read","namespace":"mcp__files__","call_id":"c1","arguments":"{}"}],
+                "tool_choice":{"type":"namespace","name":"mcp__files__"}
+            }"#
+            .to_vec(),
+        };
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("xai".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "grok-4.5",
+            "grok-4.5",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
+            AiProtocol::OpenAiResponses,
+            None,
+            Some(&meta),
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert!(value.get("prompt_cache_retention").is_none());
+        let tools = value["tools"].as_array().unwrap();
+        assert!(tools.iter().all(|t| t["type"] == "function"));
+        assert!(tools.iter().any(|t| t["name"] == "mcp__files____read"));
+        assert!(tools.iter().any(|t| t["name"] == "plain"));
+        assert!(tools.iter().all(|t| t["type"] != "tool_search"));
+        assert_eq!(value["tool_choice"], json!("auto"));
+        assert_eq!(value["input"][0]["name"], "mcp__files____read");
+        assert!(value["input"][0].get("namespace").is_none());
+        assert!(
+            prepared
+                .xai_namespace_restore_map
+                .contains_key("mcp__files____read")
+        );
+    }
+
+    #[test]
+    fn xai_responses_passthrough_skips_non_xai_provider() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/responses".to_string(),
+            headers: Vec::new(),
+            body: br#"{
+                "model":"gpt-5",
+                "prompt_cache_retention":"24h",
+                "tools":[{"type":"tool_search"}]
+            }"#
+            .to_vec(),
+        };
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("openrouter".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "gpt-5",
+            "gpt-5",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
+            AiProtocol::OpenAiResponses,
+            None,
+            Some(&meta),
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(value["prompt_cache_retention"], "24h");
+        assert_eq!(value["tools"][0]["type"], "tool_search");
+        assert!(prepared.xai_namespace_restore_map.is_empty());
     }
 
     #[test]
@@ -10533,6 +10803,7 @@ mod tests {
             false,
             false,
             GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
             AiProtocol::AnthropicMessages,
             Some(responses_to_anthropic_route()),
             None,
@@ -12745,6 +13016,7 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             "gpt-5",
             false,
             &route,
+            Some(AiProtocol::AnthropicMessages),
             AiProtocol::OpenAiResponses,
             conversion_route,
             None,

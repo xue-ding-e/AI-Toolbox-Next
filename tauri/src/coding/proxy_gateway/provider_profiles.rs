@@ -11,7 +11,7 @@ const CACHE_FILE_NAME: &str = "gateway_provider_profiles.json";
 const DEFAULT_GATEWAY_PROVIDER_PROFILES_JSON: &str =
     include_str!("../../../resources/gateway_provider_profiles.json");
 const SUPPORTED_PROFILE_TOOLS: [&str; 4] = ["claude", "codex", "grok", "gemini"];
-const SUPPORTED_COMPAT_RULES: [&str; 24] = [
+const SUPPORTED_COMPAT_RULES: [&str; 25] = [
     "anthropic_tool_thinking_history",
     "bailian_tool_call_merge",
     "bailian_tool_call_stream_filter",
@@ -32,6 +32,7 @@ const SUPPORTED_COMPAT_RULES: [&str; 24] = [
     "openrouter_reasoning_object",
     "reasoning_field_reasoning",
     "xai_filter_empty_delta",
+    "xai_responses_passthrough",
     "xai_strip_unsupported_fields",
     "zai_metadata",
     "zai_thinking",

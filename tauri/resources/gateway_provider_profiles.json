@@ -2063,6 +2063,14 @@
           "defaultEndpointId": "openai_chat",
           "endpoints": [
             {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.x.ai/v1",
+              "configProviderId": "xai",
+              "model": "grok-4.5"
+            },
+            {
               "id": "openai_chat",
               "label": "OpenAI Chat",
               "apiFormat": "openai_chat",
@@ -2101,7 +2109,8 @@
       },
       "compat": {
         "openaiChat": ["xai_strip_unsupported_fields"],
-        "openaiChatStream": ["xai_filter_empty_delta"]
+        "openaiChatStream": ["xai_filter_empty_delta"],
+        "openaiResponses": ["xai_responses_passthrough"]
       }
     }
   ]

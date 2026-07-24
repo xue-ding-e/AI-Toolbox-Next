@@ -3,6 +3,7 @@ pub mod lossy;
 pub mod messages;
 pub mod signature;
 pub mod thinking_config;
+pub mod tool_schema;
 
 use super::llm::ApiFormat;
 
@@ -17,6 +18,9 @@ pub use messages::{
     tool_choice_to_responses,
 };
 pub use thinking_config::{budget_tokens_to_reasoning_effort, reasoning_effort_to_budget_tokens};
+pub use tool_schema::{
+    flatten_namespace_tool_name, normalize_function_parameters, normalize_function_parameters_owned,
+};
 
 pub(crate) fn should_emit_openai_request_metadata(api_format: Option<ApiFormat>) -> bool {
     matches!(
