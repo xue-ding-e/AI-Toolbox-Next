@@ -1077,6 +1077,7 @@ async fn send_upstream_request(
     let mut upstream_body = prepared_upstream_body.body;
     let conversion_context = prepared_upstream_body.conversion_context;
     let lossy_warnings = prepared_upstream_body.lossy_warnings;
+    let pipeline_context = prepared_upstream_body.pipeline_context;
     let xai_namespace_restore_map = prepared_upstream_body.xai_namespace_restore_map;
     if should_filter_known_invalid_responses_ciphers(
         responses_encrypted_content_rectifier_enabled,
@@ -1205,6 +1206,7 @@ async fn send_upstream_request(
                 let rectified_body = rectified.body;
                 let rectified_context = rectified.conversion_context;
                 let rectified_lossy_warnings = rectified.lossy_warnings;
+                let rectified_pipeline_context = rectified.pipeline_context;
                 let response = send_request_once(
                     &client,
                     method.clone(),
@@ -1229,6 +1231,7 @@ async fn send_upstream_request(
                     conversion_route,
                     Some(rectified_context),
                     rectified_lossy_warnings,
+                    rectified_pipeline_context,
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
@@ -1277,6 +1280,7 @@ async fn send_upstream_request(
                         conversion_route,
                         Some(conversion_context.clone()),
                         lossy_warnings.clone(),
+                        pipeline_context.clone(),
                         upstream_response_snapshot_limit,
                         Some(context),
                         compact_compat,
@@ -1317,6 +1321,7 @@ async fn send_upstream_request(
                     conversion_route,
                     Some(conversion_context.clone()),
                     lossy_warnings.clone(),
+                    pipeline_context.clone(),
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
@@ -1356,6 +1361,7 @@ async fn send_upstream_request(
                     conversion_route,
                     Some(conversion_context.clone()),
                     lossy_warnings.clone(),
+                    pipeline_context.clone(),
                     upstream_response_snapshot_limit,
                     Some(context),
                     compact_compat,
@@ -1397,6 +1403,7 @@ async fn send_upstream_request(
         conversion_route,
         Some(conversion_context),
         lossy_warnings,
+        pipeline_context,
         upstream_response_snapshot_limit,
         Some(context),
         compact_compat,
@@ -1461,6 +1468,7 @@ async fn build_gateway_response(
     conversion_route: Option<ConversionRoute>,
     conversion_context: Option<ConversionContext>,
     lossy_warnings: Vec<String>,
+    pipeline_context: PipelineContext,
     upstream_response_snapshot_limit: Option<usize>,
     context: Option<&GatewayRuntimeContext>,
     compact_compat: CodexResponsesCompactCompat,
@@ -1517,12 +1525,20 @@ async fn build_gateway_response(
             body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
         }
         // Client-facing reverse middleware (AxonHub-style outbound response hooks).
-        body = apply_provider_pipeline_outbound_response(
-            body,
-            Some(&provider.meta),
-            provider.target_protocol,
-            Some(upstream_body_snapshot.clone()),
-        )?;
+        {
+            let response_pipeline = build_provider_pipeline(
+                Some(&provider.meta),
+                conversion_route,
+                provider.target_protocol,
+                true,
+            );
+            body = apply_provider_pipeline_outbound_response(
+                body,
+                &response_pipeline,
+                &pipeline_context,
+                Some(upstream_body_snapshot.clone()),
+            )?;
+        }
         set_response_content_type(&mut response_headers, "application/json");
         append_compact_compat_header(&mut response_headers, compact_compat);
         record_side_store_response(
@@ -1721,12 +1737,20 @@ async fn build_gateway_response(
         body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
     }
     // Client-facing reverse middleware (AxonHub-style outbound response hooks).
-    body = apply_provider_pipeline_outbound_response(
-        body,
-        Some(&provider.meta),
-        provider.target_protocol,
-        Some(upstream_body_snapshot.clone()),
-    )?;
+    {
+        let response_pipeline = build_provider_pipeline(
+            Some(&provider.meta),
+            conversion_route,
+            provider.target_protocol,
+            true,
+        );
+        body = apply_provider_pipeline_outbound_response(
+            body,
+            &response_pipeline,
+            &pipeline_context,
+            Some(upstream_body_snapshot.clone()),
+        )?;
+    }
     append_compact_compat_header(&mut response_headers, compact_compat);
     record_side_store_response(
         context,
@@ -4361,6 +4385,9 @@ struct PreparedUpstreamBody {
     conversion_context: ConversionContext,
     /// Runtime-owned lossy policy warnings (not part of transformer ConversionContext).
     lossy_warnings: Vec<String>,
+    /// Same request-scoped pipeline context used for inbound/outbound request hooks.
+    /// Must survive through client-facing reverse response hooks (e.g. billing_cch).
+    pipeline_context: PipelineContext,
     /// Request-scoped only: flat tool name → namespace identity for native xAI
     /// Responses passthrough restore. Empty when not applicable.
     xai_namespace_restore_map: HashMap<String, NamespacedName>,
@@ -4389,6 +4416,7 @@ fn build_upstream_body_for_provider(
                     body: converted.body,
                     conversion_context: converted.context,
                     lossy_warnings: Vec::new(),
+                    pipeline_context: PipelineContext::default(),
                     xai_namespace_restore_map: HashMap::new(),
                 })
                 .map_err(|error| GatewayForwardError {
@@ -4403,6 +4431,7 @@ fn build_upstream_body_for_provider(
             body: request.body.clone(),
             conversion_context: ConversionContext::default(),
             lossy_warnings: Vec::new(),
+            pipeline_context: PipelineContext::default(),
             xai_namespace_restore_map: HashMap::new(),
         });
     };
@@ -4538,6 +4567,7 @@ fn build_upstream_body_for_provider(
             body,
             conversion_context,
             lossy_warnings,
+            pipeline_context,
             xai_namespace_restore_map: HashMap::new(),
         });
     }
@@ -4545,6 +4575,7 @@ fn build_upstream_body_for_provider(
         body: upstream_body,
         conversion_context,
         lossy_warnings,
+        pipeline_context,
         xai_namespace_restore_map,
     })
 }
@@ -4703,21 +4734,20 @@ fn apply_provider_pipeline_outbound_body(
 }
 
 /// Run client-facing reverse middleware on a final JSON response body.
-/// Non-JSON bodies pass through unchanged. Hooks are currently no-op for stock
-/// middleware; the call establishes the production wire for R-4.
+/// Non-JSON bodies pass through unchanged.
+/// Uses the same request-scoped pipeline + context as inbound/outbound request hooks
+/// so captured fields like `billing_cch` survive into the client-facing response.
 fn apply_provider_pipeline_outbound_response(
     body: Vec<u8>,
-    provider_meta: Option<&ProviderGatewayMeta>,
-    target_protocol: AiProtocol,
+    pipeline: &Pipeline,
+    pipeline_context: &PipelineContext,
     upstream_request_body: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, GatewayForwardError> {
     let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
         return Ok(body);
     };
-    let pipeline = build_provider_pipeline(provider_meta, None, target_protocol, true);
-    let pipeline_context = build_pipeline_context(provider_meta, target_protocol);
     pipeline
-        .run_outbound_response(&mut value, &pipeline_context)
+        .run_outbound_response(&mut value, pipeline_context)
         .map_err(|error| GatewayForwardError {
             message: format!("Gateway response pipeline outbound failed: {error}"),
             kind: GatewayFailureKind::GatewayParse,
@@ -9727,6 +9757,94 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_outbound_response_restores_billing_cch_with_request_scoped_context() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/anthropic/v1/messages".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"claude-sonnet","max_tokens":128,"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42; cch=abc;\n\nStable prompt"}],"messages":[{"role":"user","content":"hi"}]}"#.to_vec(),
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "claude-sonnet",
+            "claude-sonnet",
+            false,
+            false,
+            GatewayCliKey::Claude,
+            Some(AiProtocol::AnthropicMessages),
+            AiProtocol::AnthropicMessages,
+            None,
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        assert_eq!(prepared.pipeline_context.billing_cch.as_deref(), Some("abc"));
+
+        let client_response = br#"{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;\n\nStable prompt"}]}"#.to_vec();
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let restored = apply_provider_pipeline_outbound_response(
+            client_response,
+            &pipeline,
+            &prepared.pipeline_context,
+            None,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&restored).unwrap();
+        let text = value["system"][0]["text"].as_str().unwrap();
+        assert!(text.contains("cch=abc"), "client response should restore cch: {text}");
+    }
+
+    #[test]
+    fn pipeline_outbound_response_does_not_restore_billing_cch_for_non_anthropic_target() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/anthropic/v1/messages".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"claude-sonnet","max_tokens":128,"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42; cch=abc;\n\nStable prompt"}],"messages":[{"role":"user","content":"hi"}]}"#.to_vec(),
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "claude-sonnet",
+            "gpt-4o",
+            false,
+            false,
+            GatewayCliKey::Claude,
+            Some(AiProtocol::AnthropicMessages),
+            AiProtocol::OpenAiChat,
+            Some(ConversionRoute::new(
+                AiProtocol::AnthropicMessages,
+                AiProtocol::OpenAiChat,
+            )),
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        assert_eq!(prepared.pipeline_context.billing_cch.as_deref(), Some("abc"));
+        let client_response = br#"{"messages":[{"role":"system","content":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;"}]},{"role":"assistant","content":"ok"}]}"#.to_vec();
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::OpenAiChat, true);
+        let restored = apply_provider_pipeline_outbound_response(
+            client_response,
+            &pipeline,
+            &prepared.pipeline_context,
+            None,
+        )
+        .unwrap();
+        let text = String::from_utf8(restored).unwrap();
+        assert!(
+            !text.contains("cch=abc"),
+            "non-anthropic client response must not restore cch: {text}"
+        );
+    }
+
+    #[test]
     fn xai_responses_passthrough_gate_requires_explicit_responses_source() {
         let xai_meta = ProviderGatewayMeta {
             provider_type: Some("xai".to_string()),
@@ -10806,10 +10924,12 @@ mod tests {
     fn pipeline_outbound_response_reverse_hook_is_wired_for_json_bodies() {
         // Stock middleware no-op: body must round-trip after reverse response hooks.
         let original = br#"{"id":"resp_1","output":[],"status":"completed"}"#.to_vec();
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::OpenAiResponses, true);
+        let pipeline_context = build_pipeline_context(None, AiProtocol::OpenAiResponses);
         let rewritten = apply_provider_pipeline_outbound_response(
             original.clone(),
-            None,
-            AiProtocol::OpenAiResponses,
+            &pipeline,
+            &pipeline_context,
             None,
         )
         .expect("outbound response pipeline");
@@ -10821,10 +10941,12 @@ mod tests {
     #[test]
     fn pipeline_outbound_response_passes_through_non_json() {
         let body = b"not-json-body".to_vec();
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::OpenAiChat, true);
+        let pipeline_context = build_pipeline_context(None, AiProtocol::OpenAiChat);
         let out = apply_provider_pipeline_outbound_response(
             body.clone(),
-            None,
-            AiProtocol::OpenAiChat,
+            &pipeline,
+            &pipeline_context,
             None,
         )
         .unwrap();

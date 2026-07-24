@@ -89,6 +89,27 @@ impl Middleware for BillingHeaderCchMiddleware {
     }
 
     fn on_outbound_body(&self, body: &mut Value, ctx: &PipelineContext) -> Result<(), String> {
+        // Upstream-facing: restore only for Anthropic target (request body to provider).
+        self.restore_billing_cch_if_anthropic(body, ctx)
+    }
+
+    fn on_outbound_response(
+        &self,
+        body: &mut Value,
+        ctx: &PipelineContext,
+    ) -> Result<(), String> {
+        // Client-facing reverse: same restore when response still carries billing header text.
+        // Non-Anthropic targets keep stripped text so dynamic cch never leaks back.
+        self.restore_billing_cch_if_anthropic(body, ctx)
+    }
+}
+
+impl BillingHeaderCchMiddleware {
+    fn restore_billing_cch_if_anthropic(
+        &self,
+        body: &mut Value,
+        ctx: &PipelineContext,
+    ) -> Result<(), String> {
         if ctx.target_protocol != Some(AiProtocol::AnthropicMessages) {
             return Ok(());
         }
@@ -451,6 +472,45 @@ mod tests {
             body["system"][0]["text"],
             "x-anthropic-billing-header: cc_version=2.1.42; cc_entrypoint=cli; cch=38a80;\n\nStable prompt"
         );
+
+        // Client-facing reverse hook restores with the same request-scoped context.
+        let mut client_response = json!({
+            "type":"message",
+            "role":"assistant",
+            "content":[{"type":"text","text":"ok"}],
+            "system":[
+                {"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42; cc_entrypoint=cli;\n\nStable prompt"}
+            ]
+        });
+        middleware
+            .on_outbound_response(&mut client_response, &ctx)
+            .unwrap();
+        assert_eq!(
+            client_response["system"][0]["text"],
+            "x-anthropic-billing-header: cc_version=2.1.42; cc_entrypoint=cli; cch=38a80;\n\nStable prompt"
+        );
+    }
+
+    #[test]
+    fn billing_header_cch_outbound_response_skips_non_anthropic_target() {
+        let mut body = json!({
+            "messages": [{
+                "role":"system",
+                "content":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;"}]
+            }]
+        });
+        let middleware = BillingHeaderCchMiddleware;
+        let ctx = PipelineContext {
+            target_protocol: Some(AiProtocol::OpenAiChat),
+            billing_cch: Some("leak".to_string()),
+            ..PipelineContext::default()
+        };
+        middleware.on_outbound_response(&mut body, &ctx).unwrap();
+        assert_eq!(
+            body["messages"][0]["content"][0]["text"],
+            "x-anthropic-billing-header: cc_version=2.1.42;"
+        );
+        assert!(!body.to_string().contains("cch=leak"));
     }
 
     #[test]
