@@ -105,7 +105,6 @@ impl Pipeline {
     }
 
     /// Client-facing stream path: reverse order (M_n → … → M_1).
-    #[allow(dead_code)] // Stream reverse hooks are wired when middleware migrates adapters.
     pub(super) fn run_outbound_stream(
         &self,
         chunk: &mut Value,

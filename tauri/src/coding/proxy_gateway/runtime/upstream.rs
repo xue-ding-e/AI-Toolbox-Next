@@ -26,8 +26,9 @@ use super::GatewayRuntimeContext;
 use super::{cache_injector, thinking_budget};
 use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind};
 use crate::coding::proxy_gateway::transformer::{
-    check_lossy_conversion, convert_error_response_body, convert_request_body_with_context,
-    convert_response_body_with_context, convert_sse_stream_with_context, AiProtocol,
+    append_utf8_safe, check_lossy_conversion, convert_error_response_body,
+    convert_request_body_with_context, convert_response_body_with_context,
+    convert_sse_stream_with_context, strip_sse_field, take_sse_block, AiProtocol,
     ConversionContext, ConversionRoute,
 };
 use crate::coding::proxy_gateway::types::{
@@ -1641,6 +1642,18 @@ async fn build_gateway_response(
             body_stream,
             context,
             response_conversion_route,
+        );
+        // Client-facing reverse stream middleware (same request-scoped pipeline_context).
+        let response_pipeline = build_provider_pipeline(
+            Some(&provider.meta),
+            conversion_route,
+            provider.target_protocol,
+            true,
+        );
+        let body_stream = wrap_pipeline_outbound_sse_stream(
+            body_stream,
+            response_pipeline,
+            pipeline_context.clone(),
         );
         let gateway_response = DebugHttpResponse {
             status_code: status.as_u16(),
@@ -4762,6 +4775,135 @@ fn apply_provider_pipeline_outbound_response(
         upstream_response_body: Some(body),
         upstream_response_body_bytes: 0,
     })
+}
+
+/// Edge-stream reverse middleware over SSE: parse each complete block, rewrite JSON
+/// `data:` payloads via `run_outbound_stream` (reverse order), re-emit without full-buffer.
+fn wrap_pipeline_outbound_sse_stream(
+    stream: DebugBodyStream,
+    pipeline: Pipeline,
+    pipeline_context: PipelineContext,
+) -> DebugBodyStream {
+    struct State {
+        inner: DebugBodyStream,
+        pipeline: Pipeline,
+        pipeline_context: PipelineContext,
+        buffer: String,
+        utf8_remainder: Vec<u8>,
+        pending: VecDeque<Result<Vec<u8>, String>>,
+        finished: bool,
+    }
+
+    Box::pin(futures_util::stream::unfold(
+        State {
+            inner: stream,
+            pipeline,
+            pipeline_context,
+            buffer: String::new(),
+            utf8_remainder: Vec::new(),
+            pending: VecDeque::new(),
+            finished: false,
+        },
+        |mut state| async move {
+            loop {
+                if let Some(chunk) = state.pending.pop_front() {
+                    return Some((chunk, state));
+                }
+                if state.finished {
+                    return None;
+                }
+                match state.inner.next().await {
+                    Some(Ok(bytes)) => {
+                        append_utf8_safe(&mut state.buffer, &mut state.utf8_remainder, &bytes);
+                        while let Some(block) = take_sse_block(&mut state.buffer) {
+                            if block.trim().is_empty() {
+                                continue;
+                            }
+                            match rewrite_sse_block_with_outbound_stream(
+                                &block,
+                                &state.pipeline,
+                                &mut state.pipeline_context,
+                            ) {
+                                Ok(bytes) => state.pending.push_back(Ok(bytes)),
+                                Err(error) => state.pending.push_back(Err(error)),
+                            }
+                        }
+                    }
+                    Some(Err(error)) => return Some((Err(error), state)),
+                    None => {
+                        state.finished = true;
+                        if !state.utf8_remainder.is_empty() {
+                            state
+                                .buffer
+                                .push_str(&String::from_utf8_lossy(&state.utf8_remainder));
+                            state.utf8_remainder.clear();
+                        }
+                        let tail = std::mem::take(&mut state.buffer);
+                        if !tail.trim().is_empty() {
+                            match rewrite_sse_block_with_outbound_stream(
+                                &tail,
+                                &state.pipeline,
+                                &mut state.pipeline_context,
+                            ) {
+                                Ok(bytes) => state.pending.push_back(Ok(bytes)),
+                                Err(error) => state.pending.push_back(Err(error)),
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    ))
+}
+
+fn rewrite_sse_block_with_outbound_stream(
+    block: &str,
+    pipeline: &Pipeline,
+    pipeline_context: &mut PipelineContext,
+) -> Result<Vec<u8>, String> {
+    let mut event_name: Option<&str> = None;
+    let mut data_parts: Vec<&str> = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = strip_sse_field(line, "event") {
+            event_name = Some(event.trim());
+        }
+        if let Some(data) = strip_sse_field(line, "data") {
+            data_parts.push(data);
+        }
+    }
+    if data_parts.is_empty() {
+        return Ok(format_sse_passthrough(block));
+    }
+    let data = data_parts.join("\n");
+    if data.trim() == "[DONE]" {
+        return Ok(format_sse_passthrough(block));
+    }
+    let Ok(mut event) = serde_json::from_str::<Value>(&data) else {
+        return Ok(format_sse_passthrough(block));
+    };
+    pipeline
+        .run_outbound_stream(&mut event, pipeline_context)
+        .map_err(|error| format!("Gateway stream pipeline outbound failed: {error}"))?;
+    let restored = serde_json::to_string(&event)
+        .map_err(|error| format!("Failed to serialize outbound stream event: {error}"))?;
+    let mut out = String::new();
+    if let Some(name) = event_name {
+        out.push_str("event: ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out.push_str("data: ");
+    out.push_str(&restored);
+    out.push_str("\n\n");
+    Ok(out.into_bytes())
+}
+
+fn format_sse_passthrough(block: &str) -> Vec<u8> {
+    if block.ends_with("\n\n") {
+        block.as_bytes().to_vec()
+    } else {
+        format!("{block}\n\n").into_bytes()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -9842,6 +9984,67 @@ mod tests {
             !text.contains("cch=abc"),
             "non-anthropic client response must not restore cch: {text}"
         );
+    }
+
+    #[test]
+    fn rewrite_sse_block_restores_billing_cch_and_passthrough_done() {
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let mut pipeline_context = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            billing_cch: Some("abc".to_string()),
+            ..PipelineContext::default()
+        };
+        let data = json!({
+            "type": "message_start",
+            "system": [{
+                "type": "text",
+                "text": "x-anthropic-billing-header: cc_version=2.1.42;
+
+Stable"
+            }]
+        })
+        .to_string();
+        let block = format!("event: message_start
+data: {data}");
+        let rewritten = rewrite_sse_block_with_outbound_stream(
+            &block,
+            &pipeline,
+            &mut pipeline_context,
+        )
+        .unwrap();
+        let out = String::from_utf8(rewritten).unwrap();
+        assert!(out.contains("cch=abc"), "stream reverse should restore cch: {out}");
+        assert!(out.contains("event: message_start"), "event name preserved: {out}");
+
+        let done = rewrite_sse_block_with_outbound_stream(
+            "data: [DONE]",
+            &pipeline,
+            &mut pipeline_context,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(done).unwrap(), "data: [DONE]
+
+");
+    }
+
+    #[test]
+    fn rewrite_sse_block_zero_diff_without_billing_context() {
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let mut pipeline_context = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            ..PipelineContext::default()
+        };
+        let data = r#"{"type":"message_start","message":{"id":"m1"}}"#;
+        let block = format!("event: message_start
+data: {data}");
+        let rewritten = rewrite_sse_block_with_outbound_stream(
+            &block,
+            &pipeline,
+            &mut pipeline_context,
+        )
+        .unwrap();
+        let out = String::from_utf8(rewritten).unwrap();
+        assert!(out.contains(data), "no middleware effect should preserve payload: {out}");
     }
 
     #[test]

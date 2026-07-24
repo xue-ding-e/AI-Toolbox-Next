@@ -102,6 +102,15 @@ impl Middleware for BillingHeaderCchMiddleware {
         // Non-Anthropic targets keep stripped text so dynamic cch never leaks back.
         self.restore_billing_cch_if_anthropic(body, ctx)
     }
+
+    fn on_outbound_stream(
+        &self,
+        chunk: &mut Value,
+        ctx: &mut PipelineContext,
+    ) -> Result<(), String> {
+        // Same client-facing restore semantics as non-stream reverse, applied per SSE JSON event.
+        self.restore_billing_cch_if_anthropic(chunk, ctx)
+    }
 }
 
 impl BillingHeaderCchMiddleware {
@@ -511,6 +520,28 @@ mod tests {
             "x-anthropic-billing-header: cc_version=2.1.42;"
         );
         assert!(!body.to_string().contains("cch=leak"));
+    }
+
+    #[test]
+    fn billing_header_cch_outbound_stream_restores_anthropic_event() {
+        let mut event = json!({
+            "system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;\n\nStable prompt"}]
+        });
+        let middleware = BillingHeaderCchMiddleware;
+        let mut ctx = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            billing_cch: Some("38a80".to_string()),
+            ..PipelineContext::default()
+        };
+        middleware.on_outbound_stream(&mut event, &mut ctx).unwrap();
+        assert!(
+            event["system"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("cch=38a80"),
+            "stream reverse should restore cch: {}",
+            event["system"][0]["text"]
+        );
     }
 
     #[test]
