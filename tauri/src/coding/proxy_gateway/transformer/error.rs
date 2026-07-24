@@ -4,6 +4,10 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolConversionError {
     InvalidJson(String),
+    /// Reserved for callers that need an explicit unsupported-route error.
+    /// Current kernel routes either convert or identity-passthrough; this
+    /// variant is not constructed by production conversion entrypoints (T-6).
+    #[allow(dead_code)]
     UnsupportedRoute(ConversionRoute),
     Transform(String),
 }

@@ -241,6 +241,20 @@ async fn validate_streaming_first_chunk(
                 let decision = probe.push_chunk(&chunk);
                 pre_read_chunks.push_back(chunk);
                 match decision {
+                    StreamingProbeDecision::ProtocolError => {
+                        let snapshot: Vec<u8> = pre_read_chunks
+                            .iter()
+                            .flat_map(|chunk| chunk.iter().copied())
+                            .collect();
+                        return Err(GatewayForwardError {
+                            message: "Upstream streaming response reported a protocol error envelope"
+                                .to_string(),
+                            kind: GatewayFailureKind::UpstreamBadRequest,
+                            upstream_request_body: None,
+                            upstream_response_body: Some(snapshot),
+                            upstream_response_body_bytes: 0,
+                        });
+                    }
                     StreamingProbeDecision::Meaningful => {
                         response.body_stream = Some(Box::pin(PreReadChunkStream {
                             pending_chunks: pre_read_chunks,
@@ -273,17 +287,35 @@ async fn validate_streaming_first_chunk(
                         GatewayFailureKind::Timeout,
                     ));
                 }
-                if probe.finish() == StreamingProbeDecision::Meaningful {
-                    response.body_stream = Some(Box::pin(PreReadChunkStream {
-                        pending_chunks: pre_read_chunks,
-                        inner: body_stream,
-                    }));
-                    return Ok(());
+                match probe.finish() {
+                    StreamingProbeDecision::ProtocolError => {
+                        let snapshot: Vec<u8> = pre_read_chunks
+                            .iter()
+                            .flat_map(|chunk| chunk.iter().copied())
+                            .collect();
+                        return Err(GatewayForwardError {
+                            message: "Upstream streaming response reported a protocol error envelope"
+                                .to_string(),
+                            kind: GatewayFailureKind::UpstreamBadRequest,
+                            upstream_request_body: None,
+                            upstream_response_body: Some(snapshot),
+                            upstream_response_body_bytes: 0,
+                        });
+                    }
+                    StreamingProbeDecision::Meaningful => {
+                        response.body_stream = Some(Box::pin(PreReadChunkStream {
+                            pending_chunks: pre_read_chunks,
+                            inner: body_stream,
+                        }));
+                        return Ok(());
+                    }
+                    StreamingProbeDecision::Continue => {
+                        return Err(GatewayForwardError::new(
+                            "Upstream streaming response ended before meaningful content",
+                            GatewayFailureKind::EmptyResponse,
+                        ));
+                    }
                 }
-                return Err(GatewayForwardError::new(
-                    "Upstream streaming response ended before meaningful content",
-                    GatewayFailureKind::EmptyResponse,
-                ));
             }
         }
     }
@@ -293,6 +325,8 @@ async fn validate_streaming_first_chunk(
 enum StreamingProbeDecision {
     Continue,
     Meaningful,
+    /// 2xx stream delivered a failure envelope (`response.failed`, nested error, etc.).
+    ProtocolError,
 }
 
 struct StreamingSemanticProbe {
@@ -300,6 +334,7 @@ struct StreamingSemanticProbe {
     buffer: Vec<u8>,
     chunk_count: usize,
     byte_count: usize,
+    saw_protocol_error: bool,
 }
 
 impl StreamingSemanticProbe {
@@ -309,12 +344,17 @@ impl StreamingSemanticProbe {
             buffer: Vec::new(),
             chunk_count: 0,
             byte_count: 0,
+            saw_protocol_error: false,
         }
     }
 
     fn push_chunk(&mut self, chunk: &[u8]) -> StreamingProbeDecision {
         self.chunk_count = self.chunk_count.saturating_add(1);
         self.byte_count = self.byte_count.saturating_add(chunk.len());
+        if gateway_body_reports_error(chunk) {
+            self.saw_protocol_error = true;
+            return StreamingProbeDecision::ProtocolError;
+        }
         if !self.enabled {
             return StreamingProbeDecision::Meaningful;
         }
@@ -322,6 +362,10 @@ impl StreamingSemanticProbe {
         self.buffer.extend_from_slice(chunk);
         while let Some((end, delimiter_len)) = find_sse_block_delimiter(&self.buffer) {
             let block = self.buffer.drain(..end + delimiter_len).collect::<Vec<_>>();
+            if gateway_body_reports_error(&block) {
+                self.saw_protocol_error = true;
+                return StreamingProbeDecision::ProtocolError;
+            }
             if sse_block_has_meaningful_content(&block) {
                 return StreamingProbeDecision::Meaningful;
             }
@@ -330,6 +374,9 @@ impl StreamingSemanticProbe {
     }
 
     fn finish(&mut self) -> StreamingProbeDecision {
+        if self.saw_protocol_error {
+            return StreamingProbeDecision::ProtocolError;
+        }
         if !self.enabled {
             return if self.byte_count > 0 {
                 StreamingProbeDecision::Meaningful
@@ -341,7 +388,9 @@ impl StreamingSemanticProbe {
             return StreamingProbeDecision::Continue;
         }
         let block = std::mem::take(&mut self.buffer);
-        if sse_block_has_meaningful_content(&block) {
+        if gateway_body_reports_error(&block) {
+            StreamingProbeDecision::ProtocolError
+        } else if sse_block_has_meaningful_content(&block) {
             StreamingProbeDecision::Meaningful
         } else {
             StreamingProbeDecision::Continue
@@ -387,11 +436,16 @@ fn sse_event_name(block: &str) -> Option<String> {
 }
 
 fn sse_value_has_meaningful_content(event_name: Option<&str>, value: &Value) -> bool {
-    if value.get("error").is_some()
-        || event_name == Some("error")
-        || value.get("type").and_then(Value::as_str) == Some("error")
+    // Failure envelopes are NOT "meaningful success content". They are detected
+    // separately by gateway_body_reports_error / classify_success_protocol_error.
+    if gateway_json_reports_error(value)
+        || event_name.is_some_and(gateway_event_reports_error)
+        || value
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_event_reports_error)
     {
-        return true;
+        return false;
     }
 
     let event_type = value
@@ -816,7 +870,8 @@ async fn forward_to_upstream(
                         }
                     }
 
-                    if let Some(failure_kind) = classify_empty_success_response(&response)
+                    if let Some(failure_kind) = classify_success_protocol_error(&response)
+                        .or_else(|| classify_empty_success_response(&response))
                         .or_else(|| classify_status_failure(response.status_code))
                     {
                         let category = model_health::classify_failure(failure_kind).category;
@@ -1410,8 +1465,9 @@ async fn build_gateway_response(
         ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol);
     let should_stream = should_stream_response(request, route, response.headers(), status.as_u16());
     let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
+    // Align with cc-switch / design: restore only on HTTP 2xx, not 3xx.
     let should_restore_xai_namespaces =
-        (200..400).contains(&status.as_u16()) && !xai_namespace_restore_map.is_empty();
+        status.is_success() && !xai_namespace_restore_map.is_empty();
 
     if let Some(aggregate_kind) = sse_aggregation_kind_for_non_streaming_client(
         request,
@@ -1452,6 +1508,13 @@ async fn build_gateway_response(
         if should_restore_xai_namespaces {
             body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
         }
+        // Client-facing reverse middleware (AxonHub-style outbound response hooks).
+        body = apply_provider_pipeline_outbound_response(
+            body,
+            Some(&provider.meta),
+            provider.target_protocol,
+            Some(upstream_body_snapshot.clone()),
+        )?;
         set_response_content_type(&mut response_headers, "application/json");
         append_compact_compat_header(&mut response_headers, compact_compat);
         record_side_store_response(
@@ -1649,6 +1712,13 @@ async fn build_gateway_response(
     if should_restore_xai_namespaces {
         body = restore_xai_namespace_json_body(&body, &xai_namespace_restore_map);
     }
+    // Client-facing reverse middleware (AxonHub-style outbound response hooks).
+    body = apply_provider_pipeline_outbound_response(
+        body,
+        Some(&provider.meta),
+        provider.target_protocol,
+        Some(upstream_body_snapshot.clone()),
+    )?;
     append_compact_compat_header(&mut response_headers, compact_compat);
     record_side_store_response(
         context,
@@ -4425,12 +4495,26 @@ fn build_upstream_body_for_provider(
     if target_protocol == AiProtocol::OpenAiResponses {
         upstream_body = apply_openai_responses_prompt_cache_key_fallback(request, &upstream_body)?;
     }
+    // Capture Chat prompt_cache_key before outbound strip so allowlisted providers can reinject.
+    let chat_prompt_cache_key_before_strip = if target_protocol == AiProtocol::OpenAiChat {
+        extract_nonempty_prompt_cache_key(&upstream_body)
+    } else {
+        None
+    };
     let mut upstream_body = apply_provider_pipeline_outbound_body(
         upstream_body,
         &pipeline,
         &pipeline_context,
         request.body.clone(),
     )?;
+    if target_protocol == AiProtocol::OpenAiChat {
+        upstream_body = apply_openai_chat_prompt_cache_key_reinject(
+            request,
+            provider_meta,
+            &upstream_body,
+            chat_prompt_cache_key_before_strip,
+        )?;
+    }
     // Native OpenAI Responses → xAI only: flatten namespace tools then scrub private
     // fields. Conversion paths (source!=target) rely on IR and must not run this.
     let xai_namespace_restore_map = apply_xai_responses_passthrough_if_needed(
@@ -4607,6 +4691,38 @@ fn apply_provider_pipeline_outbound_body(
     })
 }
 
+/// Run client-facing reverse middleware on a final JSON response body.
+/// Non-JSON bodies pass through unchanged. Hooks are currently no-op for stock
+/// middleware; the call establishes the production wire for R-4.
+fn apply_provider_pipeline_outbound_response(
+    body: Vec<u8>,
+    provider_meta: Option<&ProviderGatewayMeta>,
+    target_protocol: AiProtocol,
+    upstream_request_body: Option<Vec<u8>>,
+) -> Result<Vec<u8>, GatewayForwardError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(body);
+    };
+    let pipeline = build_provider_pipeline(provider_meta, None, target_protocol, true);
+    let pipeline_context = build_pipeline_context(provider_meta, target_protocol);
+    pipeline
+        .run_outbound_response(&mut value, &pipeline_context)
+        .map_err(|error| GatewayForwardError {
+            message: format!("Gateway response pipeline outbound failed: {error}"),
+            kind: GatewayFailureKind::GatewayParse,
+            upstream_request_body: upstream_request_body.clone(),
+            upstream_response_body: Some(body.clone()),
+            upstream_response_body_bytes: body.len() as u64,
+        })?;
+    serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!("Failed to serialize provider pipeline response body: {error}"),
+        kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body,
+        upstream_response_body: Some(body),
+        upstream_response_body_bytes: 0,
+    })
+}
+
 #[derive(Debug, Clone)]
 struct OutboundAdapterCompatMiddleware {
     conversion_route: Option<ConversionRoute>,
@@ -4763,6 +4879,81 @@ fn apply_openai_responses_prompt_cache_key_fallback(
         upstream_response_body: None,
         upstream_response_body_bytes: 0,
     })
+}
+
+fn extract_nonempty_prompt_cache_key(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("prompt_cache_key")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+/// Chat outbound strips `prompt_cache_key` by default. Reinject for allowlisted
+/// providers only: explicit (pre-strip) > session hint. Never write `"default"`
+/// or a random UUID. Does not overwrite meta `prompt_cache_key` string semantics.
+fn apply_openai_chat_prompt_cache_key_reinject(
+    request: &DebugHttpRequest,
+    provider_meta: Option<&ProviderGatewayMeta>,
+    body: &[u8],
+    explicit_key: Option<String>,
+) -> Result<Vec<u8>, GatewayForwardError> {
+    if !should_send_openai_chat_prompt_cache_key(provider_meta) {
+        return Ok(body.to_vec());
+    }
+    let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
+        return Ok(body.to_vec());
+    };
+    let has_prompt_cache_key = value
+        .get("prompt_cache_key")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_prompt_cache_key {
+        return Ok(body.to_vec());
+    }
+    let key = explicit_key
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| gateway_session_id_hint(request, &value));
+    let Some(key) = key else {
+        return Ok(body.to_vec());
+    };
+    let Value::Object(object) = &mut value else {
+        return Ok(body.to_vec());
+    };
+    object.insert("prompt_cache_key".to_string(), Value::String(key));
+    serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!("Failed to serialize Chat prompt_cache_key reinject body: {error}"),
+        kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body: Some(body.to_vec()),
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+    })
+}
+
+fn should_send_openai_chat_prompt_cache_key(provider_meta: Option<&ProviderGatewayMeta>) -> bool {
+    let Some(provider_type) = provider_meta
+        .and_then(|meta| meta.provider_type.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let normalized = provider_type.to_ascii_lowercase().replace('_', "-");
+    matches!(
+        normalized.as_str(),
+        "openai"
+            | "openai-chat"
+            | "kimi"
+            | "kimi-coding"
+            | "moonshot"
+            | "moonshot-v1"
+            | "moonshot-coding"
+    )
 }
 
 fn header_value_ci<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -6105,9 +6296,10 @@ fn strip_xai_unsupported_openai_chat_fields(object: &mut serde_json::Map<String,
     let model = object
         .get("model")
         .and_then(Value::as_str)
-        .map(|model| model.trim().to_ascii_lowercase());
+        .map(normalize_xai_chat_model_id);
     match model.as_deref() {
-        Some("grok-4") => {
+        // grok-4.5 / xai/grok-4.5: same sampling knobs + reasoning_effort as Responses sanitize.
+        Some("grok-4.5") | Some("grok-4") => {
             for field in [
                 "reasoning_effort",
                 "presence_penalty",
@@ -6124,6 +6316,15 @@ fn strip_xai_unsupported_openai_chat_fields(object: &mut serde_json::Map<String,
         }
         _ => {}
     }
+}
+
+/// Strip provider prefix (`xai/grok-4.5` → `grok-4.5`) and lowercase for Chat xAI scrub matching.
+fn normalize_xai_chat_model_id(model: &str) -> String {
+    let mut model = model.trim();
+    if let Some(idx) = model.rfind('/') {
+        model = model[idx + 1..].trim();
+    }
+    model.to_ascii_lowercase()
 }
 
 fn backfill_tool_call_reasoning_content(object: &mut serde_json::Map<String, Value>) {
@@ -7783,7 +7984,57 @@ fn inject_codex_official_headers(
         }
     }
 
+    // Client-supplied Chatgpt-Account-Id is preserved by generic header forward.
+    // Only derive from bearer JWT when the header is still missing (multi-account OAuth).
+    if !headers.contains_key("chatgpt-account-id") {
+        if let Some(account_id) = chatgpt_account_id_from_bearer_token(provider.api_key.trim()) {
+            let value = HeaderValue::from_str(&account_id)
+                .map_err(|error| format!("Invalid Chatgpt-Account-Id header value: {error}"))?;
+            append_preserved_header(headers, preserved, "Chatgpt-Account-Id", value)?;
+        }
+    }
+
     Ok(())
+}
+
+/// Best-effort parse of ChatGPT OAuth JWT payload (no signature verify).
+/// Looks for nested `https://api.openai.com/auth.chatgpt_account_id` and flat claims.
+fn chatgpt_account_id_from_bearer_token(token: &str) -> Option<String> {
+    let token = token
+        .trim()
+        .strip_prefix("Bearer ")
+        .or_else(|| token.trim().strip_prefix("bearer "))
+        .unwrap_or(token)
+        .trim();
+    if token.is_empty() || !token.contains('.') {
+        return None;
+    }
+    let payload_segment = token.split('.').nth(1)?;
+    let payload_bytes = decode_jwt_payload_segment(payload_segment)?;
+    let payload = serde_json::from_slice::<Value>(&payload_bytes).ok()?;
+    payload
+        .get("https://api.openai.com/auth")
+        .and_then(|auth| auth.get("chatgpt_account_id"))
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("chatgpt_account_id").and_then(Value::as_str))
+        .or_else(|| payload.get("account_id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn decode_jwt_payload_segment(segment: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let normalized = segment.replace('-', "+").replace('_', "/");
+    let padded = match normalized.len() % 4 {
+        0 => normalized,
+        2 => format!("{normalized}=="),
+        3 => format!("{normalized}="),
+        _ => return None,
+    };
+    base64::engine::general_purpose::STANDARD
+        .decode(padded.as_bytes())
+        .ok()
 }
 
 fn codex_session_id_from_request_headers(request: &DebugHttpRequest) -> Option<String> {
@@ -8399,8 +8650,20 @@ fn classify_reqwest_error(error: &reqwest::Error) -> GatewayFailureKind {
     }
 }
 
+/// 2xx/3xx body that is a protocol failure envelope (response.failed, top-level error, etc.).
+/// Maps to UpstreamBadRequest so failover/retry can switch providers — not EmptyResponse.
+fn classify_success_protocol_error(response: &DebugHttpResponse) -> Option<GatewayFailureKind> {
+    if response.is_streaming || !(200..400).contains(&response.status_code) {
+        return None;
+    }
+    gateway_body_reports_error(&response.body).then_some(GatewayFailureKind::UpstreamBadRequest)
+}
+
 fn classify_empty_success_response(response: &DebugHttpResponse) -> Option<GatewayFailureKind> {
     if response.is_streaming || !(200..400).contains(&response.status_code) {
+        return None;
+    }
+    if gateway_body_reports_error(&response.body) {
         return None;
     }
     (!response_body_has_meaningful_content(&response.body))
@@ -8411,6 +8674,9 @@ fn response_body_has_meaningful_content(body: &[u8]) -> bool {
     if body.iter().all(u8::is_ascii_whitespace) {
         return false;
     }
+    if gateway_body_reports_error(body) {
+        return false;
+    }
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
         return true;
     };
@@ -8418,15 +8684,15 @@ fn response_body_has_meaningful_content(body: &[u8]) -> bool {
 }
 
 fn json_value_has_meaningful_content(value: &Value) -> bool {
+    if gateway_json_reports_error(value) {
+        return false;
+    }
     match value {
         Value::Null => false,
         Value::Bool(_) | Value::Number(_) => true,
         Value::String(text) => !text.trim().is_empty(),
         Value::Array(items) => items.iter().any(json_value_has_meaningful_content),
         Value::Object(object) => {
-            if object.get("error").is_some() {
-                return true;
-            }
             if let Some(choices) = object.get("choices").and_then(Value::as_array) {
                 return choices.iter().any(choice_has_meaningful_content);
             }
@@ -8442,6 +8708,74 @@ fn json_value_has_meaningful_content(value: &Value) -> bool {
             object.values().any(json_value_has_meaningful_content)
         }
     }
+}
+
+/// Shared with connectivity tests: detect 2xx failure envelopes (JSON or SSE).
+pub(super) fn gateway_body_reports_error(body: &[u8]) -> bool {
+    if body.is_empty() {
+        return false;
+    }
+    if let Ok(value) = serde_json::from_slice::<Value>(body) {
+        return gateway_json_reports_error(&value);
+    }
+    String::from_utf8_lossy(body).lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed
+            .strip_prefix("event:")
+            .map(str::trim)
+            .is_some_and(gateway_event_reports_error)
+        {
+            return true;
+        }
+        let payload = trimmed
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        serde_json::from_str::<Value>(payload)
+            .ok()
+            .is_some_and(|value| gateway_json_reports_error(&value))
+    })
+}
+
+fn gateway_json_reports_error(value: &Value) -> bool {
+    value.get("error").is_some_and(|error| !error.is_null())
+        || value
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_event_reports_error)
+        || value
+            .get("event")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_event_reports_error)
+        || value
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(gateway_response_status_reports_error)
+        || value.get("response").is_some_and(|response| {
+            response.get("error").is_some_and(|error| !error.is_null())
+                || response
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(gateway_response_status_reports_error)
+        })
+}
+
+fn gateway_event_reports_error(event: &str) -> bool {
+    matches!(
+        event.trim(),
+        "error"
+            | "response.failed"
+            | "response.cancelled"
+            | "response.canceled"
+            | "response.incomplete"
+    )
+}
+
+fn gateway_response_status_reports_error(status: &str) -> bool {
+    matches!(
+        status.trim(),
+        "failed" | "cancelled" | "canceled" | "incomplete"
+    )
 }
 
 fn choice_has_meaningful_content(choice: &Value) -> bool {
@@ -10275,6 +10609,268 @@ mod tests {
         let value = serde_json::from_slice::<Value>(&body).unwrap();
 
         assert_eq!(value["prompt_cache_key"], "shared-session-123");
+    }
+
+    #[test]
+    fn chat_prompt_cache_key_strips_by_default_without_allowlist() {
+        let request = debug_request_with_headers(
+            br#"{
+                "model":"gpt-4o",
+                "messages":[{"role":"user","content":"hi"}],
+                "prompt_cache_key":"explicit-cache-key"
+            }"#,
+            vec![("X-Session-Id", "shared-session-123")],
+        );
+        let body = build_upstream_body(
+            &request,
+            "gpt-4o",
+            "gpt-4o",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            AiProtocol::OpenAiChat,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            false,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(value.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn chat_prompt_cache_key_reinjects_explicit_for_allowlisted_provider() {
+        let request = debug_request_with_headers(
+            br#"{
+                "model":"kimi-k2.5",
+                "messages":[{"role":"user","content":"hi"}],
+                "prompt_cache_key":"explicit-cache-key"
+            }"#,
+            vec![("X-Session-Id", "shared-session-123")],
+        );
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("kimi".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "kimi-k2.5",
+            "kimi-k2.5",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
+            AiProtocol::OpenAiChat,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            Some(&meta),
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&prepared.body).unwrap();
+        assert_eq!(value["prompt_cache_key"], "explicit-cache-key");
+    }
+
+    #[test]
+    fn chat_prompt_cache_key_reinjects_session_when_allowlisted_and_no_explicit() {
+        let request = debug_request_with_headers(
+            br#"{
+                "model":"gpt-4o",
+                "messages":[{"role":"user","content":"hi"}]
+            }"#,
+            vec![("X-Session-Id", "shared-session-123")],
+        );
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("openai".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "gpt-4o",
+            "gpt-4o",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
+            AiProtocol::OpenAiChat,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            Some(&meta),
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&prepared.body).unwrap();
+        assert_eq!(value["prompt_cache_key"], "shared-session-123");
+    }
+
+    fn protocol_error_debug_response(body: &[u8]) -> DebugHttpResponse {
+        DebugHttpResponse {
+            status_code: 200,
+            status_text: "OK".to_string(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: body.to_vec(),
+            body_stream: None,
+            response_body_bytes: body.len() as u64,
+            token_usage: TokenUsage::default(),
+            first_token_ms: None,
+            is_streaming: false,
+            cli_key: None,
+            route_name: "test".to_string(),
+            provider_id: None,
+            provider_name: None,
+            provider_type: None,
+            cost_multiplier: None,
+            pricing_model_source: None,
+            requested_model: None,
+            upstream_model_id: None,
+            upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
+            upstream_response_body_stream_snapshot: None,
+            upstream_url: None,
+            error_category: None,
+            attempt_count: 1,
+            provider_attempt_count: 1,
+            provider_attempts: Vec::new(),
+            failover: false,
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn success_protocol_error_classifies_failed_envelope_as_upstream_bad_request() {
+        let response = protocol_error_debug_response(
+            br#"{"id":"resp_1","status":"failed","error":{"message":"boom"},"output":[]}"#,
+        );
+        assert_eq!(
+            classify_success_protocol_error(&response),
+            Some(GatewayFailureKind::UpstreamBadRequest)
+        );
+        assert_eq!(classify_empty_success_response(&response), None);
+        assert!(gateway_body_reports_error(&response.body));
+        assert!(!response_body_has_meaningful_content(&response.body));
+    }
+
+    #[test]
+    fn success_protocol_error_classifies_top_level_error_object() {
+        let response = protocol_error_debug_response(
+            br#"{"error":{"message":"invalid","type":"invalid_request_error"}}"#,
+        );
+        assert_eq!(
+            classify_success_protocol_error(&response),
+            Some(GatewayFailureKind::UpstreamBadRequest)
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_validation_fails_closed_on_response_failed_envelope() {
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"error\":{\"message\":\"boom\"},\"output\":[]}}\n\n"
+        )
+        .as_bytes()
+        .to_vec())]));
+        let mut response = protocol_error_debug_response(b"");
+        response.is_streaming = true;
+        response.headers = vec![("Content-Type".to_string(), "text/event-stream".to_string())];
+        response.body_stream = Some(stream);
+
+        let error = validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect_err("response.failed first chunk must fail-closed");
+        assert_eq!(error.kind, GatewayFailureKind::UpstreamBadRequest);
+        assert!(response.body_stream.is_none());
+    }
+
+    #[test]
+    fn pipeline_outbound_response_reverse_hook_is_wired_for_json_bodies() {
+        // Stock middleware no-op: body must round-trip after reverse response hooks.
+        let original = br#"{"id":"resp_1","output":[],"status":"completed"}"#.to_vec();
+        let rewritten = apply_provider_pipeline_outbound_response(
+            original.clone(),
+            None,
+            AiProtocol::OpenAiResponses,
+            None,
+        )
+        .expect("outbound response pipeline");
+        let before = serde_json::from_slice::<Value>(&original).unwrap();
+        let after = serde_json::from_slice::<Value>(&rewritten).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn pipeline_outbound_response_passes_through_non_json() {
+        let body = b"not-json-body".to_vec();
+        let out = apply_provider_pipeline_outbound_response(
+            body.clone(),
+            None,
+            AiProtocol::OpenAiChat,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn chatgpt_account_id_parses_nested_openai_auth_claim() {
+        use base64::Engine;
+        let header = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"alg":"none"}"#)
+            .trim_end_matches('=')
+            .replace('+', "-")
+            .replace('/', "_");
+        let payload = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"https://api.openai.com/auth":{"chatgpt_account_id":"acct_from_jwt"}}"#)
+            .trim_end_matches('=')
+            .replace('+', "-")
+            .replace('/', "_");
+        let token = format!("{header}.{payload}.sig");
+        assert_eq!(
+            chatgpt_account_id_from_bearer_token(&token).as_deref(),
+            Some("acct_from_jwt")
+        );
+        assert_eq!(
+            chatgpt_account_id_from_bearer_token(&format!("Bearer {token}")).as_deref(),
+            Some("acct_from_jwt")
+        );
+    }
+
+    #[test]
+    fn codex_official_headers_derive_account_id_from_jwt_when_missing() {
+        use base64::Engine;
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.meta.provider_type = Some("chatgpt-codex".to_string());
+        let header = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"alg":"none"}"#)
+            .trim_end_matches('=')
+            .replace('+', "-")
+            .replace('/', "_");
+        let payload = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"chatgpt_account_id":"acct_derived"}"#)
+            .trim_end_matches('=')
+            .replace('+', "-")
+            .replace('/', "_");
+        provider.api_key = format!("{header}.{payload}.sig");
+        let request = debug_request(b"{}");
+        let headers = build_upstream_headers(&request, &provider, None).unwrap();
+        assert_eq!(
+            headers
+                .get("chatgpt-account-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("acct_derived")
+        );
     }
 
     #[test]
@@ -12645,6 +13241,90 @@ mod tests {
         assert!(value.get("frequency_penalty").is_none());
         assert!(value.get("stop").is_none());
         assert_eq!(value["temperature"], 0.5);
+    }
+
+    #[test]
+    fn provider_body_compat_xai_chat_strips_grok_45_and_prefixed_model_ids() {
+        for model in ["grok-4.5", "xai/grok-4.5", "XAI/Grok-4.5"] {
+            let body = format!(
+                r#"{{
+                    "model":"{model}",
+                    "reasoning_effort":"high",
+                    "presence_penalty":0.1,
+                    "frequency_penalty":0.2,
+                    "stop":["END"],
+                    "temperature":0.5,
+                    "messages":[{{"role":"user","content":"hi"}}]
+                }}"#
+            );
+            let body = apply_outbound_adapter_compat_for_provider_type(
+                body.into_bytes(),
+                None,
+                AiProtocol::OpenAiChat,
+                "xai",
+            )
+            .unwrap();
+            let value = serde_json::from_slice::<Value>(&body).unwrap();
+            assert!(
+                value.get("reasoning_effort").is_none(),
+                "model={model} should strip reasoning_effort"
+            );
+            assert!(
+                value.get("presence_penalty").is_none(),
+                "model={model} should strip presence_penalty"
+            );
+            assert!(
+                value.get("frequency_penalty").is_none(),
+                "model={model} should strip frequency_penalty"
+            );
+            assert!(
+                value.get("stop").is_none(),
+                "model={model} should strip stop"
+            );
+            assert_eq!(value["temperature"], 0.5);
+        }
+    }
+
+    #[test]
+    fn provider_body_compat_deepseek_chat_preserves_reasoning_with_tool_calls_and_strips_without()
+    {
+        let body = br#"{
+            "model":"deepseek-v4-pro",
+            "messages":[
+                {"role":"user","content":"hi"},
+                {
+                    "role":"assistant",
+                    "content":"plain",
+                    "reasoning_content":"must strip without tools",
+                    "reasoning":"must strip without tools"
+                },
+                {
+                    "role":"assistant",
+                    "content":null,
+                    "reasoning_content":"keep this",
+                    "reasoning":"also present",
+                    "tool_calls":[
+                        {
+                            "id":"call_1",
+                            "type":"function",
+                            "function":{"name":"lookup","arguments":"{}"}
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "deepseek",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(value["messages"][1].get("reasoning_content").is_none());
+        assert!(value["messages"][1].get("reasoning").is_none());
+        assert_eq!(value["messages"][2]["reasoning_content"], "keep this");
+        assert!(value["messages"][2].get("reasoning").is_none());
     }
 
     #[test]

@@ -37,6 +37,24 @@ pub(super) trait Middleware: Send + Sync {
         Ok(())
     }
 
+    /// Outbound (client-facing) response JSON — reverse order in pipeline.
+    fn on_outbound_response(
+        &self,
+        _body: &mut Value,
+        _ctx: &PipelineContext,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Outbound (client-facing) stream event JSON — reverse order in pipeline.
+    fn on_outbound_stream(
+        &self,
+        _chunk: &mut Value,
+        _ctx: &mut PipelineContext,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     fn on_error(&self, _message: &str, _ctx: &PipelineContext) -> ErrorDecision {
         ErrorDecision::Propagate
     }

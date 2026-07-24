@@ -15,7 +15,7 @@ use super::shared::{
 use super::sse::{append_utf8_safe, parse_sse_block, sse_done, sse_event, take_sse_block};
 use super::types::{AiProtocol, ConversionRoute};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub enum UnifiedStreamEvent {
@@ -155,6 +155,15 @@ impl StreamKernel {
 struct SourceStreamState {
     chat_tool_names: HashMap<usize, String>,
     chat_tool_ids: HashMap<usize, String>,
+    /// Accumulated arguments per tool index (for ordered flush / late identity).
+    chat_tool_arguments: HashMap<usize, String>,
+    chat_tool_types: HashMap<usize, String>,
+    /// Next tool index that may be first-emitted (CS#5310 ordered flush).
+    next_tool_index_to_add: usize,
+    /// Tools whose id/name are ready but waiting for earlier indices.
+    ready_tool_indices: BTreeSet<usize>,
+    /// Tools that already had their identity-open ToolCall emitted.
+    chat_tool_opened: HashSet<usize>,
     chat_seen_tool_call: bool,
     chat_inline_think_mode: InlineThinkMode,
     chat_inline_think_buffer: String,
@@ -297,21 +306,16 @@ impl SourceStreamState {
                             .get("input")
                             .and_then(Value::as_str)
                             .unwrap_or_default();
-                        out.push(UnifiedStreamEvent::ToolCall {
-                            index,
-                            id: self
-                                .chat_tool_ids
-                                .get(&index)
-                                .cloned()
-                                .unwrap_or_else(|| format!("call_{index}")),
-                            tool_type: TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string(),
-                            name: self
-                                .chat_tool_names
-                                .get(&index)
-                                .cloned()
-                                .unwrap_or_default(),
-                            arguments: input.to_string(),
-                        });
+                        if !input.is_empty() {
+                            self.chat_tool_arguments
+                                .entry(index)
+                                .or_default()
+                                .push_str(input);
+                        }
+                        self.chat_tool_types
+                            .insert(index, TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string());
+                        self.mark_chat_tool_ready(index);
+                        out.extend(self.flush_ready_tool_calls());
                         self.chat_seen_tool_call = true;
                         continue;
                     }
@@ -326,21 +330,16 @@ impl SourceStreamState {
                         .get("arguments")
                         .and_then(Value::as_str)
                         .unwrap_or_default();
-                    out.push(UnifiedStreamEvent::ToolCall {
-                        index,
-                        id: self
-                            .chat_tool_ids
-                            .get(&index)
-                            .cloned()
-                            .unwrap_or_else(|| format!("call_{index}")),
-                        name: self
-                            .chat_tool_names
-                            .get(&index)
-                            .cloned()
-                            .unwrap_or_default(),
-                        tool_type: TOOL_TYPE_FUNCTION.to_string(),
-                        arguments: arguments.to_string(),
-                    });
+                    if !arguments.is_empty() {
+                        self.chat_tool_arguments
+                            .entry(index)
+                            .or_default()
+                            .push_str(arguments);
+                    }
+                    self.chat_tool_types
+                        .insert(index, TOOL_TYPE_FUNCTION.to_string());
+                    self.mark_chat_tool_ready(index);
+                    out.extend(self.flush_ready_tool_calls());
                     self.chat_seen_tool_call = true;
                 }
             }
@@ -365,6 +364,16 @@ impl SourceStreamState {
                     .get("arguments")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                if !arguments.is_empty() {
+                    self.chat_tool_arguments
+                        .entry(index)
+                        .or_default()
+                        .push_str(arguments);
+                }
+                self.chat_tool_types
+                    .insert(index, TOOL_TYPE_FUNCTION.to_string());
+                self.mark_chat_tool_ready(index);
+                out.extend(self.flush_ready_tool_calls());
                 if !self
                     .chat_tool_names
                     .get(&index)
@@ -372,21 +381,6 @@ impl SourceStreamState {
                     .unwrap_or(true)
                     || !arguments.is_empty()
                 {
-                    out.push(UnifiedStreamEvent::ToolCall {
-                        index,
-                        id: self
-                            .chat_tool_ids
-                            .get(&index)
-                            .cloned()
-                            .unwrap_or_else(|| format!("call_{index}")),
-                        tool_type: TOOL_TYPE_FUNCTION.to_string(),
-                        name: self
-                            .chat_tool_names
-                            .get(&index)
-                            .cloned()
-                            .unwrap_or_default(),
-                        arguments: arguments.to_string(),
-                    });
                     self.chat_seen_tool_call = true;
                 }
             }
@@ -404,6 +398,8 @@ impl SourceStreamState {
                 .map(ToString::to_string)
             {
                 out.extend(self.flush_chat_inline_think_at_boundary());
+                // Flush any remaining ready tools in order before finish.
+                out.extend(self.flush_ready_tool_calls_force());
                 if let Some(usage) = usage.clone() {
                     self.pending_chat_finish_reason = None;
                     out.push(UnifiedStreamEvent::Finish {
@@ -420,6 +416,97 @@ impl SourceStreamState {
             }
         }
         out
+    }
+
+    fn mark_chat_tool_ready(&mut self, index: usize) {
+        // Already opened: argument-only deltas emit immediately via flush path.
+        if self.chat_tool_opened.contains(&index) {
+            self.ready_tool_indices.insert(index);
+            return;
+        }
+        // Name is the identity gate. Id may arrive late (or never for legacy
+        // function_call); emit uses synthetic `call_{index}` when missing.
+        let has_name = self
+            .chat_tool_names
+            .get(&index)
+            .is_some_and(|name| !name.is_empty());
+        if has_name {
+            self.ready_tool_indices.insert(index);
+        }
+    }
+
+    /// Emit tools with complete identity in ascending index order (CS#5310).
+    /// After a tool is opened, further argument deltas for that index emit immediately.
+    fn flush_ready_tool_calls(&mut self) -> Vec<UnifiedStreamEvent> {
+        let mut out = Vec::new();
+        loop {
+            // Drain already-opened tools that have pending argument deltas (any order OK after open).
+            let opened_pending: Vec<usize> = self
+                .ready_tool_indices
+                .iter()
+                .copied()
+                .filter(|index| self.chat_tool_opened.contains(index))
+                .collect();
+            for index in opened_pending {
+                self.ready_tool_indices.remove(&index);
+                if self
+                    .chat_tool_arguments
+                    .get(&index)
+                    .is_some_and(|args| !args.is_empty())
+                {
+                    out.push(self.emit_chat_tool_call(index));
+                }
+            }
+
+            if !self.ready_tool_indices.contains(&self.next_tool_index_to_add) {
+                break;
+            }
+            let index = self.next_tool_index_to_add;
+            self.ready_tool_indices.remove(&index);
+            out.push(self.emit_chat_tool_call(index));
+            self.chat_tool_opened.insert(index);
+            self.next_tool_index_to_add = self.next_tool_index_to_add.saturating_add(1);
+        }
+        out
+    }
+
+    /// On finish: emit remaining ready tools sorted by index even if gaps remain.
+    fn flush_ready_tool_calls_force(&mut self) -> Vec<UnifiedStreamEvent> {
+        let mut out = self.flush_ready_tool_calls();
+        let remaining: Vec<usize> = self.ready_tool_indices.iter().copied().collect();
+        for index in remaining {
+            self.ready_tool_indices.remove(&index);
+            out.push(self.emit_chat_tool_call(index));
+            self.chat_tool_opened.insert(index);
+            self.next_tool_index_to_add = self.next_tool_index_to_add.max(index.saturating_add(1));
+        }
+        out
+    }
+
+    fn emit_chat_tool_call(&mut self, index: usize) -> UnifiedStreamEvent {
+        let arguments = self
+            .chat_tool_arguments
+            .remove(&index)
+            .unwrap_or_default();
+        UnifiedStreamEvent::ToolCall {
+            index,
+            id: self
+                .chat_tool_ids
+                .get(&index)
+                .cloned()
+                .unwrap_or_else(|| format!("call_{index}")),
+            tool_type: self
+                .chat_tool_types
+                .get(&index)
+                .cloned()
+                .unwrap_or_else(|| TOOL_TYPE_FUNCTION.to_string()),
+            name: self
+                .chat_tool_names
+                .get(&index)
+                .cloned()
+                .unwrap_or_default(),
+            arguments,
+        }
     }
 
     fn parse_chat_content_delta(&mut self, delta: &str) -> Vec<UnifiedStreamEvent> {

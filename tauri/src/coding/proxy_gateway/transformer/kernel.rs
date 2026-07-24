@@ -26,17 +26,20 @@ pub type ConversionByteStream =
 #[derive(Debug, Clone, Default)]
 pub struct ConversionContext {
     pub codex_tool_context: Option<CodexToolContext>,
+    /// Runtime-injected after transformer conversion (lossy policy warnings).
+    /// Not produced by transformer internals; empty during pure convert paths.
     pub lossy_warnings: Vec<String>,
 }
 
 impl ConversionContext {
+    /// True when transformer-owned state is empty.
+    /// Note: `lossy_warnings` is runtime-injected and ignored here so pure
+    /// transformer emptiness is not polluted by post-conversion annotations.
     pub fn is_empty(&self) -> bool {
-        self.lossy_warnings.is_empty()
-            && self
-                .codex_tool_context
-                .as_ref()
-                .map(CodexToolContext::is_empty)
-                .unwrap_or(true)
+        self.codex_tool_context
+            .as_ref()
+            .map(CodexToolContext::is_empty)
+            .unwrap_or(true)
     }
 }
 
@@ -4155,6 +4158,48 @@ data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{},
             .expect("responses arguments done");
         assert_eq!(done["arguments"], "{\"city\":\"Tokyo\"}");
         assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_tool_calls_flush_in_index_order_despite_late_identity() {
+        // CS#5310-style: index 1 arrives with full identity first; index 0 identity
+        // is late. Target Responses must open tool 0 before tool 1.
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_order","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_order","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"second","arguments":"{\"b\":1}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_order","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"first","arguments":"{\"a\":1}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_order","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let added_names: Vec<&str> = values
+            .iter()
+            .filter(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.added")
+                    && value
+                        .pointer("/item/type")
+                        .and_then(Value::as_str)
+                        == Some("function_call")
+            })
+            .filter_map(|value| value.pointer("/item/name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            added_names,
+            vec!["first", "second"],
+            "tools must open in ascending index order even when identity for index 0 is late; got {added_names:?}"
+        );
     }
 
     #[test]

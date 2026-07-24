@@ -1,5 +1,7 @@
 use super::http_io::{self, DebugHttpRequest};
-use super::upstream::{route_request_with_options, GatewayRequestOptions};
+use super::upstream::{
+    gateway_body_reports_error, route_request_with_options, GatewayRequestOptions,
+};
 use super::{providers, GatewayRuntimeContext, NEXT_REQUEST_ID};
 use crate::coding::proxy_gateway::types::{
     AppProxyConfig, GatewayCliKey, GatewayConnectivityTestRequest, GatewayConnectivityTestResponse,
@@ -343,69 +345,6 @@ async fn drain_gateway_body_stream(
     Ok(())
 }
 
-fn gateway_body_reports_error(body: &[u8]) -> bool {
-    if body.is_empty() {
-        return false;
-    }
-    if let Ok(value) = serde_json::from_slice::<Value>(body) {
-        return gateway_json_reports_error(&value);
-    }
-    String::from_utf8_lossy(body).lines().any(|line| {
-        let trimmed = line.trim();
-        if trimmed
-            .strip_prefix("event:")
-            .map(str::trim)
-            .is_some_and(gateway_event_reports_error)
-        {
-            return true;
-        }
-        let payload = trimmed
-            .strip_prefix("data:")
-            .map(str::trim)
-            .unwrap_or(trimmed);
-        serde_json::from_str::<Value>(payload)
-            .ok()
-            .is_some_and(|value| gateway_json_reports_error(&value))
-    })
-}
-
-fn gateway_json_reports_error(value: &Value) -> bool {
-    value.get("error").is_some_and(|error| !error.is_null())
-        || value
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(gateway_event_reports_error)
-        || value
-            .get("event")
-            .and_then(Value::as_str)
-            .is_some_and(gateway_event_reports_error)
-        || value.get("response").is_some_and(|response| {
-            response.get("error").is_some_and(|error| !error.is_null())
-                || response
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(gateway_response_status_reports_error)
-        })
-}
-
-fn gateway_event_reports_error(event: &str) -> bool {
-    matches!(
-        event.trim(),
-        "error"
-            | "response.failed"
-            | "response.cancelled"
-            | "response.canceled"
-            | "response.incomplete"
-    )
-}
-
-fn gateway_response_status_reports_error(status: &str) -> bool {
-    matches!(
-        status.trim(),
-        "failed" | "cancelled" | "canceled" | "incomplete"
-    )
-}
-
 fn header_pairs_to_value(headers: &[(String, String)]) -> Value {
     let mut object = serde_json::Map::new();
     for (name, value) in headers {
@@ -424,7 +363,8 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{gateway_body_reports_error, remaining_total_timeout};
+    use super::remaining_total_timeout;
+    use super::super::upstream::gateway_body_reports_error;
     use std::time::Duration;
 
     #[test]

@@ -324,9 +324,14 @@ fn append_responses_input_to_messages(input: Option<&Value>, messages: &mut Vec<
     match input {
         Some(Value::Array(items)) => {
             let mut index = 0;
+            let mut pending_trailing_reasoning: Option<Message> = None;
             while index < items.len() {
                 let item = &items[index];
                 if item.get("type").and_then(Value::as_str) == Some("reasoning") {
+                    // Flush any previous trailing reasoning before starting a new one.
+                    if let Some(pending) = pending_trailing_reasoning.take() {
+                        attach_pending_reasoning_to_previous_assistant(messages, pending);
+                    }
                     let mut reasoning_message = responses_reasoning_message(item);
                     if items.get(index + 1).is_some_and(|following| {
                         merge_responses_following_item_into_reasoning_message(
@@ -334,16 +339,37 @@ fn append_responses_input_to_messages(input: Option<&Value>, messages: &mut Vec<
                             following,
                         )
                     }) {
+                        // Forward-merged with following item — not trailing.
                         messages.push(reasoning_message);
                         index += 2;
                     } else {
-                        messages.push(reasoning_message);
+                        // May be trailing: hold until next non-reasoning boundary or end.
+                        pending_trailing_reasoning = Some(reasoning_message);
                         index += 1;
                     }
                     continue;
                 }
+
+                // User (or other non-assistant) boundary: attach pending trailing to previous assistant.
+                let item_role = responses_item_boundary_role(item);
+                if item_role.as_deref() == Some("user") {
+                    if let Some(pending) = pending_trailing_reasoning.take() {
+                        attach_pending_reasoning_to_previous_assistant(messages, pending);
+                    }
+                } else if let Some(pending) = pending_trailing_reasoning.take() {
+                    // Non-user item after bare reasoning: try attach, else emit standalone.
+                    if !attach_pending_reasoning_to_previous_assistant(messages, pending.clone()) {
+                        messages.push(pending);
+                    }
+                }
+
                 append_responses_item_to_messages(item, messages);
                 index += 1;
+            }
+            if let Some(pending) = pending_trailing_reasoning.take() {
+                if !attach_pending_reasoning_to_previous_assistant(messages, pending.clone()) {
+                    messages.push(pending);
+                }
             }
         }
         Some(Value::String(text)) => messages.push(Message {
@@ -353,6 +379,58 @@ fn append_responses_input_to_messages(input: Option<&Value>, messages: &mut Vec<
         }),
         Some(Value::Object(_)) => append_responses_item_to_messages(input.unwrap(), messages),
         _ => {}
+    }
+}
+
+/// Attach trailing reasoning fields onto the last assistant message (append, not replace).
+/// Returns true if attached.
+fn attach_pending_reasoning_to_previous_assistant(
+    messages: &mut [Message],
+    pending: Message,
+) -> bool {
+    let Some(assistant) = messages.iter_mut().rev().find(|message| message.role == "assistant")
+    else {
+        return false;
+    };
+    if let Some(text) = pending.reasoning_content.filter(|text| !text.is_empty()) {
+        match &mut assistant.reasoning_content {
+            Some(existing) if !existing.is_empty() => {
+                existing.push('\n');
+                existing.push_str(&text);
+            }
+            _ => assistant.reasoning_content = Some(text),
+        }
+    }
+    if let Some(text) = pending.reasoning.filter(|text| !text.is_empty()) {
+        match &mut assistant.reasoning {
+            Some(existing) if !existing.is_empty() => {
+                existing.push('\n');
+                existing.push_str(&text);
+            }
+            _ => assistant.reasoning = Some(text),
+        }
+    }
+    if assistant.reasoning_signature.is_none() {
+        assistant.reasoning_signature = pending.reasoning_signature;
+    }
+    for (key, value) in pending.transformer_metadata {
+        assistant.transformer_metadata.entry(key).or_insert(value);
+    }
+    true
+}
+
+fn responses_item_boundary_role(item: &Value) -> Option<String> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") | None => item
+            .get("role")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        Some("input_text") | Some("input_image") => Some("user".to_string()),
+        Some("function_call") | Some("custom_tool_call") | Some("output_text") => {
+            Some("assistant".to_string())
+        }
+        Some("function_call_output") | Some("custom_tool_call_output") => Some("tool".to_string()),
+        _ => None,
     }
 }
 
@@ -455,7 +533,7 @@ fn responses_value_to_message_content(value: &Value) -> MessageContent {
 
 fn responses_reasoning_message(item: &Value) -> Message {
     let reasoning = responses_reasoning_text(item);
-    Message {
+    let mut message = Message {
         role: "assistant".to_string(),
         reasoning_content: reasoning.clone(),
         reasoning,
@@ -465,7 +543,15 @@ fn responses_reasoning_message(item: &Value) -> Message {
             .filter(|signature| !signature.is_empty())
             .map(|signature| encode_signature(SignatureProvider::OpenAiResponses, signature)),
         ..Default::default()
+    };
+    // Preserve Responses-only reasoning.context for Responses↔Responses IR rebuild (T-1).
+    if let Some(context) = item.get("context") {
+        message.transformer_metadata.insert(
+            "openai_responses_reasoning_context".to_string(),
+            context.clone(),
+        );
     }
+    message
 }
 
 fn merge_responses_following_item_into_reasoning_message(
@@ -481,6 +567,15 @@ fn merge_responses_following_item_into_reasoning_message(
         }
         Some("message") | None => {
             if following.get("content").is_none() {
+                return false;
+            }
+            // Only forward-merge assistant/output messages. User turns are a
+            // trailing-reasoning boundary and must not absorb the reasoning item.
+            let role = following
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("assistant");
+            if role != "assistant" {
                 return false;
             }
             let following_message = responses_message_item_to_llm(following);
@@ -902,7 +997,23 @@ pub fn llm_request_to_responses(request: Request) -> Value {
             None
         })
         .collect::<Vec<_>>();
-    let tools = merge_raw_responses_fragments(tools, raw_tools.as_ref());
+    let tool_signatures = request
+        .transformer_metadata
+        .get(RESPONSES_TOOL_SIGNATURES_METADATA_KEY)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        });
+    let mut tools = tools;
+    let tools = merge_raw_responses_fragments_with_signatures(
+        &mut tools,
+        raw_tools.as_ref(),
+        tool_signatures.as_deref(),
+    );
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
@@ -960,6 +1071,18 @@ fn merge_raw_responses_fragments(
     mut structured: Vec<Value>,
     raw_fragments: Option<&Value>,
 ) -> Vec<Value> {
+    merge_raw_responses_fragments_with_signatures(&mut structured, raw_fragments, None)
+}
+
+/// Merge raw Responses fragments back by original index.
+/// When `expected_signatures` is present (from request-scoped tool signature sidecar),
+/// a raw tool that collides with a structured tool signature is dropped (fail-closed
+/// for that fragment) instead of silently overwriting structured identity (T-3).
+fn merge_raw_responses_fragments_with_signatures(
+    structured: &mut Vec<Value>,
+    raw_fragments: Option<&Value>,
+    expected_signatures: Option<&[String]>,
+) -> Vec<Value> {
     let raw = raw_fragments
         .and_then(Value::as_array)
         .map(|items| {
@@ -968,11 +1091,18 @@ fn merge_raw_responses_fragments(
                 .iter()
                 .filter_map(raw_responses_fragment_parts)
                 .filter(|(index, _)| *index <= max_merge_index)
+                .filter(|(_, value)| {
+                    if let Some(signatures) = expected_signatures {
+                        raw_tool_compatible_with_signatures(value, signatures)
+                    } else {
+                        true
+                    }
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     if raw.is_empty() {
-        return structured;
+        return std::mem::take(structured);
     }
 
     let mut total = structured.len() + raw.len();
@@ -998,6 +1128,16 @@ fn merge_raw_responses_fragments(
             .collect::<Vec<_>>(),
     );
     merged
+}
+
+/// Drop raw tools that collide with a collected structured tool signature
+/// (same type:name) — prevents incorrect merge of hosted/raw tools over function tools.
+fn raw_tool_compatible_with_signatures(raw_tool: &Value, signatures: &[String]) -> bool {
+    let Some(raw_sig) = responses_tool_signature(raw_tool) else {
+        return true;
+    };
+    // If the raw tool's signature is already represented in structured tools, drop it.
+    !signatures.iter().any(|expected| expected == &raw_sig)
 }
 
 fn raw_responses_fragment_parts(value: &Value) -> Option<(usize, Value)> {
@@ -1160,6 +1300,12 @@ fn responses_reasoning_item_from_message(message: &Message) -> Option<Value> {
     });
     if let Some(encrypted_content) = encrypted_content {
         item["encrypted_content"] = json!(encrypted_content);
+    }
+    if let Some(context) = message
+        .transformer_metadata
+        .get("openai_responses_reasoning_context")
+    {
+        item["context"] = context.clone();
     }
     Some(item)
 }
@@ -1989,5 +2135,238 @@ mod tests {
         assert_eq!(output[1]["encrypted_content"], "encrypted_mid");
         assert_eq!(output[2]["type"], "message");
         assert_eq!(output[2]["content"][0]["text"], "second");
+    }
+
+    #[test]
+    fn trailing_reasoning_attaches_to_previous_assistant_before_user() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}]
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "trailing thought"}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "next"}]
+                }
+            ]
+        });
+        let request = responses_request_to_llm(body);
+        let assistant = request
+            .messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("assistant");
+        assert_eq!(
+            assistant.reasoning_content.as_deref(),
+            Some("trailing thought")
+        );
+        assert!(
+            !request
+                .messages
+                .iter()
+                .any(|message| message.role == "assistant"
+                    && message.content.is_empty()
+                    && message.reasoning_content.as_deref() == Some("trailing thought")
+                    && message.tool_calls.is_empty()),
+            "trailing reasoning must not remain a standalone assistant message"
+        );
+        let user = request
+            .messages
+            .iter()
+            .find(|message| message.role == "user")
+            .expect("user");
+        let user_has_next = match &user.content {
+            MessageContent::Text(text) => text == "next",
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .any(|part| part.text.as_deref() == Some("next")),
+            MessageContent::Empty => false,
+        };
+        assert!(user_has_next, "user message should carry next turn text");
+    }
+
+    #[test]
+    fn trailing_reasoning_at_input_end_attaches_to_previous_assistant() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "answer"}],
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "end trailing"}],
+                    "context": {"foo": "bar"}
+                }
+            ]
+        });
+        let request = responses_request_to_llm(body);
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(
+            request.messages[0].reasoning_content.as_deref(),
+            Some("end trailing")
+        );
+        assert_eq!(
+            request.messages[0]
+                .transformer_metadata
+                .get("openai_responses_reasoning_context"),
+            Some(&json!({"foo": "bar"}))
+        );
+    }
+
+    #[test]
+    fn forward_merge_still_combines_reasoning_with_following_function_call() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "plan"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ]
+        });
+        let request = responses_request_to_llm(body);
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, "assistant");
+        assert_eq!(request.messages[0].reasoning_content.as_deref(), Some("plan"));
+        assert_eq!(request.messages[0].tool_calls.len(), 1);
+        assert_eq!(request.messages[0].tool_calls[0].id, "call_1");
+    }
+
+    #[test]
+    fn trailing_reasoning_appends_to_assistant_that_already_has_tool_calls() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "after tools"}]
+                }
+            ]
+        });
+        let request = responses_request_to_llm(body);
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, "assistant");
+        assert_eq!(request.messages[0].tool_calls.len(), 1);
+        assert_eq!(
+            request.messages[0].reasoning_content.as_deref(),
+            Some("after tools")
+        );
+    }
+
+    #[test]
+    fn trailing_reasoning_appends_after_embedded_forward_merge() {
+        // reasoning + following assistant message (forward merge), then another
+        // trailing reasoning before user must append to that same assistant.
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "first"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "visible"}]
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "second trailing"}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "next"}]
+                }
+            ]
+        });
+        let request = responses_request_to_llm(body);
+        let assistant = request
+            .messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("assistant");
+        let reasoning = assistant.reasoning_content.as_deref().unwrap_or_default();
+        assert!(
+            reasoning.contains("first") && reasoning.contains("second trailing"),
+            "expected both forward-merged and trailing reasoning, got {reasoning:?}"
+        );
+    }
+
+    #[test]
+    fn raw_tools_merge_drops_raw_tool_colliding_with_structured_signature() {
+        // Structured function tool signature is collected on inbound; a raw tool
+        // fragment with the same type:name must be dropped (T-3 fail-closed).
+        let mut structured = vec![json!({
+            "type": "function",
+            "name": "lookup",
+            "parameters": {"type": "object"}
+        })];
+        let raw_tools = json!([
+            {
+                "index": 0,
+                "value": {
+                    "type": "function",
+                    "name": "lookup",
+                    "description": "raw collision should drop"
+                }
+            },
+            {
+                "index": 1,
+                "value": {
+                    "type": "web_search"
+                }
+            }
+        ]);
+        let signatures = vec!["function:lookup".to_string()];
+        let merged = merge_raw_responses_fragments_with_signatures(
+            &mut structured,
+            Some(&raw_tools),
+            Some(signatures.as_slice()),
+        );
+        let names: Vec<String> = merged
+            .iter()
+            .filter_map(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        tool.get("type")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    })
+            })
+            .collect();
+        assert!(
+            names.iter().filter(|name| name.as_str() == "lookup").count() == 1,
+            "colliding raw function:lookup must be dropped, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "web_search"),
+            "non-colliding raw tool should remain, got {names:?}"
+        );
     }
 }

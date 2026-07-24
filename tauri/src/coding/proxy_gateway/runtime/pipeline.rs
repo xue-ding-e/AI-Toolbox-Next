@@ -92,6 +92,31 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Client-facing response path: reverse order (M_n → … → M_1), AxonHub-style.
+    pub(super) fn run_outbound_response(
+        &self,
+        body: &mut Value,
+        ctx: &PipelineContext,
+    ) -> Result<(), String> {
+        for middleware in self.middleware.iter().rev() {
+            middleware.on_outbound_response(body, ctx)?;
+        }
+        Ok(())
+    }
+
+    /// Client-facing stream path: reverse order (M_n → … → M_1).
+    #[allow(dead_code)] // Stream reverse hooks are wired when middleware migrates adapters.
+    pub(super) fn run_outbound_stream(
+        &self,
+        chunk: &mut Value,
+        ctx: &mut PipelineContext,
+    ) -> Result<(), String> {
+        for middleware in self.middleware.iter().rev() {
+            middleware.on_outbound_stream(chunk, ctx)?;
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub(super) fn decide_error(&self, message: &str, ctx: &PipelineContext) -> ErrorDecision {
         for middleware in &self.middleware {

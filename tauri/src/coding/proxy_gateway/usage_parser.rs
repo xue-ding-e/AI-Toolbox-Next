@@ -455,10 +455,25 @@ data: {"type":"message_delta","usage":{"output_tokens":35}}
             br#"{"usage":{"input_tokens":-40,"output_tokens":10,"cached_tokens":80}}"#,
         );
 
+        // fresh = signed + 1×cache = -40 + 80 = 40; total = fresh+output+cache = 130
         assert_eq!(usage.input_tokens, Some(40));
         assert_eq!(usage.output_tokens, Some(10));
         assert_eq!(usage.cache_read_tokens, Some(80));
         assert_eq!(usage.total_tokens(), Some(130));
+    }
+
+    #[test]
+    fn parses_moonshot_positive_input_less_than_cache_as_fresh() {
+        // Branch: positive input < cache → treat input as already-fresh (no subtract).
+        let usage = from_response_body_with_provider_type(
+            GatewayCliKey::Claude,
+            Some("moonshot"),
+            br#"{"usage":{"input_tokens":30,"output_tokens":5,"cached_tokens":80}}"#,
+        );
+        assert_eq!(usage.input_tokens, Some(30));
+        assert_eq!(usage.output_tokens, Some(5));
+        assert_eq!(usage.cache_read_tokens, Some(80));
+        assert_eq!(usage.total_tokens(), Some(115));
     }
 
     #[test]
