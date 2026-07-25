@@ -31,6 +31,10 @@ interface ProviderConnectivityTestModalProps {
   onCancel: () => void;
   diagnostics?: OpenCodeDiagnosticsConfig;
   onSaveDiagnostics?: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
+  /** Model IDs that may be removed after a failed connectivity test. */
+  removableModelIds?: string[];
+  /** Remove selected failed models from the provider catalog/config. */
+  onRemoveModels?: (modelIds: string[]) => Promise<void>;
   gatewayCliKey?: Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'gemini'>;
   useGateway?: boolean;
 }
@@ -158,6 +162,8 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
   onCancel,
   diagnostics,
   onSaveDiagnostics,
+  removableModelIds,
+  onRemoveModels,
   gatewayCliKey,
   useGateway,
 }) => {
@@ -173,8 +179,10 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       providerName={connectivityInfo.providerName}
       providerConfig={connectivityInfo.providerConfig}
       modelIds={connectivityInfo.modelIds}
+      removableModelIds={removableModelIds ?? connectivityInfo.modelIds}
       diagnostics={diagnostics}
       onSaveDiagnostics={onSaveDiagnostics || (async () => {})}
+      onRemoveModels={onRemoveModels}
       gatewayRequest={useGateway && gatewayCliKey
         ? { cliKey: gatewayCliKey, providerId: connectivityInfo.providerId }
         : undefined}

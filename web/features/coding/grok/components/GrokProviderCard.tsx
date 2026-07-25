@@ -79,6 +79,13 @@ interface GrokProviderCardProps {
   onDeleteModel?: (provider: GrokProvider, modelKey: string) => void;
   onSetDefaultModel?: (provider: GrokProvider, modelKey: string) => void;
   onFetchModels?: (provider: GrokProvider) => void;
+  /** Enter/exit batch-delete selection mode for this provider's model list. */
+  onToggleBatchDeleteMode?: (provider: GrokProvider) => void;
+  /** Confirm delete of currently selected models (caller shows confirm dialog). */
+  onBatchDeleteModels?: (provider: GrokProvider) => void;
+  modelSelectionMode?: boolean;
+  selectedModelIds?: string[];
+  onToggleModelSelection?: (provider: GrokProvider, modelId: string, selected: boolean) => void;
   officialAccounts?: GrokOfficialAccount[];
   onOfficialAccountLogin?: (provider: GrokProvider) => void;
   onOfficialLocalAccountSave?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
@@ -108,6 +115,11 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
   onDeleteModel,
   onSetDefaultModel,
   onFetchModels,
+  onToggleBatchDeleteMode,
+  onBatchDeleteModels,
+  modelSelectionMode = false,
+  selectedModelIds = [],
+  onToggleModelSelection,
   officialAccounts = [],
   onOfficialAccountLogin,
   onOfficialLocalAccountSave,
@@ -805,18 +817,6 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                       {provider.notes}
                     </Text>
                   )}
-                <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ApiOutlined />}
-                  onClick={() => onTest(provider)}
-                  disabled={!canRunConnectivityTest}
-                  title={isOfficialProvider ? t('grok.provider.officialConnectivityHint') : undefined}
-                  style={{ fontSize: 11, padding: '0 4px', height: 'auto', flexShrink: 0 }}
-                >
-                  {t('opencode.connectivity.button')}
-                </Button>
               </div>
             </div>
           </div>
@@ -958,7 +958,54 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                   <Text strong style={{ fontSize: 13 }}>
                     {t('grok.model.title')} ({modelListItems.length})
                   </Text>
-                  <Space size={4} onClick={(event) => event.stopPropagation()}>
+                  <Space size={0} onClick={(event) => event.stopPropagation()}>
+                    {onToggleBatchDeleteMode && (
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        style={{ fontSize: 12 }}
+                        onClick={() => onToggleBatchDeleteMode(provider)}
+                      >
+                        {modelSelectionMode
+                          ? t('grok.model.cancelBatchDelete')
+                          : t('grok.model.batchDelete')}
+                      </Button>
+                    )}
+                    {modelSelectionMode && onBatchDeleteModels && (
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        style={{ fontSize: 12 }}
+                        disabled={selectedModelIds.length === 0}
+                        onClick={() => onBatchDeleteModels(provider)}
+                      >
+                        {t('grok.model.deleteSelected', { count: selectedModelIds.length })}
+                      </Button>
+                    )}
+                    <Tooltip
+                      title={
+                        !canRunConnectivityTest
+                          ? (isOfficialProvider
+                            ? t('grok.provider.officialConnectivityHint')
+                            : t('common.modelMissing'))
+                          : ''
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          type="text"
+                          style={{ fontSize: 12 }}
+                          onClick={() => onTest(provider)}
+                          disabled={!canRunConnectivityTest}
+                        >
+                          <ApiOutlined style={{ marginRight: 4 }} />
+                          {t('opencode.connectivity.button')}
+                        </Button>
+                      </span>
+                    </Tooltip>
                     {onFetchModels && (
                       <Button
                         size="small"
@@ -987,16 +1034,25 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
               children: (
                 <div style={{ background: 'transparent' }}>
                   {modelListItems.length > 0 ? (
-                    <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                    <Space orientation="vertical" style={{ width: '100%' }} size={4}>
                       {modelListItems.map((model) => (
                         <ModelItem
                           key={model.id}
                           model={model}
                           i18nPrefix="grok"
                           transparentBackground
-                          onEdit={onEditModel ? () => onEditModel(provider, model.id) : undefined}
-                          onDelete={onDeleteModel ? () => onDeleteModel(provider, model.id) : undefined}
-                          onSetPrimary={onSetDefaultModel
+                          selectionMode={modelSelectionMode}
+                          selected={selectedModelIds.includes(model.id)}
+                          onSelectChange={onToggleModelSelection
+                            ? (selected) => onToggleModelSelection(provider, model.id, selected)
+                            : undefined}
+                          onEdit={!modelSelectionMode && onEditModel
+                            ? () => onEditModel(provider, model.id)
+                            : undefined}
+                          onDelete={!modelSelectionMode && onDeleteModel
+                            ? () => onDeleteModel(provider, model.id)
+                            : undefined}
+                          onSetPrimary={!modelSelectionMode && onSetDefaultModel
                             ? () => onSetDefaultModel(provider, model.id)
                             : undefined}
                         />

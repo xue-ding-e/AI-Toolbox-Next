@@ -25,7 +25,9 @@
 - 表单「Base URL」是渠道级 SoT（模型映射 UI 不能改 per-model baseUrl）。`buildGrokSettingsConfig` 在表单 Base URL 非空时必须 **覆盖写入**全部 `modelCatalog.models[].baseUrl`；内置 endpoint 最终化也必须保留已构建 settings 里的 Base URL，不能回退成 endpoint 默认。不要只在 catalog 缺 baseUrl 时补齐，否则编辑已保存供应商改 URL 后卡片与 live `[model.<key>].base_url` 仍残留旧值（issue #256）。
 - 内置 endpoint 只锁定 API 格式；其模型目录只用于选择 endpoint 时初始化，或最终 settings 确实没有目录时兜底。提交阶段不得用 endpoint 默认目录整体覆盖当前表单目录，否则模型映射的新增、删除、显示名、上游模型和上下文窗口编辑都会静默丢失。
 - 自定义渠道的「服务端搜索」是渠道级总开关：勾选后 `buildGrokSettingsConfig` / 表单保存必须把 `supportsBackendSearch=true` **覆盖写入**全部 `modelCatalog.models[]`（含自动创建的默认映射）；取消则写 `false`。它走结构化 modelCatalog → `[model.<key>].supports_backend_search`，不要写进供应商高级 `config.toml` 或 Common Config。官方渠道不展示该开关。
-- 自定义渠道的模型组织对齐 OpenCode 交互、保留 Grok 数据：卡片下独立「模型列表」支持新增/编辑/删除/设默认；catalog key **不再强制 `custom`**。渠道弹窗只管 Key/Base URL/API 格式等共享字段；模型级字段（含思考菜单）走 `GrokModelFormModal`。
+- 自定义渠道的模型组织对齐 OpenCode 交互、保留 Grok 数据：卡片下独立「模型列表」支持新增/编辑/删除/设默认/批量删除；catalog key **不再强制 `custom`**。渠道弹窗只管 Key/Base URL/API 格式等共享字段；模型级字段（含思考菜单）走 `GrokModelFormModal`。
+- 模型列表标题栏操作顺序对齐 OpenCode：`批量删除` → `模型测试` → `获取模型` → `添加模型`。模型测试不再放在卡片头部摘要行。
+- 模型测试弹窗与 OpenCode 一样支持测试后「移除选中 (N)」删除失效模型；删除回调必须同时按 catalog key 与上游 model id 匹配，因为连通性测试只发送上游 id。
 - 「思考等级」只写官方 Grok Build 字段，不在 AI Toolbox 做 Claude/Gemini 协议转换：
   - 官方：`settingsConfig.defaultReasoningEffort` → `[models].default_reasoning_effort`。
   - 自定义 per-model：`reasoningEfforts[]` → `reasoning_efforts`（菜单 SoT）；`reasoningEffort` → `reasoning_effort`；有菜单时可推导 `supports_reasoning_effort=true`。

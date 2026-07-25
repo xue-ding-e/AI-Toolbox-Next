@@ -1,6 +1,10 @@
 # Proxy Gateway 协议转换架构
 
-本文描述当前代码里的 Proxy Gateway 协议转换实现。事实源是 `tauri/src/coding/proxy_gateway/runtime/**` 和 `tauri/src/coding/proxy_gateway/transformer/**`，不是历史设计稿或参考项目文档。
+本文描述当前代码里的 Proxy Gateway 协议转换实现。事实源是 `tauri/src/coding/proxy_gateway/runtime/**`、`tauri/src/coding/proxy_gateway/transformer/**`、对应模块 `AGENTS.md` 和回归测试，不是历史设计稿或参考项目文档。
+
+> **文档定位**：本文是长期架构与行为约束；`transformer-protocol-conversion-audit.md` 和 `transformer-protocol-conversion-fix-plan.md` 是特定基线上的审计证据与执行记录。
+>
+> **当前同步基线**：`1b1bea6`（2026-07-25），已吸收该提交中 F-1 至 F-13 的终态、SSE、tool identity、reasoning、raw sidecar 和 runtime 响应分类修复。后续代码变化仍以当前源码、模块规则和测试为准。
 
 ## 0. 产品场景与设计动机
 
@@ -19,7 +23,7 @@ Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本�
 - **协议结构互转**：例如 Anthropic `tool_use`、Responses `function_call`、Chat `tool_calls`、Gemini `functionCall` 之间的 JSON/SSE 映射。
 - **最终上游兼容**：例如 DeepSeek thinking 门控、OpenRouter `reasoning.effort`、Codex official forced SSE、Copilot header/token、Ollama `/api/chat` wire format、Bedrock/Vertex path/header/body 差异。
 
-这两类问题不能混在同一个层里。当前代码把可复用的公共协议转换收敛在 `transformer/`，把 provider 方言、特殊 endpoint、跨请求缓存、鉴权/header、URL 和 failover 留在 `runtime/`。旧审计文档里有价值的细节点已经按这个边界合并到本文；若本文与旧文档冲突，以当前代码和本文件为准。
+这两类问题不能混在同一个层里。当前代码把可复用的公共协议转换收敛在 `transformer/`，把 provider 方言、特殊 endpoint、跨请求缓存、鉴权/header、URL 和 failover 留在 `runtime/`。点-in-time 审计中确认的长期规则应同步回本文；若本文与当前代码、模块 `AGENTS.md` 或回归测试冲突，以代码和测试为准，并在同一任务中修正文档。
 
 ## 1. 总体边界
 
@@ -177,6 +181,9 @@ flowchart TD
 - 转换后如果 target 是 OpenAI Responses，runtime 可能补 `prompt_cache_key` fallback。
 - 转换后统一跑 outbound provider pipeline，包括 provider body 兼容、billing CCH 回填、显式 `defaultMaxTokens` 限制。
 - target 是 Anthropic 且 `cache_injection_enabled=true` 时，最后注入 `cache_control`。
+- `PreparedUpstreamBody` 持有本次 attempt 的 `ConversionContext`、request-scoped `Pipeline` / `PipelineContext`、`lossy_warnings` 和 xAI namespace restore map；这些状态必须跨越“上游请求 -> 客户端响应”存活，不能在响应阶段重新构造空 context。
+- client-facing JSON 响应使用同一 pipeline 的 `run_outbound_response()`，SSE 使用 `run_outbound_stream()`，两者都按 middleware 逆序执行。当前 stock reverse middleware 主要用于 Claude billing CCH 回填；provider body compat 仍只运行在上游 outbound body，不应反向套到客户端响应。
+- lossy warning 是 runtime request preparation 的策略结果，只由 `PreparedUpstreamBody.lossy_warnings` 携带并写入 `X-Transformer-Lossy`；它不属于 `ConversionContext` 或 `PipelineContext`。
 
 ## 7. Transformer 内核
 
@@ -271,6 +278,25 @@ IR 定义在 `transformer/llm/model.rs` 和 `transformer/llm/tools.rs`。它不�
 
 IR 通过 `transformer_metadata` 保留少量 provider-local roundtrip 信息，但不做跨请求持久化。跨请求补全状态属于 runtime side stores。
 
+### 8.1 Responses request-scoped raw 保真
+
+OpenAI Responses request 中不能完整结构化表达的 raw-only `input[]` item、`tools[]` item 和复杂 `tool_choice` 使用 `transformer_metadata` sidecar 保存，并且只在当前 request/response 转换链路中使用：
+
+- raw fragment 按原 index 合并回 Responses target，不能降级成空 message 或提升为跨请求 store。
+- 只要原请求存在 raw tool fragment，就必须保存 `openai_responses_tool_signatures`；原 structured tool 集合为空时也要保存空数组 `[]`。
+- 同时写入 `openai_responses_tool_signatures_complete=true`，明确区分“原 structured 集合确实为空”和“没有完整性证据”。
+- merge 前重新计算当前 structured tool signatures，并要求数量、顺序和每项 `type:name` 完全一致。
+- sidecar 缺失、类型异常、complete marker 缺失或非 `true`，以及任一 `function` / `custom` tool 缺少非空 name 时，全部 raw tool fragment fail-closed，只保留当前 structured tools。
+- 完整匹配后才执行 raw/structured signature collision 过滤，避免 raw fragment 覆盖中间步骤已经修改过的工具身份。
+
+### 8.2 Responses reasoning 与终态
+
+- 连续 reasoning item 先合并，再尝试 forward merge 到紧随其后的 assistant tool/message item。
+- trailing reasoning 只能挂回当前 user turn 内最近的 assistant；遇到 user boundary 必须重置归属。当前轮没有 assistant 时保留 standalone assistant reasoning，不能丢弃或挂到更早轮次。
+- 非流 Responses `status="incomplete"` 映射为 LLM `finish_reason="length"`。
+- 非流 Responses `status="cancelled"` / `"canceled"` 映射为 `finish_reason="cancelled"`；反向输出统一使用 Responses `status="canceled"`，不能退化为 `completed`。
+- `failed` / `error`、`incomplete` / `length`、`cancelled` / `canceled` 是三条独立映射，不允许用默认 completed/stop 分支相互覆盖。
+
 ## 9. ConversionContext
 
 `ConversionContext` 定义在 `transformer/kernel.rs`：
@@ -278,7 +304,6 @@ IR 通过 `transformer_metadata` 保留少量 provider-local roundtrip 信息，
 ```rust
 pub struct ConversionContext {
     pub codex_tool_context: Option<CodexToolContext>,
-    pub lossy_warnings: Vec<String>,
 }
 ```
 
@@ -298,7 +323,11 @@ pub struct ConversionContext {
 - `CodexHistoryStore` 是跨 HTTP 请求的 runtime side store，记录上一轮最终返回给 Codex 的 Responses call item，下一轮 Codex 只带 `previous_response_id` / `function_call_output` 时再补回缺失的 assistant call item。
 - 参考项目的 Codex history 实现主要覆盖 Codex Responses bridged to Chat Completions；AI Toolbox 这里扩到 Responses -> Anthropic 的依据是：补全发生在源 Responses body 上，补完后的 `function_call + function_call_output` 已能由现有 transformer 自然输出为 Anthropic `assistant tool_use + user tool_result`。
 
-`lossy_warnings` 由 runtime 在转换前通过 lossy detector 填入，响应阶段用于追加 `X-Transformer-Lossy` header。
+不要把三个 context 混在一起：
+
+- `ConversionContext`：transformer 拥有的 request-scoped 协议映射状态，当前只包含 `CodexToolContext`。
+- `PipelineContext`：runtime middleware 的 request-scoped 状态，当前包含 provider type、target protocol 和 billing CCH。
+- `PreparedUpstreamBody`：runtime request preparation 的聚合结果，持有转换 context、pipeline/context、lossy warnings 和其它本次 attempt 所需状态。
 
 ## 10. SSE 转换链路
 
@@ -307,7 +336,7 @@ pub struct ConversionContext {
 `StreamKernel` 的处理模型：
 
 1. `append_utf8_safe()` 处理 UTF-8 跨 chunk 边界。
-2. `take_sse_block()` 按 `\n\n` 或 `\r\n\r\n` 切 SSE block。
+2. `take_sse_block()` 同时查找 `\n\n` 和 `\r\n\r\n`，消费物理位置最早的 delimiter；不能固定优先 CRLF，否则混合行尾缓冲区会一次吞掉多个事件。
 3. `parse_sse_block()` 提取 `event:` 和多行 `data:`。
 4. source parser 把各协议 SSE 解析成 `UnifiedStreamEvent`。
 5. target writer 把 `UnifiedStreamEvent` 写成目标协议 SSE。
@@ -332,15 +361,28 @@ source state 会维护必要的流式状态，例如：
 - OpenAI Responses item/tool call 状态。
 - Gemini 累计文本和 reasoning 前缀差值。
 - finish reason 和 usage 的延迟合成。
+- source error terminal gate。
 
-SSE 转换要求边读边写，不 full-buffer。结束事件要幂等处理，例如 OpenAI `[DONE]`、Anthropic `message_stop`、Responses `response.completed`、Chat `finish_reason` 和 Gemini finish chunk 可能重复或组合出现。
+SSE 转换要求边读边写，不 full-buffer。结束事件要幂等处理，例如 OpenAI `[DONE]`、Anthropic `message_stop`、Responses terminal event、Chat `finish_reason` 和 Gemini finish chunk 可能重复或组合出现。
+
+当前必须保持的状态机不变量：
+
+- OpenAI Chat tool call 首次向目标协议输出 identity 前，必须同时拿到非空 name 和上游真实 id；多个 call 按 index 升序首次打开。只有 finish/EOF 时上游始终没有 id，才允许生成 `call_<index>` synthetic fallback。
+- Responses source 的 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled`、`response.canceled` 都是 terminal event；取消终态写成统一 `Finish { reason: "cancelled" }`。
+- 一旦识别到 JSON/SSE error、空 error event、transport `fail()` 或 source parser `StreamError`，`StreamKernel` 必须进入 error terminal。后续 source block 被忽略，EOF 也不能再生成正常 Chat stop、Responses completed 或 Gemini finish。
+- target writer 已输出 error envelope 后，正常完成事件不能再次出现；error 与 completed/stop 必须保持互斥。
 
 runtime 在进入 transformer 前后还会包一些 provider/runtime stream adapter：
 
+- xAI native Responses passthrough 会在 2xx 响应上先恢复 request-scoped namespace tool name。
 - Gemini target 的原始 SSE 会被 `record_gemini_sse_stream()` 旁路记录到 `GeminiShadowStore`。
 - Bailian/DashScope OpenAI Chat SSE 会先经过 provider-specific filter。
+- xAI/Grok OpenAI Chat SSE 会过滤没有 role/content/tool/finish/usage 的空 delta。
 - Ollama NDJSON stream 会先转成 OpenAI Chat SSE。
 - 如果响应最终转回 OpenAI Responses，`record_responses_sse_stream()` 会记录 Codex tool call 历史。
+- 最终 client-facing SSE 再进入同一 request-scoped pipeline 的 reverse `on_outbound_stream()`。
+
+reverse SSE middleware 必须保持字节保真：没有实际 JSON payload 改写时，完整 block 原样透传，包括 event、id、retry、comment、多行 data、原 delimiter、空白 block 和 EOF whitespace tail。只有 middleware 真正修改 data JSON 时才替换 payload，并逐行保留原始 LF/CRLF；不能用 trim + 重新序列化把 no-op 变成 wire 变化。
 
 ## 11. 响应回转链路
 
@@ -349,6 +391,16 @@ runtime 在进入 transformer 前后还会包一些 provider/runtime stream adap
 ```rust
 let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
 ```
+
+### 11.0 响应形态与 streaming 判定
+
+`should_stream_response()` 只对 2xx/3xx 生效，并按实际上游响应优先判断：
+
+1. `Content-Type` 包含 `text/event-stream`：进入 SSE 路径。
+2. 存在明确但非 SSE 的 `Content-Type`，尤其 `application/json`：不进入通用 SSE wrapper，即使请求 body 写了 `stream:true`。
+3. 没有 `Content-Type`：才兼容使用请求 `stream:true` 或 Gemini route 的 streaming 声明。
+
+Ollama `application/x-ndjson` / `application/x-json-stream` 是单独的 provider wire adapter：只有 `ProviderBodyCompat::Ollama` 会把 NDJSON 转成 OpenAI Chat SSE。NDJSON 不能因为请求声明 streaming 就被通用 SSE parser 直接消费。
 
 ### 11.1 非流客户端遇到上游 SSE
 
@@ -362,27 +414,45 @@ let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
 
 这条路径用于“上游被 provider/runtime 强制流式，但客户端要非流 JSON”的场景。
 
+OpenAI Responses 聚合还有额外终态约束：
+
+- 只有收到 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled` 或 `response.canceled` 才能返回 JSON。
+- 流只发送 created/in-progress/delta/output-item/[DONE] 就结束时，返回 `GatewayFailureKind::Connection`，交给既有 retry/failover；不能伪造 `completed`，也不能把截断冒充成上游明确声明的合法 `incomplete`。
+- created、in-progress 和 terminal response 都可能是稀疏 snapshot。聚合器按字段浅层合并，空字符串和 null 不覆盖已有 id、model、created_at、usage、error 等元数据。
+- terminal `response` 缺失、为 null、空对象或非对象时保留最近的 base snapshot；terminal status 缺失或为空时按 event type 回填。
+- 已收到 `response.output_item.done` 且 terminal snapshot 没有非空 output 时，用已聚合 item 重建 output，避免 created snapshot 的陈旧空数组覆盖实际完成的输出。
+
 ### 11.2 客户端流式
 
 如果 `should_stream_response()` 判定应该流式返回：
 
 1. 必要时设置 `Content-Type: text/event-stream`。
 2. 按设置创建 bounded upstream response snapshot。
-3. 先执行 Gemini shadow 记录、Bailian SSE filter、Ollama NDJSON -> Chat SSE 等 runtime adapter。
-4. 如果存在 `response_conversion_route`，调用 `convert_sse_stream_with_context()` 做 target -> source SSE 转换。
-5. 如果最终目标是 OpenAI Responses，旁路记录 Codex response history。
+3. 对 xAI native Responses 2xx passthrough，先按本次请求的 restore map 恢复 namespace。
+4. 执行 Gemini shadow 记录、Bailian/xAI Chat SSE filter、Ollama NDJSON -> Chat SSE 等 runtime adapter。
+5. 如果存在 `response_conversion_route`，调用 `convert_sse_stream_with_context()` 做 target -> source SSE 转换。
+6. 如果最终目标是 OpenAI Responses，旁路记录 Codex response history。
+7. 用请求阶段保留下来的同一 `Pipeline` / `PipelineContext` 包装 client-facing reverse stream。
 
 ### 11.3 普通 JSON 响应
 
 非流 JSON 响应路径：
 
-1. 读取 upstream response body。
+1. 读取并保留原始 upstream response body。
 2. 如果 provider 是 Ollama，把 Ollama JSON 先转成 OpenAI Chat JSON。
 3. 如果存在 `response_conversion_route`：
    - 2xx/3xx：`convert_response_body_with_context()`
    - 非 2xx/3xx：`convert_error_response_body()`
-4. 记录 side store。
-5. 用最终返回给客户端的 body 解析 usage。
+4. 对 xAI native Responses 2xx passthrough，恢复 namespace。
+5. 用同一 request-scoped pipeline 执行 client-facing `run_outbound_response()`。
+6. 记录 side store，并用最终返回给客户端的 body 解析 usage。
+
+成功状态的分类必须同时检查两个 body：
+
+- 最终客户端 body：`DebugHttpResponse.body`。
+- 转换前 provider 原始 body：`DebugHttpResponse.upstream_response_body`。
+
+任一 body 含顶层非空 error、`response.failed`、`status=failed` 或嵌套 response error，都按 `UpstreamBadRequest` 进入既有 retry/failover，不能被协议转换隐藏。任一 body 明确是合法 `incomplete` / `cancelled` / `canceled`，即使 output 为空也算有协议意义的终态，不触发 `EmptyResponse`、provider health 扣分或故障转移。只有两个 body 都没有实际内容、没有合法终态且只是 completed/created 等控制信息时，才保留空响应失败。
 
 ## 12. 上游 URL、query 与 auth
 
@@ -467,6 +537,24 @@ session key 来源：
 - 不使用 `"default"` 之类全局 session，避免跨会话污染。
 - 容量上限是 200 sessions，每个 session 64 turns。
 
+### 13.3 InvalidResponsesCipherStore
+
+文件：`runtime/side_stores/responses_cipher.rs`
+
+职责：
+
+- 在最终 target 是 OpenAI Responses 且上游明确报告 `invalid_encrypted_content` / `param=encrypted_content` 等验证错误时，记录本次被拒绝的具体 reasoning `encrypted_content`。
+- 缓存键使用“provider 运行时配置指纹 + `SHA-256(encrypted_content)`”，不保存完整密文。配置指纹覆盖 provider id、CLI、Base URL、target protocol、profile/endpoint 和鉴权身份等会改变实际上游的字段。
+- 后续发往同一 provider 配置的 Responses body 只预删除已知失效的 reasoning item；新密文、其它 provider 或配置变化后的同值密文继续正常探测。
+- 完整 token、前后缀省略 token 和单候选 fallback 都必须唯一命中后才能写入负缓存；多候选歧义时可完成当前请求的一次性恢复，但不能批量污染跨请求缓存。
+
+边界：
+
+- 只驻留内存，不落数据库、不修改磁盘会话，也不成为 request log 的 Source of Truth。
+- 全局容量上限是 4096 个摘要键，按插入顺序淘汰。
+- 这是 runtime 反应式兼容缓存，不是 transformer 的 provider-local signature sidecar。Transformer 仍负责同 provider roundtrip 时保留 `encrypted_content`，不能主动判断某个上游能否验证它。
+- xAI namespace restore map 不属于 side store；它由原始请求现场推导，保存在 `PreparedUpstreamBody`，只服务同一次 request/response。
+
 ## 14. Provider 兼容不属于 transformer
 
 很多“看起来像协议转换”的逻辑实际在 runtime provider adapter 层。当前代码的分界是：
@@ -479,8 +567,10 @@ session key 来源：
 | Copilot token exchange 和 fingerprint headers | `runtime` | Provider auth/header 行为 |
 | Anthropic Bedrock/Vertex URL/header/body 清理 | `runtime` | 平台差异，不是 Anthropic Messages 协议本身 |
 | Codex official Responses body/header 兼容 | `runtime` | 官方上游约束，不是通用 Responses 协议 |
+| xAI native Responses namespace/sanitize | `runtime/compat/xai_responses.rs` | 只针对 xAI 严格 Responses endpoint 的 provider 方言 |
 | DeepSeek legacy `/beta/completions` | `runtime` | Legacy completions 不属于聊天转换矩阵 |
 | Bailian Chat SSE 过滤 | `runtime` | Provider stream quirk |
+| Responses invalid encrypted content 恢复 | `runtime` rectifier + side store | 依赖上游错误和 provider 配置身份，不是公共协议映射 |
 | OpenAI Chat `reasoningField` 策略 | `runtime` | provider meta 决定最终字段 |
 | Codex -> Chat 多 vendor reasoning/thinking 参数矩阵 | `runtime` | provider meta/provider type 兼容 |
 | text-only 模型图片块替换 | `runtime` | provider/model 能力策略 |
@@ -584,7 +674,8 @@ apply_outbound_adapter_compat_value(
 | `moonshot`、`kimi` | 任意相关 target | `Moonshot` | Kimi/Moonshot Chat/Anthropic 兼容和 usage 语义 |
 | `zai`、`zhipu`、`glm`、`bigmodel` | OpenAI Chat 等 | `Zai` | GLM/Z.ai Chat 参数兼容 |
 | `doubao`、`volces` | OpenAI Chat/Responses | `Doubao` | 火山/豆包 metadata、thinking 字段兼容 |
-| `xai`、`grok` | OpenAI Chat | `Xai` | xAI/Grok 不支持字段清理 |
+| `xai`、`grok` | OpenAI Chat | `Xai` | xAI/Grok Chat 不支持字段清理和空 delta 过滤 |
+| `xai`、`grok` | OpenAI Responses native passthrough | `Xai` + `runtime/compat/xai_responses.rs` | namespace 展平/恢复、严格字段和 tool type 清理 |
 | `longcat` | OpenAI Chat/Anthropic | `Longcat` | LongCat 平台差异 |
 | `modelscope` | OpenAI Chat/Responses | `ModelScope` | ModelScope 不支持 metadata 等字段 |
 | `bailian`、`dashscope`、`aliyun` | OpenAI Chat | `Bailian` | DashScope/Bailian tool call 和 SSE 过滤 |
@@ -686,7 +777,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 | MiMo | 参考项目把 MiMo 作为 reasoning vendor，tool-call 历史需要非空 reasoning_content；Anthropic tool thinking 也要规范化。 | `ProviderBodyCompat::Mimo`。Chat target：assistant tool call 缺 `reasoning_content` 时补 `"tool call"`。Anthropic target：规范化 tool thinking 历史。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。text-only 启发式名单含 `mimo-v2.5-pro`，默认不启用启发式。 | 已覆盖内置 profile。 |
 | LongCat | 参考项目侧主要作为 Anthropic-compatible / OpenAI-compatible 供应商；消息 content 形态严格。 | `ProviderBodyCompat::Longcat`。Chat target：把 message `content` 规范成 block array，string/null/object 都转成数组形态。Anthropic target 作为 `AnthropicPlatform::LongCat`，使用 Bearer auth，并按非 Direct/非 Bedrock 平台过滤 native web_search。 | LongCat Anthropic target 的 path/header/auth 是 runtime 平台兼容，不是 Anthropic transformer 行为。 |
 | ModelScope | metadata 等 OpenAI 字段兼容性更严格。 | `ProviderBodyCompat::ModelScope`。Chat / Responses target 都会移除 `metadata`。profile 还可带 Codex -> Chat reasoning 配置。 | 已覆盖内置 profile。 |
-| xAI / Grok | 参考项目资料里主要是 OpenAI Chat 方言；profile 声明了 body 字段和 stream 空 delta 兼容。 | `ProviderBodyCompat::Xai`。Chat target 按模型清理不支持字段：`grok-4` 移除 `reasoning_effort`、presence/frequency penalty、`stop`；`grok-3` / `grok-3-mini` 移除 penalties 和 `stop`。Stream adapter：xAI OpenAI Chat SSE 在进入 response conversion 前过滤空 `delta` 事件，见 `maybe_filter_xai_openai_chat_sse_stream()`。 | `xai_filter_empty_delta` 已有 runtime adapter 和回归测试。 |
+| xAI / Grok | cc-switch 对原生 Responses endpoint 做 namespace flatten/restore、tool allowlist 和严格字段清理；Chat 路径还需要模型字段和空 delta 兼容。 | `ProviderBodyCompat::Xai` + `runtime/compat/xai_responses.rs`。Chat target 按模型清理不支持字段并过滤无语义空 delta。Responses source/target 同为 OpenAI Responses 且 effective `providerType=xai` 时，runtime 展平 namespace、同步改写 input/tool_choice、清理 unsupported 字段和 tool type；2xx JSON/SSE 响应再用本次请求 restore map 恢复 namespace。 | `gateway_provider_profiles.json` 的 `xai_responses_passthrough` 是 catalog 登记/校验项，生产门控仍要求明确 Responses source、identity route、Responses target 和 `providerType=xai`。不能仅因 conversion route 为空就触发。 |
 | Anthropic Bedrock | 参考项目和各平台要求 Bedrock Claude Messages path、version、body 字段不同。 | `ProviderBodyCompat::AnthropicBedrock` + `AnthropicPlatform::Bedrock`。URL 使用 `/model/{model}/invoke` 或 `/invoke-with-response-stream`；body 写 `anthropic_version=bedrock-2023-05-31`，移除 `model` 和 `stream`；native web_search 可保留并写 `anthropic_beta=["web-search-2025-03-05"]`；header 使用 Bedrock Anthropic version。 | 只在 target protocol 是 Anthropic Messages 时触发。不能只看 `providerType=bedrock`，必须带 target protocol 判断。 |
 | Anthropic Vertex | Vertex Claude Messages 需要 project/location publisher path 和 Vertex version。 | `ProviderBodyCompat::AnthropicVertex` + `AnthropicPlatform::Vertex`。URL 使用 base URL 中的 project/location 前缀拼 `publishers/anthropic/models/{model}:rawPredict` 或 `:streamRawPredict`；body/header 写 `anthropic_version=vertex-2023-10-16`；native web_search 会被过滤。 | 与 Gemini Vertex 是两套规则，同一个 `vertex` 字符串必须结合 target protocol 判断。 |
 | Gemini Vertex | Gemini Vertex 不接受 Gemini function call/response id。 | `ProviderBodyCompat::GeminiVertex`。Gemini Native target 下移除 `contents[].parts[].functionCall.id` 和 `functionResponse.id`；Gemini URL/version 仍由 runtime path 拼接处理。 | 只在 target protocol 是 Gemini Native 时触发，不改变 transformer 内部 synthetic id / thoughtSignature 语义。 |
@@ -702,7 +793,20 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 1. **legacy/custom provider 没有关联引用**：已保存且带 `gatewayProfile` 的 provider 会自动跟随最新 profile catalog；没有 `gatewayProfile` 的旧 provider 仍走 legacy meta。前端只在 `providerType + apiFormat` 唯一命中时辅助回显内置渠道，多匹配时不猜测，用户需要从渠道下拉显式选择后才会写入引用。
 2. **profile `compat` 名称和 runtime 实现要保持一致**：`provider_profiles.rs` 对 bundled/remote catalog 做 schema 校验和 compat 白名单检查，但新增 compat 名称时仍必须同步补 runtime adapter/测试和文档，不能只改 JSON 描述。
 
-### 14.6 新增或调整渠道兼容时的放置规则
+### 14.6 xAI native Responses passthrough
+
+xAI Responses 是“同协议直通仍需 provider 方言兼容”的典型例外。它不创建 `ConversionRoute`，也不能把 provider 信息传入 transformer：
+
+1. runtime 必须明确识别 `source_protocol == OpenAiResponses`、`conversion_route.is_none()`、target 仍是 `OpenAiResponses`，并且 effective `providerType` 是 xAI/Grok。
+2. 在改写前从原始 namespace tools 推导 flat name -> `{namespace,name}` restore map。
+3. 先把 namespace child function 提升为顶层 function，并同步改写 input history 和具名 `tool_choice`；namespace choice 降为 `auto`。
+4. flat name 与顶层工具或其它 namespace child 碰撞时返回本地 `RequestSchema`，不能猜测所有权。
+5. flatten 后再清理 xAI 不支持的顶层/递归字段、模型特定采样字段和不在 allowlist 内的 tool type。
+6. 只有上游 HTTP 2xx JSON/SSE 才恢复 namespace；错误和重定向响应保持上游原样，避免把错误 payload 误当工具调用改写。
+
+restore map 是 provider-specific request-local runtime 状态，随 `PreparedUpstreamBody` 进入同一次响应链路；它不属于通用 `ConversionContext`，也不进入跨请求 side store。
+
+### 14.7 新增或调整渠道兼容时的放置规则
 
 新增供应商或 endpoint 时，按这条顺序维护：
 
@@ -735,8 +839,8 @@ check_lossy_conversion(route, value) -> Vec<LossyConversionIssue>
 它只检测，不决策。runtime 决策在 `check_lossy_conversion_policy()`：
 
 - 没有 issue：继续。
-- 有 issue 且 `lossy_rejection_enabled=false`：继续，并把 warnings 写入 `ConversionContext.lossy_warnings`。
-- 有 issue 且 `lossy_rejection_enabled=true`，但请求头 `X-Allow-Lossy: true|1|yes`：继续，并写 warnings。
+- 有 issue 且 `lossy_rejection_enabled=false`：继续，并把 warnings 写入 `PreparedUpstreamBody.lossy_warnings`。
+- 有 issue 且 `lossy_rejection_enabled=true`，但请求头 `X-Allow-Lossy: true|1|yes`：继续，并同样写入 `PreparedUpstreamBody.lossy_warnings`。
 - 有 issue 且显式开启拒绝、请求头未绕过：返回本地 `RequestSchema` 错误。
 
 允许通过的 lossy warning 会在最终响应 header 里追加：
@@ -790,8 +894,10 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/runtime/providers.rs` | provider 读取、target protocol、auth strategy、model mapping |
 | `tauri/src/coding/proxy_gateway/runtime/middleware.rs` | request-scoped middleware context 和 middleware 实现 |
 | `tauri/src/coding/proxy_gateway/runtime/pipeline.rs` | middleware pipeline 与 executor customizer 骨架 |
+| `tauri/src/coding/proxy_gateway/runtime/compat/xai_responses.rs` | xAI native Responses namespace 展平/恢复和严格字段清理 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/codex_history.rs` | Codex Responses tool call 跨请求补全 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/gemini_shadow.rs` | Gemini thoughtSignature shadow 回放 |
+| `tauri/src/coding/proxy_gateway/runtime/side_stores/responses_cipher.rs` | invalid encrypted content 的 provider-scoped 负缓存 |
 
 ### Transformer
 
@@ -801,31 +907,45 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/transformer/types.rs` | `AiProtocol`、`ConversionRoute`、api format alias |
 | `tauri/src/coding/proxy_gateway/transformer/traits.rs` | `InboundTransformer` / `OutboundTransformer` |
 | `tauri/src/coding/proxy_gateway/transformer/kernel.rs` | JSON/error/SSE 转换入口，`ConversionContext` |
+| `tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs` | 跨协议 request/response/SSE 内核回归 |
 | `tauri/src/coding/proxy_gateway/transformer/stream.rs` | `StreamKernel`、source stream state、target stream writer |
 | `tauri/src/coding/proxy_gateway/transformer/sse.rs` | SSE block parser/writer |
 | `tauri/src/coding/proxy_gateway/transformer/llm/model.rs` | LLM request/response/message IR |
 | `tauri/src/coding/proxy_gateway/transformer/llm/tools.rs` | Tool、tool call、tool choice IR |
 | `tauri/src/coding/proxy_gateway/transformer/openai/chat.rs` | OpenAI Chat inbound/outbound |
-| `tauri/src/coding/proxy_gateway/transformer/openai/responses/mod.rs` | OpenAI Responses inbound/outbound |
+| `tauri/src/coding/proxy_gateway/transformer/openai/responses/mod.rs` | OpenAI Responses 模块入口 |
+| `tauri/src/coding/proxy_gateway/transformer/openai/responses/request.rs` | OpenAI Responses request 入站/出站和 raw request sidecar |
+| `tauri/src/coding/proxy_gateway/transformer/openai/responses/response.rs` | OpenAI Responses response 入站/出站 |
+| `tauri/src/coding/proxy_gateway/transformer/openai/responses/shared.rs` | Responses reasoning、status、raw fragment merge 等共享语义 |
+| `tauri/src/coding/proxy_gateway/transformer/openai/responses/tests.rs` | Responses request/response 精确回归 |
 | `tauri/src/coding/proxy_gateway/transformer/openai/codex_tools.rs` | Codex Responses -> Chat tool context 展平/还原 |
 | `tauri/src/coding/proxy_gateway/transformer/anthropic/inbound.rs` | Anthropic request/response -> IR |
 | `tauri/src/coding/proxy_gateway/transformer/anthropic/outbound.rs` | IR -> Anthropic request/response |
 | `tauri/src/coding/proxy_gateway/transformer/gemini/inbound.rs` | Gemini request/response -> IR |
 | `tauri/src/coding/proxy_gateway/transformer/gemini/outbound.rs` | IR -> Gemini request/response 入口 |
+| `tauri/src/coding/proxy_gateway/transformer/gemini/convert.rs` | Gemini message/content/tool 的双向公共转换 |
 | `tauri/src/coding/proxy_gateway/transformer/gemini/stream.rs` | Gemini stream error helper |
 | `tauri/src/coding/proxy_gateway/transformer/shared/signature.rs` | provider-local signature marker/heuristic |
 | `tauri/src/coding/proxy_gateway/transformer/shared/lossy.rs` | 有损转换纯检测 |
 | `tauri/src/coding/proxy_gateway/transformer/shared/thinking_config.rs` | Gemini thinking budget / effort 标准映射 |
+| `tauri/src/coding/proxy_gateway/transformer/shared/tool_schema.rs` | 跨协议 tool JSON Schema 规范化 |
 
 ## 18. 与参考项目架构差异
 
 本节记录 AI Toolbox 与参考项目的架构取舍差异。参考项目用于提供行为和边界对照，不是逐行移植目标；长期文档不记录某次本地 checkout、commit 或脏工作树状态。
 
-两者相同的基础思想是：都使用统一中间模型，把入站协议转换成统一 request/response，再由出站 transformer 写成 provider 协议；流式响应也都存在“provider stream -> 统一事件/响应 -> client stream”的双向转换。
+当前方案按以下层次判断合理性和归属：
+
+1. **OpenAI 官方协议语义和 reference fixture**：规范优先，决定 Responses 等公开协议的合法字段、状态和事件含义。
+2. **AxonHub**：通用协议架构、统一 IR、Responses 聚合和 SSE 生命周期的主要参考。它与当前实现都采用 inbound -> unified model -> outbound 的转换方向。
+3. **cc-switch**：Codex CLI tool identity、namespace 展平/恢复及供应商严格字段等渠道兼容边界的补充参考，不覆盖官方协议语义，也不决定 AI Toolbox 的通用 transformer 架构。
+4. **AI Toolbox 当前源码、模块 `AGENTS.md` 和测试**：决定最终 runtime/transformer 所有权、failover 产品语义和本机 CLI Gateway 的实际行为。
+
+AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，把入站协议转换成统一 request/response，再由出站 transformer 写成 provider 协议；流式响应也都存在“provider stream -> 统一事件/响应 -> client stream”的双向转换。
 
 但当前实现边界不同：
 
-| 维度 | AI Toolbox Proxy Gateway | 参考项目 |
+| 维度 | AI Toolbox Proxy Gateway | AxonHub |
 |---|---|---|
 | 产品定位 | 本机 CLI 接管网关，服务 Claude Code、Codex、Gemini CLI 的运行时代理 | 通用 API gateway，面向多渠道、多 endpoint、多请求类型 |
 | 协议范围 | 只把 Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini Native 四种聊天协议纳入 transformer 矩阵 | `llm.Request` 覆盖 chat、compact、completion、embedding、image、video、speech、transcription、translation、rerank 等 |
@@ -846,6 +966,13 @@ X-Transformer-Lossy: /path: message | /path2: message
 - 对同协议请求使用 runtime 直通语义，不引入参考项目那种可配置 raw body/response pass-through；这样能继续保留 AI Toolbox 对模型名、`[1M]` 标记、provider meta、billing CCH、cache injection 等本机 CLI 兼容处理。
 - 如果未来要扩展 embedding/image/video/rerank，不能只在现有 `AiProtocol` 上加枚举；需要先决定是否把当前聊天专用 IR 扩展成通用网关式多 request type IR，还是在 Gateway 外另建非聊天代理路径。
 - 如果未来要引入更完整的参考项目 pipeline 能力，应优先明确 runtime 与 transformer 的职责边界，避免把数据库、provider 表、auth、URL 和 executor 逻辑下沉到当前 transformer 模块。
+
+当前还有四项有意保留的差异，后续对照参考项目时不能误判成待同步缺口：
+
+- 合法 Responses cancellation 是协议终态，不触发 retry/failover 或 provider health 扣分；这与 AxonHub 的 terminal 解析一致，但不同于 cc-switch 当前把 cancellation 纳入错误检测的策略。
+- AxonHub 的 Responses WebSocket executor/session/pool 不属于当前本机 HTTP JSON/SSE Gateway 范围；在没有完整 transport、session 和恢复设计前，不引入半套 WebSocket。
+- Responses raw tool sidecar 的 `openai_responses_tool_signatures_complete` 和完整 signature 匹配，是 AI Toolbox 针对自身 request-scoped raw merge 的额外 fail-closed 门控。
+- runtime 同时检查最终客户端 body 与原始 `upstream_response_body`，是本项目跨协议转换、retry/failover 和可观测性链路所需的双重分类，不要求照搬 AxonHub 的内部响应对象。
 
 ## 19. 参考项目同步与审计清单
 
@@ -880,18 +1007,38 @@ X-Transformer-Lossy: /path: message | /path2: message
 
 ### 19.3 当前已合并的细节清单
 
-这些细节点已经在本文对应章节落位，后续不要再回到旧文档里找重复定义：
+`1b1bea6` 修复的 F-1 至 F-13 已提炼为以下长期不变量。后续实现或参考项目同步不能只保留测试名称，必须继续满足这些行为：
+
+| 审计项 | 长期规则 |
+|---|---|
+| F-1 | Responses `incomplete` / `cancelled` / `canceled` 是合法协议终态；即使 output 为空，也不能自动触发 provider failure、健康扣分或 failover。 |
+| F-2 | 实际上游 `Content-Type` 优先决定 JSON/SSE；reverse SSE no-op 必须字节透明，不能丢失 event/id/retry/comment、多行 data 或 delimiter。 |
+| F-3 | Chat source tool call 首次输出 identity 前必须同时拿到真实 name 和 id；仅在 finish/EOF 仍缺 id 时生成 synthetic fallback。 |
+| F-4 | Responses reasoning 只能归属当前 user turn，连续 reasoning 要合并；跨 user boundary 不得挂到历史 assistant。 |
+| F-5 | Responses raw tool fragment 只有在 structured signature 数量、顺序、内容和 complete marker 全部匹配时才能合并；证据缺失或不可签名必须整体 fail-closed。 |
+| F-6 | 长期架构文档与点-in-time 审计必须区分基线、修复提交和当前状态；不能继续把已提交实现描述成未提交工作树。 |
+| F-7 | lossy warning 归 `PreparedUpstreamBody.lossy_warnings` 所有，不进入 `ConversionContext` 或 `PipelineContext`。 |
+| F-8 | SSE parser 同时存在 LF/CRLF delimiter 时必须消费物理位置最早者，不能按换行类型固定优先级。 |
+| F-9 | forced-stream Responses 只有收到明确 terminal event 才能聚合成 JSON；缺 terminal 按连接错误处理，稀疏 snapshot 按字段合并。 |
+| F-10 | reverse SSE 必须保留空白 block、EOF whitespace tail 和每一行原始 LF/CRLF；只有 payload 实际改写时替换 data。 |
+| F-11 | source error、transport fail 或 parser error 都是错误终态；之后不能再消费普通事件或在 EOF 合成 completed/stop。 |
+| F-12 | 非流 Responses cancellation 与 LLM `finish_reason="cancelled"` 双向映射，反向 canonical status 为 `canceled`，不能退化为 `completed`。 |
+| F-13 | runtime 的失败与空响应分类同时检查最终 body 和原始 `upstream_response_body`；转换不能隐藏失败，也不能抹掉合法终态。 |
+
+其它已经落位的细节点：
 
 - `ReasoningField`、DeepSeek reasoning/tool_calls 门控、OpenRouter reasoning object、Codex -> Chat 多供应商 reasoning 矩阵：见 14 节 runtime provider compat。
-- Gemini `thoughtSignature` 跨请求回放、Codex Responses history 补全：见 13 节 runtime side stores。
+- Gemini `thoughtSignature` 跨请求回放、Codex Responses history 补全、invalid encrypted content 负缓存：见 13 节 runtime side stores。
 - `<think>` 标签、tool arguments JSON5/轻量 repair、Responses custom tool / namespace 展平、provider-local signature marker：见 7 到 10 节 transformer 内核和 stream。
 - 有损转换检测与 `X-Allow-Lossy` / `X-Transformer-Lossy` 策略：见 15 节。
 - OpenAI Responses `/responses/compact`、Codex official forced SSE 聚合、Copilot 动态 target、Ollama wire adapter：见 5、11、14、16 节。
-- 参考项目架构差异、为什么不做完整 pipeline port：见 18 节。
+- xAI native Responses namespace passthrough 和参考项目职责层次：见 14、18 节。
 
-### 19.4 删除旧审计文档后的验收基线
+### 19.4 长期架构文档与点-in-time 审计
 
-旧审计文档删除后，长期验收以本文和代码测试为准。当前必须保留的回归基线：
+本文负责长期架构、行为边界和修改准则；`transformer-protocol-conversion-audit.md` 与 `transformer-protocol-conversion-fix-plan.md` 保留 `3c138e6 -> 1b1bea6` 这次审计的证据、修复明细和验证结果。它们不是互相替代的文档，也不再假设审计文档已经删除。
+
+以下数字是 `1b1bea6` 对应的 reference fixture 验收基线。以后有意新增或删除 fixture 时，应同步更新分类测试和本文，而不是为了保住旧数字阻止合理演进：
 
 | 类别 | 基线 |
 |---|---|
@@ -901,7 +1048,9 @@ X-Transformer-Lossy: /path: message | /path2: message
 | 参考 stream fixture | supported stream fixture 当前为 43 个，全部要能转换到所有非 identity target，并满足目标协议 stream 基本 shape。 |
 | 语义精确断言 | system/instructions、image、stop、tool choice、strict schema、tool result 合并、reasoning、custom tool、Gemini thinking/schema/signature、Responses function arguments.done、finish 幂等等必须继续保留精确断言，不能只靠 shape 测试。 |
 | Runtime provider 兼容 | 修改 `gateway_provider_profiles.json` 的 `compat` 名称时，必须同步补 runtime adapter、测试和文档；仅修改 catalog 描述不算实现。 |
-| Side store | `CodexHistoryStore` 和 `GeminiShadowStore` 必须继续有容量上限、eviction 和可靠 session key；不得引入全局默认 session。 |
+| Session side store | `CodexHistoryStore` 和 `GeminiShadowStore` 必须继续有容量上限、eviction 和可靠 session key；不得引入全局默认 session。 |
+| Cipher 负缓存 | `InvalidResponsesCipherStore` 只存 provider 配置指纹和密文摘要，容量保持有界；不能保存完整密文或退化成跨 provider 全局黑名单。 |
+| Request-scoped 状态 | xAI namespace restore map、raw Responses sidecar、`ConversionContext` 和 reverse pipeline context 只服务当前请求链路，不得误放进跨请求 side store。 |
 | Pipeline 边界 | `transformer/` 继续零 runtime/provider/db 依赖；provider 方言、鉴权/header、URL、特殊 endpoint、forced SSE 聚合、retry/failover 继续留在 `runtime/`。 |
 
 ## 20. 修改准则
@@ -911,12 +1060,14 @@ X-Transformer-Lossy: /path: message | /path2: message
 - 新协议：先扩展 `AiProtocol`、`from_api_format()`、`ConversionRoute` 测试，再实现 inbound/outbound transformer、SSE source/target、fixture/test，最后接 runtime path/header/target protocol。
 - 新 provider 兼容：优先改 provider profile/meta、`runtime/providers.rs`、`ProviderBodyCompat`、outbound adapter 或 middleware。不要把 provider type 传进 transformer。
 - 新 request-scoped 协议映射状态：放 `ConversionContext`，并确保 request -> response/SSE 同一次链路携带。
+- 新 request-scoped provider/runtime 状态：放 `PreparedUpstreamBody` 或 `PipelineContext`，按所有权随同一次 attempt 传递，不要塞进 `ConversionContext` 或跨请求 side store。
 - 新跨请求补全状态：放 `runtime/side_stores/`，必须有容量上限和可靠 session key，不能进入 transformer。
 - 新有损字段：补 `shared/lossy.rs` 检测和策略测试；是否拒绝仍由 runtime settings/header 决定。
 - 新 stream 能力：保持边读边转换，不为日志、统计或转换 full-buffer 整个 SSE。
 
 最小验证建议：
 
-- 只改 transformer：运行相关 Rust 测试过滤项，例如 `cd tauri && cargo test transformer`。
-- 改 runtime 转发、provider compat、side store、日志/统计：至少运行 `cd tauri && cargo test`。
-- 改 provider UI 或设置项联动时，再补 `pnpm exec tsc --noEmit` 和 `pnpm test`。
+- 只改 transformer：运行 `cd tauri && cargo test transformer --no-default-features`。
+- 改 runtime 转发、provider compat、side store 或 response 分类：先运行 `cd tauri && cargo test --lib coding::proxy_gateway::runtime::upstream`。
+- 跨 runtime/transformer、影响保存/应用/同步/恢复或准备交付的大功能：运行 `cd tauri && cargo test`、`pnpm test` 和 `pnpm exec tsc --noEmit` 的完整集合。
+- 只改本文档：至少运行陈旧表述搜索和 `git diff --check`，并人工核对本文、审计报告、修复计划与当前源码基线是否一致。

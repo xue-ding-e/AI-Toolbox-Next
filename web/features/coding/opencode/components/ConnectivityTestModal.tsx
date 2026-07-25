@@ -334,6 +334,8 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       setResults(prev => prev.filter(r => !removedIds.includes(r.modelId)));
       setSelectedModelIds([]);
       message.success(t('opencode.connectivity.removeSuccess', { count: removedIds.length }));
+      // Removal completed the cleanup task — close the modal so users don't need an extra click.
+      onCancel();
     } catch {
       message.error(t('common.error'));
     } finally {

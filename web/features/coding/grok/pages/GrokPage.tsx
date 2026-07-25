@@ -248,6 +248,8 @@ const GrokPage: React.FC = () => {
   const [modelModalInitialValues, setModelModalInitialValues] = React.useState<Partial<GrokModelFormValues> | undefined>();
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProvider, setFetchModelsProvider] = React.useState<GrokProvider | null>(null);
+  const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
+  const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<Record<string, string[]>>({});
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [deviceAuthSession, setDeviceAuthSession] = React.useState<GrokDeviceAuthStartResult | null>(null);
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
@@ -517,6 +519,82 @@ const GrokPage: React.FC = () => {
     await loadConfig(true);
     await refreshTrayMenu();
   }, [gatewayCliStatus?.mode, loadConfig]);
+
+  const clearBatchDeleteState = React.useCallback((providerId?: string) => {
+    if (providerId) {
+      setSelectedModelIdsByProvider((previousState) => {
+        if (!(providerId in previousState)) {
+          return previousState;
+        }
+        const nextState = { ...previousState };
+        delete nextState[providerId];
+        return nextState;
+      });
+      setBatchDeleteProviderId((currentProviderId) => (
+        currentProviderId === providerId ? null : currentProviderId
+      ));
+      return;
+    }
+    setSelectedModelIdsByProvider({});
+    setBatchDeleteProviderId(null);
+  }, []);
+
+  const handleToggleBatchDeleteMode = React.useCallback((provider: GrokProvider) => {
+    if (batchDeleteProviderId === provider.id) {
+      clearBatchDeleteState(provider.id);
+      return;
+    }
+    setSelectedModelIdsByProvider({});
+    setBatchDeleteProviderId(provider.id);
+  }, [batchDeleteProviderId, clearBatchDeleteState]);
+
+  const handleToggleModelSelection = React.useCallback((
+    provider: GrokProvider,
+    modelId: string,
+    selected: boolean,
+  ) => {
+    setSelectedModelIdsByProvider((previousState) => {
+      const currentModelIds = previousState[provider.id] ?? [];
+      const nextModelIds = selected
+        ? Array.from(new Set([...currentModelIds, modelId]))
+        : currentModelIds.filter((id) => id !== modelId);
+
+      if (nextModelIds.length === 0) {
+        const nextState = { ...previousState };
+        delete nextState[provider.id];
+        return nextState;
+      }
+
+      return {
+        ...previousState,
+        [provider.id]: nextModelIds,
+      };
+    });
+  }, []);
+
+  const handleBatchDeleteModels = React.useCallback(async (provider: GrokProvider) => {
+    const selectedModelIds = selectedModelIdsByProvider[provider.id] ?? [];
+    if (selectedModelIds.length === 0) {
+      return;
+    }
+
+    try {
+      let models = getGrokProviderCatalogModels(provider);
+      for (const modelKey of selectedModelIds) {
+        models = removeGrokCatalogModel(models, modelKey);
+      }
+      const currentDefault = getGrokProviderDefaultModelKey(provider);
+      const nextDefault = currentDefault && selectedModelIds.includes(currentDefault)
+        ? (models[0]?.key || models[0]?.model)
+        : currentDefault;
+      await persistProviderCatalog(provider, models, nextDefault);
+      message.success(t('grok.model.batchDeleteSuccess', { count: selectedModelIds.length }));
+      clearBatchDeleteState(provider.id);
+    } catch (error) {
+      console.error('Failed to batch delete Grok models:', error);
+      message.error(t('common.error'));
+    }
+  }, [clearBatchDeleteState, persistProviderCatalog, selectedModelIdsByProvider, t]);
 
   const handleAddModel = React.useCallback((provider: GrokProvider) => {
     if (provider.category === 'official' || provider.id === GROK_LOCAL_PROVIDER_ID) {
@@ -888,6 +966,38 @@ const GrokPage: React.FC = () => {
     setConnectivityUsesGateway(providerApiFormat === 'gemini_native');
     setConnectivityModalOpen(true);
   };
+
+  const handleRemoveConnectivityModels = React.useCallback(async (modelIdsToRemove: string[]) => {
+    if (!connectivityInfo || modelIdsToRemove.length === 0) {
+      return;
+    }
+
+    const targetProvider = providers.find((provider) => provider.id === connectivityInfo.providerId);
+    if (!targetProvider || targetProvider.category === 'official' || targetProvider.id === GROK_LOCAL_PROVIDER_ID) {
+      return;
+    }
+
+    const removeSet = new Set(modelIdsToRemove);
+    const models = getGrokProviderCatalogModels(targetProvider).filter((model) => {
+      const key = model.key?.trim() || model.model;
+      const upstream = model.model?.trim() || key;
+      return !removeSet.has(key) && !removeSet.has(upstream);
+    });
+    const currentDefault = getGrokProviderDefaultModelKey(targetProvider);
+    const nextDefault = currentDefault
+      && models.some((model) => (model.key?.trim() || model.model) === currentDefault)
+      ? currentDefault
+      : (models[0]?.key || models[0]?.model);
+
+    await persistProviderCatalog(targetProvider, models, nextDefault);
+    clearBatchDeleteState(targetProvider.id);
+
+    // Keep the open modal model list in sync with the saved catalog.
+    setConnectivityInfo(buildGrokProviderConnectivityInfo({
+      ...targetProvider,
+      settingsConfig: buildGrokProviderSettingsWithModels(targetProvider, models, nextDefault),
+    }));
+  }, [clearBatchDeleteState, connectivityInfo, persistProviderCatalog, providers]);
 
   const handleSaveConnectivityDiagnostics = React.useCallback(async (diagnostics: OpenCodeDiagnosticsConfig) => {
     if (!connectivityInfo) {
@@ -1648,6 +1758,25 @@ const GrokPage: React.FC = () => {
                                   void handleSetDefaultModel(provider, modelKey);
                                 }}
                                 onFetchModels={handleOpenFetchModels}
+                                onToggleBatchDeleteMode={handleToggleBatchDeleteMode}
+                                onBatchDeleteModels={(provider) => {
+                                  const selectedCount = (selectedModelIdsByProvider[provider.id] ?? []).length;
+                                  if (selectedCount === 0) {
+                                    return;
+                                  }
+                                  Modal.confirm({
+                                    title: t('grok.model.batchDeleteConfirmTitle'),
+                                    content: t('grok.model.batchDeleteConfirmContent', { count: selectedCount }),
+                                    okText: t('common.confirm'),
+                                    cancelText: t('common.cancel'),
+                                    onOk: async () => {
+                                      await handleBatchDeleteModels(provider);
+                                    },
+                                  });
+                                }}
+                                modelSelectionMode={batchDeleteProviderId === provider.id}
+                                selectedModelIds={selectedModelIdsByProvider[provider.id] ?? []}
+                                onToggleModelSelection={handleToggleModelSelection}
                                 onOfficialAccountLogin={handleStartOfficialAccountOauth}
                                 onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}
                                 onOfficialAccountApply={handleApplyOfficialAccount}
@@ -1773,6 +1902,8 @@ const GrokPage: React.FC = () => {
           useGateway={connectivityUsesGateway}
           diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'grok', connectivityInfo.providerId) : undefined}
           onSaveDiagnostics={handleSaveConnectivityDiagnostics}
+          removableModelIds={connectivityInfo?.modelIds}
+          onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
         />
 

@@ -1512,6 +1512,47 @@ const PiPage: React.FC = () => {
     setConnectivityModalOpen(true);
   };
 
+  const handleRemoveConnectivityModels = React.useCallback(async (modelIdsToRemove: string[]) => {
+    if (!connectivityProviderId || modelIdsToRemove.length === 0) {
+      return;
+    }
+
+    const provider = piProviders.find((item) => item.providerKey === connectivityProviderId);
+    if (!provider) {
+      return;
+    }
+
+    const selectedModelIdSet = new Set(modelIdsToRemove);
+    const nextModels = getProviderModelRecords(provider.modelsProvider)
+      .filter((entry) => !selectedModelIdSet.has(entry.id))
+      .map((entry) => entry.model);
+
+    setSaving(true);
+    try {
+      const nextConfig = await saveProviderModels(provider, nextModels);
+      if (
+        provider.isDefault
+        && nextConfig.modelSettings.modelId
+        && selectedModelIdSet.has(nextConfig.modelSettings.modelId)
+      ) {
+        const updatedConfig = await savePiModelSettings({
+          defaultProvider: nextConfig.modelSettings.providerKey ?? provider.providerKey,
+          defaultModel: '',
+          defaultThinkingLevel: '',
+        });
+        setRuntimeConfig(updatedConfig);
+        setOtherSettings(updatedConfig.otherSettings || {});
+        modelForm.setFieldValue('defaultModel', undefined);
+      }
+      clearBatchDeleteState(provider.providerKey);
+    } catch (error) {
+      console.error('Failed to remove Pi models from connectivity test:', error);
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  }, [clearBatchDeleteState, connectivityProviderId, modelForm, piProviders]);
+
   const handleBatchTestProviders = React.useCallback(async () => {
     const targets = piProviders.map((provider) => {
       const providerConfig = buildPiOpenCodeProvider(provider);
@@ -2403,6 +2444,8 @@ const PiPage: React.FC = () => {
         <ProviderConnectivityTestModal
           open={connectivityModalOpen}
           connectivityInfo={connectivityInfo}
+          removableModelIds={connectivityInfo?.modelIds}
+          onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
         />
 
