@@ -35,7 +35,6 @@ import {
 } from '@/services/piApi';
 import type {
   PiExtensionCommandResult,
-  PiExtensionKind,
   PiExtensionListResult,
   PiExtensionSummary,
 } from '@/types/pi';
@@ -58,22 +57,68 @@ interface PiExtensionsSectionProps {
 
 const RECOMMENDED_PI_EXTENSIONS: RecommendedPiExtension[] = [
   {
-    name: 'context-mode',
-    installSource: 'npm:context-mode',
-    descriptionKey: 'pi.extensions.recommended.contextMode',
-    detailUrl: 'https://pi.dev/packages/context-mode?name=context-mode',
+    name: 'pi-cometix-footer',
+    installSource: 'npm:pi-cometix-footer',
+    descriptionKey: 'pi.extensions.recommended.cometixFooter',
+    detailUrl: 'https://pi.dev/packages/pi-cometix-footer?name=pi-cometix-footer',
   },
   {
-    name: '@cortexkit/pi-magic-context',
-    installSource: 'npm:@cortexkit/pi-magic-context',
-    descriptionKey: 'pi.extensions.recommended.magicContext',
-    detailUrl: 'https://github.com/cortexkit/magic-context',
+    name: 'pi-hashline-edit-pro',
+    installSource: 'npm:pi-hashline-edit-pro',
+    descriptionKey: 'pi.extensions.recommended.hashlineEditPro',
+    detailUrl: 'https://pi.dev/packages/pi-hashline-edit-pro?name=pi-hashline-edit-pro',
   },
   {
-    name: 'pi-web-access',
-    installSource: 'npm:pi-web-access',
-    descriptionKey: 'pi.extensions.recommended.webAccess',
-    detailUrl: 'https://pi.dev/packages/pi-web-access?name=pi-web-access',
+    name: 'pi-slopchop',
+    installSource: 'npm:pi-slopchop',
+    descriptionKey: 'pi.extensions.recommended.slopchop',
+    detailUrl: 'https://pi.dev/packages/pi-slopchop?name=pi-slopchop',
+  },
+  {
+    name: '@narumitw/pi-goal',
+    installSource: 'npm:@narumitw/pi-goal',
+    descriptionKey: 'pi.extensions.recommended.goal',
+    detailUrl: 'https://pi.dev/packages/@narumitw/pi-goal?name=%40narumitw%2Fpi-goal',
+  },
+  {
+    name: '@narumitw/pi-plan-mode',
+    installSource: 'npm:@narumitw/pi-plan-mode',
+    descriptionKey: 'pi.extensions.recommended.planMode',
+    detailUrl:
+      'https://pi.dev/packages/@narumitw/pi-plan-mode?name=%40narumitw%2Fpi-plan-mode',
+  },
+  {
+    name: '@narumitw/pi-subagents',
+    installSource: 'npm:@narumitw/pi-subagents',
+    descriptionKey: 'pi.extensions.recommended.subagents',
+    detailUrl:
+      'https://pi.dev/packages/@narumitw/pi-subagents?name=%40narumitw%2Fpi-subagents',
+  },
+  {
+    name: 'pi-autoresearch',
+    installSource: 'npm:pi-autoresearch',
+    descriptionKey: 'pi.extensions.recommended.autoresearch',
+    detailUrl: 'https://pi.dev/packages/pi-autoresearch?name=pi-autoresearch',
+  },
+  {
+    name: '@juicesharp/rpiv-ask-user-question',
+    installSource: 'npm:@juicesharp/rpiv-ask-user-question',
+    descriptionKey: 'pi.extensions.recommended.askUserQuestion',
+    detailUrl:
+      'https://pi.dev/packages/@juicesharp/rpiv-ask-user-question?name=%40juicesharp%2Frpiv-ask-user-question',
+  },
+  {
+    name: '@juicesharp/rpiv-todo',
+    installSource: 'npm:@juicesharp/rpiv-todo',
+    descriptionKey: 'pi.extensions.recommended.todo',
+    detailUrl:
+      'https://pi.dev/packages/@juicesharp/rpiv-todo?name=%40juicesharp%2Frpiv-todo',
+  },
+  {
+    name: '@narumitw/pi-btw',
+    installSource: 'npm:@narumitw/pi-btw',
+    descriptionKey: 'pi.extensions.recommended.btw',
+    detailUrl: 'https://pi.dev/packages/@narumitw/pi-btw?name=%40narumitw%2Fpi-btw',
   },
   {
     name: 'pi-mcp-adapter',
@@ -82,16 +127,74 @@ const RECOMMENDED_PI_EXTENSIONS: RecommendedPiExtension[] = [
     detailUrl: 'https://pi.dev/packages/pi-mcp-adapter?name=pi-mcp-adapter',
   },
   {
-    name: '@samfp/pi-memory',
-    installSource: 'npm:@samfp/pi-memory',
-    descriptionKey: 'pi.extensions.recommended.memory',
-    detailUrl: 'https://pi.dev/packages/@samfp/pi-memory?name=%40samfp%2Fpi-memory',
+    name: '@ff-labs/pi-fff',
+    installSource: 'npm:@ff-labs/pi-fff',
+    descriptionKey: 'pi.extensions.recommended.fff',
+    detailUrl: 'https://pi.dev/packages/@ff-labs/pi-fff?name=%40ff-labs%2Fpi-fff',
   },
   {
-    name: 'pi-subagents',
-    installSource: 'npm:pi-subagents',
-    descriptionKey: 'pi.extensions.recommended.subagents',
-    detailUrl: 'https://pi.dev/packages/pi-subagents?name=pi-subagents',
+    name: 'pi-rtk-optimizer',
+    installSource: 'npm:pi-rtk-optimizer',
+    descriptionKey: 'pi.extensions.recommended.rtkOptimizer',
+    detailUrl: 'https://pi.dev/packages/pi-rtk-optimizer?name=pi-rtk-optimizer',
+  },
+  {
+    name: 'pi-cache-optimizer',
+    installSource: 'npm:pi-cache-optimizer',
+    descriptionKey: 'pi.extensions.recommended.cacheOptimizer',
+    detailUrl: 'https://pi.dev/packages/pi-cache-optimizer?name=pi-cache-optimizer',
+  },
+  {
+    name: '@narumitw/pi-lsp',
+    installSource: 'npm:@narumitw/pi-lsp',
+    descriptionKey: 'pi.extensions.recommended.lsp',
+    detailUrl: 'https://pi.dev/packages/@narumitw/pi-lsp?name=%40narumitw%2Fpi-lsp',
+  },
+  {
+    name: 'pi-agent-browser-native',
+    installSource: 'npm:pi-agent-browser-native',
+    descriptionKey: 'pi.extensions.recommended.agentBrowserNative',
+    detailUrl:
+      'https://pi.dev/packages/pi-agent-browser-native?name=pi-agent-browser-native',
+  },
+  {
+    name: 'pi-add-dir',
+    installSource: 'npm:pi-add-dir',
+    descriptionKey: 'pi.extensions.recommended.addDir',
+    detailUrl: 'https://pi.dev/packages/pi-add-dir?name=pi-add-dir',
+  },
+  {
+    name: 'pi-workspace-history',
+    installSource: 'npm:pi-workspace-history',
+    descriptionKey: 'pi.extensions.recommended.workspaceHistory',
+    detailUrl: 'https://pi.dev/packages/pi-workspace-history?name=pi-workspace-history',
+  },
+  {
+    name: '@narumitw/pi-caffeinate',
+    installSource: 'npm:@narumitw/pi-caffeinate',
+    descriptionKey: 'pi.extensions.recommended.caffeinate',
+    detailUrl:
+      'https://pi.dev/packages/@narumitw/pi-caffeinate?name=%40narumitw%2Fpi-caffeinate',
+  },
+  {
+    name: '@tmustier/pi-raw-paste',
+    installSource: 'npm:@tmustier/pi-raw-paste',
+    descriptionKey: 'pi.extensions.recommended.rawPaste',
+    detailUrl:
+      'https://pi.dev/packages/@tmustier/pi-raw-paste?name=%40tmustier%2Fpi-raw-paste',
+  },
+  {
+    name: '@victor-software-house/pi-curated-themes',
+    installSource: 'npm:@victor-software-house/pi-curated-themes',
+    descriptionKey: 'pi.extensions.recommended.curatedThemes',
+    detailUrl:
+      'https://pi.dev/packages/@victor-software-house/pi-curated-themes?name=%40victor-software-house%2Fpi-curated-themes',
+  },
+  {
+    name: '@cortexkit/pi-magic-context',
+    installSource: 'npm:@cortexkit/pi-magic-context',
+    descriptionKey: 'pi.extensions.recommended.magicContext',
+    detailUrl: 'https://github.com/cortexkit/magic-context',
   },
 ];
 
@@ -131,6 +234,7 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
   const [uninstallingSource, setUninstallingSource] = React.useState<string | null>(null);
   const [pendingUninstall, setPendingUninstall] = React.useState<PiExtensionSummary | null>(null);
   const [updating, setUpdating] = React.useState(false);
+  const [updatingSource, setUpdatingSource] = React.useState<string | null>(null);
   const [commandResult, setCommandResult] = React.useState<PiExtensionCommandResult | null>(null);
 
   const loadExtensions = React.useCallback(async () => {
@@ -152,6 +256,7 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
   }, [loadExtensions, refreshKey]);
 
   const extensions = data?.extensions ?? [];
+  const updateAvailableCount = extensions.filter((extension) => extension.updateAvailable).length;
   const magicContextInstalled = isMagicContextInstalled(extensions);
 
   const handleInstall = async (source: string) => {
@@ -224,6 +329,25 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
     }
   };
 
+  const handleUpdateOne = async (source: string) => {
+    const normalizedSource = source.trim();
+    if (!normalizedSource) {
+      return;
+    }
+    setUpdatingSource(normalizedSource);
+    try {
+      const result = await updatePiExtensions({ source: normalizedSource });
+      setCommandResult(result);
+      await loadExtensions();
+    } catch (updateError) {
+      void message.error(
+        updateError instanceof Error ? updateError.message : String(updateError),
+      );
+    } finally {
+      setUpdatingSource(null);
+    }
+  };
+
   const handleOpenExtensionsFolder = async () => {
     if (!data?.extensionsPath) {
       return;
@@ -246,47 +370,23 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
     }
   };
 
-  const renderKindLabel = (kind: PiExtensionKind) => {
-    switch (kind) {
-      case 'local_file':
-        return t('pi.extensions.kindLocalFile');
-      case 'local_directory':
-        return t('pi.extensions.kindLocalDirectory');
-      case 'package':
-      default:
-        return t('pi.extensions.kindPackage');
-    }
-  };
-
-  const renderScopeLabel = (scope: PiExtensionSummary['scope']) => {
-    switch (scope) {
-      case 'project':
-        return t('pi.extensions.scopeProject');
-      case 'user':
-        return t('pi.extensions.scopeUser');
-      case 'unknown':
-      default:
-        return t('pi.extensions.scopeUnknown');
-    }
-  };
-
   const renderRecommendedExtension = (extension: RecommendedPiExtension) => {
     const installed = isRecommendedInstalled(extensions, extension.installSource);
     const installing = installingSources.has(extension.installSource);
 
     return (
-      <div key={extension.installSource} className={styles.recommendedItem}>
-        <div className={styles.recommendedContent}>
-          <div className={styles.recommendedTitleRow}>
+      <div key={extension.installSource} className={styles.extensionItem}>
+        <div className={styles.extensionContent}>
+          <div className={styles.extensionTitleRow}>
             <Space size={6} wrap>
               <Text strong>{extension.name}</Text>
-              <Text code className={styles.inlineSourceText}>
+              <Text code className={styles.inlineMetaText}>
                 {extension.installSource}
               </Text>
               {installed && <Tag color="success">{t('pi.extensions.installed')}</Tag>}
             </Space>
           </div>
-          <Text type="secondary" className={styles.recommendedDescription}>
+          <Text type="secondary" className={styles.extensionSecondary}>
             {t(extension.descriptionKey)}
           </Text>
         </div>
@@ -320,42 +420,64 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
   const renderInstalledExtension = (extension: PiExtensionSummary) => {
     const isPackage = extension.kind === 'package';
     const actionText = isPackage ? t('pi.extensions.uninstall') : t('pi.extensions.deleteLocal');
+    const versionLabel = extension.updateAvailable
+      && extension.currentVersion
+      && extension.latestVersion
+      ? `${extension.currentVersion} → ${extension.latestVersion}`
+      : extension.currentVersion;
+    const isUpdatingThis = updatingSource === extension.source;
 
     return (
-      <div key={extension.id} className={styles.installedItem}>
-        <div className={styles.installedContent}>
-          <div className={styles.installedTitleRow}>
-            <Text strong>{getSourceDisplayName(extension.source)}</Text>
-            <Space size={4} wrap>
-              {extension.builtIn && <Tag color="blue">{t('pi.extensions.builtIn')}</Tag>}
-              <Tag>{renderKindLabel(extension.kind)}</Tag>
-              <Tag>{renderScopeLabel(extension.scope)}</Tag>
-              {extension.currentVersion && (
-                <Tag>{t('pi.extensions.currentVersion', { version: extension.currentVersion })}</Tag>
+      <div key={extension.id} className={styles.extensionItem}>
+        <div className={styles.extensionContent}>
+          <div className={styles.extensionTitleRow}>
+            <Space size={6} wrap>
+              <Text strong>{getSourceDisplayName(extension.source)}</Text>
+              {versionLabel && (
+                <Text code className={styles.inlineMetaText}>
+                  {versionLabel}
+                </Text>
               )}
+              {extension.updateAvailable && (
+                <Button
+                  type="link"
+                  size="small"
+                  className={styles.updateAvailableButton}
+                  icon={<SyncOutlined />}
+                  loading={isUpdatingThis}
+                  disabled={updating || Boolean(updatingSource && !isUpdatingThis)}
+                  onClick={() => {
+                    void handleUpdateOne(extension.source);
+                  }}
+                >
+                  {t('pi.extensions.updateAvailable')}
+                </Button>
+              )}
+              {extension.builtIn && <Tag color="blue">{t('pi.extensions.builtIn')}</Tag>}
             </Space>
           </div>
-          <Text code className={styles.sourceText}>
+          <Text
+            type="secondary"
+            className={styles.extensionSecondary}
+            title={extension.path || extension.source}
+          >
             {extension.source}
           </Text>
-          {extension.path && (
-            <Text type="secondary" className={styles.pathText}>
-              {extension.path}
-            </Text>
-          )}
         </div>
-        {!extension.builtIn && (
-          <Button
-            danger
-            size="small"
-            className={styles.installedActionButton}
-            icon={<DeleteOutlined />}
-            loading={uninstallingSource === extension.source}
-            onClick={() => setPendingUninstall(extension)}
-          >
-            {actionText}
-          </Button>
-        )}
+        <Space size={6} className={styles.itemActions}>
+          {!extension.builtIn && (
+            <Tooltip title={actionText}>
+              <Button
+                danger
+                type="text"
+                size="small"
+                icon={<DeleteOutlined />}
+                loading={uninstallingSource === extension.source}
+                onClick={() => setPendingUninstall(extension)}
+              />
+            </Tooltip>
+          )}
+        </Space>
       </div>
     );
   };
@@ -392,15 +514,6 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
                   onClick={handleOpenPackagesFolder}
                 >
                   {t('pi.extensions.openPackagesDirectory')}
-                </Button>
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<SyncOutlined />}
-                  loading={updating}
-                  onClick={handleUpdateAll}
-                >
-                  {t('pi.extensions.updateAll')}
                 </Button>
                 <Button
                   type="link"
@@ -521,7 +634,33 @@ const PiExtensionsSection: React.FC<PiExtensionsSectionProps> = ({ refreshKey = 
                           <Text type="secondary">
                             {t('pi.extensions.count', { count: extensions.length })}
                           </Text>
+                          {updateAvailableCount > 0 && (
+                            <Text type="warning">
+                              {t('pi.extensions.updateAvailableCount', {
+                                count: updateAvailableCount,
+                              })}
+                            </Text>
+                          )}
                         </Space>
+                      ),
+                      extra: (
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          loading={updating}
+                          disabled={Boolean(updatingSource)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleUpdateAll();
+                          }}
+                        >
+                          {updateAvailableCount > 0
+                            ? t('pi.extensions.updateAllWithCount', {
+                                count: updateAvailableCount,
+                              })
+                            : t('pi.extensions.updateAll')}
+                        </Button>
                       ),
                       children: loading && !data ? (
                         <div className={styles.loadingText}>{t('pi.extensions.loading')}</div>

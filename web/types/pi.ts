@@ -88,6 +88,8 @@ export interface PiExtensionSummary {
   path?: string;
   builtIn?: boolean;
   currentVersion?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
 }
 
 export interface PiExtensionListResult {
@@ -103,6 +105,11 @@ export interface PiExtensionListResult {
 
 export interface PiExtensionInstallInput {
   source: string;
+}
+
+export interface PiExtensionUpdateInput {
+  /** When set, updates one package (`pi update <source>`). When omitted, updates all. */
+  source?: string;
 }
 
 export interface PiExtensionActionInput {

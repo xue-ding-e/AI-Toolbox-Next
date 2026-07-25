@@ -4,6 +4,7 @@ import type {
   PiExtensionCommandResult,
   PiExtensionInstallInput,
   PiExtensionListResult,
+  PiExtensionUpdateInput,
   PiAuthProviderInput,
   PiDeleteScope,
   PiModelSettingsInput,
@@ -79,6 +80,8 @@ export const uninstallPiExtension = async (
   return await invoke<PiExtensionCommandResult>('uninstall_pi_extension', { input });
 };
 
-export const updatePiExtensions = async (): Promise<PiExtensionCommandResult> => {
-  return await invoke<PiExtensionCommandResult>('update_pi_extensions');
+export const updatePiExtensions = async (
+  input?: PiExtensionUpdateInput,
+): Promise<PiExtensionCommandResult> => {
+  return await invoke<PiExtensionCommandResult>('update_pi_extensions', { input });
 };

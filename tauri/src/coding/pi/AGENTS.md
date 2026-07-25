@@ -21,6 +21,7 @@
 - 保存 provider 时只 upsert 当前 exact runtime key；如果 key 是 `anthropic`、`openrouter` 等官方内置 key，也是在原 key 上覆盖/补充，不生成 `ai-toolbox-*` 包装 provider。
 - `defaultModel` 写 Pi 官方 settings 的裸 model id。model id 本身可能包含 `/`，不要拼成 OpenCode 风格的 `provider_id/model_id`。
 - 扩展管理优先通过 Pi CLI 执行 `list/install/remove/update`，并优先附带 `--no-approve`，避免非交互环境下 project trust 提示卡住；若用户 Pi CLI 过旧或不识别该 flag（例如 `Unknown option --no-approve for "list"`），必须降级重试一次不带该 flag。本地 `.ts` 文件扩展只扫描当前 runtime root 派生的 `extensions/` 目录。
+- `list_pi_extensions` 会在本地 `currentVersion` 之上，对未 pin 的 `npm:` 包并发查询 registry `dist-tags.latest`，填充 `latestVersion` / `updateAvailable`。查询失败必须静默降级，不能让整个 list 失败。git/local/pin 源首版不检测。
 
 ## Gotchas
 

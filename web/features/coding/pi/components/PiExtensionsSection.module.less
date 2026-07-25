@@ -33,6 +33,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  align-items: stretch;
 }
 
 .innerCollapse {
@@ -62,60 +63,50 @@
   }
 }
 
-.recommendedItem,
-.installedItem {
+.extensionItem {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  min-width: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-}
-
-.recommendedItem {
   align-items: center;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
   padding: 8px 10px;
+  // Use box-shadow instead of border so 1px edges don't drop out under
+  // fractional DPR / subpixel grid row heights.
+  border: none;
+  border-radius: 8px;
   background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 1px var(--color-border);
 }
 
-.installedItem {
-  align-items: flex-start;
-  padding: 12px;
-  background: var(--color-bg-container);
-}
-
-.recommendedContent,
-.installedContent {
+.extensionContent {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   flex: 1;
 }
 
-.recommendedContent {
-  gap: 4px;
-}
-
-.recommendedTitleRow,
-.installedTitleRow {
+.extensionTitleRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
-.recommendedDescription {
+.extensionSecondary {
   font-size: 12px;
   line-height: 1.45;
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  word-break: break-all;
 }
 
-.inlineSourceText {
+.inlineMetaText {
   display: inline-block;
   max-width: 180px;
   overflow: hidden;
@@ -126,30 +117,27 @@
   white-space: nowrap;
 }
 
-.sourceText,
 .pathText {
   display: block;
   max-width: 100%;
   overflow: hidden;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sourceText {
-  width: fit-content;
-  max-width: 100%;
-}
-
-.pathText {
-  font-size: 12px;
 }
 
 .itemActions {
   flex-shrink: 0;
 }
 
-.installedActionButton {
-  justify-self: flex-end;
+.updateAvailableButton {
+  height: auto;
+  padding-inline: 0;
+  color: #d48806 !important;
+
+  &:hover {
+    color: #ad6800 !important;
+  }
 }
 
 .loadingText {
@@ -190,8 +178,7 @@
     grid-template-columns: 1fr;
   }
 
-  .recommendedItem,
-  .installedItem {
+  .extensionItem {
     grid-template-columns: 1fr;
   }
 

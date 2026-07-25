@@ -1,10 +1,10 @@
 # Proxy Gateway 协议转换架构
 
-本文描述当前代码里的 Proxy Gateway 协议转换实现，是本主题的**唯一长期文档**。事实源是 `tauri/src/coding/proxy_gateway/runtime/**`、`tauri/src/coding/proxy_gateway/transformer/**`、对应模块 `AGENTS.md` 和回归测试；AxonHub、cc-switch 只提供架构与行为对照，不替代当前源码和测试。
+本文描述当前代码里的 Proxy Gateway 协议转换架构，是本主题的**架构主文档**。事实源是 `tauri/src/coding/proxy_gateway/runtime/**`、`tauri/src/coding/proxy_gateway/transformer/**`、对应模块 `AGENTS.md` 和回归测试；AxonHub、cc-switch 只提供架构与行为对照，不替代当前源码和测试。Provider/channel 的逐项入参兼容、出参兼容、默认行为、开关、触发条件、源码位置和测试位置由 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md) 维护。
 
-> **维护入口**：凡涉及 Gateway 协议转换、provider 兼容、协议直通、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并更新本文。
+> **维护入口**：凡涉及 Gateway 协议转换、统一 IR、协议直通/转换判定、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。凡涉及 provider profile、target protocol、body/header/path/auth、stream filter、rectifier、同协议直通兼容或其它 provider/channel wire 兼容，还必须阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并按职责更新对应文档；跨架构和渠道边界的改动要同时更新两份文档。
 >
-> **当前提交基线**：`18544d0`（2026-07-25）。当前工作树在该提交之上完成了本次 tool-result 图片兼容吸收，已通过 transformer 定向回归和仓库完整测试集合；提交后应把这里更新为新的源码快照。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并；本文同时持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。不要再创建独立的点-in-time 审计报告或修复计划。
+> **当前提交基线**：`c3a452a`（2026-07-25）。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并；本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。不要再创建独立的点-in-time 审计报告或修复计划。
 
 ## 0. 产品场景与设计动机
 
@@ -637,7 +637,7 @@ Base URL 是用户可编辑连接地址，仍保存在各 CLI 自己的 `setting
 - `apiFormat`：来自 `endpoint.apiFormat`，例如 `openai_chat`、`openai_responses`、`anthropic_messages`、`gemini_native`，以及 `ollama/chat` 这类 runtime wire adapter 信号。它决定 `UpstreamProvider.target_protocol`，不表示入站 CLI 协议。
 - `apiKeyField`：优先 `endpoint.apiKeyField`，再 fallback `profile.apiKeyField`。
 - `reasoningField`：优先 `endpoint.reasoningField`，再 fallback `profile.reasoningField`。
-- `codexChatReasoning`：只在 `gatewayProfile.tool === "codex"` 时从 endpoint/profile 解析；Gemini CLI 即使复用 Codex 同 target endpoint，也不能应用或持久化这个 Codex-only 配置。
+- `codexChatReasoning`：只在 `gatewayProfile.tool === "codex"` 时从 endpoint/profile 解析；Gemini CLI 即使复用 Codex 同 target endpoint，也不能从 profile 应用或持久化这个 Codex-only 配置。后续 fallback inference 仍可由明确 effective `providerType/apiFormat` 触发。
 - `defaultMaxTokens`：优先 endpoint，再 fallback profile，由 runtime middleware 在最终目标协议 body 上补齐或截断对应 token 字段。
 - `imageInputPolicy`、`textOnlyModels`、`imageCapableModels`、`allowTextOnlyModelHeuristic`：优先 endpoint，再 fallback profile，驱动发送前预测式图片兼容策略。
 - `isFullUrl`、`promptCacheKey`、`costMultiplier`、`pricingModelSource`：继续作为 provider 自身的用户/运行态覆盖项保存在 `data.meta`，不会被 profile 覆盖。
@@ -782,19 +782,21 @@ DeepSeek Anthropic target 也属于 runtime provider body compat，不属于 tra
 
 DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenAI `/v1/completions` 或 `/completions` 入站走 runtime passthrough；当 provider 是 DeepSeek 时，URL 会从普通 `/v1/completions` 改到 DeepSeek `/beta/completions`，且不会套 OpenAI Chat body adapter。
 
-### 14.5 参考项目对照下的供应商兼容清单
+### 14.5 Provider 兼容架构摘要
 
-对照参考项目后，结论不是“把参考实现的所有启发式都塞进 transformer”，而是要把每个上游供应商的 wire/API 方言明确落在 Gateway runtime/provider compat 层。参考项目里大量规则通过 provider name、base URL、model id 启发式触发；AI Toolbox 当前更保守：Claude / Codex / Grok / Gemini CLI 内置渠道只在 provider `data.meta.gatewayProfile` 保存 profile/endpoint 引用，runtime 再从最新 profile catalog 解析出 `providerType/apiFormat`、Codex Chat reasoning、图片策略等 effective meta；自定义渠道默认不靠模型名或 Base URL 猜供应商。
+逐 provider/channel 的当前入参兼容、出参兼容、默认行为、开关、源码位置和测试位置以 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md) 为准。本节只保留架构层结论：参考项目里的供应商 wire/API 方言要明确落在 Gateway runtime/provider compat 层，不能把 provider type、base URL、model catalog、header/auth 或 endpoint 差异下沉到 `transformer`。
+
+对照参考项目后，结论不是“把参考实现的所有启发式都塞进 transformer”。参考项目里大量规则通过 provider name、base URL、model id 启发式触发；AI Toolbox 当前更保守：Claude / Codex / Grok / Gemini CLI 内置渠道只在 provider `data.meta.gatewayProfile` 保存 profile/endpoint 引用，runtime 再从最新 profile catalog 解析出 `providerType/apiFormat`、Codex Chat reasoning、图片策略等 effective meta；自定义渠道默认不靠模型名或 Base URL 猜供应商。
 
 因此判断“是否缺失”要分两类：
 
 | 类型 | AI Toolbox 当前状态 | 说明 |
 |---|---|---|
-| Claude / Codex / Grok / Gemini CLI 内置 profile 里已有 `providerType` 的供应商 | 基本已有 runtime 触发点 | 用户选择内置 endpoint 并保存后，provider `data.meta.gatewayProfile` 会记录 profile/endpoint 引用；runtime 按当前 catalog 动态解析供应商身份和兼容参数。Gemini CLI 共享同一份 `tools.gemini` endpoint，但 runtime 不会给 Gemini 应用 Codex 专属 `codexChatReasoning`。 |
+| Claude / Codex / Grok / Gemini CLI 内置 profile 里已有 `providerType` 的供应商 | 基本已有 runtime 触发点 | 用户选择内置 endpoint 并保存后，provider `data.meta.gatewayProfile` 会记录 profile/endpoint 引用；runtime 按当前 catalog 动态解析供应商身份和兼容参数。Gemini CLI 共享同一份 `tools.gemini` endpoint，但 runtime 不会从 profile 给 Gemini 应用 Codex 专属 `codexChatReasoning`；OpenAI Chat target 的 fallback inference 仍以明确 `providerType/apiFormat` 为准。 |
 | Gemini CLI 表单里的普通自定义渠道 | 只写 `meta.apiFormat`，不写 `gatewayProfile` | 如果用户手动填 DeepSeek/OpenRouter/Qwen 兼容 endpoint 但没有选择内置 profile，通常不会得到 effective `providerType`，因此只能获得通用协议转换，不能获得单供应商方言兼容。 |
 | 用户手动创建的 custom provider | 默认只做通用协议转换和通用 provider compat | 即使模型名包含 `deepseek`、`qwen`、`glm`、`minimax`，也不会自动套内置供应商规则；这是为了避免把聚合商或私有中转误判成官方方言。 |
 
-当前需要记录的供应商兼容如下：
+以下清单是架构层的归属摘要，用于说明这些行为应放在 runtime/provider compat，而不是 transformer。逐项当前事实和测试索引维护在 `docs/gateway-provider-compatibility.md`：
 
 | 供应商 / 平台 | 参考项目行为 | AI Toolbox 当前放置位置和兼容逻辑 | 缺口 / 注意事项 |
 |---|---|---|---|
@@ -804,7 +806,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 | Doubao / Volces / 火山 | Chat/Responses 接口对 metadata、thinking 字段有差异。 | `ProviderBodyCompat::Doubao`。Chat target：`metadata.user_id/request_id` 提升，补 request_id，按 `reasoning_effort` 写 `thinking.type`，后续通用清理会移除顶层 `reasoning_effort`。Responses target：移除 `metadata`。 | profile 当前主要提供 Anthropic 或 Responses endpoint；若后续新增 Doubao Chat endpoint，可复用已有 Chat compat。 |
 | Bailian / DashScope / Qwen / Aliyun | Qwen/DashScope Chat thinking 使用 `enable_thinking`；Bailian SSE tool call 后的文本 delta 需要过滤/重排。 | `ProviderBodyCompat::Bailian`。Chat target：合并连续 assistant tool-call-only message。Stream adapter：Bailian OpenAI Chat SSE 在进入 response conversion 前过滤，见 `maybe_filter_bailian_openai_chat_sse_stream()`。Codex -> Chat reasoning 矩阵使用 `enable_thinking` + `reasoning_content`。 | profile 目前内置 Anthropic/Responses endpoint；Chat compat 已在 runtime 可用。SSE 过滤必须保持在 runtime raw stream adapter，不能下沉到 transformer。 |
 | OpenRouter | 参考项目现在默认可走 Claude-compatible passthrough，但旧 Chat/Responses 路径需要 OpenRouter 原生 `reasoning.effort`。 | `ProviderBodyCompat::OpenRouter`。Chat target：把顶层 `reasoning_effort` 移入 `reasoning.effort`，`max/xhigh` 归一为 `xhigh`；默认 `reasoningField=reasoning`；Codex -> Chat reasoning 矩阵使用 `thinkingParam=none`、`effortParam=reasoning.effort`，disabled 时写 `{"reasoning":{"effort":"none"}}`。 | 已覆盖 OpenRouter Chat profile。OpenRouter 已支持 Claude-compatible endpoint 这件事只是 endpoint 选择，不改变 Chat 方言仍需 runtime 兼容。 |
-| SiliconFlow | 参考项目按平台 name/base URL 优先，Codex Chat reasoning 写 `enable_thinking`，不发 `reasoning_effort`。 | 没有单独 `ProviderBodyCompat` 枚举；通过 `gatewayProfile` 动态解析出的 Codex `codexChatReasoning` 或 `infer_codex_chat_reasoning_config()` 的 effective `providerType/apiFormat` 平台识别覆盖。Chat target 写 `enable_thinking`，输出 reasoning 期望为 `reasoning_content`，不传 effort。 | 内置 SiliconFlow 目前在 Codex/Gemini profile 中出现；Gemini 不应用 Codex 专属 `codexChatReasoning`。若未来给 Claude 增加同平台 endpoint，也必须放入 profile catalog，由 runtime 解析 effective meta，而不是靠模型名推断。 |
+| SiliconFlow | 参考项目按平台 name/base URL 优先，Codex Chat reasoning 写 `enable_thinking`，不发 `reasoning_effort`。 | 没有单独 `ProviderBodyCompat` 枚举；通过 `gatewayProfile` 动态解析出的 Codex `codexChatReasoning` 或 `infer_codex_chat_reasoning_config()` 的 effective `providerType/apiFormat` 平台识别覆盖。Chat target 写 `enable_thinking`，输出 reasoning 期望为 `reasoning_content`，不传 effort。 | 内置 SiliconFlow 目前在 Codex/Gemini profile 中出现；Gemini/Grok/Claude 不解析 profile 中的 Codex-only `codexChatReasoning`，但 OpenAI Chat target 仍可因明确 `providerType` 触发 fallback inference。若未来给 Claude 增加同平台 endpoint，也必须放入 profile catalog，由 runtime 解析 effective meta，而不是靠模型名推断。 |
 | StepFun | 参考项目只在 StepFun 平台或 `step-3.5-flash-2603` 模型下启用；2603 支持 low/high effort，其它 step 模型不发 effort。 | 没有单独 `ProviderBodyCompat`；通过 `codexChatReasoning` 矩阵覆盖。`thinkingParam=none`，`effortParam=reasoning_effort`，`effortValueMode=low_high`，且 fallback 只有 provider 已识别为 `stepfun` 后才用模型名 `2603` 做能力细分。 | 内置 StepFun 当前在 Codex/Gemini profile 中出现；模型名只作为已识别 provider 内的能力细分，不作为 custom provider 的供应商识别来源。 |
 | MiniMax | 参考项目对 MiniMax Chat reasoning 使用 `reasoning_split`，响应 reasoning 常见为 `reasoning_details`。 | 没有单独 `ProviderBodyCompat`；通过 `codexChatReasoning` 矩阵写 `reasoning_split`，输出格式声明为 `reasoning_details`。通用 Chat/stream transformer 已能提取 `reasoning_details`。text-only 图片预测启发式名单包含 `minimax-m2.7` 前缀，但只有 `allowTextOnlyModelHeuristic=true` 时才启用。 | 内置 MiniMax profile 已有 Chat/Anthropic endpoint。若某个 MiniMax endpoint 还需要额外 body 字段清理，应新增 runtime adapter 和 profile meta。 |
 | MiMo | 参考项目把 MiMo 作为 reasoning vendor，tool-call 历史需要非空 reasoning_content；Anthropic tool thinking 也要规范化。 | `ProviderBodyCompat::Mimo`。Chat target：assistant tool call 缺 `reasoning_content` 时补 `"tool call"`。Anthropic target：规范化 tool thinking 历史。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。text-only 启发式名单含 `mimo-v2.5-pro`，默认不启用启发式。 | 已覆盖内置 profile。 |
@@ -843,12 +845,14 @@ restore map 是 provider-specific request-local runtime 状态，随 `PreparedUp
 
 新增供应商或 endpoint 时，按这条顺序维护：
 
-1. 在 `gateway_provider_profiles.json` 增加或修正 profile/endpoint，明确 `providerType`、`apiFormat`、`baseUrl`，以及必要的 `reasoningField`、`codexChatReasoning`、`defaultMaxTokens`、图片策略字段。`codexChatReasoning` 只用于 Codex endpoint；即使 Gemini endpoint 从 Codex endpoint 派生，也不能复制或应用该字段。
-2. 确认前端表单保存内置 endpoint 时只写 `data.meta.gatewayProfile` 引用和用户覆盖项，不写 profile 派生快照；Claude/Codex/Grok/Gemini CLI 内置 endpoint 走对应 `mergeGatewayMetaIntoProviderMeta()`。
-3. 如果只是已有 provider type 的新 endpoint，优先复用现有 `ProviderBodyCompat`。
-4. 如果是新供应商方言，在 `runtime/upstream.rs::ProviderBodyCompat` 增加识别和最小 body/stream/header 兼容逻辑。
-5. 如果是 provider-agnostic 的协议结构互转，才改 `transformer`。
-6. 新规则必须补 runtime 回归测试，尤其覆盖“自定义 provider 即使模型名像 DeepSeek/Qwen/GLM，也不会误套内置供应商规则”的负例。
+1. 先阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)，确认当前 provider/channel 的触发条件、请求侧兼容、响应侧兼容、开关和测试索引。
+2. 在 `gateway_provider_profiles.json` 增加或修正 profile/endpoint，明确 `providerType`、`apiFormat`、`baseUrl`，以及必要的 `reasoningField`、`codexChatReasoning`、`defaultMaxTokens`、图片策略字段。profile 中的 `codexChatReasoning` 只用于 Codex endpoint；即使 Gemini endpoint 从 Codex endpoint 派生，也不能复制或通过 profile 应用该字段。
+3. 确认前端表单保存内置 endpoint 时只写 `data.meta.gatewayProfile` 引用和用户覆盖项，不写 profile 派生快照；Claude/Codex/Grok/Gemini CLI 内置 endpoint 走对应 `mergeGatewayMetaIntoProviderMeta()`。
+4. 如果只是已有 provider type 的新 endpoint，优先复用现有 `ProviderBodyCompat`。
+5. 如果是新供应商方言，在 `runtime/upstream.rs::ProviderBodyCompat` 增加识别和最小 body/stream/header 兼容逻辑。
+6. 如果是 provider-agnostic 的协议结构互转，才改 `transformer`。
+7. 新规则必须补 runtime 回归测试，尤其覆盖“自定义 provider 即使模型名像 DeepSeek/Qwen/GLM，也不会误套内置供应商规则”的负例。
+8. 修改完成后必须把逐项兼容事实、触发条件、默认行为、源码位置和测试位置同步写回 `docs/gateway-provider-compatibility.md`；如果改动影响架构边界、reference baseline 或同步结论，再同步更新本文。
 
 不要把这些信息放进 transformer：
 
@@ -1097,9 +1101,9 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
    - **协议转换**：先以 AxonHub 的统一 IR、inbound -> IR -> outbound 生命周期、状态所有权、SSE/终态和 failover 思路为主，再吸收 cc-switch 的具体渠道边界；公共协议语义进入 transformer，provider-local 形态进入 `transformer_metadata`，跨请求状态留在 `runtime/side_stores`。
    - **不属于当前范围**：记录不吸收及原因，不为了对齐参考项目半实现 WebSocket、账号体系、数据库、非聊天协议或云端 orchestrator。
 6. 对要吸收的行为映射到 AI Toolbox 当前源码位置，补最贴近用户路径的回归测试；仅有参考项目代码而没有当前路径证据时，不写成已确认缺陷。
-7. 完成代码和测试后重新跑相关校验，再更新本文 baseline 和吸收日志。
+7. 完成代码和测试后重新跑相关校验，再更新本文 baseline 和吸收日志；如果吸收内容改变 provider/channel wire 兼容、开关、触发条件、入参/出参处理或测试索引，还必须同步更新 `docs/gateway-provider-compatibility.md`。
 
-每次吸收日志至少记录：参考项目 commit、增量范围、吸收内容、不吸收内容及原因、AI Toolbox 源码位置、回归测试位置、验证命令和当前状态（已吸收/待处理/明确不吸收）。
+每次吸收日志至少记录：参考项目 commit、增量范围、吸收内容、不吸收内容及原因、AI Toolbox 源码位置、回归测试位置、验证命令和当前状态（已吸收/待处理/明确不吸收）。Provider/channel 细节的最终事实写入 `docs/gateway-provider-compatibility.md`，本文只记录架构判断、baseline 和吸收结论。
 
 ### 19.4 本次初始对齐 baseline
 
@@ -1114,7 +1118,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 
 - 架构主次固定为 **AxonHub 主架构、cc-switch 渠道兼容边界补充、AI Toolbox 当前源码/测试最终定案**。
 - 为建立 xAI native Responses 现有能力基线，额外回溯核验了 cc-switch `dbb5bd1537ed348dd4e490543b27c09e2efc86b9`。AI Toolbox 的 `runtime/compat/xai_responses.rs` 与 `runtime/upstream.rs` 已对齐其 namespace flatten/restore、input/tool_choice 同步改写、冲突拒绝、xAI sanitize、2xx JSON/SSE 恢复和 request-scoped 状态边界；生产门控接受 `providerType=xai|x-ai|grok`，并由 runtime 回归测试锁定。该行为属于同协议直通的 provider 方言兼容，不进入通用 transformer。
-- 内置 xAI profile 的 Codex 工具提供 `openai_responses` endpoint；Grok 工具当前默认只提供 `openai_chat` endpoint。自定义或存量 Grok Responses provider 仍可触发上述 native Responses 兼容，但本次不改变内置 Grok endpoint 的产品默认值。
+- 内置 xAI profile 的 Codex 工具默认 endpoint 是 `openai_chat`，并额外提供可手动选择的 `openai_responses` endpoint；Gemini/Grok 工具当前默认只提供 `openai_chat` endpoint。自定义或存量 Grok Responses provider 仍可触发上述 native Responses 兼容，但本次不改变内置 xAI/Grok endpoint 的产品默认值。
 - cc-switch 的 `6c9d444`、`878c26f` 证明 tool-result media 不能继续作为 Chat tool role 的字符串 JSON；图片应按目标协议提取到 Chat synthetic user turn、Responses `input_image` 或 Gemini 原生媒体位置，同时保持无媒体结果的旧字节形态。AI Toolbox 已在当前工作树吸收该图片子集，并由 transformer 回归测试锁定。
 - cc-switch 的媒体识别规则吸收“stringified JSON、MCP image shape、嵌套 `content`、结构化 image data URL / 远程 URL、纯字符串 data URL 的 8 KiB 阈值与 malformed data URL 边界”，但没有逐行复制其 provider/runtime 代码。cc-switch 同时支持 file/audio tool media；AI Toolbox 当前 IR 不足以承载完整 file/audio tool-result roundtrip，本次明确不宣称已吸收。
 - 当前实现位置为 `shared/tool_media.rs`、`openai/chat.rs`、`openai/responses/shared.rs`、`anthropic/inbound.rs` / `outbound.rs`、`gemini/convert.rs`；精确回归集中在 `transformer/tool_media_tests.rs`，覆盖并行工具结果、stringified/MCP、Anthropic 原生 block、Gemini 2/3、非法/远程 data URL、残留 base64 限幅和无媒体零差异。
@@ -1163,7 +1167,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 | F-3 | Chat source tool call 首次输出 identity 前必须同时拿到真实 name 和 id；仅在 finish/EOF 仍缺 id 时生成 synthetic fallback。 |
 | F-4 | Responses reasoning 只能归属当前 user turn，连续 reasoning 要合并；跨 user boundary 不得挂到历史 assistant。 |
 | F-5 | Responses raw tool fragment 只有在 structured signature 数量、顺序、内容和 complete marker 全部匹配时才能合并；证据缺失或不可签名必须整体 fail-closed。 |
-| F-6 | 唯一长期文档必须同时记录当前源码快照、参考项目 baseline/增量和当前吸收状态；不再依赖独立点-in-time 审计文件，也不能把已提交实现描述成未提交工作树。 |
+| F-6 | 长期文档体系必须记录当前源码快照、参考项目 baseline/增量和当前吸收状态；架构与 reference baseline 归本文，provider/channel 细节归 `docs/gateway-provider-compatibility.md`，不再依赖独立点-in-time 审计文件，也不能把已提交实现描述成未提交工作树。 |
 | F-7 | lossy warning 归 `PreparedUpstreamBody.lossy_warnings` 所有，不进入 `ConversionContext` 或 `PipelineContext`。 |
 | F-8 | SSE parser 同时存在 LF/CRLF delimiter 时必须消费物理位置最早者，不能按换行类型固定优先级。 |
 | F-9 | forced-stream Responses 只有收到明确 terminal event 才能聚合成 JSON；缺 terminal 按连接错误处理，稀疏 snapshot 按字段合并。 |
@@ -1183,7 +1187,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 
 ### 19.8 当前状态与历史基线
 
-本文负责长期架构、行为边界、参考项目 baseline、增量吸收日志和修改准则。历史审查中的 F-1 至 F-13 已提炼到 19.7 和各主题章节；不再依赖单独的审计报告或修复计划文件。
+本文负责长期架构、行为边界、参考项目 baseline、增量吸收日志和修改准则；`docs/gateway-provider-compatibility.md` 负责 provider/channel 逐项兼容事实。历史审查中的 F-1 至 F-13 已提炼到 19.7 和各主题章节；不再依赖单独的审计报告或修复计划文件。
 
 以下数字是 `1b1bea6` 对应的 reference fixture 验收基线。以后有意新增或删除 fixture 时，应同步更新分类测试和本文，而不是为了保住旧数字阻止合理演进：
 
@@ -1217,4 +1221,4 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - 只改 transformer：运行 `cd tauri && cargo test transformer --no-default-features`。
 - 改 runtime 转发、provider compat、side store 或 response 分类：先运行 `cd tauri && cargo test --lib coding::proxy_gateway::runtime::upstream`。
 - 跨 runtime/transformer、影响保存/应用/同步/恢复或准备交付的大功能：运行 `cd tauri && cargo test`、`pnpm test` 和 `pnpm exec tsc --noEmit` 的完整集合。
-- 只改本文档：至少运行陈旧表述搜索和 `git diff --check`，并人工核对本文、当前源码、当前测试、AxonHub、cc-switch 以及文档记录的 baseline/增量日志是否一致。
+- 只改协议转换相关文档：至少运行陈旧表述搜索和 `git diff --check`，并人工核对本文、`docs/gateway-provider-compatibility.md`、当前源码、当前测试、AxonHub、cc-switch 以及文档记录的 baseline/增量日志是否一致。

@@ -235,6 +235,12 @@ pub struct PiExtensionSummary {
     pub built_in: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_version: Option<String>,
+    /// npm registry `dist-tags.latest` when the package is unpinned and reachable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
+    /// True when `latest_version` is newer than `current_version`.
+    #[serde(default)]
+    pub update_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +262,15 @@ pub struct PiExtensionListResult {
 #[serde(rename_all = "camelCase")]
 pub struct PiExtensionInstallInput {
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionUpdateInput {
+    /// When set, updates a single package source (`pi update <source>`).
+    /// When omitted, updates all packages (`pi update --extensions`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

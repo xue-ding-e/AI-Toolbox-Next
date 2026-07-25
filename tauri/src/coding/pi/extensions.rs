@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use futures_util::future::join_all;
 use serde_json::Value;
 use tauri::Emitter;
 use tokio::process::Command;
@@ -9,14 +10,20 @@ use tokio::process::Command;
 use super::constants::{PI_ENV_KEY, PI_EXTENSIONS_DIR};
 use super::types::{
     PiExtensionActionInput, PiExtensionCommandResult, PiExtensionInstallInput, PiExtensionKind,
-    PiExtensionListResult, PiExtensionScope, PiExtensionSummary,
+    PiExtensionListResult, PiExtensionScope, PiExtensionSummary, PiExtensionUpdateInput,
 };
 use crate::coding::cli_resolver::{
     apply_create_no_window_tokio, build_local_tokio_command, local_cli_missing_hint,
     resolve_local_pi_program,
 };
 use crate::coding::runtime_location::{self, RuntimeLocationInfo, RuntimeLocationMode};
+use crate::coding::url_utils::encode_url_path_segment;
 use crate::db::SqliteDbState;
+use crate::http_client;
+
+const NPM_REGISTRY_BASE_URL: &str = "https://registry.npmjs.org";
+const NPM_LATEST_LOOKUP_TIMEOUT_SECS: u64 = 8;
+const NPM_LATEST_LOOKUP_CONCURRENCY: usize = 6;
 
 const NPM_LEGACY_PEER_DEPS_ENV_KEY: &str = "NPM_CONFIG_LEGACY_PEER_DEPS";
 const NPM_LEGACY_PEER_DEPS_ENV_VALUE: &str = "true";
@@ -325,6 +332,8 @@ fn parse_list_output(raw: &str) -> Vec<PiExtensionSummary> {
                 path: None,
                 built_in: false,
                 current_version: None,
+                latest_version: None,
+                update_available: false,
             });
             pending_index = Some(result.len() - 1);
             continue;
@@ -396,6 +405,8 @@ fn scan_local_extensions(extensions_path: &Path) -> Result<Vec<PiExtensionSummar
             kind,
             path: Some(path.to_string_lossy().to_string()),
             current_version: None,
+            latest_version: None,
+            update_available: false,
         });
     }
 
@@ -423,6 +434,186 @@ fn enrich_current_versions(extensions: Vec<PiExtensionSummary>) -> Vec<PiExtensi
         .map(|extension| PiExtensionSummary {
             current_version: read_package_current_version(&extension),
             ..extension
+        })
+        .collect()
+}
+
+/// Parse `npm:name` / `npm:@scope/name` and optional trailing `@version` pin.
+/// Returns `(package_name, pinned_version)` when the source is an npm package.
+fn parse_npm_package_source(source: &str) -> Option<(String, Option<String>)> {
+    let trimmed = source.trim();
+    let without_prefix = trimmed.strip_prefix("npm:")?;
+    if without_prefix.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = without_prefix.strip_prefix('@') {
+        // Scoped: @scope/name or @scope/name@version
+        let (name_part, version_part) = match rest.rsplit_once('@') {
+            Some((name, version)) if name.contains('/') => (name, Some(version)),
+            _ => (rest, None),
+        };
+        if name_part.is_empty() || !name_part.contains('/') {
+            return None;
+        }
+        let package_name = format!("@{name_part}");
+        let pinned = version_part
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .map(str::to_string);
+        return Some((package_name, pinned));
+    }
+
+    // Unscoped: name or name@version
+    let (name_part, version_part) = match without_prefix.rsplit_once('@') {
+        Some((name, version)) if !name.is_empty() => (name, Some(version)),
+        _ => (without_prefix, None),
+    };
+    if name_part.is_empty() || name_part.contains('/') {
+        return None;
+    }
+    let pinned = version_part
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string);
+    Some((name_part.to_string(), pinned))
+}
+
+fn is_version_newer(latest: &str, current: &str) -> bool {
+    let parse = |value: &str| -> Vec<u64> {
+        value
+            .trim()
+            .trim_start_matches('v')
+            .split(|ch: char| !ch.is_ascii_digit())
+            .filter(|part| !part.is_empty())
+            .filter_map(|part| part.parse::<u64>().ok())
+            .collect()
+    };
+    let latest_parts = parse(latest);
+    let current_parts = parse(current);
+    if latest_parts.is_empty() || current_parts.is_empty() {
+        return latest.trim() != current.trim() && !latest.trim().is_empty();
+    }
+
+    let max_len = latest_parts.len().max(current_parts.len());
+    for index in 0..max_len {
+        let left = latest_parts.get(index).copied().unwrap_or(0);
+        let right = current_parts.get(index).copied().unwrap_or(0);
+        if left > right {
+            return true;
+        }
+        if left < right {
+            return false;
+        }
+    }
+    false
+}
+
+async fn fetch_npm_latest_version(
+    client: &reqwest::Client,
+    package_name: &str,
+) -> Option<String> {
+    let package_url = format!(
+        "{}/{}",
+        NPM_REGISTRY_BASE_URL,
+        encode_url_path_segment(package_name)
+    );
+    let response = client
+        .get(&package_url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, "AI-Toolbox")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let metadata = response.json::<Value>().await.ok()?;
+    metadata
+        .get("dist-tags")
+        .and_then(|dist_tags| dist_tags.get("latest"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+async fn enrich_npm_update_availability(
+    db: &SqliteDbState,
+    extensions: Vec<PiExtensionSummary>,
+) -> Vec<PiExtensionSummary> {
+    let client = match http_client::client_with_timeout(db, NPM_LATEST_LOOKUP_TIMEOUT_SECS).await {
+        Ok(client) => client,
+        Err(_) => return extensions,
+    };
+
+    let mut package_names = Vec::new();
+    let mut seen_names = HashSet::new();
+    for extension in &extensions {
+        if extension.kind != PiExtensionKind::Package {
+            continue;
+        }
+        let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.source)
+        else {
+            continue;
+        };
+        if pinned_version.is_some() {
+            continue;
+        }
+        if extension.current_version.is_none() {
+            continue;
+        }
+        let key = package_name.to_ascii_lowercase();
+        if seen_names.insert(key) {
+            package_names.push(package_name);
+        }
+    }
+
+    if package_names.is_empty() {
+        return extensions;
+    }
+
+    let mut latest_by_package = HashMap::new();
+    for chunk in package_names.chunks(NPM_LATEST_LOOKUP_CONCURRENCY) {
+        let lookups = chunk.iter().map(|package_name| {
+            let client = client.clone();
+            let package_name = package_name.clone();
+            async move {
+                let latest = fetch_npm_latest_version(&client, &package_name).await;
+                (package_name, latest)
+            }
+        });
+        for (package_name, latest) in join_all(lookups).await {
+            if let Some(version) = latest {
+                latest_by_package.insert(package_name.to_ascii_lowercase(), version);
+            }
+        }
+    }
+
+    extensions
+        .into_iter()
+        .map(|mut extension| {
+            if extension.kind != PiExtensionKind::Package {
+                return extension;
+            }
+            let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.source)
+            else {
+                return extension;
+            };
+            if pinned_version.is_some() {
+                return extension;
+            }
+            let Some(latest_version) =
+                latest_by_package.get(&package_name.to_ascii_lowercase()).cloned()
+            else {
+                return extension;
+            };
+            let update_available = extension
+                .current_version
+                .as_deref()
+                .map(|current| is_version_newer(&latest_version, current))
+                .unwrap_or(false);
+            extension.latest_version = Some(latest_version);
+            extension.update_available = update_available;
+            extension
         })
         .collect()
 }
@@ -527,13 +718,15 @@ pub async fn list_pi_extensions(
             .await?;
     let pi_extensions = enrich_current_versions(parse_list_output(&raw));
     let local_extensions = scan_local_extensions(&extensions_path)?;
+    let merged = merge_extensions(pi_extensions, local_extensions);
+    let extensions = enrich_npm_update_availability(&db, merged).await;
     let cli_path = resolve_pi_cli_display_path(&runtime_location);
     let cli_version = probe_pi_cli_version(&runtime_location).await;
 
     Ok(PiExtensionListResult {
         extensions_path: extensions_path.to_string_lossy().to_string(),
         packages_path: packages_path.to_string_lossy().to_string(),
-        extensions: merge_extensions(pi_extensions, local_extensions),
+        extensions,
         raw,
         cli_path,
         cli_version,
@@ -609,13 +802,34 @@ pub async fn uninstall_pi_extension(
 pub async fn update_pi_extensions(
     state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
+    input: Option<PiExtensionUpdateInput>,
 ) -> Result<PiExtensionCommandResult, String> {
     let db = state.db();
     let runtime_location = runtime_location::get_pi_runtime_location_async(&db).await?;
+    let single_source = input
+        .as_ref()
+        .and_then(|value| value.source.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     // Prefer --no-approve for CLI builds that still accept it on update; fall back if rejected.
-    let args = ["update", "--extensions", "--no-approve"];
-    let (output, used_args) =
-        run_pi_command_preferring_no_approve(&runtime_location, &args, false).await?;
+    // Single package: `pi update <source>`; all packages: `pi update --extensions`.
+    let (output, used_args) = if let Some(source) = single_source.as_deref() {
+        run_pi_command_preferring_no_approve(
+            &runtime_location,
+            &["update", source, "--no-approve"],
+            false,
+        )
+        .await?
+    } else {
+        run_pi_command_preferring_no_approve(
+            &runtime_location,
+            &["update", "--extensions", "--no-approve"],
+            false,
+        )
+        .await?
+    };
     emit_extensions_changed(&app, "pi-extensions");
 
     Ok(PiExtensionCommandResult {
@@ -771,6 +985,40 @@ Project packages:
             args_without_no_approve(&["update", "--extensions"]),
             vec!["update", "--extensions"]
         );
+    }
+
+    #[test]
+    fn parses_npm_package_source_with_optional_pin() {
+        assert_eq!(
+            parse_npm_package_source("npm:context-mode"),
+            Some(("context-mode".to_string(), None))
+        );
+        assert_eq!(
+            parse_npm_package_source("npm:context-mode@1.2.3"),
+            Some(("context-mode".to_string(), Some("1.2.3".to_string())))
+        );
+        assert_eq!(
+            parse_npm_package_source("npm:@cortexkit/pi-magic-context"),
+            Some(("@cortexkit/pi-magic-context".to_string(), None))
+        );
+        assert_eq!(
+            parse_npm_package_source("npm:@cortexkit/pi-magic-context@0.29.1"),
+            Some((
+                "@cortexkit/pi-magic-context".to_string(),
+                Some("0.29.1".to_string())
+            ))
+        );
+        assert_eq!(parse_npm_package_source("github:owner/repo"), None);
+        assert_eq!(parse_npm_package_source("file:./local"), None);
+    }
+
+    #[test]
+    fn compares_semverish_versions_for_update_detection() {
+        assert!(is_version_newer("1.2.4", "1.2.3"));
+        assert!(is_version_newer("2.0.0", "1.9.9"));
+        assert!(!is_version_newer("1.2.3", "1.2.3"));
+        assert!(!is_version_newer("1.2.3", "1.2.4"));
+        assert!(is_version_newer("v1.3.0", "1.2.9"));
     }
 
     #[test]

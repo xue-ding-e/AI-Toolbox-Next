@@ -4,10 +4,11 @@
 
 - 在 Proxy Gateway 请求路径中提供独立、可复用的 AI 协议载荷转换：Anthropic Messages、OpenAI Chat Completions、OpenAI Responses、Gemini Native 的 JSON 与 SSE 聊天协议互转。
 
-## 唯一长期文档
+## 长期文档入口
 
-- 修改本模块的协议语义、统一 IR、JSON/SSE/error 转换、工具结果、多模态、lossy 检测或参考项目对照前，必须先阅读 [`docs/gateway-protocol-conversion.md`](../../../../../docs/gateway-protocol-conversion.md)。
-- 完成实现或测试后，必须在同一任务内更新该文档的当前源码事实、参考项目 baseline/增量吸收记录和回归测试索引；不再维护独立的点-in-time 审计报告或修复计划。
+- 修改本模块的协议语义、统一 IR、JSON/SSE/error 转换、工具结果、多模态、lossy 检测或参考项目对照前，必须先阅读架构主文档 [`docs/gateway-protocol-conversion.md`](../../../../../docs/gateway-protocol-conversion.md)。
+- 如果 transformer 改动会改变 provider/channel 可见的通用兼容表现，例如最终 Chat 清理前后的字段形态、tool-result 媒体输出、lossy 结果、SSE/error 终态或同协议直通边界，还必须同步核对细节文档 [`docs/gateway-provider-compatibility.md`](../../../../../docs/gateway-provider-compatibility.md)。
+- 完成实现或测试后，必须在同一任务内按职责更新对应文档的当前源码事实、参考项目 baseline/增量吸收记录和回归测试索引；不再维护独立的点-in-time 审计报告或修复计划。
 - 文档与当前源码或测试冲突时，以源码和测试为最终事实源，并在同一任务修正文档。参考项目使用 `../cc-switch`、`../axonhub` 相对路径；AxonHub 是主架构参考，cc-switch 只补充渠道兼容边界。
 
 ## Source of Truth
