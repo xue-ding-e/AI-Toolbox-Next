@@ -4,6 +4,10 @@ use super::super::llm::{
     MessageContentPart, Request, RequestType, Response, ResponseCustomTool, ResponseCustomToolCall,
     StreamOptions, Tool, ToolCall, Usage, TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
 };
+use super::super::shared::tool_media::{
+    cleaned_tool_result_text, plan_tool_result_images, ToolImage, ToolImageScope,
+    TOOL_RESULT_MEDIA_MOVED_MARKER,
+};
 use super::super::shared::{
     content_text, extract_error_code, extract_error_message, extract_error_param,
     extract_error_type, extract_reasoning_field_text, normalize_function_parameters_owned,
@@ -348,11 +352,7 @@ fn split_chat_inline_think_content(
 }
 
 pub fn llm_request_to_chat(request: Request) -> Value {
-    let messages = request
-        .messages
-        .into_iter()
-        .map(llm_message_to_chat)
-        .collect::<Vec<_>>();
+    let messages = llm_messages_to_chat(request.messages);
     let messages = normalize_chat_system_messages(messages);
     let mut body = json!({
         "model": request.model,
@@ -479,6 +479,71 @@ pub fn llm_request_to_chat(request: Request) -> Value {
         body["extra_body"] = extra_body;
     }
     body
+}
+
+fn llm_messages_to_chat(messages: Vec<Message>) -> Vec<Value> {
+    let mut converted = Vec::with_capacity(messages.len());
+    let mut pending_media = Vec::new();
+
+    for message in messages {
+        if message.role == "tool" {
+            if let Some(plan) = plan_tool_result_images(
+                &message.content,
+                ToolImageScope::AnyImage,
+                TOOL_RESULT_MEDIA_MOVED_MARKER,
+            ) {
+                let call_id = message.tool_call_id.clone().unwrap_or_default();
+                let mut tool_message = json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": cleaned_tool_result_text(&plan)
+                });
+                if let Some(name) = message.name {
+                    tool_message["name"] = json!(name);
+                }
+                converted.push(tool_message);
+                queue_chat_tool_media(&mut pending_media, &call_id, plan.images);
+                continue;
+            }
+        } else {
+            flush_chat_tool_media(&mut converted, &mut pending_media);
+        }
+
+        converted.push(llm_message_to_chat(message));
+    }
+
+    flush_chat_tool_media(&mut converted, &mut pending_media);
+    converted
+}
+
+fn queue_chat_tool_media(pending_media: &mut Vec<Value>, call_id: &str, images: Vec<ToolImage>) {
+    if images.is_empty() {
+        return;
+    }
+    pending_media.push(json!({
+        "type": "text",
+        "text": format!("[ai-toolbox: media output of tool call {call_id}]")
+    }));
+    pending_media.extend(images.into_iter().map(|image| {
+        let mut image_url = json!({ "url": image.url });
+        if let Some(detail) = image.detail {
+            image_url["detail"] = json!(detail);
+        }
+        json!({
+            "type": "image_url",
+            "image_url": image_url
+        })
+    }));
+}
+
+fn flush_chat_tool_media(messages: &mut Vec<Value>, pending_media: &mut Vec<Value>) {
+    if pending_media.is_empty() {
+        return;
+    }
+    messages.push(json!({
+        "role": "user",
+        "content": std::mem::take(pending_media)
+    }));
 }
 
 fn normalize_chat_system_messages(messages: Vec<Value>) -> Vec<Value> {

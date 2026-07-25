@@ -4,6 +4,9 @@ use super::super::llm::{
     TOOL_TYPE_ANTHROPIC_NATIVE, TOOL_TYPE_ANTHROPIC_WEB_SEARCH, TOOL_TYPE_FUNCTION,
 };
 use super::super::shared::signature::{decode_signature_for, SignatureProvider};
+use super::super::shared::tool_media::{
+    inline_image_data, plan_tool_result_images, ToolImageScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+};
 use super::super::shared::{
     normalize_function_parameters_owned, reasoning_effort_to_budget_tokens, stop_to_value,
     tool_arguments_value, tool_choice_to_anthropic,
@@ -312,6 +315,35 @@ fn tool_result_to_anthropic(message: &Message) -> Value {
 }
 
 fn tool_result_content_to_anthropic(content: &MessageContent) -> Value {
+    if let Some(plan) = plan_tool_result_images(
+        content,
+        ToolImageScope::AnyImage,
+        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    ) {
+        let mut blocks = Vec::new();
+        append_cleaned_anthropic_tool_output(&plan.cleaned, &mut blocks);
+        blocks.extend(plan.images.into_iter().filter_map(|image| {
+            if let Some((media_type, data)) = inline_image_data(&image.url) {
+                return Some(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data
+                    }
+                }));
+            }
+            Some(json!({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": image.url
+                }
+            }))
+        }));
+        return Value::Array(blocks);
+    }
+
     match content {
         MessageContent::Text(text) => Value::String(text.clone()),
         MessageContent::Parts(parts) => Value::Array(
@@ -321,6 +353,49 @@ fn tool_result_content_to_anthropic(content: &MessageContent) -> Value {
                 .collect::<Vec<_>>(),
         ),
         MessageContent::Empty => Value::String(String::new()),
+    }
+}
+
+fn append_cleaned_anthropic_tool_output(value: &Value, blocks: &mut Vec<Value>) {
+    match value {
+        Value::String(text) if !text.is_empty() => {
+            blocks.push(json!({ "type": "text", "text": text }));
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("text" | "input_text" | "output_text") => {
+                        let Some(text) = part.get("text").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let mut block = json!({ "type": "text", "text": text });
+                        if let Some(cache_control) = part.get("cache_control") {
+                            block["cache_control"] = cache_control.clone();
+                        }
+                        blocks.push(block);
+                    }
+                    _ => blocks.push(json!({
+                        "type": "text",
+                        "text": serde_json::to_string(part).unwrap_or_default()
+                    })),
+                }
+            }
+        }
+        Value::Object(object)
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("text" | "input_text" | "output_text")
+            ) =>
+        {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                blocks.push(json!({ "type": "text", "text": text }));
+            }
+        }
+        Value::Null | Value::String(_) => {}
+        other => blocks.push(json!({
+            "type": "text",
+            "text": serde_json::to_string(other).unwrap_or_default()
+        })),
     }
 }
 

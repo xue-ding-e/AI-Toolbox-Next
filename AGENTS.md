@@ -70,6 +70,27 @@ This document provides essential information for AI coding agents working on thi
 
 后续新增模块级 `AGENTS.md` 时，继续在此表追加，不在根文档其他位置零散登记。
 
+## Gateway 协议转换维护入口
+
+`docs/gateway-protocol-conversion.md` 是 Gateway 协议转换、provider 兼容边界、SSE 生命周期、响应分类、runtime pipeline 和参考项目吸收记录的**唯一长期文档**。修改以下任一内容前，必须先完整阅读该文档，再阅读目标目录最近的模块级 `AGENTS.md` 和当前源码/测试：
+
+- `tauri/src/coding/proxy_gateway/transformer/**` 的协议转换、统一 IR、JSON/SSE/error 语义；
+- `tauri/src/coding/proxy_gateway/runtime/**` 的 source/target route、provider body compat、响应分类、pipeline、side store、failover 或 fixture；
+- Gateway provider profile、协议直通/转换判定，以及从参考项目吸收的兼容行为。
+
+完成代码或测试修改后，必须在同一任务内对照当前源码、测试、AxonHub 和 cc-switch 更新 `docs/gateway-protocol-conversion.md`；文档更新不能留到后续任务。文档与源码或测试冲突时，以当前源码和测试为最终事实源，并立即修正文档。
+
+参考项目固定使用仓库根目录的相对兄弟路径，不得写死任何机器绝对路径：
+
+- `../cc-switch`：渠道/provider 兼容边界补充参考；
+- `../axonhub`：统一 IR、转换生命周期、SSE/Responses 终态和 pipeline 的主架构参考。
+
+执行参考项目同步时，先读取长期文档中的上一次 baseline commit，再检查同级目录是否存在。目录不存在时，按文档记录的远端地址和目标分支 clone 到同级目录；目录存在时先检查工作树，保留用户未提交改动，不得 reset、checkout 覆盖或清理无关文件。`git fetch` 只更新 remote-tracking ref，可以在工作树脏时执行；只有工作树干净且当前 checkout 分支就是文档指定目标分支时，才允许 fast-forward 到 remote-tracking ref。其它情况直接基于 fetch 后的 remote-tracking ref 分析，不能为了更新 baseline 改写用户工作树。只分析 `baseline..<remote-tracking-ref>` 的增量，并在吸收完成后把参考项目 commit、增量范围、吸收/不吸收结论、AI Toolbox 实现位置和回归测试位置写回唯一长期文档。
+
+协议直通只补充已证明的渠道/provider wire 兼容点；涉及协议转换时，先按文档确定 AxonHub 主架构和 AI Toolbox 当前职责边界，再吸收 cc-switch 的具体渠道兼容行为，不逐行搬运参考项目实现，也不把数据库、鉴权、URL、executor 或跨请求状态下沉到 transformer。
+
+工具结果媒体属于协议转换边界时，必须保持“有媒体才改写、无媒体沿用旧表示”的不变量：Chat tool message 不能承载原生图片时，把识别出的图片移到同一工具批次之后的 synthetic user turn；Responses 使用 `input_image`，Anthropic 使用原生 `image` block，Gemini 按 2.x/3.x 支持的 `functionResponse` 形态输出。媒体识别和目标协议映射必须以长期文档、当前源码和回归测试为准，不能只复制参考项目的 helper。
+
 ## Design System
 
 - 根目录 `DESIGN.md` 是 AI Toolbox 的视觉设计系统 Source of Truth，给 AI coding agents 阅读，不是应用运行时资源。

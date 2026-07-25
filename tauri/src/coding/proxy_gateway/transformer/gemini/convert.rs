@@ -8,6 +8,10 @@ use super::super::shared::signature::{
     decode_signature_for, encode_signature, metadata_signature, metadata_signature_raw,
     SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE, GEMINI_THOUGHT_SIGNATURE_METADATA_KEY,
 };
+use super::super::shared::tool_media::{
+    cleaned_tool_result_text, inline_image_data, plan_tool_result_images, ToolImageScope,
+    ToolResultMediaPlan, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+};
 use super::super::shared::{
     budget_tokens_to_reasoning_effort, extract_error_code, extract_error_message,
     extract_error_type, json_string, reasoning_effort_to_budget_tokens, stop_from_value,
@@ -55,14 +59,17 @@ pub fn gemini_request_to_llm(body: Value) -> Request {
     if let Some(contents) = body.get("contents").and_then(Value::as_array) {
         let mut function_call_ids_by_name = HashMap::new();
         for content in contents {
-            let message = gemini_content_to_llm(content, &function_call_ids_by_name);
-            for tool_call in &message.tool_calls {
-                if !tool_call.id.is_empty() && !tool_call.function.name.is_empty() {
-                    function_call_ids_by_name
-                        .insert(tool_call.function.name.clone(), tool_call.id.clone());
+            for message in
+                gemini_request_content_to_llm_messages(content, &function_call_ids_by_name)
+            {
+                for tool_call in &message.tool_calls {
+                    if !tool_call.id.is_empty() && !tool_call.function.name.is_empty() {
+                        function_call_ids_by_name
+                            .insert(tool_call.function.name.clone(), tool_call.id.clone());
+                    }
                 }
+                request.messages.push(message);
             }
-            request.messages.push(message);
         }
     }
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
@@ -185,6 +192,57 @@ fn gemini_parts_text(parts: Option<&Value>) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+fn gemini_request_content_to_llm_messages(
+    content: &Value,
+    function_call_ids_by_name: &HashMap<String, String>,
+) -> Vec<Message> {
+    let Some(parts) = content.get("parts").and_then(Value::as_array) else {
+        return vec![gemini_content_to_llm(content, function_call_ids_by_name)];
+    };
+    let function_response_count = parts
+        .iter()
+        .filter(|part| part.get("functionResponse").is_some())
+        .count();
+    if function_response_count <= 1 {
+        return vec![gemini_content_to_llm(content, function_call_ids_by_name)];
+    }
+
+    let mut messages = Vec::with_capacity(function_response_count);
+    let mut segment_parts = Vec::new();
+    for part in parts {
+        if part.get("functionResponse").is_some() {
+            if !segment_parts.is_empty() {
+                messages.push(gemini_content_segment_to_llm(
+                    content,
+                    std::mem::take(&mut segment_parts),
+                    function_call_ids_by_name,
+                ));
+            }
+        }
+        segment_parts.push(part.clone());
+    }
+    if !segment_parts.is_empty() {
+        messages.push(gemini_content_segment_to_llm(
+            content,
+            segment_parts,
+            function_call_ids_by_name,
+        ));
+    }
+    messages
+}
+
+fn gemini_content_segment_to_llm(
+    content: &Value,
+    parts: Vec<Value>,
+    function_call_ids_by_name: &HashMap<String, String>,
+) -> Message {
+    let mut segment = content.clone();
+    if let Some(object) = segment.as_object_mut() {
+        object.insert("parts".to_string(), Value::Array(parts));
+    }
+    gemini_content_to_llm(&segment, function_call_ids_by_name)
+}
+
 fn gemini_content_to_llm(
     content: &Value,
     function_call_ids_by_name: &HashMap<String, String>,
@@ -300,16 +358,30 @@ fn gemini_content_to_llm(
                     role: "tool".to_string(),
                     tool_call_id,
                     tool_call_name: (!function_name.is_empty()).then_some(function_name),
-                    content: MessageContent::Text(gemini_function_response_text(
-                        function_response.get("response"),
-                    )),
+                    content: gemini_function_response_content(function_response),
                     ..Default::default()
                 });
             }
         }
     }
     let reasoning = (!reasoning_chunks.is_empty()).then(|| reasoning_chunks.join(""));
-    tool_result.unwrap_or(Message {
+    if let Some(mut tool_result) = tool_result {
+        if !parts.is_empty() {
+            let mut combined = match tool_result.content {
+                MessageContent::Text(text) if !text.is_empty() => vec![MessageContentPart {
+                    part_type: "text".to_string(),
+                    text: Some(text),
+                    ..Default::default()
+                }],
+                MessageContent::Parts(parts) => parts,
+                _ => Vec::new(),
+            };
+            combined.extend(parts);
+            tool_result.content = MessageContent::Parts(combined);
+        }
+        return tool_result;
+    }
+    Message {
         role,
         content: MessageContent::Parts(parts),
         tool_calls,
@@ -317,7 +389,7 @@ fn gemini_content_to_llm(
         reasoning,
         reasoning_signature,
         ..Default::default()
-    })
+    }
 }
 
 fn gemini_part_thought_signature(part: &Value) -> Option<&str> {
@@ -367,10 +439,74 @@ fn gemini_function_response_text(response: Option<&Value>) -> String {
     }
 }
 
+fn gemini_function_response_content(function_response: &Value) -> MessageContent {
+    let response_text = gemini_function_response_text(function_response.get("response"));
+    let Some(media_parts) = function_response.get("parts").and_then(Value::as_array) else {
+        return MessageContent::Text(response_text);
+    };
+
+    let mut parts = Vec::new();
+    if !response_text.is_empty() {
+        parts.push(MessageContentPart {
+            part_type: "text".to_string(),
+            text: Some(response_text.clone()),
+            ..Default::default()
+        });
+    }
+    for part in media_parts {
+        if let Some(text) = part.get("text").and_then(Value::as_str) {
+            parts.push(MessageContentPart {
+                part_type: "text".to_string(),
+                text: Some(text.to_string()),
+                ..Default::default()
+            });
+            continue;
+        }
+        if let Some(inline_data) = part.get("inlineData").or_else(|| part.get("inline_data")) {
+            let mime = inline_data
+                .get("mimeType")
+                .or_else(|| inline_data.get("mime_type"))
+                .and_then(Value::as_str)
+                .unwrap_or("image/png");
+            let data = inline_data
+                .get("data")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            parts.push(gemini_media_part_to_llm(
+                mime,
+                format!("data:{mime};base64,{data}"),
+            ));
+            continue;
+        }
+        if let Some(file_data) = part.get("fileData").or_else(|| part.get("file_data")) {
+            let uri = file_data
+                .get("fileUri")
+                .or_else(|| file_data.get("file_uri"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !uri.is_empty() {
+                let mime = file_data
+                    .get("mimeType")
+                    .or_else(|| file_data.get("mime_type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                parts.push(gemini_media_part_to_llm(mime, uri.to_string()));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        MessageContent::Text(response_text)
+    } else {
+        MessageContent::Parts(parts)
+    }
+}
+
 pub fn llm_request_to_gemini(request: Request) -> Value {
     let mut system_chunks = Vec::new();
     let mut contents = Vec::new();
     let mut tool_names_by_id = HashMap::new();
+    let supports_multimodal_function_response = is_gemini_3_model(&request.model);
     for message in request.messages {
         if message.role == "system" || message.role == "developer" {
             if let MessageContent::Text(text) = message.content {
@@ -384,6 +520,7 @@ pub fn llm_request_to_gemini(request: Request) -> Value {
             contents.push(llm_tool_message_to_gemini_content(
                 message,
                 &tool_names_by_id,
+                supports_multimodal_function_response,
             ));
             continue;
         }
@@ -802,6 +939,7 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
 fn llm_tool_message_to_gemini_content(
     message: Message,
     tool_names_by_id: &HashMap<String, String>,
+    supports_multimodal_function_response: bool,
 ) -> Value {
     let tool_call_id = message.tool_call_id.clone().unwrap_or_default();
     let tool_call_name = message
@@ -809,16 +947,51 @@ fn llm_tool_message_to_gemini_content(
         .clone()
         .or_else(|| tool_names_by_id.get(&tool_call_id).cloned())
         .unwrap_or_else(|| tool_call_id.clone());
-    json!({
-        "role": "user",
-        "parts": [{
-            "functionResponse": {
-                "id": tool_call_id,
-                "name": tool_call_name,
-                "response": gemini_function_response_value(message.content)
-            }
-        }]
-    })
+    let media_plan = plan_tool_result_images(
+        &message.content,
+        ToolImageScope::InlineImage,
+        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    );
+    let (response, media_parts) = match media_plan {
+        Some(plan) => {
+            let response = gemini_function_response_value_from_media(&plan);
+            let media_parts = plan
+                .images
+                .into_iter()
+                .filter_map(|image| {
+                    inline_image_data(&image.url).map(|(media_type, data)| {
+                        json!({
+                            "inlineData": {
+                                "mimeType": media_type,
+                                "data": data
+                            }
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            (response, media_parts)
+        }
+        None => (gemini_function_response_value(message.content), Vec::new()),
+    };
+    let mut function_response = json!({
+        "id": tool_call_id,
+        "name": tool_call_name,
+        "response": response
+    });
+    let mut parts = Vec::new();
+    if supports_multimodal_function_response && !media_parts.is_empty() {
+        function_response["parts"] = Value::Array(media_parts);
+        parts.push(json!({ "functionResponse": function_response }));
+    } else {
+        parts.push(json!({ "functionResponse": function_response }));
+        if !media_parts.is_empty() {
+            parts.push(json!({
+                "text": format!("[ai-toolbox: media output of tool call {tool_call_id}]")
+            }));
+            parts.extend(media_parts);
+        }
+    }
+    json!({ "role": "user", "parts": parts })
 }
 
 fn gemini_function_response_value(content: MessageContent) -> Value {
@@ -826,6 +999,14 @@ fn gemini_function_response_value(content: MessageContent) -> Value {
         MessageContent::Text(text) => text,
         other => serde_json::to_string(&other).unwrap_or_default(),
     };
+    if let Ok(Value::Object(object)) = serde_json::from_str::<Value>(&text) {
+        return Value::Object(object);
+    }
+    json!({ "result": text })
+}
+
+fn gemini_function_response_value_from_media(plan: &ToolResultMediaPlan) -> Value {
+    let text = cleaned_tool_result_text(plan);
     if let Ok(Value::Object(object)) = serde_json::from_str::<Value>(&text) {
         return Value::Object(object);
     }
@@ -1049,7 +1230,11 @@ pub(super) fn gemini_error(error: Value) -> Value {
     )
 }
 
-pub(super) fn gemini_error_from_parts(message: String, kind: Option<String>, code: Option<Value>) -> Value {
+pub(super) fn gemini_error_from_parts(
+    message: String,
+    kind: Option<String>,
+    code: Option<Value>,
+) -> Value {
     let status_code = gemini_error_status_code(code.as_ref(), kind.as_deref());
     let status = gemini_error_status(status_code, kind.as_deref());
     json!({

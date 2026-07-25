@@ -7,6 +7,9 @@ use crate::coding::proxy_gateway::transformer::llm::{
 use crate::coding::proxy_gateway::transformer::shared::signature::{
     decode_signature_for, encode_signature, SignatureProvider,
 };
+use crate::coding::proxy_gateway::transformer::shared::tool_media::{
+    plan_tool_result_images, ToolImageScope, ToolResultMediaPlan, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+};
 use crate::coding::proxy_gateway::transformer::shared::{
     normalize_function_parameters_owned, tool_choice_from_openai,
 };
@@ -20,7 +23,8 @@ pub(crate) const RESPONSES_PROMPT_CACHE_RETENTION_METADATA_KEY: &str =
 pub(crate) const RESPONSES_TRUNCATION_METADATA_KEY: &str = "openai_responses_truncation";
 pub(crate) const RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY: &str =
     "openai_responses_compaction_encrypted_content";
-pub(crate) const RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY: &str = "openai_responses_compaction_created_by";
+pub(crate) const RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY: &str =
+    "openai_responses_compaction_created_by";
 pub(crate) const RESPONSES_RAW_TOOLS_METADATA_KEY: &str = "openai_responses_raw_tools";
 pub(crate) const RESPONSES_TOOL_SIGNATURES_METADATA_KEY: &str = "openai_responses_tool_signatures";
 pub(crate) const RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY: &str =
@@ -30,7 +34,6 @@ pub(crate) const RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY: &str = "openai_response
 /// Request top-level `reasoning.context` (e.g. `"all_turns"`), not input-item context.
 pub(crate) const RESPONSES_REQUEST_REASONING_CONTEXT_METADATA_KEY: &str =
     "openai_responses_request_reasoning_context";
-
 
 pub(super) fn preserve_responses_transformer_metadata(
     body: &Value,
@@ -70,7 +73,11 @@ pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut 
             .iter()
             .map(|signature| signature.clone().map(Value::String))
             .collect::<Option<Vec<_>>>();
-        if has_raw_tools || tool_signatures.as_ref().is_some_and(|items| !items.is_empty()) {
+        if has_raw_tools
+            || tool_signatures
+                .as_ref()
+                .is_some_and(|items| !items.is_empty())
+        {
             request.transformer_metadata.insert(
                 RESPONSES_TOOL_SIGNATURES_METADATA_KEY.to_string(),
                 Value::Array(tool_signatures.clone().unwrap_or_default()),
@@ -182,7 +189,10 @@ pub(super) fn responses_instructions_text(value: Option<&Value>) -> Option<Strin
     }
 }
 
-pub(super) fn append_responses_input_to_messages(input: Option<&Value>, messages: &mut Vec<Message>) {
+pub(super) fn append_responses_input_to_messages(
+    input: Option<&Value>,
+    messages: &mut Vec<Message>,
+) {
     match input {
         Some(Value::Array(items)) => {
             let mut index = 0;
@@ -472,7 +482,10 @@ pub(super) fn merge_responses_following_item_into_reasoning_message(
     }
 }
 
-pub(super) fn merge_message_into_reasoning_message(reasoning_message: &mut Message, message: Message) {
+pub(super) fn merge_message_into_reasoning_message(
+    reasoning_message: &mut Message,
+    message: Message,
+) {
     if reasoning_message.id.is_empty() {
         reasoning_message.id = message.id;
     }
@@ -872,12 +885,20 @@ pub(super) fn append_llm_message_as_responses_input(
         } else {
             "function_call_output"
         };
+        let media_plan = plan_tool_result_images(
+            &message.content,
+            ToolImageScope::AnyImage,
+            TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+        );
         input.push(json!({
             "type": output_type,
             "call_id": call_id,
-            "output": match message.content {
-                MessageContent::Text(text) => text,
-                other => serde_json::to_string(&other).unwrap_or_default(),
+            "output": match media_plan {
+                Some(plan) => responses_tool_output_with_media(plan),
+                None => match message.content {
+                    MessageContent::Text(text) => Value::String(text),
+                    other => Value::String(serde_json::to_string(&other).unwrap_or_default()),
+                },
             }
         }));
         return;
@@ -904,7 +925,65 @@ pub(super) fn append_llm_message_as_responses_input(
     }
 }
 
-pub(super) fn has_responses_message_content(content: &MessageContent, refusal: &str, assistant: bool) -> bool {
+fn responses_tool_output_with_media(plan: ToolResultMediaPlan) -> Value {
+    let mut output = Vec::new();
+    append_cleaned_responses_tool_output(&plan.cleaned, &mut output);
+    output.extend(plan.images.into_iter().map(|image| {
+        let mut part = json!({
+            "type": "input_image",
+            "image_url": image.url
+        });
+        if let Some(detail) = image.detail {
+            part["detail"] = json!(detail);
+        }
+        part
+    }));
+    Value::Array(output)
+}
+
+fn append_cleaned_responses_tool_output(value: &Value, output: &mut Vec<Value>) {
+    match value {
+        Value::String(text) if !text.is_empty() => {
+            output.push(json!({ "type": "input_text", "text": text }));
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("text" | "input_text" | "output_text") => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            output.push(json!({ "type": "input_text", "text": text }));
+                        }
+                    }
+                    _ => output.push(json!({
+                        "type": "input_text",
+                        "text": serde_json::to_string(part).unwrap_or_default()
+                    })),
+                }
+            }
+        }
+        Value::Object(object)
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("text" | "input_text" | "output_text")
+            ) =>
+        {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                output.push(json!({ "type": "input_text", "text": text }));
+            }
+        }
+        Value::Null | Value::String(_) => {}
+        other => output.push(json!({
+            "type": "input_text",
+            "text": serde_json::to_string(other).unwrap_or_default()
+        })),
+    }
+}
+
+pub(super) fn has_responses_message_content(
+    content: &MessageContent,
+    refusal: &str,
+    assistant: bool,
+) -> bool {
     if assistant && !refusal.is_empty() {
         return true;
     }
@@ -962,7 +1041,11 @@ pub(super) fn append_responses_message_content_items(
     flush_responses_message_content(&role, &mut pending_content, input);
 }
 
-pub(super) fn flush_responses_message_content(role: &str, content: &mut Vec<Value>, input: &mut Vec<Value>) {
+pub(super) fn flush_responses_message_content(
+    role: &str,
+    content: &mut Vec<Value>,
+    input: &mut Vec<Value>,
+) {
     if content.is_empty() {
         return;
     }
@@ -1184,7 +1267,10 @@ pub(super) fn response_format_to_responses_format(response_format: Value) -> Val
     response_format
 }
 
-pub(super) fn responses_function_parameters(parameters: Option<Value>, strict: Option<bool>) -> Value {
+pub(super) fn responses_function_parameters(
+    parameters: Option<Value>,
+    strict: Option<bool>,
+) -> Value {
     let mut parameters = normalize_function_parameters_owned(parameters);
     let Some(object) = parameters.as_object_mut() else {
         return parameters;

@@ -433,6 +433,11 @@ fn anthropic_tool_result_content(content: Option<&Value>) -> MessageContent {
                 .iter()
                 .filter_map(anthropic_content_part_to_llm)
                 .collect::<Vec<_>>();
+            if converted.len() != parts.len() {
+                return MessageContent::Text(
+                    serde_json::to_string(parts).unwrap_or_else(|_| "[]".to_string()),
+                );
+            }
             if converted.len() == 1
                 && converted[0].part_type == "text"
                 && converted[0].cache_control.is_none()

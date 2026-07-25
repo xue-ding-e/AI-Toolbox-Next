@@ -4699,9 +4699,9 @@ fn build_upstream_body_for_provider(
 ///
 /// Requires explicit `source == OpenAiResponses` (not merely `conversion_route`
 /// absent — that would also fire when the source protocol is unknown). Runtime
-/// binds via `providerType=xai` (`ProviderBodyCompat::Xai`); profile catalog
-/// rule `xai_responses_passthrough` is registration/docs only (same pattern as
-/// existing xAI Chat scrub rules).
+/// binds via `providerType=xai|x-ai|grok` (`ProviderBodyCompat::Xai`); profile
+/// catalog rule `xai_responses_passthrough` is registration/docs only (same
+/// pattern as existing xAI Chat scrub rules).
 fn should_apply_xai_responses_passthrough(
     source_protocol: Option<AiProtocol>,
     conversion_route: Option<ConversionRoute>,
@@ -10413,6 +10413,25 @@ data: {data}\r\n\r\n"
             "generic NDJSON must not enter the SSE wrapper without its provider adapter"
         );
         assert!(response_is_ndjson(&ndjson_headers));
+    }
+
+    #[test]
+    fn xai_responses_passthrough_gate_accepts_xai_provider_aliases() {
+        for provider_type in ["xai", "x-ai", "grok"] {
+            let provider_meta = ProviderGatewayMeta {
+                provider_type: Some(provider_type.to_string()),
+                ..ProviderGatewayMeta::default()
+            };
+            assert!(
+                should_apply_xai_responses_passthrough(
+                    Some(AiProtocol::OpenAiResponses),
+                    None,
+                    AiProtocol::OpenAiResponses,
+                    Some(&provider_meta),
+                ),
+                "providerType={provider_type} should use xAI Responses passthrough compat"
+            );
+        }
     }
 
     #[test]

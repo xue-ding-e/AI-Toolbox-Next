@@ -4,6 +4,12 @@
 
 - 在 Proxy Gateway 请求路径中提供独立、可复用的 AI 协议载荷转换：Anthropic Messages、OpenAI Chat Completions、OpenAI Responses、Gemini Native 的 JSON 与 SSE 聊天协议互转。
 
+## 唯一长期文档
+
+- 修改本模块的协议语义、统一 IR、JSON/SSE/error 转换、工具结果、多模态、lossy 检测或参考项目对照前，必须先阅读 [`docs/gateway-protocol-conversion.md`](../../../../../docs/gateway-protocol-conversion.md)。
+- 完成实现或测试后，必须在同一任务内更新该文档的当前源码事实、参考项目 baseline/增量吸收记录和回归测试索引；不再维护独立的点-in-time 审计报告或修复计划。
+- 文档与当前源码或测试冲突时，以源码和测试为最终事实源，并在同一任务修正文档。参考项目使用 `../cc-switch`、`../axonhub` 相对路径；AxonHub 是主架构参考，cc-switch 只补充渠道兼容边界。
+
 ## Source of Truth
 
 - 转换模块的 Source of Truth 是统一中间模型新内核：`llm::Request` / `llm::Response`、Inbound/Outbound transformer、`StreamKernel`，以及 `AiProtocol`、`ConversionRoute`、`convert_request_body`、`convert_response_body`、`convert_error_response_body` 和 `convert_sse_stream` 的行为与测试。
@@ -17,6 +23,8 @@
 - SSE 转换必须边读边写，不允许为了格式转换、日志或统计先 full-buffer 整个上游流。
 - 新开发和测试以 `kernel.rs`、`stream.rs`、各协议 transformer、`fixtures/reference/` 和 `fixtures/live_provider/` 为准。旧 `json.rs` / `streaming.rs` 已删除（历史见 git），不要把旧实现重新作为 fallback。
 - Gemini Native 实现按物理模块拆分：`gemini/convert.rs`（JSON 转换）、`gemini/inbound.rs` / `outbound.rs`（trait 壳）、`gemini/stream.rs`（stream error helper）。对外仍只暴露 `GeminiInbound` / `GeminiOutbound` 和 `gemini_stream_error`；测试可 `cfg(test)` 使用 convert 函数。不要把 runtime side store 或 provider meta 引入 Gemini transformer。
+- 工具结果图片兼容集中在 `shared/tool_media.rs`，只在确认存在图片时建立 media plan：识别 `input_image`、`image_url`、Anthropic `image` 和 MCP `{type:"image", mimeType, data}`，也递归处理受限深度内的 stringified JSON/`content`。Chat 将图片移到工具批次之后的 synthetic user turn；Responses 写 `function_call_output.output[]` 的 `input_image`；Anthropic 写原生 `image` block；Gemini 2.x 写同一 user content 中的 marker + `inlineData`，Gemini 3 写 `functionResponse.parts[].inlineData`。Gemini Native 入站同一 `content.parts` 中的并行 `functionResponse` 必须拆成多个 tool message，不能只保留最后一个。远程 URL、缺失/格式不完整的 data URL 在 Gemini Inline scope 保留旧 function-response 表示；大残留 data/base64 只在媒体路径触发后限幅。无媒体时调用方必须继续原有函数，不能为了统一格式而重序列化。
+- Anthropic tool-result 入站遇到未被标准 block parser 识别的 block 时，必须保留原始数组为 JSON 文本，让 `shared/tool_media.rs` 仍有机会识别 MCP/Responses alternate media；不能先静默丢掉未知 block。
 - OpenAI Responses 实现按 `openai/responses/{request,response,shared,tests}.rs` 拆分；`mod.rs` 保留 trait 壳与 public re-export。`kernel.rs` 生产代码与 `kernel_tests.rs` 分离（`#[path]`）。
 - Legacy OpenAI Completion API 不属于本 transformer 当前聊天协议矩阵。Codex/OpenAI `/v1/completions` passthrough、DeepSeek `/beta/completions` 路径兼容和对应 body adapter 跳过逻辑都在 Gateway runtime；不要为了单个 provider path quirk 新增半套 Completion IR。
 - 不要新增全局递归 `omitempty` / `omit_empty` 清理函数替代 AxonHub Go struct tag。Rust 中间模型可以继续用 `#[serde(skip_serializing_if = ...)]` 表达可省略字段；但最终 provider 出站 JSON 多数是手工 `serde_json::Value` 构造，必须按目标协议逐字段 `if let Some(...)` / `if !items.is_empty()` 插入。原因是部分协议字段允许或需要显式 `null`，全局清理会误删合法语义。
@@ -56,7 +64,7 @@
 
 ## 8 个转换节点对照索引
 
-这些节点来自 `docs/transform/01..08` 的 AxonHub 对照结果。后续排查协议转换时先查本节确认当前实现语义，再按需打开对应 review 文档看原始证据。若本节与旧 review 文档冲突，以当前代码、测试和本节为准。
+这些节点是对统一 IR 转换边界的模块摘要。后续排查协议转换时先阅读 `docs/gateway-protocol-conversion.md` 的完整架构、同步日志和当前状态，再查本节定位源码。若本节、长期文档与当前代码/测试冲突，以当前代码和测试为准，并在同一任务更新本节和长期文档。
 
 ### 01 OpenAI Chat -> LLM
 
@@ -373,7 +381,8 @@
   - `reference_all_supported_request_fixtures_convert_to_all_targets`：35 个 supported request fixture 全部转所有非 identity target。
   - `reference_all_supported_response_fixtures_convert_to_all_targets`：34 个 supported response fixture 全部转所有非 identity target。
   - `reference_all_supported_stream_fixtures_convert_to_all_targets`：43 个 supported stream fixture 全部转标准 SSE 后再转所有非 identity target。
-  - `reference_*_semantics_*` 与精确回归测试：从参考实现测试翻译来的关键断言，覆盖 stop/tool_choice、图片、工具结果、reasoning、Anthropic 混合 tool_result、Responses custom tool、Gemini thinkingConfig/native tools/schema/usage、stream tool argument accumulation 与 finish 幂等。
+- `reference_*_semantics_*` 与精确回归测试：从参考实现测试翻译来的关键断言，覆盖 stop/tool_choice、图片、工具结果、reasoning、Anthropic 混合 tool_result、Responses custom tool、Gemini thinkingConfig/native tools/schema/usage、stream tool argument accumulation 与 finish 幂等。
+- 工具结果媒体精确回归：`tool_media_tests.rs` 中的 `anthropic_parallel_tool_result_images_batch_after_chat_tool_messages`、`responses_stringified_and_mcp_tool_images_move_out_of_chat_tool_text`、`anthropic_tool_image_becomes_responses_media_and_clamps_residual_base64`、`anthropic_direct_mcp_tool_image_is_preserved_for_conversion`、`responses_alternate_tool_images_restore_anthropic_native_blocks`、`gemini_2_and_3_use_their_supported_tool_media_shapes`、`gemini_keeps_remote_and_malformed_tool_images_in_legacy_response`、`gemini_3_function_response_media_converts_to_all_native_target_shapes` 和 `no_media_anthropic_tool_result_keeps_exact_chat_text_and_no_synthetic_turn` 必须继续覆盖目标协议形态、边界和无媒体零差异。
   - `live_provider_response_fixtures_convert_to_all_targets`：真实 provider HTTP 200 响应样本转所有非 identity target，覆盖 OpenAI Chat、OpenAI Responses、Anthropic Messages、Gemini Native 的真实响应 shape、reasoning、finish/status 和 usage 边界。
 - `cargo test transformer` 是本模块当前推荐的局部验证命令；它包含 `kernel` 测试和编译边界。
 

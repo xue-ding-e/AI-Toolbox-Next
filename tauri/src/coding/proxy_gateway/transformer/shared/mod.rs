@@ -3,6 +3,7 @@ pub mod lossy;
 pub mod messages;
 pub mod signature;
 pub mod thinking_config;
+pub(crate) mod tool_media;
 pub mod tool_schema;
 
 use super::llm::ApiFormat;

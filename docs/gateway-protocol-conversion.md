@@ -1,14 +1,14 @@
 # Proxy Gateway 协议转换架构
 
-本文描述当前代码里的 Proxy Gateway 协议转换实现。事实源是 `tauri/src/coding/proxy_gateway/runtime/**`、`tauri/src/coding/proxy_gateway/transformer/**`、对应模块 `AGENTS.md` 和回归测试，不是历史设计稿或参考项目文档。
+本文描述当前代码里的 Proxy Gateway 协议转换实现，是本主题的**唯一长期文档**。事实源是 `tauri/src/coding/proxy_gateway/runtime/**`、`tauri/src/coding/proxy_gateway/transformer/**`、对应模块 `AGENTS.md` 和回归测试；AxonHub、cc-switch 只提供架构与行为对照，不替代当前源码和测试。
 
-> **文档定位**：本文是长期架构与行为约束；`transformer-protocol-conversion-audit.md` 和 `transformer-protocol-conversion-fix-plan.md` 是特定基线上的审计证据与执行记录。
+> **维护入口**：凡涉及 Gateway 协议转换、provider 兼容、协议直通、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并更新本文。
 >
-> **当前同步基线**：`1b1bea6`（2026-07-25），已吸收该提交中 F-1 至 F-13 的终态、SSE、tool identity、reasoning、raw sidecar 和 runtime 响应分类修复。后续代码变化仍以当前源码、模块规则和测试为准。
+> **当前提交基线**：`18544d0`（2026-07-25）。当前工作树在该提交之上完成了本次 tool-result 图片兼容吸收，已通过 transformer 定向回归和仓库完整测试集合；提交后应把这里更新为新的源码快照。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并；本文同时持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。不要再创建独立的点-in-time 审计报告或修复计划。
 
 ## 0. 产品场景与设计动机
 
-Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本机接管 Claude Code、Codex、Gemini CLI 这类 AI Coding CLI 的固定运行时协议，再把请求转发到用户选择的任意上游 provider。客户端协议、上游真实 wire API、provider metadata、特殊 endpoint 和运行时状态共同决定是否需要协议转换。
+Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本机接管 Claude Code、Codex、Grok CLI、Gemini CLI 这类 AI Coding CLI 的固定运行时协议，再把请求转发到用户选择的任意上游 provider。客户端协议、上游真实 wire API、provider metadata、特殊 endpoint 和运行时状态共同决定是否需要协议转换。
 
 典型组合：
 
@@ -16,6 +16,7 @@ Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本�
 |---|---|---|
 | Claude Code | Anthropic Messages | OpenAI Chat、OpenAI Responses、Gemini Native、Anthropic-compatible |
 | Codex | OpenAI Responses / OpenAI Chat | Anthropic Messages、OpenAI Chat、Gemini Native、OpenAI Responses-compatible |
+| Grok CLI | OpenAI Responses | Anthropic Messages、OpenAI Chat、Gemini Native、OpenAI Responses-compatible |
 | Gemini CLI | Gemini Native | Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini-compatible |
 
 因此本模块必须同时解决两类问题：
@@ -23,7 +24,7 @@ Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本�
 - **协议结构互转**：例如 Anthropic `tool_use`、Responses `function_call`、Chat `tool_calls`、Gemini `functionCall` 之间的 JSON/SSE 映射。
 - **最终上游兼容**：例如 DeepSeek thinking 门控、OpenRouter `reasoning.effort`、Codex official forced SSE、Copilot header/token、Ollama `/api/chat` wire format、Bedrock/Vertex path/header/body 差异。
 
-这两类问题不能混在同一个层里。当前代码把可复用的公共协议转换收敛在 `transformer/`，把 provider 方言、特殊 endpoint、跨请求缓存、鉴权/header、URL 和 failover 留在 `runtime/`。点-in-time 审计中确认的长期规则应同步回本文；若本文与当前代码、模块 `AGENTS.md` 或回归测试冲突，以代码和测试为准，并在同一任务中修正文档。
+这两类问题不能混在同一个层里。当前代码把可复用的公共协议转换收敛在 `transformer/`，把 provider 方言、特殊 endpoint、跨请求缓存、鉴权/header、URL 和 failover 留在 `runtime/`。历史审查得到的长期规则已经归档到本文；若本文与当前代码、模块 `AGENTS.md` 或回归测试冲突，以代码和测试为准，并在同一任务中修正文档。
 
 ## 1. 总体边界
 
@@ -84,6 +85,7 @@ flowchart LR
 |---|---|---|---|
 | `/anthropic` | Claude Code | `anthropic` | `/v1/messages` |
 | `/openai` | Codex / OpenAI-compatible | `openai-compatible` | `/v1/responses`、`/v1/chat/completions` |
+| `/grok` | Grok CLI | `grok` | `/v1/responses` |
 | `/gemini` | Gemini CLI | `gemini` | `/v1beta/models/...:generateContent` |
 
 随后 `runtime/upstream.rs::source_protocol_from_route()` 按 CLI 和 forwarded path 推导 source protocol：
@@ -93,9 +95,10 @@ flowchart LR
 | Claude | `/v1/messages` 或 `/messages` | `AnthropicMessages` |
 | Codex | `/v1/chat/completions` 或 `/chat/completions` | `OpenAiChat` |
 | Codex | `/v1/responses`、`/responses`、`/v1/responses/compact`、`/responses/compact` | `OpenAiResponses` |
+| Grok | `/v1/responses` 或 `/responses` | `OpenAiResponses` |
 | Gemini | path 包含 `:generateContent` 或 `:streamGenerateContent` | `GeminiNative` |
 
-如果 route 无法推导 source protocol，则不会创建 `ConversionRoute`，请求只能走 runtime 的普通转发/兼容路径。
+Grok 的 `/grok/v1` 只用于 `GET`/`HEAD` 根路径探测；正式请求必须使用 `/grok/v1/responses`。当前不接受 `/grok/v1/chat/completions` 或 `/grok/v1/responses/compact`。如果 route 无法推导 source protocol，则不会创建 `ConversionRoute`，请求只能走 runtime 的普通转发/兼容路径。
 
 ## 4. Provider target protocol
 
@@ -107,11 +110,12 @@ provider 读取在 `runtime/providers.rs`。`load_candidate_providers*()` 从对
 |---|---|---|
 | Claude | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `openrouter_compat_mode=true` | `AnthropicMessages` |
 | Codex | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `config.toml` 的 `wire_api` / `api_format` -> base URL 是否是 `/chat/completions` | 非 Chat URL 默认 `OpenAiResponses` |
+| Grok | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> selected model/backend config | `OpenAiResponses` |
 | Gemini | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` | `GeminiNative` |
 
 `provider_protocol.rs::provider_needs_gateway_proxy()` 使用同一类语义判断“普通 apply 是否需要 Gateway 接管”：官方订阅 provider 不参与代理；非官方 provider 如果 target protocol 与 CLI native protocol 不一致，就需要网关代理。
 
-Copilot 是一个 runtime 特例：`effective_upstream_provider_for_request()` 会根据本次模型名把 Copilot provider 的 effective target protocol 动态切到 `OpenAiResponses` 或 `OpenAiChat`。这只影响本次请求，不改 provider 记录。
+Copilot 是一个 runtime 特例：`effective_upstream_provider_for_request()` 会根据本次模型名把 Copilot provider 的 effective target protocol 动态切到 `OpenAiResponses` 或 `OpenAiChat`。这只影响本次请求，不改 provider 记录。Grok CLI 本身的入站协议固定为 OpenAI Responses；Grok provider 仍可通过 profile 选择其它上游 target，因此不能把 Grok CLI 路由和 xAI provider 方言混为一谈。
 
 ## 5. ConversionRoute 决策
 
@@ -182,7 +186,7 @@ flowchart TD
 - 转换后统一跑 outbound provider pipeline，包括 provider body 兼容、billing CCH 回填、显式 `defaultMaxTokens` 限制。
 - target 是 Anthropic 且 `cache_injection_enabled=true` 时，最后注入 `cache_control`。
 - `PreparedUpstreamBody` 持有本次 attempt 的 `ConversionContext`、request-scoped `Pipeline` / `PipelineContext`、`lossy_warnings` 和 xAI namespace restore map；这些状态必须跨越“上游请求 -> 客户端响应”存活，不能在响应阶段重新构造空 context。
-- client-facing JSON 响应使用同一 pipeline 的 `run_outbound_response()`，SSE 使用 `run_outbound_stream()`，两者都按 middleware 逆序执行。当前 stock reverse middleware 主要用于 Claude billing CCH 回填；provider body compat 仍只运行在上游 outbound body，不应反向套到客户端响应。
+- client-facing JSON 响应使用同一 pipeline 的 `run_outbound_response()`，SSE 使用 `run_outbound_stream()`，两者都按 middleware 逆序执行。当前 production pipeline 的 hook 是 `on_inbound_request`、`on_outbound_body`、`on_stream_chunk`、`on_outbound_response`、`on_outbound_stream`、`on_error`；stock reverse middleware 主要用于 Claude billing CCH 回填，provider body compat 仍只运行在上游 outbound body，不应反向套到客户端响应。
 - lossy warning 是 runtime request preparation 的策略结果，只由 `PreparedUpstreamBody.lossy_warnings` 携带并写入 `X-Transformer-Lossy`；它不属于 `ConversionContext` 或 `PipelineContext`。
 
 ## 7. Transformer 内核
@@ -297,6 +301,32 @@ OpenAI Responses request 中不能完整结构化表达的 raw-only `input[]` it
 - 非流 Responses `status="cancelled"` / `"canceled"` 映射为 `finish_reason="cancelled"`；反向输出统一使用 Responses `status="canceled"`，不能退化为 `completed`。
 - `failed` / `error`、`incomplete` / `length`、`cancelled` / `canceled` 是三条独立映射，不允许用默认 completed/stop 分支相互覆盖。
 
+### 8.3 Tool-result 图片媒体
+
+工具结果媒体不是新的协议或新的跨请求状态，而是一次 request conversion 中对统一 `MessageContent` 的目标协议投影。当前 AI Toolbox 只吸收图片路径；`llm::MessageContentPart` 虽然还承载 document，但没有完整的 file/audio tool-result IR，因此不能把 cc-switch 的 file/audio 扩展写成当前已支持能力。
+
+共享识别入口是 `transformer/shared/tool_media.rs`：
+
+- 识别统一 IR 中的 `image_url` / `input_image`、Anthropic `image`，以及 MCP/Responses alternate 的 `{type:"image", mimeType, data}`；
+- 在最大递归深度内读取 JSON 字符串和对象的 `content`，只在确认找到图片后才重写原工具结果；
+- 结构化图片 block 支持带 `data:image/...;base64,` 头且 payload 非空的 data URL 和 HTTP(S) URL；若整个 tool result 只是一个 image data URL 字符串，仅在长度至少 8 KiB 时识别为媒体，短示例或普通文本保持原样；Gemini 的 Inline scope 只接受前述非空 image data URL，远程或 malformed data URL 保留旧 function-response 表示；
+- 图片被移出工具文本后，不复制 `cache_control`、`prompt_cache_breakpoint` 等工具结果缓存元数据；媒体路径中残留的大 data/base64 字符串才做有界替换，普通长 OCR/日志文本保留；
+- 没有图片时返回 `None`，调用方继续原有 converter，保证旧文本/JSON 表示不因共享 helper 被重序列化。
+
+按 target protocol 的写法：
+
+| target | 工具结果图片位置 | 当前实现 |
+|---|---|---|
+| OpenAI Chat | 工具消息保留清理后的文本；同一连续工具结果批次之后追加一个 synthetic `role:"user"`，其中用 `image_url` 承载图片 | `openai/chat.rs::llm_messages_to_chat` |
+| OpenAI Responses | `function_call_output.output[]` / `custom_tool_call_output.output[]` 中写 `input_text` 和 `input_image` | `openai/responses/shared.rs::responses_tool_output_with_media` |
+| Anthropic Messages | `tool_result.content[]` 中写文本 block 和原生 `image` block | `anthropic/outbound.rs::tool_result_content_to_anthropic` |
+| Gemini 2.x | `functionResponse` 后在同一 user content 追加 marker 与 `inlineData` | `gemini/convert.rs::llm_tool_message_to_gemini_content` |
+| Gemini 3.x | `functionResponse.parts[].inlineData`，不再额外生成顶层媒体 part | 同上，按目标 model 分支 |
+
+Anthropic tool-result 入站如果包含标准 parser 不认识的 block，必须先保留原始数组为 JSON 文本，再让共享识别入口处理 MCP/Responses alternate 形态；不能在 inbound 阶段静默丢失。该规则只对转换路径生效，同协议直通仍由 runtime 保持原始 wire body。
+
+Gemini Native 入站同一个 `content.parts` 可以包含多个并行 `functionResponse`。请求转换必须按每个 `functionResponse` 拆成独立 tool message，并把紧随其后的 Gemini 2.x marker/顶层媒体归到前一个工具结果；不能用单个临时变量覆盖后只保留最后一个。
+
 ## 9. ConversionContext
 
 `ConversionContext` 定义在 `transformer/kernel.rs`：
@@ -326,8 +356,10 @@ pub struct ConversionContext {
 不要把三个 context 混在一起：
 
 - `ConversionContext`：transformer 拥有的 request-scoped 协议映射状态，当前只包含 `CodexToolContext`。
-- `PipelineContext`：runtime middleware 的 request-scoped 状态，当前包含 provider type、target protocol 和 billing CCH。
-- `PreparedUpstreamBody`：runtime request preparation 的聚合结果，持有转换 context、pipeline/context、lossy warnings 和其它本次 attempt 所需状态。
+- `transformer_metadata`：统一 IR 内部的 request/response roundtrip sidecar，保存 raw-only Responses fragment、reasoning context、provider-local block 等转换信息；只服务当前转换链路，不是 runtime side store。
+- `PipelineContext`：runtime middleware 的 request-scoped 状态，当前包含 provider type、target protocol 和 billing CCH；它不负责保存 transformer 的工具映射。
+- `PreparedUpstreamBody`：runtime request preparation 的聚合结果，持有转换 context、pipeline/context、lossy warnings 和 xAI 等 provider-local 本次 attempt 状态；它必须跨越上游请求到客户端响应链路。
+- `runtime/side_stores/`：唯一允许保存跨 HTTP 请求兼容状态的位置，当前包括 Codex history、Gemini shadow 和 invalid Responses cipher 负缓存。
 
 ## 10. SSE 转换链路
 
@@ -581,11 +613,11 @@ session key 来源：
 
 ### 14.1 渠道定义如何进入 runtime
 
-Claude / Codex / Gemini CLI 渠道表单里的内置供应商 profile 使用同一份 Gateway profile catalog。仓库内的 bundled 默认数据是 `tauri/resources/gateway_provider_profiles.json`，后端 `provider_profiles.rs` 会优先读取 app data 下缓存的 `gateway_provider_profiles.json`，缓存无效或不存在时再 fallback 到 bundled 默认数据；`web/app/providers.tsx` 启动时先 `loadCachedGatewayProviderProfiles()`，再后台 `fetchRemoteGatewayProviderProfiles()` 刷新前端共享 store。
+Claude / Codex / Grok / Gemini CLI 渠道表单里的内置供应商 profile 使用同一份 Gateway profile catalog。仓库内的 bundled 默认数据是 `tauri/resources/gateway_provider_profiles.json`，后端 `provider_profiles.rs` 会优先读取 app data 下缓存的 `gateway_provider_profiles.json`，缓存无效或不存在时再 fallback 到 bundled 默认数据；`web/app/providers.tsx` 启动时先 `loadCachedGatewayProviderProfiles()`，再后台 `fetchRemoteGatewayProviderProfiles()` 刷新前端共享 store。
 
-前端共享类型 `GatewayProviderToolKey` 当前覆盖 `claude | codex | gemini`。`gateway_provider_profiles.json` 的 `tools.<tool>` 节点分别描述各 CLI 表单可选的 endpoint：Claude / Codex / Gemini CLI 表单都从共享 catalog 生成内置渠道选项。渠道下拉本身就是关联内置渠道的入口，不需要额外“关联内置渠道”按钮。
+前端共享类型 `GatewayProviderToolKey` 当前覆盖 `claude | codex | grok | gemini`，后端 `SUPPORTED_PROFILE_TOOLS` 保持同一集合。`gateway_provider_profiles.json` 的 `tools.<tool>` 节点分别描述各 CLI 表单可选的 endpoint：四个 CLI 表单都从共享 catalog 生成内置渠道选项。渠道下拉本身就是关联内置渠道的入口，不需要额外“关联内置渠道”按钮。
 
-用户选择某个 Claude / Codex / Gemini profile endpoint 并保存 provider 时，provider `data.meta` 不再固化 endpoint/profile 上的派生兼容快照，而是保存稳定引用：
+用户选择某个 Claude / Codex / Grok / Gemini profile endpoint 并保存 provider 时，provider `data.meta` 不再固化 endpoint/profile 上的派生兼容快照，而是保存稳定引用：
 
 ```json
 {
@@ -616,6 +648,7 @@ Base URL 是用户可编辑连接地址，仍保存在各 CLI 自己的 `setting
 
 - `web/features/coding/claudecode/components/ClaudeProviderFormModal.tsx::mergeGatewayMetaIntoProviderMeta()`
 - `web/features/coding/codex/components/CodexProviderFormModal.tsx::mergeGatewayMetaIntoProviderMeta()`
+- `web/features/coding/grok/components/GrokProviderFormModal.tsx::mergeGatewayMetaIntoProviderMeta()`
 - `web/features/coding/geminicli/components/GeminiCliProviderFormModal.tsx::mergeGatewayMetaIntoProviderMeta()`
 
 后端读取点是 `runtime/providers.rs::provider_meta_from_record()`，它同时兼容 snake_case 和 camelCase 字段，把 JSONB 中的 `data.meta` 解析成 `ProviderGatewayMeta`。如果 effective `providerType` 为空，当前代码会 fallback 到 provider record 的 `category`；这个 fallback 只用于 legacy 兼容，自定义渠道不要靠模型名或 base URL 伪造供应商身份。
@@ -751,13 +784,13 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 
 ### 14.5 参考项目对照下的供应商兼容清单
 
-对照参考项目后，结论不是“把参考实现的所有启发式都塞进 transformer”，而是要把每个上游供应商的 wire/API 方言明确落在 Gateway runtime/provider compat 层。参考项目里大量规则通过 provider name、base URL、model id 启发式触发；AI Toolbox 当前更保守：Claude / Codex / Gemini CLI 内置渠道只在 provider `data.meta.gatewayProfile` 保存 profile/endpoint 引用，runtime 再从最新 profile catalog 解析出 `providerType/apiFormat`、Codex Chat reasoning、图片策略等 effective meta；自定义渠道默认不靠模型名或 Base URL 猜供应商。
+对照参考项目后，结论不是“把参考实现的所有启发式都塞进 transformer”，而是要把每个上游供应商的 wire/API 方言明确落在 Gateway runtime/provider compat 层。参考项目里大量规则通过 provider name、base URL、model id 启发式触发；AI Toolbox 当前更保守：Claude / Codex / Grok / Gemini CLI 内置渠道只在 provider `data.meta.gatewayProfile` 保存 profile/endpoint 引用，runtime 再从最新 profile catalog 解析出 `providerType/apiFormat`、Codex Chat reasoning、图片策略等 effective meta；自定义渠道默认不靠模型名或 Base URL 猜供应商。
 
 因此判断“是否缺失”要分两类：
 
 | 类型 | AI Toolbox 当前状态 | 说明 |
 |---|---|---|
-| Claude / Codex / Gemini CLI 内置 profile 里已有 `providerType` 的供应商 | 基本已有 runtime 触发点 | 用户选择内置 endpoint 并保存后，provider `data.meta.gatewayProfile` 会记录 profile/endpoint 引用；runtime 按当前 catalog 动态解析供应商身份和兼容参数。Gemini CLI 共享同一份 `tools.gemini` endpoint，但 runtime 不会给 Gemini 应用 Codex 专属 `codexChatReasoning`。 |
+| Claude / Codex / Grok / Gemini CLI 内置 profile 里已有 `providerType` 的供应商 | 基本已有 runtime 触发点 | 用户选择内置 endpoint 并保存后，provider `data.meta.gatewayProfile` 会记录 profile/endpoint 引用；runtime 按当前 catalog 动态解析供应商身份和兼容参数。Gemini CLI 共享同一份 `tools.gemini` endpoint，但 runtime 不会给 Gemini 应用 Codex 专属 `codexChatReasoning`。 |
 | Gemini CLI 表单里的普通自定义渠道 | 只写 `meta.apiFormat`，不写 `gatewayProfile` | 如果用户手动填 DeepSeek/OpenRouter/Qwen 兼容 endpoint 但没有选择内置 profile，通常不会得到 effective `providerType`，因此只能获得通用协议转换，不能获得单供应商方言兼容。 |
 | 用户手动创建的 custom provider | 默认只做通用协议转换和通用 provider compat | 即使模型名包含 `deepseek`、`qwen`、`glm`、`minimax`，也不会自动套内置供应商规则；这是为了避免把聚合商或私有中转误判成官方方言。 |
 
@@ -765,8 +798,8 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 
 | 供应商 / 平台 | 参考项目行为 | AI Toolbox 当前放置位置和兼容逻辑 | 缺口 / 注意事项 |
 |---|---|---|---|
-| DeepSeek | Claude Anthropic endpoint 会修正 tool_use 历史 thinking；OpenAI Chat 会处理 JSON schema、thinking/reasoning；legacy completions 转 `/beta/completions`。 | `ProviderBodyCompat::DeepSeek`。Chat target：`response_format.type=json_schema` 降成 `json_object`；按 `reasoning_effort` 写 `thinking.type`；映射 effort 到 `high/max`；保留或回填 assistant tool call 的 `reasoning_content`，纯文本 assistant 历史移除 reasoning 字段。Anthropic target：规范化 tool thinking 历史，`thinking.disabled` 时移除 `output_config.effort` / `reasoning_effort`。Legacy completions：runtime 改写 URL 到 `/beta/completions`。 | Claude/Codex/Gemini 内置 DeepSeek profile 已覆盖。自定义 DeepSeek-like Chat 如果没有 `providerType=deepseek`，只会走通用 Chat 清理，不会套 DeepSeek 最终 reasoning 门控。 |
-| Moonshot / Kimi | reasoning vendor hints 下保留 tool-call reasoning_content；Anthropic 历史 tool_use 前补 thinking。 | `ProviderBodyCompat::Moonshot`。Chat target：JSON schema 降成 `json_object`，assistant tool call 缺 `reasoning_content` 时补 `"tool call"`。Anthropic target：规范化 tool thinking 历史。usage 解析层还对 Moonshot/Kimi Anthropic-compatible 的 `cached_tokens` 和负 input token 折扣做 provider-aware 处理。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。 | 已覆盖 Claude/Codex/Gemini profile。注意 usage 兼容不属于 transformer，也不应在成本层二次扣减缓存 token。 |
+| DeepSeek | Claude Anthropic endpoint 会修正 tool_use 历史 thinking；OpenAI Chat 会处理 JSON schema、thinking/reasoning；legacy completions 转 `/beta/completions`。 | `ProviderBodyCompat::DeepSeek`。Chat target：`response_format.type=json_schema` 降成 `json_object`；按 `reasoning_effort` 写 `thinking.type`；映射 effort 到 `high/max`；保留或回填 assistant tool call 的 `reasoning_content`，纯文本 assistant 历史移除 reasoning 字段。Anthropic target：规范化 tool thinking 历史，`thinking.disabled` 时移除 `output_config.effort` / `reasoning_effort`。Legacy completions：runtime 改写 URL 到 `/beta/completions`。 | Claude/Codex/Grok/Gemini 内置 DeepSeek profile 已覆盖。自定义 DeepSeek-like Chat 如果没有 `providerType=deepseek`，只会走通用 Chat 清理，不会套 DeepSeek 最终 reasoning 门控。 |
+| Moonshot / Kimi | reasoning vendor hints 下保留 tool-call reasoning_content；Anthropic 历史 tool_use 前补 thinking。 | `ProviderBodyCompat::Moonshot`。Chat target：JSON schema 降成 `json_object`，assistant tool call 缺 `reasoning_content` 时补 `"tool call"`。Anthropic target：规范化 tool thinking 历史。usage 解析层还对 Moonshot/Kimi Anthropic-compatible 的 `cached_tokens` 和负 input token 折扣做 provider-aware 处理。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。 | 已覆盖 Claude/Codex/Grok/Gemini profile。注意 usage 兼容不属于 transformer，也不应在成本层二次扣减缓存 token。 |
 | Z.ai / GLM / 智谱 | Codex Responses -> Chat 时按 GLM/Zhipu thinking 方言写 `thinking`。 | `ProviderBodyCompat::Zai`。Chat target：JSON schema 降成 `json_object`；`metadata.user_id/request_id` 提升为供应商顶层字段；没有 request_id 时生成 `req_<timestamp>`；`tool_choice` 强制 `auto`；按 `reasoning_effort` 写 `thinking.type`。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。 | 已覆盖内置 profile。`tool_choice` 强制 auto 是 provider 方言，不应挪到通用 transformer。 |
 | Doubao / Volces / 火山 | Chat/Responses 接口对 metadata、thinking 字段有差异。 | `ProviderBodyCompat::Doubao`。Chat target：`metadata.user_id/request_id` 提升，补 request_id，按 `reasoning_effort` 写 `thinking.type`，后续通用清理会移除顶层 `reasoning_effort`。Responses target：移除 `metadata`。 | profile 当前主要提供 Anthropic 或 Responses endpoint；若后续新增 Doubao Chat endpoint，可复用已有 Chat compat。 |
 | Bailian / DashScope / Qwen / Aliyun | Qwen/DashScope Chat thinking 使用 `enable_thinking`；Bailian SSE tool call 后的文本 delta 需要过滤/重排。 | `ProviderBodyCompat::Bailian`。Chat target：合并连续 assistant tool-call-only message。Stream adapter：Bailian OpenAI Chat SSE 在进入 response conversion 前过滤，见 `maybe_filter_bailian_openai_chat_sse_stream()`。Codex -> Chat reasoning 矩阵使用 `enable_thinking` + `reasoning_content`。 | profile 目前内置 Anthropic/Responses endpoint；Chat compat 已在 runtime 可用。SSE 过滤必须保持在 runtime raw stream adapter，不能下沉到 transformer。 |
@@ -777,7 +810,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 | MiMo | 参考项目把 MiMo 作为 reasoning vendor，tool-call 历史需要非空 reasoning_content；Anthropic tool thinking 也要规范化。 | `ProviderBodyCompat::Mimo`。Chat target：assistant tool call 缺 `reasoning_content` 时补 `"tool call"`。Anthropic target：规范化 tool thinking 历史。Codex -> Chat reasoning 矩阵使用 `thinking` + `reasoning_content`。text-only 启发式名单含 `mimo-v2.5-pro`，默认不启用启发式。 | 已覆盖内置 profile。 |
 | LongCat | 参考项目侧主要作为 Anthropic-compatible / OpenAI-compatible 供应商；消息 content 形态严格。 | `ProviderBodyCompat::Longcat`。Chat target：把 message `content` 规范成 block array，string/null/object 都转成数组形态。Anthropic target 作为 `AnthropicPlatform::LongCat`，使用 Bearer auth，并按非 Direct/非 Bedrock 平台过滤 native web_search。 | LongCat Anthropic target 的 path/header/auth 是 runtime 平台兼容，不是 Anthropic transformer 行为。 |
 | ModelScope | metadata 等 OpenAI 字段兼容性更严格。 | `ProviderBodyCompat::ModelScope`。Chat / Responses target 都会移除 `metadata`。profile 还可带 Codex -> Chat reasoning 配置。 | 已覆盖内置 profile。 |
-| xAI / Grok | cc-switch 对原生 Responses endpoint 做 namespace flatten/restore、tool allowlist 和严格字段清理；Chat 路径还需要模型字段和空 delta 兼容。 | `ProviderBodyCompat::Xai` + `runtime/compat/xai_responses.rs`。Chat target 按模型清理不支持字段并过滤无语义空 delta。Responses source/target 同为 OpenAI Responses 且 effective `providerType=xai` 时，runtime 展平 namespace、同步改写 input/tool_choice、清理 unsupported 字段和 tool type；2xx JSON/SSE 响应再用本次请求 restore map 恢复 namespace。 | `gateway_provider_profiles.json` 的 `xai_responses_passthrough` 是 catalog 登记/校验项，生产门控仍要求明确 Responses source、identity route、Responses target 和 `providerType=xai`。不能仅因 conversion route 为空就触发。 |
+| xAI / Grok | cc-switch 对原生 Responses endpoint 做 namespace flatten/restore、tool allowlist 和严格字段清理；Chat 路径还需要模型字段和空 delta 兼容。 | `ProviderBodyCompat::Xai` + `runtime/compat/xai_responses.rs`。Chat target 按模型清理不支持字段并过滤无语义空 delta。Responses source/target 同为 OpenAI Responses 且 effective `providerType` 为 `xai`、`x-ai` 或 `grok` 时，runtime 展平 namespace、同步改写 input/tool_choice、清理 unsupported 字段和 tool type；2xx JSON/SSE 响应再用本次请求 restore map 恢复 namespace。 | `gateway_provider_profiles.json` 的 `xai_responses_passthrough` 是 catalog 登记/校验项，生产门控仍要求明确 Responses source、identity route、Responses target 和 xAI/Grok provider alias。内置 xAI 的 Codex endpoint 提供 Responses；Grok endpoint 当前默认走 Chat。不能仅因 conversion route 为空就触发，也不能为了启用兼容而擅自改变 endpoint 默认协议。 |
 | Anthropic Bedrock | 参考项目和各平台要求 Bedrock Claude Messages path、version、body 字段不同。 | `ProviderBodyCompat::AnthropicBedrock` + `AnthropicPlatform::Bedrock`。URL 使用 `/model/{model}/invoke` 或 `/invoke-with-response-stream`；body 写 `anthropic_version=bedrock-2023-05-31`，移除 `model` 和 `stream`；native web_search 可保留并写 `anthropic_beta=["web-search-2025-03-05"]`；header 使用 Bedrock Anthropic version。 | 只在 target protocol 是 Anthropic Messages 时触发。不能只看 `providerType=bedrock`，必须带 target protocol 判断。 |
 | Anthropic Vertex | Vertex Claude Messages 需要 project/location publisher path 和 Vertex version。 | `ProviderBodyCompat::AnthropicVertex` + `AnthropicPlatform::Vertex`。URL 使用 base URL 中的 project/location 前缀拼 `publishers/anthropic/models/{model}:rawPredict` 或 `:streamRawPredict`；body/header 写 `anthropic_version=vertex-2023-10-16`；native web_search 会被过滤。 | 与 Gemini Vertex 是两套规则，同一个 `vertex` 字符串必须结合 target protocol 判断。 |
 | Gemini Vertex | Gemini Vertex 不接受 Gemini function call/response id。 | `ProviderBodyCompat::GeminiVertex`。Gemini Native target 下移除 `contents[].parts[].functionCall.id` 和 `functionResponse.id`；Gemini URL/version 仍由 runtime path 拼接处理。 | 只在 target protocol 是 Gemini Native 时触发，不改变 transformer 内部 synthetic id / thoughtSignature 语义。 |
@@ -797,7 +830,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 
 xAI Responses 是“同协议直通仍需 provider 方言兼容”的典型例外。它不创建 `ConversionRoute`，也不能把 provider 信息传入 transformer：
 
-1. runtime 必须明确识别 `source_protocol == OpenAiResponses`、`conversion_route.is_none()`、target 仍是 `OpenAiResponses`，并且 effective `providerType` 是 xAI/Grok。
+1. runtime 必须明确识别 `source_protocol == OpenAiResponses`、`conversion_route.is_none()`、target 仍是 `OpenAiResponses`，并且 effective `providerType` 是 `xai`、`x-ai` 或 `grok`。
 2. 在改写前从原始 namespace tools 推导 flat name -> `{namespace,name}` restore map。
 3. 先把 namespace child function 提升为顶层 function，并同步改写 input history 和具名 `tool_choice`；namespace choice 降为 `auto`。
 4. flat name 与顶层工具或其它 namespace child 碰撞时返回本地 `RequestSchema`，不能猜测所有权。
@@ -811,7 +844,7 @@ restore map 是 provider-specific request-local runtime 状态，随 `PreparedUp
 新增供应商或 endpoint 时，按这条顺序维护：
 
 1. 在 `gateway_provider_profiles.json` 增加或修正 profile/endpoint，明确 `providerType`、`apiFormat`、`baseUrl`，以及必要的 `reasoningField`、`codexChatReasoning`、`defaultMaxTokens`、图片策略字段。`codexChatReasoning` 只用于 Codex endpoint；即使 Gemini endpoint 从 Codex endpoint 派生，也不能复制或应用该字段。
-2. 确认前端表单保存内置 endpoint 时只写 `data.meta.gatewayProfile` 引用和用户覆盖项，不写 profile 派生快照；Claude/Codex/Gemini CLI 内置 endpoint 走对应 `mergeGatewayMetaIntoProviderMeta()`。
+2. 确认前端表单保存内置 endpoint 时只写 `data.meta.gatewayProfile` 引用和用户覆盖项，不写 profile 派生快照；Claude/Codex/Grok/Gemini CLI 内置 endpoint 走对应 `mergeGatewayMetaIntoProviderMeta()`。
 3. 如果只是已有 provider type 的新 endpoint，优先复用现有 `ProviderBodyCompat`。
 4. 如果是新供应商方言，在 `runtime/upstream.rs::ProviderBodyCompat` 增加识别和最小 body/stream/header 兼容逻辑。
 5. 如果是 provider-agnostic 的协议结构互转，才改 `transformer`。
@@ -908,6 +941,7 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/transformer/traits.rs` | `InboundTransformer` / `OutboundTransformer` |
 | `tauri/src/coding/proxy_gateway/transformer/kernel.rs` | JSON/error/SSE 转换入口，`ConversionContext` |
 | `tauri/src/coding/proxy_gateway/transformer/kernel_tests.rs` | 跨协议 request/response/SSE 内核回归 |
+| `tauri/src/coding/proxy_gateway/transformer/tool_media_tests.rs` | tool-result 图片跨协议与边界专项回归 |
 | `tauri/src/coding/proxy_gateway/transformer/stream.rs` | `StreamKernel`、source stream state、target stream writer |
 | `tauri/src/coding/proxy_gateway/transformer/sse.rs` | SSE block parser/writer |
 | `tauri/src/coding/proxy_gateway/transformer/llm/model.rs` | LLM request/response/message IR |
@@ -928,11 +962,12 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/transformer/shared/signature.rs` | provider-local signature marker/heuristic |
 | `tauri/src/coding/proxy_gateway/transformer/shared/lossy.rs` | 有损转换纯检测 |
 | `tauri/src/coding/proxy_gateway/transformer/shared/thinking_config.rs` | Gemini thinking budget / effort 标准映射 |
+| `tauri/src/coding/proxy_gateway/transformer/shared/tool_media.rs` | tool-result 图片识别、清理、限幅和目标媒体计划 |
 | `tauri/src/coding/proxy_gateway/transformer/shared/tool_schema.rs` | 跨协议 tool JSON Schema 规范化 |
 
 ## 18. 与参考项目架构差异
 
-本节记录 AI Toolbox 与参考项目的架构取舍差异。参考项目用于提供行为和边界对照，不是逐行移植目标；长期文档不记录某次本地 checkout、commit 或脏工作树状态。
+本节记录 AI Toolbox 与参考项目的架构取舍差异。参考项目用于提供行为和边界对照，不是逐行移植目标；具体 checkout、baseline commit、增量范围和工作树处理规则统一记录在本节后面的“参考项目同步与吸收日志”，而不是散落在任务消息里。
 
 当前方案按以下层次判断合理性和归属：
 
@@ -947,20 +982,23 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 
 | 维度 | AI Toolbox Proxy Gateway | AxonHub |
 |---|---|---|
-| 产品定位 | 本机 CLI 接管网关，服务 Claude Code、Codex、Gemini CLI 的运行时代理 | 通用 API gateway，面向多渠道、多 endpoint、多请求类型 |
+| 产品定位 | 本机 CLI 接管网关，服务 Claude Code、Codex、Grok CLI、Gemini CLI 的运行时代理 | 通用 API gateway，面向多渠道、多 endpoint、多请求类型 |
 | 协议范围 | 只把 Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini Native 四种聊天协议纳入 transformer 矩阵 | `llm.Request` 覆盖 chat、compact、completion、embedding、image、video、speech、transcription、translation、rerank 等 |
-| source 选择 | `runtime/routes.rs` 按 `/anthropic`、`/openai`、`/gemini` 前缀和 forwarded path 推导 source protocol | 不同 API handler 绑定不同 inbound transformer；inbound transformer 把原始 HTTP request 转成 `llm.Request` 并写入 `RequestType` / `APIFormat` |
+| source 选择 | `runtime/routes.rs` 按 `/anthropic`、`/openai`、`/grok`、`/gemini` 前缀和 forwarded path 推导 source protocol | 不同 API handler 绑定不同 inbound transformer；inbound transformer 把原始 HTTP request 转成 `llm.Request` 并写入 `RequestType` / `APIFormat` |
 | target 选择 | `runtime/providers.rs` 从 provider meta/settings/config.toml 推导 `UpstreamProvider.target_protocol` | `SelectAPIFormat()` 根据 request type、入站 API format 和 channel endpoints 选择 candidate API format，再由 `selectOutboundForCandidate()` 取对应 outbound transformer |
 | 是否转换 | `conversion_route()` 只有 `source_protocol != provider.target_protocol` 时创建；相同协议不进结构转换器 | pipeline 总是走 inbound -> unified -> outbound；如果启用 pass-through 且 API format 对齐，可以在 raw request/response/stream middleware 中回用原始 provider body |
 | transformer 职责 | 纯 payload 转换：JSON body、错误 body、SSE；不读 DB，不拼 URL/header/auth，不接触 provider type | transformer 接收/返回 `httpclient.Request/Response`，出站 transformer 会构造 provider HTTP request；endpoint、headers、auth finalization、custom executor 与 pipeline 更紧密 |
 | 编排位置 | 主编排集中在 `runtime/upstream.rs`：路由、候选 provider、模型改写、URL/header/auth、provider compat、side store、日志统计、failover | 主编排在 `llm/pipeline` + `internal/server/orchestrator`：middleware、candidate/channel retry、executor customization、持久化、pass-through、性能/限流/熔断等 |
-| middleware 粒度 | 当前 runtime `Pipeline` 只有 `on_inbound_request`、`on_outbound_body`、`on_stream_chunk`、`on_error`，主要处理 request-scoped body 兼容 | 参考项目 middleware 有 inbound LLM request、inbound raw response/stream、outbound raw request/error/response/stream、outbound LLM response/stream 等多个钩子 |
+| middleware 粒度 | 当前 runtime `Pipeline` 暴露 `on_inbound_request`、`on_outbound_body`、`on_stream_chunk`、`on_outbound_response`、`on_outbound_stream`、`on_error` 六个 hook；主要处理 request-scoped body 兼容和窄范围 reverse 回填 | 参考项目 middleware 有 inbound LLM request、inbound raw response/stream、outbound raw request/error/response/stream、outbound LLM response/stream 等多个钩子 |
 | retry/failover | Gateway runtime 按 CLI manifest single/failover 和 provider attempt 处理，转换上下文随一次 attempt 的 request/response/SSE 传递 | pipeline 内建 same-channel retry、cross-channel switch、empty response detection、first event/non-stream timeout，并由 outbound transformer 状态推进 candidate/model |
 | 跨请求状态 | `CodexHistoryStore`、`GeminiShadowStore` 是 runtime side store，不进入 transformer | orchestrator 的 `PersistenceState`、request execution、pass-through stream state、channel/model state 包装在 persistent transformer 和 middleware 周围 |
 | 非聊天协议 | OpenAI legacy completion、embedding、image、video、rerank 等明确不属于当前 transformer 矩阵 | 非聊天请求是统一模型和 endpoint selection 的一等路径，部分 outbound transformer 内部按 `RequestType` 分发到子转换器 |
 
-因此，AI Toolbox 当前不是参考项目的完整 pipeline port。更准确的定位是：
+因此，AI Toolbox 当前不是参考项目的完整 pipeline port。更准确的固定定位是：
 
+- **AxonHub = 主架构参考**：统一 IR、inbound -> IR -> outbound 生命周期、Responses 终态、stream 聚合和 middleware 逆序原则。
+- **cc-switch = 渠道兼容边界补充参考**：工具结果媒体、Codex 工具身份、供应商严格字段等具体 wire 兼容；不决定通用 transformer 架构。
+- **AI Toolbox 当前源码与测试 = 最终事实源**：决定本机 CLI Gateway 的协议范围、runtime/transformer 所有权和产品 failover 语义。
 - 借鉴参考项目的 Inbound/Outbound + 统一 IR 思路，但把 transformer 收窄成本机 CLI 网关的纯聊天协议转换层。
 - 把 provider 兼容、CLI 接管、URL/header/auth、日志统计、side store 和 settings 决策留在 runtime，而不是让 transformer 直接成为可执行 HTTP pipeline。
 - 对同协议请求使用 runtime 直通语义，不引入参考项目那种可配置 raw body/response pass-through；这样能继续保留 AI Toolbox 对模型名、`[1M]` 标记、provider meta、billing CCH、cache injection 等本机 CLI 兼容处理。
@@ -974,11 +1012,120 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 - Responses raw tool sidecar 的 `openai_responses_tool_signatures_complete` 和完整 signature 匹配，是 AI Toolbox 针对自身 request-scoped raw merge 的额外 fail-closed 门控。
 - runtime 同时检查最终客户端 body 与原始 `upstream_response_body`，是本项目跨协议转换、retry/failover 和可观测性链路所需的双重分类，不要求照搬 AxonHub 的内部响应对象。
 
-## 19. 参考项目同步与审计清单
+## 19. 参考项目同步与吸收流程
 
-参考项目的价值主要是行为对照和 fixture 对照，不是代码翻译。同步时应以“当前代码是否仍满足同一 wire behavior”为标准，而不是以目录名、函数名或中间模型字段名是否相同为标准。
+参考项目的价值主要是行为对照和 fixture 对照，不是代码翻译。同步时应以“当前代码是否仍满足同一 wire behavior”为标准，而不是以目录名、函数名或中间模型字段名是否相同为标准。本文记录每个参考项目的远端、ref、baseline commit 和已吸收结论；下一次同步必须从本文记录的 baseline 之后开始。
 
-### 19.1 行为同步策略
+### 19.1 固定参考项目与目录规则
+
+参考项目相对于 AI Toolbox 仓库根目录固定为：
+
+| 项目 | 相对路径 | 默认远端 | 默认 ref | 角色 |
+|---|---|---|---|---|
+| cc-switch | `../cc-switch` | `https://github.com/farion1231/cc-switch.git` | `origin/main` | 渠道/provider 兼容边界补充 |
+| AxonHub | `../axonhub` | `https://github.com/looplj/axonhub.git` | `origin/unstable` | 统一 IR、生命周期、SSE/Responses 终态的主架构参考 |
+
+不得把任何机器绝对路径写入规则、脚本、代码或长期文档。不同机器只要保持同级目录关系即可复用本流程。
+
+如果参考项目目录不存在：
+
+1. 读取本文记录的远端地址和 ref。
+2. 用远端地址和 ref 对应的目标分支 clone 到仓库根目录的同级相对路径，例如 `git clone --branch <branch> <remote> <sibling-path>`。
+3. 记录实际 checkout commit，再开始增量分析。
+
+如果目录已经存在：
+
+1. 先运行只读 `git status --short --branch`、`git rev-parse HEAD` 和 remote/ref 检查。
+2. 执行 `git fetch --prune origin <branch>` 更新 remote-tracking ref；fetch 不改 working tree/index，不能把它和 checkout/pull 混为一谈。
+3. 工作树干净且当前 checkout 分支就是表中目标分支时，可以用 fast-forward 方式更新到对应 remote-tracking ref。
+4. 工作树有用户改动、未跟踪文件或当前 checkout 不是目标分支时，不得 reset、checkout、pull、clean、覆盖或删除；直接基于 fetch 后的 remote-tracking ref、已有 commit 或 `git diff` 做分析，不改写该参考项目工作树。
+5. 参考项目中的用户未跟踪文件不是本任务产物，必须保留。
+
+若 baseline commit 不存在于当前仓库、远端发生历史重写，或目标 ref 无法证明包含 baseline，不能直接把当前 HEAD 当作连续增量；应先记录阻断原因并重新建立明确的 baseline，再分析后续差异。
+
+### 19.2 参考项目源码查询入口
+
+以下路径都相对于各参考项目仓库根目录。后续同步先按问题类型进入这些目录，再用字段名、事件名、函数名或 commit diff 做窄搜索；不要只看提交标题，也不要一开始扫描整个仓库。
+
+cc-switch 主要用于查询 CLI 和 provider 的严格 wire 兼容：
+
+| 查询目标 | cc-switch 起始位置 |
+|---|---|
+| HTTP 服务入口、route 和 handler context | `src-tauri/src/proxy/` 下的 `server.rs`、`handlers.rs`、`handler_context.rs` |
+| 上游 URL、header、auth、转发、重试和 failover | `src-tauri/src/proxy/` 下的 `forwarder.rs`、`provider_router.rs`、`failover_switch.rs` |
+| Claude/Codex/Gemini provider 模块与 source/target 判定 | `src-tauri/src/proxy/providers/` 下的 `claude.rs`、`codex.rs`、`gemini.rs`、`adapter.rs` |
+| JSON 协议转换 | `src-tauri/src/proxy/providers/` 下的 `transform.rs`、`transform_responses.rs`、`transform_codex_chat.rs`、`transform_codex_anthropic.rs`、`transform_gemini.rs` |
+| SSE parser、协议 stream adapter 和 Responses SSE | `src-tauri/src/proxy/sse.rs`，以及 `src-tauri/src/proxy/providers/` 下的 `streaming*.rs`、`codex_responses_sse.rs` |
+| xAI native Responses namespace/sanitize | `src-tauri/src/proxy/providers/` 下的 `transform_codex_responses_namespace.rs`、`transform_codex_responses_xai_sanitize.rs`；生产调用点继续查 `src-tauri/src/proxy/forwarder.rs`、`src-tauri/src/proxy/handlers.rs` 和 `src-tauri/src/proxy/providers/codex.rs` |
+| tool-result 媒体与残留媒体清理 | `src-tauri/src/proxy/` 下的 `tool_media.rs`、`media_sanitizer.rs` |
+| 回归测试 | 多数测试与实现放在同一 Rust 文件的 `#[cfg(test)]` 中；先检索目标函数和 `#[test]`，不要假设一定存在独立 `tests/` 目录 |
+
+AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
+
+| 查询目标 | AxonHub 起始位置 |
+|---|---|
+| 统一 request/response、tool、reasoning 和 provider extension IR | `llm/model.go`、`llm/tools.go`、`llm/reasoning.go`、`llm/provider_extensions.go` |
+| Transformer 接口 | `llm/transformer/interfaces.go` |
+| 四类公共协议 | `llm/transformer/` 下的 `anthropic/**`、`openai/**`、`openai/responses/**`、`gemini/**` |
+| provider 方言 | `llm/transformer/` 下的 `deepseek/**`、`moonshot/**`、`zai/**`、`bailian/**`、`xai/**`、`openrouter/**` 等；Codex/Copilot 专项继续查 `llm/transformer/openai/codex/**`、`llm/transformer/openai/copilot/**` |
+| Pipeline 生命周期 | `llm/pipeline/` 下的 `pipeline.go`、`middleware.go`、`stream.go`、`non_streaming.go`、`empty_response.go`、`upstream_error.go` |
+| 生产编排、候选 endpoint、执行与 retry | `internal/server/orchestrator/` 下的 `inbound.go`、`outbound.go`、`transformer.go`、`request_execution.go`、`retry.go`、`pass_through.go`、`select_endpoints.go` |
+| Golden fixture | 各协议目录下的 `testdata/**`；Responses 重点查 `llm/transformer/openai/responses/testdata/**` |
+| 完整用户路径 | `integration_test/openai/responses/**`，再按同级目录查其它协议或场景 |
+
+按问题类型选择第一站：
+
+| 问题类型 | 优先查询顺序 |
+|---|---|
+| 公共 JSON 字段或公开协议 shape 映射 | AxonHub `llm/transformer/<protocol>`，再核对官方协议语义和 AI Toolbox transformer |
+| 统一 IR 字段、状态所有权、request-scoped metadata | AxonHub `llm/model.go`、`llm/pipeline/**`，再映射到 AI Toolbox `llm` / `ConversionContext` / `transformer_metadata` |
+| SSE 事件、聚合、usage、错误或终态 | AxonHub 对应协议 stream/aggregator + `llm/pipeline/stream.go`，再核对 AI Toolbox `StreamKernel` 和 runtime response lifecycle |
+| provider/channel 严格字段、header、URL 或直通 quirk | cc-switch `src-tauri/src/proxy/providers/**` + `forwarder.rs`，最终放入 AI Toolbox runtime/profile 边界 |
+| Codex namespace、custom tool、tool_search 或工具身份 | cc-switch Codex transforms 与 Responses SSE，实现时继续保持 AI Toolbox request-scoped context 所有权 |
+| retry、failover、错误分类或响应可观测性 | 先读 AI Toolbox runtime 的实际产品语义，再对照 AxonHub orchestrator/pipeline 和 cc-switch forwarder |
+
+### 19.3 一次同步的标准步骤
+
+每次用户要求“看参考项目网关部分最新改动”或等价请求时，按以下顺序执行：
+
+1. 先阅读本文、目标模块 `AGENTS.md`、当前源码和相关测试。
+2. 检查两个相对兄弟目录；缺失则按 19.1 clone，存在则先 fetch 远端 ref，再按工作树状态决定是否 fast-forward checkout 分支。
+3. 从本文读取两个项目各自的 baseline commit，只分析 `baseline..<remote-tracking-ref>`，例如 `baseline..origin/main`；只有 HEAD 已确认等于该 remote-tracking ref 时才可以等价使用 `baseline..HEAD`。
+4. 按 Gateway 相关路径和提交内容筛选增量，不能只按 commit message 判断；需要阅读真实 diff、测试和调用层级。
+5. 对每条候选改动先分类：
+   - **协议直通**：只吸收已证明的 provider/channel wire 兼容点，放在 `runtime` 的 profile、body/header/stream adapter 或 middleware。
+   - **协议转换**：先以 AxonHub 的统一 IR、inbound -> IR -> outbound 生命周期、状态所有权、SSE/终态和 failover 思路为主，再吸收 cc-switch 的具体渠道边界；公共协议语义进入 transformer，provider-local 形态进入 `transformer_metadata`，跨请求状态留在 `runtime/side_stores`。
+   - **不属于当前范围**：记录不吸收及原因，不为了对齐参考项目半实现 WebSocket、账号体系、数据库、非聊天协议或云端 orchestrator。
+6. 对要吸收的行为映射到 AI Toolbox 当前源码位置，补最贴近用户路径的回归测试；仅有参考项目代码而没有当前路径证据时，不写成已确认缺陷。
+7. 完成代码和测试后重新跑相关校验，再更新本文 baseline 和吸收日志。
+
+每次吸收日志至少记录：参考项目 commit、增量范围、吸收内容、不吸收内容及原因、AI Toolbox 源码位置、回归测试位置、验证命令和当前状态（已吸收/待处理/明确不吸收）。
+
+### 19.4 本次初始对齐 baseline
+
+以下是本次对两个参考项目进行初始内容吸收后的固定基线。首次增量审阅范围用于说明本次系统检查过的 commit 区间；为建立现有能力基线而额外回溯核验的关键提交单独记录在结论中。后续同步直接从 baseline 之后开始，不得从更早历史重新扫描，除非本文明确重建 baseline。
+
+| 项目 | 相对路径 | 远端 ref | 初始基线 commit | 首次增量审阅范围 |
+|---|---|---|---|---|
+| cc-switch | `../cc-switch` | `origin/main` | `878c26f31e012ba32b9772bd080bd4fa9e7d495e` | `a377d79303bc1e592d2783d559ca5bd6b8ba1417..878c26f31e012ba32b9772bd080bd4fa9e7d495e` |
+| AxonHub | `../axonhub` | `origin/unstable` | `9470478493e0302003ba55ca874bd56f33dfc759` | `d327c759cf2c8e32196a5a3a42694c329c123bee..9470478493e0302003ba55ca874bd56f33dfc759` |
+
+本次初始吸收结论：
+
+- 架构主次固定为 **AxonHub 主架构、cc-switch 渠道兼容边界补充、AI Toolbox 当前源码/测试最终定案**。
+- 为建立 xAI native Responses 现有能力基线，额外回溯核验了 cc-switch `dbb5bd1537ed348dd4e490543b27c09e2efc86b9`。AI Toolbox 的 `runtime/compat/xai_responses.rs` 与 `runtime/upstream.rs` 已对齐其 namespace flatten/restore、input/tool_choice 同步改写、冲突拒绝、xAI sanitize、2xx JSON/SSE 恢复和 request-scoped 状态边界；生产门控接受 `providerType=xai|x-ai|grok`，并由 runtime 回归测试锁定。该行为属于同协议直通的 provider 方言兼容，不进入通用 transformer。
+- 内置 xAI profile 的 Codex 工具提供 `openai_responses` endpoint；Grok 工具当前默认只提供 `openai_chat` endpoint。自定义或存量 Grok Responses provider 仍可触发上述 native Responses 兼容，但本次不改变内置 Grok endpoint 的产品默认值。
+- cc-switch 的 `6c9d444`、`878c26f` 证明 tool-result media 不能继续作为 Chat tool role 的字符串 JSON；图片应按目标协议提取到 Chat synthetic user turn、Responses `input_image` 或 Gemini 原生媒体位置，同时保持无媒体结果的旧字节形态。AI Toolbox 已在当前工作树吸收该图片子集，并由 transformer 回归测试锁定。
+- cc-switch 的媒体识别规则吸收“stringified JSON、MCP image shape、嵌套 `content`、结构化 image data URL / 远程 URL、纯字符串 data URL 的 8 KiB 阈值与 malformed data URL 边界”，但没有逐行复制其 provider/runtime 代码。cc-switch 同时支持 file/audio tool media；AI Toolbox 当前 IR 不足以承载完整 file/audio tool-result roundtrip，本次明确不宣称已吸收。
+- 当前实现位置为 `shared/tool_media.rs`、`openai/chat.rs`、`openai/responses/shared.rs`、`anthropic/inbound.rs` / `outbound.rs`、`gemini/convert.rs`；精确回归集中在 `transformer/tool_media_tests.rs`，覆盖并行工具结果、stringified/MCP、Anthropic 原生 block、Gemini 2/3、非法/远程 data URL、残留 base64 限幅和无媒体零差异。
+- 源码终审额外确认并修复了 Gemini Native 同一 `content.parts` 中多个并行 `functionResponse` 被覆盖的问题；现在按工具结果拆成多个统一 IR tool message，并由 `gemini_parallel_function_responses_preserve_every_tool_result` 锁定。
+- AxonHub 的统一 `llm.Request` / `llm.Response` IR、inbound -> IR -> outbound 生命周期、response/stream reverse lifecycle、Responses terminal/error 语义和 middleware 逆序原则与 AI Toolbox 当前架构一致，应继续作为主参考。
+- AxonHub 的 Responses WebSocket executor/session/pool、数据库/channel/entity、云网关账号与 orchestrator 体系不属于当前本机 HTTP JSON/SSE Gateway，不吸收半套实现。
+- AxonHub `94704784` 新增的 Responses `cache_write_tokens` 双向 usage 映射已记录为后续独立 usage/cost 能力；AI Toolbox 当前没有完整统一字段、观测、SQLite 摘要和成本语义，本次不宣称已实现。
+- 2026-07-25 再次 fetch 并核验时，cc-switch `origin/main` 和 AxonHub `origin/unstable` 仍分别等于上述 baseline，没有 baseline 之后待吸收的新提交。
+- 本次验证命令：`pnpm test`、`pnpm exec tsc --noEmit`、`cd tauri && cargo test transformer --no-default-features`、`cd tauri && cargo test`、`cd tauri && cargo test --lib coding::proxy_gateway::runtime::upstream`、`cd tauri && cargo test --lib coding::proxy_gateway::runtime::compat::xai_responses`、`git diff --check`；均通过。
+
+### 19.5 行为同步策略
 
 | 同步对象 | 可自动化程度 | 当前建议 |
 |---|---|---|
@@ -990,7 +1137,7 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 
 同步产出至少要包含三件事：行为差异说明、Rust 实现位置、回归测试或 fixture 断言。若只能证明“参考项目有某段代码”，但不能证明 AI Toolbox 当前用户路径会触发同类 wire behavior，就不要把它写成缺陷。
 
-### 19.2 Go/Rust 对照审计点
+### 19.6 Go/Rust 对照审计点
 
 参考项目中很多行为来自 Go struct tag、`omitempty`、`json.RawMessage` 和 stream aggregator。迁移到 Rust 时最容易产生偏差的点如下：
 
@@ -1005,7 +1152,7 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 | 跨请求状态 | `CodexHistoryStore` 和 `GeminiShadowStore` 必须有容量上限，并且依赖可靠 session key。 | 使用 `"default"` 之类兜底 session 导致跨会话污染，或把跨请求缓存塞进 transformer。 |
 | 有损转换 | `shared/lossy.rs` 做纯检测，runtime settings/header 决定拒绝、放过和 `X-Transformer-Lossy`。 | 在 transformer 中静默丢弃高风险字段，或默认把所有 best-effort 降级都当成 hard reject。 |
 
-### 19.3 当前已合并的细节清单
+### 19.7 当前已合并的细节清单
 
 `1b1bea6` 修复的 F-1 至 F-13 已提炼为以下长期不变量。后续实现或参考项目同步不能只保留测试名称，必须继续满足这些行为：
 
@@ -1016,7 +1163,7 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 | F-3 | Chat source tool call 首次输出 identity 前必须同时拿到真实 name 和 id；仅在 finish/EOF 仍缺 id 时生成 synthetic fallback。 |
 | F-4 | Responses reasoning 只能归属当前 user turn，连续 reasoning 要合并；跨 user boundary 不得挂到历史 assistant。 |
 | F-5 | Responses raw tool fragment 只有在 structured signature 数量、顺序、内容和 complete marker 全部匹配时才能合并；证据缺失或不可签名必须整体 fail-closed。 |
-| F-6 | 长期架构文档与点-in-time 审计必须区分基线、修复提交和当前状态；不能继续把已提交实现描述成未提交工作树。 |
+| F-6 | 唯一长期文档必须同时记录当前源码快照、参考项目 baseline/增量和当前吸收状态；不再依赖独立点-in-time 审计文件，也不能把已提交实现描述成未提交工作树。 |
 | F-7 | lossy warning 归 `PreparedUpstreamBody.lossy_warnings` 所有，不进入 `ConversionContext` 或 `PipelineContext`。 |
 | F-8 | SSE parser 同时存在 LF/CRLF delimiter 时必须消费物理位置最早者，不能按换行类型固定优先级。 |
 | F-9 | forced-stream Responses 只有收到明确 terminal event 才能聚合成 JSON；缺 terminal 按连接错误处理，稀疏 snapshot 按字段合并。 |
@@ -1034,13 +1181,13 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 - OpenAI Responses `/responses/compact`、Codex official forced SSE 聚合、Copilot 动态 target、Ollama wire adapter：见 5、11、14、16 节。
 - xAI native Responses namespace passthrough 和参考项目职责层次：见 14、18 节。
 
-### 19.4 长期架构文档与点-in-time 审计
+### 19.8 当前状态与历史基线
 
-本文负责长期架构、行为边界和修改准则；`transformer-protocol-conversion-audit.md` 与 `transformer-protocol-conversion-fix-plan.md` 保留 `3c138e6 -> 1b1bea6` 这次审计的证据、修复明细和验证结果。它们不是互相替代的文档，也不再假设审计文档已经删除。
+本文负责长期架构、行为边界、参考项目 baseline、增量吸收日志和修改准则。历史审查中的 F-1 至 F-13 已提炼到 19.7 和各主题章节；不再依赖单独的审计报告或修复计划文件。
 
 以下数字是 `1b1bea6` 对应的 reference fixture 验收基线。以后有意新增或删除 fixture 时，应同步更新分类测试和本文，而不是为了保住旧数字阻止合理演进：
 
-| 类别 | 基线 |
+| 类别 | 当前基线 |
 |---|---|
 | 参考 fixture 分类 | `reference_all_copied_fixtures_are_classified` 固定要求 reference fixture corpus 为 118 个，新增或删除 fixture 必须同步更新分类逻辑和断言原因。 |
 | 参考 request fixture | supported request fixture 当前为 35 个，全部要能转换到所有非 identity target，并满足目标协议基本 shape。 |
@@ -1070,4 +1217,4 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 - 只改 transformer：运行 `cd tauri && cargo test transformer --no-default-features`。
 - 改 runtime 转发、provider compat、side store 或 response 分类：先运行 `cd tauri && cargo test --lib coding::proxy_gateway::runtime::upstream`。
 - 跨 runtime/transformer、影响保存/应用/同步/恢复或准备交付的大功能：运行 `cd tauri && cargo test`、`pnpm test` 和 `pnpm exec tsc --noEmit` 的完整集合。
-- 只改本文档：至少运行陈旧表述搜索和 `git diff --check`，并人工核对本文、审计报告、修复计划与当前源码基线是否一致。
+- 只改本文档：至少运行陈旧表述搜索和 `git diff --check`，并人工核对本文、当前源码、当前测试、AxonHub、cc-switch 以及文档记录的 baseline/增量日志是否一致。

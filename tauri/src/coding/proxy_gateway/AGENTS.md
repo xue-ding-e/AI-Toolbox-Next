@@ -4,6 +4,14 @@
 
 - 提供本机代理网关运行态、CLI 接管状态、配置备份恢复、请求详情文件、数据库请求摘要/统计和模型级健康状态。
 
+## 协议转换长期维护入口
+
+- 修改 Gateway 协议转换、provider target protocol、协议直通/转换判定、SSE/响应分类、runtime pipeline、side store 或相关 fixture 前，必须先阅读仓库唯一长期文档 [`docs/gateway-protocol-conversion.md`](../../../../docs/gateway-protocol-conversion.md)，再核对本模块规则、当前源码和测试。
+- 代码或测试修改完成后，必须在同一任务内更新该文档，并重新对照当前源码、测试以及两个参考项目。文档与源码/测试冲突时，以源码和测试为最终事实源。
+- 参考项目只使用相对兄弟路径 `../cc-switch` 和 `../axonhub`。目录不存在时按文档远端地址和目标分支 clone 到同级目录；目录存在时先检查并保留用户工作树改动。允许用 `git fetch` 更新 remote-tracking ref，但只有工作树干净且当前 checkout 分支就是文档目标分支时才能 fast-forward；其它情况直接分析 fetch 后的 remote-tracking ref。同步只能从文档记录的 baseline commit 之后开始分析，完成后必须记录新 commit、增量范围、吸收结论和回归测试。
+- 同协议请求保持 runtime 直通语义，只补 provider/channel wire 兼容；跨协议请求由 `transformer/` 负责结构转换，runtime 负责路由、URL/header/auth、provider adapter、failover 和跨请求状态。不要把参考项目的数据库、云网关账号、executor/session/pool 或 provider 识别启发式逐行移植进本模块。
+- 工具结果媒体的共享不变量是：只有确认识别出图片时才改写 tool result；无媒体必须继续旧转换路径。Chat 将媒体移到同一工具结果批次后的 synthetic user turn，Responses 输出 `input_image`，Anthropic 输出原生 `image` block，Gemini 2.x 使用 `functionResponse` 后的兼容 parts、Gemini 3 使用 `functionResponse.parts`。当前 IR 只承载图片/文档，不把 cc-switch 的 file/audio tool media 扩展误写成已支持能力。
+
 ## Source of Truth
 
 - 全局网关设置来自 AI Toolbox 主数据库的 `proxy_gateway_settings`；必须直接读写 SQLite JSONB，旧 SurrealDB 仅用于启动时一次性导入。CLI 接管状态不进数据库，以 `proxy-gateway/cli-proxy/<cli>/manifest.json` 为准。

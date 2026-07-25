@@ -16,6 +16,10 @@ mod stream;
 mod traits;
 mod types;
 
+#[cfg(test)]
+#[path = "tool_media_tests.rs"]
+mod tool_media_tests;
+
 pub use error::ProtocolConversionError;
 pub use kernel::{
     convert_error_response_body, convert_request_body, convert_request_body_with_context,
