@@ -23,6 +23,8 @@ pub(crate) const RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY: &str =
 pub(crate) const RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY: &str = "openai_responses_compaction_created_by";
 pub(crate) const RESPONSES_RAW_TOOLS_METADATA_KEY: &str = "openai_responses_raw_tools";
 pub(crate) const RESPONSES_TOOL_SIGNATURES_METADATA_KEY: &str = "openai_responses_tool_signatures";
+pub(crate) const RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY: &str =
+    "openai_responses_tool_signatures_complete";
 pub(crate) const RESPONSES_RAW_TOOL_CHOICE_METADATA_KEY: &str = "openai_responses_raw_tool_choice";
 pub(crate) const RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY: &str = "openai_responses_raw_input_items";
 /// Request top-level `reasoning.context` (e.g. `"all_turns"`), not input-item context.
@@ -51,23 +53,33 @@ pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut 
             .filter(|(_, tool)| !is_structurally_represented_responses_tool(tool))
             .map(|(index, tool)| raw_responses_fragment(index, tool.clone()))
             .collect::<Vec<_>>();
-        if !raw_tools.is_empty() {
+        let has_raw_tools = !raw_tools.is_empty();
+        if has_raw_tools {
             request.transformer_metadata.insert(
                 RESPONSES_RAW_TOOLS_METADATA_KEY.to_string(),
                 Value::Array(raw_tools),
             );
         }
 
-        let tool_signatures = tools
+        let structured_tool_signatures = tools
             .iter()
             .filter(|tool| is_structurally_represented_responses_tool(tool))
-            .filter_map(responses_tool_signature)
-            .map(Value::String)
+            .map(responses_tool_signature)
             .collect::<Vec<_>>();
-        if !tool_signatures.is_empty() {
+        let tool_signatures = structured_tool_signatures
+            .iter()
+            .map(|signature| signature.clone().map(Value::String))
+            .collect::<Option<Vec<_>>>();
+        if has_raw_tools || tool_signatures.as_ref().is_some_and(|items| !items.is_empty()) {
             request.transformer_metadata.insert(
                 RESPONSES_TOOL_SIGNATURES_METADATA_KEY.to_string(),
-                Value::Array(tool_signatures),
+                Value::Array(tool_signatures.clone().unwrap_or_default()),
+            );
+        }
+        if has_raw_tools {
+            request.transformer_metadata.insert(
+                RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY.to_string(),
+                Value::Bool(tool_signatures.is_some()),
             );
         }
     }
@@ -117,6 +129,7 @@ pub(super) fn responses_tool_signature(tool: &Value) -> Option<String> {
         tool_type @ ("function" | "custom") => tool
             .get("name")
             .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
             .map(|name| format!("{tool_type}:{name}")),
         tool_type => Some(tool_type.to_string()),
     }
@@ -174,14 +187,19 @@ pub(super) fn append_responses_input_to_messages(input: Option<&Value>, messages
         Some(Value::Array(items)) => {
             let mut index = 0;
             let mut pending_trailing_reasoning: Option<Message> = None;
+            let mut last_assistant_index: Option<usize> = None;
             while index < items.len() {
                 let item = &items[index];
                 if item.get("type").and_then(Value::as_str) == Some("reasoning") {
-                    // Flush any previous trailing reasoning before starting a new one.
-                    if let Some(pending) = pending_trailing_reasoning.take() {
-                        attach_pending_reasoning_to_previous_assistant(messages, pending);
-                    }
+                    // Consecutive reasoning items belong to the same assistant turn.
+                    // Accumulate them so an immediately following assistant/tool item
+                    // receives the complete reasoning instead of dropping earlier items.
                     let mut reasoning_message = responses_reasoning_message(item);
+                    if let Some(pending) = pending_trailing_reasoning.take() {
+                        let mut pending = pending;
+                        append_reasoning_fields(&mut pending, reasoning_message);
+                        reasoning_message = pending;
+                    }
                     if items.get(index + 1).is_some_and(|following| {
                         merge_responses_following_item_into_reasoning_message(
                             &mut reasoning_message,
@@ -190,6 +208,7 @@ pub(super) fn append_responses_input_to_messages(input: Option<&Value>, messages
                     }) {
                         // Forward-merged with following item — not trailing.
                         messages.push(reasoning_message);
+                        last_assistant_index = messages.len().checked_sub(1);
                         index += 2;
                     } else {
                         // May be trailing: hold until next non-reasoning boundary or end.
@@ -203,22 +222,22 @@ pub(super) fn append_responses_input_to_messages(input: Option<&Value>, messages
                 let item_role = responses_item_boundary_role(item);
                 if item_role.as_deref() == Some("user") {
                     if let Some(pending) = pending_trailing_reasoning.take() {
-                        attach_pending_reasoning_to_previous_assistant(messages, pending);
+                        flush_pending_reasoning(messages, pending, last_assistant_index);
                     }
+                    last_assistant_index = None;
                 } else if let Some(pending) = pending_trailing_reasoning.take() {
                     // Non-user item after bare reasoning: try attach, else emit standalone.
-                    if !attach_pending_reasoning_to_previous_assistant(messages, pending.clone()) {
-                        messages.push(pending);
-                    }
+                    flush_pending_reasoning(messages, pending, last_assistant_index);
                 }
 
                 append_responses_item_to_messages(item, messages);
+                if item_role.as_deref() == Some("assistant") {
+                    last_assistant_index = messages.len().checked_sub(1);
+                }
                 index += 1;
             }
             if let Some(pending) = pending_trailing_reasoning.take() {
-                if !attach_pending_reasoning_to_previous_assistant(messages, pending.clone()) {
-                    messages.push(pending);
-                }
+                flush_pending_reasoning(messages, pending, last_assistant_index);
             }
         }
         Some(Value::String(text)) => messages.push(Message {
@@ -231,16 +250,35 @@ pub(super) fn append_responses_input_to_messages(input: Option<&Value>, messages
     }
 }
 
-/// Attach trailing reasoning fields onto the last assistant message (append, not replace).
-/// Returns true if attached.
-pub(super) fn attach_pending_reasoning_to_previous_assistant(
+fn flush_pending_reasoning(
+    messages: &mut Vec<Message>,
+    pending: Message,
+    assistant_index: Option<usize>,
+) {
+    let attached = assistant_index.is_some_and(|index| {
+        attach_pending_reasoning_to_assistant_at(messages, index, pending.clone())
+    });
+    if !attached {
+        messages.push(pending);
+    }
+}
+
+fn attach_pending_reasoning_to_assistant_at(
     messages: &mut [Message],
+    assistant_index: usize,
     pending: Message,
 ) -> bool {
-    let Some(assistant) = messages.iter_mut().rev().find(|message| message.role == "assistant")
-    else {
+    let Some(assistant) = messages.get_mut(assistant_index) else {
         return false;
     };
+    if assistant.role != "assistant" {
+        return false;
+    }
+    append_reasoning_fields(assistant, pending);
+    true
+}
+
+fn append_reasoning_fields(assistant: &mut Message, pending: Message) {
     if let Some(text) = pending.reasoning_content.filter(|text| !text.is_empty()) {
         match &mut assistant.reasoning_content {
             Some(existing) if !existing.is_empty() => {
@@ -265,7 +303,6 @@ pub(super) fn attach_pending_reasoning_to_previous_assistant(
     for (key, value) in pending.transformer_metadata {
         assistant.transformer_metadata.entry(key).or_insert(value);
     }
-    true
 }
 
 pub(super) fn responses_item_boundary_role(item: &Value) -> Option<String> {
@@ -728,6 +765,18 @@ pub(crate) fn merge_raw_responses_fragments_with_signatures(
     raw_fragments: Option<&Value>,
     expected_signatures: Option<&[String]>,
 ) -> Vec<Value> {
+    if let Some(expected_signatures) = expected_signatures {
+        let structured_signatures = structured
+            .iter()
+            .map(responses_tool_signature)
+            .collect::<Option<Vec<_>>>();
+        if structured_signatures.as_deref() != Some(expected_signatures) {
+            // Middleware or an intermediate conversion changed the structured
+            // tool set. Reinsert only the structured tools instead of placing
+            // raw fragments at indexes that no longer describe the source.
+            return std::mem::take(structured);
+        }
+    }
     let raw = raw_fragments
         .and_then(Value::as_array)
         .map(|items| {
@@ -1249,6 +1298,7 @@ pub(super) fn responses_status_to_finish(status: Option<&str>, has_tool: bool) -
     match status {
         Some("failed") => "error".to_string(),
         Some("incomplete") => "length".to_string(),
+        Some("cancelled") | Some("canceled") => "cancelled".to_string(),
         Some("completed") if has_tool => "tool_calls".to_string(),
         Some("completed") => "stop".to_string(),
         _ => "stop".to_string(),
@@ -1259,7 +1309,7 @@ pub(super) fn finish_to_responses_status(reason: Option<&str>) -> &'static str {
     match reason {
         Some("error") => "failed",
         Some("length") | Some("max_tokens") => "incomplete",
+        Some("cancelled") | Some("canceled") => "canceled",
         _ => "completed",
     }
 }
-

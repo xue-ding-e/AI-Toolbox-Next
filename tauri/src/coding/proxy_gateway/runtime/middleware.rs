@@ -6,7 +6,6 @@ use serde_json::Value;
 pub(super) struct PipelineContext {
     pub provider_type: Option<String>,
     pub target_protocol: Option<AiProtocol>,
-    pub lossy_warnings: Vec<String>,
     pub billing_cch: Option<String>,
 }
 

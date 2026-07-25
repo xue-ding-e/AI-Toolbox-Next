@@ -3848,6 +3848,126 @@ data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{},
     }
 
     #[test]
+    fn chat_stream_tool_call_waits_for_real_id_before_first_emit() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_late_id","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_real","type":"function"}]}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let added = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.added")
+            })
+            .expect("responses tool item added");
+        assert_eq!(added["item"]["call_id"], "call_real");
+        assert_ne!(added["item"]["call_id"], "call_0");
+        assert!(!output.contains("\"call_id\":\"call_0\""));
+    }
+
+    #[test]
+    fn chat_stream_anthropic_tool_start_waits_for_real_id_before_first_emit() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_late_id_anthropic","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id_anthropic","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"lookup"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id_anthropic","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_real","type":"function"}]}}]}
+
+"#,
+                r#"data: {"id":"chat_late_id_anthropic","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let tool_start = values
+            .iter()
+            .find(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("tool_use")
+            })
+            .expect("Anthropic tool start");
+        assert_eq!(tool_start["content_block"]["id"], "call_real");
+        assert_ne!(tool_start["content_block"]["id"], "call_0");
+    }
+
+    #[test]
+    fn chat_stream_tool_call_uses_synthetic_id_only_at_done_without_real_id() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_no_id","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_no_id","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let added = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.added")
+            })
+            .expect("responses tool item added");
+        assert_eq!(added["item"]["call_id"], "call_0");
+        assert_eq!(added["item"]["name"], "lookup");
+        assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_tool_call_uses_synthetic_id_only_at_eof_without_real_id() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_eof_no_id","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_eof_no_id","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
+
+"#,
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let added = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.added")
+            })
+            .expect("responses tool item added");
+        assert_eq!(added["item"]["call_id"], "call_0");
+        assert_eq!(added["item"]["name"], "lookup");
+        assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
     fn chat_stream_tool_call_item_preserves_reasoning_content() {
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),

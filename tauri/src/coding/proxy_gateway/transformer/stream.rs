@@ -59,6 +59,7 @@ pub struct StreamKernel {
     target: TargetStreamState,
     buffer: String,
     utf8_remainder: Vec<u8>,
+    terminated_by_error: bool,
 }
 
 impl StreamKernel {
@@ -86,15 +87,19 @@ impl StreamKernel {
 
     pub fn finish(&mut self) -> Vec<Vec<u8>> {
         if self.buffer.trim().is_empty() {
-            return self.target.finish(self.target_protocol());
+            let mut out = self.finish_source();
+            out.extend(self.target.finish(self.target_protocol()));
+            return out;
         }
         let tail = std::mem::take(&mut self.buffer);
         let mut out = self.convert_block(&tail);
+        out.extend(self.finish_source());
         out.extend(self.target.finish(self.target_protocol()));
         out
     }
 
     pub fn fail(&mut self, message: &str) -> Vec<Vec<u8>> {
+        self.terminated_by_error = true;
         self.target.write(
             self.target_protocol(),
             UnifiedStreamEvent::StreamError {
@@ -109,10 +114,14 @@ impl StreamKernel {
     }
 
     fn convert_block(&mut self, block: &str) -> Vec<Vec<u8>> {
+        if self.terminated_by_error {
+            return Vec::new();
+        }
         let parsed = parse_sse_block(block);
         let target = self.target_protocol();
         if parsed.data.trim().is_empty() {
             if parsed.event.as_deref() == Some("error") {
+                self.terminated_by_error = true;
                 return self.target.write(
                     target,
                     UnifiedStreamEvent::StreamError {
@@ -124,18 +133,27 @@ impl StreamKernel {
             return Vec::new();
         }
         if parsed.data.trim() == "[DONE]" {
-            return self.target.finish(target);
+            let mut out = self.finish_source();
+            out.extend(self.target.finish(target));
+            return out;
         }
         let Ok(value) = serde_json::from_str::<Value>(&parsed.data) else {
             return Vec::new();
         };
         if let Some((code, message)) = stream_error_from_value(parsed.event.as_deref(), &value) {
+            self.terminated_by_error = true;
             return self
                 .target
                 .write(target, UnifiedStreamEvent::StreamError { code, message });
         }
         let source = self.source_protocol();
         let events = self.source.parse(source, parsed.event.as_deref(), value);
+        if events
+            .iter()
+            .any(|event| matches!(event, UnifiedStreamEvent::StreamError { .. }))
+        {
+            self.terminated_by_error = true;
+        }
         events
             .into_iter()
             .flat_map(|event| self.target.write(target, event))
@@ -148,6 +166,18 @@ impl StreamKernel {
 
     fn target_protocol(&self) -> AiProtocol {
         self.route.expect("route must be set").target
+    }
+
+    fn finish_source(&mut self) -> Vec<Vec<u8>> {
+        if self.terminated_by_error {
+            return Vec::new();
+        }
+        let target = self.target_protocol();
+        self.source
+            .finish(self.source_protocol())
+            .into_iter()
+            .flat_map(|event| self.target.write(target, event))
+            .collect()
     }
 }
 
@@ -172,6 +202,7 @@ struct SourceStreamState {
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
     pending_chat_finish_reason: Option<String>,
+    chat_emitted_finish: bool,
     pending_anthropic_usage: Option<Value>,
 }
 
@@ -250,6 +281,7 @@ impl SourceStreamState {
                     reason: Some(reason),
                     usage: Some(usage),
                 });
+                self.chat_emitted_finish = true;
             }
             return out;
         }
@@ -413,7 +445,34 @@ impl SourceStreamState {
                         usage: None,
                     });
                 }
+                self.chat_emitted_finish = true;
             }
+        }
+        out
+    }
+
+    fn finish(&mut self, source: AiProtocol) -> Vec<UnifiedStreamEvent> {
+        match source {
+            AiProtocol::OpenAiChat => self.finish_chat(),
+            AiProtocol::OpenAiResponses | AiProtocol::AnthropicMessages | AiProtocol::GeminiNative => {
+                Vec::new()
+            }
+        }
+    }
+
+    fn finish_chat(&mut self) -> Vec<UnifiedStreamEvent> {
+        let mut out = self.flush_chat_inline_think_at_boundary();
+        out.extend(self.flush_ready_tool_calls_force());
+        if !self.chat_emitted_finish {
+            self.chat_emitted_finish = true;
+            out.push(UnifiedStreamEvent::Finish {
+                reason: Some(if self.chat_seen_tool_call {
+                    "tool_calls".to_string()
+                } else {
+                    "stop".to_string()
+                }),
+                usage: None,
+            });
         }
         out
     }
@@ -424,13 +483,17 @@ impl SourceStreamState {
             self.ready_tool_indices.insert(index);
             return;
         }
-        // Name is the identity gate. Id may arrive late (or never for legacy
-        // function_call); emit uses synthetic `call_{index}` when missing.
+        // First emit must wait for both name and real id. Synthetic ids are
+        // reserved for finish-time fallback when a legacy stream never sends id.
         let has_name = self
             .chat_tool_names
             .get(&index)
             .is_some_and(|name| !name.is_empty());
-        if has_name {
+        let has_id = self
+            .chat_tool_ids
+            .get(&index)
+            .is_some_and(|id| !id.is_empty());
+        if has_name && has_id {
             self.ready_tool_indices.insert(index);
         }
     }
@@ -473,6 +536,9 @@ impl SourceStreamState {
     /// On finish: emit remaining ready tools sorted by index even if gaps remain.
     fn flush_ready_tool_calls_force(&mut self) -> Vec<UnifiedStreamEvent> {
         let mut out = self.flush_ready_tool_calls();
+        for index in self.force_ready_chat_tool_indices() {
+            self.ready_tool_indices.insert(index);
+        }
         let remaining: Vec<usize> = self.ready_tool_indices.iter().copied().collect();
         for index in remaining {
             self.ready_tool_indices.remove(&index);
@@ -481,6 +547,18 @@ impl SourceStreamState {
             self.next_tool_index_to_add = self.next_tool_index_to_add.max(index.saturating_add(1));
         }
         out
+    }
+
+    fn force_ready_chat_tool_indices(&self) -> Vec<usize> {
+        let mut indices = self
+            .chat_tool_names
+            .iter()
+            .filter_map(|(index, name)| {
+                (!name.is_empty() && !self.chat_tool_opened.contains(index)).then_some(*index)
+            })
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices
     }
 
     fn emit_chat_tool_call(&mut self, index: usize) -> UnifiedStreamEvent {
@@ -493,6 +571,7 @@ impl SourceStreamState {
             id: self
                 .chat_tool_ids
                 .get(&index)
+                .filter(|id| !id.is_empty())
                 .cloned()
                 .unwrap_or_else(|| format!("call_{index}")),
             tool_type: self

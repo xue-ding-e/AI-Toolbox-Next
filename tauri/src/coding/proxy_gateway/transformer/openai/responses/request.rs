@@ -269,19 +269,29 @@ pub fn llm_request_to_responses(request: Request) -> Value {
         .transformer_metadata
         .get(RESPONSES_TOOL_SIGNATURES_METADATA_KEY)
         .and_then(Value::as_array)
-        .map(|items| {
+        .and_then(|items| {
             items
                 .iter()
-                .filter_map(Value::as_str)
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
+                .map(|item| item.as_str().map(ToString::to_string))
+                .collect::<Option<Vec<_>>>()
         });
     let mut tools = tools;
-    let tools = merge_raw_responses_fragments_with_signatures(
-        &mut tools,
-        raw_tools.as_ref(),
-        tool_signatures.as_deref(),
-    );
+    let can_merge_raw_tools = raw_tools.is_none()
+        || (request
+            .transformer_metadata
+            .get(RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY)
+            .and_then(Value::as_bool)
+            == Some(true)
+            && tool_signatures.is_some());
+    let tools = if raw_tools.is_some() && !can_merge_raw_tools {
+        tools
+    } else {
+        merge_raw_responses_fragments_with_signatures(
+            &mut tools,
+            raw_tools.as_ref(),
+            tool_signatures.as_deref(),
+        )
+    };
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
@@ -334,4 +344,3 @@ pub fn llm_request_to_responses_compact(request: Request) -> Value {
     }
     body
 }
-

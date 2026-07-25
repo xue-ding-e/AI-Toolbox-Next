@@ -32,16 +32,19 @@ pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
 
 fn find_sse_delimiter(buffer: &str) -> Option<(usize, usize)> {
     let bytes = buffer.as_bytes();
-    bytes
+    let crlf = bytes
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
-        .map(|index| (index, 4))
-        .or_else(|| {
-            bytes
-                .windows(2)
-                .position(|window| window == b"\n\n")
-                .map(|index| (index, 2))
-        })
+        .map(|index| (index, 4));
+    let lf = bytes
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    match (crlf, lf) {
+        (Some(crlf), Some(lf)) => Some(if crlf.0 <= lf.0 { crlf } else { lf }),
+        (Some(delimiter), None) | (None, Some(delimiter)) => Some(delimiter),
+        (None, None) => None,
+    }
 }
 
 pub(crate) fn parse_sse_block(block: &str) -> ParsedSseBlock {
@@ -83,4 +86,25 @@ pub(crate) fn sse_done() -> Vec<u8> {
 pub(crate) struct ParsedSseBlock {
     pub(crate) event: Option<String>,
     pub(crate) data: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_sse_block;
+
+    #[test]
+    fn parser_uses_the_earliest_mixed_line_ending_delimiter() {
+        let mut buffer =
+            "event: first\ndata: {\"type\":\"first\"}\n\nevent: second\r\ndata: {}\r\n\r\n"
+                .to_string();
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some("event: first\ndata: {\"type\":\"first\"}")
+        );
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some("event: second\r\ndata: {}")
+        );
+        assert!(buffer.is_empty());
+    }
 }

@@ -28,8 +28,8 @@ use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind};
 use crate::coding::proxy_gateway::transformer::{
     append_utf8_safe, check_lossy_conversion, convert_error_response_body,
     convert_request_body_with_context, convert_response_body_with_context,
-    convert_sse_stream_with_context, strip_sse_field, take_sse_block, AiProtocol,
-    ConversionContext, ConversionRoute,
+    convert_sse_stream_with_context, strip_sse_field, AiProtocol, ConversionContext,
+    ConversionRoute,
 };
 use crate::coding::proxy_gateway::types::{
     CodexChatReasoningMeta, GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt,
@@ -454,6 +454,14 @@ fn sse_value_has_meaningful_content(event_name: Option<&str>, value: &Value) -> 
         .and_then(Value::as_str)
         .or(event_name)
         .unwrap_or_default();
+    if matches!(
+        event_type,
+        "response.incomplete" | "response.cancelled" | "response.canceled"
+    ) {
+        // These are terminal provider outcomes, not provider failures. They
+        // must commit the stream even when the output list is empty.
+        return true;
+    }
     match event_type {
         "response.created"
         | "response.in_progress"
@@ -1488,7 +1496,10 @@ async fn build_gateway_response(
     append_lossy_warning_header(&mut response_headers, &lossy_warnings);
     let provider_kind =
         ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol);
-    let should_stream = should_stream_response(request, route, response.headers(), status.as_u16());
+    let should_stream = should_stream_response(request, route, response.headers(), status.as_u16())
+        || ((200..400).contains(&status.as_u16())
+            && provider_kind == Some(ProviderBodyCompat::Ollama)
+            && response_is_ndjson(response.headers()));
     let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
     // Align with cc-switch / design: restore only on HTTP 2xx, not 3xx.
     let should_restore_xai_namespaces =
@@ -1598,7 +1609,8 @@ async fn build_gateway_response(
 
     if should_stream {
         let converts_ollama_stream = (200..400).contains(&status.as_u16())
-            && provider_kind == Some(ProviderBodyCompat::Ollama);
+            && provider_kind == Some(ProviderBodyCompat::Ollama)
+            && response_is_ndjson(response.headers());
         if response_conversion_route.is_some() || converts_ollama_stream {
             set_response_content_type(&mut response_headers, "text/event-stream");
         }
@@ -1898,7 +1910,7 @@ async fn aggregate_openai_responses_sse_stream(
         raw_body.extend_from_slice(&chunk);
         aggregate.push_chunk(&chunk);
     }
-    let body = aggregate.finish();
+    let body = aggregate.finish()?;
     Ok((raw_body, body))
 }
 
@@ -2932,8 +2944,34 @@ impl OpenAiChatToolCallAggregate {
 struct OpenAiResponsesSseAggregate {
     buffer: Vec<u8>,
     response_base: Option<Value>,
-    completed_response: Option<Value>,
+    terminal_response: Option<Value>,
     output_items: Vec<(i64, Value)>,
+}
+
+fn merge_responses_response_snapshot(base: Option<&Value>, snapshot: &Value) -> Value {
+    let mut response = base
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "id": "resp_gateway_aggregated",
+                "object": "response"
+            })
+        });
+    let Some(snapshot_object) = snapshot.as_object() else {
+        return response;
+    };
+    let Some(response_object) = response.as_object_mut() else {
+        return response;
+    };
+
+    for (key, value) in snapshot_object {
+        if value.is_null() || value.as_str().is_some_and(|text| text.is_empty()) {
+            continue;
+        }
+        response_object.insert(key.clone(), value.clone());
+    }
+    response
 }
 
 impl OpenAiResponsesSseAggregate {
@@ -2945,17 +2983,32 @@ impl OpenAiResponsesSseAggregate {
         }
     }
 
-    fn finish(mut self) -> Vec<u8> {
+    fn finish(mut self) -> Result<Vec<u8>, GatewayForwardError> {
         if !self.buffer.is_empty() {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
-        let response = if let Some(response) = self.completed_response {
-            response
-        } else {
-            self.fallback_response()
+        let Some(mut response) = self.terminal_response else {
+            return Err(GatewayForwardError::new(
+                "OpenAI Responses SSE ended without a terminal event",
+                GatewayFailureKind::Connection,
+            ));
         };
-        serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec())
+        self.output_items.sort_by_key(|(index, _)| *index);
+        if let Some(object) = response.as_object_mut() {
+            if !object.contains_key("output") {
+                object.insert(
+                    "output".to_string(),
+                    Value::Array(
+                        self.output_items
+                            .into_iter()
+                            .map(|(_, item)| item)
+                            .collect(),
+                    ),
+                );
+            }
+        }
+        Ok(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()))
     }
 
     fn push_block(&mut self, block: &[u8]) {
@@ -2971,8 +3024,14 @@ impl OpenAiResponsesSseAggregate {
         };
         match value.get("type").and_then(Value::as_str) {
             Some("response.created") | Some("response.in_progress") => {
-                if let Some(response) = value.get("response").cloned() {
-                    self.response_base = Some(response);
+                if let Some(response) = value
+                    .get("response")
+                    .filter(|response| response.is_object())
+                {
+                    self.response_base = Some(merge_responses_response_snapshot(
+                        self.response_base.as_ref(),
+                        response,
+                    ));
                 }
             }
             Some("response.output_item.done") => {
@@ -2984,34 +3043,68 @@ impl OpenAiResponsesSseAggregate {
                     self.output_items.push((output_index, item));
                 }
             }
-            Some("response.completed") | Some("response.failed") | Some("response.incomplete") => {
-                if let Some(response) = value.get("response").cloned() {
-                    self.completed_response = Some(response);
+            Some("response.completed")
+            | Some("response.failed")
+            | Some("response.incomplete")
+            | Some("response.cancelled")
+            | Some("response.canceled") => {
+                let terminal_status = match value.get("type").and_then(Value::as_str) {
+                    Some("response.completed") => "completed",
+                    Some("response.failed") => "failed",
+                    Some("response.incomplete") => "incomplete",
+                    Some("response.cancelled") | Some("response.canceled") => "canceled",
+                    _ => unreachable!("matched Responses terminal event"),
+                };
+                let response_from_event = value
+                    .get("response")
+                    .filter(|response| response.is_object())
+                    .cloned();
+                let terminal_response_has_status = response_from_event
+                    .as_ref()
+                    .and_then(|response| response.get("status"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| !status.is_empty());
+                let terminal_response_has_nonempty_output = response_from_event
+                    .as_ref()
+                    .and_then(|response| response.get("output"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|output| !output.is_empty());
+                let mut response = response_from_event
+                    .as_ref()
+                    .map(|snapshot| {
+                        merge_responses_response_snapshot(self.response_base.as_ref(), snapshot)
+                    })
+                    .or_else(|| self.response_base.clone())
+                    .unwrap_or_else(|| {
+                        json!({
+                            "id": "resp_gateway_aggregated",
+                            "object": "response"
+                        })
+                    });
+                let should_rebuild_output =
+                    !terminal_response_has_nonempty_output && !self.output_items.is_empty();
+                if let Some(object) = response.as_object_mut() {
+                    if !terminal_response_has_status {
+                        object.insert(
+                            "status".to_string(),
+                            Value::String(terminal_status.to_string()),
+                        );
+                    }
+                    if should_rebuild_output {
+                        object.remove("output");
+                    }
+                    if !object.get("error").is_some_and(|error| !error.is_null()) {
+                        if let Some(error) =
+                            value.get("error").filter(|error| !error.is_null()).cloned()
+                        {
+                            object.insert("error".to_string(), error);
+                        }
+                    }
                 }
+                self.terminal_response = Some(response);
             }
             _ => {}
         }
-    }
-
-    fn fallback_response(mut self) -> Value {
-        let mut response = self.response_base.take().unwrap_or_else(|| {
-            json!({
-                "id": "resp_gateway_aggregated",
-                "object": "response",
-                "status": "completed"
-            })
-        });
-        self.output_items.sort_by_key(|(index, _)| *index);
-        let output = self
-            .output_items
-            .into_iter()
-            .map(|(_, item)| item)
-            .collect::<Vec<_>>();
-        if let Some(object) = response.as_object_mut() {
-            object.insert("status".to_string(), Value::String("completed".to_string()));
-            object.insert("output".to_string(), Value::Array(output));
-        }
-        response
     }
 }
 
@@ -3708,16 +3801,31 @@ fn should_stream_response(
     if !(200..400).contains(&status_code) {
         return false;
     }
-    response_is_sse(headers)
-        || request_declares_streaming(request)
-        || route_declares_streaming(route)
+    if response_is_sse(headers) {
+        return true;
+    }
+    !response_has_content_type(headers)
+        && (request_declares_streaming(request) || route_declares_streaming(route))
 }
 
 fn response_is_sse(headers: &HeaderMap) -> bool {
+    response_content_type_contains(headers, "text/event-stream")
+}
+
+fn response_is_ndjson(headers: &HeaderMap) -> bool {
+    response_content_type_contains(headers, "application/x-ndjson")
+        || response_content_type_contains(headers, "application/x-json-stream")
+}
+
+fn response_has_content_type(headers: &HeaderMap) -> bool {
+    headers.get(CONTENT_TYPE).is_some()
+}
+
+fn response_content_type_contains(headers: &HeaderMap, needle: &str) -> bool {
     headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+        .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
 }
 
 fn request_declares_streaming(request: &DebugHttpRequest) -> bool {
@@ -4774,6 +4882,7 @@ fn apply_provider_pipeline_outbound_response(
 
 /// Edge-stream reverse middleware over SSE: parse each complete block, rewrite JSON
 /// `data:` payloads via `run_outbound_stream` (reverse order), re-emit without full-buffer.
+/// Blocks that the pipeline does not change are returned byte-for-byte.
 fn wrap_pipeline_outbound_sse_stream(
     stream: DebugBodyStream,
     pipeline: Pipeline,
@@ -4810,10 +4919,9 @@ fn wrap_pipeline_outbound_sse_stream(
                 match state.inner.next().await {
                     Some(Ok(bytes)) => {
                         append_utf8_safe(&mut state.buffer, &mut state.utf8_remainder, &bytes);
-                        while let Some(block) = take_sse_block(&mut state.buffer) {
-                            if block.trim().is_empty() {
-                                continue;
-                            }
+                        while let Some(block) =
+                            take_sse_block_with_delimiter(&mut state.buffer)
+                        {
                             match rewrite_sse_block_with_outbound_stream(
                                 &block,
                                 &state.pipeline,
@@ -4834,7 +4942,7 @@ fn wrap_pipeline_outbound_sse_stream(
                             state.utf8_remainder.clear();
                         }
                         let tail = std::mem::take(&mut state.buffer);
-                        if !tail.trim().is_empty() {
+                        if !tail.is_empty() {
                             match rewrite_sse_block_with_outbound_stream(
                                 &tail,
                                 &state.pipeline,
@@ -4856,48 +4964,128 @@ fn rewrite_sse_block_with_outbound_stream(
     pipeline: &Pipeline,
     pipeline_context: &mut PipelineContext,
 ) -> Result<Vec<u8>, String> {
-    let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
     for line in block.lines() {
-        if let Some(event) = strip_sse_field(line, "event") {
-            event_name = Some(event.trim());
-        }
         if let Some(data) = strip_sse_field(line, "data") {
             data_parts.push(data);
         }
     }
     if data_parts.is_empty() {
-        return Ok(format_sse_passthrough(block));
+        return Ok(block.as_bytes().to_vec());
     }
     let data = data_parts.join("\n");
     if data.trim() == "[DONE]" {
-        return Ok(format_sse_passthrough(block));
+        return Ok(block.as_bytes().to_vec());
     }
     let Ok(mut event) = serde_json::from_str::<Value>(&data) else {
-        return Ok(format_sse_passthrough(block));
+        return Ok(block.as_bytes().to_vec());
     };
+    let original_event = event.clone();
     pipeline
         .run_outbound_stream(&mut event, pipeline_context)
         .map_err(|error| format!("Gateway stream pipeline outbound failed: {error}"))?;
+    if event == original_event {
+        return Ok(block.as_bytes().to_vec());
+    }
     let restored = serde_json::to_string(&event)
         .map_err(|error| format!("Failed to serialize outbound stream event: {error}"))?;
-    let mut out = String::new();
-    if let Some(name) = event_name {
-        out.push_str("event: ");
-        out.push_str(name);
-        out.push('\n');
-    }
-    out.push_str("data: ");
-    out.push_str(&restored);
-    out.push_str("\n\n");
-    Ok(out.into_bytes())
+    Ok(rewrite_sse_data_payload(block, &restored))
 }
 
-fn format_sse_passthrough(block: &str) -> Vec<u8> {
-    if block.ends_with("\n\n") {
-        block.as_bytes().to_vec()
+fn take_sse_block_with_delimiter(buffer: &mut String) -> Option<String> {
+    let (index, delimiter_len) = find_sse_text_delimiter(buffer)?;
+    let block_end = index + delimiter_len;
+    let block = buffer[..block_end].to_string();
+    buffer.replace_range(..block_end, "");
+    Some(block)
+}
+
+fn find_sse_text_delimiter(buffer: &str) -> Option<(usize, usize)> {
+    let bytes = buffer.as_bytes();
+    let crlf = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4));
+    let lf = bytes
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    match (crlf, lf) {
+        (Some(crlf), Some(lf)) => Some(if crlf.0 <= lf.0 { crlf } else { lf }),
+        (Some(delimiter), None) | (None, Some(delimiter)) => Some(delimiter),
+        (None, None) => None,
+    }
+}
+
+fn rewrite_sse_data_payload(block: &str, restored: &str) -> Vec<u8> {
+    let (body, delimiter) = split_sse_trailing_delimiter(block);
+    let line_ending = first_line_ending(body).unwrap_or_else(|| {
+        if block.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        }
+    });
+    let delimiter = if delimiter.is_empty() {
+        format!("{line_ending}{line_ending}")
     } else {
-        format!("{block}\n\n").into_bytes()
+        delimiter.to_string()
+    };
+
+    let mut out = String::new();
+    let mut wrote_data = false;
+    let mut rest = body;
+    while !rest.is_empty() {
+        let (line, ending, next) = split_first_sse_line(rest);
+        if strip_sse_field(line, "data").is_some() {
+            if !wrote_data {
+                out.push_str("data: ");
+                out.push_str(restored);
+                out.push_str(ending);
+                wrote_data = true;
+            }
+        } else {
+            out.push_str(line);
+            out.push_str(ending);
+        }
+        rest = next;
+    }
+    if !wrote_data {
+        out.push_str("data: ");
+        out.push_str(restored);
+    }
+
+    out.push_str(&delimiter);
+    out.into_bytes()
+}
+
+fn first_line_ending(text: &str) -> Option<&'static str> {
+    let lf_index = text.as_bytes().iter().position(|byte| *byte == b'\n')?;
+    if lf_index > 0 && text.as_bytes().get(lf_index - 1) == Some(&b'\r') {
+        Some("\r\n")
+    } else {
+        Some("\n")
+    }
+}
+
+fn split_first_sse_line(text: &str) -> (&str, &'static str, &str) {
+    let Some(lf_index) = text.as_bytes().iter().position(|byte| *byte == b'\n') else {
+        return (text, "", "");
+    };
+    if lf_index > 0 && text.as_bytes().get(lf_index - 1) == Some(&b'\r') {
+        (&text[..lf_index - 1], "\r\n", &text[lf_index + 1..])
+    } else {
+        (&text[..lf_index], "\n", &text[lf_index + 1..])
+    }
+}
+
+fn split_sse_trailing_delimiter(block: &str) -> (&str, &str) {
+    if let Some(body) = block.strip_suffix("\r\n\r\n") {
+        (body, "\r\n\r\n")
+    } else if let Some(body) = block.strip_suffix("\n\n") {
+        (body, "\n\n")
+    } else {
+        (block, "")
     }
 }
 
@@ -8834,18 +9022,35 @@ fn classify_success_protocol_error(response: &DebugHttpResponse) -> Option<Gatew
     if response.is_streaming || !(200..400).contains(&response.status_code) {
         return None;
     }
-    gateway_body_reports_error(&response.body).then_some(GatewayFailureKind::UpstreamBadRequest)
+    response_body_reports_protocol_error(response)
+        .then_some(GatewayFailureKind::UpstreamBadRequest)
 }
 
 fn classify_empty_success_response(response: &DebugHttpResponse) -> Option<GatewayFailureKind> {
     if response.is_streaming || !(200..400).contains(&response.status_code) {
         return None;
     }
-    if gateway_body_reports_error(&response.body) {
+    if response_body_reports_protocol_error(response) {
         return None;
     }
-    (!response_body_has_meaningful_content(&response.body))
+    (!response_has_meaningful_content(response))
         .then_some(GatewayFailureKind::EmptyResponse)
+}
+
+fn response_body_reports_protocol_error(response: &DebugHttpResponse) -> bool {
+    gateway_body_reports_error(&response.body)
+        || response
+            .upstream_response_body
+            .as_deref()
+            .is_some_and(gateway_body_reports_error)
+}
+
+fn response_has_meaningful_content(response: &DebugHttpResponse) -> bool {
+    response_body_has_meaningful_content(&response.body)
+        || response
+            .upstream_response_body
+            .as_deref()
+            .is_some_and(response_body_has_meaningful_content)
 }
 
 fn response_body_has_meaningful_content(body: &[u8]) -> bool {
@@ -8856,6 +9061,18 @@ fn response_body_has_meaningful_content(body: &[u8]) -> bool {
         return false;
     }
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        let text = String::from_utf8_lossy(body);
+        if text.contains("data:") || text.contains("event:") {
+            let mut rest = text.as_ref();
+            while let Some((index, delimiter_len)) = find_sse_block_delimiter(rest.as_bytes()) {
+                let block = &rest[..index + delimiter_len];
+                if sse_block_has_meaningful_content(block.as_bytes()) {
+                    return true;
+                }
+                rest = &rest[index + delimiter_len..];
+            }
+            return !rest.trim().is_empty() && sse_block_has_meaningful_content(rest.as_bytes());
+        }
         return true;
     };
     json_value_has_meaningful_content(&value)
@@ -8864,6 +9081,27 @@ fn response_body_has_meaningful_content(body: &[u8]) -> bool {
 fn json_value_has_meaningful_content(value: &Value) -> bool {
     if gateway_json_reports_error(value) {
         return false;
+    }
+    if value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|event| {
+            matches!(
+                event,
+                "response.incomplete" | "response.cancelled" | "response.canceled"
+            )
+        })
+        || value
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| matches!(status, "incomplete" | "cancelled" | "canceled"))
+        || value
+            .get("response")
+            .and_then(|response| response.get("status"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| matches!(status, "incomplete" | "cancelled" | "canceled"))
+    {
+        return true;
     }
     match value {
         Value::Null => false,
@@ -8896,7 +9134,11 @@ pub(super) fn gateway_body_reports_error(body: &[u8]) -> bool {
     if let Ok(value) = serde_json::from_slice::<Value>(body) {
         return gateway_json_reports_error(&value);
     }
-    String::from_utf8_lossy(body).lines().any(|line| {
+    let text = String::from_utf8_lossy(body);
+    if gateway_sse_text_reports_error(&text) {
+        return true;
+    }
+    text.lines().any(|line| {
         let trimmed = line.trim();
         if trimmed
             .strip_prefix("event:")
@@ -8913,6 +9155,36 @@ pub(super) fn gateway_body_reports_error(body: &[u8]) -> bool {
             .ok()
             .is_some_and(|value| gateway_json_reports_error(&value))
     })
+}
+
+fn gateway_sse_text_reports_error(text: &str) -> bool {
+    let mut rest = text;
+    while let Some((index, delimiter_len)) = find_sse_block_delimiter(rest.as_bytes()) {
+        let block = &rest[..index + delimiter_len];
+        if gateway_sse_block_reports_error(block) {
+            return true;
+        }
+        rest = &rest[index + delimiter_len..];
+    }
+    if !rest.trim().is_empty() && gateway_sse_block_reports_error(rest) {
+        return true;
+    }
+    false
+}
+
+fn gateway_sse_block_reports_error(block: &str) -> bool {
+    if sse_event_name(block)
+        .as_deref()
+        .is_some_and(gateway_event_reports_error)
+    {
+        return true;
+    }
+    let Some(payload) = sse_data_payload(block) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(payload.trim())
+        .ok()
+        .is_some_and(|value| gateway_json_reports_error(&value))
 }
 
 fn gateway_json_reports_error(value: &Value) -> bool {
@@ -8939,21 +9211,11 @@ fn gateway_json_reports_error(value: &Value) -> bool {
 }
 
 fn gateway_event_reports_error(event: &str) -> bool {
-    matches!(
-        event.trim(),
-        "error"
-            | "response.failed"
-            | "response.cancelled"
-            | "response.canceled"
-            | "response.incomplete"
-    )
+    matches!(event.trim(), "error" | "response.failed")
 }
 
 fn gateway_response_status_reports_error(status: &str) -> bool {
-    matches!(
-        status.trim(),
-        "failed" | "cancelled" | "canceled" | "incomplete"
-    )
+    matches!(status.trim(), "failed")
 }
 
 fn choice_has_meaningful_content(choice: &Value) -> bool {
@@ -9999,8 +10261,13 @@ Stable"
             }]
         })
         .to_string();
-        let block = format!("event: message_start
-data: {data}");
+        let block = format!(
+            ": preserve this comment\r\n\
+event: message_start\r\n\
+id: message-1\r\n\
+retry: 500\r\n\
+data: {data}\r\n\r\n"
+        );
         let rewritten = rewrite_sse_block_with_outbound_stream(
             &block,
             &pipeline,
@@ -10010,16 +10277,18 @@ data: {data}");
         let out = String::from_utf8(rewritten).unwrap();
         assert!(out.contains("cch=abc"), "stream reverse should restore cch: {out}");
         assert!(out.contains("event: message_start"), "event name preserved: {out}");
+        assert!(out.contains(": preserve this comment"), "comment preserved: {out}");
+        assert!(out.contains("id: message-1"), "id preserved: {out}");
+        assert!(out.contains("retry: 500"), "retry preserved: {out}");
+        assert!(out.contains("\r\n\r\n"), "CRLF delimiter preserved: {out:?}");
 
         let done = rewrite_sse_block_with_outbound_stream(
-            "data: [DONE]",
+            "data: [DONE]\r\n\r\n",
             &pipeline,
             &mut pipeline_context,
         )
         .unwrap();
-        assert_eq!(String::from_utf8(done).unwrap(), "data: [DONE]
-
-");
+        assert_eq!(done, b"data: [DONE]\r\n\r\n");
     }
 
     #[test]
@@ -10030,16 +10299,120 @@ data: {data}");
             ..PipelineContext::default()
         };
         let data = r#"{"type":"message_start","message":{"id":"m1"}}"#;
-        let block = format!("event: message_start
-data: {data}");
+        let block = format!(
+            ": keep exact bytes\r\n\
+event: message_start\r\n\
+id: m1\r\n\
+retry: 1000\r\n\
+data: {data}\r\n\r\n"
+        );
         let rewritten = rewrite_sse_block_with_outbound_stream(
             &block,
             &pipeline,
             &mut pipeline_context,
         )
         .unwrap();
+        assert_eq!(
+            rewritten,
+            block.as_bytes(),
+            "no-op reverse middleware must preserve the complete SSE block byte-for-byte"
+        );
+    }
+
+    #[tokio::test]
+    async fn reverse_sse_stream_preserves_blank_blocks_and_whitespace_tail() {
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let pipeline_context = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            ..PipelineContext::default()
+        };
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![
+            Ok::<Vec<u8>, String>(b"\n\n".to_vec()),
+            Ok::<Vec<u8>, String>(b"   \t".to_vec()),
+        ]));
+        let mut output = wrap_pipeline_outbound_sse_stream(stream, pipeline, pipeline_context);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = output.next().await {
+            bytes.extend(chunk.expect("reverse SSE chunk"));
+        }
+        assert_eq!(bytes, b"\n\n   \t");
+    }
+
+    #[test]
+    fn rewrite_sse_block_preserves_mixed_line_endings_when_payload_changes() {
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let mut pipeline_context = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            billing_cch: Some("abc".to_string()),
+            ..PipelineContext::default()
+        };
+        let data = json!({
+            "type": "message_start",
+            "system": [{
+                "type": "text",
+                "text": "x-anthropic-billing-header: cc_version=2.1.42;"
+            }]
+        })
+        .to_string();
+        let block = format!(": comment\r\nid: m1\ndata: {data}\r\nretry: 2000\n\n");
+        let rewritten =
+            rewrite_sse_block_with_outbound_stream(&block, &pipeline, &mut pipeline_context)
+                .unwrap();
         let out = String::from_utf8(rewritten).unwrap();
-        assert!(out.contains(data), "no middleware effect should preserve payload: {out}");
+
+        assert!(out.starts_with(": comment\r\nid: m1\n"));
+        assert!(
+            out.contains("\ndata: "),
+            "data line should keep its original position after id: {out:?}"
+        );
+        assert!(
+            out.contains("cch=abc"),
+            "payload should be changed by reverse middleware: {out}"
+        );
+        assert!(out.contains("}\r\nretry: 2000\n\n"), "mixed endings preserved: {out:?}");
+    }
+
+    #[test]
+    fn reverse_sse_parser_uses_the_earliest_mixed_line_ending_delimiter() {
+        let mut buffer =
+            "event: first\ndata: {\"type\":\"first\"}\n\nevent: second\r\ndata: {}\r\n\r\n"
+                .to_string();
+        assert_eq!(
+            take_sse_block_with_delimiter(&mut buffer).as_deref(),
+            Some("event: first\ndata: {\"type\":\"first\"}\n\n")
+        );
+        assert_eq!(
+            take_sse_block_with_delimiter(&mut buffer).as_deref(),
+            Some("event: second\r\ndata: {}\r\n\r\n")
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn response_streaming_uses_actual_content_type_for_json_fallbacks() {
+        let request = debug_request(br#"{"stream":true}"#);
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/chat/completions");
+        let mut json_headers = HeaderMap::new();
+        json_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        assert!(
+            !should_stream_response(&request, &route, &json_headers, 200),
+            "a JSON response must not be passed through the SSE wrapper"
+        );
+
+        let mut sse_headers = HeaderMap::new();
+        sse_headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+        assert!(should_stream_response(&request, &route, &sse_headers, 200));
+
+        let mut ndjson_headers = HeaderMap::new();
+        ndjson_headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-ndjson"),
+        );
+        assert!(
+            !should_stream_response(&request, &route, &ndjson_headers, 200),
+            "generic NDJSON must not enter the SSE wrapper without its provider adapter"
+        );
+        assert!(response_is_ndjson(&ndjson_headers));
     }
 
     #[test]
@@ -11098,6 +11471,102 @@ data: {data}");
         );
     }
 
+    #[test]
+    fn success_protocol_error_checks_original_body_after_response_conversion() {
+        let mut response = protocol_error_debug_response(
+            br#"{"id":"chat_1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#,
+        );
+        response.upstream_response_body = Some(
+            br#"{"id":"resp_failed","status":"failed","output":[],"error":{"message":"boom"}}"#
+                .to_vec(),
+        );
+        response.upstream_response_body_bytes =
+            response.upstream_response_body.as_ref().unwrap().len() as u64;
+
+        assert_eq!(
+            classify_success_protocol_error(&response),
+            Some(GatewayFailureKind::UpstreamBadRequest)
+        );
+        assert_eq!(classify_empty_success_response(&response), None);
+    }
+
+    #[test]
+    fn empty_converted_body_accepts_legal_cancelled_original_response() {
+        for upstream_body in [
+            br#"{"id":"resp_cancelled","status":"canceled","output":[]}"#.as_slice(),
+            concat!(
+                "event: response.created\n",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cancelled\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                "event: response.cancelled\n",
+                "data: {\"type\":\"response.cancelled\",\"response\":{\"id\":\"resp_cancelled\",\"status\":\"canceled\",\"output\":[]}}\n\n"
+            )
+            .as_bytes(),
+        ] {
+            let mut response = protocol_error_debug_response(b"{}");
+            response.upstream_response_body = Some(upstream_body.to_vec());
+            response.upstream_response_body_bytes = upstream_body.len() as u64;
+
+            assert_eq!(classify_success_protocol_error(&response), None);
+            assert_eq!(classify_empty_success_response(&response), None);
+        }
+    }
+
+    #[test]
+    fn empty_converted_body_rejects_control_only_original_sse() {
+        let upstream_body = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_empty\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_empty\",\"status\":\"completed\",\"output\":[]}}\n\n"
+        )
+        .as_bytes();
+        let mut response = protocol_error_debug_response(b"{}");
+        response.upstream_response_body = Some(upstream_body.to_vec());
+        response.upstream_response_body_bytes = upstream_body.len() as u64;
+
+        assert_eq!(classify_success_protocol_error(&response), None);
+        assert_eq!(
+            classify_empty_success_response(&response),
+            Some(GatewayFailureKind::EmptyResponse)
+        );
+    }
+
+    #[test]
+    fn gateway_body_reports_error_detects_multiline_sse_error_payload() {
+        let body = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\n",
+            "data: \"response\":{\"status\":\"failed\",\n",
+            "data: \"error\":{\"message\":\"boom\"}}}\n\n"
+        );
+        assert!(gateway_body_reports_error(body.as_bytes()));
+    }
+
+    #[test]
+    fn gateway_body_reports_error_detects_delimiterless_multiline_sse_error_payload() {
+        let body = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\n",
+            "data: \"response\":{\"status\":\"failed\",\n",
+            "data: \"error\":{\"message\":\"boom\"}}}"
+        );
+        assert!(gateway_body_reports_error(body.as_bytes()));
+    }
+
+    #[test]
+    fn incomplete_and_cancelled_terminal_responses_are_not_provider_failures() {
+        for body in [
+            br#"{"id":"resp_incomplete","status":"incomplete","output":[{"type":"message","content":[{"type":"output_text","text":"partial"}]}]}"#.as_slice(),
+            br#"{"id":"resp_cancelled","status":"canceled","output":[]}"#.as_slice(),
+        ] {
+            let response = protocol_error_debug_response(body);
+            assert_eq!(classify_success_protocol_error(&response), None);
+            assert_eq!(classify_empty_success_response(&response), None);
+            assert!(!gateway_body_reports_error(body));
+            assert!(response_body_has_meaningful_content(body));
+        }
+    }
+
     #[tokio::test]
     async fn streaming_first_chunk_validation_fails_closed_on_response_failed_envelope() {
         let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(concat!(
@@ -11116,6 +11585,27 @@ data: {data}");
             .expect_err("response.failed first chunk must fail-closed");
         assert_eq!(error.kind, GatewayFailureKind::UpstreamBadRequest);
         assert!(response.body_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_accepts_partial_output_with_incomplete_terminal_event() {
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\",\"item_id\":\"msg_1\",\"output_index\":0}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_incomplete\",\"status\":\"incomplete\",\"output\":[]}}\n\n"
+        )
+        .as_bytes()
+        .to_vec())]));
+        let mut response = protocol_error_debug_response(b"");
+        response.is_streaming = true;
+        response.headers = vec![("Content-Type".to_string(), "text/event-stream".to_string())];
+        response.body_stream = Some(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("incomplete is a valid terminal response");
+        assert!(response.body_stream.is_some());
     }
 
     #[test]
@@ -12738,7 +13228,7 @@ data: {data}");
     }
 
     #[test]
-    fn codex_official_sse_aggregate_falls_back_to_done_items() {
+    fn codex_official_sse_aggregate_rejects_missing_terminal_event() {
         let sse = concat!(
             "event: response.created\n",
             "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_2\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
@@ -12749,15 +13239,73 @@ data: {data}");
         let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
             .as_bytes()
             .to_vec())]));
+        let error = tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+            .expect_err("missing Responses terminal event must fail closed");
+
+        assert_eq!(error.kind, GatewayFailureKind::Connection);
+        assert!(error.message.contains("without a terminal event"));
+    }
+
+    #[test]
+    fn codex_official_sse_aggregate_preserves_cancelled_terminal_response() {
+        let sse = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cancelled\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+            "event: response.cancelled\n",
+            "data: {\"type\":\"response.cancelled\",\"response\":{\"id\":\"resp_cancelled\",\"object\":\"response\",\"status\":\"canceled\",\"output\":[]}}\n\n"
+        );
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
         let (_, body) =
             tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
                 .expect("aggregate responses sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(value["id"], "resp_2");
-        assert_eq!(value["status"], "completed");
-        assert_eq!(value["output"][0]["type"], "function_call");
-        assert_eq!(value["output"][0]["call_id"], "call_1");
+        assert_eq!(value["id"], "resp_cancelled");
+        assert_eq!(value["status"], "canceled");
+        assert!(value["output"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn codex_official_sse_aggregate_merges_sparse_response_snapshots() {
+        for terminal_event in [
+            r#"{"type":"response.incomplete"}"#,
+            r#"{"type":"response.incomplete","response":null}"#,
+            r#"{"type":"response.incomplete","response":{}}"#,
+            r#"{"type":"response.incomplete","response":{"status":null}}"#,
+            r#"{"type":"response.incomplete","response":{"status":"incomplete","output":[]}}"#,
+        ] {
+            let sse = format!(
+                concat!(
+                    "event: response.created\n",
+                    "data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_incomplete\",\"object\":\"response\",\"created_at\":123,\"model\":\"gpt-5.1-codex-mini\",\"status\":\"in_progress\",\"output\":[]}}}}\n\n",
+                    "event: response.in_progress\n",
+                    "data: {{\"type\":\"response.in_progress\",\"response\":{{\"status\":\"in_progress\",\"usage\":{{\"input_tokens\":3,\"output_tokens\":1,\"total_tokens\":4}}}}}}\n\n",
+                    "event: response.output_item.done\n",
+                    "data: {{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{{\"id\":\"msg_1\",\"type\":\"message\",\"status\":\"incomplete\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"partial\"}}]}}}}\n\n",
+                    "event: response.incomplete\n",
+                    "data: {}\n\n"
+                ),
+                terminal_event
+            );
+            let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+                .as_bytes()
+                .to_vec())]));
+            let (_, body) =
+                tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+                    .expect("aggregate incomplete Responses SSE");
+            let value: Value = serde_json::from_slice(&body).unwrap();
+
+            assert_eq!(value["id"], "resp_incomplete");
+            assert_eq!(value["object"], "response");
+            assert_eq!(value["created_at"], 123);
+            assert_eq!(value["model"], "gpt-5.1-codex-mini");
+            assert_eq!(value["status"], "incomplete");
+            assert_eq!(value["usage"]["total_tokens"], 4);
+            assert_eq!(value["output"][0]["id"], "msg_1");
+            assert_eq!(value["output"][0]["content"][0]["text"], "partial");
+        }
     }
 
     #[tokio::test]

@@ -1,6 +1,8 @@
 use super::shared::{
-    merge_raw_responses_fragments_with_signatures, RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY,
+    merge_raw_responses_fragments_with_signatures,
+    RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY, RESPONSES_RAW_TOOLS_METADATA_KEY,
     RESPONSES_REQUEST_REASONING_CONTEXT_METADATA_KEY,
+    RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY, RESPONSES_TOOL_SIGNATURES_METADATA_KEY,
 };
 use super::{
     llm_request_to_responses, llm_request_to_responses_compact, llm_response_to_responses,
@@ -95,6 +97,26 @@ fn responses_response_accepts_top_level_output_text() {
     };
     assert_eq!(parts[0].text.as_deref(), Some("hello"));
     assert_eq!(message.annotations, vec![json!({"type": "url_citation"})]);
+}
+
+#[test]
+fn responses_non_stream_cancellation_status_roundtrips_without_completed() {
+    for status in ["cancelled", "canceled"] {
+        let response = responses_response_to_llm(json!({
+            "id": "resp_cancelled",
+            "model": "model-a",
+            "created_at": 123,
+            "status": status,
+            "output": []
+        }));
+        assert_eq!(
+            response.choices[0].finish_reason.as_deref(),
+            Some("cancelled")
+        );
+
+        let converted = llm_response_to_responses(response);
+        assert_eq!(converted["status"], "canceled");
+    }
 }
 
 #[test]
@@ -538,6 +560,115 @@ fn trailing_reasoning_appends_after_embedded_forward_merge() {
 }
 
 #[test]
+fn consecutive_reasoning_items_are_preserved_when_followed_by_assistant() {
+    let body = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "first thought"}]
+            },
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "second thought"}]
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "answer"}]
+            }
+        ]
+    });
+    let request = responses_request_to_llm(body);
+    assert_eq!(request.messages.len(), 1);
+    assert_eq!(request.messages[0].role, "assistant");
+    let reasoning = request.messages[0]
+        .reasoning_content
+        .as_deref()
+        .unwrap_or_default();
+    assert_eq!(reasoning, "first thought\nsecond thought");
+    let answer = match &request.messages[0].content {
+        MessageContent::Text(text) => text.clone(),
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|part| part.text.as_deref())
+            .collect::<Vec<_>>()
+            .join(""),
+        MessageContent::Empty => String::new(),
+    };
+    assert_eq!(answer, "answer");
+}
+
+#[test]
+fn reasoning_without_same_turn_assistant_is_kept_before_user_boundary() {
+    let body = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "orphan thought"}]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "next"}]
+            }
+        ]
+    });
+    let request = responses_request_to_llm(body);
+    assert_eq!(request.messages.len(), 2);
+    assert_eq!(request.messages[0].role, "assistant");
+    assert_eq!(
+        request.messages[0].reasoning_content.as_deref(),
+        Some("orphan thought")
+    );
+    assert_eq!(request.messages[1].role, "user");
+}
+
+#[test]
+fn trailing_reasoning_does_not_cross_user_boundary() {
+    let body = json!({
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "previous answer"}]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "new turn"}]
+            },
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "new thought"}]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "following user"}]
+            }
+        ]
+    });
+    let request = responses_request_to_llm(body);
+    let previous_assistant = request
+        .messages
+        .iter()
+        .find(|message| message.role == "assistant")
+        .expect("previous assistant");
+    assert!(previous_assistant.reasoning_content.is_none());
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.role == "assistant"
+                && message.reasoning_content.as_deref() == Some("new thought")),
+        "reasoning must remain in the current turn instead of attaching to the previous user turn"
+    );
+}
+
+#[test]
 fn request_top_level_reasoning_context_roundtrips_without_clobbering_effort() {
     // Audit T-1: preserve request-level reasoning.context (e.g. "all_turns"),
     // not just input-item context. Outbound must merge effort + context.
@@ -634,5 +765,195 @@ fn raw_tools_merge_drops_raw_tool_colliding_with_structured_signature() {
     assert!(
         names.iter().any(|name| name == "web_search"),
         "non-colliding raw tool should remain, got {names:?}"
+    );
+}
+
+#[test]
+fn raw_tools_merge_skips_fragments_when_structured_signatures_are_reordered() {
+    let mut structured = vec![
+        json!({
+            "type": "function",
+            "name": "second",
+            "parameters": {"type": "object"}
+        }),
+        json!({
+            "type": "function",
+            "name": "first",
+            "parameters": {"type": "object"}
+        }),
+    ];
+    let raw_tools = json!([
+        {
+            "index": 1,
+            "value": {
+                "type": "web_search"
+            }
+        }
+    ]);
+    let expected_signatures = vec![
+        "function:first".to_string(),
+        "function:second".to_string(),
+    ];
+
+    let merged = merge_raw_responses_fragments_with_signatures(
+        &mut structured,
+        Some(&raw_tools),
+        Some(expected_signatures.as_slice()),
+    );
+
+    assert_eq!(merged.len(), 2);
+    assert!(merged.iter().all(|tool| tool["type"] == "function"));
+    assert_eq!(merged[0]["name"], "second");
+    assert_eq!(merged[1]["name"], "first");
+}
+
+#[test]
+fn raw_only_tools_preserve_an_empty_structured_signature_sidecar() {
+    let request = responses_request_to_llm(json!({
+        "model": "gpt-5",
+        "input": "hello",
+        "tools": [
+            {
+                "type": "web_search"
+            }
+        ]
+    }));
+
+    assert_eq!(
+        request
+            .transformer_metadata
+            .get(RESPONSES_RAW_TOOLS_METADATA_KEY)
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        request
+            .transformer_metadata
+            .get(RESPONSES_TOOL_SIGNATURES_METADATA_KEY),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        request
+            .transformer_metadata
+            .get(RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY),
+        Some(&json!(true))
+    );
+}
+
+#[test]
+fn raw_tools_merge_skips_fragments_when_structured_tool_is_added_to_empty_signature_set() {
+    let request = responses_request_to_llm(json!({
+        "model": "gpt-5",
+        "input": "hello",
+        "tools": [
+            {
+                "type": "web_search"
+            }
+        ]
+    }));
+    let mut structured = vec![json!({
+        "type": "function",
+        "name": "lookup",
+        "parameters": {"type": "object"}
+    })];
+    let raw_tools = request
+        .transformer_metadata
+        .get(RESPONSES_RAW_TOOLS_METADATA_KEY);
+    let expected_signatures = request
+        .transformer_metadata
+        .get(RESPONSES_TOOL_SIGNATURES_METADATA_KEY)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .expect("raw-only tools should preserve an empty signature sidecar");
+
+    let merged = merge_raw_responses_fragments_with_signatures(
+        &mut structured,
+        raw_tools,
+        Some(expected_signatures.as_slice()),
+    );
+
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0]["type"], "function");
+    assert_eq!(merged[0]["name"], "lookup");
+}
+
+#[test]
+fn raw_tools_merge_fails_closed_when_any_structured_tool_has_no_signature() {
+    let mut structured = vec![
+        json!({
+            "type": "function",
+            "name": "lookup",
+            "parameters": {"type": "object"}
+        }),
+        json!({
+            "type": "function",
+            "parameters": {"type": "object"}
+        }),
+    ];
+    let raw_tools = json!([
+        {
+            "index": 1,
+            "value": {
+                "type": "web_search"
+            }
+        }
+    ]);
+    let expected_signatures = vec!["function:lookup".to_string()];
+
+    let merged = merge_raw_responses_fragments_with_signatures(
+        &mut structured,
+        Some(&raw_tools),
+        Some(expected_signatures.as_slice()),
+    );
+
+    assert_eq!(merged.len(), 2);
+    assert!(merged.iter().all(|tool| tool["type"] == "function"));
+    assert!(merged.iter().all(|tool| tool["type"] != "web_search"));
+}
+
+#[test]
+fn responses_raw_tool_merge_fails_closed_for_unnameable_structured_tool() {
+    let request = responses_request_to_llm(json!({
+        "model": "gpt-5",
+        "input": "hello",
+        "tools": [
+            {
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object"}
+            },
+            {
+                "type": "function"
+            },
+            {
+                "type": "web_search"
+            }
+        ]
+    }));
+
+    assert_eq!(
+        request
+            .transformer_metadata
+            .get(RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY),
+        Some(&json!(false))
+    );
+
+    let converted = llm_request_to_responses(request);
+    let tools = converted["tools"]
+        .as_array()
+        .expect("the valid structured tool should remain");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["name"], "lookup");
+    assert!(
+        !tools.iter().any(|tool| tool["type"] == "web_search"),
+        "raw tools must not be reinserted when a structured tool has no signature"
     );
 }
