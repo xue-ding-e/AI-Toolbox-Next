@@ -73,6 +73,7 @@ import {
   getGrokProviderCatalogModels,
   getGrokProviderDefaultModelKey,
   removeGrokCatalogModel,
+  resolveGrokProviderApiFormat,
   toGrokModelFormValues,
   upsertGrokCatalogModel,
   type GrokModelFormValues,
@@ -1934,6 +1935,9 @@ const GrokPage: React.FC = () => {
         <GrokModelFormModal
           open={modelModalOpen}
           isEdit={Boolean(modelModalKey)}
+          apiFormat={modelModalProvider
+            ? resolveGrokProviderApiFormat(modelModalProvider)
+            : undefined}
           initialValues={modelModalInitialValues}
           existingKeys={modelModalProvider
             ? getGrokProviderCatalogModels(modelModalProvider)

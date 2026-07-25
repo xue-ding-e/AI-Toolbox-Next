@@ -178,6 +178,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [capAttachment, setCapAttachment] = React.useState(false);
   const [capToolCall, setCapToolCall] = React.useState(true);
   const [capTemperature, setCapTemperature] = React.useState(true);
+  const apiValue = Form.useWatch('api', form);
   const costInputValue = Form.useWatch('costInput', form);
   const costOutputValue = Form.useWatch('costOutput', form);
   const costCacheReadValue = Form.useWatch('costCacheRead', form);
@@ -288,18 +289,20 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     const hasCompat = showCompat &&
       typeof jsonCompat === 'object' && jsonCompat !== null &&
       Object.keys(jsonCompat as object).length > 0;
+    const hasApi = showApi && typeof apiValue === 'string' && apiValue.trim() !== '';
     const hasCost = showCost && [
       costInputValue,
       costOutputValue,
       costCacheReadValue,
       costCacheWriteValue,
     ].some((value) => typeof value === 'number');
-    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasCompat || hasCost;
+    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasCompat || hasApi || hasCost;
   }, [
     jsonOptions,
     jsonVariants,
     jsonThinkingLevelMap,
     jsonCompat,
+    apiValue,
     costInputValue,
     costOutputValue,
     costCacheReadValue,
@@ -310,6 +313,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     showModalities,
     showThinkingLevelMap,
     showCompat,
+    showApi,
     showCost,
   ]);
 
@@ -329,6 +333,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         });
         
         let shouldExpand = false;
+        if (typeof initialValues.api === 'string' && initialValues.api.trim() !== '') {
+          shouldExpand = true;
+        }
         if ([
           initialValues.costInput,
           initialValues.costOutput,
@@ -777,21 +784,6 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           <Input placeholder={nameRequired ? t(getKey('namePlaceholder')) : t(getKey('nameOptionalPlaceholder'))} />
         </Form.Item>
 
-        {showApi && (
-          <Form.Item
-            label={t(getKey('api'))}
-            name="api"
-            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('apiHint'))}</Text>}
-          >
-            <Select
-              allowClear
-              showSearch
-              placeholder={t(getKey('apiPlaceholder'))}
-              options={apiOptions}
-            />
-          </Form.Item>
-        )}
-
         <Form.Item
           label={t(getKey('contextLimit'))}
           name="contextLimit"
@@ -859,7 +851,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           </Form.Item>
         )}
 
-        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showCompat || showCost) && (
+        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showCompat || showApi || showCost) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -986,6 +978,21 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     "supportsDeveloperRole": false,
     "supportsReasoningEffort": false
 }`}
+                    />
+                  </Form.Item>
+                )}
+
+                {showApi && (
+                  <Form.Item
+                    label={t(getKey('api'))}
+                    name="api"
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('apiHint'))}</Text>}
+                  >
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder={t(getKey('apiPlaceholder'))}
+                      options={apiOptions}
                     />
                   </Form.Item>
                 )}

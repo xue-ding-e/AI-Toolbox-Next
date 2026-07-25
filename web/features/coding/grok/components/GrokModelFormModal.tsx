@@ -18,8 +18,10 @@ import {
   subscribePresetModels,
   type PresetModel,
 } from '@/constants/presetModels';
+import type { GrokApiFormat } from '@/types/grok';
 import {
   extractReasoningEffortsFromPresetVariants,
+  getGrokPrimaryPresetNpmTypes,
   GROK_MODEL_REASONING_EFFORT_OPTIONS,
   pickDefaultReasoningEffort,
   type GrokModelFormValues,
@@ -27,11 +29,11 @@ import {
 
 const { Text } = Typography;
 
-const XAI_NPM = '@ai-sdk/xai';
-
 interface GrokModelFormModalProps {
   open: boolean;
   isEdit: boolean;
+  /** Channel API format used to pick primary preset groups (xAI + matching SDK). */
+  apiFormat?: GrokApiFormat | string | null;
   initialValues?: Partial<GrokModelFormValues>;
   existingKeys?: string[];
   onCancel: () => void;
@@ -42,12 +44,15 @@ interface GrokModelFormModalProps {
  * Grok model editor: reuses the OpenCode modal shell (preset strip + form layout)
  * but fields map to Grok Build catalog / config.toml semantics.
  *
- * Presets: show the FULL preset catalog (all SDKs), not only @ai-sdk/xai.
- * Selecting a preset parses its variants into `reasoningEfforts` (all selected).
+ * Primary presets: xAI + the single OpenCode SDK group for the current channel
+ * API type (Chat / Responses / Anthropic are distinct). Remaining SDKs stay
+ * under "other presets". Selecting a preset parses its variants into
+ * `reasoningEfforts` (all selected).
  */
 const GrokModelFormModal: React.FC<GrokModelFormModalProps> = ({
   open,
   isEdit,
+  apiFormat,
   initialValues,
   existingKeys = [],
   onCancel,
@@ -65,30 +70,44 @@ const GrokModelFormModal: React.FC<GrokModelFormModalProps> = ({
     getPresetModelsVersion,
   );
 
-  // Full preset catalog: primary strip prefers xAI models, then every other SDK
-  // model with no truncation (user requirement: show all presets).
+  // Primary strip: xAI + current channel protocol family. Rest go to "other".
   const { primaryPresets, otherPresets, allPresets } = React.useMemo(() => {
-    const primary = PRESET_MODELS[XAI_NPM] || [];
-    const other = Object.entries(PRESET_MODELS)
-      .filter(([npm]) => npm !== XAI_NPM)
-      .flatMap(([, models]) => models);
-    // Dedupe by id while keeping first occurrence (xAI first).
+    const primaryNpmTypes = getGrokPrimaryPresetNpmTypes(apiFormat);
+    const primaryNpmSet = new Set(primaryNpmTypes);
+    const primary: PresetModel[] = [];
+    const other: PresetModel[] = [];
     const seen = new Set<string>();
-    const all: PresetModel[] = [];
-    [...primary, ...other].forEach((preset) => {
+
+    const pushUnique = (target: PresetModel[], preset: PresetModel) => {
       const id = preset.id?.trim();
       if (!id || seen.has(id)) {
         return;
       }
       seen.add(id);
-      all.push(preset);
+      target.push(preset);
+    };
+
+    // Keep declared primary group order (xAI first, then protocol-matched SDKs).
+    primaryNpmTypes.forEach((npmType) => {
+      (PRESET_MODELS[npmType] || []).forEach((preset) => {
+        pushUnique(primary, preset);
+      });
     });
+    Object.entries(PRESET_MODELS).forEach(([npmType, models]) => {
+      if (primaryNpmSet.has(npmType)) {
+        return;
+      }
+      models.forEach((preset) => {
+        pushUnique(other, preset);
+      });
+    });
+
     return {
       primaryPresets: primary,
       otherPresets: other,
-      allPresets: all,
+      allPresets: [...primary, ...other],
     };
-  }, [presetModelsVersion]);
+  }, [apiFormat, presetModelsVersion]);
 
   React.useEffect(() => {
     if (!open) {
@@ -255,9 +274,9 @@ const GrokModelFormModal: React.FC<GrokModelFormModalProps> = ({
 
         {presetsExpanded && allPresets.length > 0 && (
           <Form.Item wrapperCol={{ offset: language === 'zh-CN' ? 5 : 7, span: 19 }} style={{ marginTop: -8 }}>
-            {/* Full catalog: xAI first (if any), then every other SDK model — no slice cap. */}
+            {/* Primary: xAI + current channel API family. Other SDKs stay secondary. */}
             {primaryPresets.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: otherPresets.length > 0 ? 0 : 0 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
                 {primaryPresets.map((preset) => (
                   <Tag
                     key={`primary-${preset.id}`}

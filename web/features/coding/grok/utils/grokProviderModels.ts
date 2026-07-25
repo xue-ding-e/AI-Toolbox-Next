@@ -1,4 +1,10 @@
-import type { GrokCatalogModel, GrokProvider, GrokSettingsConfig } from '@/types/grok';
+import type {
+  GrokApiFormat,
+  GrokCatalogModel,
+  GrokProvider,
+  GrokSettingsConfig,
+} from '../../../../types/grok';
+import { extractGrokSettingsApiBackend } from '../../../../utils/grokConfigUtils';
 import { normalizeGrokCatalogModels } from './grokCatalogModels';
 import {
   CUSTOM_GROK_MODEL_KEY,
@@ -14,6 +20,114 @@ export const GROK_MODEL_REASONING_EFFORT_OPTIONS = [
   'high',
   'xhigh',
 ] as const;
+
+/** OpenCode preset group for official xAI models; always in Grok primary strip. */
+export const GROK_XAI_PRESET_NPM = '@ai-sdk/xai';
+
+const DEFAULT_GROK_API_FORMAT: GrokApiFormat = 'openai_chat';
+
+/** Normalize free-form API format tokens to Grok provider form values. */
+export function normalizeGrokApiFormat(value?: string | null): GrokApiFormat {
+  if (
+    value === 'openai_chat'
+    || value === 'openai_responses'
+    || value === 'anthropic_messages'
+  ) {
+    return value;
+  }
+  return DEFAULT_GROK_API_FORMAT;
+}
+
+/** Map a live/catalog `apiBackend` string to the channel-level API format. */
+export function mapGrokApiBackendToApiFormat(
+  apiBackend?: string | null,
+): GrokApiFormat | undefined {
+  const normalized = apiBackend?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === 'responses' || normalized === 'openai_responses') {
+    return 'openai_responses';
+  }
+  if (
+    normalized === 'anthropic'
+    || normalized === 'anthropic_messages'
+    || normalized === 'messages'
+  ) {
+    return 'anthropic_messages';
+  }
+  if (
+    normalized === 'chat'
+    || normalized === 'chat_completions'
+    || normalized === 'openai_chat'
+  ) {
+    return 'openai_chat';
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the channel API format used for model-preset grouping.
+ * Prefer meta, then settingsConfig.apiFormat, then catalog apiBackend.
+ */
+export function resolveGrokProviderApiFormat(
+  provider: Pick<GrokProvider, 'meta' | 'settingsConfig'>,
+): GrokApiFormat {
+  if (typeof provider.meta?.apiFormat === 'string' && provider.meta.apiFormat.trim()) {
+    return normalizeGrokApiFormat(provider.meta.apiFormat);
+  }
+
+  const settings = parseGrokProviderSettings(provider) as GrokSettingsConfig & {
+    apiFormat?: unknown;
+    api_format?: unknown;
+  };
+  if (typeof settings.apiFormat === 'string' && settings.apiFormat.trim()) {
+    return normalizeGrokApiFormat(settings.apiFormat);
+  }
+  if (typeof settings.api_format === 'string' && settings.api_format.trim()) {
+    return normalizeGrokApiFormat(settings.api_format);
+  }
+
+  const fromDefaultBackend = mapGrokApiBackendToApiFormat(
+    extractGrokSettingsApiBackend(settings),
+  );
+  if (fromDefaultBackend) {
+    return fromDefaultBackend;
+  }
+
+  for (const model of settings.modelCatalog?.models || []) {
+    const fromModel = mapGrokApiBackendToApiFormat(model.apiBackend);
+    if (fromModel) {
+      return fromModel;
+    }
+  }
+
+  return DEFAULT_GROK_API_FORMAT;
+}
+
+/**
+ * Primary OpenCode preset npm groups for the model editor:
+ * always xAI, plus the group matching the current channel protocol.
+ *
+ * Chat / Responses / Anthropic are three different channel types — do not merge
+ * Chat and Responses into one primary strip.
+ *
+ * - openai_chat → openai-compatible (third-party Chat Completions endpoints)
+ * - openai_responses → openai (native OpenAI / Responses-oriented catalog)
+ * - anthropic_messages → anthropic
+ */
+export function getGrokPrimaryPresetNpmTypes(
+  apiFormat?: GrokApiFormat | string | null,
+): string[] {
+  const format = normalizeGrokApiFormat(apiFormat);
+  if (format === 'anthropic_messages') {
+    return [GROK_XAI_PRESET_NPM, '@ai-sdk/anthropic'];
+  }
+  if (format === 'openai_responses') {
+    return [GROK_XAI_PRESET_NPM, '@ai-sdk/openai'];
+  }
+  return [GROK_XAI_PRESET_NPM, '@ai-sdk/openai-compatible'];
+}
 
 const GROK_MODEL_REASONING_EFFORT_SET = new Set<string>(GROK_MODEL_REASONING_EFFORT_OPTIONS);
 
