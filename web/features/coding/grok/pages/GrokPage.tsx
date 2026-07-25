@@ -41,7 +41,7 @@ import {
   saveGrokOfficialLocalAccount,
   applyGrokOfficialAccount,
   deleteGrokOfficialAccount,
-  refreshGrokOfficialAccount,
+  refreshGrokOfficialAccountLimits,
   selectGrokProvider,
   readGrokSettings,
   createGrokProvider,
@@ -831,7 +831,7 @@ const GrokPage: React.FC = () => {
   ) => {
     try {
       setRefreshingOfficialAccountId(account.id);
-      const refreshedAccount = await refreshGrokOfficialAccount(account.id);
+      const refreshedAccount = await refreshGrokOfficialAccountLimits(account.id);
       setOfficialAccountsByProviderId((previous) => ({
         ...previous,
         [provider.id]: (previous[provider.id] || []).map((currentAccount) =>
@@ -849,7 +849,7 @@ const GrokPage: React.FC = () => {
       });
       message.success(t('grok.provider.officialAccountRefreshSuccess'));
     } catch (error) {
-      console.error('Failed to refresh Grok official account usage:', error);
+      console.error('Failed to refresh Grok official account limits:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
     } finally {
@@ -2058,6 +2058,24 @@ const GrokPage: React.FC = () => {
                 {officialAccountDetails.account.id === GROK_LOCAL_PROVIDER_ID
                   ? t('grok.provider.officialAccountLocalTag')
                   : t('grok.provider.officialAccountOauthTag')}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountPlanType')}>
+                {officialAccountDetails.account.planType || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountWeeklyLimit')}>
+                {officialAccountDetails.account.limitWeeklyText || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountMonthlyLimit')}>
+                {officialAccountDetails.account.limitMonthlyText || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountWeeklyResetAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.limitWeeklyResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountMonthlyResetAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.limitMonthlyResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('grok.provider.officialAccountLastLimitRefreshAt')}>
+                {formatDateTime(officialAccountDetails.account.lastLimitsFetchedAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('grok.provider.officialAccountTokenExpiresAt')}>
                 {formatUnixTimestamp(officialAccountDetails.account.expiresAt)}

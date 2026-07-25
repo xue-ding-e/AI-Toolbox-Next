@@ -24,6 +24,21 @@
 - 更新已应用 Provider 时，必须在覆盖 SQLite 记录前捕获旧 `settings_config` 和 `category`，并显式传给运行时重应用链路。写库后再查询 applied provider 得到的是新快照，会导致被删除的 `[model.<key>]` 和高级配置字段残留。
 - `settings_config` 不存 `category`（category 在 provider 行）。清理前一 provider 的 `[model.*]` 时必须传入真实 `previous.category`；官方渠道只拥有 `[models].default`，清理时不得当 custom 去要求 `modelCatalog.models`。
 - 应用 provider 时对齐 Codex 官方账号标记：官方 provider → `sync_grok_official_account_apply_status`；非官方 → `clear_all_grok_official_account_apply_status`，避免切到自定义后账号仍显示「已应用」。
+- Device Code / OAuth 登录成功只入库官方账号（`is_applied=false`），不写 `auth.json`、不 `db_update_applied_status`、不 `emit_grok_sync`。真正应用只走 `apply_grok_official_account`（写 auth + 标记 applied）。对齐 Codex，避免当前已应用自定义渠道时新登录账号抢占「已应用」态并污染 runtime。
+- 官方账号额度走 Grok CLI chat-proxy，不是 Codex `wham/usage`，也不是 Web SSO rate-limits：
+  - `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` → 周池 `creditUsagePercent` + `currentPeriod`
+  - `GET https://cli-chat-proxy.grok.com/v1/billing` → 月账 `monthlyLimit`/`used` + 日历 `billingPeriod*`
+  - `GET https://cli-chat-proxy.grok.com/v1/user?include=subscription` → 订阅等级
+  - 必带 CLI 头：`X-XAI-Token-Auth: xai-grok-cli`、`x-grok-client-version`、`x-grok-client-identifier: grok-shell`、`x-grok-client-mode: headless`
+  - `api.x.ai/v1/billing|user` 对 OAuth 账号是 404，不要回退到官方 API base
+- OAuth access token 寿命约数小时。续期策略：
+  - Lead：剩余 ≤ 30 分钟（或缺少 expires）视为临期
+  - `apply_grok_official_account` / `refresh_grok_official_account_limits` 在写 auth 或拉 billing 前调用 `ensure_fresh`（临期才真正 refresh）
+  - `refresh_grok_official_account` 强制 refresh（不看 lead）
+  - **后台 / 启动巡检** 由共享模块 `coding::auth_refresh` 调度（startup + 15m interval），本模块只提供 `refresh_applied_grok_accounts_if_needed`
+  - 并发：`OAUTH_REFRESH_LOCK` + 同 refresh_token 30s 缓存；续期成功且 applied 时 merge live `auth.json` 并 `emit_grok_sync`
+- `refresh_grok_official_account_limits` 只写额度字段到 SQLite，不改 `is_applied`；若内部 ensure_fresh 续了 token 且账号已应用，才会写 auth。
+- 额度字段语义：`plan_type`（上游 null → `free`）、`limit_weekly_text`（`100 - creditUsagePercent`，无 percent 则空）、周 reset 来自 credits `currentPeriod.end`。月限只在默认 billing 的 `monthlyLimit>0` 时投影；**禁止**把 credits 的 `billingPeriodEnd` 当月重置（free/unified 会把它写成与周周期相同）。不要伪造 5h 窗口。
 - 删除 prompt 配置只删 SQLite 记录，不删除/清空当前 `AGENTS.md`。产品语义是“删除已保存的提示词记录”，不是“删除本地 runtime 提示词文件”；Claude Code / OpenCode / Codex / Gemini / Pi 统一此规则。
 - 清空 `auth.json` 时，必须先 `remove_auto_synced_wsl_mapping_target`，不能只 `emit_grok_sync`（源缺失时普通同步会跳过而非删除远端）。
 
@@ -37,6 +52,9 @@
 - Device Code 和 OAuth token 只留在后端；事件和前端 payload 不得包含 OAuth 凭据。
 - “预览当前配置”必须返回 live `config.toml` / `auth.json` 的真实内容，不做任何脱敏（包括 `api_key`、token、Authorization）。这是用户主动查看本地生效态的诊断入口。
 - xAI Device Code scope 包含 `conversations:read conversations:write`；身份字段来自 access-token claims 与 OIDC userinfo。refresh 必须保留同 principal 的 CLI enrichment，apply/delete/logout 必须保留其他 auth scope，最后一个 scope 删除后才删除文件。
+- 不要把 Device Code poll 成功路径重新改回「登录即 write_auth_json + is_applied=true」。那会在自定义渠道已应用时误标官方账号并改写 live auth。
+- Free 账号的 billing credits 常有周周期但没有 `creditUsagePercent`；UI 周限额应显示 `-`，不要把 0 用量或缺失 percent 当成解析失败。credits 里的 `billingPeriodEnd` 可能等于周结束日，不能填进月限重置。
+- 不要把 Grok lead 改成 Codex 的 3 天：Grok access token 只有数小时。不要给 list 账号路径加自动 refresh。
 - 从 live `config.toml` 生成 `__local__` 时：模型级 `api_key` 不得进入 `modelCatalog` / `extraConfig`。若所有 `[model.*]` 的非空 `api_key` 完全一致，提升到 `settings.auth.API_KEY`，让 Local 编辑/收编可 round-trip；多模型 key 不一致或只有部分模型有 key 时保持 `auth` 为空，不强行猜测。
 - Official xAI marketplace identifiers: manifest name `xai-official`, CLI list name `plugin-marketplace`, source `xai-org/plugin-marketplace` (`.grok-plugin/marketplace.json`). `is_curated` / hide-recommend must accept these aliases and the source URL. Claude-compatible marketplaces such as `claude-plugins-official` may still appear in CLI list or cache; keep them installable, do not treat as curated, and do not auto-delete. Resolve install sources from `.grok-plugin` first, then `.claude-plugin`.
 - Official marketplace install sources use either `{source:"url",url,sha}` or `{type:"local",path}`. `marketplace_install_source` must pin `sha`/`ref` and resolve local path objects relative to the marketplace cache root.
@@ -46,3 +64,6 @@
 - Provider 执行 `read -> edit -> save -> apply -> read` 后 fixture 只出现预期差异。
 - Common/Provider 写入后 MCP、Plugins、Skills、用户模型和未知字段仍存在。
 - `auth.json` 写回后官方 Grok CLI 可识别，Unix 权限为 `0600`。
+- 自定义渠道已应用时完成 Device Code 登录：新账号 `is_applied=false`，live `auth.json` 不变；点应用后才写 auth 并标记 applied。
+- 点「刷新额度」：账号行出现 `plan_type`/`last_limits_fetched_at`；有 `creditUsagePercent` 时周剩余为 `100-used%`；无 percent 时周限额为空但可有周重置时间。free/`monthlyLimit=0` 时月限额与月重置均为空。
+- 已应用账号 access token 临期时：apply / 刷新额度 / 后台巡检会自动续期，明细里 Token 过期时间与最近刷新时间更新；未临期不发起 refresh 请求。

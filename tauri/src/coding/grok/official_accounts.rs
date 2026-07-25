@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use chrono::Local;
@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{Emitter, Manager};
 use tempfile::NamedTempFile;
-use tokio::sync::watch;
+use tokio::sync::{watch, Mutex as AsyncMutex};
 
 use super::adapter;
 use super::commands::get_grok_auth_path_async;
 use super::types::GrokOfficialAccount;
 use crate::coding::db_id::{db_extract_id, db_new_id};
-use crate::db::helpers::{db_delete, db_get, db_list, db_put, db_update_applied_status};
+use crate::db::helpers::{
+    db_delete, db_get, db_list, db_patch_fields, db_put, db_update_applied_status,
+};
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use crate::http_client;
@@ -28,11 +30,23 @@ const XAI_ISSUER: &str = "https://auth.x.ai";
 const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+/// Official Grok CLI chat-proxy base (OAuth consumer billing/subscription live here, not api.x.ai).
+const GROK_CLI_PROXY_BASE: &str = "https://cli-chat-proxy.grok.com/v1";
+const GROK_CLI_CLIENT_VERSION: &str = "0.2.111";
+const GROK_CLI_CLIENT_IDENTIFIER: &str = "grok-shell";
+const GROK_CLI_TOKEN_AUTH: &str = "xai-grok-cli";
+const GROK_CLI_USER_AGENT: &str = "grok-shell/0.2.111 (windows; x86_64)";
+/// Access tokens last ~hours; refresh when remaining lifetime is within this lead.
+const GROK_AUTH_REFRESH_LEAD_SECONDS: i64 = 30 * 60;
+const GROK_AUTH_REFRESH_CACHE_TTL: Duration = Duration::from_secs(30);
 
 static AUTH_SESSIONS: LazyLock<Mutex<HashMap<String, watch::Sender<bool>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static AUTH_SESSION_STATUSES: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static OAUTH_REFRESH_LOCK: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
+static OAUTH_REFRESH_CACHE: LazyLock<AsyncMutex<HashMap<String, (Instant, TokenResponse)>>> =
+    LazyLock::new(|| AsyncMutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,7 +86,7 @@ struct DeviceCodeResponse {
     interval: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -87,6 +101,15 @@ struct UserInfoResponse {
     email: Option<String>,
     given_name: Option<String>,
     picture: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GrokUsageSnapshot {
+    plan_type: Option<String>,
+    limit_weekly_text: Option<String>,
+    limit_monthly_text: Option<String>,
+    limit_weekly_reset_at: Option<i64>,
+    limit_monthly_reset_at: Option<i64>,
 }
 
 #[tauri::command]
@@ -262,6 +285,9 @@ pub async fn apply_grok_official_account(
 ) -> Result<(), String> {
     let account = get_account(state.db(), &account_id)?
         .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
+    // Refresh near-expiry tokens before writing live auth.json.
+    let account =
+        ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await?;
     let snapshot = account
         .auth_snapshot
         .ok_or_else(|| "Grok official account snapshot is unavailable".to_string())?;
@@ -280,6 +306,7 @@ pub async fn apply_grok_official_account(
     Ok(())
 }
 
+/// Force-refresh OAuth tokens for a Grok official account (not subscription limits).
 #[tauri::command]
 pub async fn refresh_grok_official_account(
     state: tauri::State<'_, SqliteDbState>,
@@ -288,84 +315,38 @@ pub async fn refresh_grok_official_account(
 ) -> Result<GrokOfficialAccount, String> {
     let account = get_account(state.db(), &account_id)?
         .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
+    ensure_fresh_grok_account_auth(state.db(), Some(&app), account, true).await
+}
+
+/// Fetch Grok CLI subscription / weekly credits from cli-chat-proxy and persist limit fields.
+/// Refreshes OAuth first when the access token is near expiry. Does not change is_applied.
+#[tauri::command]
+pub async fn refresh_grok_official_account_limits(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<GrokOfficialAccount, String> {
+    let account = get_account(state.db(), &account_id)?
+        .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
+    ensure_official_provider(state.db(), &account.provider_id)?;
+    let account =
+        ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await?;
     let snapshot_text = account
         .auth_snapshot
-        .clone()
+        .as_deref()
         .ok_or_else(|| "Grok official account snapshot is unavailable".to_string())?;
-    let mut snapshot: Value = serde_json::from_str(&snapshot_text)
+    let snapshot: Value = serde_json::from_str(snapshot_text)
         .map_err(|error| format!("Invalid Grok account snapshot: {error}"))?;
-    let (_, entry) = find_xai_auth_entry(&snapshot)?;
-    let refresh_token = entry
-        .get("refresh_token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Grok account does not contain a refresh token".to_string())?
-        .to_string();
-    let token_endpoint = account
-        .token_endpoint
-        .clone()
-        .or_else(|| {
-            entry
-                .get("oidc_issuer")
-                .and_then(Value::as_str)
-                .map(|issuer| format!("{}/oauth2/token", issuer.trim_end_matches('/')))
-        })
-        .ok_or_else(|| "Grok account does not contain a token endpoint".to_string())?;
-    let token_endpoint = validate_xai_endpoint(&token_endpoint, "token_endpoint")?;
-    let client = http_client::client_with_timeout(state.db(), 30).await?;
-    let response: TokenResponse = client
-        .post(token_endpoint.clone())
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("client_id", XAI_CLIENT_ID),
-            ("refresh_token", refresh_token.as_str()),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("xAI token refresh failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("xAI token refresh failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("Failed to parse xAI token refresh: {error}"))?;
-    let issuer = entry
-        .get("oidc_issuer")
-        .and_then(Value::as_str)
-        .unwrap_or(XAI_ISSUER)
-        .to_string();
-    let userinfo_endpoint = format!("{}/oauth2/userinfo", issuer.trim_end_matches('/'));
-    snapshot = build_xai_auth_snapshot(
-        &client,
-        &response,
-        &issuer,
-        &userinfo_endpoint,
-        Some(&snapshot),
-    )
-    .await?;
-    let snapshot_text = serde_json::to_string_pretty(&snapshot)
-        .map_err(|error| format!("Failed to serialize Grok auth snapshot: {error}"))?;
-    let (email, subject) = identity_from_snapshot(&snapshot);
-    let updated = save_account_with_id(
-        state.db(),
-        &account_id,
-        &account.provider_id,
-        account.name,
-        email.or(account.email),
-        subject.or(account.subject),
-        snapshot_text,
-        Some(token_endpoint),
-        account.is_applied,
-        account.sort_index,
-        account.created_at,
-    )?;
-    if updated.is_applied {
-        let auth_path = get_grok_auth_path_async(state.db()).await?;
-        let runtime = read_auth_json_or_empty(&auth_path)?;
-        let merged = merge_account_snapshot_into_runtime(runtime, &snapshot)?;
-        write_auth_json(&auth_path, &merged)?;
-        emit_grok_sync(&app);
-    }
-    Ok(updated)
+    let access_token = access_token_from_snapshot(&snapshot)
+        .ok_or_else(|| "Grok official account is missing access token".to_string())?;
+    let usage = match fetch_grok_usage_snapshot(state.db(), &access_token).await {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = persist_usage_error(state.db(), &account_id, &error);
+            return Err(error);
+        }
+    };
+    persist_usage_snapshot(state.db(), &account_id, &usage)
 }
 
 #[tauri::command]
@@ -510,6 +491,9 @@ async fn poll_device_authorization(
                     let snapshot_text = serde_json::to_string_pretty(&snapshot)
                         .map_err(|error| format!("Failed to serialize Grok auth: {error}"))?;
                     emit_status(&app, &session_id, "saving", None, None);
+                    // Align with Codex: OAuth login only persists the account
+                    // (is_applied=false). Do not write auth.json or mark applied;
+                    // users apply explicitly via apply_grok_official_account.
                     let account = save_account(
                         db_state.db(),
                         &provider_id,
@@ -518,19 +502,9 @@ async fn poll_device_authorization(
                         subject,
                         snapshot_text,
                         Some(token_endpoint.clone()),
-                        true,
+                        false,
                     )?;
-                    write_auth_json(&get_grok_auth_path_async(db_state.db()).await?, &snapshot)?;
-                    let now = Local::now().to_rfc3339();
-                    db_state.db().with_conn_mut(|conn| {
-                        db_update_applied_status(
-                            conn,
-                            DbTable::GrokOfficialAccount,
-                            Some(&account.id),
-                            &now,
-                        )
-                    })?;
-                    emit_grok_sync(&app);
+                    let _ = app.emit("config-changed", "window");
                     return Ok(account.id);
                 }
             }
@@ -809,6 +783,7 @@ fn save_account_with_id(
     sort_index: Option<i32>,
     created_at: String,
 ) -> Result<GrokOfficialAccount, String> {
+    let existing = get_account(db, id)?;
     let snapshot_value: Value = serde_json::from_str(&snapshot).unwrap_or_else(|_| json!({}));
     let auth_entry = find_xai_auth_entry(&snapshot_value)
         .ok()
@@ -825,7 +800,8 @@ fn save_account_with_id(
                 .map(|value| value.timestamp())
         });
     let updated_at = Local::now().to_rfc3339();
-    let data = json!({
+    // Preserve previously fetched limit fields when rotating OAuth tokens.
+    let mut data = json!({
         "provider_id": provider_id,
         "name": name,
         "kind": "oauth",
@@ -841,6 +817,28 @@ fn save_account_with_id(
         "created_at": created_at,
         "updated_at": updated_at,
     });
+    if let Some(existing) = existing {
+        if let Some(object) = data.as_object_mut() {
+            if let Some(plan_type) = existing.plan_type {
+                object.insert("plan_type".to_string(), Value::String(plan_type));
+            }
+            if let Some(text) = existing.limit_weekly_text {
+                object.insert("limit_weekly_text".to_string(), Value::String(text));
+            }
+            if let Some(text) = existing.limit_monthly_text {
+                object.insert("limit_monthly_text".to_string(), Value::String(text));
+            }
+            if let Some(value) = existing.limit_weekly_reset_at {
+                object.insert("limit_weekly_reset_at".to_string(), Value::from(value));
+            }
+            if let Some(value) = existing.limit_monthly_reset_at {
+                object.insert("limit_monthly_reset_at".to_string(), Value::from(value));
+            }
+            if let Some(value) = existing.last_limits_fetched_at {
+                object.insert("last_limits_fetched_at".to_string(), Value::String(value));
+            }
+        }
+    }
     db.with_conn(|conn| db_put(conn, DbTable::GrokOfficialAccount, id, &data))?;
     get_account(db, id)?.ok_or_else(|| "Failed to read saved Grok account".to_string())
 }
@@ -867,6 +865,12 @@ fn account_from_db_value(value: Value) -> GrokOfficialAccount {
         expires_at: value.get("expires_at").and_then(Value::as_i64),
         last_refresh: optional_string(&value, "last_refresh"),
         last_error: optional_string(&value, "last_error"),
+        plan_type: optional_string(&value, "plan_type"),
+        limit_weekly_text: optional_string(&value, "limit_weekly_text"),
+        limit_monthly_text: optional_string(&value, "limit_monthly_text"),
+        limit_weekly_reset_at: value.get("limit_weekly_reset_at").and_then(Value::as_i64),
+        limit_monthly_reset_at: value.get("limit_monthly_reset_at").and_then(Value::as_i64),
+        last_limits_fetched_at: optional_string(&value, "last_limits_fetched_at"),
         is_applied: value
             .get("is_applied")
             .and_then(Value::as_bool)
@@ -878,6 +882,577 @@ fn account_from_db_value(value: Value) -> GrokOfficialAccount {
         created_at: string_field(&value, "created_at"),
         updated_at: string_field(&value, "updated_at"),
     }
+}
+
+fn access_token_from_snapshot(snapshot: &Value) -> Option<String> {
+    let entry = find_xai_auth_entry(snapshot)
+        .ok()
+        .map(|(_, entry)| entry)
+        .unwrap_or(snapshot);
+    entry
+        .get("key")
+        .or_else(|| entry.get("access_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn refresh_token_from_snapshot(snapshot: &Value) -> Option<String> {
+    let entry = find_xai_auth_entry(snapshot)
+        .ok()
+        .map(|(_, entry)| entry)
+        .unwrap_or(snapshot);
+    entry
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn token_endpoint_from_account(account: &GrokOfficialAccount, snapshot: &Value) -> Option<String> {
+    account
+        .token_endpoint
+        .clone()
+        .or_else(|| {
+            let entry = find_xai_auth_entry(snapshot)
+                .ok()
+                .map(|(_, entry)| entry)
+                .unwrap_or(snapshot);
+            entry
+                .get("oidc_issuer")
+                .and_then(Value::as_str)
+                .map(|issuer| format!("{}/oauth2/token", issuer.trim_end_matches('/')))
+        })
+}
+
+fn access_token_expiration_unix(snapshot: &Value) -> Option<i64> {
+    let entry = find_xai_auth_entry(snapshot)
+        .ok()
+        .map(|(_, entry)| entry)
+        .unwrap_or(snapshot);
+    let from_field = entry.get("expires_at").and_then(|value| match value {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => chrono::DateTime::parse_from_rfc3339(text.trim())
+            .ok()
+            .map(|value| value.timestamp()),
+        _ => None,
+    });
+    let from_jwt = access_token_from_snapshot(snapshot).and_then(|token| {
+        decode_jwt_claims(&token)
+            .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+    });
+    match (from_field, from_jwt) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn grok_account_needs_refresh(snapshot: &Value) -> bool {
+    let now = chrono::Utc::now().timestamp();
+    match access_token_expiration_unix(snapshot) {
+        Some(expires_at) => expires_at <= now + GROK_AUTH_REFRESH_LEAD_SECONDS,
+        // Missing expiry: refresh conservatively so short-lived tokens do not silently die.
+        None => true,
+    }
+}
+
+async fn request_xai_token_refresh(
+    db: &SqliteDbState,
+    token_endpoint: &str,
+    refresh_token: &str,
+) -> Result<TokenResponse, String> {
+    let client = http_client::client_with_timeout(db, 30).await?;
+    client
+        .post(token_endpoint)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", XAI_CLIENT_ID),
+            ("refresh_token", refresh_token),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("xAI token refresh failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("xAI token refresh failed: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse xAI token refresh: {error}"))
+}
+
+/// Refresh OAuth when forced or when access token is within the lead window.
+/// When applied, also merges the new snapshot into live auth.json.
+async fn ensure_fresh_grok_account_auth(
+    db: &SqliteDbState,
+    app: Option<&tauri::AppHandle>,
+    account: GrokOfficialAccount,
+    force: bool,
+) -> Result<GrokOfficialAccount, String> {
+    let snapshot_text = account
+        .auth_snapshot
+        .as_deref()
+        .ok_or_else(|| "Grok official account snapshot is unavailable".to_string())?;
+    let snapshot: Value = serde_json::from_str(snapshot_text)
+        .map_err(|error| format!("Invalid Grok account snapshot: {error}"))?;
+    if !force && !grok_account_needs_refresh(&snapshot) {
+        return Ok(account);
+    }
+
+    let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
+    // Re-read after lock: another caller may have refreshed already.
+    let account = get_account(db, &account.id)?
+        .ok_or_else(|| format!("Grok official account '{}' not found", account.id))?;
+    let snapshot_text = account
+        .auth_snapshot
+        .as_deref()
+        .ok_or_else(|| "Grok official account snapshot is unavailable".to_string())?;
+    let snapshot: Value = serde_json::from_str(snapshot_text)
+        .map_err(|error| format!("Invalid Grok account snapshot: {error}"))?;
+    if !force && !grok_account_needs_refresh(&snapshot) {
+        return Ok(account);
+    }
+
+    let refresh_token = refresh_token_from_snapshot(&snapshot)
+        .ok_or_else(|| "Grok account does not contain a refresh token".to_string())?;
+    let token_endpoint = token_endpoint_from_account(&account, &snapshot)
+        .ok_or_else(|| "Grok account does not contain a token endpoint".to_string())?;
+    let token_endpoint = validate_xai_endpoint(&token_endpoint, "token_endpoint")?;
+
+    let cached_response = OAUTH_REFRESH_CACHE
+        .lock()
+        .await
+        .get(&refresh_token)
+        .filter(|(created_at, _)| created_at.elapsed() <= GROK_AUTH_REFRESH_CACHE_TTL)
+        .map(|(_, response)| response.clone());
+    let token_response = match cached_response {
+        Some(response) => response,
+        None => {
+            let response =
+                request_xai_token_refresh(db, &token_endpoint, &refresh_token).await?;
+            OAUTH_REFRESH_CACHE.lock().await.insert(
+                refresh_token.clone(),
+                (Instant::now(), response.clone()),
+            );
+            response
+        }
+    };
+
+    let entry = find_xai_auth_entry(&snapshot)
+        .ok()
+        .map(|(_, entry)| entry)
+        .unwrap_or(&snapshot);
+    let issuer = entry
+        .get("oidc_issuer")
+        .and_then(Value::as_str)
+        .unwrap_or(XAI_ISSUER)
+        .to_string();
+    let userinfo_endpoint = format!("{}/oauth2/userinfo", issuer.trim_end_matches('/'));
+    let client = http_client::client_with_timeout(db, 30).await?;
+    let refreshed_snapshot = build_xai_auth_snapshot(
+        &client,
+        &token_response,
+        &issuer,
+        &userinfo_endpoint,
+        Some(&snapshot),
+    )
+    .await?;
+    let snapshot_text = serde_json::to_string_pretty(&refreshed_snapshot)
+        .map_err(|error| format!("Failed to serialize Grok auth snapshot: {error}"))?;
+    let (email, subject) = identity_from_snapshot(&refreshed_snapshot);
+    let updated = save_account_with_id(
+        db,
+        &account.id,
+        &account.provider_id,
+        account.name,
+        email.or(account.email),
+        subject.or(account.subject),
+        snapshot_text,
+        Some(token_endpoint),
+        account.is_applied,
+        account.sort_index,
+        account.created_at,
+    )?;
+    if updated.is_applied {
+        let auth_path = get_grok_auth_path_async(db).await?;
+        let runtime = read_auth_json_or_empty(&auth_path)?;
+        let merged = merge_account_snapshot_into_runtime(runtime, &refreshed_snapshot)?;
+        write_auth_json(&auth_path, &merged)?;
+        if let Some(app) = app {
+            emit_grok_sync(app);
+            let _ = app.emit("config-changed", "window");
+        }
+    }
+    Ok(updated)
+}
+
+/// Background / startup pass entry used by `coding::auth_refresh`.
+pub async fn refresh_applied_grok_accounts_if_needed(
+    db: &SqliteDbState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let order = OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::created_at(OrderDirection::Asc),
+    ]);
+    let accounts = db
+        .with_conn(|conn| db_list(conn, DbTable::GrokOfficialAccount, Some(&order)))?
+        .into_iter()
+        .map(account_from_db_value)
+        .filter(|account| account.is_applied)
+        .collect::<Vec<_>>();
+    for account in accounts {
+        match ensure_fresh_grok_account_auth(db, Some(app), account, false).await {
+            Ok(_) => {}
+            Err(error) => {
+                log::debug!("Grok applied account background refresh failed: {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_cli_proxy_headers(request: reqwest::RequestBuilder, access_token: &str) -> reqwest::RequestBuilder {
+    request
+        .bearer_auth(access_token)
+        .header("X-XAI-Token-Auth", GROK_CLI_TOKEN_AUTH)
+        .header("x-grok-client-version", GROK_CLI_CLIENT_VERSION)
+        .header("x-grok-client-identifier", GROK_CLI_CLIENT_IDENTIFIER)
+        .header("x-grok-client-mode", "headless")
+        .header("Accept", "application/json")
+        .header("User-Agent", GROK_CLI_USER_AGENT)
+}
+
+async fn fetch_grok_usage_snapshot(
+    db: &SqliteDbState,
+    access_token: &str,
+) -> Result<GrokUsageSnapshot, String> {
+    let client = http_client::client_with_timeout(db, 20).await?;
+
+    // credits: weekly pool / creditUsagePercent / currentPeriod
+    // default billing: monthlyLimit/used + calendar billingPeriod*
+    // Free unified-billing credits responses often copy weekly bounds into billingPeriod*,
+    // so monthly must come from the default billing payload, not credits.
+    let credits_url = format!("{GROK_CLI_PROXY_BASE}/billing?format=credits");
+    let credits_response = apply_cli_proxy_headers(client.get(credits_url), access_token)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch Grok billing credits: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Grok billing credits request failed: {error}"))?;
+    let credits_body = credits_response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("Failed to parse Grok billing credits response: {error}"))?;
+
+    let monthly_url = format!("{GROK_CLI_PROXY_BASE}/billing");
+    let monthly_body = match apply_cli_proxy_headers(client.get(monthly_url), access_token)
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response.json::<Value>().await.ok(),
+        _ => None,
+    };
+
+    let user_url = format!("{GROK_CLI_PROXY_BASE}/user?include=subscription");
+    let subscription_tier = match apply_cli_proxy_headers(client.get(user_url), access_token)
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response
+            .json::<Value>()
+            .await
+            .ok()
+            .and_then(|body| parse_subscription_tier(&body)),
+        _ => None,
+    };
+
+    Ok(parse_grok_usage_snapshot(
+        &credits_body,
+        monthly_body.as_ref(),
+        subscription_tier.as_deref(),
+        access_token,
+    ))
+}
+
+fn parse_subscription_tier(body: &Value) -> Option<String> {
+    body.get("subscriptionTier")
+        .or_else(|| body.get("subscription_tier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            body.get("user").and_then(|user| {
+                user.get("subscriptionTier")
+                    .or_else(|| user.get("subscription_tier"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        })
+}
+
+fn subscription_tier_from_jwt(access_token: &str) -> Option<String> {
+    let claims = decode_jwt_claims(access_token)?;
+    let tier = claims.get("tier")?;
+    if let Some(text) = tier.as_str().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Ok(number) = text.parse::<i64>() {
+            return subscription_tier_from_number(number);
+        }
+        return Some(text.to_string());
+    }
+    tier.as_i64()
+        .or_else(|| tier.as_f64().map(|value| value as i64))
+        .and_then(subscription_tier_from_number)
+}
+
+fn subscription_tier_from_number(tier: i64) -> Option<String> {
+    Some(
+        match tier {
+            0 => "free",
+            1 => "supergrok",
+            2 => "x_basic",
+            3 => "x_premium",
+            4 => "x_premium_plus",
+            5 => "supergrok_heavy",
+            6 => "supergrok_lite",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
+fn parse_grok_usage_snapshot(
+    credits_body: &Value,
+    monthly_body: Option<&Value>,
+    subscription_tier: Option<&str>,
+    access_token: &str,
+) -> GrokUsageSnapshot {
+    let credits_root = billing_config_root(credits_body);
+    let monthly_root = monthly_body.map(billing_config_root);
+
+    let credit_usage_percent = json_number(
+        credits_root
+            .get("creditUsagePercent")
+            .or_else(|| credits_root.get("credit_usage_percent")),
+    );
+
+    let current_period = credits_root
+        .get("currentPeriod")
+        .or_else(|| credits_root.get("current_period"));
+    let weekly_end = current_period
+        .and_then(|period| period.get("end"))
+        .and_then(Value::as_str);
+    let weekly_reset_at = weekly_end.and_then(parse_rfc3339_timestamp);
+
+    // Monthly only from default billing when monthlyLimit > 0.
+    // Do NOT use credits billingPeriodEnd: free/unified responses reuse weekly bounds there.
+    let monthly_limit = monthly_root.and_then(|root| {
+        json_number(
+            root.get("monthlyLimit")
+                .or_else(|| root.get("monthly_limit")),
+        )
+    });
+    let monthly_used = monthly_root.and_then(|root| {
+        json_number(
+            root.get("used")
+                .or_else(|| root.get("totalUsed"))
+                .or_else(|| root.get("includedUsed")),
+        )
+    });
+    let has_monthly_quota = monthly_limit.filter(|value| *value > 0.0).is_some();
+    let limit_monthly_text = if has_monthly_quota {
+        monthly_limit.zip(monthly_used).map(|(limit, used)| {
+            let remaining = ((limit - used) / limit * 100.0).clamp(0.0, 100.0);
+            format_percent_label(remaining)
+        })
+    } else {
+        None
+    };
+    let limit_monthly_reset_at = if has_monthly_quota {
+        monthly_root
+            .and_then(|root| {
+                root.get("billingPeriodEnd")
+                    .or_else(|| root.get("billing_period_end"))
+            })
+            .and_then(Value::as_str)
+            .and_then(parse_rfc3339_timestamp)
+    } else {
+        None
+    };
+
+    let plan_from_billing = plan_name_from_billing(credits_body, credits_root)
+        .or_else(|| {
+            monthly_body.and_then(|body| {
+                monthly_root.and_then(|root| plan_name_from_billing(body, root))
+            })
+        });
+    let plan_type = subscription_tier
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(plan_from_billing)
+        .or_else(|| subscription_tier_from_jwt(access_token))
+        .or_else(|| Some("free".to_string()));
+
+    let limit_weekly_text = credit_usage_percent
+        .filter(|value| (0.0..=100.0).contains(value))
+        .map(|used| format_percent_label((100.0 - used).clamp(0.0, 100.0)));
+
+    GrokUsageSnapshot {
+        plan_type,
+        limit_weekly_text,
+        limit_monthly_text,
+        limit_weekly_reset_at: weekly_reset_at,
+        limit_monthly_reset_at,
+    }
+}
+
+fn billing_config_root(body: &Value) -> &Value {
+    body.get("config")
+        .filter(|value| value.is_object())
+        .unwrap_or(body)
+}
+
+fn plan_name_from_billing(billing_body: &Value, root: &Value) -> Option<String> {
+    for source in [billing_body, root] {
+        if let Some(name) = source
+            .get("subscriptionTier")
+            .or_else(|| source.get("subscription_tier"))
+            .or_else(|| source.get("planName"))
+            .or_else(|| source.get("plan_name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(name.to_string());
+        }
+        for key in ["subscription", "plan", "membership"] {
+            if let Some(object) = source.get(key).and_then(Value::as_object) {
+                if let Some(name) = object
+                    .get("name")
+                    .or_else(|| object.get("displayName"))
+                    .or_else(|| object.get("display_name"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    return Some(name.to_string());
+                }
+                if let Some(code) = object
+                    .get("code")
+                    .or_else(|| object.get("tier"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    return Some(code.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn json_number(value: Option<&Value>) -> Option<f64> {
+    let value = value?;
+    match value {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) => text.trim().parse().ok(),
+        Value::Object(object) => object
+            .get("val")
+            .and_then(|nested| match nested {
+                Value::Number(number) => number.as_f64(),
+                Value::String(text) => text.trim().parse().ok(),
+                _ => None,
+            }),
+        _ => None,
+    }
+}
+
+fn parse_rfc3339_timestamp(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|value| value.timestamp())
+}
+
+fn format_percent_label(value: f64) -> String {
+    if (value.fract()).abs() < f64::EPSILON {
+        format!("{}%", value.round() as i64)
+    } else {
+        format!("{value:.1}%")
+    }
+}
+
+fn persist_usage_snapshot(
+    db: &SqliteDbState,
+    account_id: &str,
+    usage: &GrokUsageSnapshot,
+) -> Result<GrokOfficialAccount, String> {
+    let now = Local::now().to_rfc3339();
+    let patch = [
+        (
+            "plan_type",
+            usage
+                .plan_type
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        ),
+        (
+            "limit_weekly_text",
+            usage
+                .limit_weekly_text
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        ),
+        (
+            "limit_monthly_text",
+            usage
+                .limit_monthly_text
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        ),
+        (
+            "limit_weekly_reset_at",
+            usage
+                .limit_weekly_reset_at
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+        ),
+        (
+            "limit_monthly_reset_at",
+            usage
+                .limit_monthly_reset_at
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+        ),
+        ("last_limits_fetched_at", Value::String(now)),
+        ("last_error", Value::Null),
+    ];
+    db.with_conn(|conn| {
+        db_patch_fields(conn, DbTable::GrokOfficialAccount, account_id, &patch)?;
+        Ok(())
+    })?;
+    get_account(db, account_id)?.ok_or_else(|| "Failed to read updated Grok account".to_string())
+}
+
+fn persist_usage_error(db: &SqliteDbState, account_id: &str, error: &str) -> Result<(), String> {
+    db.with_conn(|conn| {
+        db_patch_fields(
+            conn,
+            DbTable::GrokOfficialAccount,
+            account_id,
+            &[("last_error", Value::String(error.to_string()))],
+        )?;
+        Ok(())
+    })
 }
 
 fn ensure_official_provider(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
@@ -1107,6 +1682,144 @@ mod tests {
         assert!(validate_xai_endpoint("https://sub.auth.x.ai/token", "token").is_ok());
         assert!(validate_xai_endpoint("http://auth.x.ai/token", "token").is_err());
         assert!(validate_xai_endpoint("https://x.ai.evil.example/token", "token").is_err());
+    }
+
+    #[test]
+    fn parse_usage_snapshot_weekly_remaining_percent() {
+        let credits = json!({
+            "config": {
+                "creditUsagePercent": 11.0,
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "start": "2026-07-08T00:00:00Z",
+                    "end": "2026-07-15T00:00:00Z"
+                },
+                // Free/unified credits may mirror weekly bounds into billingPeriod*;
+                // parser must ignore these for monthly.
+                "billingPeriodStart": "2026-07-08T00:00:00Z",
+                "billingPeriodEnd": "2026-07-15T00:00:00Z"
+            }
+        });
+        let monthly = json!({
+            "config": {
+                "monthlyLimit": { "val": 0 },
+                "used": { "val": 0 },
+                "billingPeriodEnd": "2026-08-01T00:00:00Z"
+            }
+        });
+        let snapshot =
+            parse_grok_usage_snapshot(&credits, Some(&monthly), Some("SuperGrokPro"), "not-a-jwt");
+        assert_eq!(snapshot.plan_type.as_deref(), Some("SuperGrokPro"));
+        assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("89%"));
+        assert_eq!(
+            snapshot.limit_weekly_reset_at,
+            parse_rfc3339_timestamp("2026-07-15T00:00:00Z")
+        );
+        assert!(snapshot.limit_monthly_text.is_none());
+        assert!(snapshot.limit_monthly_reset_at.is_none());
+    }
+
+    #[test]
+    fn parse_usage_snapshot_free_without_credit_percent() {
+        let credits = json!({
+            "config": {
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "start": "2026-07-22T00:00:00+00:00",
+                    "end": "2026-07-29T00:00:00+00:00"
+                },
+                "onDemandCap": { "val": 0 },
+                "onDemandUsed": { "val": 0 },
+                "isUnifiedBillingUser": true,
+                "billingPeriodStart": "2026-07-22T00:00:00+00:00",
+                "billingPeriodEnd": "2026-07-29T00:00:00+00:00"
+            }
+        });
+        let monthly = json!({
+            "config": {
+                "monthlyLimit": { "val": 0 },
+                "used": { "val": 0 },
+                "billingPeriodStart": "2026-07-01T00:00:00+00:00",
+                "billingPeriodEnd": "2026-08-01T00:00:00+00:00"
+            }
+        });
+        let snapshot = parse_grok_usage_snapshot(&credits, Some(&monthly), None, "not-a-jwt");
+        assert_eq!(snapshot.plan_type.as_deref(), Some("free"));
+        assert!(snapshot.limit_weekly_text.is_none());
+        assert_eq!(
+            snapshot.limit_weekly_reset_at,
+            parse_rfc3339_timestamp("2026-07-29T00:00:00+00:00")
+        );
+        // monthlyLimit=0 → no monthly quota UI, even if calendar billing period exists
+        assert!(snapshot.limit_monthly_text.is_none());
+        assert!(snapshot.limit_monthly_reset_at.is_none());
+    }
+
+    #[test]
+    fn parse_usage_snapshot_monthly_remaining() {
+        let credits = json!({
+            "config": {
+                "creditUsagePercent": 0.0,
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "start": "2026-07-22T00:00:00Z",
+                    "end": "2026-07-29T00:00:00Z"
+                }
+            }
+        });
+        let monthly = json!({
+            "config": {
+                "monthlyLimit": { "val": 100 },
+                "used": { "val": 25 },
+                "billingPeriodEnd": "2026-08-01T00:00:00Z"
+            }
+        });
+        let snapshot =
+            parse_grok_usage_snapshot(&credits, Some(&monthly), Some("supergrok"), "not-a-jwt");
+        assert_eq!(snapshot.limit_monthly_text.as_deref(), Some("75%"));
+        assert_eq!(
+            snapshot.limit_monthly_reset_at,
+            parse_rfc3339_timestamp("2026-08-01T00:00:00Z")
+        );
+        assert_eq!(
+            snapshot.limit_weekly_reset_at,
+            parse_rfc3339_timestamp("2026-07-29T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn subscription_tier_from_jwt_number() {
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"tier":5}"#);
+        let token = format!("header.{claims}.signature");
+        assert_eq!(
+            subscription_tier_from_jwt(&token).as_deref(),
+            Some("supergrok_heavy")
+        );
+    }
+
+    #[test]
+    fn grok_account_needs_refresh_respects_lead_window() {
+        let scope_key = auth_scope_key(XAI_ISSUER, XAI_CLIENT_ID);
+        let far = chrono::Utc::now().timestamp() + 2 * 60 * 60;
+        let near = chrono::Utc::now().timestamp() + 10 * 60;
+        let past = chrono::Utc::now().timestamp() - 60;
+        let make = |expires: Option<i64>| {
+            let mut entry = json!({
+                "key": "token",
+                "refresh_token": "r",
+            });
+            if let Some(expires_at) = expires {
+                entry
+                    .as_object_mut()
+                    .expect("object")
+                    .insert("expires_at".to_string(), json!(expires_at));
+            }
+            single_account_snapshot(scope_key.clone(), entry)
+        };
+        assert!(!grok_account_needs_refresh(&make(Some(far))));
+        assert!(grok_account_needs_refresh(&make(Some(near))));
+        assert!(grok_account_needs_refresh(&make(Some(past))));
+        assert!(grok_account_needs_refresh(&make(None)));
     }
 
     #[test]

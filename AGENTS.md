@@ -35,6 +35,7 @@ This document provides essential information for AI coding agents working on thi
 | 模块目录 | 说明 |
 |---------|------|
 | `tauri/src/coding/` | Coding 域共享规则：runtime location、事件驱动托盘、WSL Direct、跨工具 CLI/路径语义 |
+| `tauri/src/coding/auth_refresh/` | 官方账号 OAuth 共享调度：启动首次 + 周期 ensure_fresh（Grok/Codex/Gemini） |
 | `tauri/src/coding/claude_code/` | Claude Code 后端配置、prompt、plugin、MCP 与 WSL 同步约束 |
 | `tauri/src/coding/codex/` | Codex 后端配置、auth/config.toml、prompt、plugin 与 WSL 同步约束 |
 | `tauri/src/coding/grok/` | Grok CLI 后端 provider、config/auth、官方账号、prompt、plugin 与同步约束 |

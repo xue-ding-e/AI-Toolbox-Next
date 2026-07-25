@@ -62,7 +62,7 @@ sequenceDiagram
 - 供应商卡片与连通性测试都必须区分 Grok 本地模型 key 与上游模型 ID：列表/测试/表单回填用 `modelCatalog.models[].model`（经 `extractGrokSettingsModel`），不要把 `defaultModelKey`（固定 `custom`）当模型名称展示。卡片应展示当前 API 格式（Responses / Chat / Anthropic）。
 - UI 上 `__local__` 即使后端 `isApplied=true`，也不要显示「已应用」标签、选中高亮或「应用」按钮；只保留本地来源提示。用户应通过编辑后保存收编入库，再进入正式 applied 管理语义。
 - `__local__` 还没有正式 provider 数据库记录，不能进入依赖持久化 provider ID 的官方账号管理链路；页面应先让用户保存收编，再展示或调用官方账号接口。
-- 官方订阅模型列表只是辅助填写默认模型。当前 Grok CLI 没有 Codex 的套餐 quota 卡片语义，前端不得复制 Codex 的 5h/weekly/monthly 展示。
+- 官方订阅模型列表只是辅助填写默认模型。Grok CLI 额度来自 cli-chat-proxy 的 billing/user 投影（订阅类型、周/月剩余%、重置时间），前端只展示后端返回字段；不要伪造 Codex 的 5h 窗口，也不要复制 Web SSO `/rest/rate-limits` 语义。
 - Device Code OAuth 状态序列是 `waiting_for_user -> authorized -> saving -> completed`。前端只能在 `completed` 后刷新账号列表并关闭弹窗；`authorized` 只表示 token 已拿到，账号尚未写入 SQLite。
 - provider 模式只允许在空白新增 provider 时选择。模式入口并入表单顶部“渠道”选择行：空白新增可在“自定义/官方/内置渠道”之间切换；复制 provider 仍走创建新记录语义，但必须沿用源 provider 的 `category`；编辑已保存 provider 也必须保留既有 `category`，不要允许官方/自定义互相切换。
 - 自定义模式下的内置供应商 endpoint 会填入 Base URL、API 格式和模型映射，但只锁定 API 格式，不锁定 Base URL；保存内置 endpoint 时只写 `meta.gatewayProfile={tool:"grok",profileId,endpointId}` 引用，`settingsConfig.modelCatalog.models[].baseUrl` 必须使用用户当前表单里的 Base URL。切回普通“自定义”时必须清掉 `gatewayProfile`，只保留用户手动选择的 `apiFormat`；不要把 `providerType` / `apiKeyField` / `reasoningField` / `defaultMaxTokens` / 图片策略这类 profile 派生快照写进 provider meta。

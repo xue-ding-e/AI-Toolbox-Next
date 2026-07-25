@@ -20,7 +20,7 @@ use super::constants::CODEX_LOCAL_PROVIDER_ID;
 use super::types::{CodexOfficialAccount, CodexOfficialAccountContent, CodexProvider};
 use crate::coding::db_id::db_new_id;
 use crate::db::helpers::{
-    db_delete, db_get, db_patch_fields, db_put, db_query_by_field, db_update_applied_status,
+    db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_field, db_update_applied_status,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -2037,6 +2037,85 @@ pub async fn delete_codex_official_account(
     db.with_conn(|conn| db_delete(conn, DbTable::CodexOfficialAccount, &account_id).map(|_| ()))?;
 
     let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
+/// Background / startup pass: ensure_fresh for every applied Codex official account.
+pub async fn refresh_applied_codex_accounts_if_needed(
+    db: &SqliteDbState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let accounts = db.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::CodexOfficialAccount, None)?
+            .into_iter()
+            .map(adapter::from_db_value_official_account)
+            .filter(|account| account.is_applied && account.id != LOCAL_OFFICIAL_ACCOUNT_ID)
+            .collect::<Vec<_>>())
+    })?;
+
+    let mut wrote_runtime = false;
+    for account in accounts {
+        let Some(snapshot) = account.auth_snapshot.as_deref() else {
+            continue;
+        };
+        let snapshot_auth = match auth_json_from_snapshot(snapshot) {
+            Ok(value) => value,
+            Err(error) => {
+                log::debug!(
+                    "Codex applied account '{}' snapshot parse failed: {error}",
+                    account.id
+                );
+                continue;
+            }
+        };
+        match ensure_fresh_official_runtime_auth(db, &snapshot_auth).await {
+            Ok(refreshed) => {
+                if refreshed != snapshot_auth {
+                    if let Err(error) =
+                        persist_refreshed_account_snapshot(db, &account, &refreshed).await
+                    {
+                        log::debug!(
+                            "Codex applied account '{}' persist failed: {error}",
+                            account.id
+                        );
+                        continue;
+                    }
+                    match read_auth_json_from_disk(Some(db)).await {
+                        Ok(current_auth) => {
+                            let merged = merge_official_runtime_auth(&current_auth, &refreshed);
+                            if let Err(error) = write_auth_json_to_disk(db, &merged).await {
+                                log::debug!(
+                                    "Codex applied account '{}' runtime write failed: {error}",
+                                    account.id
+                                );
+                            } else {
+                                wrote_runtime = true;
+                            }
+                        }
+                        Err(error) => {
+                            log::debug!(
+                                "Codex applied account '{}' runtime read failed: {error}",
+                                account.id
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                log::debug!(
+                    "Codex applied account '{}' ensure_fresh failed: {error}",
+                    account.id
+                );
+            }
+        }
+    }
+
+    if wrote_runtime {
+        let _ = app.emit("config-changed", "window");
+        // Align with apply_config_internal: host auth.json change should sync to WSL.
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-codex", ());
+    }
     Ok(())
 }
 

@@ -177,6 +177,13 @@ export const refreshGrokOfficialAccount = async (accountId: string): Promise<Gro
   return await invoke<GrokOfficialAccount>('refresh_grok_official_account', { accountId });
 };
 
+/** Refresh Grok CLI subscription / weekly credits (does not rotate OAuth tokens). */
+export const refreshGrokOfficialAccountLimits = async (
+  accountId: string,
+): Promise<GrokOfficialAccount> => {
+  return await invoke<GrokOfficialAccount>('refresh_grok_official_account_limits', { accountId });
+};
+
 export const logoutGrokOfficialRuntime = async (): Promise<void> => {
   await invoke('logout_grok_official_runtime');
 };

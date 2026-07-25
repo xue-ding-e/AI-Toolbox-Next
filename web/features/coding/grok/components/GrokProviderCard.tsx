@@ -522,11 +522,29 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                       ? t('grok.provider.officialAccountLocalTag')
                       : t('grok.provider.officialAccountOauthTag')}
                   </Tag>
+                  {account.planType && (
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      {account.planType}
+                    </Text>
+                  )}
                   {account.lastError ? (
                     <Text type="danger" style={{ fontSize: 11 }}>
                       {t('grok.provider.officialAccountLastError', { message: account.lastError })}
                     </Text>
-                  ) : null}
+                  ) : (
+                    <>
+                      {account.limitWeeklyText && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {`${t('grok.provider.officialAccountWeeklyLimitLabel')}: ${account.limitWeeklyText}`}
+                        </Text>
+                      )}
+                      {account.limitMonthlyText && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {`${t('grok.provider.officialAccountMonthlyLimitLabel')}: ${account.limitMonthlyText}`}
+                        </Text>
+                      )}
+                    </>
+                  )}
                   {showOfficialRuntimeState && account.isApplied && (
                     <AppliedTag style={{ fontSize: 10 }}>
                       {t('grok.provider.applied')}

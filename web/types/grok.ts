@@ -150,6 +150,15 @@ export interface GrokOfficialAccount {
   expiresAt?: number;
   lastRefresh?: string;
   lastError?: string;
+  /** Subscription tier from CLI billing/user (null upstream is projected as free). */
+  planType?: string;
+  /** Remaining weekly pool percentage text, e.g. "89%". */
+  limitWeeklyText?: string;
+  /** Remaining monthly included quota percentage text when monthlyLimit > 0. */
+  limitMonthlyText?: string;
+  limitWeeklyResetAt?: number;
+  limitMonthlyResetAt?: number;
+  lastLimitsFetchedAt?: string;
   sortIndex?: number;
   isApplied: boolean;
   createdAt: string;

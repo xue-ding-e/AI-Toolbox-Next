@@ -186,6 +186,15 @@ pub struct GrokOfficialAccount {
     pub expires_at: Option<i64>,
     pub last_refresh: Option<String>,
     pub last_error: Option<String>,
+    /// Subscription tier from CLI `/user?include=subscription` (null upstream → "free").
+    pub plan_type: Option<String>,
+    /// Remaining weekly pool percentage text, e.g. "89%".
+    pub limit_weekly_text: Option<String>,
+    /// Remaining monthly included quota percentage text when monthlyLimit > 0.
+    pub limit_monthly_text: Option<String>,
+    pub limit_weekly_reset_at: Option<i64>,
+    pub limit_monthly_reset_at: Option<i64>,
+    pub last_limits_fetched_at: Option<String>,
     pub is_applied: bool,
     pub sort_index: Option<i32>,
     pub created_at: String,

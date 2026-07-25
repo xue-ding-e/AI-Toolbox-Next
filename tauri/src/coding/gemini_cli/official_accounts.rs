@@ -19,7 +19,7 @@ use super::types::{
 use crate::coding::db_id::db_new_id;
 use crate::coding::runtime_location;
 use crate::db::helpers::{
-    db_delete, db_get, db_patch_fields, db_put, db_query_by_field, db_update_applied_status,
+    db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_field, db_update_applied_status,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -1360,6 +1360,100 @@ pub async fn delete_gemini_cli_official_account(
         db_delete(conn, DbTable::GeminiCliOfficialAccount, &account_id).map(|_| ())
     })?;
     let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
+/// Background / startup pass: ensure_fresh for every applied Gemini official account.
+pub async fn refresh_applied_gemini_cli_accounts_if_needed(
+    db: &SqliteDbState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let accounts = db.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::GeminiCliOfficialAccount, None)?
+            .into_iter()
+            .map(adapter::from_db_value_official_account)
+            // Skip virtual local runtime rows; only persisted applied OAuth accounts.
+            .filter(|account| {
+                account.is_applied
+                    && !account.is_virtual
+                    && account.id != LOCAL_OFFICIAL_ACCOUNT_ID
+            })
+            .collect::<Vec<_>>())
+    })?;
+
+    let mut wrote_runtime = false;
+    for account in accounts {
+        let Some(snapshot) = account.auth_snapshot.as_deref() else {
+            continue;
+        };
+        let snapshot_auth = match auth_json_from_snapshot(snapshot) {
+            Ok(value) => value,
+            Err(error) => {
+                log::debug!(
+                    "Gemini applied account '{}' snapshot parse failed: {error}",
+                    account.id
+                );
+                continue;
+            }
+        };
+        match ensure_fresh_auth_snapshot(db, &snapshot_auth).await {
+            Ok(refreshed) => {
+                if refreshed != snapshot_auth {
+                    // Preserve stored quota/limit fields: build_account_content with
+                    // quota_snapshot=None would wipe weekly limits (unlike Codex persist).
+                    let mut content = match build_account_content_from_auth_snapshot(
+                        &account.provider_id,
+                        &refreshed,
+                        None,
+                        Some(&account.name),
+                        account.last_error.as_deref(),
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            log::debug!(
+                                "Gemini applied account '{}' content build failed: {error}",
+                                account.id
+                            );
+                            continue;
+                        }
+                    };
+                    content.plan_type = account.plan_type.clone().or(content.plan_type);
+                    content.limit_short_label = account.limit_short_label.clone();
+                    content.limit_5h_text = account.limit_5h_text.clone();
+                    content.limit_weekly_text = account.limit_weekly_text.clone();
+                    content.limit_5h_reset_at = account.limit_5h_reset_at;
+                    content.limit_weekly_reset_at = account.limit_weekly_reset_at;
+                    content.last_limits_fetched_at = account.last_limits_fetched_at.clone();
+                    if let Err(error) = persist_account_content(db, &account, content).await {
+                        log::debug!(
+                            "Gemini applied account '{}' persist failed: {error}",
+                            account.id
+                        );
+                        continue;
+                    }
+                    if let Err(error) = write_oauth_creds_to_disk(db, &refreshed).await {
+                        log::debug!(
+                            "Gemini applied account '{}' runtime write failed: {error}",
+                            account.id
+                        );
+                    } else {
+                        wrote_runtime = true;
+                    }
+                }
+            }
+            Err(error) => {
+                log::debug!(
+                    "Gemini applied account '{}' ensure_fresh failed: {error}",
+                    account.id
+                );
+            }
+        }
+    }
+
+    if wrote_runtime {
+        let _ = app.emit("config-changed", "window");
+        emit_sync_requests(app);
+    }
     Ok(())
 }
 

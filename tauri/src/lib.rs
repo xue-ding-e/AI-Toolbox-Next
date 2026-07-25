@@ -1178,6 +1178,9 @@ pub fn run() {
                     }
                 });
 
+                // Shared official-account OAuth refresh: startup pass + per-tool intervals.
+                coding::auth_refresh::start(app_handle.clone());
+
                 // 注册 SSH 会话状态
                 let ssh_session = coding::ssh::SshSessionState(std::sync::Arc::new(
                     tokio::sync::Mutex::new(coding::ssh::SshSession::new()),
@@ -2074,6 +2077,7 @@ pub fn run() {
             coding::grok::save_grok_official_local_account,
             coding::grok::apply_grok_official_account,
             coding::grok::refresh_grok_official_account,
+            coding::grok::refresh_grok_official_account_limits,
             coding::grok::delete_grok_official_account,
             coding::grok::logout_grok_official_runtime,
             coding::grok::get_grok_plugin_runtime_status,

@@ -25,6 +25,7 @@ interface GrokDeviceAuthModalProps {
 }
 
 // Backend sequence: waiting_for_user -> authorized -> saving -> completed.
+// Login only saves the account (is_applied=false); apply is a separate action.
 // Only "completed" means the account row is fully written and safe to reload.
 const SUCCESS_STATUS = 'completed';
 const TERMINAL_STATUSES = new Set([

@@ -1,4 +1,5 @@
 pub mod all_api_hub;
+pub mod auth_refresh;
 pub mod cc_switch;
 pub mod claude_code;
 pub mod cli_resolver;
