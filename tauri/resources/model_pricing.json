@@ -536,6 +536,22 @@
     "cache_creation_cost_per_million": "6.25"
   },
   {
+    "model_id": "claude-opus-5",
+    "display_name": "Claude Opus 5",
+    "input_cost_per_million": "5",
+    "output_cost_per_million": "25",
+    "cache_read_cost_per_million": "0.50",
+    "cache_creation_cost_per_million": "6.25"
+  },
+  {
+    "model_id": "claude-sonnet-5",
+    "display_name": "Claude Sonnet 5",
+    "input_cost_per_million": "2",
+    "output_cost_per_million": "10",
+    "cache_read_cost_per_million": "0.20",
+    "cache_creation_cost_per_million": "2.50"
+  },
+  {
     "model_id": "claude-fable-5",
     "display_name": "Claude Fable 5",
     "input_cost_per_million": "10",

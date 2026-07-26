@@ -2,8 +2,10 @@ use super::http_io::{DebugHttpRequest, DebugHttpResponse};
 use super::routes::split_request_target;
 use super::GatewayRuntimeContext;
 use crate::coding::proxy_gateway::request_log;
+use crate::coding::proxy_gateway::paths::ProxyGatewayPaths;
 use crate::coding::proxy_gateway::types::{
     GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayUsageRecordedEvent,
+    ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::usage_parser::stable_usage_request_id;
 use crate::coding::proxy_gateway::usage_stats::{self, RecordRequestSummaryOutcome};
@@ -127,7 +129,21 @@ pub(super) fn record_gateway_observability(
 
         match summary_outcome {
             RecordRequestSummaryOutcome::Skipped => {
-                // Identical proxy semantic replay: do not rewrite JSONL or emit events.
+                // Identical proxy semantic replay with existing detail: do not rewrite
+                // JSONL, recount, or emit events.
+            }
+            RecordRequestSummaryOutcome::NeedsDetail { request_id } => {
+                // Summary already exists; only retry JSONL detail attachment.
+                detail.summary.trace_id = request_id;
+                maybe_write_request_detail(
+                    context,
+                    paths,
+                    &settings,
+                    request,
+                    response,
+                    upstream_response_body_snapshot.as_ref(),
+                    &mut detail,
+                );
             }
             RecordRequestSummaryOutcome::Written {
                 request_id,
@@ -135,74 +151,91 @@ pub(super) fn record_gateway_observability(
             } => {
                 // Keep SQLite request_id and JSONL trace_id identical, including collision keys.
                 detail.summary.trace_id = request_id;
-
-                if settings.request_log_enabled {
-                    detail.request_headers = settings
-                        .store_headers
-                        .then(|| request_log::redact_headers(&request.headers));
-                    detail.request_body = stored_body_text(
-                        &request.body,
-                        request.body.len() as u64,
-                        settings.store_request_body,
-                        settings.log_max_body_size_kb,
-                    );
-                    detail.upstream_request_body =
-                        response.upstream_request_body.as_deref().and_then(|body| {
-                            stored_body_text(
-                                body,
-                                body.len() as u64,
-                                settings.store_request_body,
-                                settings.log_max_body_size_kb,
-                            )
-                        });
-                    detail.response_headers = settings
-                        .store_headers
-                        .then(|| request_log::redact_headers(&response.headers));
-                    detail.upstream_response_body = upstream_response_body_snapshot.as_ref().and_then(
-                        |(body, original_len)| {
-                            stored_body_text(
-                                body,
-                                *original_len,
-                                settings.store_response_body,
-                                settings.log_max_body_size_kb,
-                            )
-                        },
-                    );
-                    detail.response_body = stored_body_text(
-                        &response.body,
-                        response.response_body_bytes,
-                        settings.store_response_body,
-                        settings.log_max_body_size_kb,
-                    );
-
-                    let record = request_log::new_request_log_record(detail.clone());
-                    match request_log::write_request_log(paths, &settings, &record) {
-                        Ok(Some(location)) => {
-                            detail.summary.detail_file = Some(location.detail_file);
-                            detail.summary.detail_offset = Some(location.detail_offset);
-                            // Best-effort: attach locator to the SQLite row we just wrote.
-                            if let Some(db) = context.db.as_ref() {
-                                if let Err(error) = usage_stats::update_request_detail_locator(
-                                    db,
-                                    &detail.summary.trace_id,
-                                    detail.summary.detail_file.as_deref(),
-                                    detail.summary.detail_offset,
-                                ) {
-                                    log::warn!(
-                                        "Failed to attach gateway detail locator to summary: {error}"
-                                    );
-                                }
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            log::warn!("Failed to record proxy gateway request detail: {error}");
-                        }
-                    }
-                }
-
+                maybe_write_request_detail(
+                    context,
+                    paths,
+                    &settings,
+                    request,
+                    response,
+                    upstream_response_body_snapshot.as_ref(),
+                    &mut detail,
+                );
                 emit_usage_recorded_event(context, &detail.summary);
             }
+        }
+    }
+}
+
+
+fn maybe_write_request_detail(
+    context: &GatewayRuntimeContext,
+    paths: &ProxyGatewayPaths,
+    settings: &ProxyGatewaySettings,
+    request: &DebugHttpRequest,
+    response: &DebugHttpResponse,
+    upstream_response_body_snapshot: Option<&(Vec<u8>, u64)>,
+    detail: &mut GatewayRequestLogDetail,
+) {
+    if !settings.request_log_enabled {
+        return;
+    }
+
+    detail.request_headers = settings
+        .store_headers
+        .then(|| request_log::redact_headers(&request.headers));
+    detail.request_body = stored_body_text(
+        &request.body,
+        request.body.len() as u64,
+        settings.store_request_body,
+        settings.log_max_body_size_kb,
+    );
+    detail.upstream_request_body = response.upstream_request_body.as_deref().and_then(|body| {
+        stored_body_text(
+            body,
+            body.len() as u64,
+            settings.store_request_body,
+            settings.log_max_body_size_kb,
+        )
+    });
+    detail.response_headers = settings
+        .store_headers
+        .then(|| request_log::redact_headers(&response.headers));
+    detail.upstream_response_body =
+        upstream_response_body_snapshot.and_then(|(body, original_len)| {
+            stored_body_text(
+                body,
+                *original_len,
+                settings.store_response_body,
+                settings.log_max_body_size_kb,
+            )
+        });
+    detail.response_body = stored_body_text(
+        &response.body,
+        response.response_body_bytes,
+        settings.store_response_body,
+        settings.log_max_body_size_kb,
+    );
+
+    let record = request_log::new_request_log_record(detail.clone());
+    match request_log::write_request_log(paths, settings, &record) {
+        Ok(Some(location)) => {
+            detail.summary.detail_file = Some(location.detail_file);
+            detail.summary.detail_offset = Some(location.detail_offset);
+            // Best-effort: attach locator to the existing SQLite summary row.
+            if let Some(db) = context.db.as_ref() {
+                if let Err(error) = usage_stats::update_request_detail_locator(
+                    db,
+                    &detail.summary.trace_id,
+                    detail.summary.detail_file.as_deref(),
+                    detail.summary.detail_offset,
+                ) {
+                    log::warn!("Failed to attach gateway detail locator to summary: {error}");
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            log::warn!("Failed to record proxy gateway request detail: {error}");
         }
     }
 }

@@ -208,6 +208,8 @@ struct SourceStreamState {
     responses_tool_by_item: HashMap<String, SourceToolState>,
     /// Compaction item ids already emitted from output_item.added (avoid done duplicates).
     responses_compaction_emitted_ids: HashSet<String>,
+    /// True once any compaction item was emitted, including empty-id items.
+    responses_compaction_emitted_without_id: bool,
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
     pending_chat_finish_reason: Option<String>,
@@ -740,7 +742,9 @@ impl SourceStreamState {
                 if is_responses_compaction_type(item_type) {
                     // Emit on added so targets that only see one of added/done still receive it.
                     let part = responses_compaction_part(item);
-                    if !part.id.is_empty() {
+                    if part.id.is_empty() {
+                        self.responses_compaction_emitted_without_id = true;
+                    } else {
                         self.responses_compaction_emitted_ids
                             .insert(part.id.clone());
                     }
@@ -870,11 +874,14 @@ impl SourceStreamState {
                 // Prefer added; if upstream only sends done, still emit once.
                 if is_responses_compaction_type(item_type) {
                     let part = responses_compaction_part(item);
-                    if !part.id.is_empty() && self.responses_compaction_emitted_ids.contains(&part.id)
-                    {
+                    if part.id.is_empty() {
+                        if self.responses_compaction_emitted_without_id {
+                            return Vec::new();
+                        }
+                        self.responses_compaction_emitted_without_id = true;
+                    } else if self.responses_compaction_emitted_ids.contains(&part.id) {
                         return Vec::new();
-                    }
-                    if !part.id.is_empty() {
+                    } else {
                         self.responses_compaction_emitted_ids
                             .insert(part.id.clone());
                     }

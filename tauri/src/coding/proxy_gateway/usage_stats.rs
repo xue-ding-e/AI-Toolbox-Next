@@ -192,6 +192,11 @@ pub enum RecordRequestSummaryOutcome {
         request_id: String,
         collision: bool,
     },
+    /// Summary already exists with identical semantics but still lacks a JSONL
+    /// detail locator. Observability may retry detail attachment without recounting.
+    NeedsDetail {
+        request_id: String,
+    },
 }
 
 /// Record a compact proxy request summary for request list / usage stats.
@@ -267,6 +272,10 @@ pub fn record_request_summary(
         let plan = resolve_usage_request_id(conn, &summary.trace_id, &semantic)?;
         let (request_id, replace_session_log, collision, preserve_existing_detail) = match plan {
             UsageWritePlan::Skip => return Ok(RecordRequestSummaryOutcome::Skipped),
+            UsageWritePlan::NeedsDetail { request_id } => {
+                // Summary already exists with identical semantics; only detail is missing.
+                return Ok(RecordRequestSummaryOutcome::NeedsDetail { request_id });
+            }
             UsageWritePlan::Write {
                 request_id,
                 replace_session_log,
@@ -280,19 +289,35 @@ pub fn record_request_summary(
             ),
         };
 
+        let existing_detail = if preserve_existing_detail {
+            load_existing_detail_locator(conn, &request_id)?
+        } else {
+            None
+        };
         let (detail_file, detail_offset) = if preserve_existing_detail {
             // Keep a previously linked JSONL locator when upgrading a session row
             // that already points at detail, unless this write supplies a new one.
-            let existing = load_existing_detail_locator(conn, &request_id)?;
             (
                 summary
                     .detail_file
                     .clone()
-                    .or(existing.as_ref().and_then(|(file, _)| file.clone())),
-                summary.detail_offset.or(existing.and_then(|(_, offset)| offset)),
+                    .or(existing_detail
+                        .as_ref()
+                        .and_then(|(file, _)| file.clone())),
+                summary
+                    .detail_offset
+                    .or(existing_detail.and_then(|(_, offset)| offset)),
             )
         } else {
             (summary.detail_file.clone(), summary.detail_offset)
+        };
+
+        // Preserve imported session linkage when proxy upgrades a session row.
+        // INSERT OR REPLACE would otherwise wipe session_id if we hardcode NULL.
+        let session_id = if replace_session_log {
+            load_existing_session_id(conn, &request_id)?
+        } else {
+            None
         };
 
         let insert_verb = if replace_session_log {
@@ -318,8 +343,8 @@ pub fn record_request_summary(
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
-                ?18, ?19, NULL, ?20, ?21,
-                ?22, ?23, ?24, 'proxy', ?25, ?26, ?27, ?28, ?29
+                ?18, ?19, ?20, ?21, ?22,
+                ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30
             )"
         );
         let affected_rows = conn
@@ -345,6 +370,7 @@ pub fn record_request_summary(
                     summary.duration_ms as i64,
                     status_code,
                     summary.error_message,
+                    session_id,
                     summary.provider_type,
                     i64::from(summary.is_streaming),
                     cost_multiplier.to_string(),
@@ -437,6 +463,10 @@ impl UsageSemantic {
 
 enum UsageWritePlan {
     Skip,
+    /// Proxy semantic already recorded, but the row still has no detail locator.
+    NeedsDetail {
+        request_id: String,
+    },
     Write {
         request_id: String,
         replace_session_log: bool,
@@ -473,6 +503,13 @@ fn resolve_usage_request_id(
             if data_source.as_deref().unwrap_or("proxy") == "proxy"
                 && existing_semantic == *semantic =>
         {
+            // Allow a later identical replay to attach JSONL detail if the first
+            // write only managed the SQLite summary (detail half-write failure).
+            if !has_detail_locator(conn, primary_request_id)? {
+                return Ok(UsageWritePlan::NeedsDetail {
+                    request_id: primary_request_id.to_string(),
+                });
+            }
             Ok(UsageWritePlan::Skip)
         }
         Some(_) => {
@@ -487,6 +524,11 @@ fn resolve_usage_request_id(
                 if data_source.as_deref().unwrap_or("proxy") == "proxy"
                     && existing_semantic == *semantic
                 {
+                    if !has_detail_locator(conn, &fallback)? {
+                        return Ok(UsageWritePlan::NeedsDetail {
+                            request_id: fallback,
+                        });
+                    }
                     return Ok(UsageWritePlan::Skip);
                 }
                 return Err(format!(
@@ -548,6 +590,31 @@ fn load_existing_detail_locator(
     )
     .optional()
     .map_err(|error| format!("Failed to query usage detail locator: {error}"))
+}
+
+fn has_detail_locator(conn: &Connection, request_id: &str) -> Result<bool, String> {
+    let Some((file, offset)) = load_existing_detail_locator(conn, request_id)? else {
+        return Ok(false);
+    };
+    let has_file = file
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    Ok(has_file || offset.is_some())
+}
+
+fn load_existing_session_id(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT session_id FROM proxy_request_logs WHERE request_id = ?1",
+        [request_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(|value| value.flatten())
+    .map_err(|error| format!("Failed to query usage session_id: {error}"))
 }
 
 pub fn request_logs(
@@ -2643,6 +2710,14 @@ mod tests {
                 .expect("first write"),
             RecordRequestSummaryOutcome::Written { .. }
         ));
+        // With an attached detail locator, identical proxy semantics must skip.
+        update_request_detail_locator(
+            &db,
+            "SESSION:msg_stable",
+            Some("stable-detail.jsonl"),
+            Some(1),
+        )
+        .expect("attach locator");
         assert_eq!(
             record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
                 .expect("identical replay"),
@@ -2687,7 +2762,10 @@ mod tests {
                 assert!(collision);
                 assert!(request_id.starts_with("SESSION:codex:p1:resp_1:collision:"));
             }
-            RecordRequestSummaryOutcome::Skipped => panic!("expected collision write"),
+            RecordRequestSummaryOutcome::Skipped
+            | RecordRequestSummaryOutcome::NeedsDetail { .. } => {
+                panic!("expected collision write")
+            }
         }
 
         let ids = db
@@ -2725,11 +2803,11 @@ mod tests {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                     total_cost_usd, latency_ms, status_code, created_at, data_source,
-                    detail_file, detail_offset
+                    detail_file, detail_offset, session_id
                 ) VALUES (
                     'SESSION:msg_upgrade', 'session', 'claude', 'claude-sonnet', NULL,
                     1, 1, 0, 0, '0', '0', '0', '0', '0', 0, 200, 1, 'session',
-                    'old-detail.jsonl', 42
+                    'old-detail.jsonl', 42, 'imported-session-x'
                 )",
                 [],
             )
@@ -2744,16 +2822,17 @@ mod tests {
             RecordRequestSummaryOutcome::Written { .. }
         ));
 
-        let (provider_id, data_source, input_tokens, detail_file, detail_offset): (
+        let (provider_id, data_source, input_tokens, detail_file, detail_offset, session_id): (
             String,
             String,
             i64,
             Option<String>,
             Option<i64>,
+            Option<String>,
         ) = db
             .with_conn(|conn| {
                 conn.query_row(
-                    "SELECT provider_id, data_source, input_tokens, detail_file, detail_offset
+                    "SELECT provider_id, data_source, input_tokens, detail_file, detail_offset, session_id
                      FROM proxy_request_logs WHERE request_id = 'SESSION:msg_upgrade'",
                     [],
                     |row| {
@@ -2763,6 +2842,7 @@ mod tests {
                             row.get(2)?,
                             row.get(3)?,
                             row.get(4)?,
+                            row.get(5)?,
                         ))
                     },
                 )
@@ -2774,6 +2854,57 @@ mod tests {
         assert_eq!(input_tokens, 10);
         assert_eq!(detail_file.as_deref(), Some("old-detail.jsonl"));
         assert_eq!(detail_offset, Some(42));
+        assert_eq!(session_id.as_deref(), Some("imported-session-x"));
+    }
+
+    #[test]
+    fn record_request_summary_allows_detail_retry_when_locator_missing() {
+        let db = test_db();
+        let detail = make_detail("SESSION:msg_half_write", "provider-alpha", 200, 10, 20);
+        assert!(matches!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                .expect("first summary write"),
+            RecordRequestSummaryOutcome::Written {
+                request_id,
+                collision: false
+            } if request_id == "SESSION:msg_half_write"
+        ));
+
+        // First write left summary without detail locator (detail half-write failure).
+        let first_replay = record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("detail retry plan");
+        assert!(matches!(
+            first_replay,
+            RecordRequestSummaryOutcome::NeedsDetail {
+                request_id
+            } if request_id == "SESSION:msg_half_write"
+        ));
+
+        // After a locator is attached, identical semantics must skip again.
+        update_request_detail_locator(
+            &db,
+            "SESSION:msg_half_write",
+            Some("retry-detail.jsonl"),
+            Some(7),
+        )
+        .expect("attach locator");
+        assert!(matches!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                .expect("skip after detail attached"),
+            RecordRequestSummaryOutcome::Skipped
+        ));
+
+        let count: i64 = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'SESSION:msg_half_write'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("count");
+        assert_eq!(count, 1);
     }
 
     #[test]

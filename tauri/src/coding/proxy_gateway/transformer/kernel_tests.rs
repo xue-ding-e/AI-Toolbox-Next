@@ -3191,6 +3191,72 @@ data: {"type":"response.completed","response":{"id":"resp_cmp_done","object":"re
     }
 
     #[test]
+    fn responses_stream_dedupes_empty_id_compaction_on_added_and_done() {
+        let source = [
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_cmp_empty","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
+
+"#,
+            r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}}
+
+"#,
+            r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}}
+
+"#,
+            r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_cmp_empty","object":"response","model":"gpt-5","status":"completed","output":[{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}],"usage":{"input_tokens":1,"output_tokens":0}}}
+
+"#,
+        ]
+        .concat();
+
+        let responses_out = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            source,
+        );
+        let values = sse_data_values(&responses_out);
+        let compaction_events = values
+            .iter()
+            .filter(|value| {
+                matches!(
+                    value.get("type").and_then(Value::as_str),
+                    Some("response.output_item.added") | Some("response.output_item.done")
+                ) && value
+                    .pointer("/item/encrypted_content")
+                    .and_then(Value::as_str)
+                    == Some("enc_empty_id")
+            })
+            .count();
+        // Target emits one added+done pair for a single CompactionItem.
+        assert_eq!(
+            compaction_events, 2,
+            "empty-id compaction must be emitted once, got {responses_out}"
+        );
+        let completed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
+            .expect("completed event");
+        let output = completed
+            .pointer("/response/output")
+            .and_then(Value::as_array)
+            .expect("completed output");
+        let compaction_count = output
+            .iter()
+            .filter(|item| {
+                item.get("type").and_then(Value::as_str) == Some("compaction")
+                    && item.get("encrypted_content").and_then(Value::as_str)
+                        == Some("enc_empty_id")
+            })
+            .count();
+        assert_eq!(
+            compaction_count, 1,
+            "completed output should include exactly one empty-id compaction, got {output:?}"
+        );
+    }
+
+    #[test]
     fn chat_reasoning_field_syncs_into_llm_message() {
         let llm = chat_request_to_llm(json!({
             "model": "model-a",
