@@ -715,6 +715,186 @@ fn request_reasoning_context_only_without_effort_is_preserved() {
 }
 
 #[test]
+fn responses_namespace_tools_expand_into_ir_functions() {
+    // AxonHub 7d095b63: namespace children become function tools with ns__name.
+    let body = json!({
+        "model": "gpt-5",
+        "input": "hello",
+        "tools": [
+            {
+                "type": "function",
+                "name": "top_level",
+                "parameters": {"type": "object"}
+            },
+            {
+                "type": "namespace",
+                "name": "codex_app",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "automation_update",
+                        "description": "update automation",
+                        "parameters": {"type": "object", "properties": {}}
+                    },
+                    {
+                        "type": "function",
+                        "name": "list",
+                        "parameters": {"type": "object"}
+                    }
+                ]
+            },
+            {
+                "type": "web_search"
+            }
+        ]
+    });
+    let request = responses_request_to_llm(body);
+    let names: Vec<&str> = request
+        .tools
+        .iter()
+        .filter_map(|tool| tool.function.as_ref().map(|function| function.name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "top_level",
+            "codex_app__automation_update",
+            "codex_app__list"
+        ]
+    );
+
+    // Namespace envelope is preserved as a raw fragment with represented_tool_count=2.
+    let raw_tools = request
+        .transformer_metadata
+        .get(RESPONSES_RAW_TOOLS_METADATA_KEY)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let namespace_fragment = raw_tools
+        .iter()
+        .find(|fragment| {
+            fragment.pointer("/value/type").and_then(Value::as_str) == Some("namespace")
+        })
+        .expect("namespace raw fragment");
+    assert_eq!(namespace_fragment["represented_tool_count"], 2);
+    assert_eq!(namespace_fragment["index"], 1);
+    assert_eq!(
+        request
+            .transformer_metadata
+            .get(RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY)
+            .and_then(Value::as_bool),
+        Some(true),
+        "raw tools should mark signature sidecar complete for merge"
+    );
+    let signatures = request
+        .transformer_metadata
+        .get(RESPONSES_TOOL_SIGNATURES_METADATA_KEY)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        signatures,
+        vec![
+            json!("function:top_level"),
+            json!("function:codex_app__automation_update"),
+            json!("function:codex_app__list"),
+        ]
+    );
+
+    // Direct merge should reinsert namespace and consume the two expanded children.
+    let mut structured = vec![
+        json!({"type":"function","name":"top_level","parameters":{"type":"object"}}),
+        json!({"type":"function","name":"codex_app__automation_update","parameters":{"type":"object"}}),
+        json!({"type":"function","name":"codex_app__list","parameters":{"type":"object"}}),
+    ];
+    let expected = vec![
+        "function:top_level".to_string(),
+        "function:codex_app__automation_update".to_string(),
+        "function:codex_app__list".to_string(),
+    ];
+    let merged = merge_raw_responses_fragments_with_signatures(
+        &mut structured,
+        Some(&Value::Array(raw_tools.clone())),
+        Some(expected.as_slice()),
+    );
+    let merged_types: Vec<&str> = merged
+        .iter()
+        .filter_map(|tool| tool.get("type").and_then(Value::as_str))
+        .collect();
+    assert_eq!(
+        merged_types,
+        vec!["function", "namespace", "web_search"],
+        "merge should restore namespace envelope, got {merged:?}"
+    );
+
+    let roundtrip = llm_request_to_responses(request);
+    let tools = roundtrip["tools"].as_array().expect("tools");
+    let types: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("type").and_then(Value::as_str))
+        .collect();
+    assert!(
+        types.iter().any(|tool_type| *tool_type == "namespace"),
+        "namespace envelope should round-trip, got {types:?} full={tools:?}"
+    );
+    assert!(
+        types.iter().any(|tool_type| *tool_type == "function"),
+        "top-level function should remain, got {types:?}"
+    );
+    assert!(
+        types.iter().any(|tool_type| *tool_type == "web_search"),
+        "raw-only web_search should remain, got {types:?}"
+    );
+    // Expanded children must not be double-emitted as plain functions after merge.
+    let function_names: Vec<&str> = tools
+        .iter()
+        .filter(|tool| tool.get("type").and_then(Value::as_str) == Some("function"))
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    assert_eq!(function_names, vec!["top_level"]);
+}
+
+#[test]
+fn responses_usage_roundtrip_preserves_cache_write_tokens() {
+    use crate::coding::proxy_gateway::transformer::llm::Usage;
+    use super::shared::{responses_usage_to_llm, usage_to_responses};
+
+    let wire = json!({
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "total_tokens": 120,
+        "input_tokens_details": {
+            "cached_tokens": 40,
+            "cache_write_tokens": 15
+        },
+        "output_tokens_details": {
+            "reasoning_tokens": 3
+        }
+    });
+    let usage = responses_usage_to_llm(Some(&wire));
+    assert_eq!(usage.cached_tokens, 40);
+    assert_eq!(usage.cache_write_tokens, 15);
+    assert_eq!(usage.reasoning_tokens, 3);
+
+    let back = usage_to_responses(Some(&usage));
+    assert_eq!(back["input_tokens_details"]["cached_tokens"], 40);
+    assert_eq!(back["input_tokens_details"]["cache_write_tokens"], 15);
+    assert_eq!(back["output_tokens_details"]["reasoning_tokens"], 3);
+
+    let zero_write = usage_to_responses(Some(&Usage {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2,
+        cached_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+    }));
+    assert!(zero_write["input_tokens_details"]
+        .get("cache_write_tokens")
+        .is_none());
+}
+
+#[test]
 fn raw_tools_merge_drops_raw_tool_colliding_with_structured_signature() {
     // Structured function tool signature is collected on inbound; a raw tool
     // fragment with the same type:name must be dropped (T-3 fail-closed).

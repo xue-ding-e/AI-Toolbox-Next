@@ -1,10 +1,13 @@
 use super::gemini::gemini_stream_error;
 use super::kernel::ConversionContext;
-use super::llm::{TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
+use super::llm::{MessageContentPart, TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
 use super::openai::codex_tools::{
     custom_tool_input_from_chat_arguments, is_custom_tool_chat_name,
     response_tool_added_item_from_chat_name, response_tool_done_item_from_chat_name,
     response_tool_item_id_from_chat_name, CodexToolContext,
+};
+use super::openai::responses::shared::{
+    is_responses_compaction_type, responses_compaction_item_from_part, responses_compaction_part,
 };
 use super::shared::signature::{
     decode_signature_for, encode_signature, SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE,
@@ -38,6 +41,10 @@ pub enum UnifiedStreamEvent {
         tool_type: String,
         name: String,
         arguments: String,
+    },
+    /// Responses compaction / compaction_summary item (AxonHub 01707aa6).
+    CompactionItem {
+        part: MessageContentPart,
     },
     RawAnthropicContentBlock {
         block: Value,
@@ -199,6 +206,8 @@ struct SourceStreamState {
     chat_inline_think_buffer: String,
     anthropic_tool_by_block: HashMap<usize, SourceToolState>,
     responses_tool_by_item: HashMap<String, SourceToolState>,
+    /// Compaction item ids already emitted from output_item.added (avoid done duplicates).
+    responses_compaction_emitted_ids: HashSet<String>,
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
     pending_chat_finish_reason: Option<String>,
@@ -728,6 +737,15 @@ impl SourceStreamState {
                         })
                         .unwrap_or_default();
                 }
+                if is_responses_compaction_type(item_type) {
+                    // Emit on added so targets that only see one of added/done still receive it.
+                    let part = responses_compaction_part(item);
+                    if !part.id.is_empty() {
+                        self.responses_compaction_emitted_ids
+                            .insert(part.id.clone());
+                    }
+                    return vec![UnifiedStreamEvent::CompactionItem { part }];
+                }
                 if item_type != "function_call" && item_type != "custom_tool_call" {
                     return Vec::new();
                 }
@@ -833,7 +851,8 @@ impl SourceStreamState {
             }
             "response.output_item.done" => {
                 let item = value.get("item").unwrap_or(&value);
-                if item.get("type").and_then(Value::as_str) == Some("reasoning") {
+                let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+                if item_type == "reasoning" {
                     return item
                         .get("encrypted_content")
                         .and_then(Value::as_str)
@@ -847,6 +866,19 @@ impl SourceStreamState {
                             }]
                         })
                         .unwrap_or_default();
+                }
+                // Prefer added; if upstream only sends done, still emit once.
+                if is_responses_compaction_type(item_type) {
+                    let part = responses_compaction_part(item);
+                    if !part.id.is_empty() && self.responses_compaction_emitted_ids.contains(&part.id)
+                    {
+                        return Vec::new();
+                    }
+                    if !part.id.is_empty() {
+                        self.responses_compaction_emitted_ids
+                            .insert(part.id.clone());
+                    }
+                    return vec![UnifiedStreamEvent::CompactionItem { part }];
                 }
                 Vec::new()
             }
@@ -1291,19 +1323,30 @@ fn chat_usage_to_responses(usage: Option<&Value>) -> Value {
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let cache_write_tokens = usage
+        .pointer("/prompt_tokens_details/cache_write_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+        .or_else(|| usage.pointer("/prompt_tokens_details/cache_creation_tokens"))
+        .or_else(|| usage.pointer("/input_tokens_details/cache_creation_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let reasoning_tokens = usage
         .pointer("/completion_tokens_details/reasoning_tokens")
         .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
 
+    let mut input_details = json!({
+        "cached_tokens": cached_tokens
+    });
+    if cache_write_tokens > 0 {
+        input_details["cache_write_tokens"] = json!(cache_write_tokens);
+    }
     json!({
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
-        "input_tokens_details": {
-            "cached_tokens": cached_tokens
-        },
+        "input_tokens_details": input_details,
         "output_tokens_details": {
             "reasoning_tokens": reasoning_tokens
         }
@@ -1394,6 +1437,8 @@ struct TargetStreamState {
     responses_message_output_index: Option<usize>,
     responses_message_done: bool,
     responses_message_text: String,
+    /// Streamed compaction items ordered by output_index (AxonHub 01707aa6).
+    responses_compaction_items: Vec<(usize, MessageContentPart)>,
     pending_responses_finish_reason: Option<String>,
     pending_responses_encrypted_content: Option<String>,
     pending_gemini_reasoning_signature: Option<String>,
@@ -2079,11 +2124,48 @@ impl TargetStreamState {
         for tool in self.seen_response_tools.values() {
             output_items.push((tool.output_index, self.responses_tool_output_item(tool)));
         }
+        for (output_index, part) in &self.responses_compaction_items {
+            output_items.push((
+                *output_index,
+                responses_compaction_item_from_part(part.clone()),
+            ));
+        }
         output_items.sort_by_key(|(output_index, _)| *output_index);
         output_items
             .into_iter()
             .map(|(_, item)| item)
             .collect::<Vec<_>>()
+    }
+
+    fn emit_responses_compaction_item(
+        &mut self,
+        part: MessageContentPart,
+        out: &mut Vec<Vec<u8>>,
+    ) {
+        out.extend(self.ensure_responses_start());
+        self.finish_responses_reasoning_item(out);
+        let output_index = self.next_responses_output_index();
+        let mut item = responses_compaction_item_from_part(part.clone());
+        if item.get("id").and_then(Value::as_str).unwrap_or("").is_empty() {
+            item["id"] = json!(format!("cmp_gateway_{output_index}"));
+        }
+        out.push(sse_event(
+            Some("response.output_item.added"),
+            &json!({
+                "type": "response.output_item.added",
+                "output_index": output_index,
+                "item": item
+            }),
+        ));
+        out.push(sse_event(
+            Some("response.output_item.done"),
+            &json!({
+                "type": "response.output_item.done",
+                "output_index": output_index,
+                "item": item
+            }),
+        ));
+        self.responses_compaction_items.push((output_index, part));
     }
 
     fn close_anthropic_text_block(&mut self, out: &mut Vec<Vec<u8>>) {
@@ -2298,6 +2380,7 @@ impl TargetStreamState {
                 }
             }
             UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::CompactionItem { .. }
             | UnifiedStreamEvent::StreamError { .. } => {}
             UnifiedStreamEvent::RawAnthropicContentBlock { block } => {
                 if let Some(start) = self.ensure_anthropic_start() {
@@ -2398,6 +2481,7 @@ impl TargetStreamState {
             }
             UnifiedStreamEvent::ReasoningSignature { .. }
             | UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::CompactionItem { .. }
             | UnifiedStreamEvent::RawAnthropicContentBlock { .. }
             | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
@@ -2561,6 +2645,11 @@ impl TargetStreamState {
             UnifiedStreamEvent::ToolCallSignature { .. }
             | UnifiedStreamEvent::RawAnthropicContentBlock { .. }
             | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
+            UnifiedStreamEvent::CompactionItem { part } => {
+                let mut out = Vec::new();
+                self.emit_responses_compaction_item(part, &mut out);
+                out
+            }
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -2699,8 +2788,9 @@ impl TargetStreamState {
                 }
                 Vec::new()
             }
-            UnifiedStreamEvent::RawAnthropicContentBlock { .. } => Vec::new(),
-            UnifiedStreamEvent::StreamError { .. } => Vec::new(),
+            UnifiedStreamEvent::RawAnthropicContentBlock { .. }
+            | UnifiedStreamEvent::CompactionItem { .. }
+            | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,

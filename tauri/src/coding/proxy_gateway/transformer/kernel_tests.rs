@@ -3069,6 +3069,128 @@ data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{},
     }
 
     #[test]
+    fn responses_stream_preserves_compaction_item_through_chat_and_back() {
+        // AxonHub 01707aa6: streamed compaction/compaction_summary items must not be dropped.
+        let source = [
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_cmp","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
+
+"#,
+            r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"}}
+
+"#,
+            r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"}}
+
+"#,
+            r#"event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"hello","item_id":"msg_1","output_index":1,"content_index":0}
+
+"#,
+            r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_cmp","object":"response","model":"gpt-5","status":"completed","output":[{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"},{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}
+
+"#,
+        ]
+        .concat();
+
+        // Responses -> Chat: compaction is Responses-native; Chat target intentionally drops it,
+        // but the conversion must not panic and must still deliver text.
+        let chat_out = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            source.clone(),
+        );
+        assert!(
+            chat_out.contains("hello"),
+            "chat stream should still carry text after compaction item"
+        );
+
+        // Responses -> Responses: compaction item must reappear as output_item.added/done
+        // and in the completed response output array.
+        let responses_out = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            source,
+        );
+        assert!(
+            responses_out.contains("\"type\":\"compaction\"")
+                || responses_out.contains("\"type\": \"compaction\""),
+            "responses stream should preserve compaction item type, got {responses_out}"
+        );
+        assert!(
+            responses_out.contains("enc_stream_1"),
+            "responses stream should preserve compaction encrypted_content"
+        );
+        assert!(
+            responses_out.contains("response.output_item.added")
+                || responses_out.contains("\"type\":\"response.output_item.added\""),
+            "responses stream should emit output_item.added for compaction"
+        );
+        let values = sse_data_values(&responses_out);
+        let completed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
+            .expect("completed event");
+        let output = completed
+            .pointer("/response/output")
+            .and_then(Value::as_array)
+            .expect("completed output");
+        assert!(
+            output.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("compaction")
+                    && item.get("encrypted_content").and_then(Value::as_str)
+                        == Some("enc_stream_1")
+            }),
+            "completed output should include compaction item, got {output:?}"
+        );
+    }
+
+    #[test]
+    fn responses_stream_preserves_compaction_item_when_only_done_is_sent() {
+        let source = [
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_cmp_done","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
+
+"#,
+            r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"cmp_done_only","type":"compaction_summary","encrypted_content":"enc_done_only","created_by":"compact"}}
+
+"#,
+            r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_cmp_done","object":"response","model":"gpt-5","status":"completed","output":[{"id":"cmp_done_only","type":"compaction_summary","encrypted_content":"enc_done_only"}],"usage":{"input_tokens":1,"output_tokens":0}}}
+
+"#,
+        ]
+        .concat();
+
+        let responses_out = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            source,
+        );
+        assert!(
+            responses_out.contains("enc_done_only"),
+            "done-only compaction must still be preserved, got {responses_out}"
+        );
+        let values = sse_data_values(&responses_out);
+        let completed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
+            .expect("completed event");
+        let output = completed
+            .pointer("/response/output")
+            .and_then(Value::as_array)
+            .expect("completed output");
+        assert!(
+            output.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("compaction_summary")
+                    && item.get("encrypted_content").and_then(Value::as_str)
+                        == Some("enc_done_only")
+            }),
+            "completed output should include done-only compaction, got {output:?}"
+        );
+    }
+
+    #[test]
     fn chat_reasoning_field_syncs_into_llm_message() {
         let llm = chat_request_to_llm(json!({
             "model": "model-a",

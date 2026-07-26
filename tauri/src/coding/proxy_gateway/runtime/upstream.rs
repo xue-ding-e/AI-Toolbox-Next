@@ -5,6 +5,10 @@ use super::compat::xai_responses::{
     apply_xai_responses_passthrough, namespace_restore_map, restore_response_namespaces,
     wrap_namespace_restore_sse_stream, NamespacedName,
 };
+use super::content_encoding::{
+    get_content_encoding_from_header_map, maybe_decompress_encoded_body,
+    strip_decoded_entity_headers,
+};
 use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
     PreservedHeader,
@@ -1189,10 +1193,27 @@ async fn send_upstream_request(
         let status_code = status.as_u16();
         let status_text = status.canonical_reason().unwrap_or("Unknown").to_string();
         let mut response_headers = filtered_response_headers(response.headers());
+        let encoding = get_content_encoding_from_header_map(response.headers());
         let body = response.bytes().await.map_err(|mut error| {
             error.upstream_request_body = Some(upstream_body_snapshot.clone());
             error
         })?;
+        let body = match maybe_decompress_encoded_body(encoding.as_deref(), body) {
+            Ok((body, true)) => {
+                strip_decoded_entity_headers(&mut response_headers);
+                body
+            }
+            Ok((body, false)) => body,
+            Err(error) => {
+                return Err(GatewayForwardError {
+                    message: format!("Failed to decompress upstream response body: {error}"),
+                    kind: GatewayFailureKind::GatewayParse,
+                    upstream_request_body: Some(upstream_body_snapshot.clone()),
+                    upstream_response_body: None,
+                    upstream_response_body_bytes: 0,
+                });
+            }
+        };
 
         if should_attempt_thinking_signature_rectifier
             && should_rectify_thinking_signature(status_code, &body)
@@ -1698,10 +1719,28 @@ async fn build_gateway_response(
         return Ok(gateway_response);
     }
 
+    let encoding = get_content_encoding_from_header_map(response.headers());
     let upstream_response_body = response.bytes().await.map_err(|mut error| {
         error.upstream_request_body = Some(upstream_body_snapshot.clone());
         error
     })?;
+    let upstream_response_body =
+        match maybe_decompress_encoded_body(encoding.as_deref(), upstream_response_body) {
+            Ok((body, true)) => {
+                strip_decoded_entity_headers(&mut response_headers);
+                body
+            }
+            Ok((body, false)) => body,
+            Err(error) => {
+                return Err(GatewayForwardError {
+                    message: format!("Failed to decompress upstream response body: {error}"),
+                    kind: GatewayFailureKind::GatewayParse,
+                    upstream_request_body: Some(upstream_body_snapshot.clone()),
+                    upstream_response_body: None,
+                    upstream_response_body_bytes: 0,
+                });
+            }
+        };
     let upstream_response_body_bytes = upstream_response_body.len() as u64;
     let mut body = upstream_response_body.clone();
     if (200..400).contains(&status.as_u16()) && provider_kind == Some(ProviderBodyCompat::Ollama) {
@@ -4106,6 +4145,25 @@ fn should_rectify_unsupported_media(status_code: u16, body: &[u8]) -> bool {
         return false;
     };
     let lower = message.to_ascii_lowercase();
+
+    // Self-evident text-only rejections assert modality limits without mentioning
+    // image/media. Domestic gateways often omit the third-person "s"
+    // (e.g. Volcano "Model only support text input", issue #5025 / cc-switch 52534618).
+    // Keep "text only"/"text-only" as self-evident too so short messages like
+    // "model is text-only" still trigger reactive strip without an image word.
+    const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &[
+        "only support text",
+        "only supports text",
+        "text only",
+        "text-only",
+    ];
+    if TEXT_ONLY_SELF_EVIDENT_HINTS
+        .iter()
+        .any(|hint| lower.contains(hint))
+    {
+        return true;
+    }
+
     let mentions_media = [
         "image",
         "vision",
@@ -4118,14 +4176,17 @@ fn should_rectify_unsupported_media(status_code: u16, body: &[u8]) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle));
-    let unsupported_hint = [
+    if !mentions_media {
+        return false;
+    }
+
+    [
         "unsupported",
         "not supported",
         "does not support",
         "doesn't support",
         "do not support",
         "don't support",
-        "only supports text",
         "text only",
         "text-only",
         "invalid content type",
@@ -4140,13 +4201,7 @@ fn should_rectify_unsupported_media(status_code: u16, body: &[u8]) -> bool {
         "unable to process",
     ]
     .iter()
-    .any(|needle| lower.contains(needle));
-
-    unsupported_hint
-        && (mentions_media
-            || lower.contains("only supports text")
-            || lower.contains("text only")
-            || lower.contains("text-only"))
+    .any(|needle| lower.contains(needle))
 }
 
 fn build_unsupported_media_rectified_body(
@@ -6442,6 +6497,8 @@ fn known_text_only_model(model: &str) -> bool {
     let normalized = normalize_model_id_for_media_policy(model);
     let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
 
+    // Exact tails only for glm-5.x so a future multimodal glm-5.2v is not stripped
+    // by a prefix match (cc-switch 52534618 / Volcano GLM 5.2).
     const EXACT_TAILS: &[&str] = &[
         "ark-code-latest",
         "deepseek-chat",
@@ -6449,6 +6506,7 @@ fn known_text_only_model(model: &str) -> bool {
         "deepseek-v4-flash",
         "deepseek-v4-pro",
         "glm-5.1",
+        "glm-5.2",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
@@ -8848,6 +8906,8 @@ fn should_skip_forwarded_request_header(name: &str) -> bool {
     [
         HOST.as_str(),
         CONTENT_LENGTH.as_str(),
+        // Body is decoded to plain JSON before forward; never re-advertise compression.
+        "content-encoding",
         CONNECTION.as_str(),
         "keep-alive",
         "proxy-connection",
@@ -10830,6 +10890,35 @@ data: {data}\r\n\r\n"
                 .get("anthropic-beta")
                 .and_then(|value| value.to_str().ok()),
             Some("web-search-2025-03-05")
+        );
+    }
+
+    #[test]
+    fn build_upstream_headers_skips_content_encoding_and_forces_accept_encoding_identity() {
+        let provider = provider_for_cli(GatewayCliKey::Codex);
+        let request = debug_request_with_headers(
+            br#"{"model":"gpt-5"}"#,
+            vec![
+                ("content-encoding", "zstd"),
+                ("content-type", "application/json"),
+                ("accept-encoding", "gzip, deflate, br, zstd"),
+            ],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(request.body.as_slice()))
+            .unwrap();
+
+        assert!(headers.get("content-encoding").is_none());
+        assert_eq!(
+            headers
+                .get(ACCEPT_ENCODING)
+                .and_then(|value| value.to_str().ok()),
+            Some("identity")
+        );
+        assert_eq!(
+            headers
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
         );
     }
 
@@ -14978,6 +15067,15 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             422,
             br#"{"message":"model is text-only"}"#
         ));
+        // Volcano Coding Plan / GLM 5.2 (#5025): no image/media word, missing third-person s.
+        assert!(should_rectify_unsupported_media(
+            400,
+            br#"{"error":{"message":"Model only support text input Request id: 021783"}}"#
+        ));
+        assert!(should_rectify_unsupported_media(
+            400,
+            br#"{"error":{"message":"Model only supports text input"}}"#
+        ));
 
         assert!(!should_rectify_unsupported_media(
             500,
@@ -14986,6 +15084,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
         assert!(!should_rectify_unsupported_media(
             400,
             br#"{"error":{"message":"Invalid JSON schema: strict must be a boolean"}}"#
+        ));
+        assert!(!should_rectify_unsupported_media(
+            400,
+            br#"{"error":{"message":"Request support text streaming only"}}"#
         ));
     }
 
@@ -15108,6 +15210,65 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
         let value = serde_json::from_slice::<Value>(&next).unwrap();
 
         assert_eq!(value["messages"][0]["content"][0]["type"], "image_url");
+    }
+
+    #[test]
+    fn known_text_only_model_matches_glm_5_2_exact_tail_not_multimodal_variant() {
+        assert!(known_text_only_model("glm-5.2"));
+        assert!(known_text_only_model("GLM-5.2[1M]"));
+        assert!(known_text_only_model("zai-org/GLM-5.2"));
+        assert!(known_text_only_model("glm-5.1"));
+        // Exact tail only: do not strip a future multimodal glm-5.2v.
+        assert!(!known_text_only_model("glm-5.2v"));
+        assert!(!known_text_only_model("vendor/glm-5.2v-preview"));
+    }
+
+    #[test]
+    fn predictive_media_policy_replaces_images_for_glm_5_2_when_heuristic_enabled() {
+        let meta = ProviderGatewayMeta {
+            allow_text_only_model_heuristic: true,
+            ..ProviderGatewayMeta::default()
+        };
+        let body = br#"{
+            "model":"GLM-5.2[1M]",
+            "messages":[{"role":"user","content":[
+                {"type":"text","text":"describe"},
+                {"type":"image_url","image_url":{"url":"https://example.com/a.png"}}
+            ]}]
+        }"#;
+
+        let next = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&meta),
+        )
+        .expect("glm-5.2 heuristic should serialize");
+        let value = serde_json::from_slice::<Value>(&next).unwrap();
+        assert_eq!(value["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            value["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+
+        let multimodal_body = br#"{
+            "model":"glm-5.2v",
+            "messages":[{"role":"user","content":[
+                {"type":"image_url","image_url":{"url":"https://example.com/a.png"}}
+            ]}]
+        }"#;
+        let preserved = apply_outbound_adapter_compat_for_provider(
+            multimodal_body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&meta),
+        )
+        .expect("glm-5.2v must keep images");
+        let preserved_value = serde_json::from_slice::<Value>(&preserved).unwrap();
+        assert_eq!(
+            preserved_value["messages"][0]["content"][0]["type"],
+            "image_url"
+        );
     }
 
     #[test]

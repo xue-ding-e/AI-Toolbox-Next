@@ -11,7 +11,7 @@ use crate::coding::proxy_gateway::transformer::shared::tool_media::{
     plan_tool_result_images, ToolImageScope, ToolResultMediaPlan, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
 };
 use crate::coding::proxy_gateway::transformer::shared::{
-    normalize_function_parameters_owned, tool_choice_from_openai,
+    flatten_namespace_tool_name, normalize_function_parameters_owned, tool_choice_from_openai,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -50,11 +50,22 @@ pub(super) fn preserve_responses_transformer_metadata(
 
 pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut Request) {
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        // Namespace tools expand into IR functions (AxonHub 7d095b63) but the original
+        // namespace envelope must still round-trip via raw fragments + represented_tool_count.
         let raw_tools = tools
             .iter()
             .enumerate()
-            .filter(|(_, tool)| !is_structurally_represented_responses_tool(tool))
-            .map(|(index, tool)| raw_responses_fragment(index, tool.clone()))
+            .filter(|(_, tool)| {
+                !is_structurally_represented_responses_tool(tool)
+                    || is_responses_namespace_tool(tool)
+            })
+            .map(|(index, tool)| {
+                raw_responses_fragment_with_represented_count(
+                    index,
+                    tool.clone(),
+                    represented_namespace_tool_count(tool),
+                )
+            })
             .collect::<Vec<_>>();
         let has_raw_tools = !raw_tools.is_empty();
         if has_raw_tools {
@@ -64,29 +75,35 @@ pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut 
             );
         }
 
+        // Signatures list expanded namespace children as function:ns__name so merge can
+        // reinsert the namespace envelope and drop colliding raw function tools.
         let structured_tool_signatures = tools
             .iter()
-            .filter(|tool| is_structurally_represented_responses_tool(tool))
-            .map(responses_tool_signature)
+            .flat_map(responses_structured_tool_signatures)
             .collect::<Vec<_>>();
-        let tool_signatures = structured_tool_signatures
-            .iter()
-            .map(|signature| signature.clone().map(Value::String))
-            .collect::<Option<Vec<_>>>();
-        if has_raw_tools
-            || tool_signatures
-                .as_ref()
-                .is_some_and(|items| !items.is_empty())
-        {
+        let signatures_complete = tools.iter().all(|tool| {
+            if is_structurally_represented_responses_tool(tool) {
+                responses_tool_signature(tool).is_some()
+            } else {
+                // namespace / raw-only tools do not block signature completeness
+                true
+            }
+        });
+        if has_raw_tools || !structured_tool_signatures.is_empty() {
             request.transformer_metadata.insert(
                 RESPONSES_TOOL_SIGNATURES_METADATA_KEY.to_string(),
-                Value::Array(tool_signatures.clone().unwrap_or_default()),
+                Value::Array(
+                    structured_tool_signatures
+                        .into_iter()
+                        .map(Value::String)
+                        .collect(),
+                ),
             );
         }
         if has_raw_tools {
             request.transformer_metadata.insert(
                 RESPONSES_TOOL_SIGNATURES_COMPLETE_METADATA_KEY.to_string(),
-                Value::Bool(tool_signatures.is_some()),
+                Value::Bool(signatures_complete),
             );
         }
     }
@@ -118,10 +135,85 @@ pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut 
 }
 
 pub(super) fn raw_responses_fragment(index: usize, value: Value) -> Value {
-    json!({
+    raw_responses_fragment_with_represented_count(index, value, 0)
+}
+
+pub(super) fn raw_responses_fragment_with_represented_count(
+    index: usize,
+    value: Value,
+    represented_tool_count: usize,
+) -> Value {
+    let mut fragment = json!({
         "index": index,
         "value": value
-    })
+    });
+    if represented_tool_count > 0 {
+        fragment["represented_tool_count"] = json!(represented_tool_count);
+    }
+    fragment
+}
+
+pub(super) fn is_responses_namespace_tool(tool: &Value) -> bool {
+    tool.get("type").and_then(Value::as_str) == Some("namespace")
+}
+
+pub(super) fn represented_namespace_tool_count(tool: &Value) -> usize {
+    if !is_responses_namespace_tool(tool) {
+        return 0;
+    }
+    tool.get("tools")
+        .or_else(|| tool.get("children"))
+        .and_then(Value::as_array)
+        .map(|children| {
+            children
+                .iter()
+                .filter(|child| child.get("type").and_then(Value::as_str) == Some("function"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Structured IR signatures for one wire tool, including expanded namespace children.
+///
+/// Only function/custom (and expanded namespace children) produce signatures.
+/// Raw-only tools like web_search are not part of the structured signature set.
+pub(super) fn responses_structured_tool_signatures(tool: &Value) -> Vec<String> {
+    if is_responses_namespace_tool(tool) {
+        let Some(namespace) = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            return Vec::new();
+        };
+        let Some(children) = tool
+            .get("tools")
+            .or_else(|| tool.get("children"))
+            .and_then(Value::as_array)
+        else {
+            return Vec::new();
+        };
+        return children
+            .iter()
+            .filter(|child| child.get("type").and_then(Value::as_str) == Some("function"))
+            .filter_map(|child| {
+                let name = child
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())?;
+                Some(format!(
+                    "function:{}",
+                    flatten_namespace_tool_name(namespace, name)
+                ))
+            })
+            .collect();
+    }
+    if is_structurally_represented_responses_tool(tool) {
+        return responses_tool_signature(tool).into_iter().collect();
+    }
+    Vec::new()
 }
 
 pub(super) fn is_structurally_represented_responses_tool(tool: &Value) -> bool {
@@ -595,7 +687,7 @@ pub(super) fn responses_compaction_message(item: &Value) -> Message {
     }
 }
 
-pub(super) fn responses_compaction_part(item: &Value) -> MessageContentPart {
+pub(crate) fn responses_compaction_part(item: &Value) -> MessageContentPart {
     let mut transformer_metadata = HashMap::new();
     if let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) {
         transformer_metadata.insert(
@@ -673,8 +765,57 @@ pub(super) fn responses_tool_to_llm(tool: &Value) -> Option<Tool> {
             response_custom_tool: serde_json::from_value(tool.clone()).ok(),
             ..Default::default()
         }),
+        // Namespace is expanded by responses_tools_to_llm; single-tool helper keeps None.
         _ => None,
     }
+}
+
+/// Convert Responses wire tools to IR tools, expanding `namespace` children.
+///
+/// Aligns with AxonHub 7d095b63: each namespace function becomes
+/// `function` with name `{namespace}__{child}` so Anthropic/Gemini targets
+/// still receive the tools (Codex Chat has a separate codex_tools path).
+pub(super) fn responses_tools_to_llm(tools: &[Value]) -> Vec<Tool> {
+    let mut result = Vec::new();
+    for tool in tools {
+        match tool.get("type").and_then(Value::as_str) {
+            Some("namespace") => {
+                let Some(namespace) = tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                let Some(children) = tool
+                    .get("tools")
+                    .or_else(|| tool.get("children"))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for child in children {
+                    if child.get("type").and_then(Value::as_str) != Some("function") {
+                        continue;
+                    }
+                    let Some(mut converted) = responses_tool_to_llm(child) else {
+                        continue;
+                    };
+                    if let Some(function) = converted.function.as_mut() {
+                        function.name = flatten_namespace_tool_name(namespace, &function.name);
+                    }
+                    result.push(converted);
+                }
+            }
+            _ => {
+                if let Some(converted) = responses_tool_to_llm(tool) {
+                    result.push(converted);
+                }
+            }
+        }
+    }
+    result
 }
 
 pub(super) fn responses_call_to_tool_call(item: &Value, index: usize) -> ToolCall {
@@ -773,6 +914,9 @@ pub(super) fn merge_raw_responses_fragments(
 /// When `expected_signatures` is present (from request-scoped tool signature sidecar),
 /// a raw tool that collides with a structured tool signature is dropped (fail-closed
 /// for that fragment) instead of silently overwriting structured identity (T-3).
+///
+/// Namespace raw fragments carry `represented_tool_count`: each such fragment
+/// consumes that many expanded structured function tools (AxonHub 7d095b63).
 pub(crate) fn merge_raw_responses_fragments_with_signatures(
     structured: &mut Vec<Value>,
     raw_fragments: Option<&Value>,
@@ -797,8 +941,8 @@ pub(crate) fn merge_raw_responses_fragments_with_signatures(
             items
                 .iter()
                 .filter_map(raw_responses_fragment_parts)
-                .filter(|(index, _)| *index <= max_merge_index)
-                .filter(|(_, value)| {
+                .filter(|(index, _, _)| *index <= max_merge_index)
+                .filter(|(_, value, _)| {
                     if let Some(signatures) = expected_signatures {
                         raw_tool_compatible_with_signatures(value, signatures)
                     } else {
@@ -812,17 +956,32 @@ pub(crate) fn merge_raw_responses_fragments_with_signatures(
         return std::mem::take(structured);
     }
 
-    let mut total = structured.len() + raw.len();
-    for (index, _) in &raw {
+    let represented_total: usize = raw.iter().map(|(_, _, count)| count).sum();
+    if represented_total > structured.len() {
+        // Fail closed: expanded namespace children no longer match structured set.
+        return std::mem::take(structured);
+    }
+
+    let mut total = structured
+        .len()
+        .saturating_sub(represented_total)
+        .saturating_add(raw.len());
+    for (index, _, _) in &raw {
         total = total.max(index.saturating_add(1));
     }
 
-    let mut raw_by_index = raw.into_iter().collect::<HashMap<_, _>>();
+    let mut raw_by_index = raw
+        .into_iter()
+        .map(|(index, value, count)| (index, (value, count)))
+        .collect::<HashMap<_, _>>();
     let mut merged = Vec::with_capacity(total);
     let mut structured_iter = structured.drain(..);
     for index in 0..total {
-        if let Some(value) = raw_by_index.remove(&index) {
+        if let Some((value, count)) = raw_by_index.remove(&index) {
             merged.push(value);
+            for _ in 0..count {
+                let _ = structured_iter.next();
+            }
         } else if let Some(value) = structured_iter.next() {
             merged.push(value);
         }
@@ -831,7 +990,7 @@ pub(crate) fn merge_raw_responses_fragments_with_signatures(
     merged.extend(
         raw_by_index
             .into_iter()
-            .map(|(_, value)| value)
+            .map(|(_, (value, _))| value)
             .collect::<Vec<_>>(),
     );
     merged
@@ -847,10 +1006,14 @@ pub(super) fn raw_tool_compatible_with_signatures(raw_tool: &Value, signatures: 
     !signatures.iter().any(|expected| expected == &raw_sig)
 }
 
-pub(super) fn raw_responses_fragment_parts(value: &Value) -> Option<(usize, Value)> {
+pub(super) fn raw_responses_fragment_parts(value: &Value) -> Option<(usize, Value, usize)> {
     let index = value.get("index").and_then(Value::as_u64)? as usize;
     let raw_value = value.get("value")?.clone();
-    Some((index, raw_value))
+    let represented_tool_count = value
+        .get("represented_tool_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    Some((index, raw_value, represented_tool_count))
 }
 
 pub(super) fn responses_metadata_or_extra_body(
@@ -1139,11 +1302,11 @@ pub(super) fn llm_content_part_to_responses_content(
     }
 }
 
-pub(super) fn is_responses_compaction_type(part_type: &str) -> bool {
+pub(crate) fn is_responses_compaction_type(part_type: &str) -> bool {
     matches!(part_type, "compaction" | "compaction_summary")
 }
 
-pub(super) fn responses_compaction_item_from_part(part: MessageContentPart) -> Value {
+pub(crate) fn responses_compaction_item_from_part(part: MessageContentPart) -> Value {
     let mut item = Map::new();
     item.insert("type".to_string(), json!(part.part_type));
     if !part.id.is_empty() {
@@ -1363,6 +1526,12 @@ pub(super) fn responses_usage_to_llm(usage: Option<&Value>) -> Usage {
 
 pub(super) fn usage_to_responses(usage: Option<&Usage>) -> Value {
     let usage = usage.cloned().unwrap_or_default();
+    let mut input_details = json!({
+        "cached_tokens": usage.cached_tokens
+    });
+    if usage.cache_write_tokens > 0 {
+        input_details["cache_write_tokens"] = json!(usage.cache_write_tokens);
+    }
     json!({
         "input_tokens": usage.prompt_tokens,
         "output_tokens": usage.completion_tokens,
@@ -1371,9 +1540,7 @@ pub(super) fn usage_to_responses(usage: Option<&Usage>) -> Value {
         } else {
             usage.total_tokens
         },
-        "input_tokens_details": {
-            "cached_tokens": usage.cached_tokens
-        },
+        "input_tokens_details": input_details,
         "output_tokens_details": {
             "reasoning_tokens": usage.reasoning_tokens
         }

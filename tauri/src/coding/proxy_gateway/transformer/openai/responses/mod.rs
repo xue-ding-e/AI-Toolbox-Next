@@ -1,6 +1,6 @@
 mod request;
 mod response;
-mod shared;
+pub(crate) mod shared;
 
 #[cfg(test)]
 #[path = "tests.rs"]

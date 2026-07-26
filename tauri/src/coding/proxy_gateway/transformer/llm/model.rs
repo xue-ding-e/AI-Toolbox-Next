@@ -209,6 +209,9 @@ pub struct Usage {
     pub total_tokens: u64,
     #[serde(default)]
     pub cached_tokens: u64,
+    /// Prompt-cache write tokens (Responses `input_tokens_details.cache_write_tokens`).
+    #[serde(default)]
+    pub cache_write_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
 }

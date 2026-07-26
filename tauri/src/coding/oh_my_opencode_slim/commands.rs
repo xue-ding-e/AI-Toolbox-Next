@@ -514,6 +514,7 @@ pub async fn apply_config_to_file_public(
     if let Some(experimental) = global_config.experimental {
         final_json.insert("experimental".to_string(), experimental);
     }
+    // Keep raw council until after legacy master promotion. normalize strips master.
     if let Some(council) = global_config.council {
         final_json.insert("council".to_string(), council);
     }
@@ -529,14 +530,40 @@ pub async fn apply_config_to_file_public(
         }
     }
 
-    if let Some(agents) = agents_profile.agents {
+    // Profile agents override base agents, but preserve agents.council when the
+    // profile does not define one (global may only store the synthesizer there).
+    let base_agents = final_json.remove("agents");
+    if let Some(profile_agents) = agents_profile.agents {
+        let cleaned_profile_agents = adapter::strip_legacy_fallback_models_from_agents(profile_agents);
+        let merged_agents =
+            adapter::merge_agents_preserving_council(base_agents, cleaned_profile_agents);
+        final_json.insert("agents".to_string(), merged_agents);
+    } else if let Some(base_agents) = base_agents {
         final_json.insert(
             "agents".to_string(),
-            adapter::strip_legacy_fallback_models_from_agents(agents),
+            adapter::strip_legacy_fallback_models_from_agents(base_agents),
         );
     }
+
     if let Some(profile_council) = agents_profile.council {
         final_json.insert("council".to_string(), profile_council);
+    }
+
+    // Promote legacy council.master into agents.council while master is still present.
+    let existing_agents = final_json.remove("agents");
+    let existing_council = final_json.get("council").cloned();
+    if let Some(migrated_agents) =
+        adapter::migrate_legacy_council_master_into_agents(existing_agents, existing_council.as_ref())
+    {
+        final_json.insert("agents".to_string(), migrated_agents);
+    }
+
+    // Strip deprecated master* fields only after migration has consumed them.
+    if let Some(council) = final_json.remove("council") {
+        final_json.insert(
+            "council".to_string(),
+            adapter::normalize_council_config(council),
+        );
     }
     let existing_global_fallback = final_json.remove("fallback");
     let profile_fallback = agents_profile

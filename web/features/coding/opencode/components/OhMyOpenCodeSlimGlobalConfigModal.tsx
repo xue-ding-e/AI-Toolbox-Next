@@ -79,6 +79,10 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       return;
     }
 
+    // Global config no longer owns agents.council; prefer agents.council when present
+    // in otherFields for legacy/local files, otherwise fall back to council.master.
+    const otherFieldsObject = asObject(initialConfig?.otherFields) ?? undefined;
+    const legacyAgents = asObject(otherFieldsObject?.agents);
     form.setFieldsValue({
       sisyphusAgent: emptyToUndefined(initialConfig?.sisyphusAgent),
       disabledAgents: initialConfig?.disabledAgents ?? [],
@@ -87,7 +91,10 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       lsp: emptyToUndefined(initialConfig?.lsp),
       experimental: emptyToUndefined(initialConfig?.experimental),
       otherFields: emptyToUndefined(initialConfig?.otherFields),
-      ...parseSlimCouncilFormValues(initialConfig?.council ?? null),
+      ...parseSlimCouncilFormValues({
+        council: initialConfig?.council ?? null,
+        agents: legacyAgents ?? null,
+      }),
     });
 
     sisyphusValidRef.current = true;
@@ -119,6 +126,43 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
         return;
       }
 
+      // Global config stores fan-out council settings only. The synthesizer model
+      // belongs on agents.council in the Agents Profile, matching upstream OMOS.
+      // Mirror agents.council under otherFields when configured here so apply can
+      // still emit a valid synthesizer when the profile does not define one.
+      let nextOtherFields = asObject(values.otherFields);
+      if (councilBuildResult.councilAgent) {
+        const otherFieldsObject = { ...(nextOtherFields ?? {}) };
+        const existingAgents = asObject(otherFieldsObject.agents) ?? {};
+        const existingCouncilAgent = asObject(existingAgents.council) ?? {};
+        const {
+          model: _existingModel,
+          variant: _existingVariant,
+          prompt: _existingPrompt,
+          ...unmanagedCouncilFields
+        } = existingCouncilAgent;
+        otherFieldsObject.agents = {
+          ...existingAgents,
+          council: {
+            ...unmanagedCouncilFields,
+            ...councilBuildResult.councilAgent,
+          },
+        };
+        nextOtherFields = otherFieldsObject;
+      } else if (nextOtherFields) {
+        const otherFieldsObject = { ...nextOtherFields };
+        const existingAgents = asObject(otherFieldsObject.agents);
+        if (existingAgents && Object.prototype.hasOwnProperty.call(existingAgents, 'council')) {
+          const { council: _removedCouncil, ...remainingAgents } = existingAgents;
+          if (Object.keys(remainingAgents).length > 0) {
+            otherFieldsObject.agents = remainingAgents;
+          } else {
+            delete otherFieldsObject.agents;
+          }
+          nextOtherFields = Object.keys(otherFieldsObject).length > 0 ? otherFieldsObject : null;
+        }
+      }
+
       const input: OhMyOpenCodeSlimGlobalConfigInput = {
         sisyphusAgent: asObject(values.sisyphusAgent),
         disabledAgents: asStringArray(values.disabledAgents),
@@ -127,7 +171,7 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
         lsp: asObject(values.lsp),
         experimental: asObject(values.experimental),
         council: councilBuildResult.council,
-        otherFields: asObject(values.otherFields),
+        otherFields: nextOtherFields,
       };
 
       onSuccess(input);

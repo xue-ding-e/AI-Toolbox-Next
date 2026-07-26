@@ -5,7 +5,8 @@ use crate::coding::proxy_gateway::request_log;
 use crate::coding::proxy_gateway::types::{
     GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayUsageRecordedEvent,
 };
-use crate::coding::proxy_gateway::usage_stats;
+use crate::coding::proxy_gateway::usage_parser::stable_usage_request_id;
+use crate::coding::proxy_gateway::usage_stats::{self, RecordRequestSummaryOutcome};
 use chrono::{DateTime, Utc};
 use std::sync::OnceLock;
 use tauri::Emitter;
@@ -37,11 +38,26 @@ pub(super) fn record_gateway_observability(
     let cache_creation_tokens = response.token_usage.cache_creation_tokens;
     let total_tokens = response.token_usage.total_tokens();
     let settings = context.settings_snapshot();
-    let trace_id = trace_id(request);
+    let fallback_trace_id = process_local_trace_id(request);
     let upstream_response_body_snapshot = response.upstream_response_body_snapshot();
+    // Prefer upstream envelope id for stable usage keys (cc-switch c9ac6efd).
+    // Fallback remains process-local so request-list/detail still have a unique id.
+    let trace_id = response
+        .cli_key
+        .map(|cli_key| {
+            stable_usage_request_id(
+                cli_key,
+                response.provider_id.as_deref(),
+                response.token_usage.envelope_id.as_deref(),
+                &fallback_trace_id,
+            )
+        })
+        .unwrap_or(fallback_trace_id);
 
     let should_record_summary = settings.request_log_enabled || settings.metrics_enabled;
     if should_record_summary {
+        // Build compact fields first (no body/header yet) so usage-key resolution can
+        // decide skip/collision before we write expensive JSONL detail.
         let mut detail = GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
                 trace_id,
@@ -80,65 +96,112 @@ pub(super) fn record_gateway_observability(
                 detail_file: None,
                 detail_offset: None,
             },
-            request_headers: settings
-                .store_headers
-                .then(|| request_log::redact_headers(&request.headers)),
-            request_body: stored_body_text(
-                &request.body,
-                request.body.len() as u64,
-                settings.store_request_body,
-                settings.log_max_body_size_kb,
-            ),
-            upstream_request_body: response.upstream_request_body.as_deref().and_then(|body| {
-                stored_body_text(
-                    body,
-                    body.len() as u64,
-                    settings.store_request_body,
-                    settings.log_max_body_size_kb,
-                )
-            }),
-            response_headers: settings
-                .store_headers
-                .then(|| request_log::redact_headers(&response.headers)),
-            upstream_response_body: upstream_response_body_snapshot.as_ref().and_then(
-                |(body, original_len)| {
-                    stored_body_text(
-                        body,
-                        *original_len,
-                        settings.store_response_body,
-                        settings.log_max_body_size_kb,
-                    )
-                },
-            ),
-            response_body: stored_body_text(
-                &response.body,
-                response.response_body_bytes,
-                settings.store_response_body,
-                settings.log_max_body_size_kb,
-            ),
+            request_headers: None,
+            request_body: None,
+            upstream_request_body: None,
+            response_headers: None,
+            upstream_response_body: None,
+            response_body: None,
             provider_attempts: response.provider_attempts.clone(),
         };
 
-        if settings.request_log_enabled {
-            let record = request_log::new_request_log_record(detail.clone());
-            match request_log::write_request_log(paths, &settings, &record) {
-                Ok(Some(location)) => {
-                    detail.summary.detail_file = Some(location.detail_file);
-                    detail.summary.detail_offset = Some(location.detail_offset);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    log::warn!("Failed to record proxy gateway request detail: {error}");
-                }
-            }
-        }
-
-        if let Some(db) = context.db.as_ref() {
+        let summary_outcome = if let Some(db) = context.db.as_ref() {
             match usage_stats::record_request_summary(db, &settings, &detail) {
-                Ok(()) => emit_usage_recorded_event(context, &detail.summary),
+                Ok(outcome) => Some(outcome),
                 Err(error) => {
                     log::warn!("Failed to record proxy gateway request summary: {error}");
+                    None
                 }
+            }
+        } else {
+            // No DB: still allow JSONL detail under the provisional stable/fallback id.
+            Some(RecordRequestSummaryOutcome::Written {
+                request_id: detail.summary.trace_id.clone(),
+                collision: false,
+            })
+        };
+
+        let Some(summary_outcome) = summary_outcome else {
+            return;
+        };
+
+        match summary_outcome {
+            RecordRequestSummaryOutcome::Skipped => {
+                // Identical proxy semantic replay: do not rewrite JSONL or emit events.
+            }
+            RecordRequestSummaryOutcome::Written {
+                request_id,
+                collision: _,
+            } => {
+                // Keep SQLite request_id and JSONL trace_id identical, including collision keys.
+                detail.summary.trace_id = request_id;
+
+                if settings.request_log_enabled {
+                    detail.request_headers = settings
+                        .store_headers
+                        .then(|| request_log::redact_headers(&request.headers));
+                    detail.request_body = stored_body_text(
+                        &request.body,
+                        request.body.len() as u64,
+                        settings.store_request_body,
+                        settings.log_max_body_size_kb,
+                    );
+                    detail.upstream_request_body =
+                        response.upstream_request_body.as_deref().and_then(|body| {
+                            stored_body_text(
+                                body,
+                                body.len() as u64,
+                                settings.store_request_body,
+                                settings.log_max_body_size_kb,
+                            )
+                        });
+                    detail.response_headers = settings
+                        .store_headers
+                        .then(|| request_log::redact_headers(&response.headers));
+                    detail.upstream_response_body = upstream_response_body_snapshot.as_ref().and_then(
+                        |(body, original_len)| {
+                            stored_body_text(
+                                body,
+                                *original_len,
+                                settings.store_response_body,
+                                settings.log_max_body_size_kb,
+                            )
+                        },
+                    );
+                    detail.response_body = stored_body_text(
+                        &response.body,
+                        response.response_body_bytes,
+                        settings.store_response_body,
+                        settings.log_max_body_size_kb,
+                    );
+
+                    let record = request_log::new_request_log_record(detail.clone());
+                    match request_log::write_request_log(paths, &settings, &record) {
+                        Ok(Some(location)) => {
+                            detail.summary.detail_file = Some(location.detail_file);
+                            detail.summary.detail_offset = Some(location.detail_offset);
+                            // Best-effort: attach locator to the SQLite row we just wrote.
+                            if let Some(db) = context.db.as_ref() {
+                                if let Err(error) = usage_stats::update_request_detail_locator(
+                                    db,
+                                    &detail.summary.trace_id,
+                                    detail.summary.detail_file.as_deref(),
+                                    detail.summary.detail_offset,
+                                ) {
+                                    log::warn!(
+                                        "Failed to attach gateway detail locator to summary: {error}"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            log::warn!("Failed to record proxy gateway request detail: {error}");
+                        }
+                    }
+                }
+
+                emit_usage_recorded_event(context, &detail.summary);
             }
         }
     }
@@ -171,7 +234,7 @@ fn should_skip_observability(method: &str, request_path: &str) -> bool {
         && matches!(request_path, "/anthropic" | "/openai/v1" | "/gemini/v1beta")
 }
 
-fn trace_id(request: &DebugHttpRequest) -> String {
+fn process_local_trace_id(request: &DebugHttpRequest) -> String {
     let run_id = TRACE_RUN_ID
         .get_or_init(|| format!("{}-{}", std::process::id(), Utc::now().timestamp_micros()));
     format!("gw-{}-{}", run_id, request.id)
@@ -221,8 +284,8 @@ mod tests {
     }
 
     #[test]
-    fn trace_id_contains_process_run_prefix() {
-        let trace = trace_id(&request_with_id(1));
+    fn process_local_trace_id_contains_process_run_prefix() {
+        let trace = process_local_trace_id(&request_with_id(1));
 
         assert!(trace.starts_with("gw-"));
         assert!(trace.ends_with("-1"));

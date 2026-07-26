@@ -1181,6 +1181,7 @@ fn gemini_usage_to_llm(usage: Option<&Value>) -> Usage {
             .and_then(Value::as_u64)
             .unwrap_or_else(|| prompt.saturating_add(completion)),
         cached_tokens: cached,
+        cache_write_tokens: 0,
         reasoning_tokens: reasoning,
     }
 }

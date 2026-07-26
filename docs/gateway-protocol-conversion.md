@@ -512,12 +512,21 @@ OpenAI Responses 聚合还有额外终态约束：
 header/auth 由 `build_upstream_headers()` 处理：
 
 - 先保留允许转发的入站 header。
+- 入站 `Content-Encoding` 不转发。请求体在路由前由 `runtime/content_encoding.rs` 解压为明文 JSON，再重建上游 body/header；否则 Codex Desktop 官方登录态的 `zstd` 压缩体会被中转站当 JSON 解析失败（`invalid character '('`）。
+- usage 稳定键：`usage_parser` 提取 envelope id（Claude message id / OpenAI-Codex response id / Gemini responseId）；`observability` 先解析稳定 request_id，再由 `usage_stats::record_request_summary` 做同语义幂等 / collision fallback，并用最终键写 JSONL，保证列表与详情一致。
 - 强制 `Accept-Encoding: identity`。
 - 按 provider `auth_strategy` 注入鉴权。
 - `OpenAiChat` / `OpenAiResponses` 默认 Bearer。
 - Gemini 根据 key 形态使用 Google API key 或 OAuth。
 - Anthropic target 保持 Anthropic API key 或 provider meta 指定的 Bearer 语义。
 - Anthropic platform、Codex official、Copilot 会继续注入各自 runtime adapter 需要的 header。
+
+入站 content-encoding 处理：
+
+- 支持 `gzip` / `x-gzip` / `deflate` / `br` / `zstd` / `zst`，含堆叠编码（按 RFC 9110 反向解码）。
+- 解压成功后剥离 `content-encoding`、`content-length`、`transfer-encoding`。
+- 不支持或解压失败时返回 `400 invalid_request`，不能把压缩字节透传给 JSON 解析或上游。
+- 非流式上游响应若仍带 content-encoding，runtime 在解析/转换前同样解压并清实体头；流式路径继续依赖 `Accept-Encoding: identity`。
 
 ## 13. Runtime side stores
 
@@ -819,7 +828,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 | Codex official / Codex OAuth 对照 | 参考项目的 Codex OAuth 路径强制走 ChatGPT Codex backend `/responses`，body 需要 `store=false`、`include=["reasoning.encrypted_content"]` 等，并有 OAuth account manager。 | `ProviderBodyCompat::CodexOfficial`。OpenAI Responses target 下强制 `stream=true`、`store=false`、`parallel_tool_calls=true`，移除 `max_tokens` / `max_completion_tokens` / `metadata`，默认补 `include:["reasoning.encrypted_content"]` 和 `reasoning.summary="auto"`；headers 补 `Accept: text/event-stream`、缺省 `Originator: ai-toolbox`，并保留客户端已有 Codex passthrough headers。非流客户端遇到官方 forced SSE 时由 runtime 聚合同协议 JSON 后再按需 response conversion。 | AI Toolbox 这里是 official Codex upstream body/header 兼容，不包含参考项目的 Codex OAuth device/account 管理。`category=official` provider 仍不进入 Gateway 候选；要代理必须有可转发 bearer token。 |
 | GitHub Copilot | 参考项目将 Copilot 作为 provider adapter：token exchange、fingerprint headers、模型 id 归一化、Chat/Responses 动态路由。 | `ProviderBodyCompat::Copilot` + auth/header runtime adapter。本次请求按模型动态选择 OpenAI Chat 或 Responses target；GitHub token 可 exchange 成 Copilot bearer token并缓存；注入/覆盖 Copilot fingerprint headers、`X-Initiator`、interaction/request ids；Claude 4.x 模型 id 归一化；Chat/Responses orphan tool result 降级；Responses function_call item id 修正；Chat target 会移除 Anthropic thinking block。 | 不包含参考项目的 GitHub device-code 登录 UI、账号存储或 live model list fallback。Copilot profile 必须保存 origin base URL，不能固定 full URL 到 `/chat/completions`，否则会绕过动态 Responses endpoint。 |
 | Ollama | 参考项目和本地模型类接口不是 OpenAI Chat 协议本体，最后一跳是 Ollama `/api/chat`。 | `ProviderBodyCompat::Ollama` 或 `apiFormat=ollama/chat`。Gateway target protocol 仍视为 OpenAI Chat；发送前把 Chat body 投影成 Ollama `model/messages/options/format/stream`，图片 data URL 去前缀写 `images[]`，token/stop/format 映射到 Ollama 字段；非流 JSON response 先转回 OpenAI Chat，流式 NDJSON 先转 Chat SSE，再进入已有 response conversion。 | 不是第五种 transformer 协议，不需要扩展 5x5 矩阵。 |
-| text-only 图片 / 多模态降级 | 参考项目有发送前 text-only 模型图片替换和上游错误后的反应式重试。 | runtime 发送前预测式替换由 provider meta 或 model catalog 显式能力驱动：`imageInputPolicy`、`textOnlyModels`、`imageCapableModels`、`supportsImage=false` 等；`allowTextOnlyModelHeuristic=true` 时才启用参考项目风格模型名名单。上游 400/415/422/501 且错误文本明确 image/media/vision unsupported 时，同 provider 重试一次并把图片块替换为 `[Unsupported Image]`。 | 启发式默认关闭。不要因为模型名像 text-only 就静默剥图片，除非 profile/meta 明确允许。 |
+| text-only 图片 / 多模态降级 | 参考项目有发送前 text-only 模型图片替换和上游错误后的反应式重试。 | runtime 发送前预测式替换由 provider meta 或 model catalog 显式能力驱动：`imageInputPolicy`、`textOnlyModels`、`imageCapableModels`、`supportsImage=false` 等；`allowTextOnlyModelHeuristic=true` 时才启用参考项目风格模型名名单（含 exact `glm-5.1`/`glm-5.2`，不含 `glm-5.2v`）。上游 400/415/422/501 时同 provider 重试一次并把图片块替换为 `[Unsupported Image]`：错误文本明确 image/media/vision unsupported，或自证性 `only support text` / `only supports text` / `text only` / `text-only`（无需提到 image，覆盖火山 GLM 5.2 的 `Model only support text input`）。 | 启发式默认关闭。不要因为模型名像 text-only 就静默剥图片，除非 profile/meta 明确允许。 |
 | Direct Anthropic native web_search | 参考项目会处理 Anthropic native/server tool 与 beta header。 | Anthropic target 下，Direct provider 保留 native `web_search` tool，并在 header 注入 `anthropic-beta: web-search-2025-03-05`；Bedrock 通过 body `anthropic_beta` 保留；Vertex/LongCat/普通非 Direct 平台会过滤 native web_search，避免上游拒绝。 | 这是 provider platform 兼容。Anthropic native block 的协议保真在 transformer 中可 roundtrip，但能否发给上游由 runtime provider platform 决定。 |
 | `defaultMaxTokens` / prompt cache / billing CCH | 参考项目也有 provider/session cache key、usage、billing 相关兼容。 | `EnsureMaxTokensMiddleware` 只在 effective provider meta 显式 `defaultMaxTokens > 0` 时补齐/截断目标协议 token 字段；OpenAI Responses target 缺 `prompt_cache_key` 时 runtime 可从稳定 session 线索 fallback；Claude Code billing header 中动态 `cch=...` 由 middleware 剥离，Anthropic target 可回填。 | 这些是 runtime policy，不是供应商协议结构转换。无显式 meta 时不得默认改变用户请求。 |
 
@@ -1112,7 +1121,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 | 项目 | 相对路径 | 远端 ref | 初始基线 commit | 首次增量审阅范围 |
 |---|---|---|---|---|
 | cc-switch | `../cc-switch` | `origin/main` | `878c26f31e012ba32b9772bd080bd4fa9e7d495e` | `a377d79303bc1e592d2783d559ca5bd6b8ba1417..878c26f31e012ba32b9772bd080bd4fa9e7d495e` |
-| AxonHub | `../axonhub` | `origin/unstable` | `9470478493e0302003ba55ca874bd56f33dfc759` | `d327c759cf2c8e32196a5a3a42694c329c123bee..9470478493e0302003ba55ca874bd56f33dfc759` |
+| AxonHub | `../axonhub` | `origin/unstable` | `7d095b6364f4e765d687d22f2f1a7c6536de92ad` | `9470478493e0302003ba55ca874bd56f33dfc759..7d095b6364f4e765d687d22f2f1a7c6536de92ad` |
 
 本次初始吸收结论：
 
@@ -1125,9 +1134,12 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - 源码终审额外确认并修复了 Gemini Native 同一 `content.parts` 中多个并行 `functionResponse` 被覆盖的问题；现在按工具结果拆成多个统一 IR tool message，并由 `gemini_parallel_function_responses_preserve_every_tool_result` 锁定。
 - AxonHub 的统一 `llm.Request` / `llm.Response` IR、inbound -> IR -> outbound 生命周期、response/stream reverse lifecycle、Responses terminal/error 语义和 middleware 逆序原则与 AI Toolbox 当前架构一致，应继续作为主参考。
 - AxonHub 的 Responses WebSocket executor/session/pool、数据库/channel/entity、云网关账号与 orchestrator 体系不属于当前本机 HTTP JSON/SSE Gateway，不吸收半套实现。
-- AxonHub `94704784` 新增的 Responses `cache_write_tokens` 双向 usage 映射已记录为后续独立 usage/cost 能力；AI Toolbox 当前没有完整统一字段、观测、SQLite 摘要和成本语义，本次不宣称已实现。
-- 2026-07-25 再次 fetch 并核验时，cc-switch `origin/main` 和 AxonHub `origin/unstable` 仍分别等于上述 baseline，没有 baseline 之后待吸收的新提交。
-- 本次验证命令：`pnpm test`、`pnpm exec tsc --noEmit`、`cd tauri && cargo test transformer --no-default-features`、`cd tauri && cargo test`、`cd tauri && cargo test --lib coding::proxy_gateway::runtime::upstream`、`cd tauri && cargo test --lib coding::proxy_gateway::runtime::compat::xai_responses`、`git diff --check`；均通过。
+- AxonHub `94704784` 的 Responses `cache_write_tokens` 已吸收：IR `Usage.cache_write_tokens`、`openai_usage_to_llm` / `usage_to_responses` 双向映射、`usage_parser::openai_usage` 写入 `cache_creation_tokens`；测试 `responses_usage_roundtrip_preserves_cache_write_tokens`、`parses_responses_cache_write_tokens_as_cache_creation`。
+- AxonHub `7d095b63` 的 Responses namespace tools 展开已吸收：通用入站 `responses_tools_to_llm` 将 `type=namespace` 子 function 展成 `namespace__name`；raw fragment 带 `represented_tool_count`，出站 merge 按该计数消费结构化 tools 并恢复 namespace envelope；测试 `responses_namespace_tools_expand_into_ir_functions`。Codex→Chat 既有 `codex_tools` 路径与 xAI 同协议 flatten 保持不变。
+- AxonHub `4b8ab0d6` 空 `finish_reason` 归一化已有等价覆盖（stream 解析过滤 empty string），不重复吸收。
+- AxonHub `e18cc2e0` image RequestType、`5438dff5` session sticky、`a0205b75` 连接复用、渠道 UI/CIDR/backup 等与本机 Gateway 无关，明确不吸收。
+- AxonHub `01707aa6` 的流式 compaction item 保真已吸收：`StreamKernel` 对 `response.output_item.added` 中 `compaction` / `compaction_summary` 发出 `CompactionItem`，Responses target 再 emit `output_item.added/done` 并写入 completed `output`；Chat/Anthropic/Gemini target 有意丢弃（Responses 原生形态）。测试 `responses_stream_preserves_compaction_item_through_chat_and_back`。
+- 2026-07-26 将 AxonHub baseline 推进到 `7d095b63`，并吸收 namespace tools、cache_write usage 与 streamed compaction 增量。
 
 ### 19.5 行为同步策略
 

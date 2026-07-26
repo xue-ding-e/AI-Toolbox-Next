@@ -147,14 +147,18 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 - `textOnlyModels` -> 替换。
 - model catalog 里的 `supportsImage=false`、`vision=false`、`attachment=false`、`modalities.input` 不含 `image` 等会触发替换。
 - `allowTextOnlyModelHeuristic=true` 才启用模型名启发式；默认不猜。
+- 启发式 exact tails 包含 `glm-5.1`、`glm-5.2`（以及 `GLM-5.2[1M]` / `vendor/GLM-5.2` 归一化后的 tail）；不能用 `glm-5.2` 前缀，避免误伤多模态 `glm-5.2v`。
 
 上游错误后的反应式 rectifier：
 
-- 只在 HTTP 400/415/422/501 且错误明确表示 image/media/vision/attachment unsupported 时尝试同 provider 重试。
+- 只在 HTTP 400/415/422/501 时尝试同 provider 重试。
+- 触发条件二选一：
+  1. 错误文本明确 image/media/vision/attachment unsupported；
+  2. 自证性 text-only 短语 `only support text` / `only supports text` / `text only` / `text-only`（无需提到 image；覆盖火山 `Model only support text input`）。
 - 替换 OpenAI/Anthropic image/image_url、Responses `input_image`、Gemini image `inlineData/fileData` 为文本占位。
 - 保留 `cache_control`。
 
-测试：`unsupported_media_rectifier_*`、`predictive_media_policy_*`。
+测试：`unsupported_media_rectifier_*`、`predictive_media_policy_*`、`known_text_only_model_matches_glm_5_2_exact_tail_not_multimodal_variant`、`predictive_media_policy_replaces_images_for_glm_5_2_when_heuristic_enabled`。
 
 ### 2.5 middleware
 

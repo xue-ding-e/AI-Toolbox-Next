@@ -10,6 +10,7 @@ use chrono::{Duration, Local, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, ToSql};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
@@ -179,14 +180,29 @@ impl StatsAccumulator {
     }
 }
 
+/// Result of attempting to persist a compact proxy usage summary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordRequestSummaryOutcome {
+    /// Identical proxy semantic already exists; do not write JSONL or recount.
+    Skipped,
+    /// Row inserted/upgraded. `request_id` is the final SQLite primary key and must
+    /// also be used as the JSONL `trace_id` so list/detail lookup stays consistent
+    /// even when a collision fallback key is chosen.
+    Written {
+        request_id: String,
+        collision: bool,
+    },
+}
+
+/// Record a compact proxy request summary for request list / usage stats.
 pub fn record_request_summary(
     db: &SqliteDbState,
     settings: &ProxyGatewaySettings,
     detail: &GatewayRequestLogDetail,
-) -> Result<(), String> {
+) -> Result<RecordRequestSummaryOutcome, String> {
     let summary = &detail.summary;
     let Some(cli_key) = summary.cli_key else {
-        return Ok(());
+        return Ok(RecordRequestSummaryOutcome::Skipped);
     };
 
     db.with_conn(|conn| {
@@ -238,8 +254,58 @@ pub fn record_request_summary(
             })
             .unwrap_or_default();
 
-        conn.execute(
-            "INSERT OR REPLACE INTO proxy_request_logs (
+        let semantic = UsageSemantic {
+            app_type: cli_key.as_str().to_string(),
+            provider_id: provider_id.to_string(),
+            model: upstream_model.to_string(),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            status_code,
+        };
+        let plan = resolve_usage_request_id(conn, &summary.trace_id, &semantic)?;
+        let (request_id, replace_session_log, collision, preserve_existing_detail) = match plan {
+            UsageWritePlan::Skip => return Ok(RecordRequestSummaryOutcome::Skipped),
+            UsageWritePlan::Write {
+                request_id,
+                replace_session_log,
+                collision,
+                preserve_existing_detail,
+            } => (
+                request_id,
+                replace_session_log,
+                collision,
+                preserve_existing_detail,
+            ),
+        };
+
+        let (detail_file, detail_offset) = if preserve_existing_detail {
+            // Keep a previously linked JSONL locator when upgrading a session row
+            // that already points at detail, unless this write supplies a new one.
+            let existing = load_existing_detail_locator(conn, &request_id)?;
+            (
+                summary
+                    .detail_file
+                    .clone()
+                    .or(existing.as_ref().and_then(|(file, _)| file.clone())),
+                summary.detail_offset.or(existing.and_then(|(_, offset)| offset)),
+            )
+        } else {
+            (summary.detail_file.clone(), summary.detail_offset)
+        };
+
+        let insert_verb = if replace_session_log {
+            // Proxy may upgrade a prior session-import row with richer cost/detail fields.
+            "INSERT OR REPLACE"
+        } else {
+            // Process-local gw-* keys and first-time envelope keys insert only once.
+            // Identical proxy semantic replays are skipped above; different semantics
+            // land on a collision fallback key instead of overwriting.
+            "INSERT OR IGNORE"
+        };
+        let sql = format!(
+            "{insert_verb} INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
@@ -254,42 +320,234 @@ pub fn record_request_summary(
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, NULL, ?20, ?21,
                 ?22, ?23, ?24, 'proxy', ?25, ?26, ?27, ?28, ?29
-            )",
+            )"
+        );
+        let affected_rows = conn
+            .execute(
+                &sql,
+                rusqlite::params![
+                    request_id,
+                    provider_id,
+                    cli_key.as_str(),
+                    upstream_model,
+                    summary.requested_model,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    format_decimal_cost(costs.input_cost_usd),
+                    format_decimal_cost(costs.output_cost_usd),
+                    format_decimal_cost(costs.cache_read_cost_usd),
+                    format_decimal_cost(costs.cache_creation_cost_usd),
+                    format_decimal_cost(costs.total()),
+                    latency_ms,
+                    first_token_ms,
+                    summary.duration_ms as i64,
+                    status_code,
+                    summary.error_message,
+                    summary.provider_type,
+                    i64::from(summary.is_streaming),
+                    cost_multiplier.to_string(),
+                    pricing_model_source,
+                    created_at,
+                    detail_file,
+                    detail_offset.map(|value| value as i64),
+                    route_name,
+                    method,
+                    path,
+                ],
+            )
+            .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
+        if affected_rows == 0 {
+            // INSERT OR IGNORE lost a race with an identical primary key write.
+            return Ok(RecordRequestSummaryOutcome::Skipped);
+        }
+        if collision {
+            log::warn!(
+                "usage request_id collision: primary={}, fallback={request_id}",
+                summary.trace_id
+            );
+        }
+        Ok(RecordRequestSummaryOutcome::Written {
+            request_id,
+            collision,
+        })
+    })
+}
+
+/// Attach JSONL detail locator fields to an already-written summary row.
+pub fn update_request_detail_locator(
+    db: &SqliteDbState,
+    request_id: &str,
+    detail_file: Option<&str>,
+    detail_offset: Option<u64>,
+) -> Result<(), String> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Ok(());
+    }
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET detail_file = COALESCE(?2, detail_file),
+                 detail_offset = COALESCE(?3, detail_offset)
+             WHERE request_id = ?1",
             rusqlite::params![
-                summary.trace_id,
-                provider_id,
-                cli_key.as_str(),
-                upstream_model,
-                summary.requested_model,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_creation_tokens,
-                format_decimal_cost(costs.input_cost_usd),
-                format_decimal_cost(costs.output_cost_usd),
-                format_decimal_cost(costs.cache_read_cost_usd),
-                format_decimal_cost(costs.cache_creation_cost_usd),
-                format_decimal_cost(costs.total()),
-                latency_ms,
-                first_token_ms,
-                summary.duration_ms as i64,
-                status_code,
-                summary.error_message,
-                summary.provider_type,
-                i64::from(summary.is_streaming),
-                cost_multiplier.to_string(),
-                pricing_model_source,
-                created_at,
-                summary.detail_file,
-                summary.detail_offset.map(|value| value as i64),
-                route_name,
-                method,
-                path,
+                request_id,
+                detail_file,
+                detail_offset.map(|value| value as i64),
             ],
         )
-        .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
+        .map_err(|error| format!("Failed to update usage detail locator: {error}"))?;
         Ok(())
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UsageSemantic {
+    app_type: String,
+    provider_id: String,
+    model: String,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+    status_code: i64,
+}
+
+impl UsageSemantic {
+    fn sha256_hex(&self) -> String {
+        let encoded = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            self.app_type,
+            self.provider_id,
+            self.model,
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_read_tokens,
+            self.cache_creation_tokens,
+            self.status_code
+        );
+        Sha256::digest(encoded.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
+enum UsageWritePlan {
+    Skip,
+    Write {
+        request_id: String,
+        replace_session_log: bool,
+        collision: bool,
+        /// When replacing a session row, keep any existing detail locator unless
+        /// the new write supplies one.
+        preserve_existing_detail: bool,
+    },
+}
+
+fn resolve_usage_request_id(
+    conn: &Connection,
+    primary_request_id: &str,
+    semantic: &UsageSemantic,
+) -> Result<UsageWritePlan, String> {
+    let existing = load_existing_usage_semantic(conn, primary_request_id)?;
+    match existing {
+        None => Ok(UsageWritePlan::Write {
+            request_id: primary_request_id.to_string(),
+            replace_session_log: false,
+            collision: false,
+            preserve_existing_detail: false,
+        }),
+        Some((data_source, _)) if data_source.as_deref() == Some("session") => {
+            // Proxy may upgrade a session-import placeholder with richer fields.
+            Ok(UsageWritePlan::Write {
+                request_id: primary_request_id.to_string(),
+                replace_session_log: true,
+                collision: false,
+                preserve_existing_detail: true,
+            })
+        }
+        Some((data_source, existing_semantic))
+            if data_source.as_deref().unwrap_or("proxy") == "proxy"
+                && existing_semantic == *semantic =>
+        {
+            Ok(UsageWritePlan::Skip)
+        }
+        Some(_) => {
+            let fallback = format!(
+                "{}:collision:{}",
+                primary_request_id,
+                semantic.sha256_hex()
+            );
+            if let Some((data_source, existing_semantic)) =
+                load_existing_usage_semantic(conn, &fallback)?
+            {
+                if data_source.as_deref().unwrap_or("proxy") == "proxy"
+                    && existing_semantic == *semantic
+                {
+                    return Ok(UsageWritePlan::Skip);
+                }
+                return Err(format!(
+                    "usage collision fallback key already occupied with different semantics: {fallback}"
+                ));
+            }
+            Ok(UsageWritePlan::Write {
+                request_id: fallback,
+                replace_session_log: false,
+                collision: true,
+                preserve_existing_detail: false,
+            })
+        }
+    }
+}
+
+fn load_existing_usage_semantic(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<Option<(Option<String>, UsageSemantic)>, String> {
+    conn.query_row(
+        "SELECT data_source, app_type, provider_id, model,
+                input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, status_code
+         FROM proxy_request_logs WHERE request_id = ?1",
+        [request_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                UsageSemantic {
+                    app_type: row.get(1)?,
+                    provider_id: row.get(2)?,
+                    model: row.get(3)?,
+                    input_tokens: row.get(4)?,
+                    output_tokens: row.get(5)?,
+                    cache_read_tokens: row.get(6)?,
+                    cache_creation_tokens: row.get(7)?,
+                    status_code: row.get(8)?,
+                },
+            ))
+        },
+    )
+    .optional()
+    .map_err(|error| format!("Failed to query usage request_id: {error}"))
+}
+
+fn load_existing_detail_locator(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<Option<(Option<String>, Option<u64>)>, String> {
+    conn.query_row(
+        "SELECT detail_file, detail_offset FROM proxy_request_logs WHERE request_id = ?1",
+        [request_id],
+        |row| {
+            let file: Option<String> = row.get(0)?;
+            let offset: Option<i64> = row.get(1)?;
+            Ok((file, offset.map(|value| value.max(0) as u64)))
+        },
+    )
+    .optional()
+    .map_err(|error| format!("Failed to query usage detail locator: {error}"))
 }
 
 pub fn request_logs(
@@ -2373,6 +2631,149 @@ mod tests {
 
         assert_eq!(fallback.summary.method, "");
         assert_eq!(fallback.summary.path, "/openai/v1/models");
+    }
+
+    #[test]
+    fn record_request_summary_skips_identical_proxy_semantic_replay() {
+        let db = test_db();
+        let detail = make_detail("SESSION:msg_stable", "provider-alpha", 200, 11, 7);
+
+        assert!(matches!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                .expect("first write"),
+            RecordRequestSummaryOutcome::Written { .. }
+        ));
+        assert_eq!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                .expect("identical replay"),
+            RecordRequestSummaryOutcome::Skipped
+        );
+
+        let count: i64 = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'SESSION:msg_stable'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("count");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn record_request_summary_uses_collision_fallback_for_different_semantics() {
+        let db = test_db();
+        let first = make_detail("SESSION:codex:p1:resp_1", "provider-alpha", 200, 10, 1);
+        let mut second = make_detail("SESSION:codex:p1:resp_1", "provider-alpha", 200, 99, 5);
+        second.summary.upstream_model_id = Some("other-model".to_string());
+
+        assert!(matches!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &first)
+                .expect("first write"),
+            RecordRequestSummaryOutcome::Written {
+                request_id,
+                collision: false
+            } if request_id == "SESSION:codex:p1:resp_1"
+        ));
+        let second_outcome = record_request_summary(&db, &ProxyGatewaySettings::default(), &second)
+            .expect("collision fallback write");
+        match second_outcome {
+            RecordRequestSummaryOutcome::Written {
+                request_id,
+                collision,
+            } => {
+                assert!(collision);
+                assert!(request_id.starts_with("SESSION:codex:p1:resp_1:collision:"));
+            }
+            RecordRequestSummaryOutcome::Skipped => panic!("expected collision write"),
+        }
+
+        let ids = db
+            .with_conn(|conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT request_id FROM proxy_request_logs
+                         WHERE request_id = 'SESSION:codex:p1:resp_1'
+                            OR request_id LIKE 'SESSION:codex:p1:resp_1:collision:%'
+                         ORDER BY request_id",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|error| error.to_string())?;
+                let mut values = Vec::new();
+                for row in rows {
+                    values.push(row.map_err(|error| error.to_string())?);
+                }
+                Ok(values)
+            })
+            .expect("ids");
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], "SESSION:codex:p1:resp_1");
+        assert!(ids[1].starts_with("SESSION:codex:p1:resp_1:collision:"));
+    }
+
+    #[test]
+    fn record_request_summary_upgrades_session_import_row_and_keeps_existing_detail() {
+        let db = test_db();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source,
+                    detail_file, detail_offset
+                ) VALUES (
+                    'SESSION:msg_upgrade', 'session', 'claude', 'claude-sonnet', NULL,
+                    1, 1, 0, 0, '0', '0', '0', '0', '0', 0, 200, 1, 'session',
+                    'old-detail.jsonl', 42
+                )",
+                [],
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("seed session row");
+
+        let detail = make_detail("SESSION:msg_upgrade", "provider-alpha", 200, 10, 20);
+        assert!(matches!(
+            record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                .expect("upgrade session row"),
+            RecordRequestSummaryOutcome::Written { .. }
+        ));
+
+        let (provider_id, data_source, input_tokens, detail_file, detail_offset): (
+            String,
+            String,
+            i64,
+            Option<String>,
+            Option<i64>,
+        ) = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT provider_id, data_source, input_tokens, detail_file, detail_offset
+                     FROM proxy_request_logs WHERE request_id = 'SESSION:msg_upgrade'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("upgraded row");
+        assert_eq!(provider_id, "provider-alpha");
+        assert_eq!(data_source, "proxy");
+        assert_eq!(input_tokens, 10);
+        assert_eq!(detail_file.as_deref(), Some("old-detail.jsonl"));
+        assert_eq!(detail_offset, Some(42));
     }
 
     #[test]

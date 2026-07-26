@@ -1,6 +1,7 @@
 mod cache_injector;
 mod compat;
 mod connectivity_test;
+mod content_encoding;
 mod header_preserving_client;
 mod http_io;
 mod middleware;
@@ -26,7 +27,7 @@ pub(crate) use self::providers::{
 use self::http_io::DebugHttpRequest;
 #[cfg(test)]
 use self::http_io::{find_header_end, header_value};
-use self::http_io::{read_http_request, write_response};
+use self::http_io::{decode_inbound_request_body, json_response, read_http_request, write_response};
 #[cfg(test)]
 use self::providers::{codex_base_url_from_config, json_object_string};
 #[cfg(test)]
@@ -50,8 +51,9 @@ use crate::db::SqliteDbState;
 use chrono::Utc;
 #[cfg(test)]
 use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, HOST};
+use serde_json::json;
 #[cfg(test)]
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -762,12 +764,31 @@ async fn handle_connection(
         return Ok(());
     };
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
-    let request = read_http_request(stream, request_id).await?;
+    let mut request = read_http_request(stream, request_id).await?;
     let started_at = Utc::now();
     let started_instant = Instant::now();
     let settings = context.settings_snapshot();
 
-    let mut response = route_request(&request, context).await;
+    // Codex Desktop official-login clients may send zstd-compressed JSON bodies.
+    // Decode before routing/JSON parsing so passthrough and conversion both see plain JSON.
+    let mut response = match decode_inbound_request_body(&mut request) {
+        Ok(()) => route_request(&request, context).await,
+        Err(message) => {
+            let mut response = json_response(
+                400,
+                "Bad Request",
+                json!({
+                    "error": "invalid_request",
+                    "message": message,
+                }),
+                "request_decode",
+                None,
+                &message,
+            );
+            response.error_category = Some("invalid_request".to_string());
+            response
+        }
+    };
     let write_result = write_response(stream, &mut response, started_instant, &settings).await;
     let ended_at = Utc::now();
     if let Err(error) = &write_result {

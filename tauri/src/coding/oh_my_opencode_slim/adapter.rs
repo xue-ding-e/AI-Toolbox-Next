@@ -124,6 +124,102 @@ pub fn strip_legacy_fallback_models_from_agents(value: Value) -> Value {
     }
 }
 
+/// Upstream oh-my-opencode-slim no longer honors council.master* fields.
+/// Strip them (and reserved preset key "master") from runtime council config.
+pub fn normalize_council_config(value: Value) -> Value {
+    let Value::Object(mut council_obj) = value else {
+        return value;
+    };
+
+    council_obj.remove("master");
+    council_obj.remove("master_timeout");
+    council_obj.remove("master_fallback");
+
+    if let Some(Value::Object(presets_obj)) = council_obj.get_mut("presets") {
+        for preset_value in presets_obj.values_mut() {
+            if let Value::Object(preset_obj) = preset_value {
+                preset_obj.remove("master");
+            }
+        }
+    }
+
+    Value::Object(council_obj)
+}
+
+/// Prefer agents.council; if missing, promote legacy council.master into agents.council.
+pub fn migrate_legacy_council_master_into_agents(
+    agents: Option<Value>,
+    council: Option<&Value>,
+) -> Option<Value> {
+    let mut agents_obj = match agents {
+        Some(Value::Object(obj)) => obj,
+        Some(other) => return Some(other),
+        None => Map::new(),
+    };
+
+    let has_council_agent = agents_obj
+        .get("council")
+        .and_then(|value| value.as_object())
+        .map(|obj| !obj.is_empty())
+        .unwrap_or(false);
+
+    if !has_council_agent {
+        if let Some(master) = council
+            .and_then(|value| value.get("master"))
+            .filter(|value| value.is_object())
+        {
+            agents_obj.insert("council".to_string(), master.clone());
+        }
+    }
+
+    if agents_obj.is_empty() {
+        None
+    } else {
+        Some(Value::Object(agents_obj))
+    }
+}
+
+/// Overlay profile agents onto base agents, but keep base agents.council when the
+/// profile does not define one. Global config may store synthesizer only under
+/// otherFields.agents.council after master was removed.
+pub fn merge_agents_preserving_council(base_agents: Option<Value>, overlay_agents: Value) -> Value {
+    let base_council = base_agents
+        .as_ref()
+        .and_then(|value| value.get("council"))
+        .cloned();
+
+    let mut merged = match overlay_agents {
+        Value::Object(obj) => obj,
+        other => return other,
+    };
+
+    let overlay_has_council = merged
+        .get("council")
+        .and_then(|value| value.as_object())
+        .map(|obj| !obj.is_empty())
+        .unwrap_or(false);
+
+    if !overlay_has_council {
+        if let Some(base_council) = base_council {
+            merged.insert("council".to_string(), base_council);
+        }
+    }
+
+    if let Some(base_obj) = base_agents.and_then(|value| match value {
+        Value::Object(obj) => Some(obj),
+        _ => None,
+    }) {
+        for (key, value) in base_obj {
+            if key == "council" {
+                continue;
+            }
+            merged.entry(key).or_insert(value);
+        }
+    }
+
+    Value::Object(merged)
+}
+
 fn model_entry_id(value: &Value) -> Option<&str> {
     match value {
         Value::String(model_id) => {
@@ -557,4 +653,145 @@ pub fn global_config_to_db_value(content: &OhMyOpenCodeSlimGlobalConfigContent) 
         );
         json!({})
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_council_config_strips_master_fields_and_preset_master() {
+        let council = json!({
+            "master": { "model": "openai/legacy-master" },
+            "master_timeout": 300000,
+            "master_fallback": ["openai/fallback"],
+            "timeout": 180000,
+            "presets": {
+                "default": {
+                    "master": { "model": "openai/preset-master" },
+                    "alpha": { "model": "openai/gpt-5.6" }
+                }
+            }
+        });
+
+        let normalized = normalize_council_config(council);
+        assert!(normalized.get("master").is_none());
+        assert!(normalized.get("master_timeout").is_none());
+        assert!(normalized.get("master_fallback").is_none());
+        assert_eq!(normalized.get("timeout"), Some(&json!(180000)));
+        assert!(normalized
+            .pointer("/presets/default/master")
+            .is_none());
+        assert_eq!(
+            normalized.pointer("/presets/default/alpha/model"),
+            Some(&json!("openai/gpt-5.6"))
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_master_requires_raw_council_before_normalize() {
+        let agents = None;
+        let raw_council = json!({
+            "master": {
+                "model": "openai/legacy-master",
+                "variant": "high",
+                "prompt": "synthesize"
+            },
+            "presets": {
+                "default": {
+                    "alpha": { "model": "openai/gpt-5.6" }
+                }
+            }
+        });
+
+        // Apply order must be: migrate from raw council, then normalize.
+        let migrated =
+            migrate_legacy_council_master_into_agents(agents, Some(&raw_council)).unwrap();
+        assert_eq!(
+            migrated.pointer("/council/model"),
+            Some(&json!("openai/legacy-master"))
+        );
+        assert_eq!(
+            migrated.pointer("/council/variant"),
+            Some(&json!("high"))
+        );
+
+        let normalized = normalize_council_config(raw_council);
+        assert!(normalized.get("master").is_none());
+        // Migrating after normalize would fail to find master.
+        let too_late =
+            migrate_legacy_council_master_into_agents(None, Some(&normalized)).unwrap_or(json!({}));
+        assert!(too_late.get("council").is_none());
+    }
+
+    #[test]
+    fn migrate_legacy_master_does_not_override_existing_agents_council() {
+        let agents = json!({
+            "council": {
+                "model": "openai/preferred",
+                "temperature": 0.1
+            },
+            "orchestrator": { "model": "openai/gpt-5.6" }
+        });
+        let raw_council = json!({
+            "master": { "model": "openai/legacy-master" }
+        });
+
+        let migrated =
+            migrate_legacy_council_master_into_agents(Some(agents), Some(&raw_council)).unwrap();
+        assert_eq!(
+            migrated.pointer("/council/model"),
+            Some(&json!("openai/preferred"))
+        );
+        assert_eq!(
+            migrated.pointer("/council/temperature"),
+            Some(&json!(0.1))
+        );
+    }
+
+    #[test]
+    fn merge_agents_preserving_council_keeps_base_council_when_profile_omits_it() {
+        let base = json!({
+            "council": { "model": "openai/from-global" },
+            "explorer": { "model": "openai/explorer" }
+        });
+        let overlay = json!({
+            "orchestrator": { "model": "openai/profile" }
+        });
+
+        let merged = merge_agents_preserving_council(Some(base), overlay);
+        assert_eq!(
+            merged.pointer("/council/model"),
+            Some(&json!("openai/from-global"))
+        );
+        assert_eq!(
+            merged.pointer("/orchestrator/model"),
+            Some(&json!("openai/profile"))
+        );
+        // Base non-council agents fill only missing keys; profile wins for shared keys.
+        assert_eq!(
+            merged.pointer("/explorer/model"),
+            Some(&json!("openai/explorer"))
+        );
+    }
+
+    #[test]
+    fn merge_agents_preserving_council_prefers_profile_council() {
+        let base = json!({
+            "council": { "model": "openai/from-global" }
+        });
+        let overlay = json!({
+            "council": { "model": "openai/from-profile", "variant": "high" }
+        });
+
+        let merged = merge_agents_preserving_council(Some(base), overlay);
+        assert_eq!(
+            merged.pointer("/council/model"),
+            Some(&json!("openai/from-profile"))
+        );
+        assert_eq!(
+            merged.pointer("/council/variant"),
+            Some(&json!("high"))
+        );
+    }
 }

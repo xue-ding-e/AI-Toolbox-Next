@@ -105,7 +105,7 @@ pub fn responses_request_to_llm(body: Value) -> Request {
     );
     append_responses_input_to_messages(body.get("input"), &mut request.messages);
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
-        request.tools = tools.iter().filter_map(responses_tool_to_llm).collect();
+        request.tools = responses_tools_to_llm(tools);
     }
     attach_responses_raw_request_metadata(&body, &mut request);
     request

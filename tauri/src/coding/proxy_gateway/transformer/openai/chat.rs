@@ -844,6 +844,15 @@ pub fn openai_usage_to_llm(usage: Option<&Value>) -> Usage {
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    // Responses API (AxonHub 94704784) and some Chat providers surface cache writes
+    // under input/prompt token details.
+    let cache_write = usage
+        .pointer("/prompt_tokens_details/cache_write_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+        .or_else(|| usage.pointer("/prompt_tokens_details/cache_creation_tokens"))
+        .or_else(|| usage.pointer("/input_tokens_details/cache_creation_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let reasoning_tokens = usage
         .pointer("/completion_tokens_details/reasoning_tokens")
         .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
@@ -857,12 +866,19 @@ pub fn openai_usage_to_llm(usage: Option<&Value>) -> Usage {
             .and_then(Value::as_u64)
             .unwrap_or_else(|| prompt.saturating_add(completion)),
         cached_tokens: cached,
+        cache_write_tokens: cache_write,
         reasoning_tokens,
     }
 }
 
 pub fn usage_to_openai(usage: Option<&Usage>) -> Value {
     let usage = usage.cloned().unwrap_or_default();
+    let mut prompt_details = json!({
+        "cached_tokens": usage.cached_tokens
+    });
+    if usage.cache_write_tokens > 0 {
+        prompt_details["cache_write_tokens"] = json!(usage.cache_write_tokens);
+    }
     json!({
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
@@ -871,9 +887,7 @@ pub fn usage_to_openai(usage: Option<&Usage>) -> Value {
         } else {
             usage.total_tokens
         },
-        "prompt_tokens_details": {
-            "cached_tokens": usage.cached_tokens
-        },
+        "prompt_tokens_details": prompt_details,
         "completion_tokens_details": {
             "reasoning_tokens": usage.reasoning_tokens
         }

@@ -1,3 +1,6 @@
+use super::content_encoding::{
+    decompress_body, get_content_encoding_from_pairs, is_supported_content_encoding,
+};
 use crate::coding::proxy_gateway::types::{
     GatewayCliKey, GatewayProviderAttempt, ProxyGatewaySettings,
 };
@@ -206,6 +209,47 @@ pub(super) async fn read_http_request(
         headers,
         body,
     })
+}
+
+/// Decode inbound compressed request bodies before JSON routing/conversion.
+///
+/// Codex Desktop official-login clients commonly send `Content-Encoding: zstd`.
+/// After a successful decode, entity headers that no longer match the body are
+/// stripped so later forwarding rebuilds length/encoding from the plain JSON.
+pub(super) fn decode_inbound_request_body(request: &mut DebugHttpRequest) -> Result<(), String> {
+    let Some(encoding) = get_content_encoding_from_pairs(&request.headers) else {
+        return Ok(());
+    };
+
+    if !is_supported_content_encoding(&encoding) {
+        return Err(format!("Unsupported request content-encoding: {encoding}"));
+    }
+
+    let decompressed = match decompress_body(&encoding, &request.body) {
+        Ok(Some(decompressed)) => decompressed,
+        Ok(None) => {
+            return Err(format!("Unsupported request content-encoding: {encoding}"));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to decompress request body ({encoding}): {error}"
+            ));
+        }
+    };
+
+    if decompressed.len() > MAX_REQUEST_BODY_BYTES {
+        return Err(
+            "Decompressed gateway request body exceeds the maximum allowed size".to_string(),
+        );
+    }
+
+    request.body = decompressed;
+    request.headers.retain(|(name, _)| {
+        !name.eq_ignore_ascii_case("content-encoding")
+            && !name.eq_ignore_ascii_case("content-length")
+            && !name.eq_ignore_ascii_case("transfer-encoding")
+    });
+    Ok(())
 }
 
 pub(super) fn json_response(
@@ -471,4 +515,68 @@ pub(super) fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> O
         .iter()
         .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_inbound_request_body_decompresses_zstd_and_strips_entity_headers() {
+        let payload = br#"{"model":"gpt-5","input":[{"role":"user","content":"hi"}]}"#;
+        let compressed = zstd::stream::encode_all(std::io::Cursor::new(&payload[..]), 0).unwrap();
+        let mut request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/responses".to_string(),
+            headers: vec![
+                ("content-type".to_string(), "application/json".to_string()),
+                ("content-encoding".to_string(), "zstd".to_string()),
+                (
+                    "content-length".to_string(),
+                    compressed.len().to_string(),
+                ),
+            ],
+            body: compressed,
+        };
+
+        decode_inbound_request_body(&mut request).unwrap();
+
+        assert_eq!(request.body, payload);
+        assert!(header_value(&request.headers, "content-encoding").is_none());
+        assert!(header_value(&request.headers, "content-length").is_none());
+        assert_eq!(
+            header_value(&request.headers, "content-type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn decode_inbound_request_body_rejects_unsupported_encoding() {
+        let mut request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/responses".to_string(),
+            headers: vec![("content-encoding".to_string(), "snappy".to_string())],
+            body: b"\x00\x01\x02".to_vec(),
+        };
+
+        let error = decode_inbound_request_body(&mut request).unwrap_err();
+        assert!(error.contains("Unsupported request content-encoding: snappy"));
+        assert_eq!(request.body, b"\x00\x01\x02");
+    }
+
+    #[test]
+    fn decode_inbound_request_body_rejects_corrupt_zstd() {
+        let mut request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/responses".to_string(),
+            headers: vec![("content-encoding".to_string(), "zstd".to_string())],
+            body: b"not-valid-zstd".to_vec(),
+        };
+
+        let error = decode_inbound_request_body(&mut request).unwrap_err();
+        assert!(error.contains("Failed to decompress request body (zstd)"));
+    }
 }

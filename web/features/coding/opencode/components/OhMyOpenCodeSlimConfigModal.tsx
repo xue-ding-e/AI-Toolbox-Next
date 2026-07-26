@@ -17,7 +17,11 @@ import {
 } from './batchReplaceModelUtils';
 import ImportJsonConfigModal from './ImportJsonConfigModal';
 import { type ImportedConfigData } from './importJsonConfigUtils';
-import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
+import OhMyOpenCodeSlimCouncilForm, {
+  buildSlimCouncilConfig,
+  mergeCouncilAgentIntoAgents,
+  parseSlimCouncilFormValues,
+} from './OhMyOpenCodeSlimCouncilForm';
 import { buildSlimAgentsFromFormValues, splitSlimModelValue } from './ohMyOpenCodeSlimFormUtils';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
 
@@ -169,6 +173,8 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
   const fallbackConfigRef = React.useRef<OhMyOpenCodeSlimFallbackConfig | undefined>(undefined);
+  // Latest agents.council object used when merging managed synthesizer fields on save/import.
+  const councilAgentSourceRef = React.useRef<Record<string, unknown> | null>(null);
   const councilOtherFieldsValidRef = React.useRef(true);
 
   // Track if modal has been initialized
@@ -229,9 +235,18 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     otherFieldsRef.current = {};
     otherFieldsRawRef.current = '';
     fallbackConfigRef.current = undefined;
+    councilAgentSourceRef.current = null;
 
     if (initialValues) {
-      const councilFormValues = parseSlimCouncilFormValues(initialValues.council ?? null);
+      const initialCouncilAgent =
+        initialValues.agents?.council && typeof initialValues.agents.council === 'object'
+          ? (initialValues.agents.council as Record<string, unknown>)
+          : null;
+      councilAgentSourceRef.current = initialCouncilAgent;
+      const councilFormValues = parseSlimCouncilFormValues({
+        council: initialValues.council ?? null,
+        agents: (initialValues.agents as Record<string, unknown> | undefined) ?? null,
+      });
       const { fallback, chains: legacyFallbackChains } = extractManagedFallbackState(initialValues.fallback);
       // Build form values with nested agent paths
       const formValues: Record<string, unknown> = {
@@ -243,10 +258,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       const detectedCustomAgents: string[] = [];
       const builtInAgentKeySet = new Set<string>(builtInAgentKeys);
 
-      // Set agent models (built-in + custom)
+      // Set agent models (built-in + custom). agents.council is owned by the Council form.
       if (initialValues.agents) {
         Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
           if (!agent || typeof agent !== 'object') {
+            return;
+          }
+          if (agentType === 'council') {
             return;
           }
           if (agent?.model) {
@@ -280,6 +298,9 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
       if (legacyFallbackChains) {
         Object.entries(legacyFallbackChains).forEach(([agentType, chain]) => {
+          if (agentType === 'council') {
+            return;
+          }
           if (chain.length > 0) {
             formValues[`agent_${agentType}_fallback_models`] = mergeFallbackModels(
               asStringArray(formValues[`agent_${agentType}_fallback_models`]),
@@ -410,10 +431,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     let agentCount = 0;
     let nextImportedFallback: OhMyOpenCodeSlimFallbackConfig | undefined = fallbackConfigRef.current;
 
-    // Process agents
+    // Process agents. agents.council is owned by the Council form, not the agent list UI.
     if (data.agents) {
       Object.entries(data.agents).forEach(([agentType, agentConfig]) => {
         if (!agentConfig || typeof agentConfig !== 'object') return;
+        if (agentType === 'council') {
+          return;
+        }
         const normalizedAgentConfig = agentConfig as Record<string, unknown>;
 
         // Detect custom agents
@@ -447,18 +471,46 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       });
     }
 
+    // Council synthesizer may live on agents.council (new) or council.master (legacy).
+    // Accept it in both core and full import modes.
+    const importedCouncilFromOther =
+      mode === 'full' &&
+      data.otherFields?.council &&
+      typeof data.otherFields.council === 'object' &&
+      !Array.isArray(data.otherFields.council)
+        ? (data.otherFields.council as Record<string, unknown>)
+        : null;
+    const importedCouncilAgent =
+      data.agents?.council &&
+      typeof data.agents.council === 'object' &&
+      !Array.isArray(data.agents.council)
+        ? (data.agents.council as Record<string, unknown>)
+        : null;
+
+    if (importedCouncilFromOther || importedCouncilAgent) {
+      form.setFieldsValue(parseSlimCouncilFormValues({
+        council: importedCouncilFromOther,
+        agents: (data.agents as Record<string, unknown> | undefined) ?? null,
+      }));
+      if (importedCouncilAgent) {
+        councilAgentSourceRef.current = importedCouncilAgent;
+      } else if (
+        importedCouncilFromOther?.master &&
+        typeof importedCouncilFromOther.master === 'object' &&
+        !Array.isArray(importedCouncilFromOther.master)
+      ) {
+        councilAgentSourceRef.current = importedCouncilFromOther.master as Record<string, unknown>;
+      }
+    }
+
     // Process otherFields
     if (mode === 'full' && data.otherFields && Object.keys(data.otherFields).length > 0) {
       const importedOtherFields = { ...data.otherFields };
-      const importedCouncil = importedOtherFields.council;
       const importedFallbackState = extractManagedFallbackState(
         (importedOtherFields as Record<string, unknown>).fallback as OhMyOpenCodeSlimFallbackConfig | undefined
       );
 
-      if (importedCouncil && typeof importedCouncil === 'object' && !Array.isArray(importedCouncil)) {
-        form.setFieldsValue(parseSlimCouncilFormValues(importedCouncil as Record<string, unknown>));
-        delete importedOtherFields.council;
-      }
+      delete importedOtherFields.council;
       if (importedFallbackState.fallback || importedFallbackState.chains) {
         delete importedOtherFields.fallback;
         nextImportedFallback = importedFallbackState.fallback;
@@ -561,10 +613,39 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       const nextFallback: OhMyOpenCodeSlimFallbackConfig = { ...(fallbackConfigRef.current || {}) };
       delete nextFallback.chains;
 
+      const councilBuildResult = buildSlimCouncilConfig(values as Record<string, unknown>, t);
+      if (councilBuildResult.errorMessage) {
+        message.error(councilBuildResult.errorMessage);
+        setLoading(false);
+        return;
+      }
+
+      const existingCouncilAgent = councilAgentSourceRef.current;
+      let agentsWithCouncil: OhMyOpenCodeSlimAgents | undefined;
+      if (councilBuildResult.councilAgent) {
+        agentsWithCouncil = mergeCouncilAgentIntoAgents(
+          agents as Record<string, unknown>,
+          councilBuildResult.councilAgent,
+          existingCouncilAgent,
+        ) as OhMyOpenCodeSlimAgents | undefined;
+        if (
+          agentsWithCouncil?.council &&
+          typeof agentsWithCouncil.council === 'object'
+        ) {
+          councilAgentSourceRef.current = agentsWithCouncil.council as Record<string, unknown>;
+        }
+      } else {
+        // Council disabled: drop agents.council so runtime no longer carries a synthesizer.
+        const nextAgents = { ...(agents as Record<string, unknown>) };
+        delete nextAgents.council;
+        agentsWithCouncil = nextAgents as OhMyOpenCodeSlimAgents;
+        councilAgentSourceRef.current = null;
+      }
+
       const result: OhMyOpenCodeSlimConfigFormValues = {
         name: values.name,
-        agents,
-        council: undefined,
+        agents: agentsWithCouncil ?? {},
+        council: councilBuildResult.council ?? undefined,
         fallback: Object.keys(nextFallback).length > 0
           ? nextFallback
           : undefined,
@@ -572,14 +653,6 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           ? parsedOtherFields
           : undefined,
       };
-
-      const councilBuildResult = buildSlimCouncilConfig(values as Record<string, unknown>, t);
-      if (councilBuildResult.errorMessage) {
-        message.error(councilBuildResult.errorMessage);
-        setLoading(false);
-        return;
-      }
-      result.council = councilBuildResult.council ?? undefined;
 
       // Include id when editing
       if (isEdit && values.id) {

@@ -9,6 +9,9 @@ pub struct TokenUsage {
     pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,
     pub cache_creation_tokens: Option<u64>,
+    /// Upstream envelope id when available (Claude message id, OpenAI/Codex response id,
+    /// Gemini responseId). Used to build stable usage request keys.
+    pub envelope_id: Option<String>,
 }
 
 impl TokenUsage {
@@ -30,6 +33,34 @@ impl TokenUsage {
         self.cache_read_tokens = max_option(self.cache_read_tokens, other.cache_read_tokens);
         self.cache_creation_tokens =
             max_option(self.cache_creation_tokens, other.cache_creation_tokens);
+        if self.envelope_id.is_none() {
+            self.envelope_id = other.envelope_id;
+        }
+    }
+}
+
+/// Build a stable usage `request_id` from an upstream envelope id.
+///
+/// Claude keeps bare `SESSION:{id}` so proxy rows converge with session JSONL import.
+/// Other CLIs scope by app + provider to avoid cross-provider envelope collisions.
+pub fn stable_usage_request_id(
+    cli_key: GatewayCliKey,
+    provider_id: Option<&str>,
+    envelope_id: Option<&str>,
+    fallback: &str,
+) -> String {
+    let Some(envelope_id) = envelope_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return fallback.to_string();
+    };
+    match cli_key {
+        GatewayCliKey::Claude => format!("SESSION:{envelope_id}"),
+        other => {
+            let provider = provider_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("unknown");
+            format!("SESSION:{}:{provider}:{envelope_id}", other.as_str())
+        }
     }
 }
 
@@ -78,11 +109,15 @@ impl SseUsageCollector {
     }
 
     fn merge_event(&mut self, cli_key: GatewayCliKey, value: &Value) {
-        self.usage.merge_max(from_json_response_with_provider_type(
+        let mut parsed = from_json_response_with_provider_type(
             cli_key,
             value,
             self.provider_type.as_deref(),
-        ));
+        );
+        if parsed.envelope_id.is_none() {
+            parsed.envelope_id = extract_envelope_id(cli_key, value);
+        }
+        self.usage.merge_max(parsed);
     }
 }
 
@@ -109,11 +144,45 @@ fn from_json_response_with_provider_type(
     value: &Value,
     provider_type: Option<&str>,
 ) -> TokenUsage {
-    match cli_key {
+    let mut usage = match cli_key {
         GatewayCliKey::Claude => claude_usage(value, provider_type),
         GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => openai_usage(value),
         GatewayCliKey::Gemini => gemini_usage(value),
+    };
+    if usage.envelope_id.is_none() {
+        usage.envelope_id = extract_envelope_id(cli_key, value);
     }
+    usage
+}
+
+fn extract_envelope_id(cli_key: GatewayCliKey, value: &Value) -> Option<String> {
+    let paths: &[&str] = match cli_key {
+        GatewayCliKey::Claude => &[
+            "/message/id",
+            "/id",
+            "/response/id",
+            "/message_id",
+            "/messageId",
+        ],
+        GatewayCliKey::Gemini => &["/responseId", "/response/responseId", "/id"],
+        GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => &[
+            "/response/id",
+            "/id",
+            "/responseId",
+        ],
+    };
+    first_non_empty_string_at_paths(value, paths)
+}
+
+fn first_non_empty_string_at_paths(value: &Value, paths: &[&str]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        value
+            .pointer(path)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 fn claude_usage(value: &Value, provider_type: Option<&str>) -> TokenUsage {
@@ -205,6 +274,7 @@ fn claude_usage(value: &Value, provider_type: Option<&str>) -> TokenUsage {
             }),
         cache_read_tokens,
         cache_creation_tokens,
+        envelope_id: extract_envelope_id(GatewayCliKey::Claude, value),
     }
 }
 
@@ -271,11 +341,39 @@ fn openai_usage(value: &Value) -> TokenUsage {
             ],
         )
     });
+    // Responses API cache writes (AxonHub 94704784) and Chat-compatible aliases.
+    // OpenAI/Responses `input_tokens` / `prompt_tokens` are treated as cache-inclusive
+    // totals: fresh input = raw - cache_read - cache_write. Providers that already
+    // report fresh-only input would undercount if they also emit cache write details.
+    let cache_creation_tokens = first_u64_at_paths(
+        usage,
+        &[
+            "/input_tokens_details/cache_write_tokens",
+            "/prompt_tokens_details/cache_write_tokens",
+            "/input_tokens_details/cache_creation_tokens",
+            "/prompt_tokens_details/cache_creation_tokens",
+        ],
+    )
+    .or_else(|| {
+        first_u64_at_paths(
+            value,
+            &[
+                "/usage/input_tokens_details/cache_write_tokens",
+                "/usage/prompt_tokens_details/cache_write_tokens",
+                "/response/usage/input_tokens_details/cache_write_tokens",
+                "/response/usage/prompt_tokens_details/cache_write_tokens",
+                "/usage/input_tokens_details/cache_creation_tokens",
+                "/usage/prompt_tokens_details/cache_creation_tokens",
+                "/response/usage/input_tokens_details/cache_creation_tokens",
+                "/response/usage/prompt_tokens_details/cache_creation_tokens",
+            ],
+        )
+    });
     TokenUsage {
         input_tokens: subtract_cache_from_inclusive_input(
             raw_input_tokens,
             cache_read_tokens,
-            None,
+            cache_creation_tokens,
         ),
         output_tokens: first_u64_at_paths(usage, &["/output_tokens", "/completion_tokens"])
             .or_else(|| {
@@ -290,7 +388,8 @@ fn openai_usage(value: &Value) -> TokenUsage {
                 )
             }),
         cache_read_tokens,
-        cache_creation_tokens: None,
+        cache_creation_tokens,
+        envelope_id: extract_envelope_id(GatewayCliKey::Codex, value),
     }
 }
 
@@ -342,6 +441,7 @@ fn gemini_usage(value: &Value) -> TokenUsage {
         output_tokens,
         cache_read_tokens,
         cache_creation_tokens: None,
+        envelope_id: extract_envelope_id(GatewayCliKey::Gemini, value),
     }
 }
 
@@ -492,7 +592,7 @@ data: {"type":"message_delta","usage":{"output_tokens":35}}
 
     #[test]
     fn parses_openai_stream_usage_with_cached_prompt_tokens() {
-        let body = br#"data: {"type":"response.completed","response":{"usage":{"input_tokens":90,"output_tokens":12,"input_tokens_details":{"cached_tokens":30}}}}
+        let body = br#"data: {"type":"response.completed","response":{"id":"resp_abc","usage":{"input_tokens":90,"output_tokens":12,"input_tokens_details":{"cached_tokens":30}}}}
 
 data: [DONE]
 
@@ -505,6 +605,92 @@ data: [DONE]
         assert_eq!(usage.cache_read_tokens, Some(30));
         assert_eq!(usage.cache_creation_tokens, None);
         assert_eq!(usage.total_tokens(), Some(102));
+        assert_eq!(usage.envelope_id.as_deref(), Some("resp_abc"));
+    }
+
+    #[test]
+    fn parses_responses_cache_write_tokens_as_cache_creation() {
+        // AxonHub 94704784: input_tokens_details.cache_write_tokens.
+        let usage = from_response_body(
+            GatewayCliKey::Codex,
+            br#"{"id":"resp_cw","usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":8}}}"#,
+        );
+        // Inclusive OpenAI/Responses semantics: fresh input = 100 - 20 - 8 = 72
+        assert_eq!(usage.input_tokens, Some(72));
+        assert_eq!(usage.output_tokens, Some(10));
+        assert_eq!(usage.cache_read_tokens, Some(20));
+        assert_eq!(usage.cache_creation_tokens, Some(8));
+        assert_eq!(usage.total_tokens(), Some(110));
+        assert_eq!(usage.envelope_id.as_deref(), Some("resp_cw"));
+    }
+
+    #[test]
+    fn parses_responses_cache_write_only_without_cache_read() {
+        let usage = from_response_body(
+            GatewayCliKey::Codex,
+            br#"{"id":"resp_cw_only","usage":{"input_tokens":50,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":12}}}"#,
+        );
+        assert_eq!(usage.input_tokens, Some(38));
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.cache_creation_tokens, Some(12));
+        assert_eq!(usage.total_tokens(), Some(55));
+    }
+
+    #[test]
+    fn stable_usage_request_id_scopes_non_claude_and_keeps_claude_bare() {
+        assert_eq!(
+            stable_usage_request_id(
+                GatewayCliKey::Claude,
+                Some("provider-a"),
+                Some("msg_123"),
+                "gw-fallback"
+            ),
+            "SESSION:msg_123"
+        );
+        assert_eq!(
+            stable_usage_request_id(
+                GatewayCliKey::Codex,
+                Some("provider-a"),
+                Some("resp_123"),
+                "gw-fallback"
+            ),
+            "SESSION:codex:provider-a:resp_123"
+        );
+        assert_eq!(
+            stable_usage_request_id(GatewayCliKey::Gemini, Some("p1"), None, "gw-fallback"),
+            "gw-fallback"
+        );
+        assert_eq!(
+            stable_usage_request_id(GatewayCliKey::Codex, Some("p1"), Some(""), "gw-fallback"),
+            "gw-fallback"
+        );
+    }
+
+    #[test]
+    fn extracts_gemini_response_id_as_envelope() {
+        let usage = from_response_body(
+            GatewayCliKey::Gemini,
+            br#"{"responseId":"gemini_1","usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":7}}"#,
+        );
+        assert_eq!(usage.envelope_id.as_deref(), Some("gemini_1"));
+    }
+
+    #[test]
+    fn extracts_claude_message_id_as_envelope() {
+        let usage = from_response_body(
+            GatewayCliKey::Claude,
+            br#"{"id":"msg_9","usage":{"input_tokens":1,"output_tokens":2}}"#,
+        );
+        assert_eq!(usage.envelope_id.as_deref(), Some("msg_9"));
+        assert_eq!(
+            stable_usage_request_id(
+                GatewayCliKey::Claude,
+                Some("p"),
+                usage.envelope_id.as_deref(),
+                "gw-x"
+            ),
+            "SESSION:msg_9"
+        );
     }
 
     #[test]
