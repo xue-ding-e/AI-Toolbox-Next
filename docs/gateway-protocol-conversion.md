@@ -4,7 +4,7 @@
 
 > **维护入口**：凡涉及 Gateway 协议转换、统一 IR、协议直通/转换判定、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。凡涉及 provider profile、target protocol、body/header/path/auth、stream filter、rectifier、同协议直通兼容或其它 provider/channel wire 兼容，还必须阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并按职责更新对应文档；跨架构和渠道边界的改动要同时更新两份文档。
 >
-> **当前提交基线**：`c3a452a`（2026-07-25）。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并；本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。不要再创建独立的点-in-time 审计报告或修复计划。
+> **当前提交基线**：`bef809ede6cd5a1ae7e5b0edbbbf69ae9e766444`（2026-07-26）。本文同时同步记录该基线后的本轮 Gateway 修复；历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
 
 ## 0. 产品场景与设计动机
 
@@ -345,11 +345,17 @@ pub struct ConversionContext {
 - 不跨请求复用。
 - runtime 不解释 `codex_tool_context` 的协议细节。
 
-当前只有 `OpenAiResponses -> OpenAiChat` 请求转换会生成 `CodexToolContext`。作用是把 Codex Responses 的 `tool_search`、namespace tool 和 custom tool 暂时展平成 Chat function tool，让普通 Chat provider 能返回工具调用；响应从 Chat 转回 Responses 时，再用同一个 context 还原成 Codex 能识别的 Responses item。
+当前 `OpenAiResponses` 转其它协议时会按实际扩展生成两种粒度的 `CodexToolContext`：
+
+- 转 `OpenAiChat` 时，只有请求包含 `tool_search`、顶层 namespace tool，或历史 `tool_search_output`，才启用完整 Codex tool context。它把 `tool_search` 暴露为普通 Chat function、把 namespace child 展平成 flat function name，并把同一请求里的 custom tool 包装成 `{input:string}` function；Chat JSON/SSE 响应再用同一 context 还原 `tool_search_call`、带 namespace 的 `function_call` 或 `custom_tool_call`。
+- 只有普通 function/custom tool、没有上述 Codex 扩展时，不启用专用 context，继续走通用 Responses -> Chat transformer。这样 Responses custom tool 会保留为 Chat 兼容扩展 `responses_custom_tool`，不会仅因构造了 context 就退化成普通 `function`。
+- 转 `AnthropicMessages` / `GeminiNative` 时只为顶层 namespace tool 生成 namespace-only context。请求转换先把历史中带 `namespace` 的 `function_call` 和具名 `tool_choice` 改成 flat name，namespace 类型 choice 降为 `auto`；JSON/SSE 返回再用同一 context 恢复 `{namespace,name}`。namespace 展开前必须校验最终 flat name 唯一性，覆盖顶层 function/custom、不同 namespace child 以及截断/hash 后的实际碰撞，冲突直接返回 `ProtocolConversionError::Transform`。普通 function/custom tool 仍走统一 IR 的通用映射。
+
+字段名 `codex_tool_context` 当前同时承载完整 Codex context 和 namespace-only context；两者都是 transformer 拥有的同请求映射状态，runtime 只负责透传。
 
 注意不要把 `CodexToolContext` 和 `CodexHistoryStore` 混在一起：
 
-- `CodexToolContext` 是同一次 HTTP request/response 内的工具定义和名称映射，只服务 Responses <-> Chat 的工具展平/还原。
+- `CodexToolContext` 是同一次 HTTP request/response 内的工具定义和名称映射，服务 Responses -> Chat 的 Codex 扩展展平/还原，以及 Responses -> Anthropic/Gemini 的 namespace 名称还原。
 - `CodexHistoryStore` 是跨 HTTP 请求的 runtime side store，记录上一轮最终返回给 Codex 的 Responses call item，下一轮 Codex 只带 `previous_response_id` / `function_call_output` 时再补回缺失的 assistant call item。
 - 参考项目的 Codex history 实现主要覆盖 Codex Responses bridged to Chat Completions；AI Toolbox 这里扩到 Responses -> Anthropic 的依据是：补全发生在源 Responses body 上，补完后的 `function_call + function_call_output` 已能由现有 transformer 自然输出为 Anthropic `assistant tool_use + user tool_result`。
 
@@ -384,6 +390,8 @@ pub struct ConversionContext {
 - `RawAnthropicContentBlock`
 - `StreamError`
 - `Finish`
+
+Responses `compaction` / `compaction_summary` 是 Responses-only wire item，不属于普通跨协议 `UnifiedStreamEvent`。Responses -> Responses 的流式保真依赖 identity route 原始字节直通，`StreamKernel` 不解析或重新生成 compaction；Responses -> Chat/Anthropic/Gemini 时该 item 无目标协议原生表示，普通 stream kernel 忽略它，但其它 text/tool/terminal 事件必须继续正常转换。只有独立 `/responses/compact` facade 和非流 JSON 中显式可达的 compaction helper 继续维护结构化表示，不能把 identity passthrough 测试当作 stream kernel roundtrip 证据。
 
 source state 会维护必要的流式状态，例如：
 
@@ -513,7 +521,7 @@ header/auth 由 `build_upstream_headers()` 处理：
 
 - 先保留允许转发的入站 header。
 - 入站 `Content-Encoding` 不转发。请求体在路由前由 `runtime/content_encoding.rs` 解压为明文 JSON，再重建上游 body/header；否则 Codex Desktop 官方登录态的 `zstd` 压缩体会被中转站当 JSON 解析失败（`invalid character '('`）。
-- usage 稳定键：`usage_parser` 提取 envelope id（Claude message id / OpenAI-Codex response id / Gemini responseId）；`observability` 先解析稳定 request_id，再由 `usage_stats::record_request_summary` 做同语义幂等 / collision fallback，并用最终键写 JSONL，保证列表与详情一致。
+- usage 稳定键：`usage_parser` 提取 envelope id（Claude message id / OpenAI-Codex response id / Gemini responseId）；`observability` 先解析稳定 request_id，再由 `usage_stats::record_request_summary` 做同语义幂等 / collision fallback，并用最终键写 JSONL，保证列表与详情一致。若 SQLite 摘要已存在但 `detail_file` 或 `detail_offset` 任一缺失，同语义重放返回 `NeedsDetail`，只重试 JSONL/locator 挂接而不重复累计 usage 或发送 usage 事件；Session Usage 行升级时保留原 `session_id` 和已有 locator。
 - 强制 `Accept-Encoding: identity`。
 - 按 provider `auth_strategy` 注入鉴权。
 - `OpenAiChat` / `OpenAiResponses` 默认 Bearer。
@@ -524,6 +532,8 @@ header/auth 由 `build_upstream_headers()` 处理：
 入站 content-encoding 处理：
 
 - 支持 `gzip` / `x-gzip` / `deflate` / `br` / `zstd` / `zst`，含堆叠编码（按 RFC 9110 反向解码）。
+- 每一解码层都通过 bounded `Read` helper 在读取过程中执行 16 MiB 输出上限；入站请求与非流式上游响应使用相同上限，禁止先无界 `read_to_end` / `decode_all` 再检查。
+- `deflate` 先按 RFC 9110 尝试 zlib wrapper；只有格式解码失败才回退 raw deflate，输出超限必须立即返回，不能重复解码。
 - 解压成功后剥离 `content-encoding`、`content-length`、`transfer-encoding`。
 - 不支持或解压失败时返回 `400 invalid_request`，不能把压缩字节透传给 JSON 解析或上游。
 - 非流式上游响应若仍带 content-encoding，runtime 在解析/转换前同样解压并清实体头；流式路径继续依赖 `Accept-Encoding: identity`。
@@ -638,6 +648,8 @@ Claude / Codex / Grok / Gemini CLI 渠道表单里的内置供应商 profile 使
 }
 ```
 
+`profileId`、`tool` 和 `endpointId` 因此是持久化公共 ID，不是可随意重命名的展示字段。`provider_profiles.rs::validate_gateway_provider_profile_compatibility()` 要求新 catalog 保留上一份有效 catalog 中已有的 profile、受支持 tool 和 endpoint ID：允许新增 ID，也允许修改 label、Base URL、providerType、默认 endpoint 和其它非 ID 元数据；删除或 rename 既有 ID 会拒绝远端 catalog 激活，并继续使用上一份 active/cache/bundled catalog。不兼容缓存会记录 warning 并回退 bundled defaults。确需 breaking rename 时必须先提供 alias 或显式 migration，不能让 reference-only provider 静默退化到 `category=custom`。
+
 Base URL 是用户可编辑连接地址，仍保存在各 CLI 自己的 `settingsConfig` 中；它不是 endpoint 身份，也不参与内置渠道回显或刷新判断。`providerType + apiFormat` 也不是内置渠道身份，因为同一供应商类型和同一 API 格式下可能存在 cn/global/coding 等多个 profile 或 endpoint 变体。它只作为 legacy provider 的唯一匹配辅助：旧 provider 没有 `gatewayProfile` 时，前端最多在 `providerType + apiFormat` 唯一命中一个 endpoint 时自动回显内置渠道；多匹配或缺字段时回显为自定义渠道，等待用户从渠道下拉显式选择。
 
 后续 runtime 每次读取 provider 时，`runtime/providers.rs::provider_meta_from_record()` 会先解析 `data.meta.gatewayProfile`，再从当前 app data cache 或 bundled `gateway_provider_profiles.json` 动态 resolve profile/endpoint，生成本次请求使用的 effective meta：
@@ -651,7 +663,7 @@ Base URL 是用户可编辑连接地址，仍保存在各 CLI 自己的 `setting
 - `imageInputPolicy`、`textOnlyModels`、`imageCapableModels`、`allowTextOnlyModelHeuristic`：优先 endpoint，再 fallback profile，驱动发送前预测式图片兼容策略。
 - `isFullUrl`、`promptCacheKey`、`costMultiplier`、`pricingModelSource`：继续作为 provider 自身的用户/运行态覆盖项保存在 `data.meta`，不会被 profile 覆盖。
 
-如果 `gatewayProfile` 缺失、tool 不匹配、profile/endpoint 已不存在或 catalog 解析失败，runtime 保留 legacy `data.meta.providerType` / `apiFormat` / `reasoningField` / `codexChatReasoning` 等旧字段，保证存量数据继续可用；但新保存的内置渠道不应再写这些派生快照。
+如果 `gatewayProfile` 缺失、tool 不匹配或 catalog 解析失败，runtime 保留 legacy `data.meta.providerType` / `apiFormat` / `reasoningField` / `codexChatReasoning` 等旧字段，保证存量数据继续可用；但新保存的内置渠道不应再写这些派生快照。正常 catalog 更新不能再造成 profile/endpoint 消失，因为不兼容更新会在激活前被拒绝。
 
 前端合并点：
 
@@ -662,7 +674,7 @@ Base URL 是用户可编辑连接地址，仍保存在各 CLI 自己的 `setting
 
 后端读取点是 `runtime/providers.rs::provider_meta_from_record()`，它同时兼容 snake_case 和 camelCase 字段，把 JSONB 中的 `data.meta` 解析成 `ProviderGatewayMeta`。如果 effective `providerType` 为空，当前代码会 fallback 到 provider record 的 `category`；这个 fallback 只用于 legacy 兼容，自定义渠道不要靠模型名或 base URL 伪造供应商身份。
 
-`gateway_provider_profiles.json` 里的 `compat` 对象只是 profile/catalog 层的描述信息，例如 `openaiChat: ["deepseek_json_schema", "deepseek_thinking"]`；runtime 不直接读取这个对象执行逻辑。真正触发规则的是由 `gatewayProfile` 动态解析出的 effective `providerType`、`apiFormat`、`reasoningField`、`codexChatReasoning` 等字段，或 legacy provider 已显式保存的同名 meta 字段。
+`gateway_provider_profiles.json` 里的 `compat` 对象只是 profile/catalog 层的描述信息，例如 `openaiChat: ["deepseek_json_schema", "deepseek_thinking"]`；runtime 不直接读取这个对象执行逻辑。`provider_profiles.rs::SUPPORTED_COMPAT_RULES` 为每个 tag 静态登记 `runtime_owner + test_name`，catalog 校验要求登记证据非空，单元测试还会确认名称唯一且 owner/test 符号确实存在于 runtime 源码。真正触发规则的仍是由 `gatewayProfile` 动态解析出的 effective `providerType`、`apiFormat`、`reasoningField`、`codexChatReasoning` 等字段，或 legacy provider 已显式保存的同名 meta 字段；静态登记不能演变成 JSON 驱动的动态执行引擎。
 
 ### 14.2 执行位置和顺序
 
@@ -694,7 +706,7 @@ apply_outbound_adapter_compat_value(
 `apply_outbound_adapter_compat_value()` 的大致顺序：
 
 1. `filter_private_outbound_fields()` 移除 `_` 开头的内部私有字段，但保留 JSON Schema 里的属性名。
-2. `ProviderBodyCompat::from_provider_meta()` 根据 `providerType + target_protocol` 识别供应商方言。
+2. `runtime/compat/provider_kind.rs::ProviderBodyCompat::from_provider_meta()` 根据 `providerType + target_protocol` 识别供应商方言；target guard 与 alias 集中在该小模块，`upstream.rs` 保留请求/响应主编排。
 3. `ReasoningFieldPolicy::from_provider_meta()` 根据 `reasoningField` 和 provider fallback 计算 Chat reasoning 字段策略。
 4. 读取 effective meta 中的 `codexChatReasoning`；没有配置时，才根据明确的 effective `providerType/apiFormat` 做窄范围推导。
 5. `apply_provider_body_compat_before_generic()` 先做 provider 专属 body 改写。
@@ -835,7 +847,7 @@ DeepSeek legacy OpenAI Completion API 更不是 transformer 路径。Codex/OpenA
 当前真正需要警惕的缺口有两个：
 
 1. **legacy/custom provider 没有关联引用**：已保存且带 `gatewayProfile` 的 provider 会自动跟随最新 profile catalog；没有 `gatewayProfile` 的旧 provider 仍走 legacy meta。前端只在 `providerType + apiFormat` 唯一命中时辅助回显内置渠道，多匹配时不猜测，用户需要从渠道下拉显式选择后才会写入引用。
-2. **profile `compat` 名称和 runtime 实现要保持一致**：`provider_profiles.rs` 对 bundled/remote catalog 做 schema 校验和 compat 白名单检查，但新增 compat 名称时仍必须同步补 runtime adapter/测试和文档，不能只改 JSON 描述。
+2. **profile `compat` 名称和 runtime 实现要保持一致**：`provider_profiles.rs` 对 bundled/remote catalog 做 schema 校验，并通过 `CompatRuleRegistration` 把每个 compat tag 绑定到 runtime owner 与精确测试；注册表测试会检查名称唯一和源码符号存在。新增 compat 名称时仍必须同步补 runtime adapter、测试和本文档，不能只改 JSON 描述，也不能让 runtime 动态解释 tag。
 
 ### 14.6 xAI native Responses passthrough
 
@@ -940,6 +952,7 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/runtime/providers.rs` | provider 读取、target protocol、auth strategy、model mapping |
 | `tauri/src/coding/proxy_gateway/runtime/middleware.rs` | request-scoped middleware context 和 middleware 实现 |
 | `tauri/src/coding/proxy_gateway/runtime/pipeline.rs` | middleware pipeline 与 executor customizer 骨架 |
+| `tauri/src/coding/proxy_gateway/runtime/compat/provider_kind.rs` | providerType alias、target protocol guard 与 `ProviderBodyCompat` 分类 |
 | `tauri/src/coding/proxy_gateway/runtime/compat/xai_responses.rs` | xAI native Responses namespace 展平/恢复和严格字段清理 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/codex_history.rs` | Codex Responses tool call 跨请求补全 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/gemini_shadow.rs` | Gemini thoughtSignature shadow 回放 |
@@ -1128,7 +1141,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - 架构主次固定为 **AxonHub 主架构、cc-switch 渠道兼容边界补充、AI Toolbox 当前源码/测试最终定案**。
 - 为建立 xAI native Responses 现有能力基线，额外回溯核验了 cc-switch `dbb5bd1537ed348dd4e490543b27c09e2efc86b9`。AI Toolbox 的 `runtime/compat/xai_responses.rs` 与 `runtime/upstream.rs` 已对齐其 namespace flatten/restore、input/tool_choice 同步改写、冲突拒绝、xAI sanitize、2xx JSON/SSE 恢复和 request-scoped 状态边界；生产门控接受 `providerType=xai|x-ai|grok`，并由 runtime 回归测试锁定。该行为属于同协议直通的 provider 方言兼容，不进入通用 transformer。
 - 内置 xAI profile 的 Codex 工具默认 endpoint 是 `openai_chat`，并额外提供可手动选择的 `openai_responses` endpoint；Gemini/Grok 工具当前默认只提供 `openai_chat` endpoint。自定义或存量 Grok Responses provider 仍可触发上述 native Responses 兼容，但本次不改变内置 xAI/Grok endpoint 的产品默认值。
-- cc-switch 的 `6c9d444`、`878c26f` 证明 tool-result media 不能继续作为 Chat tool role 的字符串 JSON；图片应按目标协议提取到 Chat synthetic user turn、Responses `input_image` 或 Gemini 原生媒体位置，同时保持无媒体结果的旧字节形态。AI Toolbox 已在当前工作树吸收该图片子集，并由 transformer 回归测试锁定。
+- cc-switch 的 `6c9d444`、`878c26f` 证明 tool-result media 不能继续作为 Chat tool role 的字符串 JSON；图片应按目标协议提取到 Chat synthetic user turn、Responses `input_image` 或 Gemini 原生媒体位置，同时保持无媒体结果的旧字节形态。AI Toolbox 已在 `c3a452a` 提交中吸收该图片子集，并由 transformer 回归测试锁定。
 - cc-switch 的媒体识别规则吸收“stringified JSON、MCP image shape、嵌套 `content`、结构化 image data URL / 远程 URL、纯字符串 data URL 的 8 KiB 阈值与 malformed data URL 边界”，但没有逐行复制其 provider/runtime 代码。cc-switch 同时支持 file/audio tool media；AI Toolbox 当前 IR 不足以承载完整 file/audio tool-result roundtrip，本次明确不宣称已吸收。
 - 当前实现位置为 `shared/tool_media.rs`、`openai/chat.rs`、`openai/responses/shared.rs`、`anthropic/inbound.rs` / `outbound.rs`、`gemini/convert.rs`；精确回归集中在 `transformer/tool_media_tests.rs`，覆盖并行工具结果、stringified/MCP、Anthropic 原生 block、Gemini 2/3、非法/远程 data URL、残留 base64 限幅和无媒体零差异。
 - 源码终审额外确认并修复了 Gemini Native 同一 `content.parts` 中多个并行 `functionResponse` 被覆盖的问题；现在按工具结果拆成多个统一 IR tool message，并由 `gemini_parallel_function_responses_preserve_every_tool_result` 锁定。
@@ -1138,8 +1151,8 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - AxonHub `7d095b63` 的 Responses namespace tools 展开已吸收：通用入站 `responses_tools_to_llm` 将 `type=namespace` 子 function 展成 `namespace__name`；raw fragment 带 `represented_tool_count`，出站 merge 按该计数消费结构化 tools 并恢复 namespace envelope；测试 `responses_namespace_tools_expand_into_ir_functions`。Codex→Chat 既有 `codex_tools` 路径与 xAI 同协议 flatten 保持不变。
 - AxonHub `4b8ab0d6` 空 `finish_reason` 归一化已有等价覆盖（stream 解析过滤 empty string），不重复吸收。
 - AxonHub `e18cc2e0` image RequestType、`5438dff5` session sticky、`a0205b75` 连接复用、渠道 UI/CIDR/backup 等与本机 Gateway 无关，明确不吸收。
-- AxonHub `01707aa6` 的流式 compaction item 保真已吸收：`StreamKernel` 对 `response.output_item.added` 中 `compaction` / `compaction_summary` 发出 `CompactionItem`，Responses target 再 emit `output_item.added/done` 并写入 completed `output`；Chat/Anthropic/Gemini target 有意丢弃（Responses 原生形态）。测试 `responses_stream_preserves_compaction_item_through_chat_and_back`。
-- 2026-07-26 将 AxonHub baseline 推进到 `7d095b63`，并吸收 namespace tools、cache_write usage 与 streamed compaction 增量。
+- AxonHub `01707aa6` 的 streamed compaction 修复依赖其固定的 provider Responses transformer -> unified stream -> client Responses transformer 生命周期。AI Toolbox identity route 不进入 `StreamKernel`，因此不复制该 roundtrip 声明：Responses -> Responses 由 raw passthrough 字节保真；Responses -> Chat/Anthropic/Gemini 忽略 Responses-only compaction，同时继续转换普通 text/tool/terminal。回归测试为 `responses_identity_stream_preserves_compaction_bytes_without_kernel` 和 `responses_stream_drops_compaction_for_chat_without_losing_text`。非流 JSON compaction 与 `/responses/compact` 专项 facade 继续保留，不受该收窄影响。
+- 2026-07-26 将 AxonHub baseline 推进到 `7d095b63`，吸收 namespace tools 与 cache_write usage；对 streamed compaction 增量完成生命周期核验后明确采用 identity raw passthrough，并删除生产不可达的 stream kernel compaction state/writer。
 
 ### 19.5 行为同步策略
 
@@ -1210,7 +1223,8 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 | 参考 response fixture | supported response fixture 当前为 34 个，全部要能转换到所有非 identity target，并满足目标协议基本 shape。 |
 | 参考 stream fixture | supported stream fixture 当前为 43 个，全部要能转换到所有非 identity target，并满足目标协议 stream 基本 shape。 |
 | 语义精确断言 | system/instructions、image、stop、tool choice、strict schema、tool result 合并、reasoning、custom tool、Gemini thinking/schema/signature、Responses function arguments.done、finish 幂等等必须继续保留精确断言，不能只靠 shape 测试。 |
-| Runtime provider 兼容 | 修改 `gateway_provider_profiles.json` 的 `compat` 名称时，必须同步补 runtime adapter、测试和文档；仅修改 catalog 描述不算实现。 |
+| Runtime provider 兼容 | `compat` tag 必须在 `CompatRuleRegistration` 静态绑定 runtime owner 和精确测试；修改 catalog 名称时同步补 adapter、测试和文档，仅改描述不算实现。`ProviderBodyCompat` alias/target guard 位于 `runtime/compat/provider_kind.rs`。 |
+| Provider profile 引用 | `gatewayProfile.profileId/tool/endpointId` 是持久化稳定 ID；remote/cache catalog 不得删除上一份有效 catalog 的既有 ID，breaking rename 必须 alias 或 migration。 |
 | Session side store | `CodexHistoryStore` 和 `GeminiShadowStore` 必须继续有容量上限、eviction 和可靠 session key；不得引入全局默认 session。 |
 | Cipher 负缓存 | `InvalidResponsesCipherStore` 只存 provider 配置指纹和密文摘要，容量保持有界；不能保存完整密文或退化成跨 provider 全局黑名单。 |
 | Request-scoped 状态 | xAI namespace restore map、raw Responses sidecar、`ConversionContext` 和 reverse pipeline context 只服务当前请求链路，不得误放进跨请求 side store。 |

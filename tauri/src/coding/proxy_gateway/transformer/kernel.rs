@@ -4,7 +4,9 @@ use super::gemini::{GeminiInbound, GeminiOutbound};
 use super::openai::chat::{OpenAiChatInbound, OpenAiChatOutbound};
 use super::openai::codex_tools::{
     apply_codex_tool_context_to_chat_request, build_codex_tool_context_from_request,
+    build_namespace_tool_context_from_request, request_requires_codex_tool_context,
     rewrite_response_with_codex_tool_context, rewrite_responses_request_for_chat_context,
+    rewrite_responses_request_for_namespace_context, validate_responses_namespace_tool_names,
     CodexToolContext,
 };
 use super::openai::responses::{
@@ -80,6 +82,8 @@ pub fn convert_responses_compact_request_value_to_target(
         ));
     }
 
+    validate_responses_namespace_tool_names(&value)?;
+
     if target == AiProtocol::OpenAiChat {
         let codex_tool_context = build_codex_tool_context_from_request(&value);
         let request_for_chat =
@@ -97,9 +101,18 @@ pub fn convert_responses_compact_request_value_to_target(
         ));
     }
 
-    let request = responses_compact_request_to_llm(value);
+    let namespace_tool_context = build_namespace_tool_context_from_request(&value);
+    let request_value =
+        rewrite_responses_request_for_namespace_context(value, &namespace_tool_context);
+    let request = responses_compact_request_to_llm(request_value);
     let converted = outbound_transformer(target).request_from_llm(request)?;
-    Ok((converted, ConversionContext::default()))
+    let context = (!namespace_tool_context.is_empty()).then_some(namespace_tool_context);
+    Ok((
+        converted,
+        ConversionContext {
+            codex_tool_context: context,
+        },
+    ))
 }
 
 pub fn convert_target_response_body_to_responses_compact(
@@ -125,15 +138,13 @@ pub fn convert_target_response_value_to_responses_compact(
         outbound_transformer(source).response_to_llm(value)?
     };
     let mut converted = llm_response_to_responses_compact(response);
-    if source == AiProtocol::OpenAiChat {
-        if let Some(codex_tool_context) = context.and_then(|context| {
-            context
-                .codex_tool_context
-                .as_ref()
-                .filter(|tool_context| !tool_context.is_empty())
-        }) {
-            rewrite_response_with_codex_tool_context(&mut converted, codex_tool_context);
-        }
+    if let Some(codex_tool_context) = context.and_then(|context| {
+        context
+            .codex_tool_context
+            .as_ref()
+            .filter(|tool_context| !tool_context.is_empty())
+    }) {
+        rewrite_response_with_codex_tool_context(&mut converted, codex_tool_context);
     }
     Ok(converted)
 }
@@ -201,11 +212,7 @@ pub fn convert_request_value(
     route: ConversionRoute,
     value: Value,
 ) -> Result<Value, ProtocolConversionError> {
-    if route.identity() {
-        return Ok(value);
-    }
-    let request = inbound_transformer(route.source).request_to_llm(value)?;
-    outbound_transformer(route.target).request_from_llm(request)
+    convert_request_value_with_context(route, value).map(|(converted, _)| converted)
 }
 
 pub fn convert_request_value_with_context(
@@ -215,7 +222,10 @@ pub fn convert_request_value_with_context(
     if route.identity() {
         return Ok((value, ConversionContext::default()));
     }
-    if route.source == AiProtocol::OpenAiResponses && route.target == AiProtocol::OpenAiChat {
+    if route.source == AiProtocol::OpenAiResponses
+        && route.target == AiProtocol::OpenAiChat
+        && request_requires_codex_tool_context(&value)
+    {
         let codex_tool_context = build_codex_tool_context_from_request(&value);
         let request_for_chat =
             rewrite_responses_request_for_chat_context(value.clone(), &codex_tool_context);
@@ -228,6 +238,20 @@ pub fn convert_request_value_with_context(
             ConversionContext {
                 codex_tool_context: context,
                 ..ConversionContext::default()
+            },
+        ));
+    }
+    if route.source == AiProtocol::OpenAiResponses {
+        let namespace_tool_context = build_namespace_tool_context_from_request(&value);
+        let request_value =
+            rewrite_responses_request_for_namespace_context(value, &namespace_tool_context);
+        let request = inbound_transformer(route.source).request_to_llm(request_value)?;
+        let converted = outbound_transformer(route.target).request_from_llm(request)?;
+        let context = (!namespace_tool_context.is_empty()).then_some(namespace_tool_context);
+        return Ok((
+            converted,
+            ConversionContext {
+                codex_tool_context: context,
             },
         ));
     }
@@ -253,7 +277,7 @@ pub fn convert_response_value_with_context(
     }
     let response = outbound_transformer(route.source).response_to_llm(value)?;
     let mut converted = inbound_transformer(route.target).response_from_llm(response)?;
-    if route.source == AiProtocol::OpenAiChat && route.target == AiProtocol::OpenAiResponses {
+    if route.target == AiProtocol::OpenAiResponses {
         if let Some(codex_tool_context) = context.and_then(|context| {
             context
                 .codex_tool_context

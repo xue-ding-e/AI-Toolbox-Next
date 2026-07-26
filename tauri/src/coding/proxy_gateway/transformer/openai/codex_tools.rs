@@ -1,3 +1,4 @@
+use crate::coding::proxy_gateway::transformer::error::ProtocolConversionError;
 use crate::coding::proxy_gateway::transformer::shared::{
     flatten_namespace_tool_name, normalize_function_parameters,
 };
@@ -57,6 +58,12 @@ impl CodexToolContext {
         }
 
         name.to_string()
+    }
+
+    fn chat_name_for_namespace_function(&self, namespace: &str, name: &str) -> Option<&str> {
+        self.namespace_name_to_chat_name
+            .get(&(namespace.to_string(), name.to_string()))
+            .map(String::as_str)
     }
 
     fn add_chat_tool(&mut self, chat_name: String, spec: CodexToolSpec, chat_tool: Value) {
@@ -206,6 +213,107 @@ pub fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
     context
 }
 
+pub fn request_requires_codex_tool_context(body: &Value) -> bool {
+    body.get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                matches!(
+                    tool.get("type").and_then(Value::as_str),
+                    Some("tool_search" | "namespace")
+                )
+            })
+        })
+        || body.get("input").is_some_and(contains_tool_search_output)
+}
+
+pub fn build_namespace_tool_context_from_request(body: &Value) -> CodexToolContext {
+    let mut context = CodexToolContext::default();
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+                context.add_namespace_tool(tool);
+            }
+        }
+    }
+    context
+}
+
+pub fn validate_responses_namespace_tool_names(
+    body: &Value,
+) -> Result<(), ProtocolConversionError> {
+    let Some(tools) = body.get("tools").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if !tools
+        .iter()
+        .any(|tool| tool.get("type").and_then(Value::as_str) == Some("namespace"))
+    {
+        return Ok(());
+    }
+
+    let mut flat_name_owners = HashMap::<String, String>::new();
+    for tool in tools {
+        match tool.get("type").and_then(Value::as_str) {
+            Some("function") | Some("custom") => {
+                if let Some(name) = responses_tool_name(tool) {
+                    register_flat_tool_name(
+                        &mut flat_name_owners,
+                        name.clone(),
+                        format!("top-level tool {name:?}"),
+                    )?;
+                }
+            }
+            Some("namespace") => {
+                let Some(namespace) = tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                let Some(children) = tool
+                    .get("tools")
+                    .or_else(|| tool.get("children"))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for child in children {
+                    if child.get("type").and_then(Value::as_str) != Some("function") {
+                        continue;
+                    }
+                    let Some(name) = responses_tool_name(child) else {
+                        continue;
+                    };
+                    let flat_name = flatten_namespace_tool_name(namespace, &name);
+                    register_flat_tool_name(
+                        &mut flat_name_owners,
+                        flat_name,
+                        format!("namespace tool {namespace:?}/{name:?}"),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn register_flat_tool_name(
+    flat_name_owners: &mut HashMap<String, String>,
+    flat_name: String,
+    owner: String,
+) -> Result<(), ProtocolConversionError> {
+    if let Some(existing_owner) = flat_name_owners.insert(flat_name.clone(), owner.clone()) {
+        return Err(ProtocolConversionError::Transform(format!(
+            "{existing_owner} and {owner} both map to tool name {flat_name:?}; rename one of them"
+        )));
+    }
+    Ok(())
+}
+
 pub fn rewrite_responses_request_for_chat_context(
     mut body: Value,
     context: &CodexToolContext,
@@ -215,6 +323,26 @@ pub fn rewrite_responses_request_for_chat_context(
     }
     if let Some(input) = body.get_mut("input") {
         rewrite_responses_input_item_for_chat(input, context);
+    }
+    body
+}
+
+pub fn rewrite_responses_request_for_namespace_context(
+    mut body: Value,
+    context: &CodexToolContext,
+) -> Value {
+    if context.is_empty() {
+        return body;
+    }
+    if let Some(input) = body.get_mut("input") {
+        rewrite_namespace_function_calls(input, context);
+    }
+    if let Some(tool_choice) = body.get_mut("tool_choice") {
+        if tool_choice.get("type").and_then(Value::as_str) == Some("namespace") {
+            *tool_choice = json!("auto");
+        } else {
+            rewrite_namespace_function_call(tool_choice, context);
+        }
     }
     body
 }
@@ -457,6 +585,53 @@ fn rewrite_responses_input_item_for_chat(value: &mut Value, context: &CodexToolC
     }
 }
 
+fn rewrite_namespace_function_calls(value: &mut Value, context: &CodexToolContext) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                rewrite_namespace_function_calls(item, context);
+            }
+        }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("function_call") {
+                rewrite_namespace_function_call(value, context);
+                return;
+            }
+            for child in object.values_mut() {
+                rewrite_namespace_function_calls(child, context);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_namespace_function_call(value: &mut Value, context: &CodexToolContext) -> bool {
+    let Some(object) = value.as_object_mut() else {
+        return false;
+    };
+    let namespace = object
+        .get("namespace")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let Some(flat_name) = context
+        .chat_name_for_namespace_function(&namespace, &name)
+        .map(ToString::to_string)
+    else {
+        return false;
+    };
+    object.insert("name".to_string(), json!(flat_name));
+    object.remove("namespace");
+    true
+}
+
 fn rewrite_response_tool_item_with_context(item: &mut Value, context: &CodexToolContext) {
     if item.get("type").and_then(Value::as_str) != Some("function_call") {
         return;
@@ -541,6 +716,17 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
             }
         }
         _ => {}
+    }
+}
+
+fn contains_tool_search_output(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(contains_tool_search_output),
+        Value::Object(object) => {
+            object.get("type").and_then(Value::as_str) == Some("tool_search_output")
+                || object.values().any(contains_tool_search_output)
+        }
+        _ => false,
     }
 }
 
@@ -678,4 +864,3 @@ fn responses_custom_tool_call_item_id(call_id: &str) -> String {
         format!("ctc_{call_id}")
     }
 }
-

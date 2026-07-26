@@ -147,6 +147,7 @@ pub fn normalize_council_config(value: Value) -> Value {
 }
 
 /// Prefer agents.council; if missing, promote legacy council.master into agents.council.
+/// Legacy master_fallback entries are appended to the selected council model chain.
 pub fn migrate_legacy_council_master_into_agents(
     agents: Option<Value>,
     council: Option<&Value>,
@@ -169,6 +170,26 @@ pub fn migrate_legacy_council_master_into_agents(
             .filter(|value| value.is_object())
         {
             agents_obj.insert("council".to_string(), master.clone());
+        }
+    }
+
+    let fallback_entries = council
+        .and_then(|value| value.get("master_fallback"))
+        .map(model_entries_from_value)
+        .unwrap_or_default();
+    if !fallback_entries.is_empty() {
+        if let Some(council_agent) = agents_obj.get_mut("council").and_then(Value::as_object_mut) {
+            let mut model_entries = council_agent
+                .get("model")
+                .map(model_entries_from_value)
+                .unwrap_or_default();
+            let original_entry_count = model_entries.len();
+            append_unique_model_entries(&mut model_entries, fallback_entries);
+            if model_entries.len() > original_entry_count {
+                if let Some(model_value) = model_value_from_entries(model_entries) {
+                    council_agent.insert("model".to_string(), model_value);
+                }
+            }
         }
     }
 
@@ -679,9 +700,7 @@ mod tests {
         assert!(normalized.get("master_timeout").is_none());
         assert!(normalized.get("master_fallback").is_none());
         assert_eq!(normalized.get("timeout"), Some(&json!(180000)));
-        assert!(normalized
-            .pointer("/presets/default/master")
-            .is_none());
+        assert!(normalized.pointer("/presets/default/master").is_none());
         assert_eq!(
             normalized.pointer("/presets/default/alpha/model"),
             Some(&json!("openai/gpt-5.6"))
@@ -697,6 +716,11 @@ mod tests {
                 "variant": "high",
                 "prompt": "synthesize"
             },
+            "master_fallback": [
+                "openai/fallback-a",
+                { "id": "openai/fallback-b", "variant": "medium" },
+                "openai/legacy-master"
+            ],
             "presets": {
                 "default": {
                     "alpha": { "model": "openai/gpt-5.6" }
@@ -709,12 +733,13 @@ mod tests {
             migrate_legacy_council_master_into_agents(agents, Some(&raw_council)).unwrap();
         assert_eq!(
             migrated.pointer("/council/model"),
-            Some(&json!("openai/legacy-master"))
+            Some(&json!([
+                "openai/legacy-master",
+                "openai/fallback-a",
+                { "id": "openai/fallback-b", "variant": "medium" }
+            ]))
         );
-        assert_eq!(
-            migrated.pointer("/council/variant"),
-            Some(&json!("high"))
-        );
+        assert_eq!(migrated.pointer("/council/variant"), Some(&json!("high")));
 
         let normalized = normalize_council_config(raw_council);
         assert!(normalized.get("master").is_none());
@@ -734,19 +759,24 @@ mod tests {
             "orchestrator": { "model": "openai/gpt-5.6" }
         });
         let raw_council = json!({
-            "master": { "model": "openai/legacy-master" }
+            "master": { "model": "openai/legacy-master" },
+            "master_fallback": [
+                "openai/fallback",
+                { "id": "openai/object-fallback", "variant": "high" }
+            ]
         });
 
         let migrated =
             migrate_legacy_council_master_into_agents(Some(agents), Some(&raw_council)).unwrap();
         assert_eq!(
             migrated.pointer("/council/model"),
-            Some(&json!("openai/preferred"))
+            Some(&json!([
+                "openai/preferred",
+                "openai/fallback",
+                { "id": "openai/object-fallback", "variant": "high" }
+            ]))
         );
-        assert_eq!(
-            migrated.pointer("/council/temperature"),
-            Some(&json!(0.1))
-        );
+        assert_eq!(migrated.pointer("/council/temperature"), Some(&json!(0.1)));
     }
 
     #[test]
@@ -789,9 +819,6 @@ mod tests {
             merged.pointer("/council/model"),
             Some(&json!("openai/from-profile"))
         );
-        assert_eq!(
-            merged.pointer("/council/variant"),
-            Some(&json!("high"))
-        );
+        assert_eq!(merged.pointer("/council/variant"), Some(&json!("high")));
     }
 }

@@ -1,13 +1,14 @@
 use super::compat::codex_responses_compact::{
     CodexResponsesCompactCompat, CODEX_RESPONSES_COMPACT_COMPAT_HEADER,
 };
+use super::compat::provider_kind::ProviderBodyCompat;
 use super::compat::xai_responses::{
     apply_xai_responses_passthrough, namespace_restore_map, restore_response_namespaces,
     wrap_namespace_restore_sse_stream, NamespacedName,
 };
 use super::content_encoding::{
     get_content_encoding_from_header_map, maybe_decompress_encoded_body,
-    strip_decoded_entity_headers,
+    strip_decoded_entity_headers, MAX_DECOMPRESSED_BODY_BYTES,
 };
 use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
@@ -252,8 +253,9 @@ async fn validate_streaming_first_chunk(
                             .flat_map(|chunk| chunk.iter().copied())
                             .collect();
                         return Err(GatewayForwardError {
-                            message: "Upstream streaming response reported a protocol error envelope"
-                                .to_string(),
+                            message:
+                                "Upstream streaming response reported a protocol error envelope"
+                                    .to_string(),
                             kind: GatewayFailureKind::UpstreamBadRequest,
                             upstream_request_body: None,
                             upstream_response_body: Some(snapshot),
@@ -299,8 +301,9 @@ async fn validate_streaming_first_chunk(
                             .flat_map(|chunk| chunk.iter().copied())
                             .collect();
                         return Err(GatewayForwardError {
-                            message: "Upstream streaming response reported a protocol error envelope"
-                                .to_string(),
+                            message:
+                                "Upstream streaming response reported a protocol error envelope"
+                                    .to_string(),
                             kind: GatewayFailureKind::UpstreamBadRequest,
                             upstream_request_body: None,
                             upstream_response_body: Some(snapshot),
@@ -1198,7 +1201,11 @@ async fn send_upstream_request(
             error.upstream_request_body = Some(upstream_body_snapshot.clone());
             error
         })?;
-        let body = match maybe_decompress_encoded_body(encoding.as_deref(), body) {
+        let body = match maybe_decompress_encoded_body(
+            encoding.as_deref(),
+            body,
+            MAX_DECOMPRESSED_BODY_BYTES,
+        ) {
             Ok((body, true)) => {
                 strip_decoded_entity_headers(&mut response_headers);
                 body
@@ -1724,23 +1731,26 @@ async fn build_gateway_response(
         error.upstream_request_body = Some(upstream_body_snapshot.clone());
         error
     })?;
-    let upstream_response_body =
-        match maybe_decompress_encoded_body(encoding.as_deref(), upstream_response_body) {
-            Ok((body, true)) => {
-                strip_decoded_entity_headers(&mut response_headers);
-                body
-            }
-            Ok((body, false)) => body,
-            Err(error) => {
-                return Err(GatewayForwardError {
-                    message: format!("Failed to decompress upstream response body: {error}"),
-                    kind: GatewayFailureKind::GatewayParse,
-                    upstream_request_body: Some(upstream_body_snapshot.clone()),
-                    upstream_response_body: None,
-                    upstream_response_body_bytes: 0,
-                });
-            }
-        };
+    let upstream_response_body = match maybe_decompress_encoded_body(
+        encoding.as_deref(),
+        upstream_response_body,
+        MAX_DECOMPRESSED_BODY_BYTES,
+    ) {
+        Ok((body, true)) => {
+            strip_decoded_entity_headers(&mut response_headers);
+            body
+        }
+        Ok((body, false)) => body,
+        Err(error) => {
+            return Err(GatewayForwardError {
+                message: format!("Failed to decompress upstream response body: {error}"),
+                kind: GatewayFailureKind::GatewayParse,
+                upstream_request_body: Some(upstream_body_snapshot.clone()),
+                upstream_response_body: None,
+                upstream_response_body_bytes: 0,
+            });
+        }
+    };
     let upstream_response_body_bytes = upstream_response_body.len() as u64;
     let mut body = upstream_response_body.clone();
     if (200..400).contains(&status.as_u16()) && provider_kind == Some(ProviderBodyCompat::Ollama) {
@@ -4529,7 +4539,9 @@ fn build_upstream_body(
         strip_thinking_for_retry,
         cache_injection_enabled,
         cli_key,
-        conversion_route.map(|route| route.source).or(Some(target_protocol)),
+        conversion_route
+            .map(|route| route.source)
+            .or(Some(target_protocol)),
         target_protocol,
         conversion_route,
         None,
@@ -4810,10 +4822,7 @@ fn apply_xai_responses_passthrough_if_needed(
     Ok(restore_map)
 }
 
-fn restore_xai_namespace_json_body(
-    body: &[u8],
-    map: &HashMap<String, NamespacedName>,
-) -> Vec<u8> {
+fn restore_xai_namespace_json_body(body: &[u8], map: &HashMap<String, NamespacedName>) -> Vec<u8> {
     if map.is_empty() {
         return body.to_vec();
     }
@@ -4974,9 +4983,7 @@ fn wrap_pipeline_outbound_sse_stream(
                 match state.inner.next().await {
                     Some(Ok(bytes)) => {
                         append_utf8_safe(&mut state.buffer, &mut state.utf8_remainder, &bytes);
-                        while let Some(block) =
-                            take_sse_block_with_delimiter(&mut state.buffer)
-                        {
+                        while let Some(block) = take_sse_block_with_delimiter(&mut state.buffer) {
                             match rewrite_sse_block_with_outbound_stream(
                                 &block,
                                 &state.pipeline,
@@ -5074,13 +5081,16 @@ fn find_sse_text_delimiter(buffer: &str) -> Option<(usize, usize)> {
 
 fn rewrite_sse_data_payload(block: &str, restored: &str) -> Vec<u8> {
     let (body, delimiter) = split_sse_trailing_delimiter(block);
-    let line_ending = first_line_ending(body).unwrap_or_else(|| {
-        if block.contains("\r\n") {
-            "\r\n"
-        } else {
-            "\n"
-        }
-    });
+    let line_ending =
+        first_line_ending(body).unwrap_or_else(
+            || {
+                if block.contains("\r\n") {
+                    "\r\n"
+                } else {
+                    "\n"
+                }
+            },
+        );
     let delimiter = if delimiter.is_empty() {
         format!("{line_ending}{line_ending}")
     } else {
@@ -5504,95 +5514,6 @@ fn apply_outbound_adapter_compat_value(
     }
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProviderBodyCompat {
-    AnthropicBedrock,
-    AnthropicVertex,
-    DeepSeek,
-    Moonshot,
-    Zai,
-    Doubao,
-    Xai,
-    Longcat,
-    ModelScope,
-    Bailian,
-    Mimo,
-    OpenRouter,
-    GeminiVertex,
-    CodexOfficial,
-    Copilot,
-    Ollama,
-}
-
-impl ProviderBodyCompat {
-    fn from_provider_meta(
-        meta: Option<&ProviderGatewayMeta>,
-        target_protocol: AiProtocol,
-    ) -> Option<Self> {
-        let meta = meta?;
-        Self::from_provider_type(meta.provider_type.as_deref(), target_protocol).or_else(|| {
-            (target_protocol == AiProtocol::OpenAiChat
-                && meta.api_format.as_deref().is_some_and(is_ollama_api_format))
-            .then_some(Self::Ollama)
-        })
-    }
-
-    fn from_provider_type(
-        provider_type: Option<&str>,
-        target_protocol: AiProtocol,
-    ) -> Option<Self> {
-        let normalized = provider_type?.trim().to_ascii_lowercase().replace('_', "-");
-        match normalized.as_str() {
-            "bedrock" | "anthropic-bedrock" | "aws-bedrock"
-                if target_protocol == AiProtocol::AnthropicMessages =>
-            {
-                Some(Self::AnthropicBedrock)
-            }
-            "vertex" | "anthropic-vertex" | "claude-vertex"
-                if target_protocol == AiProtocol::AnthropicMessages =>
-            {
-                Some(Self::AnthropicVertex)
-            }
-            "deepseek" => Some(Self::DeepSeek),
-            "moonshot" | "kimi" => Some(Self::Moonshot),
-            "zai" | "zhipu" | "glm" | "chatglm" | "bigmodel" | "big-model" => Some(Self::Zai),
-            "doubao" | "doubaoseed" | "doubao-seed" | "volces" => Some(Self::Doubao),
-            "xai" | "x-ai" | "grok" => Some(Self::Xai),
-            "longcat" => Some(Self::Longcat),
-            "modelscope" | "model-scope" => Some(Self::ModelScope),
-            "bailian" | "dashscope" | "aliyun" => Some(Self::Bailian),
-            "mimo" | "xiaomimimo" | "xiaomi-mimo" => Some(Self::Mimo),
-            "openrouter" | "open-router" => Some(Self::OpenRouter),
-            "codex" | "openai-codex" | "chatgpt-codex" | "codex-official"
-                if target_protocol == AiProtocol::OpenAiResponses =>
-            {
-                Some(Self::CodexOfficial)
-            }
-            "copilot" | "github-copilot" | "githubcopilot" => Some(Self::Copilot),
-            "ollama" | "ollama-chat" | "ollamachat"
-                if target_protocol == AiProtocol::OpenAiChat =>
-            {
-                Some(Self::Ollama)
-            }
-            "vertex" | "googlevertex" | "google-vertex" | "geminivertex" | "gemini-vertex" => {
-                Some(Self::GeminiVertex)
-            }
-            _ => None,
-        }
-    }
-}
-
-fn is_ollama_api_format(value: &str) -> bool {
-    matches!(
-        value
-            .trim()
-            .to_ascii_lowercase()
-            .replace(['/', '-'], "_")
-            .as_str(),
-        "ollama" | "ollama_chat"
-    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9082,8 +9003,7 @@ fn classify_success_protocol_error(response: &DebugHttpResponse) -> Option<Gatew
     if response.is_streaming || !(200..400).contains(&response.status_code) {
         return None;
     }
-    response_body_reports_protocol_error(response)
-        .then_some(GatewayFailureKind::UpstreamBadRequest)
+    response_body_reports_protocol_error(response).then_some(GatewayFailureKind::UpstreamBadRequest)
 }
 
 fn classify_empty_success_response(response: &DebugHttpResponse) -> Option<GatewayFailureKind> {
@@ -9093,8 +9013,7 @@ fn classify_empty_success_response(response: &DebugHttpResponse) -> Option<Gatew
     if response_body_reports_protocol_error(response) {
         return None;
     }
-    (!response_has_meaningful_content(response))
-        .then_some(GatewayFailureKind::EmptyResponse)
+    (!response_has_meaningful_content(response)).then_some(GatewayFailureKind::EmptyResponse)
 }
 
 fn response_body_reports_protocol_error(response: &DebugHttpResponse) -> bool {
@@ -10241,7 +10160,10 @@ mod tests {
             CodexResponsesCompactCompat::none(),
         )
         .unwrap();
-        assert_eq!(prepared.pipeline_context.billing_cch.as_deref(), Some("abc"));
+        assert_eq!(
+            prepared.pipeline_context.billing_cch.as_deref(),
+            Some("abc")
+        );
 
         let client_response = br#"{"type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;\n\nStable prompt"}]}"#.to_vec();
         let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
@@ -10254,7 +10176,10 @@ mod tests {
         .unwrap();
         let value: Value = serde_json::from_slice(&restored).unwrap();
         let text = value["system"][0]["text"].as_str().unwrap();
-        assert!(text.contains("cch=abc"), "client response should restore cch: {text}");
+        assert!(
+            text.contains("cch=abc"),
+            "client response should restore cch: {text}"
+        );
     }
 
     #[test]
@@ -10286,7 +10211,10 @@ mod tests {
             CodexResponsesCompactCompat::none(),
         )
         .unwrap();
-        assert_eq!(prepared.pipeline_context.billing_cch.as_deref(), Some("abc"));
+        assert_eq!(
+            prepared.pipeline_context.billing_cch.as_deref(),
+            Some("abc")
+        );
         let client_response = br#"{"messages":[{"role":"system","content":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.42;"}]},{"role":"assistant","content":"ok"}]}"#.to_vec();
         let pipeline = build_provider_pipeline(None, None, AiProtocol::OpenAiChat, true);
         let restored = apply_provider_pipeline_outbound_response(
@@ -10328,19 +10256,28 @@ id: message-1\r\n\
 retry: 500\r\n\
 data: {data}\r\n\r\n"
         );
-        let rewritten = rewrite_sse_block_with_outbound_stream(
-            &block,
-            &pipeline,
-            &mut pipeline_context,
-        )
-        .unwrap();
+        let rewritten =
+            rewrite_sse_block_with_outbound_stream(&block, &pipeline, &mut pipeline_context)
+                .unwrap();
         let out = String::from_utf8(rewritten).unwrap();
-        assert!(out.contains("cch=abc"), "stream reverse should restore cch: {out}");
-        assert!(out.contains("event: message_start"), "event name preserved: {out}");
-        assert!(out.contains(": preserve this comment"), "comment preserved: {out}");
+        assert!(
+            out.contains("cch=abc"),
+            "stream reverse should restore cch: {out}"
+        );
+        assert!(
+            out.contains("event: message_start"),
+            "event name preserved: {out}"
+        );
+        assert!(
+            out.contains(": preserve this comment"),
+            "comment preserved: {out}"
+        );
         assert!(out.contains("id: message-1"), "id preserved: {out}");
         assert!(out.contains("retry: 500"), "retry preserved: {out}");
-        assert!(out.contains("\r\n\r\n"), "CRLF delimiter preserved: {out:?}");
+        assert!(
+            out.contains("\r\n\r\n"),
+            "CRLF delimiter preserved: {out:?}"
+        );
 
         let done = rewrite_sse_block_with_outbound_stream(
             "data: [DONE]\r\n\r\n",
@@ -10366,12 +10303,9 @@ id: m1\r\n\
 retry: 1000\r\n\
 data: {data}\r\n\r\n"
         );
-        let rewritten = rewrite_sse_block_with_outbound_stream(
-            &block,
-            &pipeline,
-            &mut pipeline_context,
-        )
-        .unwrap();
+        let rewritten =
+            rewrite_sse_block_with_outbound_stream(&block, &pipeline, &mut pipeline_context)
+                .unwrap();
         assert_eq!(
             rewritten,
             block.as_bytes(),
@@ -10429,7 +10363,10 @@ data: {data}\r\n\r\n"
             out.contains("cch=abc"),
             "payload should be changed by reverse middleware: {out}"
         );
-        assert!(out.contains("}\r\nretry: 2000\n\n"), "mixed endings preserved: {out:?}");
+        assert!(
+            out.contains("}\r\nretry: 2000\n\n"),
+            "mixed endings preserved: {out:?}"
+        );
     }
 
     #[test]
@@ -10589,11 +10526,9 @@ data: {data}\r\n\r\n"
         assert_eq!(value["tool_choice"], json!("auto"));
         assert_eq!(value["input"][0]["name"], "mcp__files____read");
         assert!(value["input"][0].get("namespace").is_none());
-        assert!(
-            prepared
-                .xai_namespace_restore_map
-                .contains_key("mcp__files____read")
-        );
+        assert!(prepared
+            .xai_namespace_restore_map
+            .contains_key("mcp__files____read"));
     }
 
     #[test]
@@ -10904,8 +10839,8 @@ data: {data}\r\n\r\n"
                 ("accept-encoding", "gzip, deflate, br, zstd"),
             ],
         );
-        let headers = build_upstream_headers(&request, &provider, Some(request.body.as_slice()))
-            .unwrap();
+        let headers =
+            build_upstream_headers(&request, &provider, Some(request.body.as_slice())).unwrap();
 
         assert!(headers.get("content-encoding").is_none());
         assert_eq!(
@@ -11157,10 +11092,7 @@ data: {data}\r\n\r\n"
         let mut provider = provider_for_cli(GatewayCliKey::Grok);
         provider.model_mapping.default_model = Some("grok-3-mini".to_string());
 
-        assert_eq!(
-            resolve_model("grok-build", &provider, true),
-            "grok-3-mini"
-        );
+        assert_eq!(resolve_model("grok-build", &provider, true), "grok-3-mini");
     }
 
     #[test]
@@ -11169,10 +11101,7 @@ data: {data}\r\n\r\n"
         provider.model_mapping.default_model = Some("grok-3-mini".to_string());
 
         // Grok CLI takeover hardcodes model=grok-build even in single mode.
-        assert_eq!(
-            resolve_model("grok-build", &provider, false),
-            "grok-3-mini"
-        );
+        assert_eq!(resolve_model("grok-build", &provider, false), "grok-3-mini");
     }
 
     #[test]
@@ -12589,6 +12518,150 @@ data: {data}\r\n\r\n"
             ProviderBodyCompat::from_provider_type(Some("custom"), AiProtocol::OpenAiChat),
             None
         );
+    }
+
+    #[test]
+    fn provider_compat_moonshot_rewrites_schema_and_backfills_tool_reasoning() {
+        let body = br#"{
+            "model":"moonshot-v1-128k",
+            "response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}},
+            "messages":[
+                {"role":"user","content":"look up"},
+                {"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}
+            ]
+        }"#;
+
+        let converted = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "moonshot",
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&converted).unwrap();
+
+        assert_eq!(value["response_format"]["type"], "json_object");
+        assert!(value["response_format"].get("json_schema").is_none());
+        assert_eq!(value["messages"][1]["reasoning_content"], "tool call");
+    }
+
+    #[test]
+    fn provider_compat_siliconflow_uses_enable_thinking_without_reasoning_effort() {
+        let body = br#"{
+            "model":"Qwen/Qwen3-32B",
+            "reasoning_effort":"high",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let converted = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "siliconflow",
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&converted).unwrap();
+
+        assert_eq!(value["enable_thinking"], true);
+        assert!(value.get("reasoning_effort").is_none());
+        assert!(value.get("thinking").is_none());
+    }
+
+    #[test]
+    fn provider_compat_stepfun_only_supports_low_high_effort_for_2603_models() {
+        for (model, expected_effort) in [("step-3.5-2603", Some("high")), ("step-3.5", None)] {
+            let body = format!(
+                r#"{{"model":"{model}","reasoning_effort":"medium","messages":[{{"role":"user","content":"hi"}}]}}"#
+            );
+            let converted = apply_outbound_adapter_compat_for_provider_type(
+                body.into_bytes(),
+                None,
+                AiProtocol::OpenAiChat,
+                "stepfun",
+            )
+            .unwrap();
+            let value: Value = serde_json::from_slice(&converted).unwrap();
+
+            assert_eq!(
+                value.get("reasoning_effort").and_then(Value::as_str),
+                expected_effort
+            );
+            assert!(value.get("thinking").is_none());
+            assert!(value.get("enable_thinking").is_none());
+        }
+    }
+
+    #[test]
+    fn provider_compat_minimax_uses_reasoning_split_and_reasoning_details_output() {
+        let body = br#"{
+            "model":"MiniMax-M2.7",
+            "reasoning_effort":"high",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let converted = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "minimax",
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&converted).unwrap();
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("minimax".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+        let config = infer_codex_chat_reasoning_config(Some(&meta), AiProtocol::OpenAiChat, &value)
+            .expect("MiniMax reasoning config");
+
+        assert_eq!(value["reasoning_split"], true);
+        assert!(value.get("reasoning_effort").is_none());
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_details"));
+    }
+
+    #[test]
+    fn provider_compat_mimo_alias_backfills_missing_tool_reasoning_content() {
+        let body = br#"{
+            "model":"mimo-v2.5-pro",
+            "messages":[
+                {"role":"user","content":"call a tool"},
+                {"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}
+            ]
+        }"#;
+
+        let converted = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "xiaomi_mimo",
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&converted).unwrap();
+
+        assert_eq!(value["messages"][1]["reasoning_content"], "tool call");
+    }
+
+    #[test]
+    fn provider_compat_modelscope_removes_metadata_for_chat_and_responses() {
+        for target_protocol in [AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses] {
+            let body = br#"{
+                "model":"Qwen/Qwen3",
+                "metadata":{"trace_id":"trace-1"},
+                "messages":[{"role":"user","content":"hi"}]
+            }"#;
+            let converted = apply_outbound_adapter_compat_for_provider_type(
+                body.to_vec(),
+                None,
+                target_protocol,
+                "modelscope",
+            )
+            .unwrap();
+            let value: Value = serde_json::from_slice(&converted).unwrap();
+            assert!(
+                value.get("metadata").is_none(),
+                "target={target_protocol:?}"
+            );
+        }
     }
 
     #[test]
@@ -14270,8 +14343,7 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn provider_body_compat_deepseek_chat_preserves_reasoning_with_tool_calls_and_strips_without()
-    {
+    fn provider_body_compat_deepseek_chat_preserves_reasoning_with_tool_calls_and_strips_without() {
         let body = br#"{
             "model":"deepseek-v4-pro",
             "messages":[
@@ -15714,10 +15786,7 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
 
     #[test]
     fn payment_required_is_retryable_provider_auth_failure() {
-        assert_eq!(
-            classify_status_failure(402),
-            Some(GatewayFailureKind::Auth)
-        );
+        assert_eq!(classify_status_failure(402), Some(GatewayFailureKind::Auth));
         assert!(should_retry_failure(GatewayFailureKind::Auth));
         let weight = model_health::classify_failure(GatewayFailureKind::Auth);
         assert_eq!(weight.scope, model_health::FailureScope::Provider);
@@ -15759,11 +15828,10 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
 
     #[test]
     fn retryable_status_codes_gate_status_driven_retry() {
-        let defaults =
-            crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
-                crate::coding::proxy_gateway::retryable_status::DEFAULT_RETRYABLE_STATUS_CODES_COMPACT,
-            )
-            .expect("default set");
+        let defaults = crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
+            crate::coding::proxy_gateway::retryable_status::DEFAULT_RETRYABLE_STATUS_CODES_COMPACT,
+        )
+        .expect("default set");
         assert!(should_retry_status_or_kind(
             Some(400),
             GatewayFailureKind::UpstreamBadRequest,

@@ -188,15 +188,10 @@ pub enum RecordRequestSummaryOutcome {
     /// Row inserted/upgraded. `request_id` is the final SQLite primary key and must
     /// also be used as the JSONL `trace_id` so list/detail lookup stays consistent
     /// even when a collision fallback key is chosen.
-    Written {
-        request_id: String,
-        collision: bool,
-    },
+    Written { request_id: String, collision: bool },
     /// Summary already exists with identical semantics but still lacks a JSONL
     /// detail locator. Observability may retry detail attachment without recounting.
-    NeedsDetail {
-        request_id: String,
-    },
+    NeedsDetail { request_id: String },
 }
 
 /// Record a compact proxy request summary for request list / usage stats.
@@ -301,9 +296,7 @@ pub fn record_request_summary(
                 summary
                     .detail_file
                     .clone()
-                    .or(existing_detail
-                        .as_ref()
-                        .and_then(|(file, _)| file.clone())),
+                    .or(existing_detail.as_ref().and_then(|(file, _)| file.clone())),
                 summary
                     .detail_offset
                     .or(existing_detail.and_then(|(_, offset)| offset)),
@@ -311,7 +304,6 @@ pub fn record_request_summary(
         } else {
             (summary.detail_file.clone(), summary.detail_offset)
         };
-
         // Preserve imported session linkage when proxy upgrades a session row.
         // INSERT OR REPLACE would otherwise wipe session_id if we hardcode NULL.
         let session_id = if replace_session_log {
@@ -513,11 +505,7 @@ fn resolve_usage_request_id(
             Ok(UsageWritePlan::Skip)
         }
         Some(_) => {
-            let fallback = format!(
-                "{}:collision:{}",
-                primary_request_id,
-                semantic.sha256_hex()
-            );
+            let fallback = format!("{}:collision:{}", primary_request_id, semantic.sha256_hex());
             if let Some((data_source, existing_semantic)) =
                 load_existing_usage_semantic(conn, &fallback)?
             {
@@ -600,13 +588,10 @@ fn has_detail_locator(conn: &Connection, request_id: &str) -> Result<bool, Strin
         .as_deref()
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
-    Ok(has_file || offset.is_some())
+    Ok(has_file && offset.is_some())
 }
 
-fn load_existing_session_id(
-    conn: &Connection,
-    request_id: &str,
-) -> Result<Option<String>, String> {
+fn load_existing_session_id(conn: &Connection, request_id: &str) -> Result<Option<String>, String> {
     conn.query_row(
         "SELECT session_id FROM proxy_request_logs WHERE request_id = ?1",
         [request_id],
@@ -2806,7 +2791,8 @@ mod tests {
                     detail_file, detail_offset, session_id
                 ) VALUES (
                     'SESSION:msg_upgrade', 'session', 'claude', 'claude-sonnet', NULL,
-                    1, 1, 0, 0, '0', '0', '0', '0', '0', 0, 200, 1, 'session',
+                    1, 1, 0, 0, '0', '0', '0', '0', '0', 0, 200,
+                    CAST(strftime('%s', 'now') AS INTEGER), 'session',
                     'old-detail.jsonl', 42, 'imported-session-x'
                 )",
                 [],
@@ -2905,6 +2891,32 @@ mod tests {
             })
             .expect("count");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn record_request_summary_retries_when_detail_locator_is_partial() {
+        for (request_id, detail_file, detail_offset) in [
+            ("SESSION:msg_file_only", Some("partial.jsonl"), None),
+            ("SESSION:msg_offset_only", None, Some(9)),
+        ] {
+            let db = test_db();
+            let detail = make_detail(request_id, "provider-alpha", 200, 10, 20);
+            assert!(matches!(
+                record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                    .expect("first summary write"),
+                RecordRequestSummaryOutcome::Written { .. }
+            ));
+            update_request_detail_locator(&db, request_id, detail_file, detail_offset)
+                .expect("attach partial locator");
+
+            assert!(matches!(
+                record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+                    .expect("partial locator retry plan"),
+                RecordRequestSummaryOutcome::NeedsDetail {
+                    request_id: retry_request_id
+                } if retry_request_id == request_id
+            ));
+        }
     }
 
     #[test]

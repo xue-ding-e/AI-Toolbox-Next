@@ -19,7 +19,7 @@
 
 ### 1.2 生产触发不是 `compat` 字段
 
-`tauri/resources/gateway_provider_profiles.json` 里的 `compat` 字段是 catalog 描述和 schema 校验材料；`tauri/src/coding/proxy_gateway/provider_profiles.rs::SUPPORTED_COMPAT_RULES` 只对白名单名称做校验。生产请求不会因为某个 profile 声明了 `compat` 字符串就直接执行兼容逻辑。
+`tauri/resources/gateway_provider_profiles.json` 里的 `compat` 字段是 catalog 描述和 schema 校验材料。`tauri/src/coding/proxy_gateway/provider_profiles.rs::SUPPORTED_COMPAT_RULES` 使用 `CompatRuleRegistration` 为每个 tag 静态登记 `runtime_owner + test_name`：catalog 校验要求登记证据完整，测试会检查 tag 唯一且 owner/test 符号实际存在。生产请求仍不会因为某个 profile 声明了 `compat` 字符串就直接执行兼容逻辑，runtime 也不能把这些 tag 当作动态规则引擎。
 
 真正触发来自 runtime 解析后的 effective meta：
 
@@ -47,8 +47,9 @@
 - profile 中的 `codexChatReasoning` 只在 `gatewayProfile.tool == "codex"` 时解析；Claude/Grok/Gemini 不从 profile 解析这个 Codex-only 字段，但后续 fallback inference 仍可由明确 effective `providerType/apiFormat` 触发。
 - `gatewayProfile.tool` 必须匹配当前 CLI；不匹配时忽略引用，继续使用 legacy meta。
 - profile/endpoint 缺失或解析失败时保留 legacy meta；如果最终 `providerType` 仍为空，fallback 到 provider record 的 `category`。
+- `profileId`、`tool`、`endpointId` 是 reference-only provider 的持久化稳定 ID。远端 catalog 激活前必须保留上一份有效 catalog 中已有的 profile、受支持 tool 和 endpoint ID；允许新增 ID 和修改非 ID 元数据，删除/rename 会拒绝激活并保留上一份有效 catalog。不兼容 cache 回退 bundled defaults；breaking rename 必须先提供 alias 或 migration。
 
-源码入口：`runtime/providers.rs::apply_gateway_profile_reference()`。
+源码入口：`runtime/providers.rs::apply_gateway_profile_reference()`、`provider_profiles.rs::validate_gateway_provider_profile_compatibility()`。
 
 ### 1.4 target protocol 推导
 
@@ -75,6 +76,15 @@
 `runtime/upstream.rs::conversion_route()` 只在 `source_protocol != provider.target_protocol` 时创建 `ConversionRoute`。同协议路径不进入 transformer。
 
 Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受 `/grok/v1/responses`。`/grok/v1/chat/completions` 和 `/grok/v1/responses/compact` 会在 `runtime/routes.rs::match_gateway_route()` 被拒绝，不能按 Codex 的 source path 推导规则理解成 Grok 可达接口。
+
+### 1.6 Responses streamed compaction 边界
+
+- Responses -> Responses：同协议 identity route 不创建 `ConversionRoute`，原始 SSE 字节直接透传，因此 `compaction` / `compaction_summary` 保真，但不经过 `StreamKernel`。
+- Responses -> OpenAI Chat / Anthropic Messages / Gemini Native：目标协议没有 Responses compaction 原生表示，普通 stream kernel 忽略该 item；同一流中的 text、tool、usage 和 terminal 事件仍需继续转换。
+- OpenAI Chat / Anthropic / Gemini -> Responses：source 协议没有 compaction 语义，不能凭空恢复。
+- `/responses/compact` 是 runtime 专项 facade；非流 JSON 中显式可达的 compaction helper 继续保留。两者都不能用来宣称普通 SSE kernel 支持跨协议 compaction roundtrip。
+
+测试：`responses_identity_stream_preserves_compaction_bytes_without_kernel`、`responses_stream_drops_compaction_for_chat_without_losing_text`。
 
 ## 2. 通用请求侧兼容
 
@@ -129,6 +139,10 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 - 删除空 assistant message。
 
 这些是 runtime provider compat，不属于 transformer roundtrip 语义。
+
+Responses source 转 Chat 时有两条有意区分的 transformer 输入形态：custom-only 请求保留 `responses_custom_tool` Chat 兼容扩展，到本层再按第三方 Chat wire 能力过滤；请求包含 `tool_search`、namespace 或历史 `tool_search_output` 时，transformer 使用 request-scoped Codex context，提前把这些扩展和同请求 custom tool 投影成普通 Chat function，本层不会再把它们当成 `response_custom_tool` 删除。两条路径都必须保留现有回归，不能无条件构造完整 Codex context 把 custom-only roundtrip 静默降级成普通 function。
+
+Responses source 转 Anthropic Messages / Gemini Native 时，namespace child 声明使用与 Chat 相同的 `flatten_namespace_tool_name()` 投影为普通 function，并用 namespace-only `ConversionContext` 保持同一次请求/响应的身份映射。历史 `function_call` 与具名 `tool_choice` 必须同步改写 flat name，namespace 类型 choice 降为 `auto`；Anthropic/Gemini 的 JSON 和 SSE 工具调用转回 Responses 时恢复原 `namespace` 与子工具名。最终 flat name 与顶层 function/custom 或其它 namespace child 重名时在本地 fail closed，不向上游发送重复工具声明。该行为是所有 Responses→Anthropic/Gemini 转换的通用 wire 兼容，不受 providerType 开关控制。
 
 ### 2.3 prompt cache
 
@@ -415,8 +429,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `provider_body_compat_anthropic_reasoning_vendor_normalizes_tool_thinking_history`
+- `provider_compat_moonshot_rewrites_schema_and_backfills_tool_reasoning`
 - `chat_prompt_cache_key_reinjects_explicit_for_allowlisted_provider`
-- 当前未见单独锁定 Moonshot Chat JSON schema 降级和 Chat tool-call reasoning backfill 的专项测试；新增或调整该分支时应补精确测试。
 
 ### 5.5 Z.ai / GLM / 智谱
 
@@ -542,7 +556,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 - `codex_chat_reasoning_config_strips_effort_for_thinking_only_provider`
 - `codex_chat_reasoning_custom_qwen_model_does_not_infer_provider_compat`
-- 当前测试覆盖的是同类 `enable_thinking` 显式配置和 custom provider 负例，未见以 `providerType=siliconflow` 命名的专项测试。
+- `provider_compat_siliconflow_uses_enable_thinking_without_reasoning_effort`
 
 ### 5.10 StepFun
 
@@ -565,7 +579,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat`
-- 当前未见以 `providerType=stepfun` 和 `2603` 能力细分命名的专项测试；修改该 inference 分支时应补精确测试。
+- `provider_compat_stepfun_only_supports_low_high_effort_for_2603_models`
 - `codex_chat_reasoning_explicit_meta_overrides_inference`
 
 ### 5.11 MiniMax
@@ -592,7 +606,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat`
-- 当前未见以 `providerType=minimax` 命名的 `reasoning_split` 专项测试；修改该 inference 分支时应补精确测试。
+- `provider_compat_minimax_uses_reasoning_split_and_reasoning_details_output`
 
 ### 5.12 MiMo
 
@@ -613,7 +627,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `provider_body_compat_anthropic_reasoning_vendor_normalizes_tool_thinking_history` 覆盖同类 Anthropic tool thinking 历史规范化，但当前样例使用 Moonshot provider。
-- 当前未见 MiMo Chat `reasoning_content` backfill 或 MiMo providerType 专项测试；修改该分支时应补精确测试。
+- `provider_compat_mimo_alias_backfills_missing_tool_reasoning_content`
 
 ### 5.13 LongCat
 
@@ -656,7 +670,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 测试：
 
-- 当前未见单独锁定 ModelScope remove metadata 的专项测试；`provider_body_compat_detects_canonical_provider_type_aliases` 只覆盖 provider kind 识别。新增或调整 ModelScope 兼容时必须补精确测试。
+- `provider_compat_modelscope_removes_metadata_for_chat_and_responses`
+- `provider_body_compat_detects_canonical_provider_type_aliases`
 
 ### 5.15 Anthropic Direct / Bedrock / Vertex
 
@@ -702,7 +717,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 触发条件：
 
 - Gemini Native target 由 provider target protocol 决定。
-- Gemini Vertex body compat 来自 `providerType=vertex|googlevertex|google-vertex|geminivertex|gemini-vertex`。
+- Gemini Vertex body compat 来自 `providerType=vertex|googlevertex|google-vertex|geminivertex|gemini-vertex`，并且 `target_protocol` 必须是 `GeminiNative`；相同 `vertex` 字符串在 `AnthropicMessages` target 下归类为 Anthropic Vertex，`google-vertex` 在 Chat/Anthropic target 下不归类为 Gemini Vertex。
 
 请求侧：
 
@@ -719,6 +734,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `outbound_adapter_strips_gemini_function_ids_for_vertex`
+- `gemini_vertex_provider_kind_requires_gemini_native_target`
 - `conversion_route_rewrites_claude_to_gemini_native_generate_content_path`
 - `conversion_route_rewrites_claude_to_gemini_native_streaming_path_and_query`
 
@@ -904,6 +920,9 @@ inferred provider：
 - `codex_chat_reasoning_custom_qwen_model_does_not_infer_provider_compat`
 - `codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat`
 - `codex_chat_reasoning_explicit_meta_overrides_inference`
+- `provider_compat_siliconflow_uses_enable_thinking_without_reasoning_effort`
+- `provider_compat_stepfun_only_supports_low_high_effort_for_2603_models`
+- `provider_compat_minimax_uses_reasoning_split_and_reasoning_details_output`
 
 ## 7. Header、path、auth 兼容
 

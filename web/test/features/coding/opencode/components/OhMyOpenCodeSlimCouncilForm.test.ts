@@ -56,6 +56,7 @@ test('parseSlimCouncilFormValues prefers agents.council over legacy council.mast
     model: 'openai/gpt-5.6',
     variant: 'high',
     prompt: 'synthesize carefully',
+    modelSourceValue: ['openai/gpt-5.6', 'openai/fallback'],
   });
   assert.equal(parsed.councilDefaultPreset, 'default');
   assert.equal(parsed.councilCouncillorsTimeout, 120000);
@@ -96,7 +97,80 @@ test('parseSlimCouncilFormValues migrates legacy council.master when agents.coun
     model: 'openai/legacy-master',
     variant: 'medium',
     prompt: 'legacy synthesizer',
+    modelSourceValue: 'openai/legacy-master',
   });
+});
+
+test('agents.council alone stays enabled and preserves its full model chain', () => {
+  const modelChain = [
+    'openai/primary',
+    'openai/fallback-a',
+    { id: 'openai/fallback-b', variant: 'high', timeout: 120000 },
+  ];
+  const parsed = parseSlimCouncilFormValues({
+    agents: {
+      council: {
+        model: modelChain,
+        prompt: 'synthesize',
+      },
+    },
+  });
+
+  assert.equal(parsed.councilEnabled, true);
+  assert.equal(parsed.councilAgent?.model, 'openai/primary');
+  const result = buildSlimCouncilConfig(parsed, t);
+
+  assert.equal(result.errorMessage, undefined);
+  assert.equal(result.council, null);
+  assert.deepEqual(result.councilAgent, {
+    model: modelChain,
+    prompt: 'synthesize',
+  });
+});
+
+test('editing the council primary model preserves fallback entries and object fields', () => {
+  const parsed = parseSlimCouncilFormValues({
+    agents: {
+      council: {
+        model: [
+          { id: 'openai/old-primary', variant: 'medium', custom: true },
+          'openai/fallback-a',
+          { id: 'openai/fallback-b', variant: 'high', custom: 'fallback' },
+        ],
+      },
+    },
+  });
+  if (!parsed.councilAgent) {
+    throw new Error('expected parsed council agent');
+  }
+  parsed.councilAgent.model = 'openai/new-primary';
+
+  const result = buildSlimCouncilConfig(parsed, t);
+  assert.deepEqual(result.councilAgent?.model, [
+    { id: 'openai/new-primary', variant: 'medium', custom: true },
+    'openai/fallback-a',
+    { id: 'openai/fallback-b', variant: 'high', custom: 'fallback' },
+  ]);
+});
+
+test('legacy council.master_fallback is merged into the council agent model chain', () => {
+  const parsed = parseSlimCouncilFormValues({
+    council: {
+      master: { model: 'openai/primary' },
+      master_fallback: [
+        'openai/fallback-a',
+        { id: 'openai/fallback-b', variant: 'high' },
+        'openai/primary',
+      ],
+    },
+  });
+  const result = buildSlimCouncilConfig(parsed, t);
+
+  assert.deepEqual(result.councilAgent?.model, [
+    'openai/primary',
+    'openai/fallback-a',
+    { id: 'openai/fallback-b', variant: 'high' },
+  ]);
 });
 
 test('parseSlimCouncilFormValues supports legacy nested councillors objects', () => {
@@ -231,4 +305,24 @@ test('mergeCouncilAgentIntoAgents preserves unmanaged agents.council fields', ()
       prompt: 'synthesize carefully',
     },
   });
+});
+
+test('mergeCouncilAgentIntoAgents keeps an existing fallback chain when only the primary changes', () => {
+  const merged = mergeCouncilAgentIntoAgents(
+    undefined,
+    { model: 'openai/new-primary' },
+    {
+      model: [
+        'openai/old-primary',
+        'openai/fallback-a',
+        { id: 'openai/fallback-b', variant: 'high' },
+      ],
+    },
+  );
+
+  assert.deepEqual((merged?.council as Record<string, unknown>).model, [
+    'openai/new-primary',
+    'openai/fallback-a',
+    { id: 'openai/fallback-b', variant: 'high' },
+  ]);
 });

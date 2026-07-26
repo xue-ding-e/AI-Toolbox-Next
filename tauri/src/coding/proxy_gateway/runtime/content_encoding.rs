@@ -7,6 +7,10 @@
 
 use std::io::Read;
 
+pub(super) const MAX_DECOMPRESSED_BODY_BYTES: usize = 16 * 1024 * 1024;
+const DECOMPRESSED_BODY_TOO_LARGE_ERROR: &str =
+    "Decompressed body exceeds the maximum allowed size";
+
 /// Split a content-encoding value into ordered codings, dropping identity/empty.
 ///
 /// HTTP allows stacked encodings such as `gzip, zstd`. Repeated headers are
@@ -26,37 +30,67 @@ fn is_single_supported(coding: &str) -> bool {
     )
 }
 
-fn decompress_single(coding: &str, body: &[u8]) -> Result<Option<Vec<u8>>, std::io::Error> {
+fn read_decoder_with_limit(
+    decoder: impl Read,
+    output_limit: usize,
+) -> Result<Vec<u8>, std::io::Error> {
+    let mut limited_decoder = decoder.take(output_limit.saturating_add(1) as u64);
+    let mut decompressed = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = limited_decoder.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(decompressed);
+        }
+        if decompressed.len().saturating_add(read) > output_limit {
+            return Err(decompressed_body_too_large_error());
+        }
+        decompressed.extend_from_slice(&buffer[..read]);
+    }
+}
+
+fn decompressed_body_too_large_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        DECOMPRESSED_BODY_TOO_LARGE_ERROR,
+    )
+}
+
+fn is_decompressed_body_too_large(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::InvalidData
+        && error.to_string() == DECOMPRESSED_BODY_TOO_LARGE_ERROR
+}
+
+fn decompress_single(
+    coding: &str,
+    body: &[u8],
+    output_limit: usize,
+) -> Result<Option<Vec<u8>>, std::io::Error> {
     match coding.to_ascii_lowercase().as_str() {
         "gzip" | "x-gzip" => {
-            let mut decoder = flate2::read::GzDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(Some(decompressed))
+            let decoder = flate2::read::GzDecoder::new(body);
+            read_decoder_with_limit(decoder, output_limit).map(Some)
         }
         "deflate" => {
             // RFC 9110: deflate means zlib-wrapped. Some clients send raw deflate.
-            let mut decompressed = Vec::new();
-            let mut zlib = flate2::read::ZlibDecoder::new(body);
-            match zlib.read_to_end(&mut decompressed) {
-                Ok(_) => Ok(Some(decompressed)),
+            let zlib = flate2::read::ZlibDecoder::new(body);
+            match read_decoder_with_limit(zlib, output_limit) {
+                Ok(decompressed) => Ok(Some(decompressed)),
+                Err(error) if is_decompressed_body_too_large(&error) => Err(error),
                 Err(_) => {
-                    let mut decompressed = Vec::new();
-                    let mut raw = flate2::read::DeflateDecoder::new(body);
-                    raw.read_to_end(&mut decompressed)?;
-                    Ok(Some(decompressed))
+                    let raw = flate2::read::DeflateDecoder::new(body);
+                    read_decoder_with_limit(raw, output_limit).map(Some)
                 }
             }
         }
         "br" => {
-            let mut decompressed = Vec::new();
-            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
-            Ok(Some(decompressed))
+            let decoder = brotli::Decompressor::new(body, 4096);
+            read_decoder_with_limit(decoder, output_limit).map(Some)
         }
         "zstd" | "zst" => {
             // Codex official-login clients commonly use Compression::Zstd.
-            let decompressed = zstd::stream::decode_all(std::io::Cursor::new(body))?;
-            Ok(Some(decompressed))
+            let decoder = zstd::stream::read::Decoder::new(body)?;
+            read_decoder_with_limit(decoder, output_limit).map(Some)
         }
         _ => Ok(None),
     }
@@ -70,6 +104,7 @@ fn decompress_single(coding: &str, body: &[u8]) -> Result<Option<Vec<u8>>, std::
 pub(super) fn decompress_body(
     content_encoding: &str,
     body: &[u8],
+    output_limit: usize,
 ) -> Result<Option<Vec<u8>>, std::io::Error> {
     let codings = split_codings(content_encoding);
     if codings.is_empty() {
@@ -82,7 +117,7 @@ pub(super) fn decompress_body(
     let mut data: Option<Vec<u8>> = None;
     for coding in codings.iter().rev() {
         let input = data.as_deref().unwrap_or(body);
-        match decompress_single(coding, input)? {
+        match decompress_single(coding, input, output_limit)? {
             Some(decompressed) => data = Some(decompressed),
             None => return Ok(None),
         }
@@ -139,11 +174,12 @@ pub(super) fn get_content_encoding_from_header_map(
 pub(super) fn maybe_decompress_encoded_body(
     content_encoding: Option<&str>,
     body: Vec<u8>,
+    output_limit: usize,
 ) -> Result<(Vec<u8>, bool), std::io::Error> {
     let Some(encoding) = content_encoding else {
         return Ok((body, false));
     };
-    match decompress_body(encoding, &body)? {
+    match decompress_body(encoding, &body, output_limit)? {
         Some(decompressed) => Ok((decompressed, true)),
         None => Ok((body, false)),
     }
@@ -164,6 +200,8 @@ mod tests {
     use reqwest::header::{HeaderMap, HeaderValue, CONTENT_ENCODING};
     use std::io::Write;
 
+    const TEST_OUTPUT_LIMIT: usize = 1024 * 1024;
+
     #[test]
     fn decompress_body_deflate_handles_zlib_wrapped_per_rfc9110() {
         let payload = br#"{"ok":true}"#;
@@ -172,7 +210,9 @@ mod tests {
         encoder.write_all(payload).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
+        let decompressed = decompress_body("deflate", &compressed, TEST_OUTPUT_LIMIT)
+            .unwrap()
+            .unwrap();
         assert_eq!(decompressed, payload);
     }
 
@@ -184,7 +224,9 @@ mod tests {
         encoder.write_all(payload).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
+        let decompressed = decompress_body("deflate", &compressed, TEST_OUTPUT_LIMIT)
+            .unwrap()
+            .unwrap();
         assert_eq!(decompressed, payload);
     }
 
@@ -196,11 +238,15 @@ mod tests {
         let compressed = encoder.finish().unwrap();
 
         assert_eq!(
-            decompress_body("gzip", &compressed).unwrap().unwrap(),
+            decompress_body("gzip", &compressed, TEST_OUTPUT_LIMIT)
+                .unwrap()
+                .unwrap(),
             payload
         );
         assert_eq!(
-            decompress_body("x-gzip", &compressed).unwrap().unwrap(),
+            decompress_body("x-gzip", &compressed, TEST_OUTPUT_LIMIT)
+                .unwrap()
+                .unwrap(),
             payload
         );
     }
@@ -216,7 +262,9 @@ mod tests {
         )
         .unwrap();
 
-        let decompressed = decompress_body("br", &compressed).unwrap().unwrap();
+        let decompressed = decompress_body("br", &compressed, TEST_OUTPUT_LIMIT)
+            .unwrap()
+            .unwrap();
         assert_eq!(decompressed, payload);
     }
 
@@ -224,10 +272,14 @@ mod tests {
     fn decompress_body_zstd_roundtrip() {
         let payload = br#"{"hello":"world","n":42}"#;
         let compressed = zstd::stream::encode_all(std::io::Cursor::new(&payload[..]), 0).unwrap();
-        let decompressed = decompress_body("zstd", &compressed).unwrap().unwrap();
+        let decompressed = decompress_body("zstd", &compressed, TEST_OUTPUT_LIMIT)
+            .unwrap()
+            .unwrap();
         assert_eq!(decompressed, payload);
         assert_eq!(
-            decompress_body("zst", &compressed).unwrap().unwrap(),
+            decompress_body("zst", &compressed, TEST_OUTPUT_LIMIT)
+                .unwrap()
+                .unwrap(),
             payload
         );
     }
@@ -240,19 +292,78 @@ mod tests {
         let gzipped = gz.finish().unwrap();
         let stacked = zstd::stream::encode_all(std::io::Cursor::new(&gzipped[..]), 0).unwrap();
 
-        let decompressed = decompress_body("gzip, zstd", &stacked).unwrap().unwrap();
+        let decompressed = decompress_body("gzip, zstd", &stacked, TEST_OUTPUT_LIMIT)
+            .unwrap()
+            .unwrap();
         assert_eq!(decompressed, payload);
     }
 
     #[test]
+    fn decompress_body_enforces_output_limit_for_every_supported_coding() {
+        let payload = vec![b'x'; 1024];
+
+        let mut gzip_encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip_encoder.write_all(&payload).unwrap();
+        let gzip = gzip_encoder.finish().unwrap();
+
+        let mut zlib_encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zlib_encoder.write_all(&payload).unwrap();
+        let zlib = zlib_encoder.finish().unwrap();
+
+        let mut raw_deflate_encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw_deflate_encoder.write_all(&payload).unwrap();
+        let raw_deflate = raw_deflate_encoder.finish().unwrap();
+
+        let mut brotli = Vec::new();
+        brotli::BrotliCompress(
+            &mut std::io::Cursor::new(&payload),
+            &mut brotli,
+            &brotli::enc::BrotliEncoderParams::default(),
+        )
+        .unwrap();
+
+        let zstd = zstd::stream::encode_all(std::io::Cursor::new(&payload), 0).unwrap();
+
+        for (coding, compressed) in [
+            ("gzip", gzip),
+            ("deflate", zlib),
+            ("deflate", raw_deflate),
+            ("br", brotli),
+            ("zstd", zstd),
+        ] {
+            let error = decompress_body(coding, &compressed, 64).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{coding}");
+            assert_eq!(error.to_string(), DECOMPRESSED_BODY_TOO_LARGE_ERROR);
+        }
+    }
+
+    #[test]
+    fn decompress_body_enforces_output_limit_on_each_stacked_layer() {
+        let payload = vec![b'x'; 1024];
+        let mut gzip_encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip_encoder.write_all(&payload).unwrap();
+        let gzip = gzip_encoder.finish().unwrap();
+        let stacked = zstd::stream::encode_all(std::io::Cursor::new(&gzip), 0).unwrap();
+
+        let error = decompress_body("gzip, zstd", &stacked, 64).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), DECOMPRESSED_BODY_TOO_LARGE_ERROR);
+    }
+
+    #[test]
     fn decompress_body_stacked_with_unsupported_returns_none() {
-        let result = decompress_body("snappy, zstd", b"\x00\x01\x02\x03").unwrap();
+        let result =
+            decompress_body("snappy, zstd", b"\x00\x01\x02\x03", TEST_OUTPUT_LIMIT).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn decompress_body_unknown_encoding_returns_none_to_keep_headers() {
-        let result = decompress_body("snappy", b"\x00\x01\x02\x03").unwrap();
+        let result = decompress_body("snappy", b"\x00\x01\x02\x03", TEST_OUTPUT_LIMIT).unwrap();
         assert!(result.is_none());
     }
 

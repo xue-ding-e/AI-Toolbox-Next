@@ -3069,8 +3069,28 @@ data: {"id":"chat_cancelled","model":"model-a","choices":[{"index":0,"delta":{},
     }
 
     #[test]
-    fn responses_stream_preserves_compaction_item_through_chat_and_back() {
-        // AxonHub 01707aa6: streamed compaction/compaction_summary items must not be dropped.
+    fn responses_identity_stream_preserves_compaction_bytes_without_kernel() {
+        let source = [
+            r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_identity"}}
+
+"#,
+            r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_identity"}}
+
+"#,
+        ]
+        .concat();
+
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            source.clone(),
+        );
+        assert_eq!(output, source);
+    }
+
+    #[test]
+    fn responses_stream_drops_compaction_for_chat_without_losing_text() {
         let source = [
             r#"event: response.created
 data: {"type":"response.created","response":{"id":"resp_cmp","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
@@ -3080,180 +3100,23 @@ data: {"type":"response.created","response":{"id":"resp_cmp","object":"response"
 data: {"type":"response.output_item.added","output_index":0,"item":{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"}}
 
 "#,
-            r#"event: response.output_item.done
-data: {"type":"response.output_item.done","output_index":0,"item":{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"}}
-
-"#,
             r#"event: response.output_text.delta
 data: {"type":"response.output_text.delta","delta":"hello","item_id":"msg_1","output_index":1,"content_index":0}
 
 "#,
             r#"event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_cmp","object":"response","model":"gpt-5","status":"completed","output":[{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"},{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}
+data: {"type":"response.completed","response":{"id":"resp_cmp","object":"response","model":"gpt-5","status":"completed","output":[{"id":"cmp_stream_1","type":"compaction","encrypted_content":"enc_stream_1"},{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}
 
 "#,
         ]
         .concat();
 
-        // Responses -> Chat: compaction is Responses-native; Chat target intentionally drops it,
-        // but the conversion must not panic and must still deliver text.
-        let chat_out = collect_stream(
+        let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
-            source.clone(),
-        );
-        assert!(
-            chat_out.contains("hello"),
-            "chat stream should still carry text after compaction item"
-        );
-
-        // Responses -> Responses: compaction item must reappear as output_item.added/done
-        // and in the completed response output array.
-        let responses_out = collect_stream(
-            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
             source,
         );
-        assert!(
-            responses_out.contains("\"type\":\"compaction\"")
-                || responses_out.contains("\"type\": \"compaction\""),
-            "responses stream should preserve compaction item type, got {responses_out}"
-        );
-        assert!(
-            responses_out.contains("enc_stream_1"),
-            "responses stream should preserve compaction encrypted_content"
-        );
-        assert!(
-            responses_out.contains("response.output_item.added")
-                || responses_out.contains("\"type\":\"response.output_item.added\""),
-            "responses stream should emit output_item.added for compaction"
-        );
-        let values = sse_data_values(&responses_out);
-        let completed = values
-            .iter()
-            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
-            .expect("completed event");
-        let output = completed
-            .pointer("/response/output")
-            .and_then(Value::as_array)
-            .expect("completed output");
-        assert!(
-            output.iter().any(|item| {
-                item.get("type").and_then(Value::as_str) == Some("compaction")
-                    && item.get("encrypted_content").and_then(Value::as_str)
-                        == Some("enc_stream_1")
-            }),
-            "completed output should include compaction item, got {output:?}"
-        );
-    }
-
-    #[test]
-    fn responses_stream_preserves_compaction_item_when_only_done_is_sent() {
-        let source = [
-            r#"event: response.created
-data: {"type":"response.created","response":{"id":"resp_cmp_done","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
-
-"#,
-            r#"event: response.output_item.done
-data: {"type":"response.output_item.done","output_index":0,"item":{"id":"cmp_done_only","type":"compaction_summary","encrypted_content":"enc_done_only","created_by":"compact"}}
-
-"#,
-            r#"event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_cmp_done","object":"response","model":"gpt-5","status":"completed","output":[{"id":"cmp_done_only","type":"compaction_summary","encrypted_content":"enc_done_only"}],"usage":{"input_tokens":1,"output_tokens":0}}}
-
-"#,
-        ]
-        .concat();
-
-        let responses_out = collect_stream(
-            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
-            source,
-        );
-        assert!(
-            responses_out.contains("enc_done_only"),
-            "done-only compaction must still be preserved, got {responses_out}"
-        );
-        let values = sse_data_values(&responses_out);
-        let completed = values
-            .iter()
-            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
-            .expect("completed event");
-        let output = completed
-            .pointer("/response/output")
-            .and_then(Value::as_array)
-            .expect("completed output");
-        assert!(
-            output.iter().any(|item| {
-                item.get("type").and_then(Value::as_str) == Some("compaction_summary")
-                    && item.get("encrypted_content").and_then(Value::as_str)
-                        == Some("enc_done_only")
-            }),
-            "completed output should include done-only compaction, got {output:?}"
-        );
-    }
-
-    #[test]
-    fn responses_stream_dedupes_empty_id_compaction_on_added_and_done() {
-        let source = [
-            r#"event: response.created
-data: {"type":"response.created","response":{"id":"resp_cmp_empty","object":"response","model":"gpt-5","status":"in_progress","output":[]}}
-
-"#,
-            r#"event: response.output_item.added
-data: {"type":"response.output_item.added","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}}
-
-"#,
-            r#"event: response.output_item.done
-data: {"type":"response.output_item.done","output_index":0,"item":{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}}
-
-"#,
-            r#"event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_cmp_empty","object":"response","model":"gpt-5","status":"completed","output":[{"id":"","type":"compaction","encrypted_content":"enc_empty_id"}],"usage":{"input_tokens":1,"output_tokens":0}}}
-
-"#,
-        ]
-        .concat();
-
-        let responses_out = collect_stream(
-            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
-            source,
-        );
-        let values = sse_data_values(&responses_out);
-        let compaction_events = values
-            .iter()
-            .filter(|value| {
-                matches!(
-                    value.get("type").and_then(Value::as_str),
-                    Some("response.output_item.added") | Some("response.output_item.done")
-                ) && value
-                    .pointer("/item/encrypted_content")
-                    .and_then(Value::as_str)
-                    == Some("enc_empty_id")
-            })
-            .count();
-        // Target emits one added+done pair for a single CompactionItem.
-        assert_eq!(
-            compaction_events, 2,
-            "empty-id compaction must be emitted once, got {responses_out}"
-        );
-        let completed = values
-            .iter()
-            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
-            .expect("completed event");
-        let output = completed
-            .pointer("/response/output")
-            .and_then(Value::as_array)
-            .expect("completed output");
-        let compaction_count = output
-            .iter()
-            .filter(|item| {
-                item.get("type").and_then(Value::as_str) == Some("compaction")
-                    && item.get("encrypted_content").and_then(Value::as_str)
-                        == Some("enc_empty_id")
-            })
-            .count();
-        assert_eq!(
-            compaction_count, 1,
-            "completed output should include exactly one empty-id compaction, got {output:?}"
-        );
+        assert!(output.contains("hello"));
+        assert!(!output.contains("enc_stream_1"));
     }
 
     #[test]
@@ -6106,12 +5969,13 @@ data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a"
 
     #[test]
     fn responses_custom_tool_extension_is_preserved_for_chat_roundtrip() {
-        let chat = convert_request_value(
+        let (chat, context) = convert_request_value_with_context(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
             read_fixture_json("openai_responses/custom_tool.request.json"),
         )
         .unwrap();
 
+        assert!(context.is_empty());
         let tools = chat["tools"].as_array().unwrap();
         assert!(tools
             .iter()
@@ -6126,6 +5990,61 @@ data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a"
                         .any(|tool_call| tool_call["type"] == TOOL_TYPE_RESPONSES_CUSTOM_TOOL)
                 })
         }));
+    }
+
+    #[test]
+    fn responses_namespace_tool_requires_chat_context_without_tool_search() {
+        let (chat, context) = convert_request_value_with_context(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            json!({
+                "model": "model-a",
+                "input": "Use Gmail search.",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "gmail",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "description": "Search Gmail",
+                        "parameters": {"type": "object"}
+                    }]
+                }]
+            }),
+        )
+        .unwrap();
+
+        assert!(!context.is_empty());
+        assert_eq!(chat["tools"][0]["function"]["name"], "gmail__search");
+
+        let responses = convert_response_value_with_context(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            json!({
+                "id": "chatcmpl_namespace",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "model-a",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call_search",
+                            "type": "function",
+                            "function": {
+                                "name": "gmail__search",
+                                "arguments": "{\"query\":\"in:inbox\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+            Some(&context),
+        )
+        .unwrap();
+
+        assert_eq!(responses["output"][0]["namespace"], "gmail");
+        assert_eq!(responses["output"][0]["name"], "search");
     }
 
     #[test]
@@ -6344,6 +6263,161 @@ data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a"
         assert!(output.contains("\"type\":\"tool_search_call\""));
         assert!(output.contains("\"execution\":\"client\""));
         assert!(output.contains("\"query\":\"Gmail search emails\""));
+    }
+
+    #[test]
+    fn responses_namespace_tools_roundtrip_through_anthropic_and_gemini() {
+        let flat_name = "gmail__search";
+        for target in [AiProtocol::AnthropicMessages, AiProtocol::GeminiNative] {
+            let request = json!({
+                "model": "model-a",
+                "input": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_old",
+                        "namespace": "gmail",
+                        "name": "search",
+                        "arguments": "{\"query\":\"old\"}"
+                    },
+                    {"type": "function_call_output", "call_id": "call_old", "output": "ok"}
+                ],
+                "tools": [{
+                    "type": "namespace",
+                    "name": "gmail",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "description": "Search Gmail",
+                        "parameters": {"type": "object"}
+                    }]
+                }],
+                "tool_choice": {"type": "function", "namespace": "gmail", "name": "search"}
+            });
+            let (converted_request, context) = convert_request_value_with_context(
+                ConversionRoute::new(AiProtocol::OpenAiResponses, target),
+                request,
+            )
+            .unwrap();
+            assert!(!context.is_empty());
+
+            match target {
+                AiProtocol::AnthropicMessages => {
+                    assert_eq!(converted_request["tools"][0]["name"], flat_name);
+                    assert_eq!(converted_request["tool_choice"]["name"], flat_name);
+                    assert_eq!(
+                        converted_request["messages"][0]["content"][0]["name"],
+                        flat_name
+                    );
+                }
+                AiProtocol::GeminiNative => {
+                    assert_eq!(
+                        converted_request["tools"][0]["functionDeclarations"][0]["name"],
+                        flat_name
+                    );
+                    assert_eq!(
+                        converted_request["toolConfig"]["functionCallingConfig"]
+                            ["allowedFunctionNames"][0],
+                        flat_name
+                    );
+                    assert_eq!(
+                        converted_request["contents"][0]["parts"][0]["functionCall"]["name"],
+                        flat_name
+                    );
+                }
+                _ => unreachable!(),
+            }
+
+            let upstream_response = match target {
+                AiProtocol::AnthropicMessages => json!({
+                    "id": "msg_namespace",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "model-a",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_new",
+                        "name": flat_name,
+                        "input": {"query": "new"}
+                    }],
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                }),
+                AiProtocol::GeminiNative => json!({
+                    "responseId": "gemini_namespace",
+                    "modelVersion": "model-a",
+                    "candidates": [{
+                        "content": {"role": "model", "parts": [{
+                            "functionCall": {
+                                "id": "call_new",
+                                "name": flat_name,
+                                "args": {"query": "new"}
+                            }
+                        }]},
+                        "finishReason": "STOP"
+                    }]
+                }),
+                _ => unreachable!(),
+            };
+            let responses = convert_response_value_with_context(
+                ConversionRoute::new(target, AiProtocol::OpenAiResponses),
+                upstream_response,
+                Some(&context),
+            )
+            .unwrap();
+            assert_eq!(responses["output"][0]["type"], "function_call");
+            assert_eq!(responses["output"][0]["namespace"], "gmail");
+            assert_eq!(responses["output"][0]["name"], "search");
+
+            let namespace_stream = stream_fixture(target).replace("read_file", flat_name);
+            let stream_output = collect_stream_with_context(
+                ConversionRoute::new(target, AiProtocol::OpenAiResponses),
+                namespace_stream,
+                context,
+            );
+            assert!(stream_output.contains("\"namespace\":\"gmail\""));
+            assert!(stream_output.contains("\"name\":\"search\""));
+        }
+    }
+
+    #[test]
+    fn responses_namespace_tool_name_collisions_fail_closed() {
+        let top_level_collision = json!({
+            "model": "model-a",
+            "input": "hi",
+            "tools": [
+                {"type": "function", "name": "foo__bar", "parameters": {"type": "object"}},
+                {"type": "namespace", "name": "foo", "tools": [
+                    {"type": "function", "name": "bar", "parameters": {"type": "object"}}
+                ]}
+            ]
+        });
+        let error = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            top_level_collision,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("foo__bar"));
+        assert!(error.to_string().contains("top-level tool"));
+
+        let namespace_collision = json!({
+            "model": "model-a",
+            "input": "hi",
+            "tools": [
+                {"type": "namespace", "name": "foo", "tools": [
+                    {"type": "function", "name": "bar__baz", "parameters": {"type": "object"}}
+                ]},
+                {"type": "namespace", "name": "foo__bar", "tools": [
+                    {"type": "function", "name": "baz", "parameters": {"type": "object"}}
+                ]}
+            ]
+        });
+        let error = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            namespace_collision,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("foo__bar__baz"));
+        assert!(error.to_string().contains("namespace tool"));
     }
 
     #[test]

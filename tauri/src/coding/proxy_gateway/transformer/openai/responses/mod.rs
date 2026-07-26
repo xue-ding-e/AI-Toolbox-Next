@@ -8,6 +8,7 @@ mod tests;
 
 use crate::coding::proxy_gateway::transformer::error::ProtocolConversionError;
 use crate::coding::proxy_gateway::transformer::llm::{Request, Response};
+use crate::coding::proxy_gateway::transformer::openai::codex_tools::validate_responses_namespace_tool_names;
 use crate::coding::proxy_gateway::transformer::shared::{
     extract_error_code, extract_error_message, extract_error_param, extract_error_type,
 };
@@ -20,8 +21,8 @@ pub use request::{
     responses_request_to_llm,
 };
 pub use response::{
-    llm_response_to_responses, llm_response_to_responses_compact, responses_compact_response_to_llm,
-    responses_response_to_llm,
+    llm_response_to_responses, llm_response_to_responses_compact,
+    responses_compact_response_to_llm, responses_response_to_llm,
 };
 
 pub struct OpenAiResponsesInbound;
@@ -33,6 +34,7 @@ impl InboundTransformer for OpenAiResponsesInbound {
     }
 
     fn request_to_llm(&self, body: Value) -> Result<Request, ProtocolConversionError> {
+        validate_responses_namespace_tool_names(&body)?;
         Ok(responses_request_to_llm(body))
     }
 

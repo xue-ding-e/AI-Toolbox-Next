@@ -225,7 +225,7 @@ pub(super) fn decode_inbound_request_body(request: &mut DebugHttpRequest) -> Res
         return Err(format!("Unsupported request content-encoding: {encoding}"));
     }
 
-    let decompressed = match decompress_body(&encoding, &request.body) {
+    let decompressed = match decompress_body(&encoding, &request.body, MAX_REQUEST_BODY_BYTES) {
         Ok(Some(decompressed)) => decompressed,
         Ok(None) => {
             return Err(format!("Unsupported request content-encoding: {encoding}"));
@@ -236,12 +236,6 @@ pub(super) fn decode_inbound_request_body(request: &mut DebugHttpRequest) -> Res
             ));
         }
     };
-
-    if decompressed.len() > MAX_REQUEST_BODY_BYTES {
-        return Err(
-            "Decompressed gateway request body exceeds the maximum allowed size".to_string(),
-        );
-    }
 
     request.body = decompressed;
     request.headers.retain(|(name, _)| {
@@ -532,10 +526,7 @@ mod tests {
             headers: vec![
                 ("content-type".to_string(), "application/json".to_string()),
                 ("content-encoding".to_string(), "zstd".to_string()),
-                (
-                    "content-length".to_string(),
-                    compressed.len().to_string(),
-                ),
+                ("content-length".to_string(), compressed.len().to_string()),
             ],
             body: compressed,
         };

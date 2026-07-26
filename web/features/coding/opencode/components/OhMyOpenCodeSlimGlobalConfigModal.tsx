@@ -5,6 +5,7 @@ import JsonEditor from '@/components/common/JsonEditor';
 import { SLIM_AGENT_TYPES, type OhMyOpenCodeSlimGlobalConfig, type OhMyOpenCodeSlimGlobalConfigInput } from '@/types/ohMyOpenCodeSlim';
 import OhMyOpenCodeSlimCouncilForm, {
   buildSlimCouncilConfig,
+  mergeCouncilAgentIntoAgents,
   parseSlimCouncilFormValues,
   type SlimCouncilModelOption,
 } from './OhMyOpenCodeSlimCouncilForm';
@@ -135,19 +136,11 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
         const otherFieldsObject = { ...(nextOtherFields ?? {}) };
         const existingAgents = asObject(otherFieldsObject.agents) ?? {};
         const existingCouncilAgent = asObject(existingAgents.council) ?? {};
-        const {
-          model: _existingModel,
-          variant: _existingVariant,
-          prompt: _existingPrompt,
-          ...unmanagedCouncilFields
-        } = existingCouncilAgent;
-        otherFieldsObject.agents = {
-          ...existingAgents,
-          council: {
-            ...unmanagedCouncilFields,
-            ...councilBuildResult.councilAgent,
-          },
-        };
+        otherFieldsObject.agents = mergeCouncilAgentIntoAgents(
+          existingAgents,
+          councilBuildResult.councilAgent,
+          existingCouncilAgent,
+        );
         nextOtherFields = otherFieldsObject;
       } else if (nextOtherFields) {
         const otherFieldsObject = { ...nextOtherFields };

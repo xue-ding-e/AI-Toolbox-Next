@@ -4,7 +4,14 @@ export interface CouncilAgentFormValue {
   model?: string;
   variant?: string;
   prompt?: string;
+  modelSourceValue?: unknown;
 }
+
+type SerializedCouncilAgentConfig = Record<string, unknown> & {
+  model?: unknown;
+  variant?: string;
+  prompt?: string;
+};
 
 interface CouncilCouncillorFormValue {
   name?: string;
@@ -80,18 +87,78 @@ const parseAgentModel = (modelValue: unknown): string | undefined => {
   return undefined;
 };
 
+const modelEntryId = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    return value.trim() || undefined;
+  }
+  const modelObject = asObject(value);
+  return typeof modelObject?.id === 'string' ? modelObject.id.trim() || undefined : undefined;
+};
+
+const modelEntriesFromValue = (value: unknown): unknown[] => {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter((entry) => modelEntryId(entry));
+};
+
+const mergeModelFallbacks = (modelValue: unknown, fallbackValue: unknown): unknown => {
+  const fallbackEntries = modelEntriesFromValue(fallbackValue);
+  if (fallbackEntries.length === 0) {
+    return modelValue;
+  }
+
+  const entries = modelEntriesFromValue(modelValue);
+  const seenModelIds = new Set(entries.map(modelEntryId).filter((id): id is string => Boolean(id)));
+  for (const fallbackEntry of fallbackEntries) {
+    const fallbackId = modelEntryId(fallbackEntry);
+    if (fallbackId && !seenModelIds.has(fallbackId)) {
+      seenModelIds.add(fallbackId);
+      entries.push(fallbackEntry);
+    }
+  }
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return entries.length === 1 ? entries[0] : entries;
+};
+
+const replacePrimaryModel = (modelValue: unknown, nextModel: string): unknown => {
+  const currentPrimaryModel = parseAgentModel(modelValue);
+  if (currentPrimaryModel === nextModel) {
+    return modelValue;
+  }
+
+  if (Array.isArray(modelValue)) {
+    const nextEntries = [...modelValue];
+    const primaryIndex = nextEntries.findIndex((entry) => modelEntryId(entry));
+    if (primaryIndex < 0) {
+      nextEntries.unshift(nextModel);
+    } else {
+      const primaryObject = asObject(nextEntries[primaryIndex]);
+      nextEntries[primaryIndex] = primaryObject
+        ? { ...primaryObject, id: nextModel }
+        : nextModel;
+    }
+    return nextEntries;
+  }
+
+  const primaryObject = asObject(modelValue);
+  return primaryObject ? { ...primaryObject, id: nextModel } : nextModel;
+};
+
 const serializeCouncilAgentConfig = (
   agent: CouncilAgentFormValue | undefined,
-): CouncilAgentFormValue | undefined => {
+): SerializedCouncilAgentConfig | undefined => {
   if (!agent) {
     return undefined;
   }
 
+  const primaryModel = agent.model?.trim();
+
   const result = cleanObject({
-    model: agent.model?.trim(),
+    model: primaryModel ? replacePrimaryModel(agent.modelSourceValue, primaryModel) : undefined,
     variant: agent.variant?.trim(),
     prompt: agent.prompt?.trim(),
-  }) as CouncilAgentFormValue;
+  }) as SerializedCouncilAgentConfig;
 
   return Object.keys(result).length > 0 ? result : undefined;
 };
@@ -107,6 +174,9 @@ const parseCouncilAgentFormValue = (rawAgent: unknown): CouncilAgentFormValue | 
     variant: typeof agentObject.variant === 'string' ? agentObject.variant : undefined,
     prompt: typeof agentObject.prompt === 'string' ? agentObject.prompt : undefined,
   }) as CouncilAgentFormValue;
+  if (result.model && Object.prototype.hasOwnProperty.call(agentObject, 'model')) {
+    result.modelSourceValue = agentObject.model;
+  }
 
   return Object.keys(result).length > 0 ? result : undefined;
 };
@@ -166,14 +236,20 @@ export const parseSlimCouncilFormValues = (
 
   const council = asObject(input.council);
   const agentsObject = asObject(input.agents);
-  const preferredCouncilAgent =
-    parseCouncilAgentFormValue(input.councilAgent) ??
-    parseCouncilAgentFormValue(agentsObject?.council) ??
-    parseCouncilAgentFormValue(asObject(council?.master));
+  const preferredCouncilAgentObject =
+    asObject(input.councilAgent) ??
+    asObject(agentsObject?.council) ??
+    asObject(council?.master);
+  const preferredCouncilAgent = preferredCouncilAgentObject
+    ? parseCouncilAgentFormValue({
+        ...preferredCouncilAgentObject,
+        model: mergeModelFallbacks(preferredCouncilAgentObject.model, council?.master_fallback),
+      })
+    : undefined;
 
   if (!council) {
     return {
-      councilEnabled: false,
+      councilEnabled: Boolean(preferredCouncilAgent),
       councilAgent: preferredCouncilAgent,
       councilDefaultPreset: undefined,
       councilCouncillorsTimeout: 180000,
@@ -221,7 +297,7 @@ export const buildSlimCouncilConfig = (
   t: (key: string, options?: Record<string, unknown>) => string,
 ): {
   council: Record<string, unknown> | null;
-  councilAgent?: CouncilAgentFormValue;
+  councilAgent?: SerializedCouncilAgentConfig;
   errorMessage?: string;
 } => {
   if (!formValues.councilEnabled) {
@@ -229,7 +305,7 @@ export const buildSlimCouncilConfig = (
   }
 
   const councilAgent = serializeCouncilAgentConfig(formValues.councilAgent as CouncilAgentFormValue | undefined);
-  if (!councilAgent?.model || typeof councilAgent.model !== 'string') {
+  if (!councilAgent?.model) {
     return {
       council: null,
       errorMessage: t('opencode.ohMyOpenCodeSlim.councilAgentModelRequired'),
@@ -240,8 +316,23 @@ export const buildSlimCouncilConfig = (
     ? (formValues.councilPresets as CouncilPresetFormValue[])
     : [];
 
+  const councilOtherFields = asObject(formValues.councilOtherFields);
+  if (councilOtherFields) {
+    const reservedCouncilKey = Object.keys(councilOtherFields).find((key) =>
+      RESERVED_COUNCIL_OTHER_FIELD_KEYS.has(key),
+    );
+    if (reservedCouncilKey) {
+      return {
+        council: null,
+        errorMessage: t('opencode.ohMyOpenCodeSlim.councilOtherFieldsReservedKey', {
+          key: reservedCouncilKey,
+        }),
+      };
+    }
+  }
+
   if (presets.length === 0) {
-    return { council: null, errorMessage: t('opencode.ohMyOpenCodeSlim.councilPresetRequired') };
+    return { council: null, councilAgent };
   }
 
   const serializedPresets: Record<string, Record<string, unknown>> = {};
@@ -330,21 +421,6 @@ export const buildSlimCouncilConfig = (
     };
   }
 
-  const councilOtherFields = asObject(formValues.councilOtherFields);
-  if (councilOtherFields) {
-    const reservedCouncilKey = Object.keys(councilOtherFields).find((key) =>
-      RESERVED_COUNCIL_OTHER_FIELD_KEYS.has(key),
-    );
-    if (reservedCouncilKey) {
-      return {
-        council: null,
-        errorMessage: t('opencode.ohMyOpenCodeSlim.councilOtherFieldsReservedKey', {
-          key: reservedCouncilKey,
-        }),
-      };
-    }
-  }
-
   // Upstream no longer honors council.master / master_timeout / master_fallback.
   // Synthesizer model is returned separately as councilAgent for agents.council.
   const councilConfig = cleanObject({
@@ -364,7 +440,7 @@ export const buildSlimCouncilConfig = (
 
 export const mergeCouncilAgentIntoAgents = (
   agents: Record<string, unknown> | undefined,
-  councilAgent: CouncilAgentFormValue | undefined,
+  councilAgent: SerializedCouncilAgentConfig | undefined,
   existingCouncilAgent?: Record<string, unknown> | null,
 ): Record<string, unknown> | undefined => {
   const nextAgents: Record<string, unknown> = { ...(agents ?? {}) };
@@ -385,9 +461,14 @@ export const mergeCouncilAgentIntoAgents = (
     ...unmanagedFields
   } = existing;
 
+  const nextModel = typeof councilAgent.model === 'string'
+    ? replacePrimaryModel(existing.model, councilAgent.model)
+    : councilAgent.model;
+
   nextAgents.council = cleanObject({
     ...unmanagedFields,
     ...councilAgent,
+    model: nextModel,
   });
 
   return nextAgents;

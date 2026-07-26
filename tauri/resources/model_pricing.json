@@ -546,10 +546,10 @@
   {
     "model_id": "claude-sonnet-5",
     "display_name": "Claude Sonnet 5",
-    "input_cost_per_million": "2",
-    "output_cost_per_million": "10",
-    "cache_read_cost_per_million": "0.20",
-    "cache_creation_cost_per_million": "2.50"
+    "input_cost_per_million": "3",
+    "output_cost_per_million": "15",
+    "cache_read_cost_per_million": "0.30",
+    "cache_creation_cost_per_million": "3.75"
   },
   {
     "model_id": "claude-fable-5",
