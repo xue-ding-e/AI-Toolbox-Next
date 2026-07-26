@@ -20,7 +20,7 @@
 
 1. **Startup pass** (after global ~90s delay): every registered tool with `run_on_startup` runs once.
 2. **Interval pass**: tools with `interval` run when due; tick granularity is 60s; per-tool `in_flight` prevents re-entry.
-3. Candidates are **applied** accounts only (each tool filters; virtual `__local__` excluded).
+3. Candidates are **persisted OAuth accounts** (each tool filters; virtual `__local__` excluded). Applied and non-applied both refresh tokens into SQLite; only applied accounts rewrite live auth files.
 4. Interval timing is **after the last completed pass** (startup resets the interval clock). Example: Grok startup at T+90s, next interval ≈ T+90s+15m — not every 15m from process start.
 
 ### Defaults
@@ -41,4 +41,4 @@
 ## Minimal verification
 
 - `cargo test --lib coding::auth_refresh`
-- With an applied Grok account near expiry: after app start + ~90s, token expiry/last_refresh update without clicking UI.
+- With a persisted Grok OAuth account near expiry (applied or not): after app start + ~90s, token expiry/last_refresh update without clicking UI. Non-applied must not rewrite live auth.

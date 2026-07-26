@@ -2040,7 +2040,10 @@ pub async fn delete_codex_official_account(
     Ok(())
 }
 
-/// Background / startup pass: ensure_fresh for every applied Codex official account.
+/// Background / startup pass: ensure_fresh for every persisted Codex official account.
+///
+/// Non-applied accounts still refresh OAuth into SQLite so login-only tokens do not die.
+/// Live `auth.json` is rewritten only for applied accounts.
 pub async fn refresh_applied_codex_accounts_if_needed(
     db: &SqliteDbState,
     app: &tauri::AppHandle,
@@ -2049,7 +2052,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
         Ok(db_list(conn, DbTable::CodexOfficialAccount, None)?
             .into_iter()
             .map(adapter::from_db_value_official_account)
-            .filter(|account| account.is_applied && account.id != LOCAL_OFFICIAL_ACCOUNT_ID)
+            .filter(|account| account.id != LOCAL_OFFICIAL_ACCOUNT_ID)
             .collect::<Vec<_>>())
     })?;
 
@@ -2062,7 +2065,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
             Ok(value) => value,
             Err(error) => {
                 log::debug!(
-                    "Codex applied account '{}' snapshot parse failed: {error}",
+                    "Codex official account '{}' snapshot parse failed: {error}",
                     account.id
                 );
                 continue;
@@ -2075,9 +2078,12 @@ pub async fn refresh_applied_codex_accounts_if_needed(
                         persist_refreshed_account_snapshot(db, &account, &refreshed).await
                     {
                         log::debug!(
-                            "Codex applied account '{}' persist failed: {error}",
+                            "Codex official account '{}' persist failed: {error}",
                             account.id
                         );
+                        continue;
+                    }
+                    if !account.is_applied {
                         continue;
                     }
                     match read_auth_json_from_disk(Some(db)).await {
@@ -2085,7 +2091,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
                             let merged = merge_official_runtime_auth(&current_auth, &refreshed);
                             if let Err(error) = write_auth_json_to_disk(db, &merged).await {
                                 log::debug!(
-                                    "Codex applied account '{}' runtime write failed: {error}",
+                                    "Codex official account '{}' runtime write failed: {error}",
                                     account.id
                                 );
                             } else {
@@ -2094,7 +2100,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
                         }
                         Err(error) => {
                             log::debug!(
-                                "Codex applied account '{}' runtime read failed: {error}",
+                                "Codex official account '{}' runtime read failed: {error}",
                                 account.id
                             );
                         }
@@ -2103,7 +2109,7 @@ pub async fn refresh_applied_codex_accounts_if_needed(
             }
             Err(error) => {
                 log::debug!(
-                    "Codex applied account '{}' ensure_fresh failed: {error}",
+                    "Codex official account '{}' ensure_fresh failed: {error}",
                     account.id
                 );
             }

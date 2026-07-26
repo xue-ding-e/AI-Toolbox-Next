@@ -2398,7 +2398,9 @@
       "deviceAuthTitle": "Codex device sign-in",
       "deviceAuthHint": "Open the sign-in page in a browser and enter the device code below.",
       "deviceAuthOpenBrowser": "Open sign-in page",
-      "deviceAuthStatus": "Status: {{status}}, {{seconds}} seconds remaining"
+      "deviceAuthStatus": "Status: {{status}}, {{seconds}} seconds remaining",
+      "officialAccountRefreshTokenSuccess": "OAuth token refreshed",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh token is invalid. Please re-login with OAuth."
     },
     "import": {
       "title": "Import from OpenCode",
@@ -2726,7 +2728,9 @@
       "providerProfileHelp": "Built-in channels fill API format and Base URL, and Base URL can still be edited. Custom channels can choose the upstream API format manually.",
       "formName": "Name",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
-      "apiFormatOpenAIResponses": "OpenAI Responses"
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "officialAccountRefreshTokenSuccess": "OAuth token refreshed",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh token is invalid. Please re-login with OAuth."
     },
     "fetchModels": {
       "button": "Fetch Models",
@@ -4206,7 +4210,10 @@
       "deviceAuthHint": "Open the xAI authorization page in your browser and enter the device code below. The account is saved automatically after authorization.",
       "modelNameCreateHint": "Defaults to grok-4.5 and reasoning effort high; both are editable. After the channel is created, add/remove/edit models from the provider list.",
       "modelNameEditHint": "Pick the default model from models already added on this channel; effort is written to that model. Manage the full list on the provider card.",
-      "modelNameOfficialHint": "Official default model id. You can fetch official models to help fill this field."
+      "modelNameOfficialHint": "Official default model id. You can fetch official models to help fill this field.",
+      "officialAccountRefreshToken": "Refresh Token",
+      "officialAccountRefreshTokenSuccess": "OAuth token refreshed",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh token is invalid. Please re-login with OAuth."
     },
     "providerDisabled": "Provider disabled",
     "providerEnabled": "Provider enabled",

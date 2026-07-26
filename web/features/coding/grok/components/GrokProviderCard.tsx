@@ -14,6 +14,7 @@ import {
   LinkOutlined,
   SyncOutlined,
   EyeOutlined,
+  KeyOutlined,
   PlusOutlined,
   CloudDownloadOutlined,
 } from '@ant-design/icons';
@@ -92,8 +93,10 @@ interface GrokProviderCardProps {
   onOfficialAccountApply?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
   onOfficialAccountDelete?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
   onOfficialAccountRefresh?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
+  onOfficialAccountRefreshToken?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
   onOfficialAccountViewDetails?: (provider: GrokProvider, account: GrokOfficialAccount) => void;
   refreshingOfficialAccountId?: string | null;
+  refreshingOfficialTokenAccountId?: string | null;
   savingOfficialAccountId?: string | null;
   connectivityStatus?: ProviderConnectivityStatusItem;
   gatewayTakeoverActive?: boolean;
@@ -126,8 +129,10 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
   onOfficialAccountApply,
   onOfficialAccountDelete,
   onOfficialAccountRefresh,
+  onOfficialAccountRefreshToken,
   onOfficialAccountViewDetails,
   refreshingOfficialAccountId,
+  refreshingOfficialTokenAccountId,
   savingOfficialAccountId,
   connectivityStatus,
   gatewayTakeoverActive = false,
@@ -563,6 +568,18 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                   >
                     {t('grok.provider.officialAccountRefresh')}
                   </Button>
+                  {account.id !== GROK_LOCAL_PROVIDER_ID && (
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<KeyOutlined />}
+                      onClick={() => onOfficialAccountRefreshToken?.(provider, account)}
+                      loading={refreshingOfficialTokenAccountId === account.id}
+                      style={{ height: 'auto', paddingInline: 4, fontSize: 11 }}
+                    >
+                      {t('grok.provider.officialAccountRefreshToken')}
+                    </Button>
+                  )}
                   <Button
                     type="text"
                     size="small"

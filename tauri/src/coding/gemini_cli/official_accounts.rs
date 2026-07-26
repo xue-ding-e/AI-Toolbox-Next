@@ -1363,7 +1363,10 @@ pub async fn delete_gemini_cli_official_account(
     Ok(())
 }
 
-/// Background / startup pass: ensure_fresh for every applied Gemini official account.
+/// Background / startup pass: ensure_fresh for every persisted Gemini official account.
+///
+/// Non-applied accounts still refresh OAuth into SQLite so login-only tokens do not die.
+/// Live `oauth_creds.json` is rewritten only for applied accounts.
 pub async fn refresh_applied_gemini_cli_accounts_if_needed(
     db: &SqliteDbState,
     app: &tauri::AppHandle,
@@ -1372,12 +1375,8 @@ pub async fn refresh_applied_gemini_cli_accounts_if_needed(
         Ok(db_list(conn, DbTable::GeminiCliOfficialAccount, None)?
             .into_iter()
             .map(adapter::from_db_value_official_account)
-            // Skip virtual local runtime rows; only persisted applied OAuth accounts.
-            .filter(|account| {
-                account.is_applied
-                    && !account.is_virtual
-                    && account.id != LOCAL_OFFICIAL_ACCOUNT_ID
-            })
+            // Skip virtual local runtime rows; refresh all persisted OAuth accounts.
+            .filter(|account| !account.is_virtual && account.id != LOCAL_OFFICIAL_ACCOUNT_ID)
             .collect::<Vec<_>>())
     })?;
 
@@ -1390,7 +1389,7 @@ pub async fn refresh_applied_gemini_cli_accounts_if_needed(
             Ok(value) => value,
             Err(error) => {
                 log::debug!(
-                    "Gemini applied account '{}' snapshot parse failed: {error}",
+                    "Gemini official account '{}' snapshot parse failed: {error}",
                     account.id
                 );
                 continue;
@@ -1411,7 +1410,7 @@ pub async fn refresh_applied_gemini_cli_accounts_if_needed(
                         Ok(value) => value,
                         Err(error) => {
                             log::debug!(
-                                "Gemini applied account '{}' content build failed: {error}",
+                                "Gemini official account '{}' content build failed: {error}",
                                 account.id
                             );
                             continue;
@@ -1426,14 +1425,17 @@ pub async fn refresh_applied_gemini_cli_accounts_if_needed(
                     content.last_limits_fetched_at = account.last_limits_fetched_at.clone();
                     if let Err(error) = persist_account_content(db, &account, content).await {
                         log::debug!(
-                            "Gemini applied account '{}' persist failed: {error}",
+                            "Gemini official account '{}' persist failed: {error}",
                             account.id
                         );
                         continue;
                     }
+                    if !account.is_applied {
+                        continue;
+                    }
                     if let Err(error) = write_oauth_creds_to_disk(db, &refreshed).await {
                         log::debug!(
-                            "Gemini applied account '{}' runtime write failed: {error}",
+                            "Gemini official account '{}' runtime write failed: {error}",
                             account.id
                         );
                     } else {
@@ -1443,7 +1445,7 @@ pub async fn refresh_applied_gemini_cli_accounts_if_needed(
             }
             Err(error) => {
                 log::debug!(
-                    "Gemini applied account '{}' ensure_fresh failed: {error}",
+                    "Gemini official account '{}' ensure_fresh failed: {error}",
                     account.id
                 );
             }

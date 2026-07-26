@@ -315,7 +315,16 @@ pub async fn refresh_grok_official_account(
 ) -> Result<GrokOfficialAccount, String> {
     let account = get_account(state.db(), &account_id)?
         .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
-    ensure_fresh_grok_account_auth(state.db(), Some(&app), account, true).await
+    match ensure_fresh_grok_account_auth(state.db(), Some(&app), account, true).await {
+        Ok(value) => {
+            let _ = clear_account_last_error(state.db(), &account_id);
+            Ok(value)
+        }
+        Err(error) => {
+            let _ = persist_usage_error(state.db(), &account_id, &error);
+            Err(error)
+        }
+    }
 }
 
 /// Fetch Grok CLI subscription / weekly credits from cli-chat-proxy and persist limit fields.
@@ -329,8 +338,18 @@ pub async fn refresh_grok_official_account_limits(
     let account = get_account(state.db(), &account_id)?
         .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
     ensure_official_provider(state.db(), &account.provider_id)?;
-    let account =
-        ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await?;
+    let account = match ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await
+    {
+        Ok(value) => {
+            // Clear stale OAuth refresh errors once token is healthy again.
+            let _ = clear_account_last_error(state.db(), &account_id);
+            value
+        }
+        Err(error) => {
+            let _ = persist_usage_error(state.db(), &account_id, &error);
+            return Err(error);
+        }
+    };
     let snapshot_text = account
         .auth_snapshot
         .as_deref()
@@ -966,7 +985,7 @@ async fn request_xai_token_refresh(
     refresh_token: &str,
 ) -> Result<TokenResponse, String> {
     let client = http_client::client_with_timeout(db, 30).await?;
-    client
+    let response = client
         .post(token_endpoint)
         .form(&[
             ("grant_type", "refresh_token"),
@@ -975,12 +994,66 @@ async fn request_xai_token_refresh(
         ])
         .send()
         .await
-        .map_err(|error| format!("xAI token refresh failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("xAI token refresh failed: {error}"))?
-        .json()
+        .map_err(|error| format!("xAI token refresh failed: {error}"))?;
+    let status = response.status();
+    let body_text = response
+        .text()
         .await
-        .map_err(|error| format!("Failed to parse xAI token refresh: {error}"))
+        .map_err(|error| format!("Failed to read xAI token refresh body: {error}"))?;
+    let token: TokenResponse = serde_json::from_str(&body_text).unwrap_or(TokenResponse {
+        access_token: None,
+        refresh_token: None,
+        expires_in: None,
+        error: None,
+        error_description: None,
+    });
+    if !status.is_success() || token.error.is_some() || token.access_token.is_none() {
+        return Err(format_xai_token_refresh_error(status.as_u16(), &body_text, &token));
+    }
+    Ok(token)
+}
+
+fn format_xai_token_refresh_error(status: u16, body_text: &str, token: &TokenResponse) -> String {
+    let error_code = token
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let error_description = token
+        .error_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let body_looks_like_invalid_grant = body_text.to_ascii_lowercase().contains("invalid_grant");
+    match (error_code, error_description) {
+        (Some("invalid_grant"), Some(description)) => format!(
+            "xAI refresh token is invalid or revoked (HTTP {status}, invalid_grant): {description}. Re-login with Device Code is required."
+        ),
+        (Some("invalid_grant"), None) => format!(
+            "xAI refresh token is invalid or revoked (HTTP {status}, invalid_grant). Re-login with Device Code is required."
+        ),
+        (None, _) if status == 400 && body_looks_like_invalid_grant => format!(
+            "xAI refresh token is invalid or revoked (HTTP {status}, invalid_grant). Re-login with Device Code is required."
+        ),
+        (None, _) if status == 400 => format!(
+            "xAI token refresh failed (HTTP {status}). Refresh token is likely invalid or revoked; Re-login with Device Code is required."
+        ),
+        (Some(code), Some(description)) => {
+            format!("xAI token refresh failed (HTTP {status}, {code}): {description}")
+        }
+        (Some(code), None) => format!("xAI token refresh failed (HTTP {status}, {code})"),
+        (None, Some(description)) => {
+            format!("xAI token refresh failed (HTTP {status}): {description}")
+        }
+        (None, None) => {
+            let trimmed = body_text.trim();
+            if trimmed.is_empty() {
+                format!("xAI token refresh failed (HTTP {status})")
+            } else {
+                format!("xAI token refresh failed (HTTP {status}): {trimmed}")
+            }
+        }
+    }
 }
 
 /// Refresh OAuth when forced or when access token is within the lead window.
@@ -1015,11 +1088,29 @@ async fn ensure_fresh_grok_account_auth(
         return Ok(account);
     }
 
-    let refresh_token = refresh_token_from_snapshot(&snapshot)
-        .ok_or_else(|| "Grok account does not contain a refresh token".to_string())?;
-    let token_endpoint = token_endpoint_from_account(&account, &snapshot)
-        .ok_or_else(|| "Grok account does not contain a token endpoint".to_string())?;
-    let token_endpoint = validate_xai_endpoint(&token_endpoint, "token_endpoint")?;
+    let refresh_token = match refresh_token_from_snapshot(&snapshot) {
+        Some(value) => value,
+        None => {
+            let error = "Grok account does not contain a refresh token. Re-login with Device Code is required.".to_string();
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
+    let token_endpoint = match token_endpoint_from_account(&account, &snapshot) {
+        Some(value) => value,
+        None => {
+            let error = "Grok account does not contain a token endpoint".to_string();
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
+    let token_endpoint = match validate_xai_endpoint(&token_endpoint, "token_endpoint") {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
 
     let cached_response = OAUTH_REFRESH_CACHE
         .lock()
@@ -1029,15 +1120,19 @@ async fn ensure_fresh_grok_account_auth(
         .map(|(_, response)| response.clone());
     let token_response = match cached_response {
         Some(response) => response,
-        None => {
-            let response =
-                request_xai_token_refresh(db, &token_endpoint, &refresh_token).await?;
-            OAUTH_REFRESH_CACHE.lock().await.insert(
-                refresh_token.clone(),
-                (Instant::now(), response.clone()),
-            );
-            response
-        }
+        None => match request_xai_token_refresh(db, &token_endpoint, &refresh_token).await {
+            Ok(response) => {
+                OAUTH_REFRESH_CACHE.lock().await.insert(
+                    refresh_token.clone(),
+                    (Instant::now(), response.clone()),
+                );
+                response
+            }
+            Err(error) => {
+                let _ = persist_usage_error(db, &account.id, &error);
+                return Err(error);
+            }
+        },
     };
 
     let entry = find_xai_auth_entry(&snapshot)
@@ -1050,19 +1145,38 @@ async fn ensure_fresh_grok_account_auth(
         .unwrap_or(XAI_ISSUER)
         .to_string();
     let userinfo_endpoint = format!("{}/oauth2/userinfo", issuer.trim_end_matches('/'));
-    let client = http_client::client_with_timeout(db, 30).await?;
-    let refreshed_snapshot = build_xai_auth_snapshot(
+    let client = match http_client::client_with_timeout(db, 30).await {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
+    let refreshed_snapshot = match build_xai_auth_snapshot(
         &client,
         &token_response,
         &issuer,
         &userinfo_endpoint,
         Some(&snapshot),
     )
-    .await?;
-    let snapshot_text = serde_json::to_string_pretty(&refreshed_snapshot)
-        .map_err(|error| format!("Failed to serialize Grok auth snapshot: {error}"))?;
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
+    let snapshot_text = match serde_json::to_string_pretty(&refreshed_snapshot) {
+        Ok(value) => value,
+        Err(error) => {
+            let message = format!("Failed to serialize Grok auth snapshot: {error}");
+            let _ = persist_usage_error(db, &account.id, &message);
+            return Err(message);
+        }
+    };
     let (email, subject) = identity_from_snapshot(&refreshed_snapshot);
-    let updated = save_account_with_id(
+    let updated = match save_account_with_id(
         db,
         &account.id,
         &account.provider_id,
@@ -1074,21 +1188,53 @@ async fn ensure_fresh_grok_account_auth(
         account.is_applied,
         account.sort_index,
         account.created_at,
-    )?;
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = persist_usage_error(db, &account.id, &error);
+            return Err(error);
+        }
+    };
+    // save_account_with_id rebuilds the row; clear any previous refresh error.
+    let _ = clear_account_last_error(db, &updated.id);
     if updated.is_applied {
-        let auth_path = get_grok_auth_path_async(db).await?;
-        let runtime = read_auth_json_or_empty(&auth_path)?;
-        let merged = merge_account_snapshot_into_runtime(runtime, &refreshed_snapshot)?;
-        write_auth_json(&auth_path, &merged)?;
+        let auth_path = match get_grok_auth_path_async(db).await {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = persist_usage_error(db, &updated.id, &error);
+                return Err(error);
+            }
+        };
+        let runtime = match read_auth_json_or_empty(&auth_path) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = persist_usage_error(db, &updated.id, &error);
+                return Err(error);
+            }
+        };
+        let merged = match merge_account_snapshot_into_runtime(runtime, &refreshed_snapshot) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = persist_usage_error(db, &updated.id, &error);
+                return Err(error);
+            }
+        };
+        if let Err(error) = write_auth_json(&auth_path, &merged) {
+            let _ = persist_usage_error(db, &updated.id, &error);
+            return Err(error);
+        }
         if let Some(app) = app {
             emit_grok_sync(app);
             let _ = app.emit("config-changed", "window");
         }
     }
-    Ok(updated)
+    get_account(db, &updated.id)?.ok_or_else(|| "Failed to read refreshed Grok account".to_string())
 }
 
 /// Background / startup pass entry used by `coding::auth_refresh`.
+///
+/// Refreshes OAuth for every persisted official account (applied and not).
+/// `ensure_fresh` only writes live `auth.json` when the account is applied.
 pub async fn refresh_applied_grok_accounts_if_needed(
     db: &SqliteDbState,
     app: &tauri::AppHandle,
@@ -1101,13 +1247,13 @@ pub async fn refresh_applied_grok_accounts_if_needed(
         .with_conn(|conn| db_list(conn, DbTable::GrokOfficialAccount, Some(&order)))?
         .into_iter()
         .map(account_from_db_value)
-        .filter(|account| account.is_applied)
         .collect::<Vec<_>>();
     for account in accounts {
         match ensure_fresh_grok_account_auth(db, Some(app), account, false).await {
             Ok(_) => {}
             Err(error) => {
-                log::debug!("Grok applied account background refresh failed: {error}");
+                // ensure_fresh already persists last_error for OAuth failures.
+                log::debug!("Grok official account background refresh failed: {error}");
             }
         }
     }
@@ -1455,6 +1601,18 @@ fn persist_usage_error(db: &SqliteDbState, account_id: &str, error: &str) -> Res
     })
 }
 
+fn clear_account_last_error(db: &SqliteDbState, account_id: &str) -> Result<(), String> {
+    db.with_conn(|conn| {
+        db_patch_fields(
+            conn,
+            DbTable::GrokOfficialAccount,
+            account_id,
+            &[("last_error", Value::Null)],
+        )?;
+        Ok(())
+    })
+}
+
 fn ensure_official_provider(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
     let provider = db
         .with_conn(|conn| db_get(conn, DbTable::GrokProvider, provider_id))?
@@ -1795,6 +1953,35 @@ mod tests {
             subscription_tier_from_jwt(&token).as_deref(),
             Some("supergrok_heavy")
         );
+    }
+
+    #[test]
+    fn format_xai_token_refresh_error_surfaces_invalid_grant() {
+        let token = TokenResponse {
+            access_token: None,
+            refresh_token: None,
+            expires_in: None,
+            error: Some("invalid_grant".to_string()),
+            error_description: Some("Refresh token has been revoked".to_string()),
+        };
+        let message = format_xai_token_refresh_error(400, r#"{"error":"invalid_grant"}"#, &token);
+        assert!(message.contains("invalid_grant"));
+        assert!(message.contains("Refresh token has been revoked"));
+        assert!(message.contains("Re-login"));
+    }
+
+    #[test]
+    fn format_xai_token_refresh_error_maps_bare_http_400() {
+        let token = TokenResponse {
+            access_token: None,
+            refresh_token: None,
+            expires_in: None,
+            error: None,
+            error_description: None,
+        };
+        let message = format_xai_token_refresh_error(400, "", &token);
+        assert!(message.contains("HTTP 400"));
+        assert!(message.contains("Re-login"));
     }
 
     #[test]

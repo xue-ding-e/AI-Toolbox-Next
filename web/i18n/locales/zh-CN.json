@@ -2395,7 +2395,9 @@
       "deviceAuthTitle": "Codex 设备码登录",
       "deviceAuthHint": "在浏览器中打开登录页面并输入下方设备码。",
       "deviceAuthOpenBrowser": "打开登录页面",
-      "deviceAuthStatus": "状态：{{status}}，剩余 {{seconds}} 秒"
+      "deviceAuthStatus": "状态：{{status}}，剩余 {{seconds}} 秒",
+      "officialAccountRefreshTokenSuccess": "OAuth Token 已刷新",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh Token 已失效，请重新 OAuth 登录"
     },
     "import": {
       "title": "从 OpenCode 导入",
@@ -2723,7 +2725,9 @@
       "providerProfileHelp": "内置渠道会填入 API 格式和 Base URL，Base URL 可按需修改；自定义渠道可手动选择上游接口协议。",
       "formName": "名称",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
-      "apiFormatOpenAIResponses": "OpenAI Responses"
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "officialAccountRefreshTokenSuccess": "OAuth Token 已刷新",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh Token 已失效，请重新 OAuth 登录"
     },
     "fetchModels": {
       "button": "获取模型",
@@ -4203,7 +4207,10 @@
       "deviceAuthHint": "在浏览器中打开 xAI 授权页面并输入下方设备码。授权完成后，账号会自动保存。",
       "modelNameCreateHint": "默认填入 grok-4.5 与思考等级 high，可自行修改。渠道建好后，可在渠道列表中新增/删除/编辑模型。",
       "modelNameEditHint": "从该渠道已添加的模型中选择默认模型；思考等级写到默认模型。更多模型请在渠道卡片列表管理。",
-      "modelNameOfficialHint": "官方渠道的默认模型 ID，可获取官方模型列表辅助填写。"
+      "modelNameOfficialHint": "官方渠道的默认模型 ID，可获取官方模型列表辅助填写。",
+      "officialAccountRefreshToken": "刷新 Token",
+      "officialAccountRefreshTokenSuccess": "OAuth Token 已刷新",
+      "officialAccountRefreshTokenFailedReLogin": "Refresh Token 已失效，请重新 OAuth 登录"
     },
     "providerDisabled": "供应商已禁用",
     "providerEnabled": "供应商已启用",

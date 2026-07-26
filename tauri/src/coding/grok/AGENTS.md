@@ -36,7 +36,8 @@
   - `apply_grok_official_account` / `refresh_grok_official_account_limits` 在写 auth 或拉 billing 前调用 `ensure_fresh`（临期才真正 refresh）
   - `refresh_grok_official_account` 强制 refresh（不看 lead）
   - **后台 / 启动巡检** 由共享模块 `coding::auth_refresh` 调度（startup + 15m interval），本模块只提供 `refresh_applied_grok_accounts_if_needed`
-  - 并发：`OAUTH_REFRESH_LOCK` + 同 refresh_token 30s 缓存；续期成功且 applied 时 merge live `auth.json` 并 `emit_grok_sync`
+  - 巡检候选是**所有已入库官方 OAuth 账号**（含 `is_applied=false`），不是只刷已应用；登录后未点应用也要续期 SQLite 快照，避免关机重启后 token 静默过期
+  - 并发：`OAUTH_REFRESH_LOCK` + 同 refresh_token 30s 缓存；续期成功后始终写 SQLite；**仅 applied** 时 merge live `auth.json` 并 `emit_grok_sync`
 - `refresh_grok_official_account_limits` 只写额度字段到 SQLite，不改 `is_applied`；若内部 ensure_fresh 续了 token 且账号已应用，才会写 auth。
 - 额度字段语义：`plan_type`（上游 null → `free`）、`limit_weekly_text`（`100 - creditUsagePercent`，无 percent 则空）、周 reset 来自 credits `currentPeriod.end`。月限只在默认 billing 的 `monthlyLimit>0` 时投影；**禁止**把 credits 的 `billingPeriodEnd` 当月重置（free/unified 会把它写成与周周期相同）。不要伪造 5h 窗口。
 - 删除 prompt 配置只删 SQLite 记录，不删除/清空当前 `AGENTS.md`。产品语义是“删除已保存的提示词记录”，不是“删除本地 runtime 提示词文件”；Claude Code / OpenCode / Codex / Gemini / Pi 统一此规则。
@@ -66,4 +67,6 @@
 - `auth.json` 写回后官方 Grok CLI 可识别，Unix 权限为 `0600`。
 - 自定义渠道已应用时完成 Device Code 登录：新账号 `is_applied=false`，live `auth.json` 不变；点应用后才写 auth 并标记 applied。
 - 点「刷新额度」：账号行出现 `plan_type`/`last_limits_fetched_at`；有 `creditUsagePercent` 时周剩余为 `100-used%`；无 percent 时周限额为空但可有周重置时间。free/`monthlyLimit=0` 时月限额与月重置均为空。
-- 已应用账号 access token 临期时：apply / 刷新额度 / 后台巡检会自动续期，明细里 Token 过期时间与最近刷新时间更新；未临期不发起 refresh 请求。
+- 已入库官方 OAuth 账号（含未应用）access token 临期时：apply / 刷新额度 / 后台巡检会自动续期，明细里 Token 过期时间与最近刷新时间更新；未临期不发起 refresh 请求。未应用只更新 SQLite，不写 live `auth.json`。
+- xAI refresh token 会轮换/吊销。token endpoint 返回 `invalid_grant`（常见 HTTP 400）时，自动续期无法恢复，必须重新 Device Code 登录；错误信息应带上 `error`/`error_description`，并写入账号 `last_error`。
+- 前端区分「刷新额度」与「刷新 Token」：额度走 `refresh_grok_official_account_limits`（临期才 refresh），Token 走 `refresh_grok_official_account`（force）。`invalid_grant`/HTTP 400 应提示重新 OAuth 登录，并在账号列表/明细展示 `last_error`；成功后续期应清空 `last_error`。

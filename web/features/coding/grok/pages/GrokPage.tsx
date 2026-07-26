@@ -41,6 +41,7 @@ import {
   saveGrokOfficialLocalAccount,
   applyGrokOfficialAccount,
   deleteGrokOfficialAccount,
+  refreshGrokOfficialAccount,
   refreshGrokOfficialAccountLimits,
   selectGrokProvider,
   readGrokSettings,
@@ -232,6 +233,7 @@ const GrokPage: React.FC = () => {
     return providerApiFormat === 'gemini_native';
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
+  const [refreshingOfficialTokenAccountId, setRefreshingOfficialTokenAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
     provider: GrokProvider;
@@ -826,6 +828,38 @@ const GrokPage: React.FC = () => {
     });
   };
 
+  const isGrokRefreshTokenInvalidError = React.useCallback((errorMessage: string) => {
+    const normalized = errorMessage.toLowerCase();
+    return (
+      normalized.includes('invalid_grant')
+      || normalized.includes('refresh token is invalid')
+      || normalized.includes('refresh token is revoked')
+      || normalized.includes('re-login with device code')
+      || normalized.includes('re-login with oauth')
+    );
+  }, []);
+
+  const applyOfficialAccountUpdate = React.useCallback((
+    provider: GrokProvider,
+    refreshedAccount: GrokOfficialAccount,
+  ) => {
+    setOfficialAccountsByProviderId((previous) => ({
+      ...previous,
+      [provider.id]: (previous[provider.id] || []).map((currentAccount) =>
+        currentAccount.id === refreshedAccount.id ? refreshedAccount : currentAccount,
+      ),
+    }));
+    setOfficialAccountDetails((current) => {
+      if (!current || current.account.id !== refreshedAccount.id) {
+        return current;
+      }
+      return {
+        provider: current.provider,
+        account: refreshedAccount,
+      };
+    });
+  }, []);
+
   const handleRefreshOfficialAccount = async (
     provider: GrokProvider,
     account: GrokOfficialAccount,
@@ -833,28 +867,73 @@ const GrokPage: React.FC = () => {
     try {
       setRefreshingOfficialAccountId(account.id);
       const refreshedAccount = await refreshGrokOfficialAccountLimits(account.id);
-      setOfficialAccountsByProviderId((previous) => ({
-        ...previous,
-        [provider.id]: (previous[provider.id] || []).map((currentAccount) =>
-          currentAccount.id === refreshedAccount.id ? refreshedAccount : currentAccount,
-        ),
-      }));
-      setOfficialAccountDetails((current) => {
-        if (!current || current.account.id !== refreshedAccount.id) {
-          return current;
-        }
-        return {
-          provider: current.provider,
-          account: refreshedAccount,
-        };
-      });
+      applyOfficialAccountUpdate(provider, refreshedAccount);
       message.success(t('grok.provider.officialAccountRefreshSuccess'));
     } catch (error) {
       console.error('Failed to refresh Grok official account limits:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
-      message.error(errorMsg || t('common.error'));
+      if (isGrokRefreshTokenInvalidError(errorMsg)) {
+        message.error(t('grok.provider.officialAccountRefreshTokenFailedReLogin'));
+      } else {
+        message.error(errorMsg || t('common.error'));
+      }
+      // Best-effort: reload account list so lastError shows up after backend persistence.
+      try {
+        const accounts = await listGrokOfficialAccounts(provider.id);
+        setOfficialAccountsByProviderId((previous) => ({
+          ...previous,
+          [provider.id]: accounts,
+        }));
+        setOfficialAccountDetails((current) => {
+          if (!current || current.account.id !== account.id) {
+            return current;
+          }
+          const refreshed = accounts.find((item) => item.id === account.id);
+          return refreshed ? { provider: current.provider, account: refreshed } : current;
+        });
+      } catch (reloadError) {
+        console.error('Failed to reload Grok official accounts after limits refresh error:', reloadError);
+      }
     } finally {
       setRefreshingOfficialAccountId((current) => (current === account.id ? null : current));
+    }
+  };
+
+  const handleRefreshOfficialAccountToken = async (
+    provider: GrokProvider,
+    account: GrokOfficialAccount,
+  ) => {
+    try {
+      setRefreshingOfficialTokenAccountId(account.id);
+      const refreshedAccount = await refreshGrokOfficialAccount(account.id);
+      applyOfficialAccountUpdate(provider, refreshedAccount);
+      message.success(t('grok.provider.officialAccountRefreshTokenSuccess'));
+    } catch (error) {
+      console.error('Failed to refresh Grok official account token:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (isGrokRefreshTokenInvalidError(errorMsg)) {
+        message.error(t('grok.provider.officialAccountRefreshTokenFailedReLogin'));
+      } else {
+        message.error(errorMsg || t('common.error'));
+      }
+      try {
+        const accounts = await listGrokOfficialAccounts(provider.id);
+        setOfficialAccountsByProviderId((previous) => ({
+          ...previous,
+          [provider.id]: accounts,
+        }));
+        setOfficialAccountDetails((current) => {
+          if (!current || current.account.id !== account.id) {
+            return current;
+          }
+          const refreshed = accounts.find((item) => item.id === account.id);
+          return refreshed ? { provider: current.provider, account: refreshed } : current;
+        });
+      } catch (reloadError) {
+        console.error('Failed to reload Grok official accounts after token refresh error:', reloadError);
+      }
+    } finally {
+      setRefreshingOfficialTokenAccountId((current) => (current === account.id ? null : current));
     }
   };
 
@@ -1783,8 +1862,10 @@ const GrokPage: React.FC = () => {
                                 onOfficialAccountApply={handleApplyOfficialAccount}
                                 onOfficialAccountDelete={handleDeleteOfficialAccount}
                                 onOfficialAccountRefresh={handleRefreshOfficialAccount}
+                                onOfficialAccountRefreshToken={handleRefreshOfficialAccountToken}
                                 onOfficialAccountViewDetails={handleViewOfficialAccountDetails}
                                 refreshingOfficialAccountId={refreshingOfficialAccountId}
+                                refreshingOfficialTokenAccountId={refreshingOfficialTokenAccountId}
                                 savingOfficialAccountId={savingOfficialAccountId}
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
@@ -2047,7 +2128,38 @@ const GrokPage: React.FC = () => {
           open={Boolean(officialAccountDetails)}
           title={t('grok.provider.officialAccountDetailsTitle')}
           onCancel={() => setOfficialAccountDetails(null)}
-          footer={null}
+          footer={officialAccountDetails && officialAccountDetails.account.id !== GROK_LOCAL_PROVIDER_ID ? (
+            <Space>
+              <Button onClick={() => setOfficialAccountDetails(null)}>
+                {t('common.close')}
+              </Button>
+              <Button
+                icon={<SyncOutlined />}
+                loading={refreshingOfficialAccountId === officialAccountDetails.account.id}
+                onClick={() => {
+                  void handleRefreshOfficialAccount(
+                    officialAccountDetails.provider,
+                    officialAccountDetails.account,
+                  );
+                }}
+              >
+                {t('grok.provider.officialAccountRefresh')}
+              </Button>
+              <Button
+                type="primary"
+                icon={<ThunderboltOutlined />}
+                loading={refreshingOfficialTokenAccountId === officialAccountDetails.account.id}
+                onClick={() => {
+                  void handleRefreshOfficialAccountToken(
+                    officialAccountDetails.provider,
+                    officialAccountDetails.account,
+                  );
+                }}
+              >
+                {t('grok.provider.officialAccountRefreshToken')}
+              </Button>
+            </Space>
+          ) : null}
           width={720}
         >
           {officialAccountDetails && (
