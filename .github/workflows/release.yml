@@ -68,7 +68,8 @@ jobs:
 
             ⚠️ Mac安装提示：`"应用程序"已损坏` 解决方法：`xattr -cr /Applications/AI\ Toolbox.app`
           draft: true
-          prerelease: false
+          # Manual beta builds should be Pre-release; formal tag pushes stay as normal releases.
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
 
   test:
     name: Run Full Test Suite
