@@ -4,7 +4,7 @@
 
 > **维护入口**：凡涉及 Gateway 协议转换、统一 IR、协议直通/转换判定、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。凡涉及 provider profile、target protocol、body/header/path/auth、stream filter、rectifier、同协议直通兼容或其它 provider/channel wire 兼容，还必须阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并按职责更新对应文档；跨架构和渠道边界的改动要同时更新两份文档。
 >
-> **当前提交基线**：`f82bcd4a58e53d14107c1df1f779ebf32f04b0f1`（2026-07-27）。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13、`46b59ac` 的 side store earliest-delimiter / 非流 multi-reasoning，以及本 commit 的 Responses `response.failed` 跨协议 error envelope、`usage_parser` 物理最早 SSE delimiter、Grok source/route 白名单对齐，均已是已提交事实。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
+> **当前提交基线**：`7633e31d7c33e46f56cefece634842ab70ef1648`（2026-07-27）。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13、`46b59ac` 的 side store earliest-delimiter / 非流 multi-reasoning，以及 `7633e31` 的 Responses `response.failed` 跨协议 error envelope、`usage_parser` 物理最早 SSE delimiter、Grok source/route 白名单对齐，均已是已提交事实。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
 
 ## 0. 产品场景与设计动机
 
