@@ -51,6 +51,7 @@ sequenceDiagram
 - 关闭 `backup_cli_config_files_enabled` 只跳过 **optional** 四工具的 `external-configs/<tool>/` 磁盘文件，不会跳过 DB 中已有记录；UI 仍可能显示「已应用」。Codex、Claude、Grok、Gemini CLI 的 applied provider/prompt 会重建。OpenCode/OpenClaw/Pi 文件仍从 zip 恢复；re-apply 里 OpenCode 仍会补 applied prompt 与已存储的 Oh My 配置，Pi 补 applied prompt，OpenClaw 不 re-apply；provider/model/main config **不从数据库猜写**。
 - `skip_cli_custom_roots=true` 时，SQLite restore 后要清空 common 中的 `root_dir/config_path`，且所有工具都不得读取备份里的 `root-dir.txt`。开关关闭但未勾选该选项时：always 三工具仍可读各自 `root-dir.txt`；optional 四工具不读。
 - re-apply 中 provider、prompt 和 Oh My config 是独立步骤：单步失败只记录 warning 并继续；Gateway takeover 只跳过被接管工具的 provider 投影，不能连 prompt 一起跳过。
+- 恢复启动编排中 `.reapply_applied_required` 优先并执行已含 OMO/OMOS 的全量 re-apply；只有 `.resync_required` 时仅串行重建 OMO/OMOS，随后继续 Skills、MCP 和单次 WSL sync，不能借普通恢复重写其它 CLI。
 - 恢复专用 apply/MCP 入口不得发中间 `wsl-sync-request-*`、`mcp-changed` 等自动同步事件。最终 WSL 同步只传播本轮实际改写的 CLI 模块，同时同步 MCP/Skills 一次，不能顺手覆盖受保护的 OpenClaw/OpenCode/Pi 本机运行时文件。
 - 普通 `timeout(work())` 无法可靠抢占卡在同步文件 I/O 的 future。re-apply 要在独立 task 中运行，超时后 abort 并继续下一个 CLI；写入前再用 `spawn_blocking` 做短时无写入路径探测，降低不可达 UNC 路径拖死恢复链路的概率。
 - 新增外部配置文件进入备份时，要同时检查本地备份、WebDAV 备份和 restore 路径，不要只改一个入口。

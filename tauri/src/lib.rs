@@ -1674,12 +1674,31 @@ pub fn run() {
                     // Re-apply applied providers/prompts before skills/MCP so MCP can write into
                     // the freshly aligned CLI configs.
                     let mut changed_wsl_modules = restored_wsl_modules;
-                    if need_reapply {
-                        let summary =
-                            coding::reapply_applied_runtime::reapply_applied_runtime_after_restore(
-                                &app_clone,
-                            )
-                            .await;
+                    let reapply_mode =
+                        coding::reapply_applied_runtime::restore_reapply_mode(
+                            need_reapply,
+                            need_resync,
+                        );
+                    if reapply_mode
+                        != coding::reapply_applied_runtime::RestoreReapplyMode::None
+                    {
+                        let summary = match reapply_mode {
+                            coding::reapply_applied_runtime::RestoreReapplyMode::Full => {
+                                coding::reapply_applied_runtime::reapply_applied_runtime_after_restore(
+                                    &app_clone,
+                                )
+                                .await
+                            }
+                            coding::reapply_applied_runtime::RestoreReapplyMode::PluginsOnly => {
+                                coding::reapply_applied_runtime::reapply_applied_opencode_plugins_after_restore(
+                                    &app_clone,
+                                )
+                                .await
+                            }
+                            coding::reapply_applied_runtime::RestoreReapplyMode::None => {
+                                unreachable!("no re-apply mode was filtered above")
+                            }
+                        };
                         for module in &summary.changed_modules {
                             if !changed_wsl_modules
                                 .iter()
@@ -1689,7 +1708,8 @@ pub fn run() {
                             }
                         }
                         info!(
-                            "Post-restore re-apply completed: applied={}, warnings={}, changed_wsl_modules={:?}",
+                            "Post-restore re-apply completed: mode={:?}, applied={}, warnings={}, changed_wsl_modules={:?}",
+                            reapply_mode,
                             summary.applied.len(),
                             summary.warnings.len(),
                             changed_wsl_modules

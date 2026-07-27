@@ -34,6 +34,25 @@ pub struct ReapplySummary {
     pub changed_modules: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreReapplyMode {
+    None,
+    Full,
+    PluginsOnly,
+}
+
+/// Select one mutually exclusive restore re-apply path. A full re-apply already includes the
+/// OpenCode companion plugins, so it always takes precedence over the resync-only path.
+pub fn restore_reapply_mode(need_full_reapply: bool, need_resync: bool) -> RestoreReapplyMode {
+    if need_full_reapply {
+        RestoreReapplyMode::Full
+    } else if need_resync {
+        RestoreReapplyMode::PluginsOnly
+    } else {
+        RestoreReapplyMode::None
+    }
+}
+
 #[derive(Debug, Default)]
 struct ReapplyCliResult {
     applied: Vec<String>,
@@ -80,6 +99,31 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     let pi_app = app.clone();
     reapply_cli(&mut summary, "pi", async move { reapply_pi(&pi_app).await }).await;
 
+    let plugin_summary = reapply_applied_opencode_plugins_after_restore(app).await;
+    summary.applied.extend(plugin_summary.applied);
+    summary.warnings.extend(plugin_summary.warnings);
+    for module in plugin_summary.changed_modules {
+        push_unique(&mut summary.changed_modules, &module);
+    }
+
+    // OpenCode main config, OpenClaw config, and Pi provider/model state are runtime-file-owned.
+    // They are intentionally preserved locally instead of being reconstructed from SQLite.
+    info!(
+        "Post-restore re-apply finished: applied={}, warnings={}",
+        summary.applied.len(),
+        summary.warnings.len()
+    );
+    summary
+}
+
+/// Re-apply only the DB-applied OpenCode companion plugin configurations restored by SQLite.
+/// This is used by ordinary restore resyncs where complete CLI runtime re-application is neither
+/// needed nor allowed.
+pub async fn reapply_applied_opencode_plugins_after_restore<R: Runtime>(
+    app: &AppHandle<R>,
+) -> ReapplySummary {
+    let mut summary = ReapplySummary::default();
+
     let openagent_app = app.clone();
     reapply_cli(&mut summary, "oh-my-openagent", async move {
         reapply_oh_my_openagent(&openagent_app).await
@@ -92,15 +136,7 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     })
     .await;
 
-    // OpenCode main config, OpenClaw config, and Pi provider/model state are runtime-file-owned.
-    // They are intentionally preserved locally instead of being reconstructed from SQLite.
     let _ = app.emit("config-changed", "restore-reapply");
-
-    info!(
-        "Post-restore re-apply finished: applied={}, warnings={}",
-        summary.applied.len(),
-        summary.warnings.len()
-    );
     summary
 }
 
@@ -732,8 +768,8 @@ pub fn reapply_flag_path(app_data_dir: &std::path::Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_record, resolve_record_id, unchanged_wsl_modules, wsl_module_for_reapply_label,
-        ReapplyCliResult,
+        apply_record, resolve_record_id, restore_reapply_mode, unchanged_wsl_modules,
+        wsl_module_for_reapply_label, ReapplyCliResult, RestoreReapplyMode,
     };
 
     #[tokio::test]
@@ -793,5 +829,19 @@ mod tests {
         assert!(skipped_modules.contains(&"openclaw".to_string()));
         assert!(skipped_modules.contains(&"geminicli".to_string()));
         assert!(skipped_modules.contains(&"pi".to_string()));
+    }
+
+    #[test]
+    fn full_restore_reapply_takes_precedence_over_plugin_only_reapply() {
+        assert_eq!(restore_reapply_mode(true, true), RestoreReapplyMode::Full);
+    }
+
+    #[test]
+    fn resync_without_full_flag_selects_plugin_only_reapply() {
+        assert_eq!(
+            restore_reapply_mode(false, true),
+            RestoreReapplyMode::PluginsOnly
+        );
+        assert_eq!(restore_reapply_mode(false, false), RestoreReapplyMode::None);
     }
 }
