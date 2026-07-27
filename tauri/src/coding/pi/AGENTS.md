@@ -29,6 +29,7 @@
 - 内置 provider 即使没有写入 `auth.json` 或 `models.json`，也可能通过环境变量或 Pi `/login` 可用；不要显示为 missing。
 - `auth.json` OAuth token 是 Pi runtime-owned。AI Toolbox 可以识别和保留，但首版不编辑 token、不发起 `/login`。
 - `models.json` 允许 unknown top-level 和 provider/model unknown fields。读写必须 preserve unknown fields。
+- Fetch Models 前端用 `findPresetModelById` 补全能力时必须保留上游返回的 model id 原文（含大小写）。preset 匹配是大小写不敏感的，只能拿 context/cost/reasoning/input 等元数据，不能把 `minimax-m3` 改写成 preset 的 `MiniMax-M3`；实现位于 `web/features/coding/pi/utils/piFetchedModels.ts`。
 - Pi 原生不支持 MCP；只有安装 `pi-mcp-adapter` 后才会读取 `<runtime-root>/mcp.json`。MCP 页面可以把 Pi 作为同步目标，但不要把它误认为 Pi provider/native config。
 - 不要硬编码 `~/.pi/agent/extensions`。Pi root 可能来自应用内 custom root、`PI_CODING_AGENT_DIR`、shell 配置、默认路径或 WSL Direct，扩展目录必须从当前 runtime location 派生。
 - Windows 文件夹选择器在 WSL UNC 下可能只能选到 `~/.pi`，但末段名为 `.pi` 的目录也可能是合法 custom root。Pi 设置保存和 runtime cache 刷新只有在当前目录没有 Pi runtime 数据、且其 `agent` 子目录已存在 Pi runtime 布局时，才归一化并回写为 `~/.pi/agent`；不能只凭目录名迁移。
@@ -50,3 +51,4 @@
 - 扩展 CLI 失败文案应包含 `pi_cli=<resolved path or wsl -d <distro> -- pi>`；list 成功时 meta 区应能看到同一路径和 `pi --version` 探测结果（探测失败可省略版本）。
 - `settings.json` 中已有 `packages` 时，`read_pi_runtime_config().other_settings` 不返回该字段，`save_pi_other_settings` 也不会删除或覆盖它。
 - Pi 0.80.6 起共享 thinking ladder 是 `off/minimal/low/medium/high/xhigh/max`。AI Toolbox 的前端选项、preset `thinkingLevelMap` 转换和后端校验白名单必须同步维护这七档；缺省的标准档 `off/minimal/low/medium/high` 按 identity mapping 支持，扩展档 `xhigh/max` 必须由模型显式提供非 `null` 映射才算支持。`ultra` 属于 Codex 的主动多智能体档位，不是 Pi thinking level，不能加入 Pi settings 或模型映射。
+- Fetch Models 命中大小写不同的 preset 时（例如上游 `minimax-m3` / preset `MiniMax-M3`），写入 `models.json` 的 model id 必须仍是上游原文；可运行 `pnpm test:web -- web/test/features/coding/pi/utils/piFetchedModels.test.ts`。

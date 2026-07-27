@@ -54,15 +54,15 @@ import {
   getOpenClawAgentsDefaults,
 } from '@/services/openclawApi';
 import {
-  findPresetModelById,
-  type PresetModel,
-} from '@/constants/presetModels';
-import {
   listFavoriteProviders,
   upsertFavoriteProvider,
   type OpenCodeDiagnosticsConfig,
   type OpenCodeFavoriteProvider,
 } from '@/services/opencodeApi';
+import { findPresetModelById } from '@/constants/presetModels';
+import {
+  buildFetchedOpenClawModel,
+} from '../utils/openClawFetchedModels';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import type {
   OpenClawConfig,
@@ -76,7 +76,7 @@ import type { OpenCodeProvider } from '@/types/opencode';
 import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
-import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/FetchModelsModal/types';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
@@ -141,37 +141,6 @@ const apiToNpm = (api?: string, baseUrl?: string): string => {
   if (url.includes('generativelanguage.googleapis.com') || url.includes('google')) return '@ai-sdk/google';
 
   return '@ai-sdk/openai-compatible';
-};
-
-const getOpenClawFetchedModelDefaultInput = (providerNpm?: string): string[] => (
-  providerNpm === OPENAI_COMPATIBLE_NPM ? ['text'] : ['text', 'image']
-);
-
-const buildOpenClawModelFromPreset = (preset: PresetModel, fallbackName: string): OpenClawModel => ({
-  id: preset.id,
-  name: preset.name || fallbackName,
-  contextWindow: preset.contextLimit,
-  maxTokens: preset.outputLimit,
-  reasoning: preset.reasoning ?? false,
-  ...(preset.modalities?.input ? { input: preset.modalities.input } : {}),
-});
-
-const buildFetchedOpenClawModel = (
-  fetchedModel: FetchedModel,
-  providerNpm?: string,
-): OpenClawModel => {
-  const matchedPresetModel = findPresetModelById(fetchedModel.id, providerNpm);
-
-  if (matchedPresetModel) {
-    return buildOpenClawModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
-  }
-
-  return {
-    id: fetchedModel.id,
-    name: fetchedModel.name || fetchedModel.id,
-    reasoning: true,
-    input: getOpenClawFetchedModelDefaultInput(providerNpm),
-  };
 };
 
 /**
@@ -935,7 +904,8 @@ const OpenClawPage: React.FC = () => {
     const newModels = (provider.models || []).filter((model) => !removedModelIdSet.has(model.id));
     for (const model of selectedModels) {
       if (!newModels.find((m) => m.id === model.id)) {
-        newModels.push(buildFetchedOpenClawModel(model, providerNpm));
+        const matchedPresetModel = findPresetModelById(model.id, providerNpm);
+        newModels.push(buildFetchedOpenClawModel(model, providerNpm, matchedPresetModel));
       }
     }
 

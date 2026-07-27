@@ -36,6 +36,7 @@ sequenceDiagram
 - 不要把 OpenClaw 的某个 section 当成独立配置源。它们最终都在改同一份配置文件。
 - 页面监听的是 `openclaw-config-changed`，不是通用 `config-changed`。抽象公共逻辑时别把它漏掉。
 - 导入 OpenCode / All API Hub / favorite providers 时，不仅要更新配置，还要同步处理 favorite provider 相关辅助状态。
+- Fetch Models 用 `findPresetModelById` 补全能力时必须保留上游返回的 model id 原文（含大小写）。preset 匹配是大小写不敏感的，只能拿 context/cost/reasoning/input 等元数据，不能把 `minimax-m3` 改写成 preset 的 `MiniMax-M3`。
 
 ## 跨模块依赖
 
@@ -54,3 +55,4 @@ sequenceDiagram
 
 - 至少验证：修改任一 section 后配置文件仍保有其它 section 内容。
 - 至少验证：路径变更或配置保存后页面能通过 `openclaw-config-changed` / reload 看到最新状态。
+- Fetch Models 命中大小写不同的 preset 时（例如上游 `minimax-m3` / preset `MiniMax-M3`），保存的 model id 必须仍是上游原文；可运行 `pnpm test:web -- web/test/features/coding/openclaw/utils/openClawFetchedModels.test.ts`。

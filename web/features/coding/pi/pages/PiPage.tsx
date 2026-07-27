@@ -55,13 +55,17 @@ import type {
 import ModelFormModal from '@/components/common/ModelFormModal';
 import type { ModelFormValues } from '@/components/common/ModelFormModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
-import type { FetchedModel, FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
-import { findPresetModelById, type PresetModel } from '@/constants/presetModels';
+import { findPresetModelById } from '@/constants/presetModels';
+import {
+  buildFetchedPiModel,
+  piApiToSdkName,
+} from '../utils/piFetchedModels';
 import ProviderConnectivityTestModal from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import {
   buildProviderConnectivityBatchTarget,
@@ -218,57 +222,6 @@ const parseStringArray = (value: string | undefined): string[] => {
   }
 };
 
-const buildPiModelFromPreset = (
-  preset: PresetModel,
-  fallbackName: string,
-): Record<string, unknown> => {
-  const inputTypes = (preset.modalities?.input ?? []).filter((inputType) => PI_INPUT_TYPES.has(inputType));
-  const cost = asRecord(preset.cost);
-  const piCost: Record<string, number> = {};
-  const inputCost = getNumberField(cost, 'input');
-  const outputCost = getNumberField(cost, 'output');
-  const cacheReadCost = getNumberField(cost, 'cacheRead') ?? getNumberField(cost, 'cache_read');
-  const cacheWriteCost = getNumberField(cost, 'cacheWrite') ?? getNumberField(cost, 'cache_write');
-  if (inputCost !== undefined) {
-    piCost.input = inputCost;
-  }
-  if (outputCost !== undefined) {
-    piCost.output = outputCost;
-  }
-  if (cacheReadCost !== undefined) {
-    piCost.cacheRead = cacheReadCost;
-  }
-  if (cacheWriteCost !== undefined) {
-    piCost.cacheWrite = cacheWriteCost;
-  }
-  const thinkingLevelMap = buildPiThinkingLevelMapFromPreset(preset.variants);
-
-  return {
-    id: preset.id,
-    name: preset.name || fallbackName,
-    ...(preset.reasoning !== undefined ? { reasoning: preset.reasoning } : {}),
-    ...(inputTypes.length > 0 ? { input: inputTypes } : {}),
-    ...(preset.contextLimit ? { contextWindow: preset.contextLimit } : {}),
-    ...(preset.outputLimit ? { maxTokens: preset.outputLimit } : {}),
-    ...(!isRecordEmpty(piCost) ? { cost: piCost } : {}),
-    ...(!isRecordEmpty(thinkingLevelMap) ? { thinkingLevelMap } : {}),
-  };
-};
-
-const buildFetchedPiModel = (
-  fetchedModel: FetchedModel,
-  providerApi?: string,
-): Record<string, unknown> => {
-  const matchedPresetModel = findPresetModelById(fetchedModel.id, piApiToSdkName(providerApi));
-  if (matchedPresetModel) {
-    return buildPiModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
-  }
-  return {
-    id: fetchedModel.id,
-    ...(fetchedModel.name ? { name: fetchedModel.name } : {}),
-  };
-};
-
 const getProviderModelRecords = (
   providerConfig: Record<string, unknown> | undefined,
 ): Array<{ id: string; model: Record<string, unknown> }> => {
@@ -375,18 +328,6 @@ const asStringRecord = (value: unknown): Record<string, string> => {
   return Object.fromEntries(
     Object.entries(record).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
-};
-
-const piApiToSdkName = (api?: string): string => {
-  switch (api) {
-    case 'anthropic-messages':
-      return '@ai-sdk/anthropic';
-    case 'google-generative-ai':
-    case 'google-vertex':
-      return '@ai-sdk/google';
-    default:
-      return '@ai-sdk/openai-compatible';
-  }
 };
 
 const sdkNameToPiApi = (sdkName?: string): string => {
@@ -1394,7 +1335,8 @@ const PiPage: React.FC = () => {
     const providerApi = getStringField(provider.modelsProvider ?? {}, 'api');
     selectedModels.forEach((model) => {
       if (!currentModelIds.has(model.id)) {
-        currentModels.push(buildFetchedPiModel(model, providerApi));
+        const matchedPresetModel = findPresetModelById(model.id, piApiToSdkName(providerApi));
+        currentModels.push(buildFetchedPiModel(model, matchedPresetModel));
       }
     });
 
