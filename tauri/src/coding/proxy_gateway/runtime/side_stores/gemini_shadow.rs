@@ -4,6 +4,8 @@ use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use super::take_sse_block;
+
 const MAX_GEMINI_SHADOW_SESSIONS: usize = 200;
 const MAX_GEMINI_SHADOW_TURNS_PER_SESSION: usize = 64;
 
@@ -166,22 +168,6 @@ fn inspect_gemini_sse_block(block: &[u8], store: &GeminiShadowStore, key: &Gemin
     if let Ok(value) = serde_json::from_str::<Value>(&data) {
         store.record_response(key.clone(), &value);
     }
-}
-
-fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let position = buffer
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|index| (index, 2))
-        .or_else(|| {
-            buffer
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .map(|index| (index, 4))
-        })?;
-    let block = buffer[..position.0].to_vec();
-    buffer.drain(..position.0 + position.1);
-    Some(block)
 }
 
 fn gemini_shadow_turn_from_content(content: &Value) -> Option<GeminiShadowTurn> {
@@ -359,6 +345,20 @@ mod tests {
         assert_eq!(
             contents[1]["parts"][0]["functionResponse"]["name"],
             "lookup"
+        );
+    }
+
+    #[test]
+    fn takes_physically_earliest_sse_delimiter() {
+        let mut buffer = b"data: first\r\n\r\ndata: second\n\n".to_vec();
+
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some(b"data: first".as_slice())
+        );
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some(b"data: second".as_slice())
         );
     }
 }

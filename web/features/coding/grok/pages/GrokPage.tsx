@@ -1069,14 +1069,19 @@ const GrokPage: React.FC = () => {
       ? currentDefault
       : (models[0]?.key || models[0]?.model);
 
-    await persistProviderCatalog(targetProvider, models, nextDefault);
-    clearBatchDeleteState(targetProvider.id);
+    try {
+      await persistProviderCatalog(targetProvider, models, nextDefault);
+      clearBatchDeleteState(targetProvider.id);
 
-    // Keep the open modal model list in sync with the saved catalog.
-    setConnectivityInfo(buildGrokProviderConnectivityInfo({
-      ...targetProvider,
-      settingsConfig: buildGrokProviderSettingsWithModels(targetProvider, models, nextDefault),
-    }));
+      // Keep the open modal model list in sync with the saved catalog.
+      setConnectivityInfo(buildGrokProviderConnectivityInfo({
+        ...targetProvider,
+        settingsConfig: buildGrokProviderSettingsWithModels(targetProvider, models, nextDefault),
+      }));
+    } catch (error) {
+      console.error('Failed to remove Grok models from connectivity test:', error);
+      throw error;
+    }
   }, [clearBatchDeleteState, connectivityInfo, persistProviderCatalog, providers]);
 
   const handleSaveConnectivityDiagnostics = React.useCallback(async (diagnostics: OpenCodeDiagnosticsConfig) => {

@@ -100,6 +100,45 @@ fn responses_response_accepts_top_level_output_text() {
 }
 
 #[test]
+fn responses_response_accumulates_multiple_reasoning_items() {
+    let llm = responses_response_to_llm(json!({
+        "id": "resp_reasoning",
+        "status": "completed",
+        "model": "gpt-5",
+        "output": [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "first thought"}],
+                "encrypted_content": "cipher-first"
+            },
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "second thought"}]
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "answer"}]
+            }
+        ]
+    }));
+
+    let message = &llm.choices[0].message;
+    assert_eq!(
+        message.reasoning_content.as_deref(),
+        Some("first thought\nsecond thought")
+    );
+    assert_eq!(
+        message.reasoning.as_deref(),
+        message.reasoning_content.as_deref()
+    );
+    assert_eq!(
+        message.reasoning_signature.as_deref(),
+        Some("ai-toolbox.sig.openai_responses:cipher-first")
+    );
+}
+
+#[test]
 fn responses_non_stream_cancellation_status_roundtrips_without_completed() {
     for status in ["cancelled", "canceled"] {
         let response = responses_response_to_llm(json!({

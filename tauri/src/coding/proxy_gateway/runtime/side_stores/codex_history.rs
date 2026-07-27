@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use super::take_sse_block;
+
 const MAX_CODEX_CACHED_RESPONSES: usize = 512;
 
 #[derive(Debug, Clone, Default)]
@@ -414,22 +416,6 @@ fn inspect_sse_block(
     }
 }
 
-fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let position = buffer
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|index| (index, 2))
-        .or_else(|| {
-            buffer
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .map(|index| (index, 4))
-        })?;
-    let block = buffer[..position.0].to_vec();
-    buffer.drain(..position.0 + position.1);
-    Some(block)
-}
-
 fn cached_call_item(item: &Value) -> Option<(String, Value)> {
     if !item_type(item).is_some_and(is_call_item_type) {
         return None;
@@ -561,5 +547,19 @@ mod tests {
 
         assert_eq!(history.enrich_request(&mut request), 0);
         assert_eq!(request["input"][0]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn takes_physically_earliest_sse_delimiter() {
+        let mut buffer = b"data: first\r\n\r\ndata: second\n\n".to_vec();
+
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some(b"data: first".as_slice())
+        );
+        assert_eq!(
+            take_sse_block(&mut buffer).as_deref(),
+            Some(b"data: second".as_slice())
+        );
     }
 }

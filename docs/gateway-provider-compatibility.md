@@ -213,6 +213,8 @@ Responses source 转 Anthropic Messages / Gemini Native 时，namespace child �
 
 provider raw stream filter 必须发生在 protocol SSE conversion 之前。
 
+Codex history 与 Gemini shadow 的旁路 SSE 记录器也遵循同一 SSE 分帧不变量：当缓冲区同时出现 `\n\n` 和 `\r\n\r\n` 时，必须消费物理位置更早的 delimiter，不能因固定换行优先级把多个 provider event 合并。回归测试为两个 side store 模块中的 `takes_physically_earliest_sse_delimiter`。
+
 ### 3.3 非流 JSON 顺序
 
 非流 JSON 路径：
@@ -223,6 +225,8 @@ provider raw stream filter 必须发生在 protocol SSE conversion 之前。
 4. xAI native Responses 2xx restore。
 5. reverse pipeline response middleware。
 6. 用最终 body 和原始 upstream body 共同做 failure/empty response 分类。
+
+Responses 非流 response output 中的多个 `reasoning` item 由 transformer 按出现顺序合并 summary 文本，最后一个有效 `encrypted_content` 作为 provider-local signature；runtime 只负责后续 provider wire 兼容，不覆盖该公共 IR 语义。回归测试：`responses_response_accumulates_multiple_reasoning_items`。
 
 ### 3.4 rectifier 默认行为
 
@@ -633,7 +637,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 触发条件：
 
-- `providerType=longcat`。
+- body compat 的 canonical `providerType=longcat`；当前内置 profile 只生成该值。
+- legacy `providerType=long-cat` 仅由 Anthropic platform/auth 识别兼容，当前不会触发 OpenAI Chat 的 LongCat content-array body compat；`long_cat` 不在已声明 alias 范围内。
 
 请求侧：
 

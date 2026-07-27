@@ -78,16 +78,20 @@ pub fn responses_response_to_llm(body: Value) -> Response {
                     parts.push(responses_compaction_part(item));
                 }
                 Some("reasoning") => {
-                    let reasoning = responses_reasoning_text(item);
-                    message.reasoning_content = reasoning.clone();
-                    message.reasoning = reasoning;
-                    message.reasoning_signature = item
+                    if let Some(reasoning) = responses_reasoning_text(item) {
+                        append_reasoning_text(&mut message.reasoning_content, &reasoning);
+                        message.reasoning = message.reasoning_content.clone();
+                    }
+                    if let Some(signature) = item
                         .get("encrypted_content")
                         .and_then(Value::as_str)
                         .filter(|signature| !signature.is_empty())
                         .map(|signature| {
                             encode_signature(SignatureProvider::OpenAiResponses, signature)
-                        });
+                        })
+                    {
+                        message.reasoning_signature = Some(signature);
+                    }
                 }
                 _ => {}
             }
@@ -128,6 +132,16 @@ pub fn responses_response_to_llm(body: Value) -> Response {
         }],
         usage: Some(responses_usage_to_llm(body.get("usage"))),
         ..Default::default()
+    }
+}
+
+fn append_reasoning_text(target: &mut Option<String>, text: &str) {
+    match target {
+        Some(existing) if !existing.is_empty() => {
+            existing.push('\n');
+            existing.push_str(text);
+        }
+        _ => *target = Some(text.to_string()),
     }
 }
 
@@ -179,4 +193,3 @@ pub fn llm_response_to_responses_compact(response: Response) -> Value {
     }
     body
 }
-

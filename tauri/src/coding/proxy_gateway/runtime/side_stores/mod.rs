@@ -4,6 +4,26 @@ mod responses_cipher;
 
 use std::sync::Arc;
 
+fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let lf = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4));
+    let position = match (lf, crlf) {
+        (Some(lf), Some(crlf)) if crlf.0 < lf.0 => crlf,
+        (Some(lf), _) => lf,
+        (None, Some(crlf)) => crlf,
+        (None, None) => return None,
+    };
+    let block = buffer[..position.0].to_vec();
+    buffer.drain(..position.0 + position.1);
+    Some(block)
+}
+
 pub(super) use codex_history::record_responses_sse_stream;
 pub(super) use gemini_shadow::{record_gemini_sse_stream, GeminiShadowSessionKey};
 

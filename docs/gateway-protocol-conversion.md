@@ -4,7 +4,7 @@
 
 > **维护入口**：凡涉及 Gateway 协议转换、统一 IR、协议直通/转换判定、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。凡涉及 provider profile、target protocol、body/header/path/auth、stream filter、rectifier、同协议直通兼容或其它 provider/channel wire 兼容，还必须阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并按职责更新对应文档；跨架构和渠道边界的改动要同时更新两份文档。
 >
-> **当前提交基线**：`bef809ede6cd5a1ae7e5b0edbbbf69ae9e766444`（2026-07-26）。本文同时同步记录该基线后的本轮 Gateway 修复；历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
+> **当前提交基线**：`b95ed54221a0daeb5190c5a1e15adf3322c94d8c`（2026-07-27）。本文同时同步记录该基线后的本轮 Gateway 工作树修复；历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
 
 ## 0. 产品场景与设计动机
 
@@ -296,6 +296,7 @@ OpenAI Responses request 中不能完整结构化表达的 raw-only `input[]` it
 ### 8.2 Responses reasoning 与终态
 
 - 连续 reasoning item 先合并，再尝试 forward merge 到紧随其后的 assistant tool/message item。
+- 非流 Responses response output 中的多个 `reasoning` item 也必须按出现顺序累积 summary 文本；最后一个有效 `encrypted_content` 仍作为当前 reasoning signature，不能让后续 item 覆盖此前文本。
 - trailing reasoning 只能挂回当前 user turn 内最近的 assistant；遇到 user boundary 必须重置归属。当前轮没有 assistant 时保留 standalone assistant reasoning，不能丢弃或挂到更早轮次。
 - 非流 Responses `status="incomplete"` 映射为 LLM `finish_reason="length"`。
 - 非流 Responses `status="cancelled"` / `"canceled"` 映射为 `finish_reason="cancelled"`；反向输出统一使用 Responses `status="canceled"`，不能退化为 `completed`。
@@ -408,7 +409,8 @@ SSE 转换要求边读边写，不 full-buffer。结束事件要幂等处理，�
 当前必须保持的状态机不变量：
 
 - OpenAI Chat tool call 首次向目标协议输出 identity 前，必须同时拿到非空 name 和上游真实 id；多个 call 按 index 升序首次打开。只有 finish/EOF 时上游始终没有 id，才允许生成 `call_<index>` synthetic fallback。
-- Responses source 的 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled`、`response.canceled` 都是 terminal event；取消终态写成统一 `Finish { reason: "cancelled" }`。
+- Responses source 的 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled`、`response.canceled` 都是 terminal event；取消终态写成统一 `Finish { reason: "cancelled" }`；incomplete 入站写成 `Finish { reason: "length" }`。
+- **Responses target writer（跨协议出站）**：`finish_reason=error` → `response.failed`；`cancelled`/`canceled` → `response.cancelled` + `status=canceled`；`length` → **`response.completed` + `status=incomplete`**（对齐 cc-switch Codex bridge，见 §18 有意差异）。不要把“length 未发 `response.incomplete` 事件名”单独判成实现疏漏。
 - 一旦识别到 JSON/SSE error、空 error event、transport `fail()` 或 source parser `StreamError`，`StreamKernel` 必须进入 error terminal。后续 source block 被忽略，EOF 也不能再生成正常 Chat stop、Responses completed 或 Gemini finish。
 - target writer 已输出 error envelope 后，正常完成事件不能再次出现；error 与 completed/stop 必须保持互斥。
 
@@ -552,6 +554,7 @@ header/auth 由 `build_upstream_headers()` 处理：
 - 用 response id 做主索引，用 call id 做二级索引。
 - 后续 Codex request 如果只带 `previous_response_id` / `function_call_output`，或只有可唯一匹配的 call id，则在转换前补回前序 assistant call item。
 - 当前补全目标是 `OpenAiResponses -> OpenAiChat` 和 `OpenAiResponses -> AnthropicMessages`。这两个 target 都要求工具结果前有同轮可见的 assistant 工具调用；Responses 上游本身可以靠 `previous_response_id` 取服务端历史，所以同协议 Responses target 不补。Gemini target 使用 `GeminiShadowStore` 在转换后的 Gemini body 上回放上一轮 model `functionCall`，不复用 `CodexHistoryStore`。
+- Codex history 的旁路 SSE parser 与 Gemini shadow parser 都必须在 `\n\n`、`\r\n\r\n` 同时存在时消费物理位置最早的 delimiter；混合行尾不能把多个事件合并成一个 block。两个 side store 都由同名 `takes_physically_earliest_sse_delimiter` 回归测试锁定。
 
 边界：
 
@@ -720,7 +723,7 @@ apply_outbound_adapter_compat_value(
 
 ### 14.3 供应商方言识别
 
-`runtime/upstream.rs::ProviderBodyCompat` 是当前 provider-specific body 兼容的核心枚举。`ProviderBodyCompat::from_provider_meta()` 先看 `providerType`，并且会结合 `target_protocol` 判断某些同名 provider type 的实际平台：
+`runtime/compat/provider_kind.rs::ProviderBodyCompat` 是当前 provider-specific body 兼容的核心枚举。`ProviderBodyCompat::from_provider_meta()` 先看 `providerType`，并且会结合 `target_protocol` 判断某些同名 provider type 的实际平台：
 
 | `providerType` / 条件 | target protocol | `ProviderBodyCompat` | 说明 |
 |---|---|---|---|
@@ -870,7 +873,7 @@ restore map 是 provider-specific request-local runtime 状态，随 `PreparedUp
 2. 在 `gateway_provider_profiles.json` 增加或修正 profile/endpoint，明确 `providerType`、`apiFormat`、`baseUrl`，以及必要的 `reasoningField`、`codexChatReasoning`、`defaultMaxTokens`、图片策略字段。profile 中的 `codexChatReasoning` 只用于 Codex endpoint；即使 Gemini endpoint 从 Codex endpoint 派生，也不能复制或通过 profile 应用该字段。
 3. 确认前端表单保存内置 endpoint 时只写 `data.meta.gatewayProfile` 引用和用户覆盖项，不写 profile 派生快照；Claude/Codex/Grok/Gemini CLI 内置 endpoint 走对应 `mergeGatewayMetaIntoProviderMeta()`。
 4. 如果只是已有 provider type 的新 endpoint，优先复用现有 `ProviderBodyCompat`。
-5. 如果是新供应商方言，在 `runtime/upstream.rs::ProviderBodyCompat` 增加识别和最小 body/stream/header 兼容逻辑。
+5. 如果是新供应商方言，在 `runtime/compat/provider_kind.rs::ProviderBodyCompat` 增加识别，并在对应 runtime adapter 增加最小 body/stream/header 兼容逻辑。
 6. 如果是 provider-agnostic 的协议结构互转，才改 `transformer`。
 7. 新规则必须补 runtime 回归测试，尤其覆盖“自定义 provider 即使模型名像 DeepSeek/Qwen/GLM，也不会误套内置供应商规则”的负例。
 8. 修改完成后必须把逐项兼容事实、触发条件、默认行为、源码位置和测试位置同步写回 `docs/gateway-provider-compatibility.md`；如果改动影响架构边界、reference baseline 或同步结论，再同步更新本文。
@@ -1031,12 +1034,13 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 - 如果未来要扩展 embedding/image/video/rerank，不能只在现有 `AiProtocol` 上加枚举；需要先决定是否把当前聊天专用 IR 扩展成通用网关式多 request type IR，还是在 Gateway 外另建非聊天代理路径。
 - 如果未来要引入更完整的参考项目 pipeline 能力，应优先明确 runtime 与 transformer 的职责边界，避免把数据库、provider 表、auth、URL 和 executor 逻辑下沉到当前 transformer 模块。
 
-当前还有四项有意保留的差异，后续对照参考项目时不能误判成待同步缺口：
+当前还有多项有意保留的差异，后续对照参考项目时不能误判成待同步缺口：
 
 - 合法 Responses cancellation 是协议终态，不触发 retry/failover 或 provider health 扣分；这与 AxonHub 的 terminal 解析一致，但不同于 cc-switch 当前把 cancellation 纳入错误检测的策略。
 - AxonHub 的 Responses WebSocket executor/session/pool 不属于当前本机 HTTP JSON/SSE Gateway 范围；在没有完整 transport、session 和恢复设计前，不引入半套 WebSocket。
 - Responses raw tool sidecar 的 `openai_responses_tool_signatures_complete` 和完整 signature 匹配，是 AI Toolbox 针对自身 request-scoped raw merge 的额外 fail-closed 门控。
 - runtime 同时检查最终客户端 body 与原始 `upstream_response_body`，是本项目跨协议转换、retry/failover 和可观测性链路所需的双重分类，不要求照搬 AxonHub 的内部响应对象。
+- **跨协议流式写回 OpenAI Responses 的 incomplete 终态事件名**：Chat / Anthropic / Gemini → Responses 时，`finish_reason=length`（及上游截断合成的 length）出站使用 **`event: response.completed` + `response.status=incomplete`**，而不是官方字面的独立 `event: response.incomplete`。这与 **cc-switch** Codex bridge（`streaming_codex_chat` / `streaming_codex_anthropic` 一律 `sse::response_completed`，incomplete 时补 `incomplete_details`）一致，目的是兼容大量**不会发 / 不依赖** `response.incomplete` 事件名的渠道与 Codex 客户端路径，并避免半截流被当成正常 completed。**入站**仍识别官方 `response.incomplete`；runtime 强制 SSE 聚合与有意义内容检测同时接受 `response.incomplete` 事件与 `status=incomplete`。AxonHub / 官方 streaming 文档以独立 incomplete 事件为 terminal 字面标准；本项目在该点优先 **cc-switch 渠道 bridge 语义**。可选增强是补齐 `incomplete_details`，不是默认改事件名。
 
 ## 19. 参考项目同步与吸收流程
 
@@ -1166,6 +1170,18 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 
 同步产出至少要包含三件事：行为差异说明、Rust 实现位置、回归测试或 fixture 断言。若只能证明“参考项目有某段代码”，但不能证明 AI Toolbox 当前用户路径会触发同类 wire behavior，就不要把它写成缺陷。
 
+审查或吸收时若发现 AI Toolbox **“看起来不合理 / 违反官方字面 / 与 AxonHub 事件名不一致”** 的逻辑，必须先做兼容归因，不能直接当 bug：
+
+1. **先查 cc-switch**（`../cc-switch`，入口见 19.2）：Codex/Chat/Anthropic/Gemini bridge、provider sanitize、history/side effect、SSE helper。很多“怪形状”是为了扛住第三方渠道缺字段、乱 finish_reason、截断流、或 Codex 客户端对 status 的实际依赖。
+2. **再查 AxonHub**（`../axonhub`）：统一 IR、终态枚举、stream aggregator、middleware 逆序。适合判断架构生命周期是否健康，不适合单独否决渠道 bridge 的事件名选择。
+3. **对照官方协议**时区分两层：
+   - **必须守住的语义**：合法终态不能当 provider failure、cancellation/incomplete 不误伤 health、error 与 completed 互斥、不 full-buffer SSE 等；
+   - **可按 bridge 放宽的 wire 字面**：例如跨协议 incomplete 用 `response.completed` + `status=incomplete`（cc-switch），只要 runtime 入站/聚合仍认识官方 `response.incomplete`。
+4. 只有同时满足「本仓用户路径会触发」且「参考项目也无对等有意设计 / 或参考设计已被本仓文档明确拒绝」时，才写成**已确认实现 bug**。
+5. 若判定为有意兼容，必须写回本文 §18（或 provider 兼容文档）的有意差异 / 不吸收说明，避免下一轮审查重复误报。
+
+典型已归档例子：跨协议 incomplete 终态事件名（§18）、DeepSeek Chat reasoning 门控严于参考库、streamed compaction 用 identity raw 而非 kernel roundtrip。
+
 ### 19.6 Go/Rust 对照审计点
 
 参考项目中很多行为来自 Go struct tag、`omitempty`、`json.RawMessage` 和 stream aggregator。迁移到 Rust 时最容易产生偏差的点如下：
@@ -1200,6 +1216,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 | F-11 | source error、transport fail 或 parser error 都是错误终态；之后不能再消费普通事件或在 EOF 合成 completed/stop。 |
 | F-12 | 非流 Responses cancellation 与 LLM `finish_reason="cancelled"` 双向映射，反向 canonical status 为 `canceled`，不能退化为 `completed`。 |
 | F-13 | runtime 的失败与空响应分类同时检查最终 body 和原始 `upstream_response_body`；转换不能隐藏失败，也不能抹掉合法终态。 |
+| F-14（审查纪律） | 发现“违反官方字面”的实现时，必须先对照 `../cc-switch` 与 `../axonhub` 判断是否为渠道兼容有意设计；跨协议 incomplete 使用 `response.completed`+`status=incomplete` 属 cc-switch 对齐项，见 §18，不得反复当 P0 bug。 |
 
 其它已经落位的细节点：
 
