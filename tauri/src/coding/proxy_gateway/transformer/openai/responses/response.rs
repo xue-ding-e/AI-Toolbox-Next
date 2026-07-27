@@ -1,5 +1,5 @@
 use crate::coding::proxy_gateway::transformer::llm::{
-    Choice, Message, MessageContent, MessageContentPart, Response,
+    Choice, Message, MessageContent, MessageContentPart, Response, ResponseError,
 };
 use crate::coding::proxy_gateway::transformer::shared::signature::{
     encode_signature, SignatureProvider,
@@ -100,6 +100,13 @@ pub fn responses_response_to_llm(body: Value) -> Response {
     message.content = MessageContent::Parts(parts);
     message.tool_calls = tool_calls;
     let has_tool = !message.tool_calls.is_empty();
+    let status = body.get("status").and_then(Value::as_str);
+    let finish_reason = responses_status_to_finish(status, has_tool);
+    let error = if status == Some("failed") || finish_reason == "error" {
+        Some(responses_error_to_llm(body.get("error")))
+    } else {
+        None
+    };
     Response {
         id: body
             .get("id")
@@ -124,14 +131,39 @@ pub fn responses_response_to_llm(body: Value) -> Response {
         choices: vec![Choice {
             index: 0,
             message,
-            finish_reason: Some(responses_status_to_finish(
-                body.get("status").and_then(Value::as_str),
-                has_tool,
-            )),
+            finish_reason: Some(finish_reason),
             ..Default::default()
         }],
         usage: Some(responses_usage_to_llm(body.get("usage"))),
+        error,
         ..Default::default()
+    }
+}
+
+fn responses_error_to_llm(error: Option<&Value>) -> ResponseError {
+    let error = error.unwrap_or(&Value::Null);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| error.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| "Response failed".to_string());
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("api_error")
+        .to_string();
+    let code = error.get("code").and_then(|code| match code {
+        Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    });
+    ResponseError {
+        message,
+        error_type,
+        code,
     }
 }
 

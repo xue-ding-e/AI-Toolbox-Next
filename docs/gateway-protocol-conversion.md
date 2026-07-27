@@ -4,7 +4,7 @@
 
 > **维护入口**：凡涉及 Gateway 协议转换、统一 IR、协议直通/转换判定、SSE 生命周期、响应分类、runtime pipeline、side store 或参考项目吸收，必须先阅读本文，再阅读目标模块 `AGENTS.md` 和当前源码。凡涉及 provider profile、target protocol、body/header/path/auth、stream filter、rectifier、同协议直通兼容或其它 provider/channel wire 兼容，还必须阅读 [`docs/gateway-provider-compatibility.md`](gateway-provider-compatibility.md)。代码或测试改完后，必须在同一任务内重新对照源码、测试、AxonHub 和 cc-switch，并按职责更新对应文档；跨架构和渠道边界的改动要同时更新两份文档。
 >
-> **当前提交基线**：`b95ed54221a0daeb5190c5a1e15adf3322c94d8c`（2026-07-27）。本文同时同步记录该基线后的本轮 Gateway 工作树修复；历史协议转换修复 `1b1bea6` 的 F-1 至 F-13 已合并。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
+> **当前提交基线**：`f82bcd4a58e53d14107c1df1f779ebf32f04b0f1`（2026-07-27）。历史协议转换修复 `1b1bea6` 的 F-1 至 F-13、`46b59ac` 的 side store earliest-delimiter / 非流 multi-reasoning，以及本 commit 的 Responses `response.failed` 跨协议 error envelope、`usage_parser` 物理最早 SSE delimiter、Grok source/route 白名单对齐，均已是已提交事实。本文持续记录参考项目 baseline、增量吸收结论和仍待处理的后续能力。
 
 ## 0. 产品场景与设计动机
 
@@ -410,9 +410,11 @@ SSE 转换要求边读边写，不 full-buffer。结束事件要幂等处理，�
 
 - OpenAI Chat tool call 首次向目标协议输出 identity 前，必须同时拿到非空 name 和上游真实 id；多个 call 按 index 升序首次打开。只有 finish/EOF 时上游始终没有 id，才允许生成 `call_<index>` synthetic fallback。
 - Responses source 的 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled`、`response.canceled` 都是 terminal event；取消终态写成统一 `Finish { reason: "cancelled" }`；incomplete 入站写成 `Finish { reason: "length" }`。
+- **Responses `response.failed`（以及 `response.completed` + `status=failed`）必须进入统一 `StreamError` / 非流 `Response.error`**，保留上游 `error.message/type/code`；不能压成普通 `Finish { reason: "error" }` 后再走各目标成功 finish writer。
+- **跨协议 failed 出站 envelope**：Anthropic → `event:error`（禁止 `message_stop` / `end_turn`）；Chat → `{error:{message,type,code}}`（禁止 `finish_reason=error` + `[DONE]`）；Gemini → Gemini error envelope（禁止 `finishReason=STOP`）；Responses target 仍发 `response.failed`。
 - **Responses target writer（跨协议出站）**：`finish_reason=error` → `response.failed`；`cancelled`/`canceled` → `response.cancelled` + `status=canceled`；`length` → **`response.completed` + `status=incomplete`**（对齐 cc-switch Codex bridge，见 §18 有意差异）。不要把“length 未发 `response.incomplete` 事件名”单独判成实现疏漏。
-- 一旦识别到 JSON/SSE error、空 error event、transport `fail()` 或 source parser `StreamError`，`StreamKernel` 必须进入 error terminal。后续 source block 被忽略，EOF 也不能再生成正常 Chat stop、Responses completed 或 Gemini finish。
-- target writer 已输出 error envelope 后，正常完成事件不能再次出现；error 与 completed/stop 必须保持互斥。
+- 一旦识别到 JSON/SSE error、空 error event、transport `fail()`、Responses failed 或 source parser `StreamError`，`StreamKernel` 必须进入 error terminal。后续 source block 被忽略，EOF 也不能再生成正常 Chat stop、Responses completed 或 Gemini finish。
+- target writer 已输出 error envelope 后，正常完成事件不能再次出现；error 与 completed/stop/`message_stop` 必须保持互斥。
 
 runtime 在进入 transformer 前后还会包一些 provider/runtime stream adapter：
 

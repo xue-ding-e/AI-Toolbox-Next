@@ -851,8 +851,25 @@ impl SourceStreamState {
                 }
                 Vec::new()
             }
+            "response.failed" => {
+                let response = value.get("response").unwrap_or(&value);
+                let error = response
+                    .get("error")
+                    .filter(|error| !error.is_null())
+                    .unwrap_or(response);
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .filter(|message| !message.trim().is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| error.as_str().map(ToString::to_string))
+                    .unwrap_or_else(|| "Response failed".to_string());
+                let code = stream_error_code_from_value(error.get("code"))
+                    .or_else(|| stream_error_code_from_value(error.get("type")))
+                    .unwrap_or_else(|| "response_error".to_string());
+                vec![UnifiedStreamEvent::StreamError { code, message }]
+            }
             "response.completed"
-            | "response.failed"
             | "response.cancelled"
             | "response.canceled"
             | "response.incomplete" => {
@@ -871,7 +888,6 @@ impl SourceStreamState {
                         })
                         .unwrap_or(false);
                 let reason = match event_type {
-                    "response.failed" => Some("error".to_string()),
                     "response.cancelled" | "response.canceled" => Some("cancelled".to_string()),
                     "response.incomplete" => Some("length".to_string()),
                     _ => response
@@ -886,6 +902,24 @@ impl SourceStreamState {
                         })
                         .map(ToString::to_string),
                 };
+                // completed + status=failed is still a protocol failure terminal.
+                if reason.as_deref() == Some("error") {
+                    let error = response
+                        .get("error")
+                        .filter(|error| !error.is_null())
+                        .unwrap_or(response);
+                    let message = error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .filter(|message| !message.trim().is_empty())
+                        .map(ToString::to_string)
+                        .or_else(|| error.as_str().map(ToString::to_string))
+                        .unwrap_or_else(|| "Response failed".to_string());
+                    let code = stream_error_code_from_value(error.get("code"))
+                        .or_else(|| stream_error_code_from_value(error.get("type")))
+                        .unwrap_or_else(|| "response_error".to_string());
+                    return vec![UnifiedStreamEvent::StreamError { code, message }];
+                }
                 vec![UnifiedStreamEvent::Finish {
                     reason,
                     usage: response.get("usage").cloned(),
@@ -2383,6 +2417,13 @@ impl TargetStreamState {
                 }
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
+                if reason.as_deref() == Some("error") {
+                    return self.write_stream_error(
+                        AiProtocol::AnthropicMessages,
+                        "response_error".to_string(),
+                        "Response failed".to_string(),
+                    );
+                }
                 return self.finish_anthropic_message(reason, usage, false);
             }
         }
@@ -2460,6 +2501,13 @@ impl TargetStreamState {
                 out
             }
             UnifiedStreamEvent::Finish { reason, .. } => {
+                if reason.as_deref() == Some("error") {
+                    return self.write_stream_error(
+                        AiProtocol::OpenAiChat,
+                        "response_error".to_string(),
+                        "Response failed".to_string(),
+                    );
+                }
                 if self.finished {
                     return Vec::new();
                 }
@@ -2470,7 +2518,6 @@ impl TargetStreamState {
                     Some(match reason.as_deref() {
                         Some("length") => "length",
                         Some("tool_calls") => "tool_calls",
-                        Some("error") => "error",
                         Some("cancelled") | Some("canceled") => "cancelled",
                         _ => "stop",
                     }),
@@ -2731,6 +2778,13 @@ impl TargetStreamState {
                 self.flush_gemini_tool_calls(false)
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
+                if reason.as_deref() == Some("error") {
+                    return self.write_stream_error(
+                        AiProtocol::GeminiNative,
+                        "response_error".to_string(),
+                        "Response failed".to_string(),
+                    );
+                }
                 if self.emitted_gemini_finish {
                     return Vec::new();
                 }

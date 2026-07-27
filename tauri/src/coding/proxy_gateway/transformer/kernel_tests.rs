@@ -2654,28 +2654,148 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
-    fn responses_failed_stream_to_chat_finishes_with_error() {
+    fn responses_failed_stream_to_chat_emits_error_envelope() {
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
             r#"event: response.created
 data: {"type":"response.created","response":{"id":"resp_failed","model":"gpt-5","status":"in_progress","output":[]}}
 
 event: response.failed
-data: {"type":"response.failed","response":{"id":"resp_failed","model":"gpt-5","status":"failed","output":[],"error":{"message":"boom"}}}
+data: {"type":"response.failed","response":{"id":"resp_failed","model":"gpt-5","status":"failed","output":[],"error":{"message":"boom","type":"server_error","code":"upstream_failed"}}}
 
 "#
             .to_string(),
         );
 
-        assert!(output.contains("chat.completion.chunk"));
-        assert!(output.contains("data: [DONE]"));
-        assert!(!output.contains(r#""finish_reason":"stop""#));
+        assert!(!output.contains("data: [DONE]"));
         let values = sse_data_values(&output);
-        let finish = values
+        assert!(
+            values
+                .iter()
+                .all(|value| value.pointer("/choices/0/finish_reason").is_none()
+                    || value["choices"][0]["finish_reason"].is_null()),
+            "response.failed must not finish Chat with a success/error finish_reason"
+        );
+        let error = values
             .iter()
-            .find(|value| value["choices"][0]["finish_reason"] == "error")
-            .expect("response.failed should map to Chat finish_reason=error");
-        assert_eq!(finish["choices"][0]["delta"], json!({}));
+            .find(|value| value.get("error").is_some())
+            .expect("response.failed should map to Chat error envelope");
+        assert_eq!(error["error"]["message"], json!("boom"));
+        // StreamError currently carries a single code field; source prefers error.code.
+        assert_eq!(error["error"]["type"], json!("upstream_failed"));
+        assert_eq!(error["error"]["code"], json!("upstream_failed"));
+    }
+
+    #[test]
+    fn responses_failed_stream_to_anthropic_emits_error_not_message_stop() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_failed","model":"gpt-5","status":"in_progress","output":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"partial"}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_failed","model":"gpt-5","status":"failed","output":[],"error":{"message":"boom","type":"server_error"}}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        assert!(output.contains(r#""message":"boom""#));
+        assert!(!output.contains("event: message_stop"));
+        assert!(!output.contains(r#""stop_reason":"end_turn""#));
+        let values = sse_data_values(&output);
+        let error = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("error"))
+            .expect("response.failed should map to Anthropic event:error");
+        assert_eq!(error["error"]["message"], json!("boom"));
+        assert_eq!(error["error"]["type"], json!("server_error"));
+    }
+
+    #[test]
+    fn responses_failed_stream_to_gemini_emits_error_not_stop() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_failed","model":"gpt-5","status":"in_progress","output":[]}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_failed","model":"gpt-5","status":"failed","output":[],"error":{"message":"boom","type":"server_error","code":"upstream_failed"}}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(!output.contains(r#""finishReason":"STOP""#));
+        let values = sse_data_values(&output);
+        let error = values
+            .iter()
+            .find(|value| value.get("error").is_some())
+            .expect("response.failed should map to Gemini error envelope");
+        assert_eq!(error["error"]["message"], json!("boom"));
+    }
+
+    #[test]
+    fn responses_failed_json_to_anthropic_emits_error_envelope() {
+        let body = json!({
+            "id": "resp_failed",
+            "object": "response",
+            "status": "failed",
+            "model": "gpt-5",
+            "output": [],
+            "error": {
+                "message": "boom",
+                "type": "server_error",
+                "code": "upstream_failed"
+            }
+        });
+        let converted = convert_response_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            body,
+        )
+        .expect("failed response should convert");
+        assert_eq!(converted["type"], json!("error"));
+        assert_eq!(converted["error"]["message"], json!("boom"));
+        assert_eq!(converted["error"]["type"], json!("server_error"));
+        assert_ne!(converted.get("stop_reason"), Some(&json!("end_turn")));
+    }
+
+    #[test]
+    fn responses_failed_json_to_chat_and_gemini_emit_error_envelopes() {
+        let body = json!({
+            "id": "resp_failed",
+            "object": "response",
+            "status": "failed",
+            "model": "gpt-5",
+            "output": [],
+            "error": {
+                "message": "boom",
+                "type": "server_error",
+                "code": "upstream_failed"
+            }
+        });
+
+        let chat = convert_response_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            body.clone(),
+        )
+        .expect("failed response should convert to chat error");
+        assert_eq!(chat["error"]["message"], json!("boom"));
+        assert_eq!(chat["error"]["type"], json!("server_error"));
+        assert_eq!(chat["error"]["code"], json!("upstream_failed"));
+        assert!(chat.get("choices").is_none());
+
+        let gemini = convert_response_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            body,
+        )
+        .expect("failed response should convert to gemini error");
+        assert_eq!(gemini["error"]["message"], json!("boom"));
+        assert!(gemini.get("candidates").is_none());
     }
 
     #[test]

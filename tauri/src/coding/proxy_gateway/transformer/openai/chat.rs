@@ -793,6 +793,37 @@ fn is_openai_o_series(model: &str) -> bool {
 }
 
 pub fn llm_response_to_chat(response: Response) -> Value {
+    if let Some(error) = response.error.as_ref() {
+        return json!({
+            "error": {
+                "message": error.message,
+                "type": if error.error_type.is_empty() {
+                    "api_error".to_string()
+                } else {
+                    error.error_type.clone()
+                },
+                "code": error
+                    .code
+                    .clone()
+                    .unwrap_or_else(|| "response_error".to_string())
+            }
+        });
+    }
+    let is_error_finish = response
+        .choices
+        .first()
+        .and_then(|choice| choice.finish_reason.as_deref())
+        == Some("error");
+    if is_error_finish {
+        return json!({
+            "error": {
+                "message": "Response failed",
+                "type": "api_error",
+                "code": "response_error"
+            }
+        });
+    }
+
     let citations = response
         .transformer_metadata
         .get(CHAT_CITATIONS_METADATA_KEY)

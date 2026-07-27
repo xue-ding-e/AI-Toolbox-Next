@@ -499,6 +499,34 @@ fn anthropic_content_part_to_llm(part: &Value) -> Option<MessageContentPart> {
 }
 
 pub fn llm_response_to_anthropic(response: Response) -> Value {
+    if let Some(error) = response.error.as_ref() {
+        return json!({
+            "type": "error",
+            "error": {
+                "type": if error.error_type.is_empty() {
+                    "api_error".to_string()
+                } else {
+                    error.error_type.clone()
+                },
+                "message": error.message
+            }
+        });
+    }
+    let is_error_finish = response
+        .choices
+        .first()
+        .and_then(|choice| choice.finish_reason.as_deref())
+        == Some("error");
+    if is_error_finish {
+        return json!({
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": "Response failed"
+            }
+        });
+    }
+
     let choice = response.choices.first();
     let message = choice.map(|choice| &choice.message);
     let mut content = Vec::new();

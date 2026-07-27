@@ -478,15 +478,23 @@ fn max_option(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 }
 
 fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    if let Some(index) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-        let block = buffer.drain(..index + 4).collect::<Vec<_>>();
-        return Some(block);
-    }
-    if let Some(index) = buffer.windows(2).position(|window| window == b"\n\n") {
-        let block = buffer.drain(..index + 2).collect::<Vec<_>>();
-        return Some(block);
-    }
-    None
+    let lf = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4));
+    let position = match (lf, crlf) {
+        (Some(lf), Some(crlf)) if crlf.0 < lf.0 => crlf,
+        (Some(lf), _) => lf,
+        (None, Some(crlf)) => crlf,
+        (None, None) => return None,
+    };
+    let block = buffer[..position.0].to_vec();
+    buffer.drain(..position.0 + position.1);
+    Some(block)
 }
 
 fn parse_sse_data_block(block: &[u8]) -> Option<Value> {
@@ -735,5 +743,42 @@ data: [DONE]
 
         collector.push_chunk(GatewayCliKey::Claude, b"aa");
         assert_eq!(collector.buffer.len(), 2);
+    }
+
+    #[test]
+    fn take_sse_block_consumes_physically_earliest_delimiter() {
+        // LF event first, CRLF later: must not drain through the later CRLF.
+        let mut buffer = b"data: {\"a\":1}\n\ndata: {\"b\":2}\r\n\r\n".to_vec();
+        let first = take_sse_block(&mut buffer).expect("first block");
+        assert_eq!(String::from_utf8_lossy(&first), "data: {\"a\":1}");
+        let second = take_sse_block(&mut buffer).expect("second block");
+        assert_eq!(String::from_utf8_lossy(&second), "data: {\"b\":2}");
+        assert!(buffer.is_empty());
+
+        // CRLF first, LF later.
+        let mut buffer = b"data: {\"c\":3}\r\n\r\ndata: {\"d\":4}\n\n".to_vec();
+        let first = take_sse_block(&mut buffer).expect("crlf-first block");
+        assert_eq!(String::from_utf8_lossy(&first), "data: {\"c\":3}");
+        let second = take_sse_block(&mut buffer).expect("lf-second block");
+        assert_eq!(String::from_utf8_lossy(&second), "data: {\"d\":4}");
+    }
+
+    #[test]
+    fn sse_usage_collector_parses_mixed_lf_crlf_events() {
+        let mut collector = SseUsageCollector::default();
+        // First event ends with LF, second with CRLF; wrong priority would merge both.
+        collector.push_chunk(
+            GatewayCliKey::Codex,
+            b"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_a\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
+        );
+        collector.push_chunk(
+            GatewayCliKey::Codex,
+            b"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_b\",\"usage\":{\"input_tokens\":90,\"output_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":30}}}}\r\n\r\n",
+        );
+        let usage = collector.finish(GatewayCliKey::Codex);
+        assert_eq!(usage.input_tokens, Some(60));
+        assert_eq!(usage.output_tokens, Some(12));
+        assert_eq!(usage.cache_read_tokens, Some(30));
+        assert_eq!(usage.envelope_id.as_deref(), Some("resp_a"));
     }
 }

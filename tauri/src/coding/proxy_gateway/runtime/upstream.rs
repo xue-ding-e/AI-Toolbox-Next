@@ -7599,7 +7599,7 @@ fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
                 None
             }
         }
-        GatewayCliKey::Codex | GatewayCliKey::Grok => {
+        GatewayCliKey::Codex => {
             let path = route.forwarded_path.as_str();
             if path == "/v1/chat/completions" || path == "/chat/completions" {
                 Some(AiProtocol::OpenAiChat)
@@ -7608,6 +7608,16 @@ fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
                 || path == "/v1/responses/compact"
                 || path == "/responses/compact"
             {
+                Some(AiProtocol::OpenAiResponses)
+            } else {
+                None
+            }
+        }
+        // Keep Grok source derivation aligned with formal route whitelist:
+        // only /v1 (probe) and /v1/responses are accepted; Chat/compact stay unsupported.
+        GatewayCliKey::Grok => {
+            let path = route.forwarded_path.as_str();
+            if path == "/v1/responses" || path == "/responses" {
                 Some(AiProtocol::OpenAiResponses)
             } else {
                 None
@@ -9847,6 +9857,26 @@ mod tests {
             upstream_forwarded_path(&route, &provider, conversion, "claude-sonnet", false).as_ref(),
             "/v1/messages"
         );
+    }
+
+    #[test]
+    fn grok_source_protocol_matches_formal_route_whitelist() {
+        let responses = gateway_route(GatewayCliKey::Grok, "/v1/responses");
+        assert_eq!(
+            source_protocol_from_route(&responses),
+            Some(AiProtocol::OpenAiResponses)
+        );
+
+        // Probe path is accepted by route matching but is not a chat protocol.
+        let probe = gateway_route(GatewayCliKey::Grok, "/v1");
+        assert_eq!(source_protocol_from_route(&probe), None);
+
+        // Even if an internal caller synthesizes Chat/compact routes, Grok must not
+        // silently expand the product protocol surface beyond formal whitelist.
+        let synthetic_chat = gateway_route(GatewayCliKey::Grok, "/v1/chat/completions");
+        assert_eq!(source_protocol_from_route(&synthetic_chat), None);
+        let synthetic_compact = gateway_route(GatewayCliKey::Grok, "/v1/responses/compact");
+        assert_eq!(source_protocol_from_route(&synthetic_compact), None);
     }
 
     #[test]

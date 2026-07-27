@@ -353,14 +353,15 @@
 
 ## Error 转换细节
 
-- `convert_error_response_body` 只在 body 是 JSON 且能提取 message 时转换；非 JSON 或无法识别 error shape 时原样返回。
+- `convert_error_response_body`：非 JSON 原样返回；任意非 null JSON 至少以序列化全文作为 message 进行目标 envelope 转换（未知 shape 不会原样透传）。
 - OpenAI/Responses target 使用 `{error:{message,type,param,code}}`。
 - Anthropic target 使用 `{type:"error", error:{type,message}}`。
 - Gemini target 使用 `{error:{code,message,status}}`，并按常见 error type 映射 HTTP-like code/status。
-- SSE 内显式错误也必须转换为目标协议错误事件，不能忽略后再正常 finish。至少要识别 `event:error`、`{"event":"error","data":{"error":...}}`、`{"type":"error",...}`、`{"error":...}`。OpenAI-style stream error 的 `code` 可能是字符串或数字；数字必须转成字符串传给非 Gemini 目标，不能退回通用 `stream_error`。
+- SSE 内显式错误也必须转换为目标协议错误事件，不能忽略后再正常 finish。至少要识别 `event:error`、`{"event":"error","data":{"error":...}}`、`{"type":"error",...}`、`{"error":...}`，以及 Responses `response.failed` / `response.completed`+`status=failed`。OpenAI-style stream error 的 `code` 可能是字符串或数字；数字必须转成字符串传给非 Gemini 目标，不能退回通用 `stream_error`。
+- Responses `response.failed` 必须解析为 `StreamError`（非流为 `Response.error`），保留 message，并优先提取 `error.code` 再 fallback `error.type`；**禁止**再压成普通 `Finish { reason: "error" }` 后走成功 finish writer。流式 `StreamError` 当前只承载单一 code 字段，因此 Chat/Anthropic stream envelope 的 type/code 可能同值；非流 JSON 路径通过 `ResponseError` 可同时保留 type 与 code。
 - EOF 只有在没有 error terminal 的情况下才允许执行 source finalization；错误事件之后必须保持目标协议 error envelope 的唯一终态。
 - 已开始的 Responses target 流遇到上游 stream error 或显式 error event 时发 `response.failed`，`response.output` 带当前已知 output items，不能再发 `response.completed`；未开始 response 时发顶层 `event:error`。
-- 目标 Anthropic 遇到 Chat/OpenAI-style SSE 错误时输出 Anthropic `event:error`，目标 Chat/Gemini 也必须输出各自协议 error envelope，避免客户端收到伪造的正常 stop/completed。
+- 目标 Anthropic 遇到 Chat/OpenAI-style SSE 错误或 Responses failed 时输出 Anthropic `event:error`（禁止 `message_stop`/`end_turn`），目标 Chat/Gemini 也必须输出各自协议 error envelope（Chat 禁止 `finish_reason=error`+`[DONE]`，Gemini 禁止 `finishReason=STOP`）。
 
 ## 非目标范围
 

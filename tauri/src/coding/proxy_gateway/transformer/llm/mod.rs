@@ -9,7 +9,7 @@ pub use constants::{
 };
 pub use model::{
     Choice, DocumentUrl, ImageUrl, Message, MessageContent, MessageContentPart, Request, Response,
-    Stop, StreamOptions, Usage,
+    ResponseError, Stop, StreamOptions, Usage,
 };
 pub use tools::{
     Function, FunctionCall, GoogleTools, NamedToolChoice, ResponseCustomTool,

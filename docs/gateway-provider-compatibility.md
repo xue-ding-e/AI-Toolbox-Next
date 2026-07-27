@@ -86,6 +86,18 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 
 测试：`responses_identity_stream_preserves_compaction_bytes_without_kernel`、`responses_stream_drops_compaction_for_chat_without_losing_text`。
 
+### 1.7 跨协议终态 envelope 索引
+
+详细状态机见架构主文档 §10 / §18。本表只索引 source terminal 到四个 target 的默认 wire，便于 provider/channel 审查检索：
+
+| Source terminal | Anthropic target | Chat target | Responses target | Gemini target | Runtime health / failover |
+|---|---|---|---|---|---|
+| Responses `failed` / `status=failed` | `event:error` / JSON `{type:"error",error:{...}}`；保留 message/type/code；**禁止** `message_stop` / `end_turn` | SSE/JSON `{error:{message,type,code}}`；**禁止** `finish_reason=error` + `[DONE]` | `response.failed` | Gemini error envelope；**禁止** `finishReason=STOP` | 视为失败，可 retry/failover |
+| Responses `incomplete` / `length` | 正常 finish（`max_tokens` 等） | `finish_reason=length` | **有意 bridge**：`response.completed` + `status=incomplete`（不是官方 `response.incomplete` 事件名）；`incomplete_details` 仅可选增强 | `finishReason=MAX_TOKENS` | 合法终态，不扣 health |
+| Responses `cancelled` / `canceled` | 当前跨协议仍可能 best-effort 正常 finish（无 1:1 cancellation terminal）；**runtime 侧保持 health-neutral，不 retry/failover** | 非官方 `finish_reason=cancelled` bridge 仍存在 | `response.cancelled` + `status=canceled` | 可能 `STOP` best-effort | 合法终态，不扣 health |
+
+测试锚点：`responses_failed_stream_to_anthropic_emits_error_not_message_stop`、`responses_failed_stream_to_chat_emits_error_envelope`、`responses_failed_stream_to_gemini_emits_error_not_stop`、`responses_failed_json_to_*`。
+
 ## 2. 通用请求侧兼容
 
 请求 body 的事实源是 `runtime/upstream.rs::build_upstream_body_for_provider()` 和 `runtime/middleware.rs`。当前顺序：

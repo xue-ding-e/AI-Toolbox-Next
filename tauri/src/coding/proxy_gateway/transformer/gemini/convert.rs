@@ -1127,6 +1127,30 @@ pub fn gemini_response_to_llm(body: Value) -> Response {
 }
 
 pub fn llm_response_to_gemini(response: Response) -> Value {
+    if let Some(error) = response.error.as_ref() {
+        let code = error
+            .code
+            .as_ref()
+            .map(|code| json!(code))
+            .or_else(|| {
+                (!error.error_type.is_empty()).then(|| json!(error.error_type.clone()))
+            });
+        let kind = (!error.error_type.is_empty()).then(|| error.error_type.clone());
+        return gemini_error_from_parts(error.message.clone(), kind, code);
+    }
+    let is_error_finish = response
+        .choices
+        .first()
+        .and_then(|choice| choice.finish_reason.as_deref())
+        == Some("error");
+    if is_error_finish {
+        return gemini_error_from_parts(
+            "Response failed".to_string(),
+            Some("api_error".to_string()),
+            Some(json!("response_error")),
+        );
+    }
+
     let choices = if response.choices.is_empty() {
         vec![Choice::default()]
     } else {
