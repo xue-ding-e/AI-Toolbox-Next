@@ -2496,16 +2496,17 @@ fn codex_catalog_model_specs(
         }
     }
 
-    // Auto-review override is provider-level and needs a catalog entry to take
-    // effect. When the user only set the default model (no model mapping), seed
-    // one catalog entry from config.toml model / override itself.
-    if specs.is_empty() {
-        if let Some(auto_review_model_override) = auto_review_model_override.as_ref() {
-            let model = extract_codex_top_level_model(config_toml)
-                .unwrap_or_else(|| auto_review_model_override.clone());
+    // Auto-review override is provider-level and is read from the *current*
+    // session model entry. Always ensure that model exists in the generated
+    // catalog (seed when mapping is empty; append when default model is missing
+    // from mapping) so Codex can resolve the override.
+    if let Some(auto_review_model_override) = auto_review_model_override.as_ref() {
+        let default_model = extract_codex_top_level_model(config_toml)
+            .unwrap_or_else(|| auto_review_model_override.clone());
+        if seen_models.insert(default_model.clone()) {
             specs.push(CodexCatalogModelSpec {
-                model: model.clone(),
-                display_name: model,
+                model: default_model.clone(),
+                display_name: default_model,
                 context_window: default_context_window,
                 auto_review_model_override: Some(auto_review_model_override.clone()),
             });
@@ -3829,7 +3830,9 @@ approval_policy = "never"
 
         let specs = codex_catalog_model_specs(&settings, "model_context_window = 256000");
 
-        assert_eq!(specs.len(), 2);
+        // No default model in config.toml, so the provider-level override itself
+        // is also seeded as a catalog entry to keep auto-review resolvable.
+        assert_eq!(specs.len(), 3);
         assert_eq!(specs[0].model, "deepseek-v4-flash");
         assert_eq!(specs[0].display_name, "DeepSeek Flash");
         assert_eq!(specs[0].context_window, 64_000);
@@ -3842,6 +3845,11 @@ approval_policy = "never"
         assert_eq!(specs[1].context_window, 256_000);
         assert_eq!(
             specs[1].auto_review_model_override.as_deref(),
+            Some("gpt-5.5")
+        );
+        assert_eq!(specs[2].model, "gpt-5.5");
+        assert_eq!(
+            specs[2].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
     }
@@ -3860,6 +3868,80 @@ approval_policy = "never"
             specs[0].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
+    }
+
+    #[test]
+    fn codex_model_catalog_appends_default_model_when_missing_from_mapping() {
+        let settings = json!({
+            "autoReviewModelOverride": "reviewer-model",
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "mapped-a",
+                        "displayName": "Mapped A"
+                    },
+                    {
+                        "model": "mapped-b"
+                    }
+                ]
+            }
+        });
+
+        let specs = codex_catalog_model_specs(
+            &settings,
+            "model = \"default-main\"\nmodel_context_window = 200000",
+        );
+
+        assert_eq!(specs.len(), 3);
+        assert_eq!(specs[0].model, "mapped-a");
+        assert_eq!(
+            specs[0].auto_review_model_override.as_deref(),
+            Some("reviewer-model")
+        );
+        assert_eq!(specs[1].model, "mapped-b");
+        assert_eq!(
+            specs[1].auto_review_model_override.as_deref(),
+            Some("reviewer-model")
+        );
+        assert_eq!(specs[2].model, "default-main");
+        assert_eq!(specs[2].display_name, "default-main");
+        assert_eq!(specs[2].context_window, 200_000);
+        assert_eq!(
+            specs[2].auto_review_model_override.as_deref(),
+            Some("reviewer-model")
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_does_not_duplicate_default_model_already_in_mapping() {
+        let settings = json!({
+            "autoReviewModelOverride": "reviewer-model",
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "default-main",
+                        "displayName": "Default Main",
+                        "contextWindow": 64000
+                    },
+                    {
+                        "model": "mapped-b"
+                    }
+                ]
+            }
+        });
+
+        let specs =
+            codex_catalog_model_specs(&settings, "model = \"default-main\"");
+
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].model, "default-main");
+        assert_eq!(specs[0].display_name, "Default Main");
+        assert_eq!(specs[0].context_window, 64_000);
+        assert_eq!(
+            specs[0].auto_review_model_override.as_deref(),
+            Some("reviewer-model")
+        );
+        assert_eq!(specs[1].model, "mapped-b");
     }
 
     #[test]
