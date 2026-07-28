@@ -20,7 +20,52 @@ export interface BuildCodexSettingsConfigInput {
   model: string;
   config: string;
   catalogModels: CodexCatalogModel[];
+  autoReviewModelOverride?: string;
   auth: Record<string, unknown>;
+}
+
+export function normalizeCodexAutoReviewModelOverride(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
+/**
+ * Resolve provider-level auto-review override.
+ * Prefer top-level settingsConfig.autoReviewModelOverride; fall back to the
+ * first non-empty legacy per-model value for short-lived local drafts.
+ */
+export function resolveCodexAutoReviewModelOverride(
+  settings: CodexSettingsConfig | undefined,
+): string | undefined {
+  if (!settings) {
+    return undefined;
+  }
+
+  const topLevel = normalizeCodexAutoReviewModelOverride(settings.autoReviewModelOverride);
+  if (topLevel) {
+    return topLevel;
+  }
+
+  const models = settings.modelCatalog?.models || [];
+  for (const item of models) {
+    const legacyItem = item as CodexCatalogModel & {
+      autoReviewModelOverride?: unknown;
+      auto_review_model_override?: unknown;
+    };
+    const fromCamel = normalizeCodexAutoReviewModelOverride(legacyItem.autoReviewModelOverride);
+    if (fromCamel) {
+      return fromCamel;
+    }
+    const fromSnake = normalizeCodexAutoReviewModelOverride(legacyItem.auto_review_model_override);
+    if (fromSnake) {
+      return fromSnake;
+    }
+  }
+
+  return undefined;
 }
 
 export function parseCodexSettingsConfig(rawConfig: string | undefined): CodexSettingsConfig {
@@ -42,11 +87,15 @@ export function buildCodexSettingsConfig({
   model,
   config,
   catalogModels,
+  autoReviewModelOverride,
   auth,
 }: BuildCodexSettingsConfigInput): string {
   let finalConfig = config;
   const normalizedApiKey = apiKey.trim();
   const normalizedCatalogModels = normalizeCodexCatalogModels(catalogModels);
+  const normalizedAutoReviewModelOverride = normalizeCodexAutoReviewModelOverride(
+    autoReviewModelOverride,
+  );
 
   if (category === 'custom') {
     finalConfig = baseUrl
@@ -74,6 +123,9 @@ export function buildCodexSettingsConfig({
     settingsConfig.modelCatalog = {
       models: normalizedCatalogModels,
     };
+  }
+  if (category === 'custom' && normalizedAutoReviewModelOverride) {
+    settingsConfig.autoReviewModelOverride = normalizedAutoReviewModelOverride;
   }
 
   return JSON.stringify(settingsConfig);

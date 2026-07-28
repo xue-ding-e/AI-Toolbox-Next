@@ -2109,8 +2109,59 @@ fn extract_provider_settings_for_storage(
     if let Some(model_catalog) = normalize_codex_model_catalog_for_storage(settings_object) {
         provider_settings["modelCatalog"] = model_catalog;
     }
+    if let Some(auto_review_model_override) =
+        resolve_codex_auto_review_model_override(settings_object)
+    {
+        provider_settings["autoReviewModelOverride"] =
+            serde_json::Value::String(auto_review_model_override);
+    }
 
     Ok(provider_settings)
+}
+
+fn normalize_codex_optional_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+}
+
+fn resolve_codex_auto_review_model_override(
+    settings_object: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    if let Some(top_level) = normalize_codex_optional_string(
+        settings_object
+            .get("autoReviewModelOverride")
+            .or_else(|| settings_object.get("auto_review_model_override")),
+    ) {
+        return Some(top_level);
+    }
+
+    let models = settings_object
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())?;
+    for item in models {
+        if let Some(legacy) = normalize_codex_optional_string(
+            item.get("autoReviewModelOverride")
+                .or_else(|| item.get("auto_review_model_override")),
+        ) {
+            return Some(legacy);
+        }
+    }
+
+    None
+}
+
+fn extract_codex_top_level_model(config_toml: &str) -> Option<String> {
+    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
+    document
+        .get("model")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn normalize_codex_model_catalog_for_storage(
@@ -2371,6 +2422,7 @@ struct CodexCatalogModelSpec {
     model: String,
     display_name: String,
     context_window: u64,
+    auto_review_model_override: Option<String>,
 }
 
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
@@ -2394,58 +2446,77 @@ fn codex_catalog_model_specs(
     provider_settings_config: &Value,
     config_toml: &str,
 ) -> Vec<CodexCatalogModelSpec> {
-    let Some(models) = provider_settings_config
+    let settings_object = provider_settings_config.as_object();
+    let auto_review_model_override = settings_object
+        .and_then(|object| resolve_codex_auto_review_model_override(object));
+    let models = provider_settings_config
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
-        .and_then(|models| models.as_array())
-    else {
-        return Vec::new();
-    };
+        .and_then(|models| models.as_array());
 
     let default_context_window =
         extract_codex_top_level_u64(config_toml, "model_context_window").unwrap_or(128_000);
     let mut seen_models = BTreeSet::new();
     let mut specs = Vec::new();
 
-    for item in models {
-        let Some(model) = item
-            .get("model")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        else {
-            continue;
-        };
+    if let Some(models) = models {
+        for item in models {
+            let Some(model) = item
+                .get("model")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+            else {
+                continue;
+            };
 
-        if !seen_models.insert(model.to_string()) {
-            continue;
+            if !seen_models.insert(model.to_string()) {
+                continue;
+            }
+
+            let display_name = item
+                .get("displayName")
+                .or_else(|| item.get("display_name"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(model);
+            let context_window = parse_codex_positive_u64(
+                item.get("contextWindow")
+                    .or_else(|| item.get("context_window")),
+            )
+            .unwrap_or(default_context_window);
+
+            specs.push(CodexCatalogModelSpec {
+                model: model.to_string(),
+                display_name: display_name.to_string(),
+                context_window,
+                auto_review_model_override: auto_review_model_override.clone(),
+            });
         }
+    }
 
-        let display_name = item
-            .get("displayName")
-            .or_else(|| item.get("display_name"))
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(model);
-        let context_window = parse_codex_positive_u64(
-            item.get("contextWindow")
-                .or_else(|| item.get("context_window")),
-        )
-        .unwrap_or(default_context_window);
-
-        specs.push(CodexCatalogModelSpec {
-            model: model.to_string(),
-            display_name: display_name.to_string(),
-            context_window,
-        });
+    // Auto-review override is provider-level and needs a catalog entry to take
+    // effect. When the user only set the default model (no model mapping), seed
+    // one catalog entry from config.toml model / override itself.
+    if specs.is_empty() {
+        if let Some(auto_review_model_override) = auto_review_model_override.as_ref() {
+            let model = extract_codex_top_level_model(config_toml)
+                .unwrap_or_else(|| auto_review_model_override.clone());
+            specs.push(CodexCatalogModelSpec {
+                model: model.clone(),
+                display_name: model,
+                context_window: default_context_window,
+                auto_review_model_override: Some(auto_review_model_override.clone()),
+            });
+        }
     }
 
     specs
 }
 
 fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Value {
-    serde_json::json!({
+    let mut entry = serde_json::json!({
         "slug": spec.model.as_str(),
         "display_name": spec.display_name.as_str(),
         "description": spec.display_name.as_str(),
@@ -2487,7 +2558,14 @@ fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Valu
         "experimental_supported_tools": [],
         "input_modalities": ["text", "image"],
         "supports_search_tool": true
-    })
+    });
+
+    if let Some(auto_review_model_override) = &spec.auto_review_model_override {
+        entry["auto_review_model_override"] =
+            serde_json::Value::String(auto_review_model_override.clone());
+    }
+
+    entry
 }
 
 fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec]) -> Value {
@@ -3730,6 +3808,7 @@ approval_policy = "never"
     #[test]
     fn codex_model_catalog_from_settings_dedupes_and_defaults() {
         let settings = json!({
+            "autoReviewModelOverride": "gpt-5.5",
             "modelCatalog": {
                 "models": [
                     {
@@ -3754,21 +3833,50 @@ approval_policy = "never"
         assert_eq!(specs[0].model, "deepseek-v4-flash");
         assert_eq!(specs[0].display_name, "DeepSeek Flash");
         assert_eq!(specs[0].context_window, 64_000);
+        assert_eq!(
+            specs[0].auto_review_model_override.as_deref(),
+            Some("gpt-5.5")
+        );
         assert_eq!(specs[1].model, "kimi-k2");
         assert_eq!(specs[1].display_name, "kimi-k2");
         assert_eq!(specs[1].context_window, 256_000);
+        assert_eq!(
+            specs[1].auto_review_model_override.as_deref(),
+            Some("gpt-5.5")
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_seeds_default_model_when_only_auto_review_override_is_set() {
+        let settings = json!({
+            "autoReviewModelOverride": "gpt-5.5"
+        });
+
+        let specs = codex_catalog_model_specs(&settings, "model = \"gpt-5.5\"");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].model, "gpt-5.5");
+        assert_eq!(
+            specs[0].auto_review_model_override.as_deref(),
+            Some("gpt-5.5")
+        );
     }
 
     #[test]
     fn prepare_codex_config_with_model_catalog_writes_relative_pointer() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let settings = json!({
+            "autoReviewModelOverride": "gpt-5.5",
             "modelCatalog": {
                 "models": [
                     {
                         "model": "deepseek-v4-flash",
                         "displayName": "DeepSeek Flash",
                         "contextWindow": 64000
+                    },
+                    {
+                        "model": "kimi-k2",
+                        "displayName": "Kimi K2"
                     }
                 ]
             }
@@ -3799,7 +3907,15 @@ approval_policy = "never"
             catalog["models"][0]["context_window"].as_u64(),
             Some(64_000)
         );
+        assert_eq!(
+            catalog["models"][0]["auto_review_model_override"].as_str(),
+            Some("gpt-5.5")
+        );
         assert!(catalog["models"][0].get("model_messages").is_some());
+        assert_eq!(
+            catalog["models"][1]["auto_review_model_override"].as_str(),
+            Some("gpt-5.5")
+        );
     }
 
     #[test]
@@ -4364,6 +4480,7 @@ approval_policy = "never"
 model_provider = "custom"
 model = "deepseek-v4-flash"
 "#,
+            "autoReviewModelOverride": "gpt-5.5",
             "modelCatalog": {
                 "models": [
                     {
@@ -4400,6 +4517,10 @@ model = "deepseek-v4-flash"
 
         let provider_settings = extract_provider_settings_for_storage(&settings, None).unwrap();
 
+        assert_eq!(
+            provider_settings.pointer("/autoReviewModelOverride"),
+            Some(&json!("gpt-5.5"))
+        );
         assert_eq!(
             provider_settings.pointer("/modelCatalog/models/0"),
             Some(&json!({

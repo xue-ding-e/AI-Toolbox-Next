@@ -52,6 +52,7 @@ sequenceDiagram
 - Codex 的 `settingsConfig.modelCatalog` 由 `useCodexConfigState` 的 `codexCatalogModels` 状态持久化，不是普通 Form 字段。内置 endpoint 提供 `modelCatalog` 时，应同步该 hook 状态；不要用 `form.setFieldValue('modelCatalog', ...)` 伪造保存。
 - Codex 的“模型名称”与“模型映射”是两份独立数据：前者是 `config.toml` 的当前默认 `model`，后者只生成 `model_catalog_json`。不得用映射第一项填充、覆盖或兜底模型名称；保存时应基于已校验的表单快照直接构建 `settingsConfig`，不要先异步 `setState` 再立即读取 hook 闭包。
 - `modelCatalog.models` 不是只给模型下拉用的三字段列表。`supportsImage`、`vision`、`attachment`、`modalities` 这类能力字段会被 Gateway runtime 用来判断 text-only/vision 行为，前端解析和保存规范化时必须保留显式 boolean（尤其是 `false`）和 `modalities.input/output`，不能只写回 `model/displayName/contextWindow`。
+- 自定义 provider 的「自动审批模型」是独立一行 provider 级配置（`settingsConfig.autoReviewModelOverride`），不挂在模型映射表格里。只在自定义模式暴露；留空表示不覆盖。可提供“设为自身”把当前默认 `model` 填入该字段。后端 apply 时统一投影到 catalog 每条 entry 的 `auto_review_model_override`，用于中转站缺少 `codex-auto-review` 时的 auto-review 审批。
 - Codex 内置 Anthropic/Claude 协议 endpoint 如果没有显式 `modelCatalog`，添加供应商时应从同一渠道的 Claude endpoint 角色模型派生初始模型映射；如果 endpoint 自带 `modelCatalog`，仍以 endpoint 自身目录为准。派生逻辑只用于补齐添加表单的初始值，不能改变 Base URL 可编辑和保存用户当前输入值的语义。
 - Gateway 现在是 direct → single → failover 三态。single 入口在已应用 provider 卡片的“网关代理”按钮；single/failover 接管期间都必须锁定其他 provider 的“应用”入口，failover 时卡片额外显示 P0/P1 优先级，切 P0 必须先恢复直连。
 - 前端不要假设 Codex prompt 文件名永远是 `AGENTS.md`。展示路径、删除已应用 prompt 后的刷新和同步结果都以后端返回/事件为准。

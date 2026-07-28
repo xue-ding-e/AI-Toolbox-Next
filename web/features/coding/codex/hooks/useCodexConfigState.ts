@@ -19,7 +19,10 @@ import {
   normalizeCodexCatalogModalities,
   normalizeCodexCatalogModels,
 } from '../utils/codexCatalogModels';
-import { buildCodexSettingsConfig } from '../utils/codexSettingsConfig';
+import {
+  buildCodexSettingsConfig,
+  resolveCodexAutoReviewModelOverride,
+} from '../utils/codexSettingsConfig';
 
 interface UseCodexConfigStateProps {
   initialData?: {
@@ -34,6 +37,7 @@ export interface CodexSettingsConfigSnapshot {
   model?: string;
   config?: string;
   catalogModels?: CodexCatalogModel[];
+  autoReviewModelOverride?: string;
 }
 
 // 新建配置的默认 config.toml 模板
@@ -56,6 +60,7 @@ function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel
         display_name?: unknown;
         context_window?: unknown;
       };
+
       return {
         model: typeof compatibleItem.model === 'string' ? compatibleItem.model : '',
         displayName:
@@ -93,6 +98,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       model: defaultModel,
       config: DEFAULT_CONFIG_TOML,
       catalogModels: [] as CodexCatalogModel[],
+      autoReviewModelOverride: '',
     };
   }
 
@@ -113,6 +119,8 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       model,
       config: configStr,
       catalogModels: category === 'custom' ? parseCodexCatalogModels(config) : [],
+      autoReviewModelOverride:
+        category === 'custom' ? (resolveCodexAutoReviewModelOverride(config) || '') : '',
     };
   } catch {
     return {
@@ -123,6 +131,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       model: '',
       config: '',
       catalogModels: [] as CodexCatalogModel[],
+      autoReviewModelOverride: '',
     };
   }
 }
@@ -140,6 +149,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const [codexConfig, setCodexConfigState] = useState(parsedInitial.config);
   const [codexAuth, setCodexAuthState] = useState<Record<string, unknown>>(parsedInitial.auth);
   const [codexCatalogModels, setCodexCatalogModels] = useState<CodexCatalogModel[]>(parsedInitial.catalogModels);
+  const [codexAutoReviewModelOverride, setCodexAutoReviewModelOverride] = useState(
+    parsedInitial.autoReviewModelOverride,
+  );
   const [providerCategory, setProviderCategoryState] = useState<CodexProviderCategory>(parsedInitial.category);
 
   // 防止循环更新的标志位
@@ -327,6 +339,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     setCodexBaseUrlState(baseUrl);
     setCodexModelState(model);
     setCodexCatalogModels([]);
+    setCodexAutoReviewModelOverride('');
     setProviderCategoryState(
       apiKey.trim() || baseUrl.trim() ? 'custom' : 'official',
     );
@@ -360,6 +373,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     setCodexModelState(nextState.model);
     setCodexConfigState(nextState.config);
     setCodexCatalogModels(nextState.catalogModels);
+    setCodexAutoReviewModelOverride(nextState.autoReviewModelOverride);
     setProviderCategoryState(nextState.category);
   }, []);
 
@@ -376,10 +390,15 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
       });
       userSetBaseUrlRef.current = false;
       setCodexCatalogModels([]);
+      setCodexAutoReviewModelOverride('');
       setCodexConfigState((prev) => normalizeCodexConfigForOfficialMode(prev));
     } else {
       setCodexConfigState((prev) => ensureCodexCustomProviderConfig(prev));
     }
+  }, []);
+
+  const handleAutoReviewModelOverrideChange = useCallback((value: string) => {
+    setCodexAutoReviewModelOverride(value);
   }, []);
 
   // 获取最终的 settingsConfig（用于保存）
@@ -396,9 +415,20 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
       model: finalModel,
       config: snapshot.config ?? codexConfig,
       catalogModels: snapshot.catalogModels ?? codexCatalogModels,
+      autoReviewModelOverride:
+        snapshot.autoReviewModelOverride ?? codexAutoReviewModelOverride,
       auth: codexAuth,
     });
-  }, [codexApiKey, codexAuth, codexBaseUrl, codexCatalogModels, codexModel, codexConfig, providerCategory]);
+  }, [
+    codexApiKey,
+    codexAuth,
+    codexAutoReviewModelOverride,
+    codexBaseUrl,
+    codexCatalogModels,
+    codexModel,
+    codexConfig,
+    providerCategory,
+  ]);
 
   return {
     // 状态
@@ -408,6 +438,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     codexModel,
     codexConfig,
     codexCatalogModels,
+    codexAutoReviewModelOverride,
     providerCategory,
 
     // 标志位（用于同步控制）
@@ -419,11 +450,13 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
+    handleAutoReviewModelOverrideChange,
     handleProviderCategoryChange,
 
     // 工具方法
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModelOverride,
     resetCodexConfig,
     resetFromSettingsConfig,
     getFinalSettingsConfig,

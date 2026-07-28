@@ -65,6 +65,47 @@ test('normalizeCodexCatalogModels preserves image capability metadata', () => {
   ]);
 });
 
+test('buildCodexSettingsConfig persists provider-level auto review model override', () => {
+  const settingsConfig = JSON.parse(buildCodexSettingsConfig({
+    category: 'custom',
+    apiKey: 'sk-test',
+    baseUrl: 'https://api.example.com/v1',
+    model: 'gpt-5.5',
+    config: 'model_provider = "custom"',
+    catalogModels: [
+      {
+        model: 'gpt-5.5',
+        displayName: 'GPT 5.5',
+      },
+    ],
+    autoReviewModelOverride: ' gpt-5.5 ',
+    auth: {},
+  }));
+
+  assert.equal(settingsConfig.autoReviewModelOverride, 'gpt-5.5');
+  assert.deepEqual(settingsConfig.modelCatalog.models, [
+    {
+      model: 'gpt-5.5',
+      displayName: 'GPT 5.5',
+    },
+  ]);
+});
+
+test('buildCodexSettingsConfig omits empty auto review model override', () => {
+  const settingsConfig = JSON.parse(buildCodexSettingsConfig({
+    category: 'custom',
+    apiKey: 'sk-test',
+    baseUrl: 'https://api.example.com/v1',
+    model: 'gpt-5.5',
+    config: 'model_provider = "custom"',
+    catalogModels: [{ model: 'gpt-5.5' }],
+    autoReviewModelOverride: '   ',
+    auth: {},
+  }));
+
+  assert.equal(settingsConfig.autoReviewModelOverride, undefined);
+});
+
 test('buildCodexSettingsConfig keeps the default model independent from model mappings', () => {
   const settingsConfig = JSON.parse(buildCodexSettingsConfig({
     category: 'custom',

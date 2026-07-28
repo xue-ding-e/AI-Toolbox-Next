@@ -64,6 +64,12 @@ export interface CodexSettingsConfig {
   auth?: CodexAuthConfig;
   config?: string; // TOML format string
   modelCatalog?: CodexModelCatalog;
+  /**
+   * Provider-level Codex auto-review model. When set, every generated
+   * model_catalog entry gets auto_review_model_override so guardian review
+   * uses this slug instead of the default codex-auto-review.
+   */
+  autoReviewModelOverride?: string;
 }
 
 /**

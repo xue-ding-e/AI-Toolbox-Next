@@ -333,11 +333,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     codexModel,
     codexConfig,
     codexCatalogModels,
+    codexAutoReviewModelOverride,
     providerCategory,
     handleApiKeyChange,
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
+    handleAutoReviewModelOverrideChange,
     handleProviderCategoryChange,
     setCodexCatalogModels,
     resetFromSettingsConfig,
@@ -738,6 +740,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         model: submittedValues.model || '',
         config: submittedValues.configToml || '',
         catalogModels: codexCatalogModels,
+        autoReviewModelOverride: codexAutoReviewModelOverride,
       });
       const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
         ? undefined
@@ -925,6 +928,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       itemIndex === index ? { ...item, ...patch } : item
     )));
   }, [setCodexCatalogModels]);
+
+  const handleUseDefaultModelAsAutoReviewOverride = React.useCallback(() => {
+    const model = (form.getFieldValue('model') as string | undefined)?.trim() || codexModel.trim();
+    if (!model) {
+      return;
+    }
+    handleAutoReviewModelOverrideChange(model);
+  }, [codexModel, form, handleAutoReviewModelOverrideChange]);
 
   const handleRemoveModelMapping = React.useCallback((index: number) => {
     setCodexCatalogModels((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
@@ -1202,7 +1213,36 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         )}
       </Form.Item>
 
-      <Form.Item 
+      {!isOfficialMode && (
+        <Form.Item
+          label={t('codex.provider.autoReviewModel')}
+          help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.autoReviewModelHelp')}</Text>}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <AutoComplete
+                value={codexAutoReviewModelOverride}
+                options={modelOptions}
+                placeholder={t('codex.provider.autoReviewModelPlaceholder')}
+                style={{ width: '100%' }}
+                filterOption={(inputValue, option) =>
+                  (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+                  option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+                }
+                onChange={(value) => handleAutoReviewModelOverrideChange(value)}
+              />
+            </div>
+            <Button
+              onClick={handleUseDefaultModelAsAutoReviewOverride}
+              disabled={!(form.getFieldValue('model') as string | undefined)?.trim() && !codexModel.trim()}
+            >
+              {t('codex.provider.autoReviewModelUseSelf')}
+            </Button>
+          </div>
+        </Form.Item>
+      )}
+
+      <Form.Item
         name="configToml" 
         label="config.toml"
         extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.configTomlHelp')}</Text>}
