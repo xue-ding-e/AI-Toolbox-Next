@@ -4035,6 +4035,64 @@ data: {"type":"response.completed","response":{"id":"resp_cmp","object":"respons
     }
 
     #[test]
+    fn responses_tool_done_snapshot_mismatch_does_not_panic_on_utf8_boundary() {
+        // Delta accumulates ASCII-only bytes so emitted_len can land mid multi-byte
+        // char after the done snapshot replaces the buffer with CJK JSON.
+        // Example: emitted_len=3 after "{\"x", done snapshot = {"好":1} → byte 3
+        // is mid-char for "好" (E5 A5 BD). Must not panic under panic=abort.
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            [
+                r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_utf8","model":"model-a"}}
+
+"#,
+                r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"item_1","type":"function_call","call_id":"call_1","name":"lookup"}}
+
+"#,
+                r#"event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"item_1","output_index":0,"delta":"{\"x"}
+
+"#,
+                r#"event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"item_1","output_index":0,"arguments":"{\"好\":1}"}
+
+"#,
+                r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_utf8","model":"model-a","status":"completed"}}
+
+"#,
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let mut joined_arguments = String::new();
+        for value in &values {
+            if let Some(tool_calls) = value
+                .pointer("/choices/0/delta/tool_calls")
+                .and_then(Value::as_array)
+            {
+                for tool_call in tool_calls {
+                    if let Some(arguments) = tool_call
+                        .pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                    {
+                        joined_arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+        // After diverged done snapshot we re-emit the full authoritative snapshot.
+        // Previously emitted "{\"x" remains in the Chat stream; final content must
+        // still contain the done snapshot without panicking.
+        assert!(
+            joined_arguments.contains(r#"{"好":1}"#),
+            "done snapshot must be emitted after UTF-8 mismatch; got {joined_arguments:?}; output={output}"
+        );
+    }
+
+    #[test]
     fn responses_dense_tool_stream_does_not_duplicate_arguments_for_chat() {
         // Real OpenAI wire: added + deltas + arguments.done + output_item.done + completed.
         // Done/finish must only emit the unsent suffix, otherwise Chat concatenates 4x args.

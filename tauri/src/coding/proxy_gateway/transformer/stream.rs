@@ -252,6 +252,26 @@ fn is_anthropic_provider_local_stream_block(block_type: &str) -> bool {
     )
 }
 
+/// Return the still-unsent suffix of tool arguments.
+///
+/// Third-party Responses-compatible upstreams may send a done snapshot that does
+/// not equal the concatenated deltas. A raw `arguments[emitted_len..]` slice can
+/// then land mid multi-byte character and panic (fatal under `panic = "abort"`).
+/// When the offset is not a char boundary, re-emit the full current snapshot.
+fn safe_unsent_argument_suffix(arguments: &str, emitted_len: usize) -> String {
+    if emitted_len == 0 {
+        return arguments.to_string();
+    }
+    if emitted_len >= arguments.len() {
+        return String::new();
+    }
+    if arguments.is_char_boundary(emitted_len) {
+        return arguments[emitted_len..].to_string();
+    }
+    // Mid-char offset after a diverged done snapshot: re-send full arguments.
+    arguments.to_string()
+}
+
 impl SourceStreamState {
     fn parse(
         &mut self,
@@ -501,8 +521,10 @@ impl SourceStreamState {
         if state.arguments_done && !mark_done {
             return Vec::new();
         }
-        let start = state.emitted_arguments_len.min(state.arguments.len());
-        let suffix = state.arguments[start..].to_string();
+        // Third-party Responses-compatible upstreams may send a done snapshot that does
+        // not equal the concatenated deltas. Never slice on a raw byte offset into that
+        // snapshot — mid-char panics abort the whole process under panic=abort.
+        let suffix = safe_unsent_argument_suffix(&state.arguments, state.emitted_arguments_len);
         state.emitted_arguments_len = state.arguments.len();
         if mark_done {
             state.arguments_done = true;
