@@ -4,6 +4,11 @@ mod responses_cipher;
 
 use std::sync::Arc;
 
+/// Bound side-store SSE parsers so a malformed stream without blank-line
+/// delimiters cannot grow the buffer without limit. Overflow drops side-store
+/// recording for the rest of the stream without affecting client forwarding.
+const SIDE_STORE_SSE_BUFFER_LIMIT: usize = 1024 * 1024;
+
 fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let lf = buffer
         .windows(2)
@@ -22,6 +27,19 @@ fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let block = buffer[..position.0].to_vec();
     buffer.drain(..position.0 + position.1);
     Some(block)
+}
+
+fn append_side_store_sse_bytes(buffer: &mut Vec<u8>, bytes: &[u8]) -> bool {
+    if buffer.len() >= SIDE_STORE_SSE_BUFFER_LIMIT {
+        return false;
+    }
+    let remaining = SIDE_STORE_SSE_BUFFER_LIMIT.saturating_sub(buffer.len());
+    if bytes.len() > remaining {
+        buffer.extend_from_slice(&bytes[..remaining]);
+        return false;
+    }
+    buffer.extend_from_slice(bytes);
+    true
 }
 
 pub(super) use codex_history::record_responses_sse_stream;

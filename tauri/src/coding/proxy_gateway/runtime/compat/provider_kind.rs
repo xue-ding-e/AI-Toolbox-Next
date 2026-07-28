@@ -55,7 +55,7 @@ impl ProviderBodyCompat {
             "zai" | "zhipu" | "glm" | "chatglm" | "bigmodel" | "big-model" => Some(Self::Zai),
             "doubao" | "doubaoseed" | "doubao-seed" | "volces" => Some(Self::Doubao),
             "xai" | "x-ai" | "grok" => Some(Self::Xai),
-            "longcat" => Some(Self::Longcat),
+            "longcat" | "long-cat" => Some(Self::Longcat),
             "modelscope" | "model-scope" => Some(Self::ModelScope),
             "bailian" | "dashscope" | "aliyun" => Some(Self::Bailian),
             "mimo" | "xiaomimimo" | "xiaomi-mimo" => Some(Self::Mimo),

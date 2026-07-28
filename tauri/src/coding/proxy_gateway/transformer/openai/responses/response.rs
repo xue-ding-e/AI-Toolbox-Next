@@ -185,6 +185,7 @@ pub fn responses_compact_response_to_llm(body: Value) -> Response {
 
 pub fn llm_response_to_responses(response: Response) -> Value {
     let previous_response_id = response.previous_response_id.clone();
+    let response_error = response.error.clone();
     let choice = response.choices.first().cloned().unwrap_or_default();
     let mut output = Vec::new();
     if let Some(reasoning_item) = responses_reasoning_item_from_message(&choice.message) {
@@ -200,17 +201,34 @@ pub fn llm_response_to_responses(response: Response) -> Value {
     for tool_call in choice.message.tool_calls {
         output.push(tool_call_to_responses_item(tool_call));
     }
+    let status = if response_error.is_some() {
+        "failed"
+    } else {
+        finish_to_responses_status(choice.finish_reason.as_deref())
+    };
     let mut body = json!({
         "id": response.id,
         "object": "response",
         "created_at": response.created,
-        "status": finish_to_responses_status(choice.finish_reason.as_deref()),
+        "status": status,
         "model": response.model,
         "output": output,
         "usage": usage_to_responses(response.usage.as_ref())
     });
     if let Some(previous_response_id) = previous_response_id {
         body["previous_response_id"] = json!(previous_response_id);
+    }
+    if let Some(error) = response_error {
+        let mut error_obj = json!({
+            "message": error.message
+        });
+        if !error.error_type.is_empty() {
+            error_obj["type"] = json!(error.error_type);
+        }
+        if let Some(code) = error.code {
+            error_obj["code"] = json!(code);
+        }
+        body["error"] = error_obj;
     }
     body
 }

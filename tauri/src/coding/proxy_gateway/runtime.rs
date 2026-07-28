@@ -19,8 +19,9 @@ pub(crate) use self::providers::ProviderAuthStrategy;
 #[cfg(test)]
 pub(crate) use self::providers::UpstreamModelMapping;
 pub(crate) use self::providers::{
-    load_candidate_providers, load_candidate_providers_with_settings_and_selection,
-    provider_priority_entries, GatewayProviderSelection, UpstreamProvider,
+    clear_gateway_provider_selection_cache, load_candidate_providers,
+    load_candidate_providers_with_settings_and_selection, provider_priority_entries,
+    GatewayProviderSelection, UpstreamProvider,
 };
 
 #[cfg(test)]
@@ -476,6 +477,7 @@ impl ProxyGatewayRuntime {
     }
 
     fn clear_provider_cache(&self) -> Result<(), String> {
+        clear_gateway_provider_selection_cache();
         self.context.clear_provider_cache()
     }
 
@@ -626,7 +628,8 @@ impl GatewayRuntimeContext {
     ) -> Result<ProviderCandidates, String> {
         let now = Instant::now();
         let settings = self.settings_snapshot();
-        let selection = providers::load_gateway_provider_selection(self.paths.as_ref(), cli_key)?;
+        let selection =
+            providers::load_gateway_provider_selection_async(self.paths.as_ref(), cli_key).await?;
         if let Ok(cache) = self.provider_cache.lock() {
             if let Some(entry) = cache.get(&cli_key) {
                 if now.duration_since(entry.loaded_at) <= PROVIDER_CACHE_TTL
@@ -823,6 +826,8 @@ fn health_check_socket(addr: SocketAddr) -> ProxyGatewayHealthCheckResult {
             error: Some("Failed to connect to gateway health endpoint".to_string()),
         };
     };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
 
     let request = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     if let Err(error) = stream.write_all(request) {

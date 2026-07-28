@@ -12,7 +12,23 @@ use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+const SELECTION_MANIFEST_CACHE_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+struct SelectionManifestCacheEntry {
+    loaded_at: Instant,
+    selection: Option<GatewayProviderSelection>,
+}
+
+fn selection_manifest_cache() -> &'static Mutex<HashMap<String, SelectionManifestCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, SelectionManifestCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpstreamProvider {
@@ -143,6 +159,8 @@ pub(crate) async fn load_provider_by_id_for_connectivity_test(
     })
 }
 
+/// Sync helper kept for non-async call sites/tests. Request hot path uses the async variant.
+#[allow(dead_code)]
 pub(crate) fn load_gateway_provider_selection(
     paths: Option<&ProxyGatewayPaths>,
     cli_key: GatewayCliKey,
@@ -151,30 +169,124 @@ pub(crate) fn load_gateway_provider_selection(
         return Ok(None);
     };
     let manifest_path = paths.manifest_path(cli_key);
-    if !manifest_path.exists() {
-        return Ok(None);
+    let cache_key = format!("{}:{}", cli_key.as_str(), manifest_path.display());
+    if let Ok(cache) = selection_manifest_cache().lock() {
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.loaded_at.elapsed() < SELECTION_MANIFEST_CACHE_TTL {
+                return Ok(entry.selection.clone());
+            }
+        }
     }
-    let content = fs::read_to_string(&manifest_path).map_err(|error| {
-        format!(
-            "Failed to read gateway manifest {}: {}",
-            manifest_path.display(),
-            error
-        )
-    })?;
-    let manifest = serde_json::from_str::<CliProxyManifest>(&content).map_err(|error| {
-        format!(
-            "Failed to parse gateway manifest {}: {}",
-            manifest_path.display(),
-            error
-        )
-    })?;
-    if !manifest.enabled {
-        return Ok(None);
+    let selection = if !manifest_path.exists() {
+        None
+    } else {
+        let content = fs::read_to_string(&manifest_path).map_err(|error| {
+            format!(
+                "Failed to read gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        })?;
+        let manifest = serde_json::from_str::<CliProxyManifest>(&content).map_err(|error| {
+            format!(
+                "Failed to parse gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        })?;
+        if !manifest.enabled {
+            None
+        } else {
+            Some(GatewayProviderSelection {
+                mode: manifest.mode,
+                primary_provider_id: manifest.primary_provider_id,
+            })
+        }
+    };
+    if let Ok(mut cache) = selection_manifest_cache().lock() {
+        cache.insert(
+            cache_key,
+            SelectionManifestCacheEntry {
+                loaded_at: Instant::now(),
+                selection: selection.clone(),
+            },
+        );
     }
-    Ok(Some(GatewayProviderSelection {
-        mode: manifest.mode,
-        primary_provider_id: manifest.primary_provider_id,
-    }))
+    Ok(selection)
+}
+
+/// Async variant for request hot paths: avoids blocking a Tokio worker on disk I/O.
+pub(crate) async fn load_gateway_provider_selection_async(
+    paths: Option<&ProxyGatewayPaths>,
+    cli_key: GatewayCliKey,
+) -> Result<Option<GatewayProviderSelection>, String> {
+    let Some(paths) = paths else {
+        return Ok(None);
+    };
+    let manifest_path = paths.manifest_path(cli_key);
+    let cache_key = format!("{}:{}", cli_key.as_str(), manifest_path.display());
+    if let Ok(cache) = selection_manifest_cache().lock() {
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.loaded_at.elapsed() < SELECTION_MANIFEST_CACHE_TTL {
+                return Ok(entry.selection.clone());
+            }
+        }
+    }
+    let selection = if !tokio::fs::try_exists(&manifest_path)
+        .await
+        .map_err(|error| {
+            format!(
+                "Failed to check gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        })?
+    {
+        None
+    } else {
+        let content = tokio::fs::read_to_string(&manifest_path)
+            .await
+            .map_err(|error| {
+                format!(
+                    "Failed to read gateway manifest {}: {}",
+                    manifest_path.display(),
+                    error
+                )
+            })?;
+        let manifest = serde_json::from_str::<CliProxyManifest>(&content).map_err(|error| {
+            format!(
+                "Failed to parse gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        })?;
+        if !manifest.enabled {
+            None
+        } else {
+            Some(GatewayProviderSelection {
+                mode: manifest.mode,
+                primary_provider_id: manifest.primary_provider_id,
+            })
+        }
+    };
+    if let Ok(mut cache) = selection_manifest_cache().lock() {
+        cache.insert(
+            cache_key,
+            SelectionManifestCacheEntry {
+                loaded_at: Instant::now(),
+                selection: selection.clone(),
+            },
+        );
+    }
+    Ok(selection)
+}
+
+/// Drop cached selection manifests after engage/disengage so the next request
+/// re-reads disk instead of waiting for the 30s TTL.
+pub(crate) fn clear_gateway_provider_selection_cache() {
+    if let Ok(mut cache) = selection_manifest_cache().lock() {
+        cache.clear();
+    }
 }
 
 pub(crate) fn provider_priority_entries(

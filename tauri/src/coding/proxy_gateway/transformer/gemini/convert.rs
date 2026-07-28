@@ -1172,7 +1172,7 @@ pub fn llm_response_to_gemini(response: Response) -> Value {
     })
 }
 
-fn gemini_usage_to_llm(usage: Option<&Value>) -> Usage {
+pub(crate) fn gemini_usage_to_llm(usage: Option<&Value>) -> Usage {
     let usage = usage.unwrap_or(&Value::Null);
     let prompt = usage
         .get("promptTokenCount")
@@ -1210,7 +1210,7 @@ fn gemini_usage_to_llm(usage: Option<&Value>) -> Usage {
     }
 }
 
-fn llm_usage_to_gemini(usage: Option<&Usage>) -> Value {
+pub(crate) fn llm_usage_to_gemini(usage: Option<&Usage>) -> Value {
     let usage = usage.cloned().unwrap_or_default();
     json!({
         "promptTokenCount": usage.prompt_tokens,
@@ -1225,7 +1225,7 @@ fn llm_usage_to_gemini(usage: Option<&Usage>) -> Value {
     })
 }
 
-fn gemini_finish_to_openai_finish(reason: Option<&str>, has_tool: bool) -> Option<String> {
+pub(crate) fn gemini_finish_to_openai_finish(reason: Option<&str>, has_tool: bool) -> Option<String> {
     let reason = reason.filter(|reason| !reason.trim().is_empty())?;
     match reason {
         "MAX_TOKENS" => Some("length".to_string()),

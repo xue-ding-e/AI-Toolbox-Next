@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use super::take_sse_block;
+use super::{append_side_store_sse_bytes, take_sse_block};
 
 const MAX_CODEX_CACHED_RESPONSES: usize = 512;
 
@@ -348,6 +348,7 @@ pub(crate) fn record_responses_sse_stream(
         history: Arc<CodexHistoryStore>,
         buffer: Vec<u8>,
         current_response_id: Option<String>,
+        recording_enabled: bool,
     }
 
     Box::pin(stream::unfold(
@@ -356,13 +357,25 @@ pub(crate) fn record_responses_sse_stream(
             history,
             buffer: Vec::new(),
             current_response_id: None,
+            recording_enabled: true,
         },
         |mut state| async move {
             let item = state.inner.next().await?;
             if let Ok(bytes) = &item {
-                state.buffer.extend_from_slice(bytes);
-                while let Some(block) = take_sse_block(&mut state.buffer) {
-                    inspect_sse_block(&block, &mut state.current_response_id, &state.history);
+                if state.recording_enabled {
+                    if !append_side_store_sse_bytes(&mut state.buffer, bytes) {
+                        // Malformed/unbounded side stream: drop side-store recording only.
+                        state.recording_enabled = false;
+                        state.buffer.clear();
+                    } else {
+                        while let Some(block) = take_sse_block(&mut state.buffer) {
+                            inspect_sse_block(
+                                &block,
+                                &mut state.current_response_id,
+                                &state.history,
+                            );
+                        }
+                    }
                 }
             }
             Some((item, state))

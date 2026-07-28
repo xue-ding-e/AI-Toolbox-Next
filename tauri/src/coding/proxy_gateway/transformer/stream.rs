@@ -1,4 +1,7 @@
-use super::gemini::gemini_stream_error;
+use super::gemini::{
+    gemini_finish_to_openai_finish, gemini_stream_error, gemini_usage_to_llm, llm_usage_to_gemini,
+};
+use super::llm::Usage;
 use super::kernel::ConversionContext;
 use super::llm::{TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
 use super::openai::codex_tools::{
@@ -52,9 +55,9 @@ pub enum UnifiedStreamEvent {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StreamKernel {
-    route: Option<ConversionRoute>,
+    route: ConversionRoute,
     source: SourceStreamState,
     target: TargetStreamState,
     buffer: String,
@@ -70,9 +73,12 @@ impl StreamKernel {
 
     pub fn with_context(route: ConversionRoute, context: ConversionContext) -> Self {
         Self {
-            route: Some(route),
+            route,
+            source: SourceStreamState::default(),
             target: TargetStreamState::with_conversion_context(context),
-            ..Default::default()
+            buffer: String::new(),
+            utf8_remainder: Vec::new(),
+            terminated_by_error: false,
         }
     }
 
@@ -161,11 +167,11 @@ impl StreamKernel {
     }
 
     fn source_protocol(&self) -> AiProtocol {
-        self.route.expect("route must be set").source
+        self.route.source
     }
 
     fn target_protocol(&self) -> AiProtocol {
-        self.route.expect("route must be set").target
+        self.route.target
     }
 
     fn finish_source(&mut self) -> Vec<Vec<u8>> {
@@ -201,6 +207,7 @@ struct SourceStreamState {
     responses_tool_by_item: HashMap<String, SourceToolState>,
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
+    gemini_seen_tool_call: bool,
     pending_chat_finish_reason: Option<String>,
     chat_emitted_finish: bool,
     pending_anthropic_usage: Option<Value>,
@@ -454,10 +461,29 @@ impl SourceStreamState {
     fn finish(&mut self, source: AiProtocol) -> Vec<UnifiedStreamEvent> {
         match source {
             AiProtocol::OpenAiChat => self.finish_chat(),
-            AiProtocol::OpenAiResponses
-            | AiProtocol::AnthropicMessages
-            | AiProtocol::GeminiNative => Vec::new(),
+            AiProtocol::OpenAiResponses => self.finish_responses(),
+            AiProtocol::AnthropicMessages | AiProtocol::GeminiNative => Vec::new(),
         }
+    }
+
+    fn finish_responses(&mut self) -> Vec<UnifiedStreamEvent> {
+        // Flush any pending tool calls that never received arguments.done / item.done.
+        let mut tools = self
+            .responses_tool_by_item
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        tools.sort_by_key(|tool| tool.index);
+        tools
+            .into_iter()
+            .map(|state| UnifiedStreamEvent::ToolCall {
+                index: state.index,
+                id: state.id,
+                tool_type: state.tool_type,
+                name: state.name,
+                arguments: state.arguments,
+            })
+            .collect()
     }
 
     fn finish_chat(&mut self) -> Vec<UnifiedStreamEvent> {
@@ -762,17 +788,17 @@ impl SourceStreamState {
                         .to_string(),
                     arguments: String::new(),
                 };
-                let event = (state.tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL).then(|| {
-                    UnifiedStreamEvent::ToolCall {
-                        index: state.index,
-                        id: state.id.clone(),
-                        tool_type: state.tool_type.clone(),
-                        name: state.name.clone(),
-                        arguments: String::new(),
-                    }
-                });
+                // Emit tool header (id+name) on added for both function and custom tools so
+                // sparse streams without deltas still surface the call to target writers.
+                let event = UnifiedStreamEvent::ToolCall {
+                    index: state.index,
+                    id: state.id.clone(),
+                    tool_type: state.tool_type.clone(),
+                    name: state.name.clone(),
+                    arguments: String::new(),
+                };
                 self.responses_tool_by_item.insert(key, state);
-                event.into_iter().collect()
+                vec![event]
             }
             "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
                 let key = value
@@ -828,6 +854,13 @@ impl SourceStreamState {
                     {
                         state.arguments = arguments.to_string();
                     }
+                    return vec![UnifiedStreamEvent::ToolCall {
+                        index: state.index,
+                        id: state.id.clone(),
+                        tool_type: state.tool_type.clone(),
+                        name: state.name.clone(),
+                        arguments: state.arguments.clone(),
+                    }];
                 }
                 Vec::new()
             }
@@ -848,6 +881,38 @@ impl SourceStreamState {
                             }]
                         })
                         .unwrap_or_default();
+                }
+                if item_type == "function_call" || item_type == "custom_tool_call" {
+                    let key = item
+                        .get("id")
+                        .or_else(|| value.get("item_id"))
+                        .or_else(|| item.get("call_id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("call_0")
+                        .to_string();
+                    if let Some(state) = self.responses_tool_by_item.get_mut(&key) {
+                        if let Some(arguments) = item
+                            .get("arguments")
+                            .or_else(|| item.get("input"))
+                            .and_then(Value::as_str)
+                        {
+                            if !arguments.is_empty() {
+                                state.arguments = arguments.to_string();
+                            }
+                        }
+                        if let Some(name) = item.get("name").and_then(Value::as_str) {
+                            if !name.is_empty() {
+                                state.name = name.to_string();
+                            }
+                        }
+                        return vec![UnifiedStreamEvent::ToolCall {
+                            index: state.index,
+                            id: state.id.clone(),
+                            tool_type: state.tool_type.clone(),
+                            name: state.name.clone(),
+                            arguments: state.arguments.clone(),
+                        }];
+                    }
                 }
                 Vec::new()
             }
@@ -940,6 +1005,9 @@ impl SourceStreamState {
         {
             "message_start" => {
                 let message = value.get("message").unwrap_or(&value);
+                if let Some(usage) = message.get("usage").cloned() {
+                    self.pending_anthropic_usage = Some(usage);
+                }
                 vec![UnifiedStreamEvent::Start {
                     id: message
                         .get("id")
@@ -1017,8 +1085,11 @@ impl SourceStreamState {
                 Vec::new()
             }
             "message_delta" => {
-                if let Some(usage) = value.get("usage").cloned() {
-                    self.pending_anthropic_usage = Some(usage);
+                if let Some(usage) = value.get("usage") {
+                    self.pending_anthropic_usage = Some(merge_anthropic_stream_usage(
+                        self.pending_anthropic_usage.as_ref(),
+                        usage,
+                    ));
                 }
                 value
                     .pointer("/delta/stop_reason")
@@ -1028,11 +1099,15 @@ impl SourceStreamState {
                         let mapped_reason = match reason {
                             "max_tokens" => "length",
                             "tool_use" => "tool_calls",
+                            "refusal" => "refusal",
                             _ => "stop",
                         };
                         vec![UnifiedStreamEvent::Finish {
                             reason: Some(mapped_reason.to_string()),
-                            usage: self.pending_anthropic_usage.take(),
+                            usage: self
+                                .pending_anthropic_usage
+                                .take()
+                                .map(|usage| anthropic_usage_value_to_unified(&usage)),
                         }]
                     })
                     .unwrap_or_default()
@@ -1043,7 +1118,7 @@ impl SourceStreamState {
                 .map(|usage| {
                     vec![UnifiedStreamEvent::Finish {
                         reason: None,
-                        usage: Some(usage),
+                        usage: Some(anthropic_usage_value_to_unified(&usage)),
                     }]
                 })
                 .unwrap_or_default(),
@@ -1076,6 +1151,28 @@ impl SourceStreamState {
                 .unwrap_or_default()
                 .to_string(),
         });
+
+        // Safety-only blocked streams: promptFeedback.blockReason without candidates.
+        if let Some(block_reason) = value
+            .pointer("/promptFeedback/blockReason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+        {
+            let message = value
+                .pointer("/promptFeedback/blockReasonMessage")
+                .and_then(Value::as_str)
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or("Response blocked by Gemini safety filters");
+            out.push(UnifiedStreamEvent::TextDelta(format!(
+                "[blocked:{block_reason}] {message}"
+            )));
+            out.push(UnifiedStreamEvent::Finish {
+                reason: Some("refusal".to_string()),
+                usage: gemini_stream_usage(value.get("usageMetadata")),
+            });
+            return out;
+        }
+
         if let Some(candidate) = value
             .get("candidates")
             .and_then(Value::as_array)
@@ -1130,6 +1227,7 @@ impl SourceStreamState {
                     let Some(function_call) = part.get("functionCall") else {
                         continue;
                     };
+                    self.gemini_seen_tool_call = true;
                     if let Some(signature) = gemini_part_thought_signature(part) {
                         out.push(UnifiedStreamEvent::ToolCallSignature {
                             index,
@@ -1165,15 +1263,11 @@ impl SourceStreamState {
                 .filter(|reason| !reason.trim().is_empty())
             {
                 out.push(UnifiedStreamEvent::Finish {
-                    reason: Some(
-                        if finish_reason == "MAX_TOKENS" {
-                            "length"
-                        } else {
-                            "stop"
-                        }
-                        .to_string(),
+                    reason: gemini_finish_to_openai_finish(
+                        Some(finish_reason),
+                        self.gemini_seen_tool_call,
                     ),
-                    usage: value.get("usageMetadata").cloned(),
+                    usage: gemini_stream_usage(value.get("usageMetadata")),
                 });
             }
         }
@@ -1186,11 +1280,151 @@ impl SourceStreamState {
         {
             out.push(UnifiedStreamEvent::Finish {
                 reason: Some("stop".to_string()),
-                usage: value.get("usageMetadata").cloned(),
+                usage: gemini_stream_usage(value.get("usageMetadata")),
             });
         }
         out
     }
+}
+
+fn gemini_stream_usage(usage_metadata: Option<&Value>) -> Option<Value> {
+    usage_metadata.map(|usage| llm_usage_to_unified_value(&gemini_usage_to_llm(Some(usage))))
+}
+
+fn llm_usage_to_unified_value(usage: &Usage) -> Value {
+    let mut value = json!({
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": if usage.total_tokens == 0 {
+            usage.prompt_tokens.saturating_add(usage.completion_tokens)
+        } else {
+            usage.total_tokens
+        },
+    });
+    if usage.cached_tokens > 0 || usage.cache_write_tokens > 0 {
+        let mut details = json!({});
+        if usage.cached_tokens > 0 {
+            details["cached_tokens"] = json!(usage.cached_tokens);
+        }
+        if usage.cache_write_tokens > 0 {
+            details["cache_write_tokens"] = json!(usage.cache_write_tokens);
+        }
+        value["prompt_tokens_details"] = details;
+    }
+    if usage.reasoning_tokens > 0 {
+        value["completion_tokens_details"] = json!({
+            "reasoning_tokens": usage.reasoning_tokens
+        });
+    }
+    value
+}
+
+fn merge_anthropic_stream_usage(start: Option<&Value>, delta: &Value) -> Value {
+    let mut merged = start.cloned().unwrap_or_else(|| json!({}));
+    let Some(merged_object) = merged.as_object_mut() else {
+        return delta.clone();
+    };
+    let Some(delta_object) = delta.as_object() else {
+        return merged;
+    };
+    for (key, value) in delta_object {
+        // Prefer message_start for input/cache fields; take latest non-null for output.
+        let is_input_like = matches!(
+            key.as_str(),
+            "input_tokens"
+                | "cache_creation_input_tokens"
+                | "cache_read_input_tokens"
+                | "cache_creation"
+        );
+        if is_input_like {
+            if !merged_object.contains_key(key) || merged_object.get(key).is_some_and(Value::is_null)
+            {
+                merged_object.insert(key.clone(), value.clone());
+            }
+            continue;
+        }
+        if !value.is_null() {
+            merged_object.insert(key.clone(), value.clone());
+        }
+    }
+    merged
+}
+
+fn anthropic_usage_value_to_unified(usage: &Value) -> Value {
+    let input = usage
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cached = usage
+        .get("cache_read_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    llm_usage_to_unified_value(&Usage {
+        prompt_tokens: input.saturating_add(cached).saturating_add(cache_creation),
+        completion_tokens: output,
+        total_tokens: input
+            .saturating_add(cached)
+            .saturating_add(cache_creation)
+            .saturating_add(output),
+        cached_tokens: cached,
+        cache_write_tokens: cache_creation,
+        reasoning_tokens: 0,
+    })
+}
+
+fn unified_value_to_usage(usage: &Value) -> Usage {
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens));
+    let cached_tokens = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .or_else(|| usage.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_write_tokens = usage
+        .pointer("/prompt_tokens_details/cache_write_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+        .or_else(|| usage.get("cache_write_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let reasoning_tokens = usage
+        .pointer("/completion_tokens_details/reasoning_tokens")
+        .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
+        .or_else(|| usage.get("reasoning_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Usage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cached_tokens,
+        cache_write_tokens,
+        reasoning_tokens,
+    }
+}
+
+fn unified_usage_to_gemini_metadata(usage: Option<Value>) -> Option<Value> {
+    usage.map(|value| llm_usage_to_gemini(Some(&unified_value_to_usage(&value))))
 }
 
 fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
@@ -1227,27 +1461,14 @@ fn anthropic_start_usage() -> Value {
 
 fn chat_usage_to_anthropic(usage: Option<&Value>) -> Value {
     let usage = usage.unwrap_or(&Value::Null);
-    let prompt_tokens = usage
-        .get("prompt_tokens")
-        .or_else(|| usage.get("input_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output_tokens = usage
-        .get("completion_tokens")
-        .or_else(|| usage.get("output_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let cached_tokens = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-
+    let parsed = unified_value_to_usage(usage);
+    let cache_write = parsed.cache_write_tokens;
+    let cached_tokens = parsed.cached_tokens;
     json!({
-        "input_tokens": prompt_tokens.saturating_sub(cached_tokens),
-        "cache_creation_input_tokens": 0,
+        "input_tokens": parsed.prompt_tokens.saturating_sub(cached_tokens).saturating_sub(cache_write),
+        "cache_creation_input_tokens": cache_write,
         "cache_read_input_tokens": cached_tokens,
-        "output_tokens": output_tokens
+        "output_tokens": parsed.completion_tokens
     })
 }
 
@@ -1902,6 +2123,18 @@ impl TargetStreamState {
                 || is_custom_tool_chat_name(&tool_name, self.codex_tool_context.as_ref());
             if is_custom_tool {
                 let tool_input = custom_tool_input_from_chat_arguments(&tool_arguments);
+                // Emit one full-input delta then done (flush semantics; no per-fragment unpack).
+                if !tool_input.is_empty() {
+                    out.push(sse_event(
+                        Some("response.custom_tool_call_input.delta"),
+                        &json!({
+                            "type": "response.custom_tool_call_input.delta",
+                            "item_id": response_item_id.clone(),
+                            "output_index": output_index,
+                            "delta": tool_input
+                        }),
+                    ));
+                }
                 out.push(sse_event(
                     Some("response.custom_tool_call_input.done"),
                     &json!({
@@ -2500,7 +2733,7 @@ impl TargetStreamState {
                 ));
                 out
             }
-            UnifiedStreamEvent::Finish { reason, .. } => {
+            UnifiedStreamEvent::Finish { reason, usage } => {
                 if reason.as_deref() == Some("error") {
                     return self.write_stream_error(
                         AiProtocol::OpenAiChat,
@@ -2513,11 +2746,27 @@ impl TargetStreamState {
                 }
                 let mut out = self.ensure_chat_start();
                 self.finished = true;
+                // OpenAI include_usage wire: usage-only chunk with empty choices before finish.
+                // Normalize source-protocol usage keys (input_tokens/output_tokens) into Chat shape.
+                if let Some(usage) = usage {
+                    let chat_usage = llm_usage_to_unified_value(&unified_value_to_usage(&usage));
+                    out.push(sse_event(
+                        None,
+                        &json!({
+                            "id": if self.id.is_empty() { "chatcmpl_gateway" } else { &self.id },
+                            "object": "chat.completion.chunk",
+                            "model": self.model,
+                            "choices": [],
+                            "usage": chat_usage
+                        }),
+                    ));
+                }
                 out.push(self.chat_chunk(
                     json!({}),
                     Some(match reason.as_deref() {
                         Some("length") => "length",
                         Some("tool_calls") => "tool_calls",
+                        Some("refusal") => "content_filter",
                         Some("cancelled") | Some("canceled") => "cancelled",
                         _ => "stop",
                     }),
@@ -2691,16 +2940,9 @@ impl TargetStreamState {
                     if state_tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL
                         || is_custom_tool_chat_name(&state_name, self.codex_tool_context.as_ref())
                     {
-                        let input = custom_tool_input_from_chat_arguments(&arguments);
-                        out.push(sse_event(
-                            Some("response.custom_tool_call_input.delta"),
-                            &json!({
-                                "type": "response.custom_tool_call_input.delta",
-                                "item_id": item_id,
-                                "output_index": output_index,
-                                "delta": input
-                            }),
-                        ));
+                        // Custom tool args need complete JSON to unpack. Accumulate only;
+                        // emit a single delta+done from finish_responses_tool_items.
+                        let _ = (item_id, output_index);
                     } else {
                         out.push(sse_event(
                             Some("response.function_call_arguments.delta"),
@@ -2812,12 +3054,12 @@ impl TargetStreamState {
                 }
                 out.push(self.gemini_chunk(
                     Vec::new(),
-                    Some(if reason.as_deref() == Some("length") {
-                        "MAX_TOKENS"
-                    } else {
-                        "STOP"
+                    Some(match reason.as_deref() {
+                        Some("length") => "MAX_TOKENS",
+                        Some("refusal") => "SAFETY",
+                        _ => "STOP",
                     }),
-                    usage,
+                    unified_usage_to_gemini_metadata(usage),
                 ));
                 out
             }

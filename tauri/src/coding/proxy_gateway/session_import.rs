@@ -65,7 +65,7 @@ fn import_cli_session_usage(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
 ) -> Result<GatewaySessionUsageImportResult, String> {
-    let roots = default_session_roots(cli_key);
+    let roots = default_session_roots(db, cli_key);
     let mut result = GatewaySessionUsageImportResult {
         scanned_files: 0,
         parsed_records: 0,
@@ -81,7 +81,17 @@ fn import_cli_session_usage(
                 break;
             }
             result.scanned_files = result.scanned_files.saturating_add(1);
-            let records = parse_session_file(cli_key, &file_path)?;
+            let records = match parse_session_file(cli_key, &file_path) {
+                Ok(records) => records,
+                Err(error) => {
+                    log::warn!(
+                        "Skipping unreadable session file {}: {error}",
+                        file_path.display()
+                    );
+                    result.skipped_records = result.skipped_records.saturating_add(1);
+                    continue;
+                }
+            };
             result.parsed_records = result.parsed_records.saturating_add(records.len() as u64);
             for record in records {
                 if insert_session_usage_record(db, &record)? {
@@ -95,17 +105,58 @@ fn import_cli_session_usage(
     Ok(result)
 }
 
-fn default_session_roots(cli_key: GatewayCliKey) -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
-        return Vec::new();
+fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<PathBuf> {
+    // Prefer runtime_location-derived roots so custom/WSL Direct paths are honored.
+    // Hardcoded home paths remain fallbacks when runtime location is unavailable.
+    let mut roots = Vec::new();
+    let push_unique = |roots: &mut Vec<PathBuf>, path: PathBuf| {
+        if !roots.iter().any(|root| root == &path) {
+            roots.push(path);
+        }
     };
     match cli_key {
-        GatewayCliKey::Claude => vec![home.join(".claude").join("projects")],
-        GatewayCliKey::Codex => vec![home.join(".codex").join("sessions")],
-        GatewayCliKey::Grok => vec![home.join(".grok").join("sessions")],
-        GatewayCliKey::Gemini => vec![home.join(".gemini").join("tmp")],
-        GatewayCliKey::OpenCode => Vec::new(),
+        GatewayCliKey::Claude => {
+            if let Ok(location) =
+                crate::coding::runtime_location::get_claude_runtime_location_sync(db)
+            {
+                push_unique(&mut roots, location.host_path.join("projects"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique(&mut roots, home.join(".claude").join("projects"));
+            }
+        }
+        GatewayCliKey::Codex => {
+            if let Ok(location) =
+                crate::coding::runtime_location::get_codex_runtime_location_sync(db)
+            {
+                push_unique(&mut roots, location.host_path.join("sessions"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique(&mut roots, home.join(".codex").join("sessions"));
+            }
+        }
+        GatewayCliKey::Grok => {
+            if let Ok(location) = crate::coding::runtime_location::get_grok_runtime_location_sync(db)
+            {
+                push_unique(&mut roots, location.host_path.join("sessions"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique(&mut roots, home.join(".grok").join("sessions"));
+            }
+        }
+        GatewayCliKey::Gemini => {
+            if let Ok(location) =
+                crate::coding::runtime_location::get_gemini_cli_runtime_location_sync(db)
+            {
+                push_unique(&mut roots, location.host_path.join("tmp"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique(&mut roots, home.join(".gemini").join("tmp"));
+            }
+        }
+        GatewayCliKey::OpenCode => {}
     }
+    roots
 }
 
 fn session_files(root: &Path) -> Vec<PathBuf> {

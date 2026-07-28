@@ -10,14 +10,35 @@ pub(crate) fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, chu
     bytes.extend_from_slice(chunk);
     remainder.clear();
 
-    match std::str::from_utf8(&bytes) {
-        Ok(text) => buffer.push_str(text),
-        Err(error) => {
-            let valid_up_to = error.valid_up_to();
-            if valid_up_to > 0 {
-                buffer.push_str(&String::from_utf8_lossy(&bytes[..valid_up_to]));
+    let mut offset = 0;
+    while offset < bytes.len() {
+        match std::str::from_utf8(&bytes[offset..]) {
+            Ok(text) => {
+                buffer.push_str(text);
+                return;
             }
-            remainder.extend_from_slice(&bytes[valid_up_to..]);
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                if valid_up_to > 0 {
+                    buffer.push_str(
+                        std::str::from_utf8(&bytes[offset..offset + valid_up_to])
+                            .expect("valid_up_to must point at valid UTF-8"),
+                    );
+                    offset += valid_up_to;
+                }
+                match error.error_len() {
+                    Some(error_len) => {
+                        // Invalid byte sequence: replace and keep parsing the rest.
+                        buffer.push('\u{FFFD}');
+                        offset += error_len;
+                    }
+                    None => {
+                        // Incomplete trailing sequence: wait for more bytes.
+                        remainder.extend_from_slice(&bytes[offset..]);
+                        return;
+                    }
+                }
+            }
         }
     }
 }
@@ -90,7 +111,7 @@ pub(crate) struct ParsedSseBlock {
 
 #[cfg(test)]
 mod tests {
-    use super::take_sse_block;
+    use super::{append_utf8_safe, take_sse_block};
 
     #[test]
     fn parser_uses_the_earliest_mixed_line_ending_delimiter() {
@@ -106,5 +127,29 @@ mod tests {
             Some("event: second\r\ndata: {}")
         );
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn append_utf8_safe_replaces_invalid_bytes_and_continues() {
+        let mut buffer = String::new();
+        let mut remainder = Vec::new();
+        append_utf8_safe(&mut buffer, &mut remainder, b"hello");
+        append_utf8_safe(&mut buffer, &mut remainder, b"\xff world");
+        append_utf8_safe(&mut buffer, &mut remainder, b" tail");
+        assert_eq!(buffer, "hello\u{FFFD} world tail");
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn append_utf8_safe_keeps_incomplete_multibyte_sequence() {
+        let mut buffer = String::new();
+        let mut remainder = Vec::new();
+        // Leading bytes of a 3-byte UTF-8 sequence without continuation.
+        append_utf8_safe(&mut buffer, &mut remainder, &[0xE4, 0xBD]);
+        assert!(buffer.is_empty());
+        assert_eq!(remainder, vec![0xE4, 0xBD]);
+        append_utf8_safe(&mut buffer, &mut remainder, &[0xA0]);
+        assert_eq!(buffer.chars().count(), 1);
+        assert!(remainder.is_empty());
     }
 }

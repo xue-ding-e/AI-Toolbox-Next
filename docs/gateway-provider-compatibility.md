@@ -55,7 +55,7 @@
 
 - Claude：effective `apiFormat` -> settings `api_format/apiFormat` -> `openrouter_compat_mode=true` -> 默认 `AnthropicMessages`。
 - Codex：effective `apiFormat` -> settings `api_format/apiFormat` -> `config.toml` 的 `wire_api/api_format` -> base URL 是否 `/chat/completions` -> 默认 `OpenAiResponses`。
-- Grok：effective `apiFormat` -> settings `api_format/apiFormat` -> selected model/backend config -> 默认 `OpenAiResponses`。
+- Grok：effective `apiFormat` -> selected model `api_backend` -> 默认 `OpenAiChat`。
 - Gemini：effective `apiFormat` -> settings `api_format/apiFormat` -> 默认 `GeminiNative`。
 - Copilot：请求级动态特例，模型名 `gpt-<major>` 且 major >= 5 但不是 `gpt-5-mini` 时，本次请求切到 `OpenAiResponses`；其它走 `OpenAiChat`。这只改变本次 effective provider，不改 provider 记录。
 
@@ -109,7 +109,7 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 5. 只在存在 conversion route 时执行有损检测；默认放过并写 `X-Transformer-Lossy`，用户开启 `lossy_rejection_enabled` 后才拒绝，且 `X-Allow-Lossy: true` 可绕过。
 6. 写入或改写最终上游 `model`，剥离 `[1M]` / `[1m]`。
 7. Gemini source 转非 Gemini target 且 route streaming 时写 `stream=true`。
-8. thinking rectifier 重试路径才执行 `strip_thinking_blocks`；正常请求不会预先删除 thinking。
+8. thinking rectifier 重试路径才执行 `strip_thinking_blocks`；该 rectifier 按**入站 CLI=Claude** 门控，不是按 target protocol 判断；正常请求不会预先删除 thinking。
 9. `/responses/compact` 走 compact 专项 compat；普通跨协议请求调用 `convert_request_body_with_context()`；同协议请求直通当前 body。
 10. target Gemini 时可由 `GeminiShadowStore` 回放上一轮带 `thoughtSignature` 的 model functionCall。
 11. target OpenAI Responses 时执行 `prompt_cache_key` fallback。
@@ -140,7 +140,7 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 `normalize_openai_chat_for_provider_compat()` 是发往 OpenAI Chat-compatible provider 前的通用清理：
 
 - 删除顶层 `verbosity`、`prompt_cache_key`。
-- 非 DeepSeek 且没有显式 `codexChatReasoning` 要保留 effort 时删除 `reasoning_effort`。
+- 非 DeepSeek 且没有显式或 inferred `codexChatReasoning` 要保留 effort 时删除 `reasoning_effort`。
 - 过滤 tools，只保留 `type=function` 且有 `function.name` 的工具，移除 `response_custom_tool`。
 - `developer` role 改成 `system`。
 - system content parts 压成 string。
@@ -299,7 +299,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - 确保 `reasoning.summary="auto"`。
 - headers 补 `Accept: text/event-stream`。
 - 缺 `Originator` 时写 `Originator: ai-toolbox`。
-- 缺 `Session_id` 时从 body `session_id` 或 `x-codex-turn-metadata.session_id` 推导。
+- 缺 `Session_id` 时从 header `session_id` 或 header `x-codex-turn-metadata` JSON 中的 `session_id` 推导（不读 body `session_id`）。
 - 保留客户端已有 `Originator`、`Session_id`、`Chatgpt-Account-Id`。
 - 缺 `Chatgpt-Account-Id` 时尽力从 bearer JWT payload 的 OpenAI/ChatGPT account claim 解析。
 
@@ -536,6 +536,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - effort 映射：`max/xhigh -> xhigh`；`high/medium/low/minimal` 保留；`none/off/disabled -> none`。
 - 默认 reasoning field policy 为 `reasoning`，除非 meta 显式覆盖。
 - Codex -> Chat reasoning 矩阵使用 `reasoning.effort`。
+- OpenRouter 在 `reasoningField=none` / disabled thinking 时仍会剥离 assistant reasoning 字段；“其它 none”仅对显式 disabled 成立，不是默认对所有非 OpenRouter 路径都 none。
 
 响应侧：
 
@@ -650,7 +651,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 触发条件：
 
 - body compat 的 canonical `providerType=longcat`；当前内置 profile 只生成该值。
-- legacy `providerType=long-cat` 仅由 Anthropic platform/auth 识别兼容，当前不会触发 OpenAI Chat 的 LongCat content-array body compat；`long_cat` 不在已声明 alias 范围内。
+- `providerType` 归一化会把 `long_cat` / `long-cat` 统一为 `longcat`；OpenAI Chat 的 LongCat content-array body compat 与 Anthropic platform/auth 都识别这些别名。
 
 请求侧：
 
@@ -912,7 +913,7 @@ effort 映射：
 - `deepseek`：`max/xhigh -> max`，其它 -> `high`。
 - `low_high`：`minimal/low -> low`，其它 -> `high`。
 - `openrouter`：`max/xhigh -> xhigh`，`high/medium/low/minimal` 保留，其它 none。
-- `passthrough`：支持 `minimal/low/medium/high/xhigh`。
+- `passthrough`：支持 `minimal/low/medium/high/xhigh/max`。
 
 inferred provider：
 
@@ -925,6 +926,12 @@ inferred provider：
 - Qwen/DashScope/Bailian -> `enable_thinking`。
 - MiniMax -> `reasoning_split`，output `reasoning_details`。
 - MiMo -> `thinking`。
+
+默认 reasoning field 额外漏记行为：
+
+- 未显式配置时默认 `reasoning_content`；`providerType=openrouter|nanogpt`（及常见别名）默认 `reasoning`。
+- `long_cat` / `long-cat` 归一化后等效 `longcat`。
+- 未知 `providerType` 的 Anthropic target 默认按 Direct 语义处理（注入 Direct 风格 `anthropic-version` / web_search beta 规则），而不是 silently no-op。
 
 测试：
 

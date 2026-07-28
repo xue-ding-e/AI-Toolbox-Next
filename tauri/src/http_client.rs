@@ -100,7 +100,7 @@ pub async fn client_with_timeout(
     timeout_secs: u64,
 ) -> Result<Client, String> {
     let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
-    build_client(proxy_mode, &proxy_url, timeout_secs, false)
+    build_client(proxy_mode, &proxy_url, Some(timeout_secs), false)
 }
 
 /// Create an HTTP client with custom timeout and disabled automatic response decompression.
@@ -112,7 +112,15 @@ pub async fn client_with_timeout_no_compression(
     timeout_secs: u64,
 ) -> Result<Client, String> {
     let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
-    build_client(proxy_mode, &proxy_url, timeout_secs, true)
+    build_client(proxy_mode, &proxy_url, Some(timeout_secs), true)
+}
+
+/// Streaming-oriented HTTP client: no overall request timeout so long-lived SSE
+/// bodies are not cut off after a fixed wall-clock budget. Connect timeout still
+/// applies; first-byte and per-chunk idle timeouts are enforced by callers.
+pub async fn client_streaming_no_compression(db_state: &SqliteDbState) -> Result<Client, String> {
+    let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
+    build_client(proxy_mode, &proxy_url, None, true)
 }
 
 /// Build an HTTP client with explicit proxy URL.
@@ -135,12 +143,16 @@ pub async fn client_with_timeout_no_compression(
 fn build_client(
     proxy_mode: ProxyMode,
     proxy_url: &str,
-    timeout_secs: u64,
+    timeout_secs: Option<u64>,
     disable_content_decoding: bool,
 ) -> Result<Client, String> {
-    let mut builder = Client::builder()
-        .use_rustls_tls()
-        .timeout(Duration::from_secs(timeout_secs));
+    let mut builder = Client::builder().use_rustls_tls();
+    if let Some(timeout_secs) = timeout_secs {
+        builder = builder.timeout(Duration::from_secs(timeout_secs));
+    } else {
+        // Streaming clients: keep connect bounded, leave body open for idle/first-byte control.
+        builder = builder.connect_timeout(Duration::from_secs(30));
+    }
 
     if disable_content_decoding {
         builder = builder.no_gzip().no_brotli().no_zstd().no_deflate();
@@ -205,7 +217,7 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
     }
 
     // Create client with custom proxy mode
-    let client = build_client(ProxyMode::Custom, proxy_url, 10, false)?;
+    let client = build_client(ProxyMode::Custom, proxy_url, Some(10), false)?;
 
     // Test with httpbin.org - it's designed for testing HTTP clients
     let response = client

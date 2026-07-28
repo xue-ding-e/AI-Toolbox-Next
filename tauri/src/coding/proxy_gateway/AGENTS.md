@@ -41,6 +41,9 @@
 - 停止网关前必须做后端硬检查：只要存在 enabled manifest，就拒绝停止，要求先恢复对应 CLI 直连，避免用户 CLI 被留在不可用的本机网关地址上。
 - 重启网关不能走 stop preflight，也不能实现成前端 `stop + start`。有接管时重启必须仍可用，否则网络切换后的半死状态只能靠用户先恢复直连才能自愈。
 - 重新接管时必须复用已有 manifest 的原始备份，不要把已经被网关改写过的文件再次备份成“原始状态”。
+- engage 路径先写 enabled manifest（保护 `.bak`），再 `apply_gateway_config`。若 apply 中途失败：必须立即按备份 restore runtime 文件，并把 manifest `enabled=false` 写回，不能留下 “manifest enabled 但配置半改写” 的产品态；重试时仍复用首次原始 `.bak`。
+- selection manifest 热路径必须用 `load_gateway_provider_selection_async`（`tokio::fs`），不能在请求路径同步 `fs::read_to_string`；30s 缓存只是二次优化。`write_manifest` 与 provider cache clear 都必须调用 `clear_gateway_provider_selection_cache`，覆盖 engage / disengage / restore 全部出口。
+- forced-stream 聚合 raw_body 上限必须复用 `upstream_response_snapshot_limit`（来自 `store_response_body` + `log_max_body_size_kb`）；仅当该 limit 未启用时才允许 16 MiB fallback，避免设置页语义与实现漂移。
 
 ## 关键流程
 

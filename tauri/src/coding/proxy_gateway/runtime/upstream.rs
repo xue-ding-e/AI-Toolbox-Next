@@ -67,6 +67,7 @@ const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 const DEFAULT_COPILOT_WARMUP_MODEL: &str = "gpt-5-mini";
 const DEFAULT_COPILOT_TOKEN_ENDPOINT: &str = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_TOKEN_EXPIRY_BUFFER_SECS: i64 = 300;
+const COPILOT_TOKEN_CACHE_MAX_ENTRIES: usize = 256;
 const STREAM_SEMANTIC_PROBE_MAX_CHUNKS: usize = 32;
 const STREAM_SEMANTIC_PROBE_MAX_BYTES: usize = 256 * 1024;
 
@@ -252,6 +253,7 @@ async fn validate_streaming_first_chunk(
                             .iter()
                             .flat_map(|chunk| chunk.iter().copied())
                             .collect();
+                        let snapshot_bytes = snapshot.len() as u64;
                         return Err(GatewayForwardError {
                             message:
                                 "Upstream streaming response reported a protocol error envelope"
@@ -259,7 +261,7 @@ async fn validate_streaming_first_chunk(
                             kind: GatewayFailureKind::UpstreamBadRequest,
                             upstream_request_body: None,
                             upstream_response_body: Some(snapshot),
-                            upstream_response_body_bytes: 0,
+                            upstream_response_body_bytes: snapshot_bytes,
                         });
                     }
                     StreamingProbeDecision::Meaningful => {
@@ -300,6 +302,7 @@ async fn validate_streaming_first_chunk(
                             .iter()
                             .flat_map(|chunk| chunk.iter().copied())
                             .collect();
+                        let snapshot_bytes = snapshot.len() as u64;
                         return Err(GatewayForwardError {
                             message:
                                 "Upstream streaming response reported a protocol error envelope"
@@ -307,7 +310,7 @@ async fn validate_streaming_first_chunk(
                             kind: GatewayFailureKind::UpstreamBadRequest,
                             upstream_request_body: None,
                             upstream_response_body: Some(snapshot),
-                            upstream_response_body_bytes: 0,
+                            upstream_response_body_bytes: snapshot_bytes,
                         });
                     }
                     StreamingProbeDecision::Meaningful => {
@@ -946,7 +949,11 @@ async fn forward_to_upstream(
                     return response;
                 }
                 Err(error) => {
-                    if error.kind == GatewayFailureKind::RequestSchema {
+                    // Local deterministic errors must not same-provider retry or failover.
+                    if matches!(
+                        error.kind,
+                        GatewayFailureKind::RequestSchema | GatewayFailureKind::GatewayParse
+                    ) {
                         save_health_registry_if_needed(context, health_changed);
                         let mut response = local_request_schema_failure_response(
                             route,
@@ -1104,10 +1111,14 @@ async fn send_upstream_request(
         strip_known_invalid_responses_ciphers(context, provider, &mut upstream_body)?;
     }
     let upstream_body_snapshot = upstream_body.clone();
-    let client =
-        http_client::client_with_timeout_no_compression(db, non_streaming_timeout_secs.max(1))
-            .await
-            .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::Connection))?;
+    let target_streaming = request_declares_streaming(request) || route_declares_streaming(route);
+    // Streaming must not use a total Client::timeout that covers the whole SSE body.
+    let client = if target_streaming {
+        http_client::client_streaming_no_compression(db).await
+    } else {
+        http_client::client_with_timeout_no_compression(db, non_streaming_timeout_secs.max(1)).await
+    }
+    .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::Connection))?;
     if let Some(copilot_token) = resolve_copilot_token_for_provider(&client, provider)
         .await
         .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::Connection))?
@@ -1126,7 +1137,6 @@ async fn send_upstream_request(
                 upstream_response_body_bytes: 0,
             }
         })?;
-    let target_streaming = request_declares_streaming(request) || route_declares_streaming(route);
     let forwarded_path = upstream_forwarded_path(
         route,
         provider,
@@ -1478,10 +1488,25 @@ async fn send_request_once(
             .await
             {
                 Ok(response) => return Ok(UpstreamResponse::HeaderPreserving(response)),
-                Err(error) => {
+                Err(error) if !error.request_body_written() => {
+                    // Only pre-write connection failures may fall back to reqwest.
                     log::warn!(
-                    "Header-preserving upstream request failed; falling back to reqwest: {error}"
-                );
+                        "Header-preserving upstream request failed before write; falling back to reqwest: {}",
+                        error.message()
+                    );
+                }
+                Err(error) => {
+                    // Request already left this process; re-sending via reqwest would double-bill.
+                    return Err(GatewayForwardError {
+                        message: format!(
+                            "Header-preserving upstream request failed after write: {}",
+                            error.message()
+                        ),
+                        kind: GatewayFailureKind::Connection,
+                        upstream_request_body: None,
+                        upstream_response_body: None,
+                        upstream_response_body_bytes: 0,
+                    });
                 }
             }
         }
@@ -1541,7 +1566,11 @@ async fn build_gateway_response(
         status.as_u16(),
     ) {
         let (upstream_response_body, mut body) =
-            aggregate_sse_stream_for_non_streaming_client(aggregate_kind, response.bytes_stream())
+            aggregate_sse_stream_for_non_streaming_client(
+                aggregate_kind,
+                response.bytes_stream(),
+                upstream_response_snapshot_limit,
+            )
                 .await
                 .map_err(|mut error| {
                     error.upstream_request_body = Some(upstream_body_snapshot.clone());
@@ -1939,24 +1968,34 @@ fn should_aggregate_openai_chat_sse_for_non_streaming_client(
 async fn aggregate_sse_stream_for_non_streaming_client(
     kind: SseAggregateKind,
     stream: DebugBodyStream,
+    raw_body_limit: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), GatewayForwardError> {
     match kind {
-        SseAggregateKind::OpenAiResponses => aggregate_openai_responses_sse_stream(stream).await,
-        SseAggregateKind::OpenAiChat => aggregate_openai_chat_sse_stream(stream).await,
-        SseAggregateKind::AnthropicMessages => aggregate_anthropic_sse_stream(stream).await,
-        SseAggregateKind::GeminiNative => aggregate_gemini_sse_stream(stream).await,
+        SseAggregateKind::OpenAiResponses => {
+            aggregate_openai_responses_sse_stream(stream, raw_body_limit).await
+        }
+        SseAggregateKind::OpenAiChat => {
+            aggregate_openai_chat_sse_stream(stream, raw_body_limit).await
+        }
+        SseAggregateKind::AnthropicMessages => {
+            aggregate_anthropic_sse_stream(stream, raw_body_limit).await
+        }
+        SseAggregateKind::GeminiNative => {
+            aggregate_gemini_sse_stream(stream, raw_body_limit).await
+        }
     }
 }
 
 async fn aggregate_openai_responses_sse_stream(
     mut stream: DebugBodyStream,
+    raw_body_limit: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), GatewayForwardError> {
     let mut raw_body = Vec::new();
     let mut aggregate = OpenAiResponsesSseAggregate::default();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk
             .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))?;
-        raw_body.extend_from_slice(&chunk);
+        append_bounded_raw_body(&mut raw_body, &chunk, raw_body_limit);
         aggregate.push_chunk(&chunk);
     }
     let body = aggregate.finish()?;
@@ -1965,47 +2004,67 @@ async fn aggregate_openai_responses_sse_stream(
 
 async fn aggregate_openai_chat_sse_stream(
     mut stream: DebugBodyStream,
+    raw_body_limit: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), GatewayForwardError> {
     let mut raw_body = Vec::new();
     let mut aggregate = OpenAiChatSseAggregate::default();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk
             .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))?;
-        raw_body.extend_from_slice(&chunk);
+        append_bounded_raw_body(&mut raw_body, &chunk, raw_body_limit);
         aggregate.push_chunk(&chunk);
     }
-    let body = aggregate.finish();
+    let body = aggregate.finish()?;
     Ok((raw_body, body))
 }
 
 async fn aggregate_anthropic_sse_stream(
     mut stream: DebugBodyStream,
+    raw_body_limit: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), GatewayForwardError> {
     let mut raw_body = Vec::new();
     let mut aggregate = AnthropicSseAggregate::default();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk
             .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))?;
-        raw_body.extend_from_slice(&chunk);
+        append_bounded_raw_body(&mut raw_body, &chunk, raw_body_limit);
         aggregate.push_chunk(&chunk);
     }
-    let body = aggregate.finish();
+    let body = aggregate.finish()?;
     Ok((raw_body, body))
 }
 
 async fn aggregate_gemini_sse_stream(
     mut stream: DebugBodyStream,
+    raw_body_limit: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), GatewayForwardError> {
     let mut raw_body = Vec::new();
     let mut aggregate = GeminiSseAggregate::default();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk
             .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))?;
-        raw_body.extend_from_slice(&chunk);
+        append_bounded_raw_body(&mut raw_body, &chunk, raw_body_limit);
         aggregate.push_chunk(&chunk);
     }
-    let body = aggregate.finish();
+    let body = aggregate.finish()?;
     Ok((raw_body, body))
+}
+
+/// Fallback only when caller did not pass store_response_body snapshot limit.
+const FORCED_STREAM_RAW_BODY_FALLBACK_LIMIT: usize = 16 * 1024 * 1024;
+
+fn append_bounded_raw_body(
+    raw_body: &mut Vec<u8>,
+    chunk: &[u8],
+    raw_body_limit: Option<usize>,
+) {
+    let limit = raw_body_limit.unwrap_or(FORCED_STREAM_RAW_BODY_FALLBACK_LIMIT);
+    let remaining = limit.saturating_sub(raw_body.len());
+    if remaining == 0 {
+        return;
+    }
+    let take = chunk.len().min(remaining);
+    raw_body.extend_from_slice(&chunk[..take]);
 }
 
 fn convert_ollama_chat_response_to_openai_chat(body: &[u8]) -> Result<Vec<u8>, String> {
@@ -2311,13 +2370,27 @@ impl AnthropicSseAggregate {
         }
     }
 
-    fn finish(mut self) -> Vec<u8> {
+    fn finish(mut self) -> Result<Vec<u8>, GatewayForwardError> {
         if !self.buffer.is_empty() {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
+        let has_content = !self.content_blocks.is_empty()
+            || self
+                .message
+                .as_ref()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_array)
+                .is_some_and(|content| !content.is_empty());
+        let has_terminal = self.stop_reason.as_ref().is_some_and(|reason| !reason.is_empty());
+        if has_content && !has_terminal {
+            return Err(GatewayForwardError::new(
+                "Anthropic Messages SSE ended without a terminal stop_reason",
+                GatewayFailureKind::Connection,
+            ));
+        }
         let response = self.response_value();
-        serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec())
+        Ok(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()))
     }
 
     fn push_block(&mut self, block: &[u8]) {
@@ -2335,7 +2408,7 @@ impl AnthropicSseAggregate {
             Some("message_start") => {
                 if let Some(message) = value.get("message").cloned() {
                     if let Some(usage) = message.get("usage") {
-                        merge_usage_object(&mut self.usage, usage);
+                        merge_usage_snapshot(&mut self.usage, usage);
                     }
                     self.message = Some(message);
                 }
@@ -2366,7 +2439,7 @@ impl AnthropicSseAggregate {
                     }
                 }
                 if let Some(usage) = value.get("usage") {
-                    merge_usage_object(&mut self.usage, usage);
+                    merge_usage_snapshot(&mut self.usage, usage);
                 }
             }
             _ => {}
@@ -2513,13 +2586,26 @@ impl GeminiSseAggregate {
         }
     }
 
-    fn finish(mut self) -> Vec<u8> {
+    fn finish(mut self) -> Result<Vec<u8>, GatewayForwardError> {
         if !self.buffer.is_empty() {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
+        let has_content = self.candidates.values().any(|candidate| {
+            !candidate.parts.is_empty() || candidate.finish_reason.is_some()
+        });
+        let has_terminal = self
+            .candidates
+            .values()
+            .any(|candidate| candidate.finish_reason.as_ref().is_some_and(|reason| !reason.is_empty()));
+        if has_content && !has_terminal {
+            return Err(GatewayForwardError::new(
+                "Gemini Native SSE ended without a terminal finishReason",
+                GatewayFailureKind::Connection,
+            ));
+        }
         let response = self.response_value();
-        serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec())
+        Ok(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()))
     }
 
     fn push_block(&mut self, block: &[u8]) {
@@ -2727,9 +2813,13 @@ fn merge_json_objects(existing: &mut Value, incoming: &Value) {
     }
 }
 
-fn merge_usage_object(target: &mut Option<Value>, usage: &Value) {
+/// Anthropic usage fields are cumulative snapshots, not per-event deltas.
+/// Chat/Responses may still sum deltas via local helpers; Anthropic uses overwrite.
+fn merge_usage_snapshot(target: &mut Option<Value>, usage: &Value) {
     let Some(usage_object) = usage.as_object() else {
-        *target = Some(usage.clone());
+        if !usage.is_null() {
+            *target = Some(usage.clone());
+        }
         return;
     };
     let target_value = target.get_or_insert_with(|| json!({}));
@@ -2738,14 +2828,10 @@ fn merge_usage_object(target: &mut Option<Value>, usage: &Value) {
         return;
     };
     for (key, value) in usage_object {
-        if let (Some(existing), Some(incoming)) = (
-            target_object.get(key).and_then(Value::as_i64),
-            value.as_i64(),
-        ) {
-            target_object.insert(key.clone(), json!(existing + incoming));
-        } else {
-            target_object.insert(key.clone(), value.clone());
+        if value.is_null() {
+            continue;
         }
+        target_object.insert(key.clone(), value.clone());
     }
 }
 
@@ -2788,13 +2874,32 @@ impl OpenAiChatSseAggregate {
         }
     }
 
-    fn finish(mut self) -> Vec<u8> {
+    fn finish(mut self) -> Result<Vec<u8>, GatewayForwardError> {
         if !self.buffer.is_empty() {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
+        let has_content = self.choices.values().any(|choice| {
+            !choice.content.is_empty()
+                || !choice.reasoning_content.is_empty()
+                || !choice.tool_calls.is_empty()
+                || choice.finish_reason.is_some()
+        });
+        let has_terminal = self.choices.values().any(|choice| {
+            choice
+                .finish_reason
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|reason| !reason.trim().is_empty())
+        });
+        if has_content && !has_terminal {
+            return Err(GatewayForwardError::new(
+                "OpenAI Chat SSE ended without a terminal finish_reason",
+                GatewayFailureKind::Connection,
+            ));
+        }
         let response = self.response_value();
-        serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec())
+        Ok(serde_json::to_vec(&response).unwrap_or_else(|_| b"{}".to_vec()))
     }
 
     fn push_block(&mut self, block: &[u8]) {
@@ -3017,6 +3122,20 @@ fn merge_responses_response_snapshot(base: Option<&Value>, snapshot: &Value) -> 
     for (key, value) in snapshot_object {
         if value.is_null() || value.as_str().is_some_and(|text| text.is_empty()) {
             continue;
+        }
+        // Empty object/array snapshots must not clobber previously merged non-empty values.
+        if value.as_object().is_some_and(|object| object.is_empty())
+            || value.as_array().is_some_and(|array| array.is_empty())
+        {
+            let keep_existing = response_object.get(key).is_some_and(|existing| {
+                existing
+                    .as_object()
+                    .is_some_and(|object| !object.is_empty())
+                    || existing.as_array().is_some_and(|array| !array.is_empty())
+            });
+            if keep_existing {
+                continue;
+            }
         }
         response_object.insert(key.clone(), value.clone());
     }
@@ -3722,8 +3841,20 @@ fn streaming_first_chunk_failure_response(
     failure_response.pricing_model_source = Some(provider.meta.pricing_model_source.clone());
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
-    failure_response.upstream_request_body = response.upstream_request_body.take();
-    if let Some((body, body_bytes)) = response.upstream_response_body_snapshot() {
+    failure_response.upstream_request_body = response
+        .upstream_request_body
+        .take()
+        .or(error.upstream_request_body);
+    // Prefer the probe-captured envelope, then any snapshot already on the response.
+    if let Some(body) = error.upstream_response_body {
+        let body_bytes = if error.upstream_response_body_bytes > 0 {
+            error.upstream_response_body_bytes
+        } else {
+            body.len() as u64
+        };
+        failure_response.upstream_response_body = Some(body);
+        failure_response.upstream_response_body_bytes = body_bytes;
+    } else if let Some((body, body_bytes)) = response.upstream_response_body_snapshot() {
         failure_response.upstream_response_body = Some(body);
         failure_response.upstream_response_body_bytes = body_bytes;
     }
@@ -4391,7 +4522,7 @@ fn can_retry_current_provider(
     retry_count: u32,
     max_retry_count: u32,
 ) -> bool {
-    failure_kind != GatewayFailureKind::Timeout
+    should_retry_failure(failure_kind)
         && provider_retry_count < per_provider_retry_count
         && retry_count < max_retry_count
 }
@@ -5256,7 +5387,8 @@ fn gateway_session_id_hint(request: &DebugHttpRequest, body: &Value) -> Option<S
         "x-session-id",
         "x-conversation-id",
         "chatgpt-conversation-id",
-        "chatgpt-account-id",
+        // Do not use chatgpt-account-id: account-level ids would share shadow store /
+        // prompt_cache_key across concurrent sessions on the same account.
     ] {
         if let Some(value) =
             header_value_ci(&request.headers, header_name).filter(|value| !value.trim().is_empty())
@@ -5529,17 +5661,30 @@ impl AnthropicPlatform {
         if provider.target_protocol != AiProtocol::AnthropicMessages {
             return None;
         }
-        let normalized = provider
-            .meta
-            .provider_type
-            .as_deref()
-            .map(|value| value.trim().to_ascii_lowercase().replace(['_', ' '], "-"));
-        match normalized.as_deref() {
-            Some("bedrock" | "anthropic-bedrock" | "aws-bedrock") => Some(Self::Bedrock),
-            Some("vertex" | "anthropic-vertex" | "claude-vertex") => Some(Self::Vertex),
-            Some("longcat" | "long-cat") => Some(Self::LongCat),
-            Some("anthropic" | "claude" | "direct" | "claude-code") => Some(Self::Direct),
-            _ => None,
+        // Prefer the shared ProviderBodyCompat normalization so long_cat / aws bedrock
+        // aliases stay consistent across platform header injection and body adapters.
+        match ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol)
+        {
+            Some(ProviderBodyCompat::AnthropicBedrock) => Some(Self::Bedrock),
+            Some(ProviderBodyCompat::AnthropicVertex) => Some(Self::Vertex),
+            Some(ProviderBodyCompat::Longcat) => Some(Self::LongCat),
+            _ => {
+                let normalized = provider
+                    .meta
+                    .provider_type
+                    .as_deref()
+                    .map(|value| value.trim().to_ascii_lowercase().replace(['_', ' '], "-"));
+                match normalized.as_deref() {
+                    Some("anthropic" | "claude" | "direct" | "claude-code") | None => {
+                        // Unknown or empty providerType on Anthropic target: Direct semantics.
+                        Some(Self::Direct)
+                    }
+                    Some("long-cat") => Some(Self::LongCat),
+                    Some("bedrock" | "anthropic-bedrock" | "aws-bedrock") => Some(Self::Bedrock),
+                    Some("vertex" | "anthropic-vertex" | "claude-vertex") => Some(Self::Vertex),
+                    _ => Some(Self::Direct),
+                }
+            }
         }
     }
 }
@@ -6255,10 +6400,16 @@ fn convert_response_format_json_schema_to_json_object(object: &mut serde_json::M
 }
 
 fn apply_deepseek_openai_chat_thinking_compat(object: &mut serde_json::Map<String, Value>) {
-    let thinking_disabled = object
+    // Only inject thinking when the request expresses a reasoning intent.
+    // Bare Chat requests without reasoning_effort must not force thinking on.
+    let Some(effort) = object
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .is_some_and(is_reasoning_disabled_effort);
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let thinking_disabled = is_reasoning_disabled_effort(&effort);
     object.insert(
         "thinking".to_string(),
         json!({ "type": if thinking_disabled { "disabled" } else { "enabled" } }),
@@ -6270,14 +6421,10 @@ fn apply_deepseek_openai_chat_thinking_compat(object: &mut serde_json::Map<Strin
         return;
     }
 
-    if let Some(effort) = object
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .and_then(map_deepseek_reasoning_effort)
-    {
+    if let Some(mapped) = map_deepseek_reasoning_effort(&effort) {
         object.insert(
             "reasoning_effort".to_string(),
-            Value::String(effort.to_string()),
+            Value::String(mapped.to_string()),
         );
     }
 }
@@ -7841,6 +7988,20 @@ fn cached_copilot_token(cache_key: &str) -> Option<String> {
 
 fn cache_copilot_token(cache_key: String, token: String, expires_at: i64) {
     if let Ok(mut cache) = COPILOT_TOKEN_CACHE.lock() {
+        let now = unix_timestamp_secs();
+        cache.retain(|_, entry| {
+            entry.expires_at > now.saturating_add(COPILOT_TOKEN_EXPIRY_BUFFER_SECS)
+        });
+        if cache.len() >= COPILOT_TOKEN_CACHE_MAX_ENTRIES && !cache.contains_key(&cache_key) {
+            // Drop an arbitrary expired-or-oldest entry to keep the map bounded.
+            if let Some(evict_key) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(key, _)| key.clone())
+            {
+                cache.remove(&evict_key);
+            }
+        }
         cache.insert(cache_key, CopilotTokenCacheEntry { token, expires_at });
     }
 }
@@ -8907,16 +9068,25 @@ fn inject_provider_auth(
             )?;
         }
     }
-    if provider.target_protocol == AiProtocol::AnthropicMessages
-        && !headers.contains_key("anthropic-version")
-    {
+    if provider.target_protocol == AiProtocol::AnthropicMessages {
         let anthropic_version = anthropic_header_version(provider);
-        append_preserved_header(
-            headers,
-            preserved,
-            "anthropic-version",
-            HeaderValue::from_static(anthropic_version),
-        )?;
+        let platform = AnthropicPlatform::from_provider(provider);
+        // Bedrock/Vertex must always override client-supplied anthropic-version.
+        // Direct only injects when missing so client betas can keep their version.
+        let should_set = matches!(
+            platform,
+            Some(AnthropicPlatform::Bedrock | AnthropicPlatform::Vertex)
+        ) || !headers.contains_key("anthropic-version");
+        if should_set {
+            headers.remove("anthropic-version");
+            preserved.retain(|header| !header.name.eq_ignore_ascii_case("anthropic-version"));
+            append_preserved_header(
+                headers,
+                preserved,
+                "anthropic-version",
+                HeaderValue::from_static(anthropic_version),
+            )?;
+        }
     }
     Ok(())
 }
@@ -9317,7 +9487,8 @@ fn classify_status_failure(status_code: u16) -> Option<GatewayFailureKind> {
 fn should_retry_failure(kind: GatewayFailureKind) -> bool {
     !matches!(
         kind,
-        GatewayFailureKind::RequestSchema
+        GatewayFailureKind::Timeout
+            | GatewayFailureKind::RequestSchema
             | GatewayFailureKind::ClientCancelled
             | GatewayFailureKind::GatewayParse
     )
@@ -13427,7 +13598,7 @@ data: {data}\r\n\r\n"
             .as_bytes()
             .to_vec())]));
         let (raw, body) =
-            tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+            tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
                 .expect("aggregate responses sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
 
@@ -13450,7 +13621,7 @@ data: {data}\r\n\r\n"
         let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
             .as_bytes()
             .to_vec())]));
-        let error = tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+        let error = tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
             .expect_err("missing Responses terminal event must fail closed");
 
         assert_eq!(error.kind, GatewayFailureKind::Connection);
@@ -13469,7 +13640,7 @@ data: {data}\r\n\r\n"
             .as_bytes()
             .to_vec())]));
         let (_, body) =
-            tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+            tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
                 .expect("aggregate responses sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
 
@@ -13504,7 +13675,7 @@ data: {data}\r\n\r\n"
                 .as_bytes()
                 .to_vec())]));
             let (_, body) =
-                tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream))
+                tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
                     .expect("aggregate incomplete Responses SSE");
             let value: Value = serde_json::from_slice(&body).unwrap();
 
@@ -13530,7 +13701,7 @@ data: {data}\r\n\r\n"
             .as_bytes()
             .to_vec())]));
 
-        let (raw, body) = aggregate_openai_chat_sse_stream(stream)
+        let (raw, body) = aggregate_openai_chat_sse_stream(stream, None)
             .await
             .expect("aggregate chat sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
@@ -13586,7 +13757,7 @@ data: {data}\r\n\r\n"
             .as_bytes()
             .to_vec())]));
 
-        let (raw, body) = aggregate_anthropic_sse_stream(stream)
+        let (raw, body) = aggregate_anthropic_sse_stream(stream, None)
             .await
             .expect("aggregate anthropic sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
@@ -13617,7 +13788,7 @@ data: {data}\r\n\r\n"
             .as_bytes()
             .to_vec())]));
 
-        let (raw, body) = aggregate_gemini_sse_stream(stream)
+        let (raw, body) = aggregate_gemini_sse_stream(stream, None)
             .await
             .expect("aggregate gemini sse");
         let value: Value = serde_json::from_slice(&body).unwrap();
@@ -14411,6 +14582,44 @@ data: {data}\r\n\r\n"
         assert!(value["messages"][1].get("reasoning").is_none());
         assert_eq!(value["messages"][2]["reasoning_content"], "keep this");
         assert!(value["messages"][2].get("reasoning").is_none());
+    }
+
+    #[test]
+    fn provider_body_compat_deepseek_chat_skips_thinking_when_no_reasoning_effort() {
+        let body = br#"{
+            "model":"deepseek-v4-pro",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "deepseek",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(
+            value.get("thinking").is_none(),
+            "no reasoning intent must not inject thinking.enabled"
+        );
+    }
+
+    #[test]
+    fn provider_body_compat_deepseek_chat_injects_thinking_when_reasoning_effort_present() {
+        let body = br#"{
+            "model":"deepseek-v4-pro",
+            "reasoning_effort":"high",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            "deepseek",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["thinking"]["type"], "enabled");
     }
 
     #[test]

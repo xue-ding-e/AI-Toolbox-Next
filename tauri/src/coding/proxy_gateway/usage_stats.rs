@@ -1640,6 +1640,7 @@ fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
         ("claude", "claude_provider"),
         ("codex", "codex_provider"),
         ("gemini", "gemini_cli_provider"),
+        ("grok", "grok_provider"),
     ] {
         let sql = format!("SELECT id, json_extract(data, '$.name') FROM {table}");
         let mut stmt = conn.prepare(&sql).map_err(|error| {
@@ -2257,10 +2258,28 @@ mod tests {
     }
 
     fn insert_provider(db: &SqliteDbState, id: &str, name: &str) {
+        insert_provider_for_cli(db, GatewayCliKey::Claude, id, name);
+    }
+
+    fn insert_provider_for_cli(
+        db: &SqliteDbState,
+        cli_key: GatewayCliKey,
+        id: &str,
+        name: &str,
+    ) {
+        let table = match cli_key {
+            GatewayCliKey::Claude => DbTable::ClaudeProvider,
+            GatewayCliKey::Codex => DbTable::CodexProvider,
+            GatewayCliKey::Grok => DbTable::GrokProvider,
+            GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
+            GatewayCliKey::OpenCode => {
+                panic!("OpenCode provider insertion is not used by usage_stats unit tests")
+            }
+        };
         db.with_conn(|conn| {
             db_put(
                 conn,
-                DbTable::ClaudeProvider,
+                table,
                 id,
                 &json!({
                     "name": name,
@@ -2336,18 +2355,43 @@ mod tests {
         input_tokens: u64,
         output_tokens: u64,
     ) -> GatewayRequestLogDetail {
+        make_detail_for_cli(
+            GatewayCliKey::Claude,
+            trace_id,
+            provider_id,
+            status_code,
+            input_tokens,
+            output_tokens,
+        )
+    }
+
+    fn make_detail_for_cli(
+        cli_key: GatewayCliKey,
+        trace_id: &str,
+        provider_id: &str,
+        status_code: u16,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> GatewayRequestLogDetail {
         let ended_at = Utc.with_ymd_and_hms(2026, 5, 20, 8, 30, 0).unwrap();
         let mut request_headers = BTreeMap::new();
         request_headers.insert("authorization".to_string(), "Bearer redacted".to_string());
+        let (route_name, path) = match cli_key {
+            GatewayCliKey::Claude => ("claude_messages", "/v1/messages"),
+            GatewayCliKey::Codex => ("codex_responses", "/v1/responses"),
+            GatewayCliKey::Grok => ("grok_responses", "/v1/responses"),
+            GatewayCliKey::Gemini => ("gemini_generate", "/v1beta/models/gemini:generateContent"),
+            GatewayCliKey::OpenCode => ("opencode", "/v1/chat/completions"),
+        };
         GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
                 trace_id: trace_id.to_string(),
                 started_at: ended_at - Duration::milliseconds(1200),
                 ended_at,
-                cli_key: Some(GatewayCliKey::Claude),
-                route_name: "claude_messages".to_string(),
+                cli_key: Some(cli_key),
+                route_name: route_name.to_string(),
                 method: "POST".to_string(),
-                path: "/v1/messages".to_string(),
+                path: path.to_string(),
                 provider_id: Some(provider_id.to_string()),
                 provider_name: Some("Runtime Name".to_string()),
                 provider_type: None,
@@ -2954,6 +2998,30 @@ mod tests {
 
         assert_eq!(row.0, "4.000000");
         assert_eq!(row.1, "requested");
+    }
+
+    #[test]
+    fn load_provider_names_resolves_grok_provider_display_name() {
+        let db = test_db();
+        insert_provider_for_cli(&db, GatewayCliKey::Grok, "provider-grok", "Grok Display Name");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail_for_cli(GatewayCliKey::Grok, "trace-grok", "provider-grok", 200, 9, 4),
+        )
+        .expect("record grok summary");
+
+        let provider_rows =
+            provider_stats(&db, None, None, Some(GatewayCliKey::Grok)).expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(provider_rows[0].provider_id, "provider-grok");
+        assert_eq!(
+            provider_rows[0].provider_name.as_deref(),
+            Some("Grok Display Name"),
+            "Grok usage rows must resolve display names from grok_provider"
+        );
+        assert_eq!(provider_rows[0].request_count, 1);
+        assert_eq!(provider_rows[0].total_tokens, 13);
     }
 
     #[test]

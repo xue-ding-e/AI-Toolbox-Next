@@ -300,7 +300,17 @@ pub(crate) fn wrap_namespace_restore_sse_stream(
                     Some(Ok(bytes)) => {
                         append_utf8_safe(&mut state.buffer, &mut state.utf8_remainder, &bytes);
                         while let Some(block) = take_sse_block(&mut state.buffer) {
-                            if block.trim().is_empty() {
+                            // Keep blank/comment keep-alive blocks byte-equivalent; only
+                            // rewrite blocks that contain data JSON.
+                            if block.trim().is_empty()
+                                || block.lines().all(|line| {
+                                    let trimmed = line.trim();
+                                    trimmed.is_empty() || trimmed.starts_with(':')
+                                })
+                            {
+                                let mut raw = block.into_bytes();
+                                raw.extend_from_slice(b"\n\n");
+                                state.pending.push_back(Ok(raw));
                                 continue;
                             }
                             state

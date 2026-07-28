@@ -254,10 +254,10 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
     let parts = message_parts(message.get("content"));
     let mut llm_parts = Vec::new();
     let mut tool_calls = Vec::new();
-    let mut reasoning_content = None;
-    let mut reasoning = None;
-    let mut reasoning_signature = None;
-    let mut redacted_reasoning_content = None;
+    let mut reasoning_content: Option<String> = None;
+    let mut reasoning: Option<String> = None;
+    let mut reasoning_signature: Option<String> = None;
+    let mut redacted_reasoning_content: Option<String> = None;
 
     for (index, part) in parts.iter().enumerate() {
         match part.get("type").and_then(Value::as_str) {
@@ -279,14 +279,20 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
                     .and_then(Value::as_str)
                     .filter(|text| !text.is_empty())
                 {
-                    reasoning_content = Some(thinking.to_string());
-                    reasoning = Some(thinking.to_string());
+                    match reasoning_content.as_mut() {
+                        Some(existing) => existing.push_str(thinking),
+                        None => reasoning_content = Some(thinking.to_string()),
+                    }
+                    reasoning = reasoning_content.clone();
                 }
-                reasoning_signature = part
+                if let Some(signature) = part
                     .get("signature")
                     .and_then(Value::as_str)
                     .filter(|signature| !signature.is_empty())
-                    .map(|signature| encode_signature(SignatureProvider::Anthropic, signature));
+                {
+                    reasoning_signature =
+                        Some(encode_signature(SignatureProvider::Anthropic, signature));
+                }
             }
             Some("redacted_thinking") => {
                 redacted_reasoning_content = part
@@ -643,10 +649,16 @@ fn append_llm_content_as_anthropic(content: &MessageContent, out: &mut Vec<Value
 
 fn usage_to_anthropic(usage: Option<&Usage>) -> Value {
     let usage = usage.cloned().unwrap_or_default();
+    let cache_write = usage.cache_write_tokens;
+    let cached = usage.cached_tokens;
     json!({
-        "input_tokens": usage.prompt_tokens.saturating_sub(usage.cached_tokens),
+        "input_tokens": usage
+            .prompt_tokens
+            .saturating_sub(cached)
+            .saturating_sub(cache_write),
         "output_tokens": usage.completion_tokens,
-        "cache_read_input_tokens": usage.cached_tokens,
+        "cache_creation_input_tokens": cache_write,
+        "cache_read_input_tokens": cached,
     })
 }
 
@@ -680,17 +692,25 @@ pub fn anthropic_response_to_llm(body: Value) -> Response {
                     }
                 }
                 Some("thinking") => {
-                    let reasoning = block
+                    if let Some(thinking) = block
                         .get("thinking")
                         .and_then(Value::as_str)
-                        .map(ToString::to_string);
-                    message.reasoning_content = reasoning.clone();
-                    message.reasoning = reasoning;
-                    message.reasoning_signature = block
+                        .filter(|text| !text.is_empty())
+                    {
+                        match message.reasoning_content.as_mut() {
+                            Some(existing) => existing.push_str(thinking),
+                            None => message.reasoning_content = Some(thinking.to_string()),
+                        }
+                        message.reasoning = message.reasoning_content.clone();
+                    }
+                    if let Some(signature) = block
                         .get("signature")
                         .and_then(Value::as_str)
                         .filter(|signature| !signature.is_empty())
-                        .map(|signature| encode_signature(SignatureProvider::Anthropic, signature));
+                    {
+                        message.reasoning_signature =
+                            Some(encode_signature(SignatureProvider::Anthropic, signature));
+                    }
                 }
                 Some("redacted_thinking") => {
                     message.redacted_reasoning_content = block
@@ -779,6 +799,7 @@ fn anthropic_usage_to_llm(usage: Option<&Value>) -> Usage {
             .saturating_add(cache_creation)
             .saturating_add(output),
         cached_tokens: cached,
+        cache_write_tokens: cache_creation,
         ..Default::default()
     }
 }
@@ -787,6 +808,7 @@ fn anthropic_stop_to_openai_finish(reason: &str) -> &'static str {
     match reason {
         "max_tokens" => "length",
         "tool_use" => "tool_calls",
+        "refusal" => "refusal",
         _ => "stop",
     }
 }

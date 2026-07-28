@@ -264,7 +264,10 @@ fn should_skip_observability(method: &str, request_path: &str) -> bool {
         return true;
     }
     matches!(method, "GET" | "HEAD")
-        && matches!(request_path, "/anthropic" | "/openai/v1" | "/gemini/v1beta")
+        && matches!(
+            request_path,
+            "/anthropic" | "/openai/v1" | "/grok/v1" | "/gemini/v1beta"
+        )
 }
 
 fn process_local_trace_id(request: &DebugHttpRequest) -> String {
@@ -329,6 +332,8 @@ mod tests {
     fn skips_cli_root_probe_observability() {
         assert!(should_skip_observability("HEAD", "/anthropic"));
         assert!(should_skip_observability("GET", "/openai/v1"));
+        assert!(should_skip_observability("GET", "/grok/v1"));
+        assert!(should_skip_observability("HEAD", "/grok/v1"));
         assert!(should_skip_observability("HEAD", "/gemini/v1beta"));
         assert!(!should_skip_observability("POST", "/anthropic"));
         assert!(!should_skip_observability("POST", "/anthropic/v1/messages"));

@@ -12,10 +12,15 @@ pub(super) struct PreservedHeader {
     pub(super) value: HeaderValue,
 }
 
+const MAX_HEADER_PRESERVING_BODY_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub(super) struct HeaderPreservingResponse {
     status: reqwest::StatusCode,
     headers: HeaderMap,
     body: hyper::body::Incoming,
+    /// Remaining budget for body reads after headers arrived.
+    body_timeout: Duration,
 }
 
 impl HeaderPreservingResponse {
@@ -28,35 +33,80 @@ impl HeaderPreservingResponse {
     }
 
     pub(super) async fn bytes(self) -> Result<Vec<u8>, String> {
-        let collected = self
-            .body
-            .collect()
-            .await
-            .map_err(|error| format!("Failed to read upstream response body: {error}"))?;
-        Ok(collected.to_bytes().to_vec())
+        let timeout = if self.body_timeout.is_zero() {
+            DEFAULT_BODY_IDLE_TIMEOUT
+        } else {
+            self.body_timeout
+        };
+        let collected = tokio::time::timeout(timeout, async {
+            let mut body = self.body;
+            let mut out = Vec::new();
+            loop {
+                match body.frame().await {
+                    Some(Ok(frame)) => {
+                        if let Ok(data) = frame.into_data() {
+                            if out.len().saturating_add(data.len()) > MAX_HEADER_PRESERVING_BODY_BYTES
+                            {
+                                return Err(format!(
+                                    "Upstream response body exceeded {} bytes",
+                                    MAX_HEADER_PRESERVING_BODY_BYTES
+                                ));
+                            }
+                            out.extend_from_slice(&data);
+                        }
+                    }
+                    Some(Err(error)) => {
+                        return Err(format!("Failed to read upstream response body: {error}"));
+                    }
+                    None => return Ok(out),
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
+            format!(
+                "Timed out reading upstream response body after {} seconds",
+                timeout.as_secs()
+            )
+        })??;
+        Ok(collected)
     }
 
     pub(super) fn bytes_stream(
         self,
     ) -> impl Stream<Item = Result<Vec<u8>, String>> + Send + 'static {
-        futures_util::stream::unfold(self.body, |mut body| async move {
+        let idle = if self.body_timeout.is_zero() {
+            DEFAULT_BODY_IDLE_TIMEOUT
+        } else {
+            self.body_timeout.min(DEFAULT_BODY_IDLE_TIMEOUT)
+        };
+        futures_util::stream::unfold((self.body, idle), |(mut body, idle)| async move {
             loop {
-                match body.frame().await {
-                    Some(Ok(frame)) => {
+                match tokio::time::timeout(idle, body.frame()).await {
+                    Ok(Some(Ok(frame))) => {
                         if let Ok(data) = frame.into_data() {
                             if data.is_empty() {
                                 continue;
                             }
-                            return Some((Ok(data.to_vec()), body));
+                            return Some((Ok(data.to_vec()), (body, idle)));
                         }
                     }
-                    Some(Err(error)) => {
+                    Ok(Some(Err(error))) => {
                         return Some((
                             Err(format!("Failed to read upstream response body: {error}")),
-                            body,
+                            (body, idle),
                         ));
                     }
-                    None => return None,
+                    Ok(None) => return None,
+                    Err(_) => {
+                        return Some((
+                            Err(format!(
+                                "Timed out waiting for upstream stream chunk after {} seconds",
+                                idle.as_secs()
+                            )),
+                            (body, idle),
+                        ));
+                    }
                 }
             }
         })
@@ -77,6 +127,28 @@ pub(super) fn append_preserved_header(
     Ok(())
 }
 
+#[derive(Debug)]
+pub(super) enum HeaderPreservingError {
+    /// Connection/handshake failed before any request bytes were written.
+    /// Safe to fall back to reqwest without risking a double-send.
+    PreWrite { message: String },
+    /// Request body was already written to the upstream socket.
+    /// Must not fall back to reqwest (would re-execute the LLM request).
+    PostWrite { message: String },
+}
+
+impl HeaderPreservingError {
+    pub(super) fn message(&self) -> &str {
+        match self {
+            Self::PreWrite { message } | Self::PostWrite { message } => message,
+        }
+    }
+
+    pub(super) fn request_body_written(&self) -> bool {
+        matches!(self, Self::PostWrite { .. })
+    }
+}
+
 pub(super) async fn send_header_preserving_request(
     upstream_url: &reqwest::Url,
     method: reqwest::Method,
@@ -84,14 +156,23 @@ pub(super) async fn send_header_preserving_request(
     body: Vec<u8>,
     timeout: Duration,
     proxy_url: Option<&str>,
-) -> Result<HeaderPreservingResponse, String> {
+) -> Result<HeaderPreservingResponse, HeaderPreservingError> {
+    let started = std::time::Instant::now();
     let future = send_raw_request(upstream_url, method, preserved_headers, &body, proxy_url);
-    tokio::time::timeout(timeout, future).await.map_err(|_| {
-        format!(
-            "Timed out sending upstream request after {} seconds",
-            timeout.as_secs()
-        )
-    })?
+    let mut response = tokio::time::timeout(timeout, future)
+        .await
+        .map_err(|_| HeaderPreservingError::PreWrite {
+            message: format!(
+                "Timed out sending upstream request after {} seconds",
+                timeout.as_secs()
+            ),
+        })??;
+    let elapsed = started.elapsed();
+    response.body_timeout = timeout.saturating_sub(elapsed);
+    if response.body_timeout.is_zero() {
+        response.body_timeout = Duration::from_secs(1);
+    }
+    Ok(response)
 }
 
 async fn send_raw_request(
@@ -100,13 +181,15 @@ async fn send_raw_request(
     preserved_headers: &[PreservedHeader],
     body: &[u8],
     proxy_url: Option<&str>,
-) -> Result<HeaderPreservingResponse, String> {
+) -> Result<HeaderPreservingResponse, HeaderPreservingError> {
     use tokio::io::AsyncWriteExt;
 
     let scheme = upstream_url.scheme();
     let host = upstream_url
         .host_str()
-        .ok_or_else(|| "Upstream URL has no host".to_string())?;
+        .ok_or_else(|| HeaderPreservingError::PreWrite {
+            message: "Upstream URL has no host".to_string(),
+        })?;
     let port = upstream_url
         .port()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
@@ -128,43 +211,65 @@ async fn send_raw_request(
     );
 
     let stream = if let Some(proxy_url) = proxy_url {
-        connect_via_proxy(proxy_url, host, port).await?
+        connect_via_proxy(proxy_url, host, port)
+            .await
+            .map_err(|message| HeaderPreservingError::PreWrite { message })?
     } else {
         ProxyStream::Tcp(
             tokio::net::TcpStream::connect((host, port))
                 .await
-                .map_err(|error| format!("TCP connect failed: {error}"))?,
+                .map_err(|error| HeaderPreservingError::PreWrite {
+                    message: format!("TCP connect failed: {error}"),
+                })?,
         )
     };
 
     if scheme == "https" {
         let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
-            .map_err(|error| format!("Invalid upstream server name: {error}"))?;
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(
+            |error| HeaderPreservingError::PreWrite {
+                message: format!("Invalid upstream server name: {error}"),
+            },
+        )?;
         let mut tls_stream = tls_connector
             .connect(server_name, stream)
             .await
-            .map_err(|error| format!("TLS handshake failed: {error}"))?;
+            .map_err(|error| HeaderPreservingError::PreWrite {
+                message: format!("TLS handshake failed: {error}"),
+            })?;
+        // From here on, request bytes may reach the upstream.
         tls_stream
             .write_all(&raw_request)
             .await
-            .map_err(|error| format!("Write failed: {error}"))?;
+            .map_err(|error| HeaderPreservingError::PostWrite {
+                message: format!("Write failed: {error}"),
+            })?;
         tls_stream
             .flush()
             .await
-            .map_err(|error| format!("Flush failed: {error}"))?;
-        parse_response_from_stream(WriteFilter::new(tls_stream), method).await
+            .map_err(|error| HeaderPreservingError::PostWrite {
+                message: format!("Flush failed: {error}"),
+            })?;
+        parse_response_from_stream(WriteFilter::new(tls_stream), method)
+            .await
+            .map_err(|message| HeaderPreservingError::PostWrite { message })
     } else {
         let mut stream = stream;
         stream
             .write_all(&raw_request)
             .await
-            .map_err(|error| format!("Write failed: {error}"))?;
+            .map_err(|error| HeaderPreservingError::PostWrite {
+                message: format!("Write failed: {error}"),
+            })?;
         stream
             .flush()
             .await
-            .map_err(|error| format!("Flush failed: {error}"))?;
-        parse_response_from_stream(WriteFilter::new(stream), method).await
+            .map_err(|error| HeaderPreservingError::PostWrite {
+                message: format!("Flush failed: {error}"),
+            })?;
+        parse_response_from_stream(WriteFilter::new(stream), method)
+            .await
+            .map_err(|message| HeaderPreservingError::PostWrite { message })
     }
 }
 
@@ -249,6 +354,7 @@ where
         status: parts.status,
         headers: parts.headers,
         body,
+        body_timeout: DEFAULT_BODY_IDLE_TIMEOUT,
     })
 }
 

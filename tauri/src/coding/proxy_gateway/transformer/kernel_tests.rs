@@ -184,7 +184,7 @@
         match protocol {
             AiProtocol::AnthropicMessages => [
                 r#"event: message_start
-data: {"type":"message_start","message":{"id":"msg_1","model":"model-a"}}
+data: {"type":"message_start","message":{"id":"msg_1","model":"model-a","usage":{"input_tokens":11,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 
 "#,
                 r#"event: content_block_delta
@@ -233,7 +233,7 @@ data: {"type":"message_stop"}
                 r#"data: {"id":"chat_1","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"\"a.txt\"}"}}]}}]}
 
 "#,
-                r#"data: {"id":"chat_1","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":3}}
+                r#"data: {"id":"chat_1","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}}
 
 "#,
                 "data: [DONE]\n\n",
@@ -265,7 +265,7 @@ data: {"type":"response.function_call_arguments.delta","item_id":"item_1","outpu
 
 "#,
                 r#"event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","status":"completed","usage":{"output_tokens":3}}}
+data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","status":"completed","usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14}}}
 
 "#,
             ]
@@ -280,7 +280,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 r#"data: {"responseId":"gemini_1","modelVersion":"model-a","candidates":[{"content":{"role":"model","parts":[{"text":"hello"},{"text":"think","thought":true},{"functionCall":{"id":"call_1","name":"read_file","args":{"path":"a.txt"}}}]}}]}
 
 "#,
-                r#"data: {"responseId":"gemini_1","modelVersion":"model-a","candidates":[{"finishReason":"STOP"}],"usageMetadata":{"candidatesTokenCount":3}}}
+                r#"data: {"responseId":"gemini_1","modelVersion":"model-a","candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":3,"totalTokenCount":14}}
 
 "#,
             ]
@@ -389,6 +389,15 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 assert!(output.contains("tool_use"));
                 assert!(output.contains("input_json_delta"));
                 assert!(output.contains("event: message_stop"));
+                // Usage must survive cross-protocol stream conversion.
+                assert!(
+                    output.contains(r#""input_tokens":11"#) || output.contains(r#""input_tokens": 11"#),
+                    "Anthropic target must preserve input_tokens; output={output}"
+                );
+                assert!(
+                    output.contains(r#""output_tokens":3"#) || output.contains(r#""output_tokens": 3"#),
+                    "Anthropic target must preserve output_tokens; output={output}"
+                );
             }
             AiProtocol::OpenAiChat => {
                 assert!(output.contains("chat.completion.chunk"));
@@ -396,6 +405,15 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 assert!(output.contains("reasoning_content"));
                 assert!(output.contains("tool_calls"));
                 assert!(output.contains("[DONE]"));
+                assert!(
+                    output.contains(r#""prompt_tokens":11"#) || output.contains(r#""prompt_tokens": 11"#),
+                    "Chat target must preserve prompt_tokens; output={output}"
+                );
+                assert!(
+                    output.contains(r#""completion_tokens":3"#)
+                        || output.contains(r#""completion_tokens": 3"#),
+                    "Chat target must preserve completion_tokens; output={output}"
+                );
             }
             AiProtocol::OpenAiResponses => {
                 assert!(output.contains("event: response.created"));
@@ -404,12 +422,30 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 assert!(output.contains("response.output_item.added"));
                 assert!(output.contains("response.function_call_arguments.done"));
                 assert!(output.contains("event: response.completed"));
+                assert!(
+                    output.contains(r#""input_tokens":11"#) || output.contains(r#""input_tokens": 11"#),
+                    "Responses target must preserve input_tokens; output={output}"
+                );
+                assert!(
+                    output.contains(r#""output_tokens":3"#) || output.contains(r#""output_tokens": 3"#),
+                    "Responses target must preserve output_tokens; output={output}"
+                );
             }
             AiProtocol::GeminiNative => {
                 assert!(output.contains("candidates"));
                 assert!(output.contains(r#""text":"hello""#));
                 assert!(output.contains("functionCall"));
                 assert!(output.contains("finishReason"));
+                assert!(
+                    output.contains(r#""promptTokenCount":11"#)
+                        || output.contains(r#""promptTokenCount": 11"#),
+                    "Gemini target must preserve promptTokenCount; output={output}"
+                );
+                assert!(
+                    output.contains(r#""candidatesTokenCount":3"#)
+                        || output.contains(r#""candidatesTokenCount": 3"#),
+                    "Gemini target must preserve candidatesTokenCount; output={output}"
+                );
             }
         }
     }
@@ -820,6 +856,69 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 let output =
                     collect_stream(ConversionRoute::new(source, target), stream_fixture(source));
                 assert_stream_shape(target, &output);
+                assert_stream_usage_values(source, target, &output);
+            }
+        }
+    }
+
+    fn assert_stream_usage_values(source: AiProtocol, target: AiProtocol, output: &str) {
+        // Gemini/Anthropic source fixtures now carry exact usage; lock the converted numbers.
+        let expects_usage = matches!(
+            source,
+            AiProtocol::GeminiNative | AiProtocol::AnthropicMessages | AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses
+        );
+        if !expects_usage {
+            return;
+        }
+        match target {
+            AiProtocol::OpenAiChat => {
+                let values = sse_data_values(output);
+                let usage = values
+                    .iter()
+                    .find_map(|value| value.get("usage"))
+                    .unwrap_or_else(|| panic!("Chat target from {source:?} missing usage; output={output}"));
+                assert_eq!(
+                    usage.get("prompt_tokens").and_then(Value::as_u64),
+                    Some(11),
+                    "Chat usage prompt_tokens from {source:?}: {usage}"
+                );
+                assert_eq!(
+                    usage.get("completion_tokens").and_then(Value::as_u64),
+                    Some(3),
+                    "Chat usage completion_tokens from {source:?}: {usage}"
+                );
+            }
+            AiProtocol::OpenAiResponses => {
+                assert!(
+                    output.contains(r#""input_tokens":11"#) || output.contains(r#""input_tokens": 11"#),
+                    "Responses target from {source:?} missing input_tokens=11; output={output}"
+                );
+                assert!(
+                    output.contains(r#""output_tokens":3"#) || output.contains(r#""output_tokens": 3"#),
+                    "Responses target from {source:?} missing output_tokens=3; output={output}"
+                );
+            }
+            AiProtocol::AnthropicMessages => {
+                assert!(
+                    output.contains(r#""input_tokens":11"#) || output.contains(r#""input_tokens": 11"#),
+                    "Anthropic target from {source:?} missing input_tokens=11; output={output}"
+                );
+                assert!(
+                    output.contains(r#""output_tokens":3"#) || output.contains(r#""output_tokens": 3"#),
+                    "Anthropic target from {source:?} missing output_tokens=3; output={output}"
+                );
+            }
+            AiProtocol::GeminiNative => {
+                assert!(
+                    output.contains(r#""promptTokenCount":11"#)
+                        || output.contains(r#""promptTokenCount": 11"#),
+                    "Gemini target from {source:?} missing promptTokenCount=11; output={output}"
+                );
+                assert!(
+                    output.contains(r#""candidatesTokenCount":3"#)
+                        || output.contains(r#""candidatesTokenCount": 3"#),
+                    "Gemini target from {source:?} missing candidatesTokenCount=3; output={output}"
+                );
             }
         }
     }
@@ -5007,10 +5106,16 @@ data: {"type":"message_stop"}
         assert!(!output.contains("content_block_stop"));
         assert!(output.contains("data: [DONE]"));
         let values = sse_data_values(&output);
-        assert_eq!(values.len(), 3);
+        // role start + text delta + usage-only chunk + finish chunk
+        assert_eq!(values.len(), 4);
         assert_eq!(values[0]["choices"][0]["delta"]["role"], "assistant");
         assert_eq!(values[1]["choices"][0]["delta"]["content"], "Hello");
-        assert_eq!(values[2]["choices"][0]["finish_reason"], "stop");
+        assert!(values[2]["choices"]
+            .as_array()
+            .is_some_and(|choices| choices.is_empty()));
+        assert_eq!(values[2]["usage"]["prompt_tokens"], 2);
+        assert_eq!(values[2]["usage"]["completion_tokens"], 1);
+        assert_eq!(values[3]["choices"][0]["finish_reason"], "stop");
     }
 
     #[test]
@@ -5104,6 +5209,78 @@ data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{
             "output={output}"
         );
         assert!(output.contains("[DONE]"), "output={output}");
+        let values = sse_data_values(&output);
+        let usage_chunk = values
+            .iter()
+            .find(|value| value.get("usage").is_some())
+            .expect("chat usage-only chunk");
+        assert_eq!(usage_chunk["usage"]["prompt_tokens"], 3);
+        assert_eq!(usage_chunk["usage"]["completion_tokens"], 0);
+        assert_eq!(usage_chunk["usage"]["total_tokens"], 3);
+    }
+
+    #[test]
+    fn anthropic_message_start_usage_merges_into_chat_usage() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_usage","model":"claude","usage":{"input_tokens":17,"cache_creation_input_tokens":3,"cache_read_input_tokens":2}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#
+            .to_string(),
+        );
+        let values = sse_data_values(&output);
+        let usage_chunk = values
+            .iter()
+            .find(|value| value.get("usage").is_some())
+            .expect("chat usage-only chunk from anthropic source");
+        // input(17) + cache_read(2) + cache_write(3) = 22 prompt tokens
+        assert_eq!(usage_chunk["usage"]["prompt_tokens"], 22);
+        assert_eq!(usage_chunk["usage"]["completion_tokens"], 5);
+        assert_eq!(
+            usage_chunk["usage"]["prompt_tokens_details"]["cached_tokens"],
+            2
+        );
+        assert_eq!(
+            usage_chunk["usage"]["prompt_tokens_details"]["cache_write_tokens"],
+            3
+        );
+    }
+
+    #[test]
+    fn gemini_function_call_finish_maps_to_tool_calls_for_chat() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
+            r#"data: {"responseId":"g1","modelVersion":"m","candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"q":"1"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,"totalTokenCount":11}}
+
+"#
+            .to_string(),
+        );
+        let values = sse_data_values(&output);
+        assert!(
+            values.iter().any(|value| {
+                value
+                    .pointer("/choices/0/finish_reason")
+                    .and_then(Value::as_str)
+                    == Some("tool_calls")
+            }),
+            "Gemini functionCall + STOP must finish as tool_calls; output={output}"
+        );
+        let usage_chunk = values
+            .iter()
+            .find(|value| value.get("usage").is_some())
+            .expect("usage chunk");
+        assert_eq!(usage_chunk["usage"]["prompt_tokens"], 9);
+        assert_eq!(usage_chunk["usage"]["completion_tokens"], 2);
     }
 
     #[test]

@@ -434,8 +434,12 @@ pub async fn engage_single_cli(
         GatewayProxyMode::Single,
         &primary_provider_id,
     )?;
+    // Persist enabled manifest + backup metadata before rewriting runtime files.
+    // If apply_gateway_config fails mid-way, retry must still reuse the original .bak.
+    sync_manifest_managed_fields(&mut manifest, &targets);
+    write_manifest(paths, cli_key, &manifest)?;
     let codex_auth_backup_content = codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
-    apply_gateway_config(
+    if let Err(error) = apply_gateway_config(
         cli_key,
         &mut targets,
         &effective_origin,
@@ -444,7 +448,15 @@ pub async fn engage_single_cli(
         None,
         codex_auth_backup_content.as_deref(),
         codex_auth_preservation_enabled_for_cli(db, cli_key)?,
-    )?;
+    ) {
+        // Early enabled manifest protects the original .bak, but a failed apply must not leave
+        // the CLI looking "taken over" with a half-patched runtime config.
+        let _ = restore_gateway_config(cli_key, paths, &targets, &manifest);
+        manifest.enabled = false;
+        manifest.updated_at = chrono::Utc::now().to_rfc3339();
+        let _ = write_manifest(paths, cli_key, &manifest);
+        return Err(error);
+    }
     sync_manifest_managed_fields(&mut manifest, &targets);
     write_manifest(paths, cli_key, &manifest)?;
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
@@ -1082,7 +1094,9 @@ fn write_manifest(
             manifest_path.display(),
             error
         )
-    })
+    })?;
+    crate::coding::proxy_gateway::runtime::clear_gateway_provider_selection_cache();
+    Ok(())
 }
 
 fn prepare_manifest(
@@ -1155,6 +1169,25 @@ fn backup_target_file(
     let existed = target.path.exists();
     let mut backup_sha256 = None;
     let mut backup_size = None;
+
+    // Never re-backup over an existing original snapshot. A failed first engage can leave a
+    // patched runtime file without an enabled manifest; retry must keep the first .bak.
+    if backup_path.exists() {
+        if let Ok(content) = fs::read(&backup_path) {
+            backup_size = Some(content.len() as u64);
+            backup_sha256 = Some(sha256_hex(&content));
+        }
+        return Ok(CliProxyManifestFile {
+            kind: target.kind.to_string(),
+            path: path_to_string(&target.path),
+            // Backup presence means the original file existed when first engaged.
+            existed: true,
+            backup_rel_path,
+            backup_sha256,
+            backup_size,
+            managed_fields: target.managed_fields.clone(),
+        });
+    }
 
     if existed {
         if let Some(parent) = backup_path.parent() {
@@ -1333,38 +1366,91 @@ fn restore_gateway_config(
     manifest: &CliProxyManifest,
 ) -> Result<(), String> {
     match cli_key {
-        GatewayCliKey::Claude => restore_claude_settings(
-            required_target_path(targets, CLAUDE_SETTINGS_KIND)?,
-            backup_content(paths, cli_key, manifest, CLAUDE_SETTINGS_KIND)?.as_deref(),
-        ),
-        GatewayCliKey::Codex => {
-            restore_codex_config(
-                required_target_path(targets, CODEX_CONFIG_KIND)?,
-                backup_content(paths, cli_key, manifest, CODEX_CONFIG_KIND)?.as_deref(),
-            )?;
-            restore_codex_auth(
-                required_target_path(targets, CODEX_AUTH_KIND)?,
-                backup_content(paths, cli_key, manifest, CODEX_AUTH_KIND)?.as_deref(),
+        GatewayCliKey::Claude => {
+            let path = required_target_path(targets, CLAUDE_SETTINGS_KIND)?;
+            if should_delete_gateway_created_file(manifest, CLAUDE_SETTINGS_KIND) {
+                return delete_if_exists(path);
+            }
+            restore_claude_settings(
+                path,
+                backup_content(paths, cli_key, manifest, CLAUDE_SETTINGS_KIND)?.as_deref(),
             )
         }
-        GatewayCliKey::Grok => restore_grok_config(
-            required_target_path(targets, GROK_CONFIG_KIND)?,
-            backup_content(paths, cli_key, manifest, GROK_CONFIG_KIND)?.as_deref(),
-        ),
-        GatewayCliKey::Gemini => {
-            restore_gemini_env(
-                required_target_path(targets, GEMINI_ENV_KIND)?,
-                backup_content(paths, cli_key, manifest, GEMINI_ENV_KIND)?.as_deref(),
-            )?;
-            restore_gemini_settings(
-                required_target_path(targets, GEMINI_SETTINGS_KIND)?,
-                backup_content(paths, cli_key, manifest, GEMINI_SETTINGS_KIND)?.as_deref(),
+        GatewayCliKey::Codex => {
+            let config_path = required_target_path(targets, CODEX_CONFIG_KIND)?;
+            if should_delete_gateway_created_file(manifest, CODEX_CONFIG_KIND) {
+                delete_if_exists(config_path)?;
+            } else {
+                restore_codex_config(
+                    config_path,
+                    backup_content(paths, cli_key, manifest, CODEX_CONFIG_KIND)?.as_deref(),
+                )?;
+            }
+            let auth_path = required_target_path(targets, CODEX_AUTH_KIND)?;
+            if should_delete_gateway_created_file(manifest, CODEX_AUTH_KIND) {
+                delete_if_exists(auth_path)
+            } else {
+                restore_codex_auth(
+                    auth_path,
+                    backup_content(paths, cli_key, manifest, CODEX_AUTH_KIND)?.as_deref(),
+                )
+            }
+        }
+        GatewayCliKey::Grok => {
+            let path = required_target_path(targets, GROK_CONFIG_KIND)?;
+            if should_delete_gateway_created_file(manifest, GROK_CONFIG_KIND) {
+                return delete_if_exists(path);
+            }
+            restore_grok_config(
+                path,
+                backup_content(paths, cli_key, manifest, GROK_CONFIG_KIND)?.as_deref(),
             )
+        }
+        GatewayCliKey::Gemini => {
+            let env_path = required_target_path(targets, GEMINI_ENV_KIND)?;
+            if should_delete_gateway_created_file(manifest, GEMINI_ENV_KIND) {
+                delete_if_exists(env_path)?;
+            } else {
+                restore_gemini_env(
+                    env_path,
+                    backup_content(paths, cli_key, manifest, GEMINI_ENV_KIND)?.as_deref(),
+                )?;
+            }
+            let settings_path = required_target_path(targets, GEMINI_SETTINGS_KIND)?;
+            if should_delete_gateway_created_file(manifest, GEMINI_SETTINGS_KIND) {
+                delete_if_exists(settings_path)
+            } else {
+                restore_gemini_settings(
+                    settings_path,
+                    backup_content(paths, cli_key, manifest, GEMINI_SETTINGS_KIND)?.as_deref(),
+                )
+            }
         }
         GatewayCliKey::OpenCode => {
             Err("OpenCode adapter is intentionally out of scope".to_string())
         }
     }
+}
+
+fn should_delete_gateway_created_file(manifest: &CliProxyManifest, kind: &str) -> bool {
+    manifest
+        .files
+        .iter()
+        .find(|file| file.kind == kind)
+        .is_some_and(|file| !file.existed)
+}
+
+fn delete_if_exists(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| {
+            format!(
+                "Failed to delete gateway-created config {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn required_target_path<'a>(targets: &'a CliProxyTargets, kind: &str) -> Result<&'a Path, String> {
@@ -3592,6 +3678,70 @@ base_url = "http://127.0.0.1:9999/v1"
             Some("https://original.example.com")
         );
         assert_eq!(second_manifest.files.len(), 1);
+    }
+
+    #[test]
+    fn retry_after_patch_failure_without_manifest_does_not_overwrite_original_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path().join("app-data"));
+        let settings_path = dir.path().join("runtime").join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_BASE_URL": "https://original.example.com"}}),
+        )
+        .unwrap();
+        let targets = CliProxyTargets {
+            runtime_root: dir.path().join("runtime"),
+            is_wsl_direct: false,
+            files: vec![CliProxyTarget {
+                kind: CLAUDE_SETTINGS_KIND,
+                path: settings_path.clone(),
+                managed_fields: static_managed_fields(&CLAUDE_MANAGED_FIELDS),
+            }],
+        };
+
+        // First engage prepares backup but never lands an enabled manifest (apply failed).
+        let _ = prepare_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37123",
+            &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
+        )
+        .unwrap();
+        write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:37123/anthropic"}}),
+        )
+        .unwrap();
+
+        let retry_manifest = prepare_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37123",
+            &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
+        )
+        .unwrap();
+        let backup = backup_content(
+            &paths,
+            GatewayCliKey::Claude,
+            &retry_manifest,
+            CLAUDE_SETTINGS_KIND,
+        )
+        .unwrap()
+        .unwrap();
+        let backup_json = serde_json::from_str::<Value>(&backup).unwrap();
+
+        assert_eq!(
+            backup_json
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://original.example.com"),
+            "retry must keep the pre-patch original backup"
+        );
     }
 
     #[test]

@@ -110,10 +110,12 @@ provider 读取在 `runtime/providers.rs`。`load_candidate_providers*()` 从对
 |---|---|---|
 | Claude | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `openrouter_compat_mode=true` | `AnthropicMessages` |
 | Codex | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `config.toml` 的 `wire_api` / `api_format` -> base URL 是否是 `/chat/completions` | 非 Chat URL 默认 `OpenAiResponses` |
-| Grok | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> selected model/backend config | `OpenAiResponses` |
+| Grok | effective `apiFormat` -> selected model `api_backend` | `OpenAiChat` |
 | Gemini | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` | `GeminiNative` |
 
-`provider_protocol.rs::provider_needs_gateway_proxy()` 使用同一类语义判断“普通 apply 是否需要 Gateway 接管”：官方订阅 provider 不参与代理；非官方 provider 如果 target protocol 与 CLI native protocol 不一致，就需要网关代理。
+`UpstreamProvider.target_protocol`（`runtime/providers.rs`）按上表解析 Grok 等 CLI 的上游目标协议。
+
+`provider_protocol.rs::provider_needs_gateway_proxy()` 使用另一条判定链判断“普通 apply 是否需要 Gateway 接管”：官方订阅 provider 不参与代理；非官方 provider 如果 target protocol 与 CLI native protocol 不一致，就需要网关代理。Grok 有特例：只有 `GeminiNative` target 才强制需要 gateway proxy，其它 target 不一律等同通用规则。
 
 Copilot 是一个 runtime 特例：`effective_upstream_provider_for_request()` 会根据本次模型名把 Copilot provider 的 effective target protocol 动态切到 `OpenAiResponses` 或 `OpenAiChat`。这只影响本次请求，不改 provider 记录。Grok CLI 本身的入站协议固定为 OpenAI Responses；Grok provider 仍可通过 profile 选择其它上游 target，因此不能把 Grok CLI 路由和 xAI provider 方言混为一谈。
 
@@ -175,7 +177,7 @@ flowchart TD
 关键细节：
 
 - 入站 middleware 在协议转换前运行。目前包括 `BillingHeaderCchMiddleware`，它会从 Claude Code billing header 文本里剥离动态 `cch=...` 并放入 `PipelineContext`。
-- `CodexHistoryStore` enrich 只在 `OpenAiResponses -> OpenAiChat` 和 `OpenAiResponses -> AnthropicMessages` 请求转换前运行，用于补回 Codex follow-up 请求缺失的前序 function/custom tool call item。Chat target 需要前序 assistant `tool_calls`，Anthropic target 需要前序 assistant `tool_use`；二者都可以先在源 Responses body 中补回 call item，再交给 transformer 转成目标协议形态。
+- `CodexHistoryStore` enrich 主要在 `OpenAiResponses -> OpenAiChat` 和 `OpenAiResponses -> AnthropicMessages` 请求转换前运行，用于补回 Codex follow-up 请求缺失的前序 function/custom tool call item。Chat target 需要前序 assistant `tool_calls`，Anthropic target 需要前序 assistant `tool_use`；二者都可以先在源 Responses body 中补回 call item，再交给 transformer 转成目标协议形态。`/responses/compact` 的 Chat fallback 路径也会消费该 store。
 - 有损检测在转换前运行，调用 `transformer::check_lossy_conversion(route, value)`。默认只返回 warnings；只有 `ProxyGatewaySettings.lossy_rejection_enabled=true` 且请求没有 `X-Allow-Lossy: true` 时才返回本地 400。
 - runtime 在转换前改写源 body 的 `model` 字段为 provider 映射后的上游模型，并剥离 `[1M]` / `[1m]` 上下文标记。Gemini source 如果 body 没有 `model`，转换前会补一个。
 - Gemini source 的 stream route 转到非 Gemini target 时，runtime 会在 body 里写 `stream=true`。
@@ -193,10 +195,11 @@ flowchart TD
 
 公开入口在 `transformer/mod.rs`：
 
-- `convert_request_body()` / `convert_request_body_with_context()`
-- `convert_response_body()` / `convert_response_body_with_context()`
+- `convert_request_body()` / `convert_request_body_with_context()` / `convert_request_value()`
+- `convert_response_body()` / `convert_response_body_with_context()` / `convert_response_value()`
 - `convert_error_response_body()`
 - `convert_sse_stream()` / `convert_sse_stream_with_context()`
+- `convert_responses_compact_*` compact facade（仅 compact 端点；不进普通 4×4 矩阵）
 - `check_lossy_conversion()`
 
 转换内核在 `transformer/kernel.rs`，采用统一中间模型：
@@ -462,16 +465,18 @@ OpenAI Responses 聚合还有额外终态约束：
 
 - 只有收到 `response.completed`、`response.failed`、`response.incomplete`、`response.cancelled` 或 `response.canceled` 才能返回 JSON。
 - 流只发送 created/in-progress/delta/output-item/[DONE] 就结束时，返回 `GatewayFailureKind::Connection`，交给既有 retry/failover；不能伪造 `completed`，也不能把截断冒充成上游明确声明的合法 `incomplete`。
-- created、in-progress 和 terminal response 都可能是稀疏 snapshot。聚合器按字段浅层合并，空字符串和 null 不覆盖已有 id、model、created_at、usage、error 等元数据。
+- created、in-progress 和 terminal response 都可能是稀疏 snapshot。聚合器按字段浅层合并，空字符串、null、空 object、空 array 不覆盖已有 id、model、created_at、usage、error、output 等非空元数据。
 - terminal `response` 缺失、为 null、空对象或非对象时保留最近的 base snapshot；terminal status 缺失或为空时按 event type 回填。
 - 已收到 `response.output_item.done` 且 terminal snapshot 没有非空 output 时，用已聚合 item 重建 output，避免 created snapshot 的陈旧空数组覆盖实际完成的输出。
+
+Chat / Anthropic / Gemini 聚合同样 fail-closed：已有内容但没有 finish/stop 信号时返回 `GatewayFailureKind::Connection`，进入 retry/failover，不能把 mid-content 截断流伪装成 200 JSON。
 
 ### 11.2 客户端流式
 
 如果 `should_stream_response()` 判定应该流式返回：
 
 1. 必要时设置 `Content-Type: text/event-stream`。
-2. 按设置创建 bounded upstream response snapshot。
+2. 按设置创建 bounded upstream response snapshot（**仅转换路径**才建 upstream response stream snapshot；同协议直通不做该 snapshot）。
 3. 对 xAI native Responses 2xx passthrough，先按本次请求的 restore map 恢复 namespace。
 4. 执行 Gemini shadow 记录、Bailian/xAI Chat SSE filter、Ollama NDJSON -> Chat SSE 等 runtime adapter。
 5. 如果存在 `response_conversion_route`，调用 `convert_sse_stream_with_context()` 做 target -> source SSE 转换。
@@ -517,7 +522,7 @@ OpenAI Responses 聚合还有额外终态约束：
 - Gemini target 的 API version 从 provider base URL 推断，支持 `v1` / `v1beta` / `v1alpha`；没有显式版本时默认 `v1beta`。
 - Gemini source 转非 Gemini target 时，转换后的 query 会过滤 `alt=sse` 和 `key=`。
 - 转 Gemini target 且目标流式时，query 会补 `alt=sse`。
-- 所有 converted route query 会过滤 `beta=`。
+- converted route 与 full-URL merge 两处都会过滤 `beta=`。
 - Anthropic Bedrock/Vertex target 会按 platform 改写 path：Bedrock 使用 `/model/{model}/invoke*`，Vertex 使用 `/publishers/anthropic/models/{model}:rawPredict|streamRawPredict`。
 - DeepSeek legacy completion 和 Ollama `/api/chat` 是 runtime 特殊路径，不属于 transformer 协议矩阵。
 
@@ -957,8 +962,11 @@ X-Transformer-Lossy: /path: message | /path2: message
 | `tauri/src/coding/proxy_gateway/runtime/providers.rs` | provider 读取、target protocol、auth strategy、model mapping |
 | `tauri/src/coding/proxy_gateway/runtime/middleware.rs` | request-scoped middleware context 和 middleware 实现 |
 | `tauri/src/coding/proxy_gateway/runtime/pipeline.rs` | middleware pipeline 与 executor customizer 骨架 |
-| `tauri/src/coding/proxy_gateway/runtime/compat/provider_kind.rs` | providerType alias、target protocol guard 与 `ProviderBodyCompat` 分类 |
+| `tauri/src/coding/proxy_gateway/runtime/compat/provider_kind.rs` | providerType alias（`_`→`-` 归一化）、target protocol guard 与 `ProviderBodyCompat` 分类 |
+| `tauri/src/coding/proxy_gateway/runtime/compat/codex_responses_compact.rs` | Codex `/responses/compact` 端点识别与 Chat/Anthropic/Gemini fallback |
+| `tauri/src/coding/proxy_gateway/runtime/content_encoding.rs` | 入站/上游 content-encoding 解压（gzip/br/zstd 等）与 16 MiB 上限 |
 | `tauri/src/coding/proxy_gateway/runtime/compat/xai_responses.rs` | xAI native Responses namespace 展平/恢复和严格字段清理 |
+| `tauri/src/coding/proxy_gateway/runtime/header_preserving_client.rs` | 原始 HTTP/1.1 header 大小写保真路径与 body 超时/上限 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/codex_history.rs` | Codex Responses tool call 跨请求补全 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/gemini_shadow.rs` | Gemini thoughtSignature shadow 回放 |
 | `tauri/src/coding/proxy_gateway/runtime/side_stores/responses_cipher.rs` | invalid encrypted content 的 provider-scoped 负缓存 |

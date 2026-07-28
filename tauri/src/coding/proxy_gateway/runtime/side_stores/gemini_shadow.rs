@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use super::take_sse_block;
+use super::{append_side_store_sse_bytes, take_sse_block};
 
 const MAX_GEMINI_SHADOW_SESSIONS: usize = 200;
 const MAX_GEMINI_SHADOW_TURNS_PER_SESSION: usize = 64;
@@ -126,6 +126,7 @@ pub(crate) fn record_gemini_sse_stream(
         store: Arc<GeminiShadowStore>,
         key: GeminiShadowSessionKey,
         buffer: Vec<u8>,
+        recording_enabled: bool,
     }
 
     Box::pin(stream::unfold(
@@ -134,13 +135,20 @@ pub(crate) fn record_gemini_sse_stream(
             store,
             key,
             buffer: Vec::new(),
+            recording_enabled: true,
         },
         |mut state| async move {
             let item = state.inner.next().await?;
             if let Ok(bytes) = &item {
-                state.buffer.extend_from_slice(bytes);
-                while let Some(block) = take_sse_block(&mut state.buffer) {
-                    inspect_gemini_sse_block(&block, &state.store, &state.key);
+                if state.recording_enabled {
+                    if !append_side_store_sse_bytes(&mut state.buffer, bytes) {
+                        state.recording_enabled = false;
+                        state.buffer.clear();
+                    } else {
+                        while let Some(block) = take_sse_block(&mut state.buffer) {
+                            inspect_gemini_sse_block(&block, &state.store, &state.key);
+                        }
+                    }
                 }
             }
             Some((item, state))
