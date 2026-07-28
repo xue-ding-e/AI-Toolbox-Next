@@ -19,8 +19,11 @@ pub(super) struct HeaderPreservingResponse {
     status: reqwest::StatusCode,
     headers: HeaderMap,
     body: hyper::body::Incoming,
-    /// Remaining budget for body reads after headers arrived.
+    /// Remaining overall budget for non-stream body reads after headers arrived.
     body_timeout: Duration,
+    /// Per-chunk idle timeout for SSE/stream reads. Must honor user settings and
+    /// must NOT be capped by a hardcoded 60s ceiling.
+    stream_idle_timeout: Duration,
 }
 
 impl HeaderPreservingResponse {
@@ -75,10 +78,10 @@ impl HeaderPreservingResponse {
     pub(super) fn bytes_stream(
         self,
     ) -> impl Stream<Item = Result<Vec<u8>, String>> + Send + 'static {
-        let idle = if self.body_timeout.is_zero() {
+        let idle = if self.stream_idle_timeout.is_zero() {
             DEFAULT_BODY_IDLE_TIMEOUT
         } else {
-            self.body_timeout.min(DEFAULT_BODY_IDLE_TIMEOUT)
+            self.stream_idle_timeout
         };
         futures_util::stream::unfold((self.body, idle), |(mut body, idle)| async move {
             loop {
@@ -155,6 +158,7 @@ pub(super) async fn send_header_preserving_request(
     preserved_headers: &[PreservedHeader],
     body: Vec<u8>,
     timeout: Duration,
+    stream_idle_timeout: Duration,
     proxy_url: Option<&str>,
 ) -> Result<HeaderPreservingResponse, HeaderPreservingError> {
     let started = std::time::Instant::now();
@@ -172,6 +176,11 @@ pub(super) async fn send_header_preserving_request(
     if response.body_timeout.is_zero() {
         response.body_timeout = Duration::from_secs(1);
     }
+    response.stream_idle_timeout = if stream_idle_timeout.is_zero() {
+        DEFAULT_BODY_IDLE_TIMEOUT
+    } else {
+        stream_idle_timeout
+    };
     Ok(response)
 }
 
@@ -355,6 +364,7 @@ where
         headers: parts.headers,
         body,
         body_timeout: DEFAULT_BODY_IDLE_TIMEOUT,
+        stream_idle_timeout: DEFAULT_BODY_IDLE_TIMEOUT,
     })
 }
 

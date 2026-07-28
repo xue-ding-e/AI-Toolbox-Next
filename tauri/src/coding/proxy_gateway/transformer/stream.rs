@@ -220,6 +220,10 @@ struct SourceToolState {
     tool_type: String,
     name: String,
     arguments: String,
+    /// Bytes of `arguments` already emitted as ToolCall fragments.
+    emitted_arguments_len: usize,
+    /// True after arguments.done / output_item.done flushed this tool.
+    arguments_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -467,23 +471,57 @@ impl SourceStreamState {
     }
 
     fn finish_responses(&mut self) -> Vec<UnifiedStreamEvent> {
-        // Flush any pending tool calls that never received arguments.done / item.done.
-        let mut tools = self
+        // Only flush tools that never got arguments.done / output_item.done.
+        // Dense streams already emitted deltas (+ optional done suffix); re-emitting
+        // full arguments here would concatenate duplicates into Chat/Anthropic.
+        let mut keys = self
             .responses_tool_by_item
-            .values()
-            .cloned()
+            .iter()
+            .filter(|(_, state)| !state.arguments_done)
+            .map(|(key, state)| (key.clone(), state.index))
             .collect::<Vec<_>>();
-        tools.sort_by_key(|tool| tool.index);
-        tools
-            .into_iter()
-            .map(|state| UnifiedStreamEvent::ToolCall {
+        keys.sort_by_key(|(_, index)| *index);
+        let mut out = Vec::new();
+        for (key, _) in keys {
+            out.extend(self.emit_responses_tool_arguments_progress(&key, true));
+        }
+        self.responses_tool_by_item
+            .retain(|_, state| !state.arguments_done);
+        out
+    }
+
+    fn emit_responses_tool_arguments_progress(
+        &mut self,
+        key: &str,
+        mark_done: bool,
+    ) -> Vec<UnifiedStreamEvent> {
+        let Some(state) = self.responses_tool_by_item.get_mut(key) else {
+            return Vec::new();
+        };
+        if state.arguments_done && !mark_done {
+            return Vec::new();
+        }
+        let start = state.emitted_arguments_len.min(state.arguments.len());
+        let suffix = state.arguments[start..].to_string();
+        state.emitted_arguments_len = state.arguments.len();
+        if mark_done {
+            state.arguments_done = true;
+        }
+        let event = if suffix.is_empty() {
+            None
+        } else {
+            Some(UnifiedStreamEvent::ToolCall {
                 index: state.index,
-                id: state.id,
-                tool_type: state.tool_type,
-                name: state.name,
-                arguments: state.arguments,
+                id: state.id.clone(),
+                tool_type: state.tool_type.clone(),
+                name: state.name.clone(),
+                arguments: suffix,
             })
-            .collect()
+        };
+        if mark_done {
+            self.responses_tool_by_item.remove(key);
+        }
+        event.into_iter().collect()
     }
 
     fn finish_chat(&mut self) -> Vec<UnifiedStreamEvent> {
@@ -787,6 +825,8 @@ impl SourceStreamState {
                         .unwrap_or_default()
                         .to_string(),
                     arguments: String::new(),
+                    emitted_arguments_len: 0,
+                    arguments_done: false,
                 };
                 // Emit tool header (id+name) on added for both function and custom tools so
                 // sparse streams without deltas still surface the call to target writers.
@@ -812,32 +852,30 @@ impl SourceStreamState {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                let state = self
-                    .responses_tool_by_item
-                    .entry(key.clone())
-                    .or_insert_with(|| SourceToolState {
-                        index: value
-                            .get("output_index")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0) as usize,
-                        id: key,
-                        tool_type: if event_name.unwrap_or_default()
-                            == "response.custom_tool_call_input.delta"
-                        {
-                            TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string()
-                        } else {
-                            TOOL_TYPE_FUNCTION.to_string()
+                {
+                    let state = self.responses_tool_by_item.entry(key.clone()).or_insert_with(
+                        || SourceToolState {
+                            index: value
+                                .get("output_index")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0) as usize,
+                            id: key.clone(),
+                            tool_type: if event_name.unwrap_or_default()
+                                == "response.custom_tool_call_input.delta"
+                            {
+                                TOOL_TYPE_RESPONSES_CUSTOM_TOOL.to_string()
+                            } else {
+                                TOOL_TYPE_FUNCTION.to_string()
+                            },
+                            ..Default::default()
                         },
-                        ..Default::default()
-                    });
-                state.arguments.push_str(&delta);
-                vec![UnifiedStreamEvent::ToolCall {
-                    index: state.index,
-                    id: state.id.clone(),
-                    tool_type: state.tool_type.clone(),
-                    name: state.name.clone(),
-                    arguments: delta,
-                }]
+                    );
+                    if state.arguments_done {
+                        return Vec::new();
+                    }
+                    state.arguments.push_str(&delta);
+                }
+                self.emit_responses_tool_arguments_progress(&key, false)
             }
             "response.function_call_arguments.done" | "response.custom_tool_call_input.done" => {
                 let key = value
@@ -852,17 +890,11 @@ impl SourceStreamState {
                         .or_else(|| value.get("input"))
                         .and_then(Value::as_str)
                     {
+                        // Prefer the complete snapshot when present; only emit the unsent suffix.
                         state.arguments = arguments.to_string();
                     }
-                    return vec![UnifiedStreamEvent::ToolCall {
-                        index: state.index,
-                        id: state.id.clone(),
-                        tool_type: state.tool_type.clone(),
-                        name: state.name.clone(),
-                        arguments: state.arguments.clone(),
-                    }];
                 }
-                Vec::new()
+                self.emit_responses_tool_arguments_progress(&key, true)
             }
             "response.output_item.done" => {
                 let item = value.get("item").unwrap_or(&value);
@@ -905,14 +937,8 @@ impl SourceStreamState {
                                 state.name = name.to_string();
                             }
                         }
-                        return vec![UnifiedStreamEvent::ToolCall {
-                            index: state.index,
-                            id: state.id.clone(),
-                            tool_type: state.tool_type.clone(),
-                            name: state.name.clone(),
-                            arguments: state.arguments.clone(),
-                        }];
                     }
+                    return self.emit_responses_tool_arguments_progress(&key, true);
                 }
                 Vec::new()
             }
@@ -1050,6 +1076,8 @@ impl SourceStreamState {
                                 .unwrap_or_default()
                                 .to_string(),
                             arguments: String::new(),
+                            emitted_arguments_len: 0,
+                            arguments_done: false,
                         },
                     );
                 }

@@ -4035,6 +4035,71 @@ data: {"type":"response.completed","response":{"id":"resp_cmp","object":"respons
     }
 
     #[test]
+    fn responses_dense_tool_stream_does_not_duplicate_arguments_for_chat() {
+        // Real OpenAI wire: added + deltas + arguments.done + output_item.done + completed.
+        // Done/finish must only emit the unsent suffix, otherwise Chat concatenates 4x args.
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            [
+                r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_dense","model":"model-a"}}
+
+"#,
+                r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"item_1","type":"function_call","call_id":"call_1","name":"lookup"}}
+
+"#,
+                r#"event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"item_1","output_index":0,"delta":"{\"a\":"}
+
+"#,
+                r#"event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"item_1","output_index":0,"delta":"1}"}
+
+"#,
+                r#"event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"item_1","output_index":0,"arguments":"{\"a\":1}"}
+
+"#,
+                r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"item_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"a\":1}"}}
+
+"#,
+                r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_dense","model":"model-a","status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}
+
+"#,
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let mut joined_arguments = String::new();
+        for value in &values {
+            if let Some(tool_calls) = value
+                .pointer("/choices/0/delta/tool_calls")
+                .and_then(Value::as_array)
+            {
+                for tool_call in tool_calls {
+                    if let Some(arguments) = tool_call
+                        .pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                    {
+                        joined_arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            joined_arguments, r#"{"a":1}"#,
+            "dense Responses tool stream must not re-emit full arguments on done/finish; got {joined_arguments:?}; output={output}"
+        );
+        assert!(
+            !joined_arguments.contains(r#"{"a":1}{"a":1}"#),
+            "arguments must not be concatenated repeatedly"
+        );
+    }
+
+    #[test]
     fn chat_legacy_function_call_stream_converts_to_responses_tool_call() {
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),

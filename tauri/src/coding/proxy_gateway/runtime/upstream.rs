@@ -183,25 +183,46 @@ impl UpstreamResponse {
         }
     }
 
-    async fn bytes(self) -> Result<Vec<u8>, GatewayForwardError> {
+    async fn bytes_with_timeout(
+        self,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<u8>, GatewayForwardError> {
         match self {
             Self::Reqwest(response) => {
-                response
-                    .bytes()
-                    .await
-                    .map(|bytes| bytes.to_vec())
-                    .map_err(|error| GatewayForwardError {
+                let future = response.bytes();
+                let result = if let Some(timeout) = timeout {
+                    tokio::time::timeout(timeout, future)
+                        .await
+                        .map_err(|_| GatewayForwardError {
+                            message: format!(
+                                "Timed out reading upstream response body after {} seconds",
+                                timeout.as_secs()
+                            ),
+                            kind: GatewayFailureKind::Timeout,
+                            upstream_request_body: None,
+                            upstream_response_body: None,
+                            upstream_response_body_bytes: 0,
+                        })?
+                } else {
+                    future.await
+                };
+                result.map(|bytes| bytes.to_vec()).map_err(|error| {
+                    GatewayForwardError {
                         message: format!("Failed to read upstream response body: {error}"),
                         kind: classify_reqwest_error(&error),
                         upstream_request_body: None,
                         upstream_response_body: None,
                         upstream_response_body_bytes: 0,
-                    })
+                    }
+                })
             }
-            Self::HeaderPreserving(response) => response
-                .bytes()
-                .await
-                .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection)),
+            Self::HeaderPreserving(response) => {
+                // Header-preserving path already applies body_timeout inside bytes().
+                response
+                    .bytes()
+                    .await
+                    .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))
+            }
         }
     }
 
@@ -825,6 +846,7 @@ async fn forward_to_upstream(
                 settings.thinking_budget_rectifier_enabled,
                 settings.cache_injection_enabled,
                 app_config.non_streaming_timeout_secs,
+                app_config.streaming_idle_timeout_secs,
                 upstream_response_snapshot_limit,
             )
             .await
@@ -1056,6 +1078,7 @@ async fn send_upstream_request(
     thinking_budget_rectifier_enabled: bool,
     cache_injection_enabled: bool,
     non_streaming_timeout_secs: u64,
+    streaming_idle_timeout_secs: u64,
     upstream_response_snapshot_limit: Option<usize>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let effective_upstream_model_id =
@@ -1163,6 +1186,7 @@ async fn send_upstream_request(
         headers.clone(),
         upstream_body.clone(),
         non_streaming_timeout_secs.max(1),
+        streaming_idle_timeout_secs.max(1),
         header_preserving_proxy.clone(),
     )
     .await
@@ -1207,10 +1231,13 @@ async fn send_upstream_request(
         let status_text = status.canonical_reason().unwrap_or("Unknown").to_string();
         let mut response_headers = filtered_response_headers(response.headers());
         let encoding = get_content_encoding_from_header_map(response.headers());
-        let body = response.bytes().await.map_err(|mut error| {
-            error.upstream_request_body = Some(upstream_body_snapshot.clone());
-            error
-        })?;
+        let body = response
+            .bytes_with_timeout(Some(Duration::from_secs(non_streaming_timeout_secs.max(1))))
+            .await
+            .map_err(|mut error| {
+                error.upstream_request_body = Some(upstream_body_snapshot.clone());
+                error
+            })?;
         let body = match maybe_decompress_encoded_body(
             encoding.as_deref(),
             body,
@@ -1263,6 +1290,7 @@ async fn send_upstream_request(
                     headers.clone(),
                     rectified_body.clone(),
                     non_streaming_timeout_secs.max(1),
+                    streaming_idle_timeout_secs.max(1),
                     header_preserving_proxy.clone(),
                 )
                 .await
@@ -1283,6 +1311,7 @@ async fn send_upstream_request(
                     rectified_pipeline,
                     rectified_pipeline_context,
                     upstream_response_snapshot_limit,
+                    non_streaming_timeout_secs.max(1),
                     Some(context),
                     compact_compat,
                     xai_namespace_restore_map.clone(),
@@ -1313,6 +1342,7 @@ async fn send_upstream_request(
                         headers.clone(),
                         rectified_body.clone(),
                         non_streaming_timeout_secs.max(1),
+                        streaming_idle_timeout_secs.max(1),
                         header_preserving_proxy.clone(),
                     )
                     .await
@@ -1333,6 +1363,7 @@ async fn send_upstream_request(
                         pipeline.clone(),
                         pipeline_context.clone(),
                         upstream_response_snapshot_limit,
+                        non_streaming_timeout_secs.max(1),
                         Some(context),
                         compact_compat,
                         xai_namespace_restore_map.clone(),
@@ -1355,6 +1386,7 @@ async fn send_upstream_request(
                     headers.clone(),
                     rectified_body.clone(),
                     non_streaming_timeout_secs.max(1),
+                    streaming_idle_timeout_secs.max(1),
                     header_preserving_proxy.clone(),
                 )
                 .await
@@ -1375,6 +1407,7 @@ async fn send_upstream_request(
                     pipeline.clone(),
                     pipeline_context.clone(),
                     upstream_response_snapshot_limit,
+                    non_streaming_timeout_secs.max(1),
                     Some(context),
                     compact_compat,
                     xai_namespace_restore_map.clone(),
@@ -1396,6 +1429,7 @@ async fn send_upstream_request(
                     headers.clone(),
                     rectified_body.clone(),
                     non_streaming_timeout_secs.max(1),
+                    streaming_idle_timeout_secs.max(1),
                     header_preserving_proxy.clone(),
                 )
                 .await
@@ -1416,6 +1450,7 @@ async fn send_upstream_request(
                     pipeline.clone(),
                     pipeline_context.clone(),
                     upstream_response_snapshot_limit,
+                    non_streaming_timeout_secs.max(1),
                     Some(context),
                     compact_compat,
                     xai_namespace_restore_map.clone(),
@@ -1459,6 +1494,7 @@ async fn send_upstream_request(
         pipeline,
         pipeline_context,
         upstream_response_snapshot_limit,
+        non_streaming_timeout_secs.max(1),
         Some(context),
         compact_compat,
         xai_namespace_restore_map,
@@ -1473,6 +1509,7 @@ async fn send_request_once(
     headers: UpstreamHeaders,
     upstream_body: Vec<u8>,
     timeout_secs: u64,
+    stream_idle_timeout_secs: u64,
     header_preserving_proxy: Option<Option<String>>,
 ) -> Result<UpstreamResponse, GatewayForwardError> {
     if should_use_header_preserving_raw(upstream_url) {
@@ -1483,6 +1520,7 @@ async fn send_request_once(
                 &headers.preserved,
                 upstream_body.clone(),
                 Duration::from_secs(timeout_secs.max(1)),
+                Duration::from_secs(stream_idle_timeout_secs.max(1)),
                 proxy_url.as_deref(),
             )
             .await
@@ -1540,6 +1578,7 @@ async fn build_gateway_response(
     pipeline: Pipeline,
     pipeline_context: PipelineContext,
     upstream_response_snapshot_limit: Option<usize>,
+    body_read_timeout_secs: u64,
     context: Option<&GatewayRuntimeContext>,
     compact_compat: CodexResponsesCompactCompat,
     xai_namespace_restore_map: HashMap<String, NamespacedName>,
@@ -1756,10 +1795,14 @@ async fn build_gateway_response(
     }
 
     let encoding = get_content_encoding_from_header_map(response.headers());
-    let upstream_response_body = response.bytes().await.map_err(|mut error| {
-        error.upstream_request_body = Some(upstream_body_snapshot.clone());
-        error
-    })?;
+    // Stream-oriented clients have no total Client::timeout; always bound JSON body reads.
+    let upstream_response_body = response
+        .bytes_with_timeout(Some(Duration::from_secs(body_read_timeout_secs.max(1))))
+        .await
+        .map_err(|mut error| {
+            error.upstream_request_body = Some(upstream_body_snapshot.clone());
+            error
+        })?;
     let upstream_response_body = match maybe_decompress_encoded_body(
         encoding.as_deref(),
         upstream_response_body,

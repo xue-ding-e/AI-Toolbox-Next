@@ -42,6 +42,8 @@
 - 重启网关不能走 stop preflight，也不能实现成前端 `stop + start`。有接管时重启必须仍可用，否则网络切换后的半死状态只能靠用户先恢复直连才能自愈。
 - 重新接管时必须复用已有 manifest 的原始备份，不要把已经被网关改写过的文件再次备份成“原始状态”。
 - engage 路径先写 enabled manifest（保护 `.bak`），再 `apply_gateway_config`。若 apply 中途失败：必须立即按备份 restore runtime 文件，并把 manifest `enabled=false` 写回，不能留下 “manifest enabled 但配置半改写” 的产品态；重试时仍复用首次原始 `.bak`。
+- `restore_cli_direct` 成功后必须删除对应 `.bak` 快照。否则“接管→恢复直连→用户改 API key/base URL→再接管→再恢复”会把 managed 字段滚回第一次接管时的旧值。失败重试路径仍可在 `.bak` 存在时复用，两者不矛盾。
+- Responses 源工具流：`arguments.done` / `output_item.done` / `finish()` 只能冲刷尚未发出的参数后缀，done 后从 pending map 移除；禁止对 dense 流（delta+done 都发）重发全量 arguments，否则 Chat/Anthropic 目标参数会拼接重复。
 - selection manifest 热路径必须用 `load_gateway_provider_selection_async`（`tokio::fs`），不能在请求路径同步 `fs::read_to_string`；30s 缓存只是二次优化。`write_manifest` 与 provider cache clear 都必须调用 `clear_gateway_provider_selection_cache`，覆盖 engage / disengage / restore 全部出口。
 - forced-stream 聚合 raw_body 上限必须复用 `upstream_response_snapshot_limit`（来自 `store_response_body` + `log_max_body_size_kb`）；仅当该 limit 未启用时才允许 16 MiB fallback，避免设置页语义与实现漂移。
 
@@ -106,6 +108,7 @@ sequenceDiagram
 - Gateway 连通性测试的 `timeoutSecs` 是从请求开始计算的整体预算，路由/建连/首字节和后续流读取共享同一个 deadline，不能在拿到 response 后重新分配完整时长。HTTP 2xx 流也必须把 `event: response.failed`、`type: response.failed` 和嵌套 `response.error` / failure status 判为失败。
 - 非流式 2xx/3xx 响应也必须做 empty response detection：body 为空、或协议 JSON 没有 Chat choices / Responses output / Anthropic content / Gemini candidates 等实际内容时，按 `empty_response` 失败处理并进入现有同 provider retry / 跨 provider failover；不能把 200 空 body 当成功返回给 CLI。
 - Header 大小写保真不能依赖 `reqwest::HeaderMap`，`HeaderName::from_bytes` 会规范化名称。需要保留原始大小写时走 `runtime/header_preserving_client.rs` 的原始 HTTP/1.1 写出路径；系统代理和 SOCKS 代理场景继续回退现有 reqwest 路径以尊重用户代理设置。
+- header-preserving 流式路径的 per-chunk idle timeout 必须使用用户/CLI 的 `streaming_idle_timeout_secs`，禁止再 `min(..., 60s)` 硬顶；否则用户调大 idle 仍会在 60s 被掐断，复现 mid-response Connection closed。无总超时的 stream client 在读非 SSE JSON body 时仍必须套 `non_streaming_timeout` 兜底。
 - `proxy_request_logs.latency_ms` 表示首 token/首 chunk 延迟；非流式或拿不到首包时间时才退回完整请求耗时。`duration_ms` 才表示完整请求耗时。
 - 成本统计以 `model_pricing` 表和 `proxy_request_logs` 的 token 摘要计算，内部计算使用 `Decimal`，写库仍存字符串/数值文本格式。未知模型或未命中定价时 cost 可以为 0，但不能在写入路径把所有 cost 列固定写成 0。
 - 更新模型定价只改变后续成本计算的价格来源；除非任务明确要求历史回填，不要在定价 CRUD 中重算 `proxy_request_logs` 或 `usage_daily_rollups`，避免把管理弹窗变成高成本数据迁移入口。

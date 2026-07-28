@@ -488,7 +488,7 @@ pub async fn engage_failover_cli(
         let mut targets = resolve_targets(db, cli_key).await?;
         let codex_auth_backup_content =
             codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
-        apply_gateway_config(
+        if let Err(error) = apply_gateway_config(
             cli_key,
             &mut targets,
             &manifest.base_origin,
@@ -497,7 +497,20 @@ pub async fn engage_failover_cli(
             None,
             codex_auth_backup_content.as_deref(),
             codex_auth_preservation_enabled_for_cli(db, cli_key)?,
-        )?;
+        ) {
+            // Roll back half-applied failover fields to the single-mode gateway config.
+            let _ = apply_gateway_config(
+                cli_key,
+                &mut targets,
+                &manifest.base_origin,
+                Some(&primary_provider),
+                GatewayProxyMode::Single,
+                None,
+                codex_auth_backup_content.as_deref(),
+                codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+            );
+            return Err(error);
+        }
         sync_manifest_managed_fields(&mut manifest, &targets);
         manifest.mode = GatewayProxyMode::Failover;
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
@@ -577,6 +590,9 @@ pub async fn restore_cli_direct(
     }
 
     restore_gateway_config(cli_key, paths, &targets, &manifest)?;
+    // Drop original snapshots after a successful restore so the next engage re-backs up
+    // the post-direct runtime files instead of reusing a stale first-engage .bak.
+    clear_gateway_backups(paths, cli_key, &manifest);
     manifest.enabled = false;
     manifest.updated_at = chrono::Utc::now().to_rfc3339();
     write_manifest(paths, cli_key, &manifest)?;
@@ -1157,6 +1173,29 @@ fn prepare_manifest(
     }
     manifest.files = files;
     Ok(manifest)
+}
+
+fn clear_gateway_backups(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    manifest: &CliProxyManifest,
+) {
+    let backup_dir = paths.backup_dir(cli_key);
+    for file in &manifest.files {
+        if validate_backup_rel_path(&file.backup_rel_path).is_err() {
+            continue;
+        }
+        let backup_path = backup_dir.join(&file.backup_rel_path);
+        if backup_path.exists() {
+            if let Err(error) = fs::remove_file(&backup_path) {
+                log::warn!(
+                    "Failed to remove gateway backup {} after restore: {}",
+                    backup_path.display(),
+                    error
+                );
+            }
+        }
+    }
 }
 
 fn backup_target_file(
@@ -3678,6 +3717,92 @@ base_url = "http://127.0.0.1:9999/v1"
             Some("https://original.example.com")
         );
         assert_eq!(second_manifest.files.len(), 1);
+    }
+
+    #[test]
+    fn successful_restore_clears_backup_so_next_engage_rebacks_current_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path().join("app-data"));
+        let settings_path = dir.path().join("runtime").join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_BASE_URL": "https://original.example.com", "ANTHROPIC_API_KEY": "old-key"}}),
+        )
+        .unwrap();
+        let targets = CliProxyTargets {
+            runtime_root: dir.path().join("runtime"),
+            is_wsl_direct: false,
+            files: vec![CliProxyTarget {
+                kind: CLAUDE_SETTINGS_KIND,
+                path: settings_path.clone(),
+                managed_fields: static_managed_fields(&CLAUDE_MANAGED_FIELDS),
+            }],
+        };
+
+        let first_manifest = prepare_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37123",
+            &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
+        )
+        .unwrap();
+        write_manifest(&paths, GatewayCliKey::Claude, &first_manifest).unwrap();
+        let backup_path = paths
+            .backup_dir(GatewayCliKey::Claude)
+            .join(format!("{CLAUDE_SETTINGS_KIND}.bak"));
+        assert!(backup_path.exists(), "first engage must create .bak");
+
+        // Successful restore must delete the snapshot and disable the manifest so later
+        // engages re-backup the post-direct runtime files.
+        clear_gateway_backups(&paths, GatewayCliKey::Claude, &first_manifest);
+        assert!(
+            !backup_path.exists(),
+            "successful restore must remove .bak snapshots"
+        );
+        let mut restored_manifest = first_manifest;
+        restored_manifest.enabled = false;
+        restored_manifest.updated_at = chrono::Utc::now().to_rfc3339();
+        write_manifest(&paths, GatewayCliKey::Claude, &restored_manifest).unwrap();
+
+        // User edits runtime after direct restore, then re-engages.
+        write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_BASE_URL": "https://updated.example.com", "ANTHROPIC_API_KEY": "new-key"}}),
+        )
+        .unwrap();
+        let second_manifest = prepare_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37124",
+            &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
+        )
+        .unwrap();
+        let backup = backup_content(
+            &paths,
+            GatewayCliKey::Claude,
+            &second_manifest,
+            CLAUDE_SETTINGS_KIND,
+        )
+        .unwrap()
+        .unwrap();
+        let backup_json = serde_json::from_str::<Value>(&backup).unwrap();
+        assert_eq!(
+            backup_json
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://updated.example.com"),
+            "re-engage after restore must back up the current post-direct runtime"
+        );
+        assert_eq!(
+            backup_json
+                .pointer("/env/ANTHROPIC_API_KEY")
+                .and_then(Value::as_str),
+            Some("new-key")
+        );
     }
 
     #[test]
