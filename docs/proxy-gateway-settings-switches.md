@@ -41,8 +41,8 @@
 
 | UI | 字段 | 默认值 | 作用 |
 |---|---|---:|---|
-| 首包超时秒 | `streaming_first_byte_timeout_secs` | `60` | 流式请求上游返回成功状态后，等待第一个非空 chunk 的最长时间。首包前失败或超时可按 failover/retry 策略继续尝试。 |
-| 流式空闲秒 | `streaming_idle_timeout_secs` | `120` | 流式响应过程中两次 chunk 之间允许的最长空闲时间，避免半开连接无限挂起。 |
+| 首包超时秒 | `streaming_first_byte_timeout_secs` | `90` | 流式请求上游返回成功状态后，等待第一个非空 chunk 的最长时间。首包前失败或超时可按 failover/retry 策略继续尝试。 |
+| 流式空闲秒 | `streaming_idle_timeout_secs` | `180` | 流式响应过程中两次 chunk 之间允许的最长空闲时间，避免半开连接无限挂起。 |
 | 非流式超时秒 | `non_streaming_timeout_secs` | `600` | 非流式请求等待完整上游响应的最长时间。 |
 
 ## 重试
