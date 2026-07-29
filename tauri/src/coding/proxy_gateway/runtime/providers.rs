@@ -56,6 +56,10 @@ pub(crate) enum ProviderAuthStrategy {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct UpstreamModelMapping {
     pub(crate) default_model: Option<String>,
+    /// Codex provider-level auto-review model override from
+    /// `settingsConfig.autoReviewModelOverride`. Used on failover guardian
+    /// requests so each candidate channel owns its own review model.
+    pub(crate) auto_review_model: Option<String>,
     pub(crate) haiku_model: Option<String>,
     pub(crate) sonnet_model: Option<String>,
     pub(crate) opus_model: Option<String>,
@@ -439,6 +443,12 @@ fn provider_from_record(
                 meta,
                 model_mapping: UpstreamModelMapping {
                     default_model: codex_model_from_config(config_toml),
+                    auto_review_model: codex_auto_review_model_from_settings(&settings)
+                        .or_else(|| {
+                            settings
+                                .get("modelCatalog")
+                                .and_then(codex_auto_review_model_from_catalog)
+                        }),
                     ..UpstreamModelMapping::default()
                 },
             }))
@@ -1310,6 +1320,7 @@ fn claude_model_mapping_from_settings(settings: &Value) -> UpstreamModelMapping 
             .or_else(|| json_object_string(env, "ANTHROPIC_DEFAULT_FABLE_MODEL")),
         reasoning_model: json_value_string(settings, "reasoningModel")
             .or_else(|| json_object_string(env, "ANTHROPIC_REASONING_MODEL")),
+        ..UpstreamModelMapping::default()
     }
 }
 
@@ -1340,6 +1351,37 @@ pub(super) fn codex_base_url_from_config(config_toml: &str) -> Option<String> {
 
 fn codex_model_from_config(config_toml: &str) -> Option<String> {
     super::super::provider_protocol::codex_model_from_config(config_toml)
+}
+
+fn codex_auto_review_model_from_settings(settings: &Value) -> Option<String> {
+    settings
+        .get("autoReviewModelOverride")
+        .or_else(|| settings.get("auto_review_model_override"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+// Match the Codex module's legacy modelCatalog row-level override.
+// This covers short-lived drafts and older provider records.
+fn codex_auto_review_model_from_catalog(catalog: &Value) -> Option<String> {
+    let models = catalog
+        .get("models")
+        .and_then(|m| m.as_array())?;
+    for item in models {
+        if let Some(legacy) = item
+            .get("autoReviewModelOverride")
+            .or_else(|| item.get("auto_review_model_override"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+        {
+            return Some(legacy);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1507,6 +1549,7 @@ api_key = "secret"
                 "category": "custom",
                 "settings_config": serde_json::json!({
                     "auth": {"OPENAI_API_KEY": "test-key"},
+                    "autoReviewModelOverride": "review-model",
                     "config": r#"
 model = "deepseek-v4-flash"
 model_provider = "custom"
@@ -1525,6 +1568,149 @@ base_url = "https://api.deepseek.com/v1"
             result.model_mapping.default_model.as_deref(),
             Some("deepseek-v4-flash")
         );
+        assert_eq!(
+            result.model_mapping.auto_review_model.as_deref(),
+            Some("review-model")
+        );
+    }
+
+    #[test]
+    fn codex_provider_loads_auto_review_model_from_model_catalog_legacy() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-catalog-review",
+                "name": "Codex Catalog Review",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "test-key"},
+                    "modelCatalog": {
+                        "models": [
+                            {
+                                "model": "deepseek-v4-flash",
+                                "autoReviewModelOverride": "catalog-review-model"
+                            }
+                        ]
+                    },
+                    "config": r#"
+model = "deepseek-v4-flash"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com/v1"
+"#
+                }).to_string(),
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            result.model_mapping.auto_review_model.as_deref(),
+            Some("catalog-review-model")
+        );
+    }
+
+    #[test]
+    fn codex_provider_top_level_auto_review_overrides_model_catalog_legacy() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-top-level-review",
+                "name": "Codex Top Level Review",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "test-key"},
+                    "autoReviewModelOverride": "top-level-review",
+                    "modelCatalog": {
+                        "models": [
+                            {
+                                "model": "deepseek-v4-flash",
+                                "autoReviewModelOverride": "catalog-review-model"
+                            }
+                        ]
+                    },
+                    "config": r#"
+model = "deepseek-v4-flash"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com/v1"
+"#
+                }).to_string(),
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            result.model_mapping.auto_review_model.as_deref(),
+            Some("top-level-review")
+        );
+    }
+
+    #[test]
+    fn codex_provider_blank_auto_review_override_falls_back_to_catalog_then_none() {
+        let with_catalog = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-blank-top-level",
+                "name": "Codex Blank Top Level",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "test-key"},
+                    "autoReviewModelOverride": "  ",
+                    "modelCatalog": {
+                        "models": [
+                            {
+                                "model": "deepseek-v4-flash",
+                                "auto_review_model_override": "catalog-from-blank-top"
+                            }
+                        ]
+                    },
+                    "config": r#"
+model = "deepseek-v4-flash"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com/v1"
+"#
+                }).to_string(),
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            with_catalog.model_mapping.auto_review_model.as_deref(),
+            Some("catalog-from-blank-top")
+        );
+
+        let blank_only = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-blank-only",
+                "name": "Codex Blank Only",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "test-key"},
+                    "autoReviewModelOverride": "  ",
+                    "config": r#"
+model = "deepseek-v4-flash"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com/v1"
+"#
+                }).to_string(),
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(blank_only.model_mapping.auto_review_model, None);
     }
 
     #[test]

@@ -4576,6 +4576,15 @@ async fn wait_before_retry(retry_interval_secs: u64) {
     }
 }
 
+fn is_codex_auto_review_request(request: &DebugHttpRequest) -> bool {
+    header_value_ci(&request.headers, "x-openai-subagent")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("guardian") || value.eq_ignore_ascii_case("auto_review")
+        })
+}
+
 fn resolve_upstream_model_id(
     request: &DebugHttpRequest,
     requested_model: &str,
@@ -4598,15 +4607,26 @@ fn resolve_upstream_model_id(
         }
         // Codex only rewrites in failover: CLI config already carries the real
         // P0 model in single mode. Without a default model, passthrough.
+        // Auto-review/guardian requests resolve per candidate channel:
+        // channel autoReview override -> channel default_model -> request model.
         GatewayCliKey::Codex => {
             if !apply_failover_model_mapping {
                 return strip_one_m_context_marker(requested_model).to_string();
             }
-            let resolved_model = provider
-                .model_mapping
-                .default_model
-                .as_deref()
-                .unwrap_or(requested_model);
+            let resolved_model = if is_codex_auto_review_request(request) {
+                provider
+                    .model_mapping
+                    .auto_review_model
+                    .as_deref()
+                    .or(provider.model_mapping.default_model.as_deref())
+                    .unwrap_or(requested_model)
+            } else {
+                provider
+                    .model_mapping
+                    .default_model
+                    .as_deref()
+                    .unwrap_or(requested_model)
+            };
             strip_one_m_context_marker(resolved_model).to_string()
         }
         // Grok takeover always writes model=grok-build into CLI config for both
@@ -11328,6 +11348,114 @@ data: {data}\r\n\r\n"
         assert_eq!(
             resolve_model("gpt-5.4-codex", &provider, true),
             "provider-model"
+        );
+    }
+
+    fn codex_auto_review_request() -> DebugHttpRequest {
+        let mut request = debug_request(br#"{"model":"requested-review-model"}"#);
+        request.headers = vec![("x-openai-subagent".to_string(), "guardian".to_string())];
+        request
+    }
+
+    #[test]
+    fn codex_failover_auto_review_uses_channel_auto_review_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+        provider.model_mapping.auto_review_model = Some("p1-review".to_string());
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &codex_auto_review_request(),
+                "requested-review-model",
+                &provider,
+                true,
+                true,
+            ),
+            "p1-review"
+        );
+    }
+
+    #[test]
+    fn codex_failover_auto_review_falls_back_to_channel_default_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &codex_auto_review_request(),
+                "requested-review-model",
+                &provider,
+                true,
+                true,
+            ),
+            "p1-main"
+        );
+    }
+
+    #[test]
+    fn codex_failover_auto_review_both_none_passthroughs_requested_model() {
+        let provider = provider_for_cli(GatewayCliKey::Codex);
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &codex_auto_review_request(),
+                "requested-review-model",
+                &provider,
+                true,
+                true,
+            ),
+            "requested-review-model"
+        );
+    }
+
+    #[test]
+    fn codex_failover_auto_review_header_value_auto_review_is_recognized() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+        provider.model_mapping.auto_review_model = Some("p1-review".to_string());
+
+        let mut request = debug_request(br#"{"model":"requested-review-model"}"#);
+        request.headers = vec![("x-openai-subagent".to_string(), "auto_review".to_string())];
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &request,
+                "requested-review-model",
+                &provider,
+                true,
+                true,
+            ),
+            "p1-review"
+        );
+    }
+
+    #[test]
+    fn codex_failover_main_session_ignores_auto_review_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+        provider.model_mapping.auto_review_model = Some("p1-review".to_string());
+
+        assert_eq!(
+            resolve_model("gpt-5.4-codex", &provider, true),
+            "p1-main"
+        );
+    }
+
+    #[test]
+    fn codex_single_auto_review_preserves_requested_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p0-main".to_string());
+        provider.model_mapping.auto_review_model = Some("p0-review".to_string());
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &codex_auto_review_request(),
+                "requested-review-model",
+                &provider,
+                false,
+                true,
+            ),
+            "requested-review-model"
         );
     }
 

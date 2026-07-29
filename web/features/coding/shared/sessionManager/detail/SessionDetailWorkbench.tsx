@@ -52,6 +52,11 @@ interface SessionDetailWorkbenchProps {
   onCopyText: (text: string, successText: string) => void | Promise<void>;
 }
 
+// Process-lifetime memory shared across all tools' session detail pages.
+// Survives workbench remount when switching sessions; resets only on app restart.
+let rememberedSessionRoleFilter: SessionRoleFilter = { ...DEFAULT_SESSION_ROLE_FILTER };
+let rememberedSessionContentFilter: SessionContentFilter = { ...DEFAULT_SESSION_CONTENT_FILTER };
+
 const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
   detail,
   subagents,
@@ -70,8 +75,12 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
 }) => {
   const [query, setQuery] = React.useState('');
   const deferredQuery = React.useDeferredValue(query);
-  const [roleFilter, setRoleFilter] = React.useState<SessionRoleFilter>(DEFAULT_SESSION_ROLE_FILTER);
-  const [contentFilter, setContentFilter] = React.useState<SessionContentFilter>(DEFAULT_SESSION_CONTENT_FILTER);
+  const [roleFilter, setRoleFilter] = React.useState<SessionRoleFilter>(
+    () => ({ ...rememberedSessionRoleFilter }),
+  );
+  const [contentFilter, setContentFilter] = React.useState<SessionContentFilter>(
+    () => ({ ...rememberedSessionContentFilter }),
+  );
   const [searchScope, setSearchScope] = React.useState<SessionSearchScope>('content');
   const [activeMessageIndex, setActiveMessageIndex] = React.useState<number | null>(null);
   const [activeMatchOffset, setActiveMatchOffset] = React.useState(NO_ACTIVE_MATCH_OFFSET);
@@ -88,9 +97,8 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
   const assistantLabel = getAssistantLabel(detail.meta.providerId);
 
   React.useEffect(() => {
+    // Keep role/content filter chips across sessions; only reset session-local UI state.
     setQuery('');
-    setRoleFilter(DEFAULT_SESSION_ROLE_FILTER);
-    setContentFilter(DEFAULT_SESSION_CONTENT_FILTER);
     setSearchScope('content');
     setActiveMessageIndex(null);
     setActiveMatchOffset(NO_ACTIVE_MATCH_OFFSET);
@@ -142,17 +150,25 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
   }, [query, roleFilter, contentFilter, searchScope]);
 
   const toggleRoleFilter = React.useCallback((key: SessionRoleFilterKey) => {
-    setRoleFilter((current) => ({
-      ...current,
-      [key]: !current[key],
-    }));
+    setRoleFilter((current) => {
+      const next = {
+        ...current,
+        [key]: !current[key],
+      };
+      rememberedSessionRoleFilter = next;
+      return next;
+    });
   }, []);
 
   const toggleContentFilter = React.useCallback((key: SessionContentFilterKey) => {
-    setContentFilter((current) => ({
-      ...current,
-      [key]: !current[key],
-    }));
+    setContentFilter((current) => {
+      const next = {
+        ...current,
+        [key]: !current[key],
+      };
+      rememberedSessionContentFilter = next;
+      return next;
+    });
   }, []);
 
   const updateScrollControls = React.useCallback(() => {

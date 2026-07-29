@@ -2592,6 +2592,7 @@ mod tests {
             meta: super::super::types::ProviderGatewayMeta::default(),
             model_mapping: super::super::runtime::UpstreamModelMapping {
                 default_model: default_model.map(str::to_string),
+                auto_review_model: None,
                 haiku_model: haiku_model.map(str::to_string),
                 sonnet_model: sonnet_model.map(str::to_string),
                 opus_model: opus_model.map(str::to_string),

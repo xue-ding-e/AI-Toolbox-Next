@@ -197,6 +197,46 @@ Responses source 转 Anthropic Messages / Gemini Native 时，namespace child �
 
 测试：`provider_pipeline_caps_default_max_tokens_in_upstream_body`、`provider_pipeline_strips_billing_cch_for_non_anthropic_target`、`provider_pipeline_restores_billing_cch_for_anthropic_target`。
 
+### 2.6 Codex failover auto-review 模型映射
+
+触发条件：
+
+- CLI 必须是 Codex。
+- Gateway manifest 必须处于 `failover` 模式，并且不是指定 `provider_override_id` 的连通性测试。
+- 请求 header `x-openai-subagent` 去空白后等于 `guardian` 或 `auto_review`（大小写不敏感）。
+
+模型选择顺序：
+
+1. auto-review/guardian 请求按当前候选 provider 解析模型，优先使用该 provider 的 `settingsConfig.autoReviewModelOverride` / `auto_review_model_override`。
+2. 顶层 override 缺失或为空白时，兼容旧数据里的 `settingsConfig.modelCatalog.models[].autoReviewModelOverride` / `auto_review_model_override`，取首个非空值。
+3. 仍未命中时回退该候选 provider 的 `default_model`。
+4. 再没有时透传客户端请求里的 `model`。
+
+主会话请求不读取 auto-review override；Codex failover 主会话仍只使用当前候选 provider 的 `default_model`。Codex `single` 模式下 auto-review/guardian 与主会话一样透传请求模型。所有分支最终都会剥离模型名中的 `[1M]` / `[1m]` 上下文标记。
+
+默认模型来源仍是 provider `settings_config.config` 中 Codex `config.toml` 的 `[chat].model`，没有时回退根级 `model`。`modelCatalog` 只用于 legacy auto-review override 兼容，不能当作 Codex 主会话默认模型来源。
+
+源码：
+
+- `runtime/providers.rs::provider_from_record()`
+- `runtime/providers.rs::codex_auto_review_model_from_settings()`
+- `runtime/providers.rs::codex_auto_review_model_from_catalog()`
+- `runtime/upstream.rs::is_codex_auto_review_request()`
+- `runtime/upstream.rs::resolve_upstream_model_id()`
+
+测试：
+
+- `codex_provider_loads_default_model_from_config_toml`
+- `codex_provider_loads_auto_review_model_from_model_catalog_legacy`
+- `codex_provider_top_level_auto_review_overrides_model_catalog_legacy`
+- `codex_provider_blank_auto_review_override_falls_back_to_catalog_then_none`
+- `codex_failover_auto_review_uses_channel_auto_review_model`
+- `codex_failover_auto_review_falls_back_to_channel_default_model`
+- `codex_failover_auto_review_both_none_passthroughs_requested_model`
+- `codex_failover_auto_review_header_value_auto_review_is_recognized`
+- `codex_failover_main_session_ignores_auto_review_model`
+- `codex_single_auto_review_preserves_requested_model`
+
 ## 3. 通用响应侧兼容
 
 响应事实源是 `runtime/upstream.rs::build_gateway_response()`。
