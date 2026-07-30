@@ -174,8 +174,7 @@ fn resolve_cli_from_path(command_name: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let paths = parse_lookup_command_output(&stdout);
+    let paths = decode_lookup_lines(&output.stdout);
     let existing_paths = paths
         .into_iter()
         .filter(|path| is_existing_command_path(path))
@@ -191,6 +190,99 @@ fn parse_lookup_command_output(stdout: &str) -> Vec<PathBuf> {
         .filter(|line| !line.is_empty())
         .map(PathBuf::from)
         .collect()
+}
+
+/// Decode the stdout of `where` / `which` into candidate paths.
+///
+/// On Windows, `where` may emit bytes in the system OEM or ANSI code page
+/// rather than UTF-8 (e.g. a Chinese locale uses CP936/GBK). A path containing
+/// non-ASCII characters would then fail `String::from_utf8` and silently drop
+/// the PATH lookup. We first try UTF-8, then fall back to the OEM and ANSI
+/// code pages so non-ASCII install paths are still discovered.
+fn decode_lookup_lines(stdout: &[u8]) -> Vec<PathBuf> {
+    if let Ok(text) = std::str::from_utf8(stdout) {
+        return parse_lookup_command_output(text);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut paths = Vec::new();
+        for code_page in [windows_oem_code_page(), windows_ansi_code_page()] {
+            if let Some(text) = windows_decode_code_page(code_page, stdout) {
+                paths.extend(parse_lookup_command_output(&text));
+            }
+        }
+        return paths;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        parse_lookup_command_output(&String::from_utf8_lossy(stdout))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_oem_code_page() -> u32 {
+    extern "system" {
+        fn GetOEMCP() -> u32;
+    }
+    // SAFETY: GetOEMCP is a leaf query with no inputs and is always safe.
+    unsafe { GetOEMCP() }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ansi_code_page() -> u32 {
+    extern "system" {
+        fn GetACP() -> u32;
+    }
+    // SAFETY: GetACP is a leaf query with no inputs and is always safe.
+    unsafe { GetACP() }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_decode_code_page(code_page: u32, bytes: &[u8]) -> Option<String> {
+    extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            flags: u32,
+            multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    // SAFETY: we pass a valid pointer + length for the input; the first call only
+    // computes the required wide length (null output buffer). We then allocate
+    // exactly that capacity for the second call.
+    unsafe {
+        let wide_len = MultiByteToWideChar(
+            code_page,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            std::ptr::null_mut(),
+            0,
+        );
+        if wide_len <= 0 {
+            return None;
+        }
+        let mut wide = vec![0u16; wide_len as usize];
+        let written = MultiByteToWideChar(
+            code_page,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            wide.as_mut_ptr(),
+            wide_len,
+        );
+        if written <= 0 {
+            return None;
+        }
+        String::from_utf16(&wide[..written as usize]).ok()
+    }
 }
 
 fn select_existing_command_path(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -319,6 +411,17 @@ fn collect_fnm_candidates(fnm_dir: &Path, command_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     let default_alias = fnm_dir.join("aliases").join("default");
+    // Windows: npm 全局可执行文件直接位于 Node 安装根目录，无 `bin` 子文件夹
+    // （`{prefix}/bin` 是 Unix 约定，Windows 上直接链接进 `{prefix}`）。
+    #[cfg(target_os = "windows")]
+    {
+        push_command_candidate(&mut candidates, &default_alias, command_name);
+        push_command_candidate(
+            &mut candidates,
+            &default_alias.join("installation"),
+            command_name,
+        );
+    }
     push_command_candidate(&mut candidates, default_alias.join("bin"), command_name);
     push_command_candidate(
         &mut candidates,
@@ -338,6 +441,9 @@ fn collect_fnm_candidates(fnm_dir: &Path, command_name: &str) -> Vec<PathBuf> {
 
 fn append_fnm_version_bins(candidates: &mut Vec<PathBuf>, version_root: &Path, command_name: &str) {
     for version_dir in sorted_child_dirs_desc(version_root) {
+        // Windows: 可执行文件直接在 `installation` 根目录，无 `bin` 子文件夹。
+        #[cfg(target_os = "windows")]
+        push_command_candidate(candidates, &version_dir.join("installation"), command_name);
         push_command_candidate(
             candidates,
             version_dir.join("installation").join("bin"),
