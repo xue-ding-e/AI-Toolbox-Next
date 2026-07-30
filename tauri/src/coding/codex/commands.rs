@@ -2433,6 +2433,13 @@ fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     }
 }
 
+/// Codex 内置模型目录（codex-rs/models-manager/models.json）中每条 entry
+/// 统一使用 272000 作为上下文窗口。当 ai-toolbox 的 provider 设置中
+/// 既没有显式填写模型 contextWindow，也没有在 config.toml 设置顶层
+/// `model_context_window` 时，以此值兜底，避免用武断的 128k 把模型
+/// 上下文窗口压缩到比 Codex 默认更小。来源：codex-rs/models-manager/models.json。
+const CODEX_DEFAULT_CONTEXT_WINDOW: u64 = 272_000;
+
 fn extract_codex_top_level_u64(config_toml: &str, field: &str) -> Option<u64> {
     let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
     document
@@ -2454,8 +2461,8 @@ fn codex_catalog_model_specs(
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array());
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_toml, "model_context_window").unwrap_or(128_000);
+    let default_context_window = extract_codex_top_level_u64(config_toml, "model_context_window")
+        .unwrap_or(CODEX_DEFAULT_CONTEXT_WINDOW);
     let mut seen_models = BTreeSet::new();
     let mut specs = Vec::new();
 
@@ -3848,6 +3855,7 @@ approval_policy = "never"
             Some("gpt-5.5")
         );
         assert_eq!(specs[2].model, "gpt-5.5");
+        assert_eq!(specs[2].context_window, 256_000);
         assert_eq!(
             specs[2].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
@@ -3994,6 +4002,17 @@ approval_policy = "never"
             Some("gpt-5.5")
         );
         assert!(catalog["models"][0].get("model_messages").is_some());
+        // kimi-k2 has no explicit context window; the entry falls back to
+        // CODEX_DEFAULT_CONTEXT_WINDOW (272_000), matching Codex's bundled
+        // models.json instead of the old hard-coded 128_000.
+        assert_eq!(
+            catalog["models"][1]["context_window"].as_u64(),
+            Some(272_000)
+        );
+        assert_eq!(
+            catalog["models"][1]["max_context_window"].as_u64(),
+            Some(272_000)
+        );
         assert_eq!(
             catalog["models"][1]["auto_review_model_override"].as_str(),
             Some("gpt-5.5")
