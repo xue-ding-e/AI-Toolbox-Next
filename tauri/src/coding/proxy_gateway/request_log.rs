@@ -636,4 +636,80 @@ mod tests {
         .unwrap();
         assert_eq!(detail.summary.trace_id, "trace-1");
     }
+
+    fn write_dated_log_file(paths: &ProxyGatewayPaths, date: &str, contents: &str) -> PathBuf {
+        let root = paths.request_log_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(format!("{date}.jsonl"));
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn prune_by_retention_deletes_files_older_than_retention_days() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        // Files are named by date; prune parses the %Y-%m-%d stem.
+        let old_date = "2020-01-01";
+        let recent_date = chrono::Utc::now().date_naive();
+        let recent = recent_date.format("%Y-%m-%d").to_string();
+        write_dated_log_file(&paths, old_date, "old");
+        write_dated_log_file(&paths, &recent, "recent");
+
+        // retention_days=7 keeps anything within the last 7 days, drops 2020.
+        prune_by_retention(&paths, 7).unwrap();
+
+        assert!(!paths.request_log_root().join(format!("{old_date}.jsonl")).exists());
+        assert!(paths.request_log_root().join(format!("{recent}.jsonl")).exists());
+    }
+
+    #[test]
+    fn prune_by_retention_zero_days_keeps_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let path = write_dated_log_file(&paths, "2020-01-01", "old");
+
+        // retention_days == 0 is the documented early-return (retention disabled).
+        prune_by_retention(&paths, 0).unwrap();
+
+        assert!(path.exists(), "zero retention must not delete anything");
+    }
+
+    #[test]
+    fn prune_by_size_drops_files_until_total_under_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        // Three files whose combined size (~2.1 MiB) exceeds a 1 MiB cap.
+        // prune_by_size must remove files until the surviving directory fits.
+        let big = "x".repeat(700_000);
+        let path_a = write_dated_log_file(&paths, "2020-01-01", &big);
+        let path_b = write_dated_log_file(&paths, "2020-01-02", &big);
+        let path_c = write_dated_log_file(&paths, "2020-01-03", &big);
+
+        prune_by_size(&paths, 1).unwrap();
+
+        let all = [path_a, path_b, path_c];
+        let remaining = all.iter().filter(|path| path.exists()).count();
+        assert!(remaining < 3, "size pruning must remove at least one file");
+        let surviving_size: u64 = all
+            .iter()
+            .filter_map(|path| path.metadata().ok())
+            .map(|metadata| metadata.len())
+            .sum();
+        assert!(
+            surviving_size <= 1024 * 1024,
+            "surviving dir size {surviving_size} must be under the 1 MiB cap"
+        );
+    }
+
+    #[test]
+    fn prune_by_size_zero_cap_keeps_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let path = write_dated_log_file(&paths, "2020-01-01", "data");
+
+        prune_by_size(&paths, 0).unwrap();
+
+        assert!(path.exists(), "zero size cap must not delete anything");
+    }
 }

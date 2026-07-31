@@ -44,9 +44,49 @@ pub fn validate_settings(settings: &ProxyGatewaySettings) -> Result<(String, u16
     if settings.per_provider_retry_count > settings.max_retry_count {
         return Err("Gateway per-provider retry count cannot exceed max retry count".to_string());
     }
+    // Streaming/non-streaming timeouts must be positive so the runtime never
+    // builds a zero Duration from persisted settings. The runtime also clamps
+    // via `.max(1)`, but rejecting at save time gives users a clear error
+    // instead of silently degrading to a 1s per-chunk idle.
+    for (label, secs) in [
+        (
+            "streaming first byte timeout",
+            settings.streaming_first_byte_timeout_secs,
+        ),
+        (
+            "streaming idle timeout",
+            settings.streaming_idle_timeout_secs,
+        ),
+        ("non-streaming timeout", settings.non_streaming_timeout_secs),
+    ] {
+        if secs == 0 {
+            return Err(format!("Gateway {label} must be at least 1 second, got 0"));
+        }
+    }
     // Validate expression early so bad UI input fails at save time.
     super::retryable_status::parse_retryable_status_codes(&settings.retryable_status_codes)?;
     for (cli_key, app_config) in &settings.app_configs {
+        for (label, secs) in [
+            (
+                "streaming first byte timeout",
+                app_config.streaming_first_byte_timeout_secs,
+            ),
+            (
+                "streaming idle timeout",
+                app_config.streaming_idle_timeout_secs,
+            ),
+            (
+                "non-streaming timeout",
+                app_config.non_streaming_timeout_secs,
+            ),
+        ] {
+            if matches!(secs, Some(0)) {
+                return Err(format!(
+                    "Gateway {} per-app {label} must be at least 1 second, got 0",
+                    cli_key.as_str()
+                ));
+            }
+        }
         if let (Some(per_provider), Some(max_retry)) = (
             app_config.per_provider_retry_count,
             app_config.max_retry_count,

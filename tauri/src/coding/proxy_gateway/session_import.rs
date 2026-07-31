@@ -443,4 +443,37 @@ mod tests {
         assert_eq!(records[0].request_id, "SESSION:msg_123");
         assert_eq!(records[0].usage.cache_read_tokens, Some(3));
     }
+
+    #[test]
+    fn insert_session_usage_record_is_idempotent_for_duplicate_request_id() {
+        // INSERT OR IGNORE on the PRIMARY KEY (request_id) is the only guard
+        // against double-counting usage when the same session is imported twice.
+        let db = SqliteDbState::in_memory_for_test().expect("sqlite");
+        let root = tempfile::tempdir().unwrap();
+        let file_path = root.path().join("session.jsonl");
+        let mut file = fs::File::create(&file_path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "message": {
+                    "id": "msg_dup",
+                    "model": "claude-sonnet-4-5",
+                    "usage": {"input_tokens": 10, "output_tokens": 20}
+                }
+            })
+        )
+        .unwrap();
+
+        let records = parse_session_file(GatewayCliKey::Claude, &file_path).unwrap();
+        let record = &records[0];
+
+        let first = insert_session_usage_record(&db, record).unwrap();
+        assert!(first, "first insert should report a row change");
+        let second = insert_session_usage_record(&db, record).unwrap();
+        assert!(
+            !second,
+            "duplicate insert must be ignored so usage is not double-counted"
+        );
+    }
 }

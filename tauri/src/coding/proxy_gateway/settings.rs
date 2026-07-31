@@ -43,12 +43,15 @@ pub fn settings_from_value(value: Value) -> Result<ProxyGatewaySettings, String>
     normalize_settings(settings)
 }
 
-pub fn normalize_settings(mut settings: ProxyGatewaySettings) -> Result<ProxyGatewaySettings, String> {
+pub fn normalize_settings(
+    mut settings: ProxyGatewaySettings,
+) -> Result<ProxyGatewaySettings, String> {
     if settings.enabled_cli_keys.is_empty() {
         settings.enabled_cli_keys = ProxyGatewaySettings::default().enabled_cli_keys;
     }
-    settings.retryable_status_codes =
-        super::retryable_status::normalize_retryable_status_codes(&settings.retryable_status_codes)?;
+    settings.retryable_status_codes = super::retryable_status::normalize_retryable_status_codes(
+        &settings.retryable_status_codes,
+    )?;
     validate_settings(&settings)?;
     Ok(settings)
 }
@@ -176,5 +179,84 @@ mod tests {
         let loaded = load_settings_from_sqlite_state(&sqlite_state).expect("reload settings");
         assert_eq!(loaded.listen_port, 38123);
         assert!(loaded.enabled_on_startup);
+    }
+
+    #[test]
+    fn zero_timeouts_are_rejected_at_save_time() {
+        // Each timeout field must be rejected when set to 0 so the runtime
+        // never builds a zero Duration from persisted settings.
+        assert!(settings_from_value(json!({
+            "streaming_first_byte_timeout_secs": 0,
+        }))
+        .is_err());
+        assert!(settings_from_value(json!({
+            "streaming_idle_timeout_secs": 0,
+        }))
+        .is_err());
+        assert!(settings_from_value(json!({
+            "non_streaming_timeout_secs": 0,
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn zero_app_timeouts_are_rejected_at_save_time() {
+        for payload in [
+            json!({
+                "app_configs": {
+                    "codex": {
+                        "streaming_first_byte_timeout_secs": 0,
+                    }
+                }
+            }),
+            json!({
+                "app_configs": {
+                    "codex": {
+                        "streaming_idle_timeout_secs": 0,
+                    }
+                }
+            }),
+            json!({
+                "app_configs": {
+                    "codex": {
+                        "non_streaming_timeout_secs": 0,
+                    }
+                }
+            }),
+        ] {
+            assert!(settings_from_value(payload).is_err());
+        }
+    }
+
+    #[test]
+    fn positive_timeouts_are_accepted() {
+        let settings = settings_from_value(json!({
+            "streaming_first_byte_timeout_secs": 1,
+            "streaming_idle_timeout_secs": 1,
+            "non_streaming_timeout_secs": 1,
+        }))
+        .unwrap();
+        assert_eq!(settings.streaming_first_byte_timeout_secs, 1);
+        assert_eq!(settings.streaming_idle_timeout_secs, 1);
+        assert_eq!(settings.non_streaming_timeout_secs, 1);
+    }
+
+    #[test]
+    fn positive_app_timeouts_are_accepted_and_effective() {
+        let settings = settings_from_value(json!({
+            "app_configs": {
+                "codex": {
+                    "streaming_first_byte_timeout_secs": 2,
+                    "streaming_idle_timeout_secs": 3,
+                    "non_streaming_timeout_secs": 4,
+                }
+            }
+        }))
+        .unwrap();
+
+        let codex_config = settings.effective_app_config(GatewayCliKey::Codex);
+        assert_eq!(codex_config.streaming_first_byte_timeout_secs, 2);
+        assert_eq!(codex_config.streaming_idle_timeout_secs, 3);
+        assert_eq!(codex_config.non_streaming_timeout_secs, 4);
     }
 }

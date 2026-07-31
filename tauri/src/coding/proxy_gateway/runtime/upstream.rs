@@ -2418,15 +2418,12 @@ impl AnthropicSseAggregate {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
-        let has_content = !self.content_blocks.is_empty()
-            || self
-                .message
-                .as_ref()
-                .and_then(|message| message.get("content"))
-                .and_then(Value::as_array)
-                .is_some_and(|content| !content.is_empty());
         let has_terminal = self.stop_reason.as_ref().is_some_and(|reason| !reason.is_empty());
-        if has_content && !has_terminal {
+        // Fail-closed: a stream that ends without any terminal stop_reason is
+        // treated as a connection failure even when no content block arrived,
+        // so a truncated/empty stream is never surfaced to the non-streaming
+        // client as a 200 with an empty `{}` body.
+        if !has_terminal {
             return Err(GatewayForwardError::new(
                 "Anthropic Messages SSE ended without a terminal stop_reason",
                 GatewayFailureKind::Connection,
@@ -2634,14 +2631,24 @@ impl GeminiSseAggregate {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
-        let has_content = self.candidates.values().any(|candidate| {
-            !candidate.parts.is_empty() || candidate.finish_reason.is_some()
+        let has_terminal_finish = self.candidates.values().any(|candidate| {
+            candidate
+                .finish_reason
+                .as_ref()
+                .is_some_and(|reason| !reason.is_empty())
         });
-        let has_terminal = self
-            .candidates
-            .values()
-            .any(|candidate| candidate.finish_reason.as_ref().is_some_and(|reason| !reason.is_empty()));
-        if has_content && !has_terminal {
+        let has_blocked_prompt_feedback = self
+            .prompt_feedback
+            .as_ref()
+            .and_then(|feedback| feedback.get("blockReason"))
+            .and_then(Value::as_str)
+            .is_some_and(|reason| !reason.trim().is_empty());
+        // Fail-closed: a stream that ends without any terminal finishReason is
+        // treated as a connection failure so a truncated/empty stream is never
+        // surfaced as a 200 with an empty `{}` body. Gemini safety blocks are
+        // the protocol-level exception: promptFeedback.blockReason is the
+        // terminal result for blocked prompts and may arrive with no candidates.
+        if !has_terminal_finish && !has_blocked_prompt_feedback {
             return Err(GatewayForwardError::new(
                 "Gemini Native SSE ended without a terminal finishReason",
                 GatewayFailureKind::Connection,
@@ -2922,12 +2929,6 @@ impl OpenAiChatSseAggregate {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
-        let has_content = self.choices.values().any(|choice| {
-            !choice.content.is_empty()
-                || !choice.reasoning_content.is_empty()
-                || !choice.tool_calls.is_empty()
-                || choice.finish_reason.is_some()
-        });
         let has_terminal = self.choices.values().any(|choice| {
             choice
                 .finish_reason
@@ -2935,7 +2936,11 @@ impl OpenAiChatSseAggregate {
                 .and_then(Value::as_str)
                 .is_some_and(|reason| !reason.trim().is_empty())
         });
-        if has_content && !has_terminal {
+        // Fail-closed: a stream that ends without any terminal finish_reason
+        // is treated as a connection failure even when no choice content
+        // arrived, so a truncated/empty stream is never surfaced as a 200 with
+        // an empty `{}` body.
+        if !has_terminal {
             return Err(GatewayForwardError::new(
                 "OpenAI Chat SSE ended without a terminal finish_reason",
                 GatewayFailureKind::Connection,
@@ -13946,6 +13951,79 @@ data: {data}\r\n\r\n"
         assert_eq!(value["stop_reason"], "tool_use");
         assert_eq!(value["usage"]["input_tokens"], 4);
         assert_eq!(value["usage"]["output_tokens"], 7);
+    }
+
+    #[tokio::test]
+    async fn anthropic_sse_aggregate_fails_closed_when_stream_has_no_content_or_terminal() {
+        // A stream that is truncated before any content block or stop_reason
+        // must fail closed (500) rather than surface an empty `{}` 200 body.
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_trunc\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"usage\":{\"input_tokens\":4}}}\n\n"
+        );
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+        let error = aggregate_anthropic_sse_stream(stream, None)
+            .await
+            .expect_err("empty/truncated Anthropic stream must fail closed");
+        assert_eq!(error.kind, GatewayFailureKind::Connection);
+        assert!(error.message.contains("without a terminal stop_reason"));
+    }
+
+    #[tokio::test]
+    async fn openai_chat_sse_aggregate_fails_closed_when_stream_has_no_content_or_terminal() {
+        let sse = "data: {\"id\":\"chatcmpl_trunc\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n";
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+        let error = aggregate_openai_chat_sse_stream(stream, None)
+            .await
+            .expect_err("empty/truncated Chat stream must fail closed");
+        assert_eq!(error.kind, GatewayFailureKind::Connection);
+        assert!(error.message.contains("without a terminal finish_reason"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_fails_closed_when_stream_has_no_candidates_or_terminal() {
+        let sse = "data: {\"responseId\":\"resp_trunc\",\"modelVersion\":\"gemini-2.5-flash\",\"candidates\":[]}\n\n";
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+        let error = aggregate_gemini_sse_stream(stream, None)
+            .await
+            .expect_err("empty/truncated Gemini stream must fail closed");
+        assert_eq!(error.kind, GatewayFailureKind::Connection);
+        assert!(error.message.contains("without a terminal finishReason"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_allows_blocked_prompt_feedback_without_finish_reason() {
+        let sse = concat!(
+            "data: {\"responseId\":\"resp_blocked\",\"modelVersion\":\"gemini-2.5-flash\",",
+            "\"promptFeedback\":{\"blockReason\":\"SAFETY\",\"blockReasonMessage\":\"blocked by safety filters\"},",
+            "\"candidates\":[],",
+            "\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":4}}\n\n",
+        );
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+
+        let (raw, body) = aggregate_gemini_sse_stream(stream, None)
+            .await
+            .expect("blocked prompt feedback is a valid Gemini terminal result");
+        let value: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(raw, sse.as_bytes());
+        assert_eq!(value["responseId"], "resp_blocked");
+        assert_eq!(value["modelVersion"], "gemini-2.5-flash");
+        assert_eq!(value["promptFeedback"]["blockReason"], "SAFETY");
+        assert_eq!(
+            value["promptFeedback"]["blockReasonMessage"],
+            "blocked by safety filters"
+        );
+        assert!(value["candidates"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(value["usageMetadata"]["promptTokenCount"], 4);
     }
 
     #[tokio::test]

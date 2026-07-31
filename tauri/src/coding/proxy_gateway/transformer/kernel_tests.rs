@@ -1943,6 +1943,81 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn gemini_prompt_feedback_block_reason_maps_to_refusal_non_stream() {
+        // Non-stream path (gemini/convert.rs): a Gemini response carrying
+        // promptFeedback.blockReason and no candidates must surface as a
+        // refusal message with finish_reason=refusal.
+        let llm = gemini_response_to_llm(json!({
+            "responseId": "gem_block_1",
+            "modelVersion": "gemini-2.5",
+            "promptFeedback": {
+                "blockReason": "SAFETY",
+                "blockReasonMessage": "blocked by safety filters"
+            }
+        }));
+        let content = match &llm.choices[0].message.content {
+            MessageContent::Text(text) => text.clone(),
+            _ => String::new(),
+        };
+        assert!(
+            content.contains("Request blocked by Gemini safety filters: SAFETY"),
+            "blockReason should surface as refusal text, got: {content}"
+        );
+        assert_eq!(llm.choices[0].finish_reason.as_deref(), Some("refusal"));
+    }
+
+    #[test]
+    fn gemini_block_reason_stream_to_chat_emits_blocked_text_and_content_filter() {
+        // Stream path (stream.rs): promptFeedback.blockReason -> TextDelta +
+        // Finish(refusal). Routed to Chat, the refusal finish must map to
+        // content_filter (stream.rs refusal => content_filter).
+        let sse = "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\",\"blockReasonMessage\":\"blocked\"},\"candidates\":[]}\n\n";
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
+            sse.to_string(),
+        );
+        assert!(
+            output.contains("[blocked:SAFETY]"),
+            "blockReason should emit a [blocked:...] text delta"
+        );
+        let finish = sse_data_values(&output)
+            .into_iter()
+            .find(|value| value["choices"][0]["finish_reason"] == "content_filter")
+            .expect("refusal finish should map to content_filter for Chat target");
+        assert!(finish["choices"][0]["finish_reason"] == "content_filter");
+    }
+
+    #[test]
+    fn chat_refusal_finish_stream_to_gemini_maps_to_safety() {
+        // Stream LLM->Gemini: a Chat source with finish_reason=refusal produces a
+        // unified refusal finish, which the Gemini outbound must map to SAFETY
+        // (stream.rs refusal => SAFETY).
+        let sse = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"refusal\"}]}\n\ndata: [DONE]\n\n";
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            sse.to_string(),
+        );
+        assert!(
+            output.contains("\"finishReason\":\"SAFETY\""),
+            "Chat refusal finish should map to SAFETY finishReason for Gemini target"
+        );
+    }
+
+    #[test]
+    fn refusal_finish_maps_to_gemini_safety_non_stream() {
+        // Non-stream LLM->Gemini (gemini/convert.rs openai_finish_to_gemini_finish):
+        // a refusal finish_reason must map to SAFETY.
+        let llm = gemini_response_to_llm(json!({
+            "responseId": "gem_block_2",
+            "modelVersion": "gemini-2.5",
+            "promptFeedback": {"blockReason": "SAFETY"}
+        }));
+        assert_eq!(llm.choices[0].finish_reason.as_deref(), Some("refusal"));
+        let gemini = llm_response_to_gemini(llm);
+        assert_eq!(gemini["candidates"][0]["finishReason"], "SAFETY");
+    }
+
+    #[test]
     fn chat_outbound_normalizes_developer_role_to_system() {
         // Codex (Responses) carries developer instructions as `developer` messages.
         // Third-party OpenAI-compatible chat upstreams only accept `system`, so the
@@ -2749,6 +2824,41 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             .iter()
             .find(|value| value["choices"][0]["finish_reason"] == "tool_calls")
             .expect("custom tool stream should finish as tool_calls");
+        assert_eq!(finish["choices"][0]["delta"], json!({}));
+    }
+
+    #[test]
+    fn responses_custom_tool_sparse_stream_surfaces_call_without_deltas() {
+        // Sparse tool stream: only output_item.added + custom_tool_call_input.done,
+        // no delta events in between. The added header must still surface the call
+        // (id+name) and the done snapshot must flush the complete arguments, so a
+        // non-streaming/dense-unaware client still receives the tool call.
+        let sse = r#"event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"type":"custom_tool_call","status":"in_progress","call_id":"call_sparse_001","name":"apply_patch","input":""}}
+
+event: response.custom_tool_call_input.done
+data: {"type":"response.custom_tool_call_input.done","sequence_number":3,"item_id":"call_sparse_001","output_index":0,"input":"*** Begin Patch\n@@ def hello():\n-    print(\"Hello\")\n+    print(\"Hi\")\n*** End Patch\n"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":4,"output_index":0,"item":{"type":"custom_tool_call","status":"completed","call_id":"call_sparse_001","name":"apply_patch","input":"*** Begin Patch\n@@ def hello():\n-    print(\"Hello\")\n+    print(\"Hi\")\n*** End Patch\n"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_sparse","model":"gpt-5","status":"completed","output":[{"type":"custom_tool_call","status":"completed","call_id":"call_sparse_001","name":"apply_patch","input":"*** Begin Patch\n@@ def hello():\n-    print(\"Hello\")\n+    print(\"Hi\")\n*** End Patch\n"}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}
+
+"#;
+        let output =
+            collect_stream(ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat), sse.to_string());
+        assert!(output.contains(TOOL_TYPE_RESPONSES_CUSTOM_TOOL));
+        assert!(output.contains("response_custom_tool_call"));
+        assert!(output.contains("apply_patch"));
+        assert!(output.contains("call_sparse_001"));
+        // Complete arguments must be flushed from the done snapshot even without deltas.
+        assert!(output.contains("*** Begin Patch"));
+        assert!(output.contains("*** End Patch"));
+        let finish = sse_data_values(&output)
+            .into_iter()
+            .find(|value| value["choices"][0]["finish_reason"] == "tool_calls")
+            .expect("sparse custom tool stream should finish as tool_calls");
         assert_eq!(finish["choices"][0]["delta"], json!({}));
     }
 

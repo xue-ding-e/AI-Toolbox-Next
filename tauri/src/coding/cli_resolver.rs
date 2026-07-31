@@ -1038,19 +1038,29 @@ mod tests {
     fn fnm_default_alias_candidate_precedes_scanned_versions() {
         let test_dir = TestDir::new("fnm-default");
         let fnm_dir = test_dir.path().join("fnm");
-        let default_bin = fnm_dir.join("aliases").join("default").join("bin");
-        let version_bin = fnm_dir
+        let default_alias = fnm_dir.join("aliases").join("default");
+        let default_bin = default_alias.join("bin");
+        let version_installation = fnm_dir
             .join("node-versions")
             .join("v22.18.0")
-            .join("installation")
-            .join("bin");
+            .join("installation");
+        let version_bin = version_installation.join("bin");
 
         fs::create_dir_all(&default_bin).expect("failed to create default alias bin dir");
         fs::create_dir_all(&version_bin).expect("failed to create fnm version bin dir");
 
         let candidates = collect_fnm_candidates(&fnm_dir, "opencode");
 
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(candidates.first(), Some(&default_alias.join("opencode")));
+            assert!(candidates.contains(&default_alias.join("opencode.cmd")));
+            assert!(candidates.contains(&version_installation.join("opencode")));
+        }
+
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(candidates.first(), Some(&default_bin.join("opencode")));
+
         assert!(candidates.contains(&version_bin.join("opencode")));
     }
 

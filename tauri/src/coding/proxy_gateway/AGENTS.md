@@ -106,7 +106,7 @@ sequenceDiagram
 - 网关运行态必须保持 tokio async 链路：监听使用 `tokio::net::TcpListener`，连接处理使用 `tokio::spawn`，HTTP 读写和流式 body 写回都 `.await`。不要在请求路径里重新引入 `std::thread + block_on` 或 thread-per-connection。
 - 流式 failover 只有在首个有协议意义的 chunk 到达后才算当前 provider 成功；单纯 SSE 控制事件、heartbeat、created/completed 但没有文本/工具/候选等实际内容时仍应按 empty response 失败并允许重试/故障转移。完全没有收到非空 chunk 的首包前断流仍按 timeout 处理。写回客户端时每个 chunk 读取都必须套 idle timeout，避免上游半开连接永久挂住。
 - Gateway 连通性测试的 `timeoutSecs` 是从请求开始计算的整体预算，路由/建连/首字节和后续流读取共享同一个 deadline，不能在拿到 response 后重新分配完整时长。HTTP 2xx 流也必须把 `event: response.failed`、`type: response.failed` 和嵌套 `response.error` / failure status 判为失败。
-- 非流式 2xx/3xx 响应也必须做 empty response detection：body 为空、或协议 JSON 没有 Chat choices / Responses output / Anthropic content / Gemini candidates 等实际内容时，按 `empty_response` 失败处理并进入现有同 provider retry / 跨 provider failover；不能把 200 空 body 当成功返回给 CLI。
+- 非流式 2xx/3xx 响应也必须做 empty response detection：body 为空、或协议 JSON 没有 Chat choices / Responses output / Anthropic content / Gemini candidates 等实际内容时，按 `empty_response` 失败处理并进入现有同 provider retry / 跨 provider failover；不能把 200 空 body 当成功返回给 CLI。Gemini `promptFeedback.blockReason` 是合法 blocked prompt 终态，即使 `candidates: []` 且没有 candidate `finishReason`，也必须保留为响应内容，不能当截断流重试或故障转移。
 - Header 大小写保真不能依赖 `reqwest::HeaderMap`，`HeaderName::from_bytes` 会规范化名称。需要保留原始大小写时走 `runtime/header_preserving_client.rs` 的原始 HTTP/1.1 写出路径；系统代理和 SOCKS 代理场景继续回退现有 reqwest 路径以尊重用户代理设置。
 - header-preserving 流式路径的 per-chunk idle timeout 必须使用用户/CLI 的 `streaming_idle_timeout_secs`，禁止再 `min(..., 60s)` 硬顶；否则用户调大 idle 仍会在 60s 被掐断，复现 mid-response Connection closed。无总超时的 stream client 在读非 SSE JSON body 时仍必须套 `non_streaming_timeout` 兜底。
 - `proxy_request_logs.latency_ms` 表示首 token/首 chunk 延迟；非流式或拿不到首包时间时才退回完整请求耗时。`duration_ms` 才表示完整请求耗时。

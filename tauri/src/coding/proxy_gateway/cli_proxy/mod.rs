@@ -4092,4 +4092,77 @@ api_backend = "responses"
         .expect("managed content");
         assert!(rewritten.contains("http://172.20.0.1:37123/grok/v1"));
     }
+
+    #[test]
+    fn restore_deletes_gateway_created_file_when_it_did_not_exist_before() {
+        // G-03 regression guard: when the gateway created a config file that
+        // did not exist before engaging, restore must delete it rather than
+        // leaving an empty `{}` file behind.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("settings.json");
+        // The gateway wrote the file during engage; it did not pre-exist.
+        std::fs::write(&file_path, "{\"managed\":\"by-gateway\"}").unwrap();
+        let manifest = CliProxyManifest {
+            schema_version: 1,
+            managed_by: "ai-toolbox".to_string(),
+            cli_key: GatewayCliKey::Claude,
+            enabled: true,
+            mode: GatewayProxyMode::Single,
+            primary_provider_id: "provider-1".to_string(),
+            base_origin: "http://127.0.0.1:37123".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            files: vec![CliProxyManifestFile {
+                kind: CLAUDE_SETTINGS_KIND.to_string(),
+                path: path_to_string(&file_path),
+                existed: false,
+                backup_rel_path: format!("{CLAUDE_SETTINGS_KIND}.bak"),
+                backup_sha256: None,
+                backup_size: None,
+                managed_fields: Vec::new(),
+            }],
+        };
+
+        assert!(
+            should_delete_gateway_created_file(&manifest, CLAUDE_SETTINGS_KIND),
+            "a file the gateway created (existed=false) must be flagged for deletion"
+        );
+        delete_if_exists(&file_path).unwrap();
+        assert!(!file_path.exists(), "restore must delete the gateway-created file");
+    }
+
+    #[test]
+    fn restore_keeps_pre_existing_file_when_it_existed_before() {
+        // The inverse case: a file that pre-existed (existed=true) must NOT be
+        // flagged for deletion; restore restores its backup instead.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("settings.json");
+        std::fs::write(&file_path, "{\"pre\":\"existing\"}").unwrap();
+        let manifest = CliProxyManifest {
+            schema_version: 1,
+            managed_by: "ai-toolbox".to_string(),
+            cli_key: GatewayCliKey::Claude,
+            enabled: true,
+            mode: GatewayProxyMode::Single,
+            primary_provider_id: "provider-1".to_string(),
+            base_origin: "http://127.0.0.1:37123".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            files: vec![CliProxyManifestFile {
+                kind: CLAUDE_SETTINGS_KIND.to_string(),
+                path: path_to_string(&file_path),
+                existed: true,
+                backup_rel_path: format!("{CLAUDE_SETTINGS_KIND}.bak"),
+                backup_sha256: None,
+                backup_size: None,
+                managed_fields: Vec::new(),
+            }],
+        };
+
+        assert!(
+            !should_delete_gateway_created_file(&manifest, CLAUDE_SETTINGS_KIND),
+            "a pre-existing file (existed=true) must not be deleted on restore"
+        );
+        assert!(file_path.exists(), "pre-existing file must be untouched by the delete path");
+    }
 }
