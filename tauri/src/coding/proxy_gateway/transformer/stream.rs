@@ -1522,6 +1522,44 @@ fn chat_usage_to_anthropic(usage: Option<&Value>) -> Value {
     })
 }
 
+fn direct_custom_tool_item_id(call_id: &str) -> String {
+    if call_id.starts_with("ctc") {
+        call_id.to_string()
+    } else if call_id.is_empty() {
+        "ctc_0".to_string()
+    } else {
+        format!("ctc_{call_id}")
+    }
+}
+
+fn direct_custom_tool_added_item(item_id: &str, status: &str, call_id: &str, name: &str) -> Value {
+    json!({
+        "id": item_id,
+        "type": "custom_tool_call",
+        "status": status,
+        "call_id": call_id,
+        "name": name,
+        "input": ""
+    })
+}
+
+fn direct_custom_tool_done_item(
+    item_id: &str,
+    status: &str,
+    call_id: &str,
+    name: &str,
+    input: &str,
+) -> Value {
+    json!({
+        "id": item_id,
+        "type": "custom_tool_call",
+        "status": status,
+        "call_id": call_id,
+        "name": name,
+        "input": custom_tool_input_from_chat_arguments(input)
+    })
+}
+
 fn trusted_chat_stream_usage(value: &Value, usage_only_chunk: bool) -> Option<Value> {
     let usage = value.get("usage").filter(|usage| !usage.is_null())?;
     if usage_only_chunk || !is_zero_chat_usage_placeholder(usage) {
@@ -2158,14 +2196,24 @@ impl TargetStreamState {
             let tool_arguments = tool.arguments.clone();
             let tool_reasoning_content = tool.reasoning_content.clone();
             let response_item_id = tool.response_item_id.clone();
-            let mut done_item = response_tool_done_item_from_chat_name(
-                &response_item_id,
-                "completed",
-                &tool_id,
-                &tool_name,
-                &tool_arguments,
-                self.codex_tool_context.as_ref(),
-            );
+            let mut done_item = if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+                direct_custom_tool_done_item(
+                    &response_item_id,
+                    "completed",
+                    &tool_id,
+                    &tool_name,
+                    &tool_arguments,
+                )
+            } else {
+                response_tool_done_item_from_chat_name(
+                    &response_item_id,
+                    "completed",
+                    &tool_id,
+                    &tool_name,
+                    &tool_arguments,
+                    self.codex_tool_context.as_ref(),
+                )
+            };
             if !tool_reasoning_content.trim().is_empty() {
                 done_item["reasoning_content"] = json!(tool_reasoning_content);
             }
@@ -2933,18 +2981,26 @@ impl TargetStreamState {
                 out.extend(self.ensure_responses_start());
                 if !self.seen_response_tools.contains_key(&index) {
                     let output_index = self.next_responses_output_index();
-                    let response_item_id = response_tool_item_id_from_chat_name(
-                        &id,
-                        &name,
-                        self.codex_tool_context.as_ref(),
-                    );
-                    let response_item = response_tool_added_item_from_chat_name(
-                        &response_item_id,
-                        "in_progress",
-                        &id,
-                        &name,
-                        self.codex_tool_context.as_ref(),
-                    );
+                    let response_item_id = if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+                        direct_custom_tool_item_id(&id)
+                    } else {
+                        response_tool_item_id_from_chat_name(
+                            &id,
+                            &name,
+                            self.codex_tool_context.as_ref(),
+                        )
+                    };
+                    let response_item = if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+                        direct_custom_tool_added_item(&response_item_id, "in_progress", &id, &name)
+                    } else {
+                        response_tool_added_item_from_chat_name(
+                            &response_item_id,
+                            "in_progress",
+                            &id,
+                            &name,
+                            self.codex_tool_context.as_ref(),
+                        )
+                    };
                     self.seen_response_tools.insert(
                         index,
                         TargetResponseToolState {

@@ -2863,6 +2863,63 @@ data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_sp
     }
 
     #[test]
+    fn chat_custom_tool_stream_converts_to_responses_custom_events() {
+        let sse = r#"data: {"id":"chatcmpl_custom","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_custom","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_custom_001","type":"responses_custom_tool","function":{"name":""},"response_custom_tool_call":{"call_id":"call_custom_001","name":"apply_patch","input":"*** Begin Patch\n*** End Patch"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_custom","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+"#;
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            sse.to_string(),
+        );
+        let values = sse_data_values(&output);
+
+        let added = values
+            .iter()
+            .find(|value| value["type"] == "response.output_item.added")
+            .expect("custom tool item added");
+        assert_eq!(added["item"]["type"], "custom_tool_call");
+        assert_eq!(added["item"]["id"], "ctc_call_custom_001");
+        assert_eq!(added["item"]["call_id"], "call_custom_001");
+        assert_eq!(added["item"]["name"], "apply_patch");
+
+        let delta = values
+            .iter()
+            .find(|value| value["type"] == "response.custom_tool_call_input.delta")
+            .expect("custom tool input delta");
+        assert_eq!(delta["item_id"], "ctc_call_custom_001");
+        assert_eq!(delta["output_index"], added["output_index"]);
+        assert!(delta["delta"].as_str().unwrap().contains("*** Begin Patch"));
+
+        let done = values
+            .iter()
+            .find(|value| value["type"] == "response.custom_tool_call_input.done")
+            .expect("custom tool input done");
+        assert_eq!(done["item_id"], "ctc_call_custom_001");
+        assert!(done["input"].as_str().unwrap().contains("*** End Patch"));
+
+        let item_done = values
+            .iter()
+            .find(|value| {
+                value["type"] == "response.output_item.done"
+                    && value["item"]["type"] == "custom_tool_call"
+            })
+            .expect("custom tool output item done");
+        assert_eq!(item_done["item"]["id"], "ctc_call_custom_001");
+        assert_eq!(item_done["item"]["input"], done["input"]);
+        assert!(!values.iter().any(|value| {
+            value["type"] == "response.output_item.added"
+                && value["item"]["type"] == "function_call"
+                && value["item"]["call_id"] == "call_custom_001"
+        }));
+    }
+
+    #[test]
     fn responses_failed_stream_to_chat_emits_error_envelope() {
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),

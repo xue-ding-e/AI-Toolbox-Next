@@ -568,6 +568,9 @@ fn anthropic_sse_event_has_meaningful_content(event_type: &str, value: &Value) -
 }
 
 fn generic_sse_value_has_meaningful_content(value: &Value) -> bool {
+    if gemini_prompt_feedback_has_block_reason(value) {
+        return true;
+    }
     if let Some(choices) = value.get("choices").and_then(Value::as_array) {
         return choices.iter().any(choice_has_meaningful_content);
     }
@@ -9336,6 +9339,9 @@ fn json_value_has_meaningful_content(value: &Value) -> bool {
         Value::String(text) => !text.trim().is_empty(),
         Value::Array(items) => items.iter().any(json_value_has_meaningful_content),
         Value::Object(object) => {
+            if gemini_prompt_feedback_has_block_reason(value) {
+                return true;
+            }
             if let Some(choices) = object.get("choices").and_then(Value::as_array) {
                 return choices.iter().any(choice_has_meaningful_content);
             }
@@ -9528,6 +9534,14 @@ fn candidate_has_meaningful_content(candidate: &Value) -> bool {
         .and_then(|content| content.get("parts"))
         .and_then(Value::as_array)
         .is_some_and(|parts| parts.iter().any(content_part_has_meaningful_content))
+}
+
+fn gemini_prompt_feedback_has_block_reason(value: &Value) -> bool {
+    value
+        .get("promptFeedback")
+        .and_then(|feedback| feedback.get("blockReason"))
+        .and_then(Value::as_str)
+        .is_some_and(|reason| !reason.trim().is_empty())
 }
 
 fn extract_reasoning_like_text(value: &Value) -> Option<&str> {
@@ -11981,6 +11995,16 @@ data: {data}\r\n\r\n"
         }
     }
 
+    #[test]
+    fn gemini_blocked_prompt_feedback_is_meaningful_with_empty_candidates() {
+        let body = br#"{"promptFeedback":{"blockReason":"SAFETY","blockReasonMessage":"blocked by safety filters"},"candidates":[]}"#;
+        let response = protocol_error_debug_response(body);
+
+        assert_eq!(classify_success_protocol_error(&response), None);
+        assert_eq!(classify_empty_success_response(&response), None);
+        assert!(response_body_has_meaningful_content(body));
+    }
+
     #[tokio::test]
     async fn streaming_first_chunk_validation_fails_closed_on_response_failed_envelope() {
         let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(concat!(
@@ -11999,6 +12023,25 @@ data: {data}\r\n\r\n"
             .expect_err("response.failed first chunk must fail-closed");
         assert_eq!(error.kind, GatewayFailureKind::UpstreamBadRequest);
         assert!(response.body_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_accepts_gemini_blocked_prompt_feedback() {
+        let sse = concat!(
+            "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\",",
+            "\"blockReasonMessage\":\"blocked by safety filters\"},\"candidates\":[]}\n\n"
+        );
+        let stream: DebugBodyStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(sse.as_bytes().to_vec())]));
+        let mut response = protocol_error_debug_response(b"");
+        response.is_streaming = true;
+        response.headers = vec![("Content-Type".to_string(), "text/event-stream".to_string())];
+        response.body_stream = Some(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("Gemini blocked prompt feedback is meaningful SSE content");
+        assert!(response.body_stream.is_some());
     }
 
     #[tokio::test]
@@ -16280,6 +16323,36 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
         assert_eq!(weight.scope, model_health::FailureScope::Provider);
         assert_eq!(weight.score, 5);
         assert_eq!(weight.category, "auth");
+    }
+
+    #[test]
+    fn gateway_parse_failure_is_not_retryable() {
+        assert!(!should_retry_failure(GatewayFailureKind::GatewayParse));
+    }
+
+    #[test]
+    fn merge_usage_snapshot_overwrites_cumulative_fields() {
+        let mut usage = Some(json!({
+            "input_tokens": 5,
+            "output_tokens": 2,
+            "total_tokens": 7
+        }));
+
+        merge_usage_snapshot(
+            &mut usage,
+            &json!({
+                "input_tokens": 8,
+                "output_tokens": 3,
+                "total_tokens": 11,
+                "cache_read_input_tokens": 4
+            }),
+        );
+
+        let usage = usage.expect("merged usage");
+        assert_eq!(usage["input_tokens"], 8);
+        assert_eq!(usage["output_tokens"], 3);
+        assert_eq!(usage["total_tokens"], 11);
+        assert_eq!(usage["cache_read_input_tokens"], 4);
     }
 
     #[test]

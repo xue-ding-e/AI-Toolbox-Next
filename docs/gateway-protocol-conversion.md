@@ -469,7 +469,7 @@ OpenAI Responses 聚合还有额外终态约束：
 - terminal `response` 缺失、为 null、空对象或非对象时保留最近的 base snapshot；terminal status 缺失或为空时按 event type 回填。
 - 已收到 `response.output_item.done` 且 terminal snapshot 没有非空 output 时，用已聚合 item 重建 output，避免 created snapshot 的陈旧空数组覆盖实际完成的输出。
 
-Chat / Anthropic / Gemini 聚合同样 fail-closed：已有内容但没有 finish/stop 信号时返回 `GatewayFailureKind::Connection`，进入 retry/failover，不能把 mid-content 截断流伪装成 200 JSON。Gemini 的 `promptFeedback.blockReason` 是例外：安全拦截/内容过滤可以合法返回 `candidates: []` 且没有 candidate `finishReason`，聚合器必须保留 `promptFeedback` 并返回 Gemini JSON，再由 transformer 在跨协议路径映射为 refusal。
+Chat / Anthropic / Gemini 聚合同样 fail-closed：只要缺少对应协议的 finish/stop/terminal 信号，就返回 `GatewayFailureKind::Connection` 并进入 retry/failover；即使已经收到部分内容，也不能把截断流伪装成 200 JSON，更不能把无内容截断流聚合成空成功 JSON。Gemini 的 `promptFeedback.blockReason` 是例外：安全拦截/内容过滤可以合法返回 `candidates: []` 且没有 candidate `finishReason`，聚合器和 runtime empty-response 分类都必须保留 `promptFeedback` 并视为有协议意义的响应内容，再由 transformer 在跨协议路径映射为 refusal。
 
 ### 11.2 客户端流式
 
