@@ -20,6 +20,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Label,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -420,7 +421,6 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
         </div>
 
         <div className={styles.filterActions}>
-          <span className={styles.filterDivider} aria-hidden="true" />
           <div className={styles.filterSection}>
             <Clock className={styles.filterIcon} size={14} aria-hidden="true" />
             <Select
@@ -468,6 +468,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           value={formatInteger(summary?.total_requests ?? 0)}
           meta={t('gateway.page.statistics.successRateOnly', { rate: successRate.toFixed(1) })}
           tone="traffic"
+          visual="curve"
         />
         <StatTile
           icon={<Zap size={15} />}
@@ -479,6 +480,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
             cache: formatCompactInteger(totalCacheTokens),
           })}
           tone="info"
+          visual="stack"
         />
         <StatTile
           icon={<Coins size={15} />}
@@ -486,43 +488,72 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           value={formatUsd(summary?.total_cost_usd ?? '0', 6)}
           meta={t('gateway.page.statistics.dbSummaryOnly')}
           tone="warning"
+          visual="coins"
         />
       </div>
 
       <section className={styles.chartPanel}>
         <div className={styles.panelHeader}>
           <span>
-            <BarChart3 size={14} aria-hidden="true" />
+            <BarChart3 className={styles.panelIcon} size={14} aria-hidden="true" />
             {t('gateway.page.statistics.trends')}
           </span>
         </div>
         <div className={styles.chartBody}>
           {chartRows.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartRows} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
-                <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: 'var(--color-text-tertiary)', fontSize: 11 }} />
+              <AreaChart data={chartRows} margin={{ top: 12, right: 24, left: 8, bottom: 4 }}>
+                <CartesianGrid stroke="var(--color-border)" strokeDasharray="4 4" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  axisLine={{ stroke: 'var(--color-border)' }}
+                  tickLine={false}
+                  tick={{ fill: 'var(--color-text-tertiary)', fontSize: 11 }}
+                />
                 <YAxis
                   yAxisId="tokens"
+                  axisLine={{ stroke: 'var(--color-border)' }}
+                  tickLine={false}
                   tick={{ fill: 'var(--color-text-tertiary)', fontSize: 11 }}
                   tickFormatter={(value) => formatCompactInteger(Number(value))}
-                />
+                >
+                  <Label
+                    value={t('gateway.page.statistics.columns.tokens')}
+                    angle={-90}
+                    position="insideLeft"
+                    fill="var(--color-text-tertiary)"
+                    style={{ fontSize: 10 }}
+                  />
+                </YAxis>
                 <YAxis
                   yAxisId="cost"
                   orientation="right"
+                  axisLine={{ stroke: 'var(--color-border)' }}
+                  tickLine={false}
                   tick={{ fill: 'var(--color-text-tertiary)', fontSize: 11 }}
                   tickFormatter={(value) => `$${value}`}
-                />
+                >
+                  <Label
+                    value={t('gateway.page.statistics.columns.cost')}
+                    angle={90}
+                    position="insideRight"
+                    fill="var(--color-text-tertiary)"
+                    style={{ fontSize: 10 }}
+                  />
+                </YAxis>
                 <Tooltip
                   contentStyle={{
                     background: 'var(--color-bg-elevated)',
                     border: '1px solid var(--color-border)',
                     color: 'var(--color-text-primary)',
                   }}
+                  cursor={{ stroke: 'var(--color-border-secondary)', strokeDasharray: '4 4' }}
                 />
                 <Legend
                   formatter={renderTrendLegendLabel}
                   onClick={handleTrendLegendClick}
+                  iconType="plainline"
+                  wrapperStyle={{ paddingTop: 8 }}
                 />
                 <Area
                   yAxisId="tokens"
@@ -579,7 +610,11 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       <section className={styles.dataPanel}>
         <div className={styles.panelHeader}>
           <span>
-            {activeStatsTab === 'providers' ? <Server size={14} aria-hidden="true" /> : <Gauge size={14} aria-hidden="true" />}
+            {activeStatsTab === 'providers' ? (
+              <Server className={styles.panelIcon} size={14} aria-hidden="true" />
+            ) : (
+              <Gauge className={styles.panelIcon} size={14} aria-hidden="true" />
+            )}
             {t('gateway.page.statistics.breakdown')}
           </span>
           <ManagementSegmented<StatsTabKey>

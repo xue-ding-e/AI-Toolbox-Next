@@ -768,7 +768,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       <section className={styles.dataPanel}>
         <div className={styles.panelHeader}>
           <span>
-            <Network size={14} aria-hidden="true" />
+            <Network className={styles.panelIcon} size={14} aria-hidden="true" />
             {t('gateway.page.requests.records')}
           </span>
           <div className={styles.panelHeaderActions}>

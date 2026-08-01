@@ -1,15 +1,17 @@
 .statTile {
   --stat-accent: var(--ant-color-primary);
   --stat-accent-border: color-mix(in srgb, var(--stat-accent) 18%, var(--color-border-card));
-  --stat-surface: color-mix(in srgb, var(--color-bg-container) 72%, var(--color-bg-elevated));
+  --stat-surface: var(--color-bg-container);
 
+  position: relative;
   display: flex;
   min-width: 0;
-  min-height: 110px;
+  min-height: 156px;
   flex-direction: column;
-  justify-content: center;
-  gap: 9px;
-  padding: 18px 16px;
+  justify-content: flex-start;
+  gap: 0;
+  overflow: hidden;
+  padding: 20px 22px;
   border-radius: 8px;
   background: var(--stat-surface);
   border: 1px solid color-mix(in srgb, var(--color-border-card) 82%, transparent);
@@ -31,7 +33,7 @@
 }
 
 .statTile_traffic {
-  --stat-accent: color-mix(in srgb, var(--ant-color-primary) 58%, var(--color-status-success));
+  --stat-accent: var(--ant-color-primary);
 }
 
 .statTile_success {
@@ -50,28 +52,42 @@
   --stat-accent: var(--color-text-tertiary);
 }
 
+.statTile_traffic,
+.statTile_info,
+.statTile_warning {
+  border-color: color-mix(in srgb, var(--stat-accent) 22%, var(--color-border-card));
+}
+
 .statHeading {
+  position: relative;
+  z-index: 1;
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
   color: var(--stat-accent);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.2;
 }
 
 .statIcon {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--stat-accent) 28%, transparent);
+  border-radius: 50%;
+  background: var(--stat-accent);
+  color: var(--ant-color-text-light-solid);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--stat-accent) 18%, transparent);
 }
 
 .statLabel,
 .statMeta {
+  min-width: 0;
   overflow: hidden;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -83,10 +99,13 @@
 }
 
 .statValue {
+  position: relative;
+  z-index: 1;
   min-width: 0;
+  margin-top: 18px;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 22px;
+  font-size: 30px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   line-height: 1.16;
@@ -95,13 +114,20 @@
 }
 
 .statMeta {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .statTile_info .statValue {
-  font-size: 24px;
+  font-size: 32px;
   font-weight: 720;
+}
+
+.statTile_info .statMeta {
+  max-width: 68%;
 }
 
 .statValue_info,
@@ -119,4 +145,124 @@
 
 .statValue_muted {
   color: var(--color-text-tertiary);
+}
+
+.statVisual {
+  position: absolute;
+  z-index: 0;
+  right: -1px;
+  bottom: -1px;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0.34;
+}
+
+.statVisual_curve {
+  right: 2px;
+  bottom: -2px;
+  width: 32%;
+  height: 86%;
+}
+
+.statVisual_stack {
+  right: -3px;
+  bottom: -8px;
+  width: 30%;
+  height: 88%;
+}
+
+.statVisual_coins {
+  top: 50%;
+  right: -14px;
+  bottom: auto;
+  width: 56%;
+  height: 88%;
+  opacity: 0.9;
+  transform: translateY(-50%);
+}
+
+.visualSvg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.visualWave {
+  fill: none;
+  stroke: var(--stat-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.visualCubeTop,
+.visualCubeLeft,
+.visualCubeRight {
+  stroke: var(--stat-accent);
+  stroke-linejoin: round;
+  stroke-width: 1;
+}
+
+.visualCubeTop {
+  fill: color-mix(in srgb, var(--stat-accent) 12%, transparent);
+}
+
+.visualCubeLeft {
+  fill: color-mix(in srgb, var(--stat-accent) 6%, transparent);
+}
+
+.visualCubeRight {
+  fill: color-mix(in srgb, var(--stat-accent) 18%, transparent);
+}
+
+.visualCoinFace {
+  fill: color-mix(in srgb, var(--stat-accent) 14%, var(--color-bg-container));
+  stroke: color-mix(in srgb, var(--stat-accent) 32%, transparent);
+  stroke-width: 1;
+}
+
+.visualCoinEdge {
+  fill: color-mix(in srgb, var(--stat-accent) 22%, var(--color-bg-container));
+  stroke: color-mix(in srgb, var(--stat-accent) 36%, transparent);
+  stroke-width: 1;
+}
+
+.visualCoinSmallFace {
+  fill: color-mix(in srgb, var(--stat-accent) 11%, var(--color-bg-container));
+  stroke: color-mix(in srgb, var(--stat-accent) 26%, transparent);
+  stroke-width: 1;
+  opacity: 0.8;
+}
+
+.visualCoinMark {
+  fill: none;
+  stroke: color-mix(in srgb, var(--stat-accent) 82%, var(--color-bg-container));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.visualCoinShine {
+  fill: none;
+  stroke: color-mix(in srgb, var(--stat-accent) 62%, var(--color-bg-container));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+@media (max-width: 720px) {
+  .statTile {
+    min-height: 138px;
+    padding: 18px;
+  }
+
+  .statValue {
+    font-size: 28px;
+  }
+
+  .statTile_info .statValue {
+    font-size: 30px;
+  }
 }

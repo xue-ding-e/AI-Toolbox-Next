@@ -2,14 +2,14 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .inlineAlert {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--color-status-error-border);
   border-radius: 8px;
   background: var(--color-status-error-bg);
@@ -22,12 +22,10 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-bg-container);
+  justify-content: space-between;
+  gap: 12px;
+  overflow: visible;
+  padding: 0;
   scrollbar-width: none;
 
   &::-webkit-scrollbar {
@@ -41,6 +39,11 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
 }
 
 .filterIcon {
@@ -58,7 +61,7 @@
 
   :global(.ant-select-selection-item) {
     color: var(--color-text-primary);
-    font-size: 12px;
+    font-size: 13px;
   }
 }
 
@@ -70,6 +73,10 @@
   background: var(--color-border);
 }
 
+.filterBar > .filterDivider {
+  display: none;
+}
+
 .filterActions {
   display: inline-flex;
   min-width: 0;
@@ -77,6 +84,23 @@
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  min-height: 36px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+
+  .filterSection {
+    min-height: 30px;
+    padding: 0;
+    border: none;
+    background: transparent;
+  }
+
+  .filterDivider {
+    height: 20px;
+    margin: 0 2px;
+  }
 }
 
 .segmentScroller {
@@ -96,16 +120,17 @@
 
 .refreshButton {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--color-bg-elevated);
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font: inherit;
   transition:
     background 0.16s ease,
     color 0.16s ease,
@@ -126,13 +151,13 @@
 .statGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 16px;
 }
 
 .chartPanel,
 .dataPanel {
   min-width: 0;
-  border-radius: 8px;
+  border-radius: 16px;
   background: var(--color-bg-container);
   border: 1px solid var(--color-border-card);
   box-shadow: var(--shadow-card-sm);
@@ -141,23 +166,55 @@
   :global(.ant-table-thead > tr > th) {
     background: transparent !important;
   }
+
+  :global(.ant-table) {
+    background: transparent;
+  }
+
+  :global(.ant-table-container) {
+    border-inline: none !important;
+  }
+
+  :global(.ant-table-thead > tr > th) {
+    padding: 14px 16px;
+    border-bottom-color: var(--color-border);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  :global(.ant-table-tbody > tr > td) {
+    padding: 14px 16px;
+    border-bottom-color: var(--color-border);
+    background: transparent;
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+
+  :global(.ant-table-tbody > tr:last-child > td) {
+    border-bottom: none;
+  }
+
+  :global(.ant-table-tbody > tr:hover > td) {
+    background: var(--color-bg-hover) !important;
+  }
 }
 
 .chartPanel {
-  min-height: 360px;
+  min-height: 410px;
 }
 
 .panelHeader {
   display: flex;
-  min-height: 42px;
+  min-height: 56px;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 5px 12px;
+  padding: 8px 20px;
   border-bottom: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
 
   span {
@@ -166,12 +223,18 @@
     align-items: center;
     gap: 6px;
   }
+
+}
+
+.panelIcon {
+  flex: 0 0 auto;
+  color: var(--ant-color-primary);
 }
 
 .chartBody {
-  height: 318px;
+  height: 352px;
   min-width: 0;
-  padding: 14px 12px 8px;
+  padding: 16px 20px 10px;
 
   :global(.recharts-legend-item) {
     cursor: pointer;
@@ -208,13 +271,13 @@
 
   strong {
     color: var(--color-text-primary);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 650;
   }
 
   small {
     color: var(--color-text-tertiary);
-    font-size: 11px;
+    font-size: 10px;
   }
 }
 
@@ -235,9 +298,34 @@
 }
 
 @media (max-width: 720px) {
+  .filterBar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filterSection,
+  .filterActions {
+    width: 100%;
+  }
+
+  .filterSection {
+    justify-content: flex-start;
+  }
+
+  .filterActions {
+    margin-left: 0;
+    justify-content: flex-end;
+
+    .filterSection {
+      width: auto;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+  }
+
   .customRangePicker {
-    width: 230px;
-    min-width: 230px;
+    width: min(230px, 100%);
+    min-width: 0;
   }
 
   .refreshButton {
@@ -249,7 +337,12 @@
   }
 
   .chartBody {
-    height: 280px;
+    height: 300px;
+    padding: 12px 10px 8px;
+  }
+
+  .panelHeader {
+    padding-inline: 14px;
   }
 }
 
