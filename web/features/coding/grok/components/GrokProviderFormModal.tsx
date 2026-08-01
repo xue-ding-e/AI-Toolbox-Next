@@ -734,7 +734,13 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const shouldConfirmOpenAiBaseUrlV1 = (
     baseUrl: string | undefined,
     apiFormat: GrokApiFormat | undefined,
+    hasSelectedGatewayEndpoint: boolean,
   ): boolean => {
+    // 内置 gateway profile endpoint 的 baseUrl 由 profile 提供且已验证可用，
+    // 不套用"自定义渠道需以 /v1 结尾"的通用校验。
+    if (hasSelectedGatewayEndpoint) {
+      return false;
+    }
     if (!baseUrl?.trim()) {
       return false;
     }
@@ -918,7 +924,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
           ? normalizeGrokApiFormat(selectedEndpoint.apiFormat)
           : normalizeGrokApiFormat(submittedValues.apiFormat);
 
-      if (shouldConfirmOpenAiBaseUrlV1(submittedValues.baseUrl, effectiveApiFormat)) {
+      if (shouldConfirmOpenAiBaseUrlV1(submittedValues.baseUrl, effectiveApiFormat, !!selectedEndpoint)) {
         Modal.confirm({
           title: t('common.confirm'),
           content: t('grok.provider.baseUrlConfirmV1'),

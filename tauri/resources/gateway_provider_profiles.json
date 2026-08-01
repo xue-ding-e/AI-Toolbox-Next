@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-07-04",
+  "updatedAt": "2026-08-01",
   "profiles": [
     {
       "id": "deepseek",
@@ -34,8 +34,30 @@
           ]
         },
         "codex": {
-          "defaultEndpointId": "openai_chat",
+          "defaultEndpointId": "openai_responses",
           "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.deepseek.com",
+              "configProviderId": "deepseek",
+              "model": "deepseek-v4-flash",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 1000000
+                  },
+                  {
+                    "model": "deepseek-v4-pro",
+                    "displayName": "DeepSeek V4 Pro",
+                    "contextWindow": 1000000
+                  }
+                ]
+              }
+            },
             {
               "id": "openai_chat",
               "label": "OpenAI Chat",
@@ -75,8 +97,30 @@
           ]
         },
         "gemini": {
-          "defaultEndpointId": "openai_chat",
+          "defaultEndpointId": "openai_responses",
           "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.deepseek.com",
+              "configProviderId": "deepseek",
+              "model": "deepseek-v4-flash",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 1000000
+                  },
+                  {
+                    "model": "deepseek-v4-pro",
+                    "displayName": "DeepSeek V4 Pro",
+                    "contextWindow": 1000000
+                  }
+                ]
+              }
+            },
             {
               "id": "openai_chat",
               "label": "OpenAI Chat",
@@ -108,8 +152,30 @@
           ]
         },
         "grok": {
-          "defaultEndpointId": "openai_chat",
+          "defaultEndpointId": "openai_responses",
           "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.deepseek.com",
+              "configProviderId": "deepseek",
+              "model": "deepseek-v4-flash",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 1000000
+                  },
+                  {
+                    "model": "deepseek-v4-pro",
+                    "displayName": "DeepSeek V4 Pro",
+                    "contextWindow": 1000000
+                  }
+                ]
+              }
+            },
             {
               "id": "openai_chat",
               "label": "OpenAI Chat",

@@ -300,7 +300,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 | profile | providerType | compat 声明 | 当前 endpoint 摘要 |
 |---|---|---|---|
-| `deepseek` | `deepseek` | DeepSeek Chat/Anthropic | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_chat*`/`anthropic_messages` |
+| `deepseek` | `deepseek` | DeepSeek Chat/Anthropic | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_responses*`/`openai_chat`/`anthropic_messages` |
 | `zai_cn` / `zai_en` | `zai` | Z.ai Chat | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_chat*`/`anthropic_messages` |
 | `doubao` | `doubao` | Doubao metadata | Claude `anthropic*`/`openai_responses`；Codex/Gemini/Grok `openai_responses*`/`anthropic_messages` |
 | `bailian` / `bailian_coding` | `bailian` | Bailian tool merge/SSE filter | Claude `anthropic*`/`openai_responses`；Codex/Gemini/Grok `openai_responses*`/`anthropic_messages` |
@@ -428,6 +428,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 - `providerType=deepseek`。
 - Chat、Anthropic target 和 legacy Completion path 各有不同 runtime 分支。
+- profile `deepseek` 的 Codex/Gemini/Grok 默认 endpoint 自 2026-08-01 切到 `openai_responses`（官方新增 Responses API 支持），保留 `openai_chat` 与 `anthropic_messages` 作可选 fallback。Responses target 走通用 OpenAI Responses 直通，无 DeepSeek 专用 body compat（compat 规则 `deepseek_json_schema`/`deepseek_thinking`/`deepseek_disabled_strip_effort` 仅作用于 `openaiChat`/`anthropicMessages`）。
+- `openai_responses` endpoint 的 `baseUrl` 用官方值 `https://api.deepseek.com`（不带 `/v1`，与 DeepSeek 官方 Codex 接入脚本一致）。DeepSeek 服务端对 `/responses` 与 `/v1/responses` 双路径兼容，Codex/Grok CLI 直连按 `base_url + /responses` 可直接命中；走网关时 `build_target_url`（`runtime/routes.rs`）对 OpenAiResponses 固定拼 `/v1/responses` 也能命中。内置官方渠道的 baseUrl 由 profile 提供且已验证可用，因此 Codex/Grok 表单的 `/v1` 软确认对内置 endpoint 跳过（仅对自定义手填地址保留）。
 
 请求侧，OpenAI Chat：
 
