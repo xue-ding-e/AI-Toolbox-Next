@@ -2450,9 +2450,11 @@ impl AnthropicSseAggregate {
         match value.get("type").and_then(Value::as_str) {
             Some("message_start") => {
                 // Only accept an object `message`: a malformed upstream can send
-                // a scalar/array here, and the later index-assignments in
-                // `response_value` assume an object. Treat a non-object as
-                // absent so the aggregate falls back to its default envelope.
+                // a scalar/array here. `response_value` reads fields off
+                // `self.message` with an object guard, so a non-object would
+                // fail the guard and yield an otherwise empty/odd envelope.
+                // Treat a non-object as absent so the aggregate falls back to
+                // its default message envelope.
                 if let Some(message) = value.get("message").filter(|message| message.is_object()) {
                     if let Some(usage) = message.get("usage") {
                         merge_usage_snapshot(&mut self.usage, usage);

@@ -2599,46 +2599,24 @@ fn codex_model_catalog_from_specs(
 
 /// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
 /// catalog (models.json) that AI Toolbox mirrors verbatim. Matched against
-/// `base_url` ONLY — deliberately NOT by model brand: official entries GRANT
-/// capabilities (freeform `apply_patch`, vendor harness), and an aggregator
-/// merely hosting the same model may not honor them. The safe failure
-/// direction for aggregators is the neutral template (degraded but working).
-const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS: &[&str] = &["deepseek.com"];
+/// the parsed `base_url` host ONLY — deliberately NOT by model brand: official
+/// entries GRANT capabilities (freeform `apply_patch`, vendor harness), and an
+/// aggregator merely hosting the same model may not honor them. The safe
+/// failure direction for aggregators is the neutral template (degraded but
+/// working).
+const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOST: &str = "deepseek.com";
 
-fn extract_codex_base_url(config_toml: &str) -> Option<String> {
-    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
-
-    if let Some(active_provider) = document
-        .get("model_provider")
-        .and_then(|item| item.as_str())
-    {
-        if let Some(base_url) = document
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(|item| item.as_str())
-        {
-            return Some(base_url.to_string());
-        }
-    }
-
-    document
-        .get("base_url")
-        .and_then(|item| item.as_str())
-        .map(ToString::to_string)
-}
-
-fn codex_provider_wire_api(config_toml: &str) -> Option<String> {
-    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
-    let active_provider = document
-        .get("model_provider")
-        .and_then(|item| item.as_str())?;
-    document
-        .get("model_providers")
-        .and_then(|providers| providers.get(active_provider))
-        .and_then(|provider| provider.get("wire_api"))
-        .and_then(|item| item.as_str())
-        .map(ToString::to_string)
+fn codex_deepseek_official_host(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    url.host_str()
+        .map(|host| {
+            let host = host.to_ascii_lowercase();
+            host == CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOST
+                || host.ends_with(&format!(".{CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOST}"))
+        })
+        .unwrap_or(false)
 }
 
 /// Bundled copy of DeepSeek's official Codex models.json — the exact file
@@ -2658,24 +2636,26 @@ fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
 }
 
 /// Official vendor catalog entries for the provider in `config_toml`, if its
-/// gateway ships one. Only the `wire_api = "responses"` (native Responses)
-/// provider qualifies: the neutral template still powers ProxyChat/Anthropic
-/// targets. Host-driven like the web_search blacklist, so existing providers
-/// pick it up on their next switch without a re-save.
+/// gateway ships one. Only the native Responses provider qualifies: the
+/// neutral template still powers ProxyChat/Anthropic targets. Host-driven like
+/// the web_search blacklist, so existing providers pick it up on their next
+/// switch without a re-save.
+///
+/// Reuses the same TOML semantics as the Gateway runtime
+/// (`provider_protocol::codex_wire_api_from_config` /
+/// `codex_base_url_from_config`), so the catalog decision cannot diverge from
+/// whether the runtime actually proxies a native Responses provider.
 fn codex_official_vendor_catalog_models(config_toml: &str) -> Option<Vec<Value>> {
-    // Only native `/responses` providers qualify (wire_api = "responses");
-    // ProxyChat/Anthropic targets keep the neutral template.
-    let uses_native_responses = codex_provider_wire_api(config_toml)
+    // Only native `/responses` providers qualify (wire_api/api_format =
+    // "responses"); ProxyChat/Anthropic targets keep the neutral template.
+    let uses_native_responses = provider_protocol::codex_wire_api_from_config(config_toml)
         .is_some_and(|wire_api| wire_api.eq_ignore_ascii_case("responses"));
     if !uses_native_responses {
         return None;
     }
 
-    let base_url = extract_codex_base_url(config_toml)?.to_ascii_lowercase();
-    if !CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS
-        .iter()
-        .any(|host| base_url.contains(host))
-    {
+    let base_url = provider_protocol::codex_base_url_from_config(config_toml)?;
+    if !codex_deepseek_official_host(&base_url) {
         return None;
     }
 
@@ -2714,8 +2694,18 @@ fn codex_vendor_catalog_model_entry(
         return serde_json::json!({});
     };
 
-    if matched.is_none() {
+    if matched.is_none() && spec.display_name.is_none() {
+        // Unknown model id clones the flagship entry for its capability
+        // profile, but must NOT impersonate the flagship's display name /
+        // description: show the user's own model id instead. An explicit user
+        // displayName (handled below) still wins.
         entry_obj.insert("slug".to_string(), serde_json::json!(spec.model));
+        entry_obj.insert("display_name".to_string(), serde_json::json!(spec.model));
+        entry_obj.insert("description".to_string(), serde_json::json!(spec.model));
+    } else if matched.is_none() {
+        entry_obj.insert("slug".to_string(), serde_json::json!(spec.model));
+    }
+    if matched.is_none() {
         entry_obj.insert("priority".to_string(), serde_json::json!(1000 + priority));
     }
 
@@ -4306,6 +4296,12 @@ wire_api = "responses"
             pro.get("slug").and_then(|v| v.as_str()),
             Some("deepseek-v4-pro")
         );
+        // Matches the official slug, so the official display name survives when
+        // the user did not provide an explicit one.
+        assert_eq!(
+            pro.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek-V4-Pro")
+        );
         // Explicit user context window override wins over the official 1m.
         assert_eq!(
             pro.get("context_window").and_then(|v| v.as_u64()),
@@ -4315,6 +4311,54 @@ wire_api = "responses"
             pro.get("apply_patch_tool_type").and_then(|v| v.as_str()),
             Some("freeform")
         );
+    }
+
+    #[test]
+    fn deepseek_unknown_model_clones_flagship_capabilities_without_impersonation() {
+        // A user model that does not match any official slug (e.g.
+        // `deepseek-reasoner`) clones the flagship entry for its capability
+        // profile but must NOT keep the flagship's display name / description —
+        // it would show the wrong model name in the Codex model selector.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-reasoner" }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_text =
+            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
+                .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-reasoner")
+        );
+        // Must show the user's own model id, not the flagship's name.
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("deepseek-reasoner")
+        );
+        assert_eq!(
+            entry.get("description").and_then(|v| v.as_str()),
+            Some("deepseek-reasoner")
+        );
+        // Capability profile still inherited from the flagship.
+        assert_eq!(
+            entry.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform")
+        );
+        assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
     }
 
     #[test]
@@ -4390,6 +4434,42 @@ wire_api = "chat"
         assert_eq!(
             entry.get("input_modalities"),
             Some(&json!(["text", "image"]))
+        );
+
+        // Host that merely CONTAINS "deepseek.com" as a substring is not the
+        // official gateway — must stay neutral to avoid granting the official
+        // freeform apply_patch capability to an unrelated host.
+        let spoof_config = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "https://deepseek.com.evil.example/v1"
+wire_api = "responses"
+"#;
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            spoof_config,
+        )
+        .expect("spoof host catalog generation should not error");
+        let catalog_text =
+            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
+                .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+        let entry = &catalog["models"][0];
+        // Substring host must NOT trigger the official DeepSeek mirror: keep
+        // the neutral image-friendly template and the neutral 272k default,
+        // not the official text-only modality / 1m window.
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "substring host must not trigger the official DeepSeek mirror"
+        );
+        assert_eq!(
+            entry.get("context_window").and_then(|v| v.as_u64()),
+            Some(272_000),
+            "spoof host must not inherit the official 1m context window"
         );
     }
 
