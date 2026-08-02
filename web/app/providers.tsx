@@ -4,6 +4,9 @@ import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import { emit, listen } from '@tauri-apps/api/event';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
+import DeepLinkImportDialog from '@/features/shared/deepLink/DeepLinkImportDialog';
+import { useDeepLinkImport } from '@/features/shared/deepLink/useDeepLinkImport';
+import type { DeepLinkErrorPayload } from '@/services/deeplinkApi';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore } from '@/stores/themeStore';
 import {
@@ -52,6 +55,28 @@ const formatSpeed = (bytesPerSecond: number) => {
   const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
   const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k));
   return parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+/**
+ * Globally-mounted deep-link import dialog: listens for `deep-link-import` /
+ * `deep-link-error` events from the backend and shows a confirmation modal
+ * (with a masked API key) before persisting via `import_from_deeplink_unified`.
+ * The hook marks the frontend listener ready and drains a cold-start pending
+ * request after the listeners are attached.
+ */
+const DeepLinkImportMount: React.FC = () => {
+  const { message } = App.useApp();
+
+  const onError = React.useCallback(
+    (error: DeepLinkErrorPayload) => {
+      message.error(`${i18n.t('common.deepLink.parseError')}: ${error.error}`);
+    },
+    [message],
+  );
+
+  const { request, dismiss } = useDeepLinkImport(onError);
+
+  return <DeepLinkImportDialog request={request} onDismiss={dismiss} />;
 };
 
 const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -231,6 +256,8 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return (
     <>
       {children}
+      {/* Deep-link (`aitoolbox://`) provider import confirmation */}
+      <DeepLinkImportMount />
       {/* Update Progress Modal */}
       <Modal
         title={i18n.t('settings.about.downloadingUpdate')}

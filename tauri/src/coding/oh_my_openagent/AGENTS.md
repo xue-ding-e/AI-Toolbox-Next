@@ -51,6 +51,7 @@ sequenceDiagram
 - 路径来源不是简单的“默认目录就默认、其它都 custom”，还要兼容旧文件名候选和 `runtime_location` 决议。
 - unified 模式下 source 为 `"unified"`（不再走 default/custom 判定）;`flatten_omo_config` 会把 base 键与 `[opencode]` 块摊平（块胜出），并剔除 omo 控制键（`profiles`/`_migrations`/`models`/`task`/`teams`/`codegraph`/`$schema`），避免它们被当成 `other_fields` 写回 `[opencode]` 造成污染。
 - unified 写入必须**保留**既有共享键（codegraph/models/task/teams/profiles 等），只替换 `[opencode]` 块；并写 `_migrations` 标记 `2026-07-opencode-config-unification` 阻止插件启动迁移重复导入残留 legacy 文件。
+- unified 模式下 legacy upgrade 按钮如果检测到默认旧扁平文件（`~/.config/opencode/oh-my-openagent.*` / `oh-my-opencode.*`），必须把其插件配置迁移到 `~/.omo/omo.jsonc` 的 `[opencode]` 块并移除旧文件；否则 banner 会因为同一旧文件存在而反复出现。迁移时仍要保留 unified 文件里的共享键。
 - unified 模式写出的 `[opencode]` 块**不写 `lsp`**（lsp 已不是插件合法 schema 键，写了报 Unknown key）;DB 与 UI 仍保留 lsp，legacy 模式照旧写。
 - 改应用逻辑时要记住它属于 OpenCode 运行时的一部分，所以 WSL 同步事件也复用 `wsl-sync-request-opencode`。
 - “清除已应用配置”只删除当前决议到的运行时配置并取消 `is_applied`，不删除数据库里的 profile，也不是任意路径/文件名映射能力。`__local__` 不应开放该危险操作。

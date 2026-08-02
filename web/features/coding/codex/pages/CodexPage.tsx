@@ -62,7 +62,7 @@ import { codexPromptApi } from '@/services/codexPromptApi';
 import CodexDeviceAuthModal from '../components/CodexDeviceAuthModal';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
-import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
+import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { useSettingsStore } from '@/stores';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
@@ -450,10 +450,18 @@ const CodexPage: React.FC = () => {
       event.preventDefault();
       void loadConfig(true);
     };
+    const handleDeepLinkImport = (event: Event) => {
+      const detail = (event as CustomEvent<{ app?: string; id?: string }>).detail;
+      if (detail?.app === 'codex') {
+        void loadConfig(true);
+      }
+    };
 
     window.addEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+    window.addEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     return () => {
       window.removeEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+      window.removeEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     };
   }, [loadConfig]);
 

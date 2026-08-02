@@ -345,10 +345,11 @@ pub async fn get_oh_my_openagent_upgrade_status(
     let ssh_config = ssh::ssh_get_config(state.clone()).await?;
 
     let has_legacy_plugin = detect_legacy_plugin_usage(state.clone()).await?;
+    let legacy_mode = runtime_location::uses_legacy_omo_config_async(&db).await;
     // legacy 模式按解析路径文件名判定；unified 模式下解析路径是 ~/.omo/omo.jsonc，
     // 无法从文件名识别 legacy，因此额外检查默认 legacy 候选文件（旧 oh-my-opencode/openagent 遗留）
     // 是否仍存在，保证存量用户能看到 rename 升级 banner。
-    let has_legacy_local_config = if runtime_location::uses_legacy_omo_config(&db) {
+    let has_legacy_local_config = if legacy_mode {
         detect_legacy_local_config_path(&oh_my_openagent_path)
     } else {
         super::commands::get_default_oh_my_openagent_path_candidates()
@@ -391,6 +392,7 @@ pub async fn upgrade_oh_my_openagent_legacy_setup(
     let wsl_config = wsl::wsl_get_config(state.clone()).await?;
     let ssh_config = ssh::ssh_get_config(state.clone()).await?;
     let normalized_opencode_config = load_normalized_opencode_config(state.clone()).await?;
+    let legacy_mode = runtime_location::uses_legacy_omo_config_async(&db).await;
 
     let mut plugin_updated = false;
     let mut local_config_renamed = false;
@@ -399,15 +401,22 @@ pub async fn upgrade_oh_my_openagent_legacy_setup(
     let wsl_file_renamed;
     let mut ssh_mapping_updated = false;
 
-    if let Some(file_name) = oh_my_openagent_path
-        .file_name()
-        .and_then(|name| name.to_str())
-    {
-        if let Some(legacy_name) = legacy_file_name(file_name) {
-            let canonical_path = oh_my_openagent_path.with_file_name(legacy_name.canonical_name);
-            rename_local_file_atomic(&oh_my_openagent_path, &canonical_path)?;
-            local_config_renamed = true;
+    if legacy_mode {
+        if let Some(file_name) = oh_my_openagent_path
+            .file_name()
+            .and_then(|name| name.to_str())
+        {
+            if let Some(legacy_name) = legacy_file_name(file_name) {
+                let canonical_path =
+                    oh_my_openagent_path.with_file_name(legacy_name.canonical_name);
+                rename_local_file_atomic(&oh_my_openagent_path, &canonical_path)?;
+                local_config_renamed = true;
+            }
         }
+    } else if super::commands::migrate_default_legacy_local_configs_to_unified(
+        &oh_my_openagent_path,
+    )? {
+        local_config_renamed = true;
     }
 
     if update_custom_opencode_config_path_if_needed(state.clone(), &app).await? {

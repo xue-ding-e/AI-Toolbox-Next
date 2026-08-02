@@ -5,6 +5,7 @@ pub mod claude_code;
 pub mod cli_resolver;
 pub mod codex;
 pub mod config_cleanup;
+pub mod deeplink;
 pub mod gemini_cli;
 pub mod grok;
 pub mod image;

@@ -13,6 +13,15 @@ pub fn load_settings_from_sqlite_state(
     sqlite_state.with_conn(load_settings_from_sqlite_conn)
 }
 
+pub async fn load_settings_from_sqlite_state_async(
+    sqlite_state: &SqliteDbState,
+) -> Result<AppSettings, String> {
+    let sqlite_state = sqlite_state.clone();
+    tauri::async_runtime::spawn_blocking(move || load_settings_from_sqlite_state(&sqlite_state))
+        .await
+        .map_err(|error| format!("Failed to join settings load task: {error}"))?
+}
+
 pub fn save_settings_to_sqlite_state(
     sqlite_state: &SqliteDbState,
     settings: &AppSettings,

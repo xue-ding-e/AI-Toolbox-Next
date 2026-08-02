@@ -1143,6 +1143,29 @@
       "importSuccess": "成功从 CC Switch 导入 {{count}} 个供应商",
       "importPartial": "从 CC Switch 导入完成：成功 {{ok}} 个，失败 {{fail}} 个",
       "searchPlaceholder": "搜索名称、地址或模型"
+    },
+    "deepLink": {
+      "title": "通过链接导入供应商",
+      "description": "以下供应商来自一个 aitoolbox:// 链接，确认后将写入对应工具。API 密钥仅显示前 4 位。",
+      "import": "导入",
+      "importSuccess": "供应商导入成功",
+      "importFailed": "导入失败",
+      "parseError": "链接解析失败",
+      "appClaude": "Claude Code",
+      "appCodex": "Codex",
+      "appGemini": "Gemini CLI",
+      "appUnknown": "未知工具",
+      "fieldApp": "工具",
+      "fieldName": "名称",
+      "fieldCategory": "类别",
+      "fieldApiKey": "API 密钥",
+      "fieldBaseUrl": "基础地址",
+      "fieldModel": "模型",
+      "fieldHomepage": "主页",
+      "fieldNotes": "备注",
+      "category_official": "官方",
+      "category_third_party": "第三方",
+      "category_custom": "自定义"
     }
   },
   "sessionManager": {

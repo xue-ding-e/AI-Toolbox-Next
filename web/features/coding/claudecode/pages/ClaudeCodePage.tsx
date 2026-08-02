@@ -45,7 +45,7 @@ import {
 } from '@/services/claudeCodeApi';
 import { useRefreshStore, useSettingsStore } from '@/stores';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
-import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
+import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { claudeCodePromptApi } from '@/services/claudeCodePromptApi';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
 import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
@@ -422,10 +422,18 @@ const ClaudeCodePage: React.FC = () => {
       event.preventDefault();
       void loadConfig(true);
     };
+    const handleDeepLinkImport = (event: Event) => {
+      const detail = (event as CustomEvent<{ app?: string; id?: string }>).detail;
+      if (detail?.app === 'claude') {
+        void loadConfig(true);
+      }
+    };
 
     window.addEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+    window.addEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     return () => {
       window.removeEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+      window.removeEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     };
   }, [loadConfig]);
 

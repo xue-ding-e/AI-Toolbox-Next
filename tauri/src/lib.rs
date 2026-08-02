@@ -966,6 +966,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             info!("开始执行 setup()...");
             let app_handle = app.handle().clone();
@@ -1151,6 +1152,46 @@ pub fn run() {
 
                 app.manage(coding::proxy_gateway::ProxyGatewayState::default());
                 info!("网关状态已注册到应用");
+
+                // Deep-link (`aitoolbox://`) provider import: register state and
+                // subscribe to the unified `deep-link://new-url` event. The
+                // frontend drains cold-start pending links with a command after
+                // its listener is attached.
+                app.manage(coding::deeplink::DeepLinkState::default());
+                coding::deeplink::install_deeplink_handlers(&app_handle);
+                info!("Deep-link handler 已注册");
+
+                // On Windows/Linux dev runs the scheme isn't installed, so
+                // register it at runtime. macOS registers via Info.plist on
+                // bundle, and `register_all` returns `UnsupportedPlatform`.
+                #[cfg(any(windows, target_os = "linux"))]
+                {
+                    use tauri_plugin_deep_link::DeepLinkExt;
+                    // Cold-start fallback: the deep-link plugin's setup runs
+                    // BEFORE this user setup closure, so its
+                    // `handle_cli_arguments` already emitted
+                    // `deep-link://new-url` (carrying the Win/Linux argv URL)
+                    // before `on_open_url` was attached above — that early
+                    // event is lost. The plugin also stashed the URL in
+                    // `DeepLink::current`; drain it here to recover. No-op
+                    // when argv had no URL (normal launch) and on macOS (cold
+                    // launch there goes through `RunEvent::Opened`, which fires
+                    // after setup, so `on_open_url` already catches it).
+                    if let Ok(Some(urls)) = app_handle.deep_link().get_current() {
+                        for url in urls {
+                            if coding::deeplink::handle_deeplink_url(
+                                &app_handle,
+                                url.as_str(),
+                                true,
+                            ) {
+                                break;
+                            }
+                        }
+                    }
+                    if let Err(error) = app_handle.deep_link().register_all() {
+                        warn!("Deep-link scheme 运行时注册失败（dev 运行可能不影响已安装构建）: {error}");
+                    }
+                }
 
                 let gateway_start_app = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1999,6 +2040,8 @@ pub fn run() {
             coding::all_api_hub::get_all_api_hub_provider_models,
             coding::cc_switch::has_cc_switch_db,
             coding::cc_switch::list_cc_switch_providers,
+            coding::deeplink::mark_deeplink_frontend_ready,
+            coding::deeplink::import_from_deeplink_unified,
             // Magic Context
             coding::magic_context::read_magic_context_config,
             coding::magic_context::save_magic_context_config,

@@ -625,6 +625,16 @@ pub async fn create_claude_provider(
     app: tauri::AppHandle,
     provider: ClaudeCodeProviderInput,
 ) -> Result<ClaudeCodeProvider, String> {
+    create_claude_provider_inner(&state, &app, provider).await
+}
+
+/// Pure async core of `create_claude_provider`, callable in-process (e.g. from
+/// the deep-link import path) without a `tauri::State` wrapper.
+pub async fn create_claude_provider_inner(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle,
+    provider: ClaudeCodeProviderInput,
+) -> Result<ClaudeCodeProvider, String> {
     let db = state.db();
     let normalized_settings_config =
         normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
@@ -947,8 +957,7 @@ pub async fn launch_claude_provider_cli(
         ));
     }
 
-    let runtime_location =
-        runtime_location::get_claude_runtime_location_async(&db).await?;
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
     let full_access = full_access.unwrap_or(false);
 
     super::cli_launch::launch_claude_provider_cli_session(

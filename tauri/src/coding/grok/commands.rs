@@ -288,6 +288,16 @@ pub async fn create_grok_provider(
     app: tauri::AppHandle,
     provider: GrokProviderInput,
 ) -> Result<GrokProvider, String> {
+    create_grok_provider_inner(&state, &app, provider).await
+}
+
+/// Pure async core of `create_grok_provider`, callable in-process (e.g. from
+/// the deep-link import path) without a `tauri::State` wrapper.
+pub async fn create_grok_provider_inner(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle,
+    provider: GrokProviderInput,
+) -> Result<GrokProvider, String> {
     validate_provider_settings(&provider.settings_config, &provider.category)?;
     let db = state.db();
     let now = Local::now().to_rfc3339();
@@ -1847,7 +1857,9 @@ mod tests {
         });
         let mut document = DocumentMut::new();
         project_provider_models(&mut document, &official, "official").expect("project official");
-        assert!(document.to_string().contains("default_reasoning_effort = \"medium\""));
+        assert!(document
+            .to_string()
+            .contains("default_reasoning_effort = \"medium\""));
 
         let custom = json!({
             "defaultModelKey": "custom",

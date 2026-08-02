@@ -17,5 +17,6 @@ export * from './codexPromptApi';
 export * from './piApi';
 export * from './piPromptApi';
 export * from './appApi';
+export * from './deeplinkApi';
 export * from './ohMyOpenAgentApi';
 export * from '../features/coding/shared/sessionManager/sessionManagerApi';

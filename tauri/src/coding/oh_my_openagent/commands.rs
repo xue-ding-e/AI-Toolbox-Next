@@ -271,7 +271,8 @@ fn get_default_oh_my_openagent_dir() -> Result<std::path::PathBuf, String> {
     Ok(home_dir.join(".config").join("opencode"))
 }
 
-pub(crate) fn get_default_oh_my_openagent_path_candidates() -> Result<Vec<std::path::PathBuf>, String> {
+pub(crate) fn get_default_oh_my_openagent_path_candidates(
+) -> Result<Vec<std::path::PathBuf>, String> {
     let default_dir = get_default_oh_my_openagent_dir()?;
     Ok(vec![
         default_dir.join("oh-my-openagent.jsonc"),
@@ -285,7 +286,7 @@ async fn get_oh_my_openagent_config_path_and_source(
     db: &crate::db::SqliteDbState,
 ) -> Result<(std::path::PathBuf, &'static str), String> {
     let path = runtime_location::get_omo_config_path_async(db).await?;
-    let source = if !runtime_location::uses_legacy_omo_config(db) {
+    let source = if !runtime_location::uses_legacy_omo_config_async(db).await {
         "unified"
     } else {
         let default_candidates = get_default_oh_my_openagent_path_candidates()?;
@@ -662,7 +663,7 @@ pub async fn clear_oh_my_openagent_applied_config(
 
     let config_path = get_oh_my_openagent_config_path(&db).await?;
 
-    if runtime_location::uses_legacy_omo_config(&db) {
+    if runtime_location::uses_legacy_omo_config_async(&db).await {
         // legacy 模式：目标文件是 AI Toolbox 全权管理的扁平文件，删除本机文件前先删 WSL 目标。
         #[cfg(target_os = "windows")]
         crate::coding::wsl::remove_auto_synced_wsl_mapping_target(state.inner(), "opencode-oh-my")
@@ -737,7 +738,7 @@ pub async fn apply_config_to_file_public(
     // 4. Agents Profile 的 categories
     // 5. Agents Profile 的 other_fields（最高优先级，可以覆盖所有）
 
-    let legacy_mode = runtime_location::uses_legacy_omo_config(db);
+    let legacy_mode = runtime_location::uses_legacy_omo_config_async(db).await;
 
     let mut plugin_config = serde_json::Map::new();
 
@@ -845,8 +846,82 @@ pub async fn apply_config_to_file_public(
 fn write_config_file(config_path: &Path, value: &Value) -> Result<(), String> {
     let json_content = serde_json::to_string_pretty(value)
         .map_err(|e| format!("Failed to serialize final config: {}", e))?;
-    fs::write(config_path, json_content)
-        .map_err(|e| format!("Failed to write config file: {}", e))
+    fs::write(config_path, json_content).map_err(|e| format!("Failed to write config file: {}", e))
+}
+
+fn migrate_legacy_local_configs_to_unified(
+    legacy_candidates: &[std::path::PathBuf],
+    unified_config_path: &Path,
+) -> Result<bool, String> {
+    let existing: Vec<std::path::PathBuf> = legacy_candidates
+        .iter()
+        .filter(|path| path.exists())
+        .cloned()
+        .collect();
+    if existing.is_empty() {
+        return Ok(false);
+    }
+
+    let mut merged = serde_json::Map::new();
+    for path in &existing {
+        let file_content = fs::read_to_string(path).map_err(|e| {
+            format!(
+                "Failed to read legacy Oh My OpenAgent config {}: {}",
+                path.to_string_lossy(),
+                e
+            )
+        })?;
+        let json_value: Value = json5::from_str(&file_content).map_err(|e| {
+            format!(
+                "Failed to parse legacy Oh My OpenAgent config {}: {}",
+                path.to_string_lossy(),
+                e
+            )
+        })?;
+        let flattened = flatten_omo_config(&json_value);
+        let Some(object) = flattened.as_object() else {
+            return Err(format!(
+                "Legacy Oh My OpenAgent config {} must be a JSON object",
+                path.to_string_lossy()
+            ));
+        };
+        for (key, value) in object {
+            if !merged.contains_key(key) {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    if let Some(parent) = unified_config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create unified OMO config directory {}: {}",
+                parent.to_string_lossy(),
+                e
+            )
+        })?;
+    }
+
+    write_unified_omo_config(unified_config_path, &Value::Object(merged))?;
+
+    for path in existing {
+        fs::remove_file(&path).map_err(|e| {
+            format!(
+                "Failed to remove migrated legacy Oh My OpenAgent config {}: {}",
+                path.to_string_lossy(),
+                e
+            )
+        })?;
+    }
+
+    Ok(true)
+}
+
+pub(crate) fn migrate_default_legacy_local_configs_to_unified(
+    unified_config_path: &Path,
+) -> Result<bool, String> {
+    let candidates = get_default_oh_my_openagent_path_candidates()?;
+    migrate_legacy_local_configs_to_unified(&candidates, unified_config_path)
 }
 
 /// Write the merged plugin config into the `[opencode]` block of `~/.omo/omo.jsonc`,
@@ -1243,8 +1318,8 @@ fn remove_opencode_block(config_path: &Path) -> Result<(), String> {
     if !config_path.exists() {
         return Ok(());
     }
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read omo.jsonc: {}", e))?;
+    let content =
+        fs::read_to_string(config_path).map_err(|e| format!("Failed to read omo.jsonc: {}", e))?;
     if !matches!(json5::from_str::<Value>(&content), Ok(Value::Object(_))) {
         return Ok(());
     }
@@ -1256,15 +1331,16 @@ fn remove_opencode_block(config_path: &Path) -> Result<(), String> {
 
     let (remaining_keys, _) = scan_top_level_keys(&patched);
     let meaningful = remaining_keys.iter().any(|k| {
-        !matches!(k.name.as_str(), "$schema" | "_migrations" | "legacy_migrations")
+        !matches!(
+            k.name.as_str(),
+            "$schema" | "_migrations" | "legacy_migrations"
+        )
     });
 
     if meaningful {
-        fs::write(config_path, patched)
-            .map_err(|e| format!("Failed to write omo.jsonc: {}", e))?;
+        fs::write(config_path, patched).map_err(|e| format!("Failed to write omo.jsonc: {}", e))?;
     } else {
-        fs::remove_file(config_path)
-            .map_err(|e| format!("Failed to remove omo.jsonc: {}", e))?;
+        fs::remove_file(config_path).map_err(|e| format!("Failed to remove omo.jsonc: {}", e))?;
     }
     Ok(())
 }
@@ -1682,10 +1758,13 @@ mod tests {
     fn write_unified_omo_config_preserves_shared_keys_and_stamps_migration_marker() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("omo.jsonc");
-        std::fs::write(&path, r#"{
+        std::fs::write(
+            &path,
+            r#"{
   "codegraph": { "daemon": true },
   "models": { "opus": { "model": "x/y" } }
-}"#)
+}"#,
+        )
         .unwrap();
 
         let plugin = json!({ "agents": { "sisyphus": { "model": "c/d" } } });
@@ -1698,15 +1777,20 @@ mod tests {
         assert_eq!(obj["[opencode]"], plugin);
         assert_eq!(obj["$schema"], OMO_UNIFIED_SCHEMA_URL);
         let markers = obj["_migrations"].as_array().unwrap();
-        assert!(markers.iter().any(|m| m.as_str() == Some(OMO_UNIFIED_MIGRATION_ID)));
+        assert!(markers
+            .iter()
+            .any(|m| m.as_str() == Some(OMO_UNIFIED_MIGRATION_ID)));
     }
 
     #[test]
     fn remove_opencode_block_removes_block_but_preserves_shared_keys() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("omo.jsonc");
-        std::fs::write(&path, r#"{ "codegraph": { "daemon": true }, "[opencode]": { "agents": {} } }"#)
-            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{ "codegraph": { "daemon": true }, "[opencode]": { "agents": {} } }"#,
+        )
+        .unwrap();
 
         remove_opencode_block(&path).unwrap();
 
@@ -1720,8 +1804,11 @@ mod tests {
     fn remove_opencode_block_deletes_file_when_only_control_keys_remain() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("omo.jsonc");
-        std::fs::write(&path, r#"{ "$schema": "x", "_migrations": [], "[opencode]": { "agents": {} } }"#)
-            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{ "$schema": "x", "_migrations": [], "[opencode]": { "agents": {} } }"#,
+        )
+        .unwrap();
 
         remove_opencode_block(&path).unwrap();
 
@@ -1758,6 +1845,66 @@ mod tests {
         assert!(obj.as_object().unwrap().contains_key("models"));
         assert_eq!(obj["[opencode]"], plugin);
         assert_eq!(obj["$schema"], OMO_UNIFIED_SCHEMA_URL);
+    }
+
+    #[test]
+    fn migrate_legacy_local_configs_to_unified_moves_flat_config_into_opencode_block() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp.path().join("oh-my-openagent.jsonc");
+        let unified = temp.path().join(".omo").join("omo.jsonc");
+        std::fs::write(
+            &legacy,
+            r#"{
+  "$schema": "legacy",
+  "agents": { "Sisyphus": { "model": "a/b" } },
+  "codegraph": { "daemon": true }
+}"#,
+        )
+        .unwrap();
+
+        let changed = migrate_legacy_local_configs_to_unified(&[legacy.clone()], &unified).unwrap();
+
+        assert!(changed);
+        assert!(!legacy.exists());
+        let content = std::fs::read_to_string(&unified).unwrap();
+        let obj: Value = json5::from_str(&content).unwrap();
+        assert_eq!(obj["[opencode]"]["agents"]["Sisyphus"]["model"], "a/b");
+        assert!(obj["[opencode]"].get("codegraph").is_none());
+        assert_eq!(obj["$schema"], OMO_UNIFIED_SCHEMA_URL);
+    }
+
+    #[test]
+    fn migrate_legacy_local_configs_to_unified_preserves_existing_shared_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp.path().join("oh-my-openagent.jsonc");
+        let unified = temp.path().join(".omo").join("omo.jsonc");
+        std::fs::create_dir_all(unified.parent().unwrap()).unwrap();
+        std::fs::write(
+            &unified,
+            r#"{
+  "codegraph": { "daemon": true },
+  "models": { "opus": { "model": "x/y" } }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &legacy,
+            r#"{
+  "agents": { "sisyphus": { "model": "a/b" } }
+}"#,
+        )
+        .unwrap();
+
+        let changed = migrate_legacy_local_configs_to_unified(&[legacy.clone()], &unified).unwrap();
+
+        assert!(changed);
+        assert!(!legacy.exists());
+        let content = std::fs::read_to_string(&unified).unwrap();
+        assert!(content.contains("\"codegraph\""));
+        let obj: Value = json5::from_str(&content).unwrap();
+        assert_eq!(obj["codegraph"]["daemon"], true);
+        assert_eq!(obj["models"]["opus"]["model"], "x/y");
+        assert_eq!(obj["[opencode]"]["agents"]["sisyphus"]["model"], "a/b");
     }
 
     #[test]

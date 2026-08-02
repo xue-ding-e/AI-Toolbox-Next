@@ -1143,6 +1143,29 @@
       "importSuccess": "Successfully imported {{count}} providers from CC Switch",
       "importPartial": "CC Switch import finished: {{ok}} succeeded, {{fail}} failed",
       "searchPlaceholder": "Search by name, URL, or model"
+    },
+    "deepLink": {
+      "title": "Import Provider via Link",
+      "description": "This provider came from an aitoolbox:// link. It will be written to the matching tool after you confirm. Only the first 4 characters of the API key are shown.",
+      "import": "Import",
+      "importSuccess": "Provider imported successfully",
+      "importFailed": "Import failed",
+      "parseError": "Failed to parse link",
+      "appClaude": "Claude Code",
+      "appCodex": "Codex",
+      "appGemini": "Gemini CLI",
+      "appUnknown": "Unknown tool",
+      "fieldApp": "Tool",
+      "fieldName": "Name",
+      "fieldCategory": "Category",
+      "fieldApiKey": "API Key",
+      "fieldBaseUrl": "Base URL",
+      "fieldModel": "Model",
+      "fieldHomepage": "Homepage",
+      "fieldNotes": "Notes",
+      "category_official": "Official",
+      "category_third_party": "Third-party",
+      "category_custom": "Custom"
     }
   },
   "sessionManager": {

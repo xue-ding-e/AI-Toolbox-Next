@@ -2459,8 +2459,8 @@ fn codex_catalog_model_specs(
     config_toml: &str,
 ) -> Vec<CodexCatalogModelSpec> {
     let settings_object = provider_settings_config.as_object();
-    let auto_review_model_override = settings_object
-        .and_then(|object| resolve_codex_auto_review_model_override(object));
+    let auto_review_model_override =
+        settings_object.and_then(|object| resolve_codex_auto_review_model_override(object));
     let models = provider_settings_config
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
@@ -2716,7 +2716,10 @@ fn codex_vendor_catalog_model_entry(
         entry_obj.insert("description".to_string(), serde_json::json!(display_name));
     }
     if let Some(context_window) = spec.context_window {
-        entry_obj.insert("context_window".to_string(), serde_json::json!(context_window));
+        entry_obj.insert(
+            "context_window".to_string(),
+            serde_json::json!(context_window),
+        );
         entry_obj.insert(
             "max_context_window".to_string(),
             serde_json::json!(context_window),
@@ -2806,9 +2809,8 @@ fn prepare_codex_config_with_model_catalog(
         return set_codex_model_catalog_json_field(config_toml, false);
     }
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_toml, "model_context_window")
-            .unwrap_or(CODEX_DEFAULT_CONTEXT_WINDOW);
+    let default_context_window = extract_codex_top_level_u64(config_toml, "model_context_window")
+        .unwrap_or(CODEX_DEFAULT_CONTEXT_WINDOW);
     // DeepSeek publishes an OFFICIAL Codex models.json for its native
     // `/responses` gateway (freeform apply_patch, GPT-5 harness, 1m context,
     // low/high/max reasoning). Mirror it verbatim instead of the neutral
@@ -2902,6 +2904,16 @@ pub async fn repair_codex_providers(
 pub async fn create_codex_provider(
     state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
+    provider: CodexProviderInput,
+) -> Result<CodexProvider, String> {
+    create_codex_provider_inner(&state, &app, provider).await
+}
+
+/// Pure async core of `create_codex_provider`, callable in-process (e.g. from
+/// the deep-link import path) without a `tauri::State` wrapper.
+pub async fn create_codex_provider_inner(
+    state: &SqliteDbState,
+    app: &tauri::AppHandle,
     provider: CodexProviderInput,
 ) -> Result<CodexProvider, String> {
     let db = state.db();
@@ -4130,8 +4142,7 @@ approval_policy = "never"
             }
         });
 
-        let specs =
-            codex_catalog_model_specs(&settings, "model = \"default-main\"");
+        let specs = codex_catalog_model_specs(&settings, "model = \"default-main\"");
 
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].model, "default-main");
@@ -4334,9 +4345,12 @@ wire_api = "responses"
             DEEPSEEK_NATIVE_CONFIG,
         )
         .expect("vendor catalog generation should not error");
-        let catalog_text =
-            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
-                .unwrap();
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
 
         let entry = &catalog["models"][0];
@@ -4391,9 +4405,12 @@ wire_api = "responses"
             aggregator_config,
         )
         .expect("aggregator host catalog generation should not error");
-        let catalog_text =
-            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
-                .unwrap();
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
         let entry = &catalog["models"][0];
         assert_eq!(
@@ -4405,7 +4422,10 @@ wire_api = "responses"
             entry.get("input_modalities"),
             Some(&json!(["text", "image"]))
         );
-        assert_eq!(entry.get("web_search_tool_type").and_then(|v| v.as_str()), Some("text_and_image"));
+        assert_eq!(
+            entry.get("web_search_tool_type").and_then(|v| v.as_str()),
+            Some("text_and_image")
+        );
         assert_eq!(
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(272_000)
@@ -4420,15 +4440,15 @@ name = "deepseek"
 base_url = "https://api.deepseek.com"
 wire_api = "chat"
 "#;
-        let _rendered = prepare_codex_config_with_model_catalog(
-            temp_dir.path(),
-            Some(&settings),
-            chat_config,
+        let _rendered =
+            prepare_codex_config_with_model_catalog(temp_dir.path(), Some(&settings), chat_config)
+                .expect("chat target catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
         )
-        .expect("chat target catalog generation should not error");
-        let catalog_text =
-            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
-                .unwrap();
+        .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
         let entry = &catalog["models"][0];
         assert_eq!(
@@ -4447,15 +4467,15 @@ name = "deepseek"
 base_url = "https://deepseek.com.evil.example/v1"
 wire_api = "responses"
 "#;
-        let _rendered = prepare_codex_config_with_model_catalog(
-            temp_dir.path(),
-            Some(&settings),
-            spoof_config,
+        let _rendered =
+            prepare_codex_config_with_model_catalog(temp_dir.path(), Some(&settings), spoof_config)
+                .expect("spoof host catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
         )
-        .expect("spoof host catalog generation should not error");
-        let catalog_text =
-            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
-                .unwrap();
+        .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
         let entry = &catalog["models"][0];
         // Substring host must NOT trigger the official DeepSeek mirror: keep

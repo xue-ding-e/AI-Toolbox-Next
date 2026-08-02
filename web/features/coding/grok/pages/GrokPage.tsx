@@ -57,7 +57,7 @@ import {
 import { grokPromptApi } from '@/services/grokPromptApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
-import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
+import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { useSettingsStore } from '@/stores';
 import GrokProviderCard from '../components/GrokProviderCard';
 import GrokProviderFormModal from '../components/GrokProviderFormModal';
@@ -425,10 +425,20 @@ const GrokPage: React.FC = () => {
       event.preventDefault();
       void loadConfig(true);
     };
+    // Deep-link import never targets Grok in v1 (backend rejects app=grok),
+    // but the listener is harmless and keeps the four pages consistent.
+    const handleDeepLinkImport = (event: Event) => {
+      const detail = (event as CustomEvent<{ app?: string; id?: string }>).detail;
+      if (detail?.app === 'grok') {
+        void loadConfig(true);
+      }
+    };
 
     window.addEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+    window.addEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     return () => {
       window.removeEventListener(TRAY_CONFIG_REFRESH_EVENT, handleTrayConfigRefresh);
+      window.removeEventListener(DEEP_LINK_IMPORT_COMPLETED, handleDeepLinkImport);
     };
   }, [loadConfig]);
 

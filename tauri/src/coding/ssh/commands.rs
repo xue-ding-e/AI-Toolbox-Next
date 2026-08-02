@@ -1168,12 +1168,16 @@ async fn backfill_default_file_mappings(
                 mapping.local_path = NEW_OMO_MAPPING_PATH.to_string();
                 mapping.remote_path = NEW_OMO_MAPPING_PATH.to_string();
                 let data = adapter::mapping_to_db_value(mapping);
-                if let Err(e) = db.with_conn(|conn| {
-                    db_put(conn, DbTable::SshFileMapping, &mapping_id, &data)
-                }) {
+                if let Err(e) =
+                    db.with_conn(|conn| db_put(conn, DbTable::SshFileMapping, &mapping_id, &data))
+                {
                     log::warn!("Failed to migrate SSH mapping '{}': {}", mapping_id, e);
                 } else {
-                    log::info!("Migrated SSH mapping '{}' to {}", mapping_id, NEW_OMO_MAPPING_PATH);
+                    log::info!(
+                        "Migrated SSH mapping '{}' to {}",
+                        mapping_id,
+                        NEW_OMO_MAPPING_PATH
+                    );
                 }
             }
         }
@@ -1236,6 +1240,7 @@ pub async fn resolve_dynamic_paths_with_db(
     file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     let mut resolved = Vec::with_capacity(file_mappings.len());
+    let legacy_omo_config = runtime_location::uses_legacy_omo_config_async(db).await;
     for mut mapping in resolve_dynamic_paths(file_mappings) {
         match mapping.id.as_str() {
             "opencode-main" => {
@@ -1257,7 +1262,7 @@ pub async fn resolve_dynamic_paths_with_db(
                         .and_then(runtime_location::parse_wsl_unc_path)
                         .map(|wsl| wsl.linux_path)
                         .unwrap_or_else(|| {
-                            if !runtime_location::uses_legacy_omo_config(db) {
+                            if !legacy_omo_config {
                                 "~/.omo/omo.jsonc".to_string()
                             } else {
                                 path.file_name()
