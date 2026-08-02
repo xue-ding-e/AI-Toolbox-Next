@@ -57,6 +57,7 @@ sequenceDiagram
 - Gateway 现在是 direct → single → failover 三态。single 入口在已应用 provider 卡片的“网关代理”按钮；single/failover 接管期间都必须锁定其他 provider 的“应用”入口，failover 时卡片额外显示 P0/P1 优先级，切 P0 必须先恢复直连。
 - 前端不要假设 Codex prompt 文件名永远是 `AGENTS.md`。展示路径、删除已应用 prompt 后的刷新和同步结果都以后端返回/事件为准。
 - 插件页的全部启用/全部禁用只作用于“已安装”Tab 中当前 runtime 的已安装插件，不作用于市场可安装列表；全部启用需要允许后端同时开启 plugins feature，成功后仍按现有规则提示用户重启 Codex。
+- 市场添加入口与 Grok/Claude 对齐：marketplaces Tab 工具栏与空态各有“添加”按钮，打开带文本输入框的 Modal。输入框接受 git 仓库 URL / GitHub `owner/repo` 简写 / `marketplace.json` 直链 / 本地目录；“选择目录”按钮把本地目录回填到输入框（不直接提交）。提交统一走 `addCodexPluginWorkspaceRoot({ path })`，由后端识别源类型并下载/克隆；失败时 Modal 保持打开（`marketplace-add-failed`）。不要为本地目录再加单独的直选入口，避免重复。
 - 历史同步入口放在会话管理区域标题栏右侧，不属于 provider 卡片或已应用 provider 菜单；同步和恢复都是高影响本地写操作，必须使用后端返回的来源、统计、备份路径和锁等待信息展示结果，恢复最新备份必须强确认。历史同步默认只修复 provider 路由，不应在 UI 文案中承诺会同步或改写 model。
 - “统一 Codex 会话历史”入口属于 Codex 更多选项，不属于手动历史同步弹窗；开关行应沿用 SidebarSettingsModal 的左右布局，说明文字放在 Switch 下方。开启确认里“迁入现有官方会话历史”默认不勾，关闭确认里只有存在当前 Codex root 的迁移账本时才提供按账本恢复；Gateway 接管期间前端应禁用开关并提示先恢复直连。
 - “切换第三方时保留官方登录”同样在更多选项里，但语义不同：它会影响当前已应用渠道的 live 投影，不能只写 settings store。前端必须走 `setCodexPreserveOfficialAuthOnSwitch` → 后端 `set_codex_preserve_official_auth_on_switch`，由后端重投影（未接管直接 apply；Gateway 下 restore → apply → re-engage）。不要前端自己 `saveSettings` 或拼 Gateway 开关顺序。

@@ -2573,7 +2573,14 @@
         "alreadyInstalled": "已安装",
         "installed": "已安装",
         "enabled": "已启用",
-        "notAvailable": "不可安装"
+        "notAvailable": "不可安装",
+        "add": "添加市场",
+        "addModalTitle": "添加插件市场",
+        "sourceLabel": "市场源",
+        "sourcePlaceholder": "输入 git 仓库 URL、GitHub owner/repo、marketplace.json 直链或本地目录",
+        "sourceHint": "支持 git 仓库 URL（克隆整个仓库，插件可安装）、marketplace.json 直链（仅下载该文件，插件可列出但无法安装）或本地目录。",
+        "sourceRequired": "请先输入市场源",
+        "pickDirectory": "选择目录"
       }
     },
     "prompt": {

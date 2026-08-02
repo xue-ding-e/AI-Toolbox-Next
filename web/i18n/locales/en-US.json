@@ -2576,7 +2576,14 @@
         "alreadyInstalled": "Installed",
         "installed": "Installed",
         "enabled": "Enabled",
-        "notAvailable": "Not available"
+        "notAvailable": "Not available",
+        "add": "Add Marketplace",
+        "addModalTitle": "Add Plugin Marketplace",
+        "sourceLabel": "Marketplace Source",
+        "sourcePlaceholder": "Enter a git repo URL, GitHub owner/repo, marketplace.json URL, or local directory",
+        "sourceHint": "Supports git repo URLs (clones the whole repo so plugins stay installable), direct marketplace.json URLs (downloads only that file; plugins are listed but cannot be installed), or local directories.",
+        "sourceRequired": "Please enter a marketplace source first",
+        "pickDirectory": "Choose Local Directory"
       }
     },
     "prompt": {

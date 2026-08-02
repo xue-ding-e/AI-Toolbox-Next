@@ -18,6 +18,7 @@ import {
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
+  FolderOpenOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -59,7 +60,7 @@ type CodexPluginActionKey =
   | `installed:${string}:disable`
   | `installed:${string}:uninstall`
   | `discover:${string}:install`
-  | 'workspace:add'
+  | 'marketplace:add'
   | `workspace:${string}:remove`;
 
 interface CodexPluginsPanelProps {
@@ -94,6 +95,8 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
   const [activeTabKey, setActiveTabKey] = React.useState('installed');
   const [runtimeCollapsed, setRuntimeCollapsed] = React.useState(true);
   const [workspaceCollapsed, setWorkspaceCollapsed] = React.useState(true);
+  const [addMarketplaceModalOpen, setAddMarketplaceModalOpen] = React.useState(false);
+  const [marketplaceSourceInput, setMarketplaceSourceInput] = React.useState('');
   const [runtimeStatus, setRuntimeStatus] = React.useState<CodexPluginRuntimeStatus | null>(null);
   const [installedPlugins, setInstalledPlugins] = React.useState<CodexInstalledPlugin[]>([]);
   const [marketplaces, setMarketplaces] = React.useState<CodexPluginMarketplace[]>([]);
@@ -269,7 +272,28 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
     }
   }, [runAction, showManualRestartNotice, t]);
 
-  const handlePickWorkspace = React.useCallback(async () => {
+  const handleAddMarketplace = React.useCallback(async (sourceOverride?: string) => {
+    const normalizedSource = (sourceOverride ?? marketplaceSourceInput).trim();
+    if (!normalizedSource) {
+      message.warning(t('codex.plugins.marketplaces.sourceRequired'));
+      return false;
+    }
+
+    const succeeded = await runAction(
+      'marketplace:add',
+      () => addCodexPluginWorkspaceRoot({ path: normalizedSource }),
+      t('codex.plugins.marketplaces.addSuccess'),
+    );
+
+    if (succeeded) {
+      setMarketplaceSourceInput('');
+      setAddMarketplaceModalOpen(false);
+      setActiveTabKey('marketplaces');
+    }
+    return succeeded;
+  }, [marketplaceSourceInput, runAction, t]);
+
+  const handlePickLocalMarketplaceDirectory = React.useCallback(async () => {
     try {
       const selected = await open({
         title: t('codex.plugins.marketplaces.pickDirectoryTitle'),
@@ -281,20 +305,12 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
         return;
       }
 
-      const succeeded = await runAction(
-        'workspace:add',
-        () => addCodexPluginWorkspaceRoot({ path: selected }),
-        t('codex.plugins.marketplaces.addSuccess'),
-      );
-
-      if (succeeded) {
-        setActiveTabKey('marketplaces');
-      }
+      setMarketplaceSourceInput(selected);
     } catch (error) {
-      console.error('Failed to pick Codex workspace directory:', error);
+      console.error('Failed to pick Codex marketplace directory:', error);
       message.error(t('codex.plugins.marketplaces.pickDirectoryError'));
     }
-  }, [runAction, t]);
+  }, [t]);
 
   const handleRemoveWorkspace = React.useCallback(async (path: string) => {
     await runAction(
@@ -427,20 +443,6 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                       {t('codex.plugins.marketplaces.sectionHint')}
                     </div>
                   </div>
-
-                  <Button
-                    type="text"
-                    className={styles.ghostActionButton}
-                    size="small"
-                    icon={<PlusOutlined />}
-                    disabled={Boolean(activeActionKey)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handlePickWorkspace();
-                    }}
-                  >
-                    {t('codex.plugins.marketplaces.addWorkspace')}
-                  </Button>
                 </div>
               ),
               children: workspaceRoots.length === 0 ? (
@@ -534,6 +536,18 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
       {marketplaces.length === 0 ? (
         <div className={styles.emptyWrap}>
           <Empty description={t('codex.plugins.marketplaces.empty')} />
+          <div className={styles.emptyActions}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlusOutlined />}
+              loading={activeActionKey === 'marketplace:add'}
+              disabled={Boolean(activeActionKey)}
+              onClick={() => setAddMarketplaceModalOpen(true)}
+            >
+              {t('codex.plugins.marketplaces.add')}
+            </Button>
+          </div>
         </div>
       ) : (
         <div className={styles.list}>
@@ -649,6 +663,7 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
   );
 
   return (
+    <>
     <Spin spinning={loading}>
       <div className={styles.panel}>
         <div className={styles.hintBlock}>
@@ -788,6 +803,19 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                       ) : null}
                     </>
                   ) : null}
+                  {activeTabKey === 'marketplaces' ? (
+                    <Button
+                      type="text"
+                      className={styles.ghostActionButton}
+                      size="small"
+                      icon={<PlusOutlined />}
+                      loading={activeActionKey === 'marketplace:add'}
+                      disabled={Boolean(activeActionKey)}
+                      onClick={() => setAddMarketplaceModalOpen(true)}
+                    >
+                      {t('codex.plugins.marketplaces.add')}
+                    </Button>
+                  ) : null}
                   <Button
                     type="text"
                     className={styles.ghostActionButton}
@@ -816,6 +844,59 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
         </section>
       </div>
     </Spin>
+
+    <Modal
+      open={addMarketplaceModalOpen}
+      title={t('codex.plugins.marketplaces.addModalTitle')}
+      okText={t('codex.plugins.marketplaces.add')}
+      cancelText={t('common.cancel')}
+      confirmLoading={activeActionKey === 'marketplace:add'}
+      destroyOnHidden
+      onOk={async () => {
+        const succeeded = await handleAddMarketplace();
+        if (!succeeded) {
+          // Keep the modal open when validation fails or the backend rejects.
+          throw new Error('marketplace-add-failed');
+        }
+      }}
+      onCancel={() => {
+        if (activeActionKey !== 'marketplace:add') {
+          setAddMarketplaceModalOpen(false);
+          setMarketplaceSourceInput('');
+        }
+      }}
+    >
+      <div className={styles.modalFieldRow}>
+        <div className={styles.modalFieldLabel}>
+          {t('codex.plugins.marketplaces.sourceLabel')}
+        </div>
+        <div className={styles.modalFieldControl}>
+          <Input
+            autoFocus
+            value={marketplaceSourceInput}
+            onChange={(event) => setMarketplaceSourceInput(event.target.value)}
+            placeholder={t('codex.plugins.marketplaces.sourcePlaceholder')}
+            onPressEnter={() => {
+              void handleAddMarketplace();
+            }}
+          />
+          <div className={styles.modalFieldActions}>
+            <Button
+              size="small"
+              icon={<FolderOpenOutlined />}
+              disabled={Boolean(activeActionKey)}
+              onClick={() => void handlePickLocalMarketplaceDirectory()}
+            >
+              {t('codex.plugins.marketplaces.pickDirectory')}
+            </Button>
+          </div>
+          <div className={styles.modalHint}>
+            {t('codex.plugins.marketplaces.sourceHint')}
+          </div>
+        </div>
+      </div>
+    </Modal>
+    </>
   );
 };
 
