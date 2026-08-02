@@ -80,6 +80,8 @@ interface SettingsState {
 
   // OpenCode options
   opencodeAllowClearAppliedOhMyConfig: boolean;
+  opencodeUseLegacyOhMyConfig: boolean;
+  opencodeOmoUpgradeConfirmed: boolean;
 
   // Codex options
   codexPreserveOfficialAuthOnSwitch: boolean;
@@ -116,6 +118,8 @@ interface SettingsState {
   setVisibleTabs: (tabs: string[]) => Promise<void>;
   setSidebarHidden: (page: SidebarPageKey, hidden: boolean) => Promise<void>;
   setOpencodeAllowClearAppliedOhMyConfig: (enabled: boolean) => Promise<void>;
+  setOpencodeUseLegacyOhMyConfig: (enabled: boolean) => Promise<void>;
+  setOpencodeOmoUpgradeConfirmed: (confirmed: boolean) => Promise<void>;
   setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
   setCodexUnifiedSessionHistoryEnabled: (enabled: boolean) => void;
   setClaudeCliLaunchFullAccess: (enabled: boolean) => Promise<void>;
@@ -205,6 +209,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   visibleTabs: ['opencode', 'claudecode', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'gateway', 'image', 'ssh', 'wsl'],
   sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
   opencodeAllowClearAppliedOhMyConfig: false,
+  opencodeUseLegacyOhMyConfig: false,
+  opencodeOmoUpgradeConfirmed: false,
   codexPreserveOfficialAuthOnSwitch: false,
   codexUnifiedSessionHistoryEnabled: false,
   claudeCliLaunchFullAccess: false,
@@ -238,6 +244,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'gateway', 'image', 'ssh', 'wsl'],
         sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         opencodeAllowClearAppliedOhMyConfig: settings.opencode_allow_clear_applied_oh_my_config ?? false,
+        opencodeUseLegacyOhMyConfig: settings.opencode_use_legacy_oh_my_config ?? false,
+        opencodeOmoUpgradeConfirmed: settings.opencode_omo_upgrade_confirmed ?? false,
         codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
         codexUnifiedSessionHistoryEnabled: settings.codex_unified_session_history_enabled ?? false,
         claudeCliLaunchFullAccess: settings.claude_cli_launch_full_access ?? false,
@@ -461,6 +469,28 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       opencode_allow_clear_applied_oh_my_config: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setOpencodeUseLegacyOhMyConfig: async (enabled) => {
+    set({ opencodeUseLegacyOhMyConfig: enabled });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      opencode_use_legacy_oh_my_config: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setOpencodeOmoUpgradeConfirmed: async (confirmed) => {
+    set({ opencodeOmoUpgradeConfirmed: confirmed });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      opencode_omo_upgrade_confirmed: confirmed,
     };
     await saveSettings(newSettings);
   },

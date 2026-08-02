@@ -935,7 +935,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 9;
+    const CURRENT_DEFAULTS_VERSION: u64 = 10;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agent", "opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -990,6 +990,32 @@ async fn backfill_default_mappings(
             }
             log::info!("Backfilled default WSL mapping: {}", default_mapping.id);
             file_mappings.push(default_mapping);
+        }
+    }
+
+    // v10: migrate the persisted Oh My OpenAgent mapping from the legacy default
+    // (~/.config/opencode/oh-my-openagent.jsonc) to the unified ~/.omo/omo.jsonc,
+    // so the WSL/SSH settings page shows the path that dynamic sync actually uses.
+    if stored_version < 10 {
+        const OLD_OMO_MAPPING_PATH: &str = "~/.config/opencode/oh-my-openagent.jsonc";
+        const NEW_OMO_MAPPING_PATH: &str = "~/.omo/omo.jsonc";
+        for mapping in file_mappings.iter_mut() {
+            if mapping.id == "opencode-oh-my"
+                && (mapping.windows_path == OLD_OMO_MAPPING_PATH
+                    || mapping.wsl_path == OLD_OMO_MAPPING_PATH)
+            {
+                let mapping_id = mapping.id.clone();
+                mapping.windows_path = NEW_OMO_MAPPING_PATH.to_string();
+                mapping.wsl_path = NEW_OMO_MAPPING_PATH.to_string();
+                let data = adapter::mapping_to_db_value(mapping);
+                if let Err(e) = db.with_conn(|conn| {
+                    db_put(conn, DbTable::WslFileMapping, &mapping_id, &data)
+                }) {
+                    log::warn!("Failed to migrate WSL mapping '{}': {}", mapping_id, e);
+                } else {
+                    log::info!("Migrated WSL mapping '{}' to {}", mapping_id, NEW_OMO_MAPPING_PATH);
+                }
+            }
         }
     }
 
@@ -1076,13 +1102,17 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .and_then(runtime_location::parse_wsl_unc_path)
                         .map(|wsl| wsl.linux_path)
                         .unwrap_or_else(|| {
-                            path.file_name()
-                                .map(|name| {
-                                    format!("~/.config/opencode/{}", name.to_string_lossy())
-                                })
-                                .unwrap_or_else(|| {
-                                    "~/.config/opencode/oh-my-openagent.jsonc".to_string()
-                                })
+                            if !runtime_location::uses_legacy_omo_config(db) {
+                                "~/.omo/omo.jsonc".to_string()
+                            } else {
+                                path.file_name()
+                                    .map(|name| {
+                                        format!("~/.config/opencode/{}", name.to_string_lossy())
+                                    })
+                                    .unwrap_or_else(|| {
+                                        "~/.config/opencode/oh-my-openagent.jsonc".to_string()
+                                    })
+                            }
                         });
                 }
             }
@@ -1395,8 +1425,8 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             id: "opencode-oh-my".to_string(),
             name: "Oh My OpenAgent 配置".to_string(),
             module: "opencode".to_string(),
-            windows_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
-            wsl_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
+            windows_path: "~/.omo/omo.jsonc".to_string(),
+            wsl_path: "~/.omo/omo.jsonc".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { OhMyOpenAgentConfig } from '@/types/ohMyOpenAgent';
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { useRefreshStore } from '@/stores';
+import { useOmoUpgradeGate } from './useOmoUpgradeGate';
 
 interface OhMyOpenAgentConfigSelectorProps {
   disabled?: boolean;
@@ -17,6 +18,7 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
 }) => {
   const { t } = useTranslation();
   const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
+  const { guardedApply, upgradeConfirmModal } = useOmoUpgradeGate();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenAgentConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = React.useState<string>('');
@@ -45,24 +47,27 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
     }
   };
 
-  const handleChange = async (configId: string | undefined) => {
+  const handleChange = (configId: string | undefined) => {
     if (!configId) {
       setSelectedConfigId('');
       return;
     }
-    try {
-      await applyOhMyOpenAgentConfig(configId);
-      setSelectedConfigId(configId);
-      message.success(t('opencode.ohMyOpenCode.applySuccess'));
-      loadConfigs();
-      // 触发其他组件（如 Settings）刷新
-      incrementOmoConfigRefresh();
-      if (onConfigSelected) {
-        onConfigSelected(configId);
+    // 首次应用时先做「OMO 是否已升级」二次确认；确认过/取消由 guardedApply 处理
+    guardedApply(async () => {
+      try {
+        await applyOhMyOpenAgentConfig(configId);
+        setSelectedConfigId(configId);
+        message.success(t('opencode.ohMyOpenCode.applySuccess'));
+        loadConfigs();
+        // 触发其他组件（如 Settings）刷新
+        incrementOmoConfigRefresh();
+        if (onConfigSelected) {
+          onConfigSelected(configId);
+        }
+      } catch {
+        message.error(t('common.error'));
       }
-    } catch {
-      message.error(t('common.error'));
-    }
+    });
   };
 
   const managedConfigs = configs.filter((config) => config.id !== '__local__');
@@ -96,23 +101,26 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
   }
 
   return (
-    <Space.Compact style={{ width: '100%' }}>
-      <Select
-        value={selectedConfigId || undefined}
-        onChange={handleChange}
-        placeholder={t('opencode.ohMyOpenCode.selectConfig')}
-        options={options}
-        style={{ flex: 1 }}
-        allowClear
-        disabled={disabled}
-      />
-      <Button
-        icon={<SyncOutlined />}
-        onClick={loadConfigs}
-        loading={loading}
-        disabled={disabled}
-      />
-    </Space.Compact>
+    <>
+      <Space.Compact style={{ width: '100%' }}>
+        <Select
+          value={selectedConfigId || undefined}
+          onChange={handleChange}
+          placeholder={t('opencode.ohMyOpenCode.selectConfig')}
+          options={options}
+          style={{ flex: 1 }}
+          allowClear
+          disabled={disabled}
+        />
+        <Button
+          icon={<SyncOutlined />}
+          onClick={loadConfigs}
+          loading={loading}
+          disabled={disabled}
+        />
+      </Space.Compact>
+      {upgradeConfirmModal}
+    </>
   );
 };
 

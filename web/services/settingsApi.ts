@@ -116,6 +116,8 @@ export interface AppSettings {
   visible_tabs: string[];
   sidebar_hidden_by_page: SidebarHiddenByPage;
   opencode_allow_clear_applied_oh_my_config: boolean;
+  opencode_use_legacy_oh_my_config: boolean;
+  opencode_omo_upgrade_confirmed: boolean;
   codex_preserve_official_auth_on_switch: boolean;
   codex_unified_session_history_enabled: boolean;
   claude_cli_launch_full_access: boolean;
@@ -164,6 +166,8 @@ export const defaultSettings: AppSettings = {
   visible_tabs: ['opencode', 'claudecode', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'gateway', 'image', 'ssh', 'wsl'],
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
   opencode_allow_clear_applied_oh_my_config: false,
+  opencode_use_legacy_oh_my_config: false,
+  opencode_omo_upgrade_confirmed: false,
   codex_preserve_official_auth_on_switch: false,
   codex_unified_session_history_enabled: false,
   claude_cli_launch_full_access: false,

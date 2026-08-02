@@ -345,7 +345,16 @@ pub async fn get_oh_my_openagent_upgrade_status(
     let ssh_config = ssh::ssh_get_config(state.clone()).await?;
 
     let has_legacy_plugin = detect_legacy_plugin_usage(state.clone()).await?;
-    let has_legacy_local_config = detect_legacy_local_config_path(&oh_my_openagent_path);
+    // legacy 模式按解析路径文件名判定；unified 模式下解析路径是 ~/.omo/omo.jsonc，
+    // 无法从文件名识别 legacy，因此额外检查默认 legacy 候选文件（旧 oh-my-opencode/openagent 遗留）
+    // 是否仍存在，保证存量用户能看到 rename 升级 banner。
+    let has_legacy_local_config = if runtime_location::uses_legacy_omo_config(&db) {
+        detect_legacy_local_config_path(&oh_my_openagent_path)
+    } else {
+        super::commands::get_default_oh_my_openagent_path_candidates()
+            .map(|candidates| candidates.iter().any(|path| path.exists()))
+            .unwrap_or(false)
+    };
     let has_legacy_custom_config_path =
         opencode_config_path.source == "custom" && is_legacy_omo_path(&opencode_config_path.path);
     let has_legacy_wsl_mapping = wsl_config.file_mappings.iter().any(|mapping| {

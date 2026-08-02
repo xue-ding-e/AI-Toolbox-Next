@@ -55,6 +55,8 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       pi: false,
     },
     opencode_allow_clear_applied_oh_my_config: false,
+    opencode_use_legacy_oh_my_config: false,
+    opencode_omo_upgrade_confirmed: false,
     codex_preserve_official_auth_on_switch: false,
     codex_unified_session_history_enabled: false,
     claude_cli_launch_full_access: false,

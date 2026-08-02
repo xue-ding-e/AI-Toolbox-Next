@@ -21,6 +21,8 @@ const MODULE_KEYS: [&str; 7] = [
 ];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
+const OMO_UNIFIED_DIR: &str = ".omo";
+const OMO_UNIFIED_BASENAME: &str = "omo";
 pub const CODEX_DEFAULT_PROMPT_FILE_NAME: &str = "AGENTS.md";
 pub const CODEX_OVERRIDE_PROMPT_FILE_NAME: &str = "AGENTS.override.md";
 pub const CODEX_PROMPT_FILE_NAMES: [&str; 2] = [
@@ -430,14 +432,57 @@ pub async fn get_opencode_prompt_path_async(
     Ok(get_opencode_config_dir_async(db).await?.join("AGENTS.md"))
 }
 
-pub fn get_omo_config_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
-    let dir = get_opencode_config_dir_sync(db)?;
+pub async fn get_omo_config_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    if !uses_legacy_omo_config(db) {
+        return get_unified_omo_config_path_async(db).await;
+    }
+    let dir = get_opencode_config_dir_async(db).await?;
     Ok(resolve_omo_config_path_from_dir(&dir))
 }
 
-pub async fn get_omo_config_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
-    let dir = get_opencode_config_dir_async(db).await?;
-    Ok(resolve_omo_config_path_from_dir(&dir))
+/// Whether the OMO runtime config should use the legacy flat file
+/// (~/.config/opencode/oh-my-openagent.jsonc) instead of the unified
+/// ~/.omo/omo.jsonc ([opencode] block) format. Driven by the
+/// `opencode_use_legacy_oh_my_config` app setting.
+pub fn uses_legacy_omo_config(db: &crate::db::SqliteDbState) -> bool {
+    crate::settings::store::load_settings_from_sqlite_state(db)
+        .map(|settings| settings.opencode_use_legacy_oh_my_config)
+        .unwrap_or(false)
+}
+
+/// Resolve the unified `~/.omo/omo.jsonc` path, honoring a WSL Direct OpenCode
+/// runtime. When opencode runs inside WSL, the plugin reads the WSL home's
+/// `~/.omo/omo.jsonc`, so the path must be a UNC path derived from the WSL user
+/// root (`get_opencode_runtime_location_async`). Otherwise fall back to the
+/// local host home.
+async fn get_unified_omo_config_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    if let Ok(location) = get_opencode_runtime_location_async(db).await {
+        if let Some(wsl) = &location.wsl {
+            let linux_config = if location.source == "default" {
+                expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.omo/omo.jsonc")
+            } else {
+                format!("{}/.omo/omo.jsonc", wsl.linux_path.trim_end_matches('/'))
+            };
+            return Ok(build_windows_unc_path(&wsl.distro, &linux_config));
+        }
+    }
+    resolve_unified_omo_config_path()
+}
+
+fn resolve_unified_omo_config_path() -> Result<PathBuf, String> {
+    let home = get_home_dir()?;
+    let dir = home.join(OMO_UNIFIED_DIR);
+    let jsonc = dir.join(format!("{OMO_UNIFIED_BASENAME}.jsonc"));
+    let json = dir.join(format!("{OMO_UNIFIED_BASENAME}.json"));
+    Ok(if jsonc.exists() {
+        jsonc
+    } else if json.exists() {
+        json
+    } else {
+        jsonc
+    })
 }
 
 fn resolve_omo_config_path_from_dir(dir: &Path) -> PathBuf {
@@ -1722,12 +1767,12 @@ mod tests {
         get_claude_prompt_path_sync, get_claude_runtime_location_async,
         get_claude_runtime_location_sync, get_claude_settings_path_async,
         get_claude_settings_path_sync, get_claude_wsl_claude_json_path_async,
-        get_claude_wsl_target_path_async, get_tool_mcp_config_path_async,
+        get_claude_wsl_target_path_async, get_omo_config_path_async, get_tool_mcp_config_path_async,
         get_tool_mcp_config_path_sync, get_tool_skills_path_async, get_tool_skills_path_sync,
         module_status_from_runtime_result, refresh_runtime_location_cache_for_module_async,
         replace_path_file_name, resolve_codex_prompt_file_path, set_cached_runtime_location,
-        RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo, CODEX_DEFAULT_PROMPT_FILE_NAME,
-        CODEX_OVERRIDE_PROMPT_FILE_NAME,
+        uses_legacy_omo_config, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
+        CODEX_DEFAULT_PROMPT_FILE_NAME, CODEX_OVERRIDE_PROMPT_FILE_NAME,
     };
     use crate::db::helpers::{db_delete, db_get, db_put};
     use crate::db::schema::DbTable;
@@ -1910,6 +1955,33 @@ mod tests {
             .or_else(|_| std::env::var("HOME"))
             .map(PathBuf::from)
             .expect("resolve local home dir")
+    }
+
+    #[tokio::test]
+    async fn omo_config_path_uses_unified_by_default_and_legacy_with_setting() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+
+        // Default (no setting): unified ~/.omo/omo.jsonc
+        assert!(!uses_legacy_omo_config(&db));
+        let unified = get_omo_config_path_async(&db).await.unwrap();
+        assert_eq!(unified, local_home_dir().join(".omo").join("omo.jsonc"));
+
+        // Switch to legacy mode and point OPENCODE_CONFIG at a temp dir so the
+        // legacy path resolution is deterministic.
+        let mut settings = crate::settings::store::load_settings_from_sqlite_state(&db).unwrap();
+        settings.opencode_use_legacy_oh_my_config = true;
+        crate::settings::store::save_settings_to_sqlite_state(&db, &settings).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let opencode_config = temp_dir.path().join("opencode.jsonc");
+        let _env = EnvVarGuard::set("OPENCODE_CONFIG", &opencode_config);
+        clear_runtime_location_cache();
+
+        assert!(uses_legacy_omo_config(&db));
+        let legacy = get_omo_config_path_async(&db).await.unwrap();
+        assert_eq!(legacy, temp_dir.path().join("oh-my-openagent.jsonc"));
     }
 
     #[test]

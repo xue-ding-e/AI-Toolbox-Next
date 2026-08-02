@@ -61,6 +61,16 @@ pub fn from_db_value(value: Value) -> AppSettings {
             "opencode_allow_clear_applied_oh_my_config",
             false,
         ),
+        opencode_use_legacy_oh_my_config: get_bool(
+            &value,
+            "opencode_use_legacy_oh_my_config",
+            false,
+        ),
+        opencode_omo_upgrade_confirmed: get_bool(
+            &value,
+            "opencode_omo_upgrade_confirmed",
+            false,
+        ),
         codex_preserve_official_auth_on_switch: get_bool(
             &value,
             "codex_preserve_official_auth_on_switch",
@@ -581,6 +591,38 @@ mod tests {
         }));
 
         assert!(settings.opencode_allow_clear_applied_oh_my_config);
+    }
+
+    #[test]
+    fn opencode_use_legacy_oh_my_config_defaults_to_false() {
+        let settings = from_db_value(json!({}));
+
+        assert!(!settings.opencode_use_legacy_oh_my_config);
+    }
+
+    #[test]
+    fn opencode_use_legacy_oh_my_config_preserves_explicit_true() {
+        let settings = from_db_value(json!({
+            "opencode_use_legacy_oh_my_config": true,
+        }));
+
+        assert!(settings.opencode_use_legacy_oh_my_config);
+    }
+
+    #[test]
+    fn opencode_omo_upgrade_confirmed_defaults_to_false() {
+        let settings = from_db_value(json!({}));
+
+        assert!(!settings.opencode_omo_upgrade_confirmed);
+    }
+
+    #[test]
+    fn opencode_omo_upgrade_confirmed_preserves_explicit_true() {
+        let settings = from_db_value(json!({
+            "opencode_omo_upgrade_confirmed": true,
+        }));
+
+        assert!(settings.opencode_omo_upgrade_confirmed);
     }
 
     #[test]

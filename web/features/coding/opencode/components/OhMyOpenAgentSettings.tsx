@@ -24,6 +24,7 @@ import type {
 import OhMyOpenAgentConfigCard from './OhMyOpenAgentConfigCard';
 import OhMyOpenAgentConfigModal, { type OhMyOpenAgentConfigFormValues } from './OhMyOpenAgentConfigModal';
 import OhMyOpenAgentGlobalConfigModal from './OhMyOpenAgentGlobalConfigModal';
+import { useOmoUpgradeGate } from './useOmoUpgradeGate';
 import {
   listOhMyOpenAgentConfigs,
   createOhMyOpenAgentConfig,
@@ -55,6 +56,8 @@ interface OhMyOpenAgentSettingsProps {
   modelVariantsMap?: Record<string, string[]>;
   disabled?: boolean;
   allowClearAppliedConfig?: boolean;
+  /** Whether to write the legacy flat config format instead of unified ~/.omo/omo.jsonc */
+  useLegacyConfig?: boolean;
   onConfigApplied?: (config: OhMyOpenAgentConfig) => void;
   onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
   onLegacyUpgraded?: () => void;
@@ -65,12 +68,14 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
   modelVariantsMap = {},
   disabled = false,
   allowClearAppliedConfig = false,
+  useLegacyConfig = false,
   onConfigApplied,
   onConfigUpdated,
   onLegacyUpgraded,
 }) => {
   const { t } = useTranslation();
   const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
+  const { guardedApply, upgradeConfirmModal } = useOmoUpgradeGate();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenAgentConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -165,21 +170,24 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
     });
   };
 
-  const handleApplyConfig = async (config: OhMyOpenAgentConfig) => {
-    try {
-      await applyOhMyOpenAgentConfig(config.id);
-      message.success(t('opencode.ohMyOpenCode.applySuccess'));
-      loadConfigs();
-      // 触发其他组件（如 ConfigSelector）刷新
-      incrementOmoConfigRefresh();
-      // Refresh tray menu after applying config
-      await refreshTrayMenu();
-      if (onConfigApplied) {
-        onConfigApplied(config);
+  const handleApplyConfig = (config: OhMyOpenAgentConfig) => {
+    // 首次应用时先做「OMO 是否已升级」二次确认；确认过/取消由 guardedApply 处理
+    guardedApply(async () => {
+      try {
+        await applyOhMyOpenAgentConfig(config.id);
+        message.success(t('opencode.ohMyOpenCode.applySuccess'));
+        loadConfigs();
+        // 触发其他组件（如 ConfigSelector）刷新
+        incrementOmoConfigRefresh();
+        // Refresh tray menu after applying config
+        await refreshTrayMenu();
+        if (onConfigApplied) {
+          onConfigApplied(config);
+        }
+      } catch {
+        message.error(t('common.error'));
       }
-    } catch {
-      message.error(t('common.error'));
-    }
+    });
   };
 
   const handleClearAppliedConfig = async (config: OhMyOpenAgentConfig) => {
@@ -408,16 +416,22 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
     otherFields?: Record<string, unknown>;
   }) => {
     try {
+      // In unified mode the LSP section is hidden; preserve the existing DB
+      // value instead of clearing it (lsp is only written to legacy files).
+      const submittedValues = !useLegacyConfig
+        ? { ...values, lsp: globalConfig?.lsp ?? null }
+        : values;
+
       // Check if this is a __local__ config (temporary config from local file)
       const isLocalConfig = globalConfig?.id === '__local__';
 
       if (isLocalConfig) {
         // Save local config to database using saveOhMyOpenAgentLocalConfig
         await saveOhMyOpenAgentLocalConfig({
-          globalConfig: values,
+          globalConfig: submittedValues,
         });
       } else {
-        await saveOhMyOpenAgentGlobalConfig(values);
+        await saveOhMyOpenAgentGlobalConfig(submittedValues);
       }
       message.success(t('common.success'));
       setGlobalModalOpen(false);
@@ -622,12 +636,15 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
         open={globalModalOpen}
         isLocal={globalConfig?.id === '__local__'}
         initialValues={globalConfig || undefined}
+        showLsp={useLegacyConfig}
         onCancel={() => {
           setGlobalModalOpen(false);
           setGlobalConfig(null);
         }}
         onSuccess={handleSaveGlobalConfig}
       />
+
+      {upgradeConfirmModal}
     </>
   );
 };

@@ -22,6 +22,8 @@ const emptyToUndefined = (value: unknown): unknown => {
 interface OhMyOpenAgentGlobalConfigModalProps {
   open: boolean;
   isLocal?: boolean;
+  /** Whether to show the LSP settings section (hidden in unified omo.jsonc mode) */
+  showLsp?: boolean;
   initialValues?: {
     schema?: string;
     sisyphusAgent?: Record<string, unknown> | null;
@@ -56,6 +58,7 @@ interface OhMyOpenAgentGlobalConfigModalProps {
 const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalProps> = ({
   open,
   isLocal = false,
+  showLsp = true,
   initialValues,
   onCancel,
   onSuccess,
@@ -370,35 +373,36 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
               ]}
             />
 
-            {/* LSP Settings */}
-            <Collapse
-              className={styles.sectionCollapse}
-              bordered={false}
-              items={[
-                {
-                  key: 'lsp',
-                  label: buildSectionLabel(t('opencode.ohMyOpenCode.lspSettings'), t('opencode.ohMyOpenCode.lspConfigHint')),
-                  children: (
-                    <Form.Item
-                      className={styles.editorItem}
-                      name="lsp"
-                      labelCol={{ span: 24 }}
-                      wrapperCol={{ span: 24 }}
-                    >
-                      <JsonEditor
-                        value={emptyToUndefined(form.getFieldValue('lsp'))}
-                        onChange={(value, isValid) => {
-                          lspJsonValidRef.current = isValid;
-                          if (isValid && typeof value === 'object' && value !== null) {
-                            form.setFieldValue('lsp', value);
-                          }
-                        }}
-                        height={250}
-                        minHeight={150}
-                        maxHeight={400}
-                        resizable
-                        mode="text"
-                        placeholder={`{
+            {/* LSP Settings (hidden in unified omo.jsonc mode) */}
+            {showLsp && (
+              <Collapse
+                className={styles.sectionCollapse}
+                bordered={false}
+                items={[
+                  {
+                    key: 'lsp',
+                    label: buildSectionLabel(t('opencode.ohMyOpenCode.lspSettings'), t('opencode.ohMyOpenCode.lspConfigHint')),
+                    children: (
+                      <Form.Item
+                        className={styles.editorItem}
+                        name="lsp"
+                        labelCol={{ span: 24 }}
+                        wrapperCol={{ span: 24 }}
+                      >
+                        <JsonEditor
+                          value={emptyToUndefined(form.getFieldValue('lsp'))}
+                          onChange={(value, isValid) => {
+                            lspJsonValidRef.current = isValid;
+                            if (isValid && typeof value === 'object' && value !== null) {
+                              form.setFieldValue('lsp', value);
+                            }
+                          }}
+                          height={250}
+                          minHeight={150}
+                          maxHeight={400}
+                          resizable
+                          mode="text"
+                          placeholder={`{
     "lsp": {
         "typescript-language-server": {
             "command": ["typescript-language-server", "--stdio"],
@@ -410,12 +414,13 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
         }
     }
 }`}
-                      />
-                    </Form.Item>
-                  ),
-                },
-              ]}
-            />
+                        />
+                      </Form.Item>
+                    ),
+                  },
+                ]}
+              />
+            )}
 
             {/* Claude Code Settings */}
             <Collapse

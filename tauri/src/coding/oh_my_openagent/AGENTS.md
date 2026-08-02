@@ -9,10 +9,17 @@
 - 长期主数据在 SQLite JSONB 表 `oh_my_openagent_config` / `oh_my_openagent_global_config`；旧 SurrealDB 仅用于启动时一次性导入，不再镜像写入。
 - 当数据库为空时，页面先看到的是从本地配置文件读取出来的临时 `__local__` 记录；它只是桥接态，不是最终持久化 ID。
 - 当前生效配置文件路径由 `runtime_location::get_omo_config_path_async()` 决议，而不是写死默认文件名。
+- 写入目标由应用设置 `opencode_use_legacy_oh_my_config` 决定：
+  - `false`（默认）→ unified `~/.omo/omo.jsonc`，插件配置整体写入 **[opencode]** 块（新版 oh-my-openagent 唯一读取源）。
+  - `true` → legacy 扁平文件 `~/.config/opencode/oh-my-openagent.jsonc`（仅 oh-my-openagent 4.20 之前的旧版本读取）。
+- 首次应用前有一次「OMO 是否已升级」二次确认（前端 `useOmoUpgradeGate`）：确认「未升级」会自动打开 `opencode_use_legacy_oh_my_config`。持久化标志 `opencode_omo_upgrade_confirmed` 记录「已确认」，取消不持久化、下次继续弹。后端不需要感知该确认流程，只提供两个设置字段。
+- **已知局限（产品已接受）**：确认门只罩住两个显式 apply 入口（设置面板应用 + 顶部选择器切换）。编辑已应用配置自动 re-apply、保存全局配置 re-apply、toggle disabled、托盘 apply、备份恢复/启动 re-apply 等后端写路径**不会**弹确认、直接按当前开关写 unified/legacy。存量用户若未先走显式 apply 而直接改全局配置，首写可能绕过确认。
 
 ## 核心设计决策（Why）
 
 - 该模块必须兼容历史文件名 `oh-my-opencode.*` 和新文件名 `oh-my-openagent.*`，否则升级用户会直接丢失本地配置。
+- 新版本 oh-my-openagent 的 OpenCode 插件只读 `~/.omo/omo.jsonc`（含项目 `.omo/omo.jsonc`），legacy 文件唯一例外是被插件启动迁移引擎导入。因此写错目标文件会「看起来成功但完全无效」。
+- unified 读写在 `commands.rs` 通过 `flatten_omo_config` / `write_unified_omo_config` / `remove_opencode_block` 实现，保持「一个 DB 模型 + is_applied」不变：apply 时把全局字段 + 生效方案合并成一份扁平结果写入 **[opencode]** 块。
 - 应用配置统一走 `apply_config_internal`：写文件、更新 `is_applied`、发 `config-changed` 和 `wsl-sync-request-opencode`。
 - agents key 统一做小写归一化，避免历史配置里的大小写差异造成逻辑分叉。
 
@@ -42,9 +49,14 @@ sequenceDiagram
 - 前端 UI 即使后端把 `__local__` 标成已应用，也不要显示「已应用」标签、选中高亮或「应用」按钮；只保留本地来源提示。用户应先保存收编入库，再进入正式 applied 管理语义。
 - 保存 `__local__` 到数据库时，要区分“整个 profile/global section 未传入”和“section 已传入但某个 optional 字段为 `None`”。后者代表用户明确清空该字段，不能再回退到本地文件旧值。
 - 路径来源不是简单的“默认目录就默认、其它都 custom”，还要兼容旧文件名候选和 `runtime_location` 决议。
+- unified 模式下 source 为 `"unified"`（不再走 default/custom 判定）;`flatten_omo_config` 会把 base 键与 `[opencode]` 块摊平（块胜出），并剔除 omo 控制键（`profiles`/`_migrations`/`models`/`task`/`teams`/`codegraph`/`$schema`），避免它们被当成 `other_fields` 写回 `[opencode]` 造成污染。
+- unified 写入必须**保留**既有共享键（codegraph/models/task/teams/profiles 等），只替换 `[opencode]` 块；并写 `_migrations` 标记 `2026-07-opencode-config-unification` 阻止插件启动迁移重复导入残留 legacy 文件。
+- unified 模式写出的 `[opencode]` 块**不写 `lsp`**（lsp 已不是插件合法 schema 键，写了报 Unknown key）;DB 与 UI 仍保留 lsp，legacy 模式照旧写。
 - 改应用逻辑时要记住它属于 OpenCode 运行时的一部分，所以 WSL 同步事件也复用 `wsl-sync-request-opencode`。
-- “清除已应用配置”只删除当前决议到的运行时配置文件并取消 `is_applied`，不删除数据库里的 profile，也不是任意路径/文件名映射能力。`__local__` 不应开放该危险操作。
-- 在 Windows + WSL 自动同步开启时，清除已应用配置必须先显式删除 `opencode-oh-my` 的 WSL 目标文件，再删除本机文件并取消 `is_applied`；不要只发 `wsl-sync-request-opencode`，因为普通同步会跳过不存在的源文件，不会删除远端旧文件。
+- “清除已应用配置”只删除当前决议到的运行时配置并取消 `is_applied`，不删除数据库里的 profile，也不是任意路径/文件名映射能力。`__local__` 不应开放该危险操作。
+- unified 模式下清除已应用**只移除 `[opencode]` 块**（共享文件不能整个删）；仅剩 `$schema`/`_migrations` 等控制键时才删除文件。legacy 模式仍是删除整个文件。
+- **仅 legacy 模式**：在 Windows + WSL 自动同步开启时，清除已应用配置必须先显式删除 `opencode-oh-my` 的 WSL 目标文件，再删除本机文件并取消 `is_applied`；不要只发 `wsl-sync-request-opencode`，因为普通同步会跳过不存在的源文件，不会删除远端旧文件。**unified 模式绝不能整删 WSL 侧 `~/.omo/omo.jsonc`**（共享文件含 codegraph/models），只移除 `[opencode]` 块并靠 `wsl-sync-request-opencode` 同步去除远端该块。
+- unified 模式 `~/.omo/omo.jsonc` 是**共享统一配置**；`opencode-oh-my` 的 WSL/SSH 同步目标在 unified 模式下应指向 `~/.omo/omo.jsonc`（legacy 才用 `~/.config/opencode/...`），默认 mapping 已改为 unified 路径。
 
 ## 跨模块依赖
 

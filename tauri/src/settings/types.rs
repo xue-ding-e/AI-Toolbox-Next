@@ -130,6 +130,12 @@ pub struct AppSettings {
     pub sidebar_hidden_by_page: HashMap<String, bool>,
     /// Allow clearing OMO/OMOS applied runtime config from OpenCode page (default: false)
     pub opencode_allow_clear_applied_oh_my_config: bool,
+    /// Write OMO config to the legacy flat file (~/.config/opencode/oh-my-openagent.jsonc)
+    /// instead of the unified ~/.omo/omo.jsonc ([opencode] block) format (default: false)
+    pub opencode_use_legacy_oh_my_config: bool,
+    /// Whether the user has already answered the one-time "has OMO been upgraded?"
+    /// confirmation shown on the first Oh My OpenAgent apply (default: false)
+    pub opencode_omo_upgrade_confirmed: bool,
     /// Keep Codex official OAuth login when applying third-party providers (default: false)
     pub codex_preserve_official_auth_on_switch: bool,
     /// Let official Codex sessions use the shared custom history bucket (default: false)
@@ -180,6 +186,8 @@ impl Default for AppSettings {
             ],
             sidebar_hidden_by_page: default_sidebar_hidden_by_page(),
             opencode_allow_clear_applied_oh_my_config: false,
+            opencode_use_legacy_oh_my_config: false,
+            opencode_omo_upgrade_confirmed: false,
             codex_preserve_official_auth_on_switch: false,
             codex_unified_session_history_enabled: false,
             claude_cli_launch_full_access: false,

@@ -1913,7 +1913,15 @@
           "description": "写作模式 - 写文档的\"技术作家模式\"，专注清晰流畅的散文表达，用于README、文档、技术文章",
           "recommendedModel": "gemini-3-flash"
         }
-      }
+      },
+      "legacyConfigToggle": "写入旧版配置格式",
+      "legacyConfigToggleHint": "开启后 OMO 配置写入 ~/.config/opencode/oh-my-openagent.jsonc(仅 oh-my-openagent 4.20 之前的旧版本需要);关闭则写入统一配置 ~/.omo/omo.jsonc",
+      "upgradeConfirmTitle": "OMO 是否已升级到最新版本?",
+      "upgradeConfirmDesc": "新版本配置(~/.omo/omo.jsonc)与老版本配置(~/.config/opencode/oh-my-openagent.jsonc)不兼容。选择『已升级』将使用统一格式,选择『未升级』将自动开启旧配置写入。",
+      "upgradeConfirmUpgraded": "已升级",
+      "upgradeConfirmNotUpgraded": "未升级",
+      "upgradeLegacyAutoHint": "已自动开启『写入旧配置』；升级 omo 之后可在『更多选项』里关闭。",
+      "upgradeUnifiedAutoHint": "已切换到统一配置格式(~/.omo/omo.jsonc);如需写旧版可在『更多选项』重新开启"
     },
     "official": {
       "title": "官方Auth认证渠道",

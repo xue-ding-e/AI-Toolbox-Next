@@ -65,6 +65,10 @@ sequenceDiagram
 - OMOS Council 的成员超时应写当前上游字段 `council.timeout`；历史 `council.councillors_timeout` 只做兼容读取，不要再写入新配置。
 - OMOS Council 合成模型必须写 `agents.council`（model/variant/prompt），不要再写 `council.master` / `master_timeout` / `master_fallback` 或 preset 内 `master`。只有合法 `agents.council`、没有顶层 fan-out `council` 也是启用状态，保存时不得强制要求 presets。`agents.council.model` 允许 string/object/array；表单只编辑主模型，但必须携带原始模型值，主模型未改时原样回写，修改时只替换第一项并保留 fallback 对象的 `variant` 和未知字段。旧配置读取时把 `council.master` 与 `master_fallback` 合并为模型链，保存时迁移到 `agents.council` 并从输出中剔除 master 字段。JSON 导入时 `agents.council` 归 Council 表单（core/full 都要解析），不能当普通 custom agent，也不能只在 `otherFields.council` 存在时才回填。Global Config 若只在 Council 表单配置合成模型，可临时镜像到 `otherFields.agents.council`，并复用共享合并 helper；apply 时 profile agents 覆盖 base agents，但应保留缺失的 `agents.council`，且必须先 migrate 再 normalize。
 - OMO/OMOS 的清除已应用配置是页面级“更多选项”中默认关闭的危险能力；开关值保存在应用 settings 中。开启后点击已应用标签只清除当前运行时配置文件和 applied 状态，不删除 AI Toolbox 保存的配置，也不表示支持任意文件映射。
+- OMO 写入目标由 settings 开关 `opencode_use_legacy_oh_my_config`（`opencodeUseLegacyOhMyConfig`）决定：关（默认）= 写 unified `~/.omo/omo.jsonc` 的 `[opencode]` 块；开 = 写旧版扁平 `~/.config/opencode/oh-my-openagent.jsonc`。开关在侧栏设置弹窗里，切换后要触发 `incrementOmoConfigRefresh()` + `refreshTrayMenu()` 刷新读取路径。
+- unified 模式下全局配置弹窗的 **LSP 区块隐藏**（`OhMyOpenAgentGlobalConfigModal` 的 `showLsp={useLegacyConfig}`）；`OhMyOpenAgentSettings.handleSaveGlobalConfig` 在 unified 模式提交前把 `lsp` 还原为既有 DB 值（`globalConfig?.lsp ?? null`），**不能因表单隐藏而清空 DB 的 lsp**。lsp 只写 legacy 文件。
+- OMO **首次应用**前有一次「OMO 是否已升级到最新版本？」二次确认，由共享 hook `useOmoUpgradeGate` 实现，两个 apply 入口（`OhMyOpenAgentSettings.handleApplyConfig` 和 `OhMyOpenAgentConfigSelector.handleChange`）都要用 `guardedApply` 包裹并把 `upgradeConfirmModal` 渲染进 JSX。选「已升级」→ 确保关闭 legacy 开关（走 unified）并应用；选「未升级」→ 自动开 `setOpencodeUseLegacyOhMyConfig(true)` 再应用；选「取消」→ 中止且不持久化。确认标志 `opencodeOmoUpgradeConfirmed` 持久化后不再弹。
+- **局限（产品已接受）**：该确认门只罩上述两个显式 apply 入口；后端 re-apply（编辑已应用配置、保存全局配置、toggle disabled、托盘、备份恢复/启动）不经确认直接写运行时文件。UI 只能保证从这两个入口触发的路径受控。
 
 ## 跨模块依赖
 

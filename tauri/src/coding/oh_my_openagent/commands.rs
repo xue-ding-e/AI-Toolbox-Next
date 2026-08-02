@@ -1,6 +1,7 @@
 use chrono::Local;
 use serde_json::Value;
 use std::fs;
+use std::path::Path;
 
 use super::adapter;
 use super::types::*;
@@ -15,6 +16,14 @@ use tauri::Emitter;
 
 pub const OH_MY_OPENAGENT_CONFIG_TABLE: &str = "oh_my_openagent_config";
 pub const OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE: &str = "oh_my_openagent_global_config";
+
+const OMO_LEGACY_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json";
+const OMO_UNIFIED_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json";
+/// Matches the upstream opencode-config unification migration id so the plugin's
+/// startup migration does not re-import a stale legacy file over our values.
+const OMO_UNIFIED_MIGRATION_ID: &str = "2026-07-opencode-config-unification";
 
 fn default_global_config() -> OhMyOpenAgentGlobalConfig {
     OhMyOpenAgentGlobalConfig {
@@ -218,12 +227,51 @@ fn normalize_agents_keys(agents: &mut Value) {
     }
 }
 
+/// Flatten a unified `~/.omo/omo.jsonc` document (or a legacy flat file) into the
+/// single flat view the extraction logic expects. omo-config-core control keys
+/// (`profiles`, `_migrations`, `legacy_migrations`, `models`, `task`, `teams`,
+/// `codegraph`, `$schema`) are not plugin config and are always stripped — even when
+/// there is no `[opencode]` block yet — so they never leak into `other_fields` and
+/// then get written back into `[opencode]` (which would trigger upstream Unknown key
+/// diagnostics). When a `[opencode]` block exists, its keys overlay the base
+/// (block wins, mirroring upstream resolution).
+fn flatten_omo_config(json: &Value) -> Value {
+    let Some(obj) = json.as_object() else {
+        return json.clone();
+    };
+
+    let mut flattened = serde_json::Map::new();
+    for (key, value) in obj {
+        if matches!(
+            key.as_str(),
+            "[opencode]"
+                | "profiles"
+                | "_migrations"
+                | "legacy_migrations"
+                | "$schema"
+                | "models"
+                | "task"
+                | "teams"
+                | "codegraph"
+        ) {
+            continue;
+        }
+        flattened.insert(key.clone(), value.clone());
+    }
+    if let Some(block) = obj.get("[opencode]").and_then(Value::as_object) {
+        for (key, value) in block {
+            flattened.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(flattened)
+}
+
 fn get_default_oh_my_openagent_dir() -> Result<std::path::PathBuf, String> {
     let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
     Ok(home_dir.join(".config").join("opencode"))
 }
 
-fn get_default_oh_my_openagent_path_candidates() -> Result<Vec<std::path::PathBuf>, String> {
+pub(crate) fn get_default_oh_my_openagent_path_candidates() -> Result<Vec<std::path::PathBuf>, String> {
     let default_dir = get_default_oh_my_openagent_dir()?;
     Ok(vec![
         default_dir.join("oh-my-openagent.jsonc"),
@@ -237,14 +285,18 @@ async fn get_oh_my_openagent_config_path_and_source(
     db: &crate::db::SqliteDbState,
 ) -> Result<(std::path::PathBuf, &'static str), String> {
     let path = runtime_location::get_omo_config_path_async(db).await?;
-    let default_candidates = get_default_oh_my_openagent_path_candidates()?;
-    let source = if default_candidates
-        .iter()
-        .any(|candidate| candidate == &path)
-    {
-        "default"
+    let source = if !runtime_location::uses_legacy_omo_config(db) {
+        "unified"
     } else {
-        "custom"
+        let default_candidates = get_default_oh_my_openagent_path_candidates()?;
+        if default_candidates
+            .iter()
+            .any(|candidate| candidate == &path)
+        {
+            "default"
+        } else {
+            "custom"
+        }
     };
     Ok((path, source))
 }
@@ -299,6 +351,8 @@ async fn load_temp_config_from_file(
     // 解析 JSON（使用 json5 支持带注释的 JSONC 格式）
     let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
+    // 兼容 unified ~/.omo/omo.jsonc:把 [opencode] 块 + base 摊平成扁平视图
+    let json_value = flatten_omo_config(&json_value);
 
     // 提取 agents 配置（并标准化键名为小写）
     let mut agents = json_value
@@ -382,6 +436,8 @@ async fn load_temp_global_config_from_file(
 
     let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
+    // 兼容 unified ~/.omo/omo.jsonc:把 [opencode] 块 + base 摊平成扁平视图
+    let json_value = flatten_omo_config(&json_value);
 
     // 提取全局配置字段
     let schema = json_value
@@ -606,13 +662,20 @@ pub async fn clear_oh_my_openagent_applied_config(
 
     let config_path = get_oh_my_openagent_config_path(&db).await?;
 
-    #[cfg(target_os = "windows")]
-    crate::coding::wsl::remove_auto_synced_wsl_mapping_target(state.inner(), "opencode-oh-my")
-        .await?;
-
-    if config_path.exists() {
-        fs::remove_file(&config_path)
-            .map_err(|e| format!("Failed to remove config file: {}", e))?;
+    if runtime_location::uses_legacy_omo_config(&db) {
+        // legacy 模式：目标文件是 AI Toolbox 全权管理的扁平文件，删除本机文件前先删 WSL 目标。
+        #[cfg(target_os = "windows")]
+        crate::coding::wsl::remove_auto_synced_wsl_mapping_target(state.inner(), "opencode-oh-my")
+            .await?;
+        if config_path.exists() {
+            fs::remove_file(&config_path)
+                .map_err(|e| format!("Failed to remove config file: {}", e))?;
+        }
+    } else {
+        // Unified 模式下 omo.jsonc 是共享配置文件，只移除 [opencode] 块，
+        // 保留 codegraph/models/task/teams/profiles 等共享键；绝不整删 WSL 侧共享文件
+        // （WSL 侧由后续 wsl-sync-request-opencode 同步去除该块）。
+        remove_opencode_block(&config_path)?;
     }
 
     let now = Local::now().to_rfc3339();
@@ -674,66 +737,65 @@ pub async fn apply_config_to_file_public(
     // 4. Agents Profile 的 categories
     // 5. Agents Profile 的 other_fields（最高优先级，可以覆盖所有）
 
-    let mut final_json = serde_json::Map::new();
+    let legacy_mode = runtime_location::uses_legacy_omo_config(db);
 
-    // 使用保存的 schema 或默认 schema
-    let schema_url = global_config.schema.unwrap_or_else(|| {
-        "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json".to_string()
-    });
-    final_json.insert("$schema".to_string(), serde_json::json!(schema_url));
+    let mut plugin_config = serde_json::Map::new();
 
-    // 1. 先设置全局配置的明确字段（优先级最低）
+    // 1. 先设置全局配置的明确字段（优先级最低）。unified 模式剔除 lsp：
+    //    lsp 已不是插件合法 schema 键（上游迁移会丢弃），写入会触发 Unknown key 诊断。
     if let Some(sisyphus) = global_config.sisyphus_agent {
-        final_json.insert("sisyphus_agent".to_string(), sisyphus);
+        plugin_config.insert("sisyphus_agent".to_string(), sisyphus);
     }
     if let Some(disabled_agents) = global_config.disabled_agents {
-        final_json.insert(
+        plugin_config.insert(
             "disabled_agents".to_string(),
             serde_json::json!(disabled_agents),
         );
     }
     if let Some(disabled_mcps) = global_config.disabled_mcps {
-        final_json.insert(
+        plugin_config.insert(
             "disabled_mcps".to_string(),
             serde_json::json!(disabled_mcps),
         );
     }
     if let Some(disabled_hooks) = global_config.disabled_hooks {
-        final_json.insert(
+        plugin_config.insert(
             "disabled_hooks".to_string(),
             serde_json::json!(disabled_hooks),
         );
     }
     if let Some(disabled_skills) = global_config.disabled_skills {
-        final_json.insert(
+        plugin_config.insert(
             "disabled_skills".to_string(),
             serde_json::json!(disabled_skills),
         );
     }
-    if let Some(lsp) = global_config.lsp {
-        final_json.insert("lsp".to_string(), lsp);
+    if legacy_mode {
+        if let Some(lsp) = global_config.lsp {
+            plugin_config.insert("lsp".to_string(), lsp);
+        }
     }
     if let Some(experimental) = global_config.experimental {
-        final_json.insert("experimental".to_string(), experimental);
+        plugin_config.insert("experimental".to_string(), experimental);
     }
     if let Some(background_task) = global_config.background_task {
-        final_json.insert("background_task".to_string(), background_task);
+        plugin_config.insert("background_task".to_string(), background_task);
     }
     if let Some(browser_automation_engine) = global_config.browser_automation_engine {
-        final_json.insert(
+        plugin_config.insert(
             "browser_automation_engine".to_string(),
             browser_automation_engine,
         );
     }
     if let Some(claude_code) = global_config.claude_code {
-        final_json.insert("claude_code".to_string(), claude_code);
+        plugin_config.insert("claude_code".to_string(), claude_code);
     }
 
     // 2. 然后平铺全局配置的 other_fields（会覆盖上面的明确字段）
     if let Some(global_others) = global_config.other_fields {
         if let Some(others_obj) = global_others.as_object() {
             for (key, value) in others_obj {
-                final_json.insert(key.clone(), value.clone());
+                plugin_config.insert(key.clone(), value.clone());
             }
         }
     }
@@ -741,35 +803,469 @@ pub async fn apply_config_to_file_public(
     // 3. 设置 Agents Profile 的 agents（会覆盖前面的 agents，并标准化键名为小写）
     if let Some(mut agents) = agents_profile.agents {
         normalize_agents_keys(&mut agents);
-        final_json.insert("agents".to_string(), agents);
+        plugin_config.insert("agents".to_string(), agents);
     }
 
     // 4. 设置 Agents Profile 的 categories（会覆盖前面的 categories）
     if let Some(categories) = agents_profile.categories {
-        final_json.insert("categories".to_string(), categories);
+        plugin_config.insert("categories".to_string(), categories);
     }
 
     // 5. 最后平铺 Agents Profile 的 other_fields（最高优先级，可以覆盖所有字段）
     if let Some(profile_others) = agents_profile.other_fields {
         if let Some(others_obj) = profile_others.as_object() {
             for (key, value) in others_obj {
-                final_json.insert(key.clone(), value.clone());
+                plugin_config.insert(key.clone(), value.clone());
             }
         }
     }
 
-    let mut final_json = Value::Object(final_json);
+    let mut plugin_config = Value::Object(plugin_config);
 
     // 清理空值：删除空对象和空数组
-    adapter::clean_empty_values(&mut final_json);
+    adapter::clean_empty_values(&mut plugin_config);
 
-    // Write to file with pretty formatting
-    let json_content = serde_json::to_string_pretty(&final_json)
+    if legacy_mode {
+        // Legacy 扁平格式：整体覆写 ~/.config/opencode/oh-my-openagent.jsonc
+        let schema_url = global_config
+            .schema
+            .unwrap_or_else(|| OMO_LEGACY_SCHEMA_URL.to_string());
+        let mut final_map = plugin_config.as_object().cloned().unwrap_or_default();
+        final_map.insert("$schema".to_string(), serde_json::json!(schema_url));
+        write_config_file(&config_path, &Value::Object(final_map))?;
+    } else {
+        // Unified 格式：只替换 [opencode] 块，保留 codegraph/models/task/teams/profiles 等共享键
+        write_unified_omo_config(&config_path, &plugin_config)?;
+    }
+
+    Ok(())
+}
+
+/// Write a JSON document with pretty formatting to the given path.
+fn write_config_file(config_path: &Path, value: &Value) -> Result<(), String> {
+    let json_content = serde_json::to_string_pretty(value)
         .map_err(|e| format!("Failed to serialize final config: {}", e))?;
+    fs::write(config_path, json_content)
+        .map_err(|e| format!("Failed to write config file: {}", e))
+}
 
-    fs::write(&config_path, json_content)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
+/// Write the merged plugin config into the `[opencode]` block of `~/.omo/omo.jsonc`,
+/// preserving every other top-level key (codegraph/models/task/teams/profiles...).
+/// Also stamps the unification migration marker so the upstream startup migration
+/// does not re-import a stale legacy file over our values.
+/// Write the merged plugin config into the `[opencode]` block of `~/.omo/omo.jsonc`,
+/// preserving every other top-level key (codegraph/models/task/teams/profiles...) and
+/// all comments verbatim (JSONC-aware in-place patch). Also stamps the unification
+/// migration marker so the upstream startup migration does not re-import a stale
+/// legacy file over our values. A missing/invalid file is rewritten fresh.
+fn write_unified_omo_config(config_path: &Path, plugin_config: &Value) -> Result<(), String> {
+    let block_json = serde_json::to_string_pretty(plugin_config)
+        .map_err(|e| format!("Failed to serialize [opencode] block: {}", e))?;
 
+    if config_path.exists() {
+        let content = fs::read_to_string(config_path)
+            .map_err(|e| format!("Failed to read existing omo.jsonc: {}", e))?;
+        if matches!(json5::from_str::<Value>(&content), Ok(Value::Object(_))) {
+            let patched = patch_unified_omo_config_text(
+                &content,
+                &block_json,
+                OMO_UNIFIED_SCHEMA_URL,
+                OMO_UNIFIED_MIGRATION_ID,
+            );
+            fs::write(config_path, patched)
+                .map_err(|e| format!("Failed to write config file: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    let top = serde_json::json!({
+        "$schema": OMO_UNIFIED_SCHEMA_URL,
+        "[opencode]": plugin_config,
+        "_migrations": [OMO_UNIFIED_MIGRATION_ID],
+    });
+    write_config_file(config_path, &top)
+}
+
+/// JSONC top-level key span for in-place patching.
+struct TopLevelKey {
+    name: String,
+    key_start: usize,   // index of the opening quote of the key
+    value_start: usize, // index of the first char of the value
+    value_end: usize,   // index pointing at the trailing comma (or root brace) after the value
+}
+
+/// Scan the root-level keys of a JSONC document, honoring strings and `//` / `/* */`
+/// comments. Returns the keys and the index of the root object's closing brace.
+fn scan_top_level_keys(text: &str) -> (Vec<TopLevelKey>, usize) {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut keys = Vec::new();
+    let mut root_close = n;
+    let mut i = 0usize;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_line = false;
+    let mut in_block = false;
+
+    while i < n {
+        let c = bytes[i];
+        if in_line {
+            if c == b'\n' {
+                in_line = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block {
+            if c == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                in_block = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                in_line = true;
+                i += 2;
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                in_block = true;
+                i += 2;
+                continue;
+            }
+            b'"' => {
+                let str_start = i;
+                i += 1;
+                let mut str_end = i;
+                let mut str_in = true;
+                let mut str_esc = false;
+                while str_end < n {
+                    let sc = bytes[str_end];
+                    if str_esc {
+                        str_esc = false;
+                    } else if sc == b'\\' {
+                        str_esc = true;
+                    } else if sc == b'"' {
+                        str_in = false;
+                        str_end += 1;
+                        break;
+                    }
+                    str_end += 1;
+                }
+                if str_in {
+                    i = str_end;
+                    continue;
+                }
+                let name = &text[str_start + 1..str_end - 1];
+                // Skip whitespace and comments to see if this string is a key (':' follows).
+                let mut j = str_end;
+                loop {
+                    while j < n && bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j + 1 < n && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+                        while j < n && bytes[j] != b'\n' {
+                            j += 1;
+                        }
+                        continue;
+                    }
+                    if j + 1 < n && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                        j += 2;
+                        while j + 1 < n && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                            j += 1;
+                        }
+                        j += 2;
+                        continue;
+                    }
+                    break;
+                }
+                if j < n && bytes[j] == b':' && depth == 1 {
+                    let mut vs = j + 1;
+                    while vs < n && bytes[vs].is_ascii_whitespace() {
+                        vs += 1;
+                    }
+                    let ve = scan_value_end(text, vs);
+                    keys.push(TopLevelKey {
+                        name: name.to_string(),
+                        key_start: str_start,
+                        value_start: vs,
+                        value_end: ve,
+                    });
+                    i = ve;
+                    continue;
+                }
+                i = str_end;
+                continue;
+            }
+            b'{' => {
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                if depth == 1 {
+                    root_close = i;
+                    i = n;
+                    continue;
+                }
+                if depth > 0 {
+                    depth -= 1;
+                }
+                i += 1;
+                continue;
+            }
+            b'[' => {
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            b']' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+                i += 1;
+                continue;
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        }
+    }
+    (keys, root_close)
+}
+
+/// Scan a JSONC value starting at `start` and return the index just after the value
+/// (i.e. pointing at the trailing comma or the root closing brace).
+fn scan_value_end(text: &str, mut i: usize) -> usize {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_line = false;
+    let mut in_block = false;
+    while i < n {
+        let c = bytes[i];
+        if in_line {
+            if c == b'\n' {
+                in_line = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block {
+            if c == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                in_block = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                in_line = true;
+                i += 2;
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                in_block = true;
+                i += 2;
+                continue;
+            }
+            b'"' => {
+                in_string = true;
+                i += 1;
+                continue;
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            b'}' | b']' => {
+                if depth == 0 {
+                    return i;
+                }
+                depth -= 1;
+                i += 1;
+                continue;
+            }
+            b',' if depth == 0 => {
+                return i;
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        }
+    }
+    i
+}
+
+/// In-place JSONC patch: replace/insert `[opencode]`, set `$schema`, and ensure
+/// `_migrations` contains `migration_id`, preserving every other top-level block and
+/// all comments verbatim.
+fn patch_unified_omo_config_text(
+    raw: &str,
+    block_json: &str,
+    schema_url: &str,
+    migration_id: &str,
+) -> String {
+    let (keys, root_close) = scan_top_level_keys(raw);
+    let find = |name: &str| keys.iter().find(|k| k.name == name);
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut insertions: Vec<String> = Vec::new();
+
+    if let Some(k) = find("[opencode]") {
+        replacements.push((k.value_start, k.value_end, block_json.to_string()));
+    } else {
+        insertions.push(format!("\"[opencode]\": {}", block_json));
+    }
+
+    if let Some(k) = find("$schema") {
+        replacements.push((k.value_start, k.value_end, format!("\"{}\"", schema_url)));
+    } else {
+        insertions.push(format!("\"$schema\": \"{}\"", schema_url));
+    }
+
+    if let Some(k) = find("_migrations") {
+        let existing: Vec<String> =
+            json5::from_str(&raw[k.value_start..k.value_end]).unwrap_or_default();
+        let mut markers = existing;
+        if !markers.iter().any(|m| m == migration_id) {
+            markers.push(migration_id.to_string());
+        }
+        let arr = serde_json::json!(markers);
+        replacements.push((
+            k.value_start,
+            k.value_end,
+            serde_json::to_string(&arr).unwrap_or_default(),
+        ));
+    } else {
+        insertions.push(format!("\"_migrations\": [\"{}\"]", migration_id));
+    }
+
+    replacements.sort_by_key(|(start, _, _)| *start);
+
+    let mut out = String::with_capacity(raw.len() + 256);
+    let mut cursor = 0usize;
+    for (start, end, new_text) in &replacements {
+        out.push_str(&raw[cursor..*start]);
+        out.push_str(new_text);
+        cursor = *end;
+    }
+    out.push_str(&raw[cursor..root_close]);
+
+    // Insert missing keys before the root brace, comma-separated and one per line.
+    if !insertions.is_empty() {
+        let tail = out.trim_end();
+        let needs_comma = !tail.is_empty() && !tail.ends_with(',') && !tail.ends_with('{');
+        if needs_comma {
+            out.push(',');
+        }
+        for (index, insertion) in insertions.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push_str("\n  ");
+            out.push_str(insertion);
+        }
+        out.push('\n');
+    }
+
+    out.push_str(&raw[root_close..]);
+    out
+}
+
+/// Remove a top-level key from JSONC text in place (comment-preserving), handling the
+/// surrounding comma. Returns the patched text and whether the key was found.
+fn remove_top_level_key(text: &str, name: &str) -> (String, bool) {
+    let (keys, root_close) = scan_top_level_keys(text);
+    let Some(k) = keys.iter().find(|k| k.name == name) else {
+        return (text.to_string(), false);
+    };
+    let bytes = text.as_bytes();
+    let has_comma = k.value_end < root_close && bytes[k.value_end] == b',';
+    let mut out = String::with_capacity(text.len());
+    if has_comma {
+        // Remove [key_start, comma+1) so the preceding comma is kept and the next key stays valid.
+        out.push_str(&text[..k.key_start]);
+        out.push_str(&text[k.value_end + 1..]);
+    } else {
+        // Last key: also drop the preceding comma so no trailing comma remains before `}`.
+        let mut start = k.key_start;
+        let mut before = k.key_start;
+        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+            before -= 1;
+        }
+        if before > 0 && bytes[before - 1] == b',' {
+            start = before - 1;
+        }
+        out.push_str(&text[..start]);
+        out.push_str(&text[root_close..]);
+    }
+    (out, true)
+}
+
+/// Remove the `[opencode]` block from `~/.omo/omo.jsonc`, preserving shared keys and
+/// comments. If only control keys (`$schema`/`_migrations`/`legacy_migrations`) remain,
+/// the file is deleted entirely.
+fn remove_opencode_block(config_path: &Path) -> Result<(), String> {
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read omo.jsonc: {}", e))?;
+    if !matches!(json5::from_str::<Value>(&content), Ok(Value::Object(_))) {
+        return Ok(());
+    }
+
+    let (patched, found) = remove_top_level_key(&content, "[opencode]");
+    if !found {
+        return Ok(());
+    }
+
+    let (remaining_keys, _) = scan_top_level_keys(&patched);
+    let meaningful = remaining_keys.iter().any(|k| {
+        !matches!(k.name.as_str(), "$schema" | "_migrations" | "legacy_migrations")
+    });
+
+    if meaningful {
+        fs::write(config_path, patched)
+            .map_err(|e| format!("Failed to write omo.jsonc: {}", e))?;
+    } else {
+        fs::remove_file(config_path)
+            .map_err(|e| format!("Failed to remove omo.jsonc: {}", e))?;
+    }
     Ok(())
 }
 /// Apply an Oh My OpenAgent config to the JSON file
@@ -1141,5 +1637,184 @@ mod tests {
         assert_eq!(content.schema, Some("old-schema".to_string()));
         assert_eq!(content.disabled_agents, Some(vec!["coder".to_string()]));
         assert_eq!(content.other_fields, Some(json!({ "custom": "old" })));
+    }
+
+    #[test]
+    fn flatten_omo_config_merges_base_agents_with_opencode_block() {
+        let input = json!({
+            "$schema": "https://example/omo.schema.json",
+            "codegraph": { "daemon": true },
+            "models": { "opus": { "model": "x/y" } },
+            "task": { "default_concurrency": 5 },
+            "agents": { "baseAgent": { "model": "a/b" } },
+            "[opencode]": {
+                "agents": {
+                    "sisyphus": { "model": "c/d" },
+                    "baseAgent": { "model": "overridden" }
+                },
+                "background_task": { "defaultConcurrency": 4 }
+            }
+        });
+
+        let flat = flatten_omo_config(&input);
+        let obj = flat.as_object().unwrap();
+
+        // [opencode] block wins over base for the same key
+        assert_eq!(obj["agents"]["baseAgent"]["model"], "overridden");
+        // block-only agent keys survive
+        assert_eq!(obj["agents"]["sisyphus"]["model"], "c/d");
+        // block top-level plugin keys survive
+        assert!(obj.contains_key("background_task"));
+        // omo-config-core control keys and $schema are stripped
+        assert!(!obj.contains_key("codegraph"));
+        assert!(!obj.contains_key("models"));
+        assert!(!obj.contains_key("task"));
+        assert!(!obj.contains_key("$schema"));
+    }
+
+    #[test]
+    fn flatten_omo_config_returns_unchanged_when_no_block() {
+        let input = json!({ "agents": { "a": { "model": "x" } } });
+        assert_eq!(flatten_omo_config(&input), input);
+    }
+
+    #[test]
+    fn write_unified_omo_config_preserves_shared_keys_and_stamps_migration_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("omo.jsonc");
+        std::fs::write(&path, r#"{
+  "codegraph": { "daemon": true },
+  "models": { "opus": { "model": "x/y" } }
+}"#)
+        .unwrap();
+
+        let plugin = json!({ "agents": { "sisyphus": { "model": "c/d" } } });
+        write_unified_omo_config(&path, &plugin).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let obj: Value = serde_json::from_str(&content).unwrap();
+        assert!(obj.as_object().unwrap().contains_key("codegraph"));
+        assert!(obj.as_object().unwrap().contains_key("models"));
+        assert_eq!(obj["[opencode]"], plugin);
+        assert_eq!(obj["$schema"], OMO_UNIFIED_SCHEMA_URL);
+        let markers = obj["_migrations"].as_array().unwrap();
+        assert!(markers.iter().any(|m| m.as_str() == Some(OMO_UNIFIED_MIGRATION_ID)));
+    }
+
+    #[test]
+    fn remove_opencode_block_removes_block_but_preserves_shared_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("omo.jsonc");
+        std::fs::write(&path, r#"{ "codegraph": { "daemon": true }, "[opencode]": { "agents": {} } }"#)
+            .unwrap();
+
+        remove_opencode_block(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let obj: Value = serde_json::from_str(&content).unwrap();
+        assert!(obj.as_object().unwrap().contains_key("codegraph"));
+        assert!(!obj.as_object().unwrap().contains_key("[opencode]"));
+    }
+
+    #[test]
+    fn remove_opencode_block_deletes_file_when_only_control_keys_remain() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("omo.jsonc");
+        std::fs::write(&path, r#"{ "$schema": "x", "_migrations": [], "[opencode]": { "agents": {} } }"#)
+            .unwrap();
+
+        remove_opencode_block(&path).unwrap();
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn write_unified_omo_config_preserves_comments_in_shared_blocks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("omo.jsonc");
+        std::fs::write(
+            &path,
+            r#"{
+  // shared codegraph settings
+  "codegraph": { "daemon": true /* keep daemon */ },
+  "models": {
+    "opus": { "model": "x/y" } // my favorite model
+  }
+}"#,
+        )
+        .unwrap();
+
+        let plugin = json!({ "agents": { "s": { "model": "a/b" } } });
+        write_unified_omo_config(&path, &plugin).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        // comments in shared blocks survive the in-place patch
+        assert!(content.contains("// shared codegraph settings"));
+        assert!(content.contains("/* keep daemon */"));
+        assert!(content.contains("// my favorite model"));
+        // still valid JSONC and all keys present
+        let obj: Value = json5::from_str(&content).unwrap();
+        assert!(obj.as_object().unwrap().contains_key("codegraph"));
+        assert!(obj.as_object().unwrap().contains_key("models"));
+        assert_eq!(obj["[opencode]"], plugin);
+        assert_eq!(obj["$schema"], OMO_UNIFIED_SCHEMA_URL);
+    }
+
+    #[test]
+    fn patch_unified_omo_config_text_merges_existing_migration_markers() {
+        let raw = r#"{
+  "codegraph": { "daemon": true },
+  "[opencode]": { "agents": {} },
+  "_migrations": ["2026-08-reasoning-unification"]
+}"#;
+        let patched = patch_unified_omo_config_text(
+            raw,
+            "{ }",
+            "https://example/omo.schema.json",
+            "2026-07-opencode-config-unification",
+        );
+        let obj: Value = json5::from_str(&patched).unwrap();
+        let names: Vec<&str> = obj["_migrations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.as_str())
+            .collect();
+        assert!(names.contains(&"2026-08-reasoning-unification"));
+        assert!(names.contains(&"2026-07-opencode-config-unification"));
+    }
+
+    #[test]
+    fn remove_top_level_key_handles_middle_and_last_keys() {
+        let (middle, found) = remove_top_level_key(r#"{ "a": 1, "b": 2, "c": 3 }"#, "b");
+        assert!(found);
+        let obj: Value = json5::from_str(&middle).unwrap();
+        assert!(obj.get("a").is_some() && obj.get("c").is_some() && obj.get("b").is_none());
+
+        let (last, found) = remove_top_level_key(r#"{ "a": 1, "b": 2 }"#, "b");
+        assert!(found);
+        let obj: Value = json5::from_str(&last).unwrap();
+        assert!(obj.get("a").is_some() && obj.get("b").is_none());
+    }
+
+    #[test]
+    fn remove_opencode_block_preserves_comments_in_shared_blocks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("omo.jsonc");
+        std::fs::write(
+            &path,
+            r#"{
+  "codegraph": { "daemon": true }, // keep codegraph
+  "[opencode]": { "agents": {} }
+}"#,
+        )
+        .unwrap();
+
+        remove_opencode_block(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("// keep codegraph"));
+        assert!(content.contains("\"codegraph\""));
+        assert!(!content.contains("[opencode]"));
     }
 }

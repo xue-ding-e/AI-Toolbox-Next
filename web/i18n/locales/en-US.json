@@ -1822,7 +1822,15 @@
           "description": "Writing mode - \"Technical writer mode\" for documentation, focuses on clear fluent prose, for README, docs, technical articles",
           "recommendedModel": "gemini-3-flash"
         }
-      }
+      },
+      "legacyConfigToggle": "Write legacy config format",
+      "legacyConfigToggleHint": "When enabled, OMO config is written to ~/.config/opencode/oh-my-openagent.jsonc (only needed for oh-my-openagent versions before 4.20); when disabled, the unified ~/.omo/omo.jsonc is used",
+      "upgradeConfirmTitle": "Has OMO been upgraded to the latest version?",
+      "upgradeConfirmDesc": "The new unified config (~/.omo/omo.jsonc) is incompatible with the legacy config (~/.config/opencode/oh-my-openagent.jsonc). Choosing \"Already upgraded\" uses the unified format; choosing \"Not upgraded\" auto-enables legacy writes.",
+      "upgradeConfirmUpgraded": "Already upgraded",
+      "upgradeConfirmNotUpgraded": "Not upgraded",
+      "upgradeLegacyAutoHint": "Auto-enabled \"write legacy config\"; you can turn it off in \"more options\" after upgrading omo.",
+      "upgradeUnifiedAutoHint": "Switched to the unified config format (~/.omo/omo.jsonc); you can re-enable legacy writes in \"more options\" if needed"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",

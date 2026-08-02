@@ -304,6 +304,8 @@ const OpenCodePage: React.FC = () => {
     setSidebarHidden,
     opencodeAllowClearAppliedOhMyConfig,
     setOpencodeAllowClearAppliedOhMyConfig,
+    opencodeUseLegacyOhMyConfig,
+    setOpencodeUseLegacyOhMyConfig,
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
@@ -2184,6 +2186,7 @@ const OpenCodePage: React.FC = () => {
 	                  modelVariantsMap={modelVariantsMap}
 	                  disabled={!omoPluginEnabled}
 	                  allowClearAppliedConfig={opencodeAllowClearAppliedOhMyConfig}
+	                  useLegacyConfig={opencodeUseLegacyOhMyConfig}
 	                  onConfigApplied={() => {
                     // 当配置被应用时，触发 Selector 刷新以更新选中状态
                     setOhMyOpenAgentRefreshKey((prev) => prev + 1);
@@ -2721,6 +2724,18 @@ const OpenCodePage: React.FC = () => {
                 checked={opencodeAllowClearAppliedOhMyConfig}
                 onChange={(checked) => {
                   void setOpencodeAllowClearAppliedOhMyConfig(checked);
+                }}
+              />
+              <SettingsToggleRow
+                title={t('opencode.ohMyOpenCode.legacyConfigToggle')}
+                hint={t('opencode.ohMyOpenCode.legacyConfigToggleHint')}
+                checked={opencodeUseLegacyOhMyConfig}
+                onChange={(checked) => {
+                  void (async () => {
+                    await setOpencodeUseLegacyOhMyConfig(checked);
+                    incrementOmoConfigRefresh();
+                    await refreshTrayMenu();
+                  })();
                 }}
               />
             </SidebarSettingsModal>
