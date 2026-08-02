@@ -430,6 +430,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - Chat、Anthropic target 和 legacy Completion path 各有不同 runtime 分支。
 - profile `deepseek` 的 Codex/Gemini/Grok 默认 endpoint 自 2026-08-01 切到 `openai_responses`（官方新增 Responses API 支持），保留 `openai_chat` 与 `anthropic_messages` 作可选 fallback。Responses target 走通用 OpenAI Responses 直通，无 DeepSeek 专用 body compat（compat 规则 `deepseek_json_schema`/`deepseek_thinking`/`deepseek_disabled_strip_effort` 仅作用于 `openaiChat`/`anthropicMessages`）。
 - `openai_responses` endpoint 的 `baseUrl` 用官方值 `https://api.deepseek.com`（不带 `/v1`，与 DeepSeek 官方 Codex 接入脚本一致）。DeepSeek 服务端对 `/responses` 与 `/v1/responses` 双路径兼容，Codex/Grok CLI 直连按 `base_url + /responses` 可直接命中；走网关时 `build_target_url`（`runtime/routes.rs`）对 OpenAiResponses 固定拼 `/v1/responses` 也能命中。内置官方渠道的 baseUrl 由 profile 提供且已验证可用，因此 Codex/Grok 表单的 `/v1` 软确认对内置 endpoint 跳过（仅对自定义手填地址保留）。
+- Codex provider 生成 `ai-toolbox-codex-model-catalog.json` 时，`wire_api="responses"`（native Responses）且 `base_url` 命中 `deepseek.com` 的渠道镜像内置的 DeepSeek 官方 models.json（`tauri/resources/codex_deepseek_catalog_template.json`：freeform `apply_patch`、GPT-5 harness base_instructions、low/high/max reasoning、1m context），不套 neutral 模板的 image/text_and_image 声明；用户显式 `displayName` / `contextWindow` 仍优先，未知模型克隆官方旗舰条目。非 `deepseek.com` host 或非 Responses target（chat/anthropic）仍用 neutral 模板。实现在 `codex/commands.rs`，不进入 runtime/transformer。
 
 请求侧，OpenAI Chat：
 
@@ -466,6 +467,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - `provider_body_compat_deepseek_anthropic_disabled_thinking_strips_effort_fields`
 - `deepseek_legacy_completion_route_uses_beta_path`
 - `deepseek_legacy_completion_body_skips_chat_adapter`
+- `deepseek_host_native_catalog_mirrors_official_entries`
+- `non_deepseek_or_non_native_provider_keeps_neutral_template`
 
 ### 5.4 Moonshot / Kimi
 

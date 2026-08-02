@@ -2449,17 +2449,28 @@ impl AnthropicSseAggregate {
         };
         match value.get("type").and_then(Value::as_str) {
             Some("message_start") => {
-                if let Some(message) = value.get("message").cloned() {
+                // Only accept an object `message`: a malformed upstream can send
+                // a scalar/array here, and the later index-assignments in
+                // `response_value` assume an object. Treat a non-object as
+                // absent so the aggregate falls back to its default envelope.
+                if let Some(message) = value.get("message").filter(|message| message.is_object()) {
                     if let Some(usage) = message.get("usage") {
                         merge_usage_snapshot(&mut self.usage, usage);
                     }
-                    self.message = Some(message);
+                    self.message = Some(message.clone());
                 }
             }
             Some("content_block_start") => {
                 let index = value.get("index").and_then(Value::as_i64).unwrap_or(0);
+                // Sanitize to an object: `append_string_field` / `set_string_field`
+                // require a JSON object, so a malformed non-object block from the
+                // upstream cannot be stored verbatim (it would silently drop the
+                // text of the deltas that follow). Recovering as a `text` block
+                // keeps the common case flowing; a tool-use block still yields
+                // nothing, exactly as before.
                 let block = value
                     .get("content_block")
+                    .filter(|block| block.is_object())
                     .cloned()
                     .unwrap_or_else(|| json!({"type": "text", "text": ""}));
                 self.content_blocks
@@ -14012,6 +14023,66 @@ data: {data}\r\n\r\n"
             .expect_err("empty/truncated Anthropic stream must fail closed");
         assert_eq!(error.kind, GatewayFailureKind::Connection);
         assert!(error.message.contains("without a terminal stop_reason"));
+    }
+
+    #[tokio::test]
+    async fn anthropic_sse_aggregate_recovers_non_object_content_block_as_text() {
+        // A malformed upstream can send a non-object `content_block`; the
+        // aggregate must not panic and must keep the text of the deltas that
+        // follow, instead of silently dropping it into a completed empty block.
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"usage\":{\"input_tokens\":4}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":[1]}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+
+        let (_raw, body) = aggregate_anthropic_sse_stream(stream, None)
+            .await
+            .expect("aggregation must not panic on a non-object content_block");
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            value["content"][0]["text"],
+            json!("x"),
+            "text recovered from a malformed block must survive to the output"
+        );
+    }
+
+    #[tokio::test]
+    async fn anthropic_sse_aggregate_non_object_message_does_not_panic() {
+        // A malformed upstream can send a scalar `message`; the later
+        // `response_value` index-assignment would have panicked before the
+        // object guard.
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":\"oops\"}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
+
+        let (_raw, body) = aggregate_anthropic_sse_stream(stream, None)
+            .await
+            .expect("aggregation must not panic on a non-object message");
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["content"][0]["text"], json!("hello"));
     }
 
     #[tokio::test]

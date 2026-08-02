@@ -1145,12 +1145,14 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 
 以下是本次对两个参考项目进行初始内容吸收后的固定基线。首次增量审阅范围用于说明本次系统检查过的 commit 区间；为建立现有能力基线而额外回溯核验的关键提交单独记录在结论中。后续同步直接从 baseline 之后开始，不得从更早历史重新扫描，除非本文明确重建 baseline。
 
-| 项目 | 相对路径 | 远端 ref | 初始基线 commit | 首次增量审阅范围 |
+| 项目 | 相对路径 | 远端 ref | 基线 commit | 本次增量审阅范围 |
 |---|---|---|---|---|
-| cc-switch | `../cc-switch` | `origin/main` | `878c26f31e012ba32b9772bd080bd4fa9e7d495e` | `a377d79303bc1e592d2783d559ca5bd6b8ba1417..878c26f31e012ba32b9772bd080bd4fa9e7d495e` |
+| cc-switch | `../cc-switch` | `origin/main` | `ebbf141fc71547a99f669df1be8e345130d1d890` | `878c26f31e012ba32b9772bd080bd4fa9e7d495e..ebbf141fc71547a99f669df1be8e345130d1d890` |
 | AxonHub | `../axonhub` | `origin/unstable` | `7d095b6364f4e765d687d22f2f1a7c6536de92ad` | `9470478493e0302003ba55ca874bd56f33dfc759..7d095b6364f4e765d687d22f2f1a7c6536de92ad` |
 
-本次初始吸收结论：
+首次增量审阅范围（cc-switch 初始对齐）为 `a377d79303bc1e592d2783d559ca5bd6b8ba1417..878c26f31e012ba32b9772bd080bd4fa9e7d495e`；本次为 `878c26f..ebbf141f`。
+
+本次增量吸收结论：
 
 - 架构主次固定为 **AxonHub 主架构、cc-switch 渠道兼容边界补充、AI Toolbox 当前源码/测试最终定案**。
 - 为建立 xAI native Responses 现有能力基线，额外回溯核验了 cc-switch `dbb5bd1537ed348dd4e490543b27c09e2efc86b9`。AI Toolbox 的 `runtime/compat/xai_responses.rs` 与 `runtime/upstream.rs` 已对齐其 namespace flatten/restore、input/tool_choice 同步改写、冲突拒绝、xAI sanitize、2xx JSON/SSE 恢复和 request-scoped 状态边界；生产门控接受 `providerType=xai|x-ai|grok`，并由 runtime 回归测试锁定。该行为属于同协议直通的 provider 方言兼容，不进入通用 transformer。
@@ -1167,6 +1169,11 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - AxonHub `e18cc2e0` image RequestType、`5438dff5` session sticky、`a0205b75` 连接复用、渠道 UI/CIDR/backup 等与本机 Gateway 无关，明确不吸收。
 - AxonHub `01707aa6` 的 streamed compaction 修复依赖其固定的 provider Responses transformer -> unified stream -> client Responses transformer 生命周期。AI Toolbox identity route 不进入 `StreamKernel`，因此不复制该 roundtrip 声明：Responses -> Responses 由 raw passthrough 字节保真；Responses -> Chat/Anthropic/Gemini 忽略 Responses-only compaction，同时继续转换普通 text/tool/terminal。回归测试为 `responses_identity_stream_preserves_compaction_bytes_without_kernel` 和 `responses_stream_drops_compaction_for_chat_without_losing_text`。非流 JSON compaction 与 `/responses/compact` 专项 facade 继续保留，不受该收窄影响。
 - 2026-07-26 将 AxonHub baseline 推进到 `7d095b63`，吸收 namespace tools 与 cache_write usage；对 streamed compaction 增量完成生命周期核验后明确采用 identity raw passthrough，并删除生产不可达的 stream kernel compaction state/writer。
+
+- **2026-08-02 将 cc-switch baseline 从 `878c26f` 推进到 `ebbf141f`**，审阅增量 `878c26f..ebbf141f`（49 个提交，绝大多数为 presets/docs/ci/i18n/usage 前端）。触及 `src-tauri/src/proxy/**` 的提交为 `4bfb3fc3`（usage 去重 scope）、`c49cf96a`（Grok Build proxy/session 集成）、`3c1154be`（死代码清理）、`ff3bc242`（三个 panic path 防护）。吸收两条：
+  - **已经吸收：Anthropic Messages SSE 非对象归一**（参考 cc-switch `ff3bc242` 的 `transform_codex_anthropic` / `streaming_codex_anthropic` 防护）。AI Toolbox 在 `runtime/upstream.rs` 的 `AnthropicSseAggregate::push_block` 中给 `message_start` 加 `filter(|m| m.is_object())` 门控，`content_block_start` 对非对象 `content_block` 归一为 `{"type":"text","text":""}`，使后续 delta 文本继续承接而不是静默丢弃成 completed 空输出；此路径本来就通过 `as_object_mut()` 避免 panic（比 cc-switch 更早防住），本次补齐了"不 panic 且不吞文本"的行为。回归测试 `anthropic_sse_aggregate_recovers_non_object_content_block_as_text`、`anthropic_sse_aggregate_non_object_message_does_not_panic`，位于 `runtime/upstream.rs`。
+  - **已经吸收：DeepSeek 官方 Codex catalog mirror**（参考 cc-switch `8ae1ce85`）。对 `wire_api="responses"`（native Responses）且在 `base_url` 命中 `deepseek.com` 的 Codex provider，生成的 `ai-toolbox-codex-model-catalog.json` 镜像内置的 DeepSeek 官方 models.json（`tauri/resources/codex_deepseek_catalog_template.json`，freeform `apply_patch`、GPT-5 harness base_instructions、low/high/max reasoning、1m context），避免 neutral 模板把 DeepSeek 能力声明错配（如 image modality、text_and_image web search）。`CodexCatalogModelSpec.display_name` / `context_window` 改为 `Option` 以区分"用户显式值"与"默认兜底"：官方条目保留 vendor 声明，用户显式覆盖仍优先，未知模型克隆官方旗舰条目而不冒充。非 deepseek host 或非 Responses target 仍走 neutral 模板。实现位于 `codex/commands.rs`（`codex_official_vendor_catalog_models` / `codex_vendor_catalog_model_entry` / `fill_template_fields_from_static`），回归测试 `deepseek_host_native_catalog_mirrors_official_entries`、`non_deepseek_or_non_native_provider_keeps_neutral_template`。
+  - **明确不吸收**：`c49cf96a` 的 Grok Build `x-grok-conv-id` / `x-grok-session-id` 会话提取（AI Toolbox 当前不代理 Grok Build 产品）、`4bfb3fc3` 的 Claude Desktop proxy 与 session logs 去重（AI Toolbox 不代理 Claude Desktop）。`12b972a6` models.dev pricing sync、`cd17912f` Object.prototype walker、zip-slip、deeplink risk 等属前端/配置/CI 层，与本机 gateway 无关。
 
 ### 19.5 行为同步策略
 

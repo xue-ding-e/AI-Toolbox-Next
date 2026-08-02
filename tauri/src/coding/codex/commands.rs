@@ -2420,8 +2420,13 @@ fn build_managed_codex_config(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
-    display_name: String,
-    context_window: u64,
+    /// Explicit user value only (falls back to `model` for the neutral
+    /// template; official vendor catalog entries keep their own display name).
+    display_name: Option<String>,
+    /// Explicit user value only (falls back to the config's top-level
+    /// `model_context_window` or the default for the neutral template; official
+    /// vendor catalog entries keep the vendor's declared window).
+    context_window: Option<u64>,
     auto_review_model_override: Option<String>,
 }
 
@@ -2461,8 +2466,6 @@ fn codex_catalog_model_specs(
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array());
 
-    let default_context_window = extract_codex_top_level_u64(config_toml, "model_context_window")
-        .unwrap_or(CODEX_DEFAULT_CONTEXT_WINDOW);
     let mut seen_models = BTreeSet::new();
     let mut specs = Vec::new();
 
@@ -2487,16 +2490,15 @@ fn codex_catalog_model_specs(
                 .and_then(|value| value.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .unwrap_or(model);
+                .map(str::to_string);
             let context_window = parse_codex_positive_u64(
                 item.get("contextWindow")
                     .or_else(|| item.get("context_window")),
-            )
-            .unwrap_or(default_context_window);
+            );
 
             specs.push(CodexCatalogModelSpec {
                 model: model.to_string(),
-                display_name: display_name.to_string(),
+                display_name,
                 context_window,
                 auto_review_model_override: auto_review_model_override.clone(),
             });
@@ -2513,8 +2515,8 @@ fn codex_catalog_model_specs(
         if seen_models.insert(default_model.clone()) {
             specs.push(CodexCatalogModelSpec {
                 model: default_model.clone(),
-                display_name: default_model,
-                context_window: default_context_window,
+                display_name: None,
+                context_window: None,
                 auto_review_model_override: Some(auto_review_model_override.clone()),
             });
         }
@@ -2523,11 +2525,17 @@ fn codex_catalog_model_specs(
     specs
 }
 
-fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Value {
+fn codex_model_catalog_entry(
+    spec: &CodexCatalogModelSpec,
+    index: usize,
+    default_context_window: u64,
+) -> Value {
+    let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+    let context_window = spec.context_window.unwrap_or(default_context_window);
     let mut entry = serde_json::json!({
         "slug": spec.model.as_str(),
-        "display_name": spec.display_name.as_str(),
-        "description": spec.display_name.as_str(),
+        "display_name": display_name,
+        "description": display_name,
         "default_reasoning_level": "medium",
         "supported_reasoning_levels": [
             { "effort": "low", "description": "Fast responses with lighter reasoning" },
@@ -2560,8 +2568,8 @@ fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Valu
         },
         "supports_parallel_tool_calls": true,
         "supports_image_detail_original": true,
-        "context_window": spec.context_window,
-        "max_context_window": spec.context_window,
+        "context_window": context_window,
+        "max_context_window": context_window,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text", "image"],
@@ -2576,14 +2584,198 @@ fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Valu
     entry
 }
 
-fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec]) -> Value {
+fn codex_model_catalog_from_specs(
+    specs: &[CodexCatalogModelSpec],
+    default_context_window: u64,
+) -> Value {
     let models: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| codex_model_catalog_entry(spec, index))
+        .map(|(index, spec)| codex_model_catalog_entry(spec, index, default_context_window))
         .collect();
 
     serde_json::json!({ "models": models })
+}
+
+/// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
+/// catalog (models.json) that AI Toolbox mirrors verbatim. Matched against
+/// `base_url` ONLY — deliberately NOT by model brand: official entries GRANT
+/// capabilities (freeform `apply_patch`, vendor harness), and an aggregator
+/// merely hosting the same model may not honor them. The safe failure
+/// direction for aggregators is the neutral template (degraded but working).
+const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS: &[&str] = &["deepseek.com"];
+
+fn extract_codex_base_url(config_toml: &str) -> Option<String> {
+    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
+
+    if let Some(active_provider) = document
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+    {
+        if let Some(base_url) = document
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("base_url"))
+            .and_then(|item| item.as_str())
+        {
+            return Some(base_url.to_string());
+        }
+    }
+
+    document
+        .get("base_url")
+        .and_then(|item| item.as_str())
+        .map(ToString::to_string)
+}
+
+fn codex_provider_wire_api(config_toml: &str) -> Option<String> {
+    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
+    let active_provider = document
+        .get("model_provider")
+        .and_then(|item| item.as_str())?;
+    document
+        .get("model_providers")
+        .and_then(|providers| providers.get(active_provider))
+        .and_then(|provider| provider.get("wire_api"))
+        .and_then(|item| item.as_str())
+        .map(ToString::to_string)
+}
+
+/// Bundled copy of DeepSeek's official Codex models.json — the exact file
+/// their one-click integration script writes (api-docs.deepseek.com →
+/// quick_start/agent_integrations/codex): freeform apply_patch, GPT-5 harness
+/// base_instructions, low/high/max reasoning levels, web_search supported,
+/// 1m context.
+fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
+    let text = include_str!("../../../resources/codex_deepseek_catalog_template.json");
+    let catalog: Value =
+        serde_json::from_str(text).expect("bundled DeepSeek official catalog must be valid JSON");
+    catalog
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Official vendor catalog entries for the provider in `config_toml`, if its
+/// gateway ships one. Only the `wire_api = "responses"` (native Responses)
+/// provider qualifies: the neutral template still powers ProxyChat/Anthropic
+/// targets. Host-driven like the web_search blacklist, so existing providers
+/// pick it up on their next switch without a re-save.
+fn codex_official_vendor_catalog_models(config_toml: &str) -> Option<Vec<Value>> {
+    // Only native `/responses` providers qualify (wire_api = "responses");
+    // ProxyChat/Anthropic targets keep the neutral template.
+    let uses_native_responses = codex_provider_wire_api(config_toml)
+        .is_some_and(|wire_api| wire_api.eq_ignore_ascii_case("responses"));
+    if !uses_native_responses {
+        return None;
+    }
+
+    let base_url = extract_codex_base_url(config_toml)?.to_ascii_lowercase();
+    if !CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS
+        .iter()
+        .any(|host| base_url.contains(host))
+    {
+        return None;
+    }
+
+    let models = load_codex_deepseek_official_catalog_models();
+    if models.is_empty() {
+        return None;
+    }
+    Some(models)
+}
+
+/// Build one catalog entry from an official vendor catalog: match the user's
+/// model id against the vendor entries by slug; an unknown id clones the
+/// vendor's first (flagship) entry so it keeps the gateway's capability
+/// profile without impersonating the flagship. The official entry is
+/// authoritative — no tool-profile stripping — but explicit per-row user
+/// overrides still win.
+fn codex_vendor_catalog_model_entry(
+    vendor_models: &[Value],
+    spec: &CodexCatalogModelSpec,
+    priority: usize,
+) -> Value {
+    let matched = vendor_models.iter().find(|entry| {
+        entry
+            .get("slug")
+            .and_then(|slug| slug.as_str())
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(&spec.model))
+    });
+    let mut entry = match matched {
+        Some(found) => found.clone(),
+        None => vendor_models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    };
+    let Some(entry_obj) = entry.as_object_mut() else {
+        return serde_json::json!({});
+    };
+
+    if matched.is_none() {
+        entry_obj.insert("slug".to_string(), serde_json::json!(spec.model));
+        entry_obj.insert("priority".to_string(), serde_json::json!(1000 + priority));
+    }
+
+    // Explicit user overrides win over the official entry; absent values keep
+    // the vendor's declarations (context window, modalities, harness, ...).
+    if let Some(display_name) = spec.display_name.as_deref() {
+        entry_obj.insert("display_name".to_string(), serde_json::json!(display_name));
+        entry_obj.insert("description".to_string(), serde_json::json!(display_name));
+    }
+    if let Some(context_window) = spec.context_window {
+        entry_obj.insert("context_window".to_string(), serde_json::json!(context_window));
+        entry_obj.insert(
+            "max_context_window".to_string(),
+            serde_json::json!(context_window),
+        );
+    }
+    if let Some(auto_review_model_override) = spec.auto_review_model_override.as_deref() {
+        entry_obj.insert(
+            "auto_review_model_override".to_string(),
+            serde_json::json!(auto_review_model_override),
+        );
+    }
+
+    // Defensive: if a future codex parser requires a field the vendor file
+    // predates, backfill only whitelisted parser-required keys.
+    fill_template_fields_from_static(&mut entry);
+    entry
+}
+
+fn codex_vendor_catalog_from_specs(
+    specs: &[CodexCatalogModelSpec],
+    vendor_models: &[Value],
+) -> Value {
+    let models: Vec<Value> = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| codex_vendor_catalog_model_entry(vendor_models, spec, index))
+        .collect();
+
+    serde_json::json!({ "models": models })
+}
+
+/// Fields Codex's external-catalog parser REQUIRES (no serde default): when
+/// one is missing Codex rejects the whole catalog file at startup ("missing
+/// field ..."). The neutral template and the official vendor entries both
+/// carry them; this backfill is a defensive net for vendor files that predate
+/// a newer parser.
+fn fill_template_fields_from_static(entry: &mut serde_json::Value) {
+    let Some(entry_obj) = entry.as_object_mut() else {
+        return;
+    };
+    if !entry_obj.contains_key("shell_type") {
+        entry_obj.insert("shell_type".to_string(), serde_json::json!("shell_command"));
+    }
+    if !entry_obj.contains_key("visibility") {
+        entry_obj.insert("visibility".to_string(), serde_json::json!("list"));
+    }
+    if !entry_obj.contains_key("supported_in_api") {
+        entry_obj.insert("supported_in_api".to_string(), serde_json::json!(true));
+    }
 }
 
 fn set_codex_model_catalog_json_field(
@@ -2624,7 +2816,17 @@ fn prepare_codex_config_with_model_catalog(
         return set_codex_model_catalog_json_field(config_toml, false);
     }
 
-    let catalog = codex_model_catalog_from_specs(&specs);
+    let default_context_window =
+        extract_codex_top_level_u64(config_toml, "model_context_window")
+            .unwrap_or(CODEX_DEFAULT_CONTEXT_WINDOW);
+    // DeepSeek publishes an OFFICIAL Codex models.json for its native
+    // `/responses` gateway (freeform apply_patch, GPT-5 harness, 1m context,
+    // low/high/max reasoning). Mirror it verbatim instead of the neutral
+    // template: the harness tells the model to use apply_patch, so stripping
+    // the tool while keeping the harness would be self-inconsistent.
+    let catalog = codex_official_vendor_catalog_models(config_toml)
+        .map(|vendor_models| codex_vendor_catalog_from_specs(&specs, &vendor_models))
+        .unwrap_or_else(|| codex_model_catalog_from_specs(&specs, default_context_window));
     let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
     let catalog_content = serde_json::to_string_pretty(&catalog)
         .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
@@ -3841,21 +4043,21 @@ approval_policy = "never"
         // is also seeded as a catalog entry to keep auto-review resolvable.
         assert_eq!(specs.len(), 3);
         assert_eq!(specs[0].model, "deepseek-v4-flash");
-        assert_eq!(specs[0].display_name, "DeepSeek Flash");
-        assert_eq!(specs[0].context_window, 64_000);
+        assert_eq!(specs[0].display_name.as_deref(), Some("DeepSeek Flash"));
+        assert_eq!(specs[0].context_window, Some(64_000));
         assert_eq!(
             specs[0].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
         assert_eq!(specs[1].model, "kimi-k2");
-        assert_eq!(specs[1].display_name, "kimi-k2");
-        assert_eq!(specs[1].context_window, 256_000);
+        assert_eq!(specs[1].display_name, None);
+        assert_eq!(specs[1].context_window, None);
         assert_eq!(
             specs[1].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
         assert_eq!(specs[2].model, "gpt-5.5");
-        assert_eq!(specs[2].context_window, 256_000);
+        assert_eq!(specs[2].context_window, None);
         assert_eq!(
             specs[2].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
@@ -3912,8 +4114,8 @@ approval_policy = "never"
             Some("reviewer-model")
         );
         assert_eq!(specs[2].model, "default-main");
-        assert_eq!(specs[2].display_name, "default-main");
-        assert_eq!(specs[2].context_window, 200_000);
+        assert_eq!(specs[2].display_name, None);
+        assert_eq!(specs[2].context_window, None);
         assert_eq!(
             specs[2].auto_review_model_override.as_deref(),
             Some("reviewer-model")
@@ -3943,8 +4145,8 @@ approval_policy = "never"
 
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].model, "default-main");
-        assert_eq!(specs[0].display_name, "Default Main");
-        assert_eq!(specs[0].context_window, 64_000);
+        assert_eq!(specs[0].display_name.as_deref(), Some("Default Main"));
+        assert_eq!(specs[0].context_window, Some(64_000));
         assert_eq!(
             specs[0].auto_review_model_override.as_deref(),
             Some("reviewer-model")
@@ -4016,6 +4218,178 @@ approval_policy = "never"
         assert_eq!(
             catalog["models"][1]["auto_review_model_override"].as_str(),
             Some("gpt-5.5")
+        );
+    }
+
+    const DEEPSEEK_NATIVE_CONFIG: &str = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#;
+
+    #[test]
+    fn deepseek_host_native_catalog_mirrors_official_entries() {
+        // DeepSeek publishes an official Codex models.json (freeform
+        // apply_patch + GPT-5 harness + low/high/max reasoning levels). For a
+        // deepseek.com native provider the generated catalog must mirror it
+        // verbatim instead of the stripped neutral template — the harness
+        // tells the model to use apply_patch, so stripping the tool while
+        // keeping the harness would be self-inconsistent.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" },
+                    { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        let catalog_text = std::fs::read_to_string(catalog_path).unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let flash = &catalog["models"][0];
+        assert_eq!(
+            flash.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform"),
+            "official DeepSeek entries keep the freeform apply_patch grant"
+        );
+        assert!(
+            flash
+                .get("base_instructions")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("Codex")),
+            "official harness must survive verbatim"
+        );
+        let efforts: Vec<&str> = flash["supported_reasoning_levels"]
+            .as_array()
+            .expect("official reasoning levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["low", "high", "max"]);
+        assert_eq!(flash.get("input_modalities"), Some(&json!(["text"])));
+        assert!(
+            flash.get("model_messages").is_some(),
+            "official entries are mirrored verbatim, incl. model_messages"
+        );
+        // No explicit contextWindow on the row: the official 1m window must
+        // survive instead of being clobbered by the neutral default.
+        assert_eq!(
+            flash.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576)
+        );
+        // Explicit user display name still wins over the official one.
+        assert_eq!(
+            flash.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Flash")
+        );
+
+        let pro = &catalog["models"][1];
+        assert_eq!(
+            pro.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-pro")
+        );
+        // Explicit user context window override wins over the official 1m.
+        assert_eq!(
+            pro.get("context_window").and_then(|v| v.as_u64()),
+            Some(500_000)
+        );
+        assert_eq!(
+            pro.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform")
+        );
+    }
+
+    #[test]
+    fn non_deepseek_or_non_native_provider_keeps_neutral_template() {
+        // Aggregator host or non-Responses target must NOT inherit the
+        // official freeform apply_patch / image-free catalog: wrongly granting
+        // freeform apply_patch to an aggregator that does not honor it would
+        // reintroduce the custom-tool rejection bug.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek Flash" }
+                ]
+            }
+        });
+
+        // Aggregator host with native responses: neutral template, not mirror.
+        let aggregator_config = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "aggregator"
+base_url = "https://proxy.example.com/v1"
+wire_api = "responses"
+"#;
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            aggregator_config,
+        )
+        .expect("aggregator host catalog generation should not error");
+        let catalog_text =
+            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
+                .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        // Neutral template: image-friendly input modalities, search tool on.
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
+        assert_eq!(entry.get("web_search_tool_type").and_then(|v| v.as_str()), Some("text_and_image"));
+        assert_eq!(
+            entry.get("context_window").and_then(|v| v.as_u64()),
+            Some(272_000)
+        );
+
+        // DeepSeek host but non-native target (chat): also neutral template.
+        let chat_config = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+wire_api = "chat"
+"#;
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            chat_config,
+        )
+        .expect("chat target catalog generation should not error");
+        let catalog_text =
+            std::fs::read_to_string(temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
+                .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"]))
         );
     }
 
