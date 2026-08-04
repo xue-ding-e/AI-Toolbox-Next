@@ -300,7 +300,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'total_cost_usd',
       width: 120,
       align: 'right',
-      render: (value: string) => formatUsd(value, 6),
+      render: (value: string) => formatUsd(value, 2),
     },
     {
       title: t('gateway.page.statistics.columns.successRate'),
@@ -350,7 +350,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'total_cost_usd',
       width: 120,
       align: 'right',
-      render: (value: string) => formatUsd(value, 6),
+      render: (value: string) => formatUsd(value, 2),
     },
     {
       title: t('gateway.page.statistics.columns.latency'),
@@ -485,7 +485,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
         <StatTile
           icon={<Coins size={15} />}
           label={t('gateway.page.statistics.summaryCost')}
-          value={formatUsd(summary?.total_cost_usd ?? '0', 6)}
+          value={formatUsd(summary?.total_cost_usd ?? '0', 2)}
           meta={t('gateway.page.statistics.dbSummaryOnly')}
           tone="warning"
           visual="coins"

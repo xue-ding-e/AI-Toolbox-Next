@@ -67,7 +67,7 @@ export const formatCompactInteger = (value: number | null | undefined) => {
   }).format(value);
 };
 
-export const formatUsd = (value: string | number | null | undefined, digits = 6) => {
+export const formatUsd = (value: string | number | null | undefined, digits = 2) => {
   const parsed = typeof value === 'number' ? value : Number.parseFloat(value ?? '0');
   if (!Number.isFinite(parsed)) {
     return '$0';
