@@ -37,7 +37,8 @@
 
 - 对 Claude Code 这类根目录模块，路径来源和运行时文件派生必须一致收敛，否则前端看的是一个目录、实际写到另一个目录，很容易状态分叉。
 - `apply_config_internal` 统一负责写文件、更新 `is_applied`、发 `config-changed` 和 `wsl-sync-request-claude`。
-- 自定义 provider 的 `extra_settings_config` 是 provider 私有的 `settings.json` 额外字段层，合并顺序固定为：磁盘/runtime 未知字段 → common config → extra settings → provider 表单派生字段。
+- 自定义 provider 的 `extra_settings_config` 是 provider 私有的 `settings.json` 额外字段层。`extra_settings_merge_strategy` 是 provider 级行为开关，缺失时默认 `provider_overrides_common`，三种语义分别是：渠道配置覆盖通用配置、通用配置覆盖渠道配置、通用配置与渠道配置递归合并（数组元素去重，标量冲突渠道优先）。
+- 配置应用顺序仍然是：磁盘/runtime 未知字段 → 按策略合并 common config 与 extra settings → provider 表单派生字段；前两种策略的数组整体替换，第三种策略才合并同路径数组元素。
 - plugin/MCP 运行时文件要保留 CLI 自己拥有的字段，不能按 AI Toolbox 的部分结构反序列化后整文件重写。
 
 ## 关键流程
@@ -66,6 +67,8 @@ sequenceDiagram
 - 改写 `settings.json` 时要显式保留运行时自有字段，如 `enabledPlugins`、`extraKnownMarketplaces`、`hooks`，不能整文件按受管字段重建。
 - Claude 插件启用/禁用必须继续通过 `claude plugin enable/disable --scope user` 这类官方 CLI 操作。批量启用/禁用也只处理 user scope 已安装插件，不要直接改写 `settings.json.enabledPlugins`，避免绕过 Claude CLI 自己的 marketplace/plugin 元数据规则。
 - `extra_settings_config` 不管理 `enabledPlugins`、`extraKnownMarketplaces`、`hooks`，也不能覆盖 provider 表单派生的 `ANTHROPIC_*` env 与模型字段。切换 provider 或编辑已应用 provider 时，必须先按上一份已应用 provider 的 extra settings 清理旧受管字段，再合入当前配置，避免旧 extra key 残留。
+- 切换 `extra_settings_merge_strategy` 或编辑已应用 provider 时，清理必须使用上一份已应用策略和配置，不能让第三种策略产生的数组合并结果累积到下一次应用；旧 provider 缺失该字段时按 `provider_overrides_common` 处理。
+- 清理非默认策略的上一份 Extra settings 时，空对象也代表受管路径，必须删除对应运行时字段；common config 的空对象标记仍要保留运行时字段细节，不能复用同一清理语义。
 - Claude provider 模型字段的新写入源是 `settingsConfig.env`：`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_FABLE_MODEL` 以及四个 `ANTHROPIC_DEFAULT_*_MODEL_NAME`。后端拆分/合并 settings 时必须继续兼容旧顶层 `model` / `haikuModel` / `sonnetModel` / `opusModel` / `fableModel`，但保存和应用时统一迁移到 env 字段；旧 provider 没有 Fable 字段时前端保持为空，不用 Opus 回填。
 - `ANTHROPIC_REASONING_MODEL` / `reasoningModel` 只作为遗留读取兼容。新 provider apply 不应再写入 `ANTHROPIC_REASONING_MODEL`；清理受管 env 时仍要把它视为已知旧字段，避免旧运行时值残留。
 - 跨平台目标端清理统一走 `coding::config_cleanup`，Claude 对外仍可保留 `settings_merge::sanitize_claude_settings_*` 兼容入口。普通 Windows 源配置不能被同步后处理反向污染；WSL/SSH/非 Windows 恢复只清理目标副本或恢复后的目标数据。当前非 Windows 目标必须移除 `CLAUDE_CODE_USE_POWERSHELL_TOOL` 与 `CLAUDE_CODE_SHELL`；后续如果出现 Linux/远端不适用的 Claude env，也应扩展共享清理规则，而不是在各同步模块里散落硬编码。

@@ -28,6 +28,7 @@ import type {
   ImportConflictInfo,
   ImportConflictAction,
 } from '@/types/claudecode';
+import { DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY } from '@/types/claudecode';
 import {
   getClaudeConfigPath,
   getClaudeRootPathInfo,
@@ -144,6 +145,7 @@ function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
       category: provider.category,
       settingsConfig: provider.settingsConfig,
       extraSettingsConfig: provider.extraSettingsConfig,
+      extraSettingsMergeStrategy: provider.extraSettingsMergeStrategy,
       ...(provider.meta ? { meta: provider.meta } : {}),
       ...(provider.notes ? { notes: provider.notes } : {}),
     } satisfies ClaudeFavoriteProviderPayload,
@@ -826,6 +828,7 @@ const ClaudeCodePage: React.FC = () => {
             },
           }),
           extraSettingsConfig: '{}',
+          extraSettingsMergeStrategy: undefined,
           sourceProviderId: item.providerId,
           notes: undefined,
         };
@@ -877,6 +880,7 @@ const ClaudeCodePage: React.FC = () => {
           category: (candidate.normalizedCategory || 'custom') as ClaudeProviderInput['category'],
           settingsConfig,
           extraSettingsConfig: candidate.extraSettingsConfig || '{}',
+          extraSettingsMergeStrategy: undefined,
           sourceProviderId: candidate.sourceProviderId,
           websiteUrl: candidate.websiteUrl,
           notes: candidate.notes,
@@ -927,6 +931,7 @@ const ClaudeCodePage: React.FC = () => {
           category: payload.category as ClaudeProviderInput['category'],
           settingsConfig: payload.settingsConfig,
           extraSettingsConfig: payload.extraSettingsConfig || '{}',
+          extraSettingsMergeStrategy: payload.extraSettingsMergeStrategy,
           meta: payload.meta as ClaudeProviderInput['meta'],
           notes: payload.notes,
           sourceProviderId: extractFavoriteProviderRawId('claudecode', favoriteProvider.providerId),
@@ -966,6 +971,7 @@ const ClaudeCodePage: React.FC = () => {
         category: values.category,
         settingsConfig,
         extraSettingsConfig: values.extraSettingsConfig || '{}',
+        extraSettingsMergeStrategy: values.extraSettingsMergeStrategy,
         sourceProviderId: values.sourceProviderId,
         meta: values.meta,
         notes: values.notes,
@@ -995,6 +1001,8 @@ const ClaudeCodePage: React.FC = () => {
               category: values.category,
               settingsConfig: providerInput.settingsConfig,
               extraSettingsConfig: providerInput.extraSettingsConfig || '{}',
+              extraSettingsMergeStrategy:
+                providerInput.extraSettingsMergeStrategy || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
               sourceProviderId: values.sourceProviderId,
               meta: values.meta,
               notes: values.notes,
@@ -1020,6 +1028,8 @@ const ClaudeCodePage: React.FC = () => {
           category: values.category,
           settingsConfig: providerInput.settingsConfig,
           extraSettingsConfig: providerInput.extraSettingsConfig || '{}',
+          extraSettingsMergeStrategy:
+            providerInput.extraSettingsMergeStrategy || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
           sourceProviderId: values.sourceProviderId,
           meta: values.meta,
           notes: values.notes,
@@ -1063,6 +1073,10 @@ const ClaudeCodePage: React.FC = () => {
         category: values.category,
         settingsConfig,
         extraSettingsConfig: values.extraSettingsConfig || '{}',
+        extraSettingsMergeStrategy:
+          values.extraSettingsMergeStrategy ||
+          existingProvider.extraSettingsMergeStrategy ||
+          DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
         meta: values.meta,
         notes: values.notes,
         createdAt: existingProvider.createdAt,

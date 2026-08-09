@@ -1,4 +1,5 @@
 import type { OpenCodeDiagnosticsConfig, OpenCodeFavoriteProvider } from '@/services/opencodeApi';
+import type { ClaudeSettingsMergeStrategy } from '@/types/claudecode';
 import type { OpenCodeProvider } from '@/types/opencode';
 import { isJsonObject } from '../../../utils/json.ts';
 
@@ -9,6 +10,7 @@ export interface ClaudeFavoriteProviderPayload {
   category: string;
   settingsConfig: string;
   extraSettingsConfig?: string;
+  extraSettingsMergeStrategy?: ClaudeSettingsMergeStrategy;
   meta?: unknown;
   notes?: string;
 }

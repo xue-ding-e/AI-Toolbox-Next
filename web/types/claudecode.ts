@@ -6,6 +6,13 @@
 
 export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
 export type ClaudeApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses' | 'gemini_native';
+export type ClaudeSettingsMergeStrategy =
+  | 'provider_overrides_common'
+  | 'common_overrides_provider'
+  | 'merge_common_and_provider';
+
+export const DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY: ClaudeSettingsMergeStrategy =
+  'provider_overrides_common';
 
 export interface GatewayProviderProfileReference {
   tool?: 'claude' | 'codex' | 'grok' | 'gemini';
@@ -68,6 +75,7 @@ export interface ClaudeCodeProvider {
   category: ClaudeProviderCategory;
   settingsConfig: string; // JSON string of ClaudeSettingsConfig
   extraSettingsConfig: string; // JSON string of additional settings.json fields for custom providers
+  extraSettingsMergeStrategy: ClaudeSettingsMergeStrategy;
   // Source info if imported from settings
   sourceProviderId?: string;
   // Metadata
@@ -144,6 +152,7 @@ export interface ClaudeProviderFormValues {
   fableModelName?: string;
   reasoningModel?: string; // Legacy only; new provider form no longer writes it.
   extraSettingsConfig?: string;
+  extraSettingsMergeStrategy?: ClaudeSettingsMergeStrategy;
   meta?: GatewayProviderMeta;
   apiFormat?: ClaudeApiFormat;
   notes?: string;
@@ -160,6 +169,7 @@ export interface ClaudeProviderInput {
   category: ClaudeProviderCategory;
   settingsConfig: string;
   extraSettingsConfig?: string;
+  extraSettingsMergeStrategy?: ClaudeSettingsMergeStrategy;
   sourceProviderId?: string;
   websiteUrl?: string;
   notes?: string;

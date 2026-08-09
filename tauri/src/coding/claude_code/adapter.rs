@@ -64,6 +64,12 @@ pub fn from_db_value_provider(value: Value) -> ClaudeCodeProvider {
             "extraSettingsConfig",
             "{}",
         ),
+        extra_settings_merge_strategy: value
+            .get("extra_settings_merge_strategy")
+            .or_else(|| value.get("extraSettingsMergeStrategy"))
+            .and_then(Value::as_str)
+            .and_then(|raw| serde_json::from_value(Value::String(raw.to_string())).ok())
+            .unwrap_or_default(),
         source_provider_id: get_opt_str_compat(&value, "source_provider_id", "sourceProviderId"),
         website_url: get_opt_str_compat(&value, "website_url", "websiteUrl"),
         notes: get_opt_str_compat(&value, "notes", "notes"),
@@ -152,4 +158,43 @@ pub fn to_db_value_prompt(content: &ClaudePromptConfigContent) -> Value {
         eprintln!("Failed to serialize Claude prompt content: {}", e);
         json!({})
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding::claude_code::types::ClaudeSettingsMergeStrategy;
+
+    #[test]
+    fn provider_without_merge_strategy_uses_provider_override_default() {
+        let provider = from_db_value_provider(json!({
+            "id": "legacy-provider",
+            "name": "Legacy",
+            "category": "custom",
+            "settings_config": "{}",
+            "extra_settings_config": "{}"
+        }));
+
+        assert_eq!(
+            provider.extra_settings_merge_strategy,
+            ClaudeSettingsMergeStrategy::ProviderOverridesCommon
+        );
+    }
+
+    #[test]
+    fn provider_reads_camel_case_merge_strategy() {
+        let provider = from_db_value_provider(json!({
+            "id": "camel-provider",
+            "name": "Camel",
+            "category": "custom",
+            "settingsConfig": "{}",
+            "extraSettingsConfig": "{}",
+            "extraSettingsMergeStrategy": "merge_common_and_provider"
+        }));
+
+        assert_eq!(
+            provider.extra_settings_merge_strategy,
+            ClaudeSettingsMergeStrategy::MergeCommonAndProvider
+        );
+    }
 }

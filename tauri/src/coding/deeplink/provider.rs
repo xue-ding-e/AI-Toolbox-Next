@@ -49,6 +49,7 @@ pub async fn build_and_create_provider(
                 category: request.category.clone(),
                 settings_config,
                 extra_settings_config,
+                extra_settings_merge_strategy: None,
                 source_provider_id: request.source_provider_id.clone(),
                 website_url: request.homepage.clone(),
                 notes: request.notes.clone(),

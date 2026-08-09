@@ -5,6 +5,25 @@ fn default_json_object_string() -> String {
     "{}".to_string()
 }
 
+/// Controls how a provider's extra settings are applied together with Claude's common config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaudeSettingsMergeStrategy {
+    /// Preserve AI Toolbox's historical behavior: provider extra fields replace
+    /// same-name common top-level fields.
+    ProviderOverridesCommon,
+    /// Match cc-switch: provider settings are the base and common config overlays them.
+    CommonOverridesProvider,
+    /// Recursively merge both layers and merge array elements with de-duplication.
+    MergeCommonAndProvider,
+}
+
+impl Default for ClaudeSettingsMergeStrategy {
+    fn default() -> Self {
+        Self::ProviderOverridesCommon
+    }
+}
+
 // ============================================================================
 // ClaudeCode Provider Types
 // ============================================================================
@@ -18,6 +37,8 @@ pub struct ClaudeCodeProviderRecord {
     pub settings_config: String,
     #[serde(default = "default_json_object_string")]
     pub extra_settings_config: String,
+    #[serde(default)]
+    pub extra_settings_merge_strategy: ClaudeSettingsMergeStrategy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,6 +69,8 @@ pub struct ClaudeCodeProvider {
     pub settings_config: String,
     #[serde(default = "default_json_object_string")]
     pub extra_settings_config: String,
+    #[serde(default)]
+    pub extra_settings_merge_strategy: ClaudeSettingsMergeStrategy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +99,7 @@ impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
             category: record.category,
             settings_config: record.settings_config,
             extra_settings_config: record.extra_settings_config,
+            extra_settings_merge_strategy: record.extra_settings_merge_strategy,
             source_provider_id: record.source_provider_id,
             website_url: record.website_url,
             notes: record.notes,
@@ -99,6 +123,8 @@ pub struct ClaudeCodeProviderContent {
     pub settings_config: String,
     #[serde(default = "default_json_object_string")]
     pub extra_settings_config: String,
+    #[serde(default)]
+    pub extra_settings_merge_strategy: ClaudeSettingsMergeStrategy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +156,8 @@ pub struct ClaudeCodeProviderInput {
     pub settings_config: String,
     #[serde(default)]
     pub extra_settings_config: Option<String>,
+    #[serde(default)]
+    pub extra_settings_merge_strategy: Option<ClaudeSettingsMergeStrategy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

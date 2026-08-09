@@ -1,9 +1,196 @@
 use ai_toolbox_lib::coding::claude_code::settings_merge::{
     extract_provider_settings_for_storage, merge_claude_settings_for_provider,
+    merge_claude_settings_for_provider_with_strategy,
     sanitize_claude_settings_for_non_windows_target, split_settings_into_provider_and_common,
     strip_claude_common_config_from_settings, KNOWN_ENV_FIELDS,
 };
+use ai_toolbox_lib::coding::claude_code::types::ClaudeSettingsMergeStrategy;
 use serde_json::json;
+
+fn merge_with_strategy(
+    current_disk_settings: &serde_json::Value,
+    previous_common_config: Option<&serde_json::Value>,
+    next_common_config: &serde_json::Value,
+    previous_extra_settings_config: Option<&serde_json::Value>,
+    previous_merge_strategy: Option<ClaudeSettingsMergeStrategy>,
+    next_extra_settings_config: Option<&serde_json::Value>,
+    next_merge_strategy: ClaudeSettingsMergeStrategy,
+) -> serde_json::Value {
+    merge_claude_settings_for_provider_with_strategy(
+        Some(current_disk_settings),
+        previous_common_config,
+        next_common_config,
+        previous_extra_settings_config,
+        previous_merge_strategy,
+        next_extra_settings_config,
+        next_merge_strategy,
+        &json!({}),
+        &KNOWN_ENV_FIELDS,
+    )
+    .expect("strategy merge should succeed")
+}
+
+#[test]
+fn provider_override_strategy_preserves_existing_top_level_replacement_behavior() {
+    let common_config = json!({
+        "permissions": {
+            "allow": ["Read"],
+            "deny": ["Read(~/.ssh/**)"]
+        }
+    });
+    let extra_settings = json!({
+        "permissions": {
+            "deny": ["WebSearch"]
+        }
+    });
+
+    let merged = merge_with_strategy(
+        &json!({}),
+        None,
+        &common_config,
+        None,
+        None,
+        Some(&extra_settings),
+        ClaudeSettingsMergeStrategy::ProviderOverridesCommon,
+    );
+
+    assert_eq!(
+        merged["permissions"],
+        json!({
+            "deny": ["WebSearch"]
+        })
+    );
+}
+
+#[test]
+fn common_override_strategy_recursively_merges_objects_and_replaces_conflicting_arrays() {
+    let common_config = json!({
+        "permissions": {
+            "deny": ["Read(~/.ssh/**)"],
+            "defaultMode": "ask"
+        }
+    });
+    let extra_settings = json!({
+        "permissions": {
+            "allow": ["Bash"],
+            "deny": ["WebSearch"],
+            "defaultMode": "deny"
+        }
+    });
+
+    let merged = merge_with_strategy(
+        &json!({}),
+        None,
+        &common_config,
+        None,
+        None,
+        Some(&extra_settings),
+        ClaudeSettingsMergeStrategy::CommonOverridesProvider,
+    );
+
+    assert_eq!(merged.pointer("/permissions/allow"), Some(&json!(["Bash"])));
+    assert_eq!(
+        merged.pointer("/permissions/deny"),
+        Some(&json!(["Read(~/.ssh/**)"]))
+    );
+    assert_eq!(
+        merged.pointer("/permissions/defaultMode"),
+        Some(&json!("ask"))
+    );
+}
+
+#[test]
+fn merge_strategy_combines_and_deduplicates_arrays_with_provider_scalar_priority() {
+    let common_config = json!({
+        "permissions": {
+            "deny": ["Read(~/.ssh/**)", "WebSearch"],
+            "defaultMode": "ask"
+        }
+    });
+    let extra_settings = json!({
+        "permissions": {
+            "deny": ["WebSearch", "Bash"],
+            "defaultMode": "deny"
+        }
+    });
+
+    let merged = merge_with_strategy(
+        &json!({}),
+        None,
+        &common_config,
+        None,
+        None,
+        Some(&extra_settings),
+        ClaudeSettingsMergeStrategy::MergeCommonAndProvider,
+    );
+
+    assert_eq!(
+        merged.pointer("/permissions/deny"),
+        Some(&json!(["Read(~/.ssh/**)", "WebSearch", "Bash"]))
+    );
+    assert_eq!(
+        merged.pointer("/permissions/defaultMode"),
+        Some(&json!("deny"))
+    );
+}
+
+#[test]
+fn switching_from_merge_strategy_removes_previous_array_union_before_reapplying() {
+    let common_config = json!({
+        "permissions": {
+            "deny": ["Read(~/.ssh/**)"]
+        }
+    });
+    let extra_settings = json!({
+        "permissions": {
+            "deny": ["WebSearch"]
+        }
+    });
+    let previously_merged = json!({
+        "permissions": {
+            "deny": ["Read(~/.ssh/**)", "WebSearch"]
+        }
+    });
+
+    let merged = merge_with_strategy(
+        &previously_merged,
+        Some(&common_config),
+        &common_config,
+        Some(&extra_settings),
+        Some(ClaudeSettingsMergeStrategy::MergeCommonAndProvider),
+        Some(&extra_settings),
+        ClaudeSettingsMergeStrategy::ProviderOverridesCommon,
+    );
+
+    assert_eq!(
+        merged.pointer("/permissions/deny"),
+        Some(&json!(["WebSearch"]))
+    );
+}
+
+#[test]
+fn empty_object_extra_paths_are_removed_for_non_default_strategies() {
+    for strategy in [
+        ClaudeSettingsMergeStrategy::CommonOverridesProvider,
+        ClaudeSettingsMergeStrategy::MergeCommonAndProvider,
+    ] {
+        let merged = merge_with_strategy(
+            &json!({
+                "foo": { "oldExtraField": true },
+                "keep": true
+            }),
+            Some(&json!({})),
+            &json!({}),
+            Some(&json!({ "foo": {} })),
+            Some(strategy),
+            None,
+            strategy,
+        );
+
+        assert!(merged.get("foo").is_none());
+        assert_eq!(merged.get("keep"), Some(&json!(true)));
+    }
+}
 
 #[test]
 fn merge_preserves_existing_nested_status_line_details() {

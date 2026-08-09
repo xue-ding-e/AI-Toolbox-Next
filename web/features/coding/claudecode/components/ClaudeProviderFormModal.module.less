@@ -41,6 +41,45 @@
   min-width: 0;
 }
 
+.settingsMergeStrategyRow {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 320px);
+  gap: 8px;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.settingsMergeStrategyLabel {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.settingsMergeStrategyControl {
+  min-width: 0;
+}
+
+.settingsMergeStrategySelect {
+  width: 100%;
+  max-width: 320px;
+  height: 28px;
+  min-height: 28px;
+
+  :global(.ant-select-selector) {
+    height: 28px !important;
+    min-height: 28px !important;
+  }
+
+  :global(.ant-select-selection-item),
+  :global(.ant-select-selection-placeholder) {
+    font-size: 12px;
+    line-height: 26px !important;
+  }
+}
+
 .extraSettingsHelp {
   display: flex;
   flex-direction: column;
@@ -203,6 +242,21 @@
 
   .providerProfileRow {
     grid-template-columns: 1fr;
+  }
+
+  .settingsMergeStrategyRow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    align-items: stretch;
+  }
+
+  .settingsMergeStrategyLabel {
+    display: block;
+    white-space: normal;
+  }
+
+  .settingsMergeStrategySelect {
+    max-width: none;
   }
 
   .modelGridHeader {

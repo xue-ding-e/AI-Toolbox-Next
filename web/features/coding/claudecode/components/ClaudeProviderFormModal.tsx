@@ -6,7 +6,15 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import JsonEditor from '@/components/common/JsonEditor';
 import { useAppStore } from '@/stores';
-import type { ClaudeApiFormat, ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig, GatewayProviderMeta } from '@/types/claudecode';
+import type {
+  ClaudeApiFormat,
+  ClaudeCodeProvider,
+  ClaudeProviderFormValues,
+  ClaudeSettingsMergeStrategy,
+  ClaudeSettingsConfig,
+  GatewayProviderMeta,
+} from '@/types/claudecode';
+import { DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY } from '@/types/claudecode';
 import { isJsonObject } from '@/utils/json';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
@@ -201,12 +209,30 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       label: t('claudecode.provider.apiFormatGeminiNative'),
     },
   ], [t]);
+  const settingsMergeStrategyOptions = React.useMemo(() => [
+    {
+      value: 'provider_overrides_common',
+      label: t('claudecode.provider.mergeStrategyProviderOverridesCommon'),
+    },
+    {
+      value: 'common_overrides_provider',
+      label: t('claudecode.provider.mergeStrategyCommonOverridesProvider'),
+    },
+    {
+      value: 'merge_common_and_provider',
+      label: t('claudecode.provider.mergeStrategyMergeCommonAndProvider'),
+    },
+  ], [t]);
 
   const isEdit = !!provider && !isCopy;
   const canSelectProviderCategory = !provider && mode === 'manual';
   const isOfficialMode = providerCategory === 'official';
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
+  const selectedSettingsMergeStrategy = (Form.useWatch(
+    'extraSettingsMergeStrategy',
+    watchOptions,
+  ) as ClaudeSettingsMergeStrategy | undefined) || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
   const fallbackModel = Form.useWatch('model', watchOptions) || '';
   const sonnetModel = Form.useWatch('sonnetModel', watchOptions) || '';
@@ -256,6 +282,18 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       supportsOneM: false,
     },
   ], [fableModel, fableModelName, haikuModel, haikuModelName, opusModel, opusModelName, sonnetModel, sonnetModelName, t]);
+
+  const extraSettingsHintKey = React.useMemo(() => {
+    switch (selectedSettingsMergeStrategy) {
+      case 'common_overrides_provider':
+        return 'claudecode.provider.extraSettingsHintCommonOverridesProvider';
+      case 'merge_common_and_provider':
+        return 'claudecode.provider.extraSettingsHintMergeCommonAndProvider';
+      case 'provider_overrides_common':
+      default:
+        return 'claudecode.provider.extraSettingsHintProviderOverridesCommon';
+    }
+  }, [selectedSettingsMergeStrategy]);
 
   const providerEndpointOptions = React.useMemo(() => {
     if (isOfficialMode && !canSelectProviderCategory) {
@@ -385,7 +423,13 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         : provider.extraSettingsConfig || '';
       setExtraSettingsValue(toExtraSettingsEditorValue(nextExtraSettingsRaw));
       setExtraSettingsError(undefined);
-      setAdvancedSettingsExpanded(nextProviderCategory !== 'official' && hasNonEmptyExtraSettingsObject(nextExtraSettingsRaw));
+      setAdvancedSettingsExpanded(
+        nextProviderCategory !== 'official' &&
+        (
+          hasNonEmptyExtraSettingsObject(nextExtraSettingsRaw) ||
+          provider.extraSettingsMergeStrategy !== DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY
+        ),
+      );
       extraSettingsRawRef.current = nextExtraSettingsRaw;
 
       form.setFieldsValue({
@@ -411,6 +455,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         opusModelName: modelConfig.roles.opus.displayName,
         fableModel: modelConfig.roles.fable.model,
         fableModelName: modelConfig.roles.fable.displayName,
+        extraSettingsMergeStrategy:
+          provider.extraSettingsMergeStrategy || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
         notes: provider.notes,
       });
     } else {
@@ -428,6 +474,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: undefined,
         apiFormat: DEFAULT_CLAUDE_API_FORMAT,
+        extraSettingsMergeStrategy: DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
       });
     }
   }, [provider, form]);
@@ -451,6 +498,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: undefined,
         apiFormat: DEFAULT_CLAUDE_API_FORMAT,
+        extraSettingsMergeStrategy: DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
       });
     }
   }, [form, mode, open, provider]);
@@ -689,6 +737,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         fableModel: submittedValues.fableModel,
         fableModelName: submittedValues.fableModelName,
         extraSettingsConfig,
+        extraSettingsMergeStrategy: selectedCategory === 'official'
+          ? undefined
+          : (submittedValues.extraSettingsMergeStrategy || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY),
         apiFormat: selectedApiFormat,
         meta: mergeBillingConfigIntoMeta(
           mergeGatewayMetaIntoProviderMeta(
@@ -995,6 +1046,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: undefined,
         apiFormat: DEFAULT_CLAUDE_API_FORMAT,
+        extraSettingsMergeStrategy: DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
       });
     } else {
       form.setFieldsValue({
@@ -1003,6 +1055,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: undefined,
         apiFormat: form.getFieldValue('apiFormat') || DEFAULT_CLAUDE_API_FORMAT,
+        extraSettingsMergeStrategy:
+          form.getFieldValue('extraSettingsMergeStrategy') || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY,
       });
     }
   };
@@ -1139,6 +1193,24 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                 className={styles.extraSettingsEditor}
                 placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
               />
+              <div className={styles.settingsMergeStrategyRow}>
+                <label
+                  className={styles.settingsMergeStrategyLabel}
+                  htmlFor="claude-settings-merge-strategy"
+                >
+                  {t('claudecode.provider.mergeStrategyLabel')}
+                </label>
+                <div className={styles.settingsMergeStrategyControl}>
+                  <Form.Item name="extraSettingsMergeStrategy" noStyle>
+                    <Select
+                      id="claude-settings-merge-strategy"
+                      size="small"
+                      className={styles.settingsMergeStrategySelect}
+                      options={settingsMergeStrategyOptions}
+                    />
+                  </Form.Item>
+                </div>
+              </div>
               <div className={styles.extraSettingsHelp}>
                 {extraSettingsError && (
                   <div className={styles.extraSettingsError}>
@@ -1146,7 +1218,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                   </div>
                 )}
                 <div className={styles.extraSettingsHint}>
-                  {t('claudecode.provider.extraSettingsHint')}
+                  {t(extraSettingsHintKey)}
                 </div>
               </div>
             </div>

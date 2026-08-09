@@ -271,6 +271,7 @@ async fn load_temp_provider_from_file_with_db(
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|error| format!("Failed to serialize provider settings: {}", error))?,
         extra_settings_config: "{}".to_string(),
+        extra_settings_merge_strategy: ClaudeSettingsMergeStrategy::default(),
         source_provider_id: None,
         website_url: None,
         notes: None,
@@ -381,6 +382,17 @@ fn normalize_extra_settings_config_for_storage(
         .map_err(|e| format!("Failed to serialize extra settings config: {}", e))
 }
 
+fn normalize_extra_settings_merge_strategy_for_storage(
+    category: &str,
+    strategy: Option<ClaudeSettingsMergeStrategy>,
+) -> ClaudeSettingsMergeStrategy {
+    if category == "official" {
+        ClaudeSettingsMergeStrategy::default()
+    } else {
+        strategy.unwrap_or_default()
+    }
+}
+
 fn parse_extra_settings_config_value(provider: &ClaudeCodeProvider) -> Result<Value, String> {
     if provider.category == "official" {
         return Ok(Value::Object(serde_json::Map::new()));
@@ -391,15 +403,25 @@ fn parse_extra_settings_config_value(provider: &ClaudeCodeProvider) -> Result<Va
     )?))
 }
 
-async fn load_applied_provider_extra_settings_value(
+#[derive(Debug, Clone)]
+struct AppliedProviderMergeContext {
+    extra_settings_config: Value,
+    merge_strategy: ClaudeSettingsMergeStrategy,
+}
+
+async fn load_applied_provider_merge_context(
     db: &crate::db::SqliteDbState,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<AppliedProviderMergeContext>, String> {
     let applied = list_claude_providers_from_sqlite(db)?
         .into_iter()
         .find(|provider| provider.is_applied);
     applied
-        .as_ref()
-        .map(parse_extra_settings_config_value)
+        .map(|provider| {
+            Ok(AppliedProviderMergeContext {
+                extra_settings_config: parse_extra_settings_config_value(&provider)?,
+                merge_strategy: provider.extra_settings_merge_strategy,
+            })
+        })
         .transpose()
 }
 
@@ -642,6 +664,10 @@ pub async fn create_claude_provider_inner(
         &provider.category,
         provider.extra_settings_config.as_deref(),
     )?;
+    let extra_settings_merge_strategy = normalize_extra_settings_merge_strategy_for_storage(
+        &provider.category,
+        provider.extra_settings_merge_strategy,
+    );
 
     let now = Local::now().to_rfc3339();
     let content = ClaudeCodeProviderContent {
@@ -649,6 +675,7 @@ pub async fn create_claude_provider_inner(
         category: provider.category,
         settings_config: normalized_settings_config,
         extra_settings_config,
+        extra_settings_merge_strategy,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -693,6 +720,10 @@ pub async fn update_claude_provider(
         &provider.category,
         Some(&provider.extra_settings_config),
     )?;
+    let extra_settings_merge_strategy = normalize_extra_settings_merge_strategy_for_storage(
+        &provider.category,
+        Some(provider.extra_settings_merge_strategy),
+    );
 
     // Use the id from frontend (pure string id without table prefix)
     let id = provider.id.clone();
@@ -704,8 +735,10 @@ pub async fn update_claude_provider(
         .ok_or_else(|| format!("Claude Code provider with ID '{}' not found", id))?;
 
     // Get created_at and is_disabled from existing record
-    let previous_extra_settings_config_value =
-        parse_extra_settings_config_value(&existing_provider).map(Some)?;
+    let previous_provider_merge_context = Some(AppliedProviderMergeContext {
+        extra_settings_config: parse_extra_settings_config_value(&existing_provider)?,
+        merge_strategy: existing_provider.extra_settings_merge_strategy,
+    });
 
     let (created_at, existing_is_disabled) = if !provider.created_at.trim().is_empty() {
         (provider.created_at.clone(), existing_provider.is_disabled)
@@ -725,6 +758,7 @@ pub async fn update_claude_provider(
         category: provider.category,
         settings_config: normalized_settings_config,
         extra_settings_config,
+        extra_settings_merge_strategy,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -743,8 +777,7 @@ pub async fn update_claude_provider(
     // 如果该配置当前是应用状态，立即重新写入到配置文件
     if content.is_applied {
         if let Err(e) =
-            apply_config_to_file_with_context(&db, &id, None, previous_extra_settings_config_value)
-                .await
+            apply_config_to_file_with_context(&db, &id, None, previous_provider_merge_context).await
         {
             eprintln!("Failed to auto-apply updated config: {}", e);
             // 不中断更新流程，只记录错误
@@ -760,6 +793,7 @@ pub async fn update_claude_provider(
         category: content.category,
         settings_config: content.settings_config,
         extra_settings_config: content.extra_settings_config,
+        extra_settings_merge_strategy: content.extra_settings_merge_strategy,
         source_provider_id: content.source_provider_id,
         website_url: content.website_url,
         notes: content.notes,
@@ -808,6 +842,7 @@ pub async fn reorder_claude_providers(
                 category: provider.category,
                 settings_config: provider.settings_config,
                 extra_settings_config: provider.extra_settings_config,
+                extra_settings_merge_strategy: provider.extra_settings_merge_strategy,
                 source_provider_id: provider.source_provider_id,
                 website_url: provider.website_url,
                 notes: provider.notes,
@@ -853,6 +888,7 @@ pub async fn select_claude_provider(
             category: provider.category,
             settings_config: provider.settings_config,
             extra_settings_config: provider.extra_settings_config,
+            extra_settings_merge_strategy: provider.extra_settings_merge_strategy,
             source_provider_id: provider.source_provider_id,
             website_url: provider.website_url,
             notes: provider.notes,
@@ -1013,7 +1049,7 @@ async fn apply_config_to_file_with_context(
     db: &crate::db::SqliteDbState,
     provider_id: &str,
     previous_common_config: Option<Value>,
-    previous_extra_settings_config: Option<Value>,
+    previous_provider_merge_context: Option<AppliedProviderMergeContext>,
 ) -> Result<(), String> {
     // Get the provider
     let provider = get_claude_provider_from_sqlite(db, provider_id)?
@@ -1031,9 +1067,9 @@ async fn apply_config_to_file_with_context(
     let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
         .map_err(|e| format!("Failed to parse provider config: {}", e))?;
     let extra_settings_config = parse_extra_settings_config_value(&provider)?;
-    let previous_extra_settings_config = match previous_extra_settings_config {
-        Some(value) => Some(value),
-        None => load_applied_provider_extra_settings_value(db).await?,
+    let previous_provider_merge_context = match previous_provider_merge_context {
+        Some(context) => Some(context),
+        None => load_applied_provider_merge_context(db).await?,
     };
 
     // Get common config
@@ -1046,12 +1082,18 @@ async fn apply_config_to_file_with_context(
     };
 
     let current_settings = read_current_claude_settings_value_async(db).await?;
-    let merged_settings = settings_merge::merge_claude_settings_for_provider(
+    let merged_settings = settings_merge::merge_claude_settings_for_provider_with_strategy(
         current_settings.as_ref(),
         previous_common_config.as_ref(),
         &common_config,
-        previous_extra_settings_config.as_ref(),
+        previous_provider_merge_context
+            .as_ref()
+            .map(|context| &context.extra_settings_config),
+        previous_provider_merge_context
+            .as_ref()
+            .map(|context| context.merge_strategy),
         Some(&extra_settings_config),
+        provider.extra_settings_merge_strategy,
         &provider_config,
         &KNOWN_ENV_FIELDS,
     )?;
@@ -1087,6 +1129,7 @@ pub async fn toggle_claude_code_provider_disabled(
             category: provider.category,
             settings_config: provider.settings_config,
             extra_settings_config: provider.extra_settings_config,
+            extra_settings_merge_strategy: provider.extra_settings_merge_strategy,
             source_provider_id: provider.source_provider_id,
             website_url: provider.website_url,
             notes: provider.notes,
@@ -1183,6 +1226,7 @@ async fn apply_config_internal_with_events<R: tauri::Runtime>(
             category: provider.category,
             settings_config: provider.settings_config,
             extra_settings_config: provider.extra_settings_config,
+            extra_settings_merge_strategy: provider.extra_settings_merge_strategy,
             source_provider_id: provider.source_provider_id,
             website_url: provider.website_url,
             notes: provider.notes,
@@ -1660,11 +1704,18 @@ pub async fn save_claude_local_config(
         &provider_category,
         Some(&provider_extra_settings_config),
     )?;
+    let extra_settings_merge_strategy = normalize_extra_settings_merge_strategy_for_storage(
+        &provider_category,
+        provider_input
+            .as_ref()
+            .and_then(|input| input.extra_settings_merge_strategy),
+    );
     let provider_content = ClaudeCodeProviderContent {
         name: provider_name,
         category: provider_category,
         settings_config: normalized_provider_settings_config,
         extra_settings_config: normalized_extra_settings_config,
+        extra_settings_merge_strategy,
         source_provider_id: provider_source_id,
         website_url: None,
         notes: provider_notes,
@@ -2151,6 +2202,7 @@ pub async fn init_claude_provider_from_settings(
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|e| format!("Failed to serialize provider settings: {}", e))?,
         extra_settings_config: "{}".to_string(),
+        extra_settings_merge_strategy: ClaudeSettingsMergeStrategy::default(),
         source_provider_id: None,
         website_url: None,
         notes: Some("从 settings.json 自动导入".to_string()),
@@ -2444,6 +2496,7 @@ mod tests {
             category: "custom".to_string(),
             settings_config: "{}".to_string(),
             extra_settings_config: None,
+            extra_settings_merge_strategy: None,
             source_provider_id: None,
             website_url: None,
             notes: None,
@@ -2476,6 +2529,7 @@ mod tests {
             category: "custom".to_string(),
             settings_config: "{}".to_string(),
             extra_settings_config: None,
+            extra_settings_merge_strategy: None,
             source_provider_id: None,
             website_url: None,
             notes: None,

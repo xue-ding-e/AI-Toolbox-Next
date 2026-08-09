@@ -1,6 +1,8 @@
 use crate::coding::config_cleanup;
 use serde_json::{Map, Value};
 
+use super::types::ClaudeSettingsMergeStrategy;
+
 const PROTECTED_TOP_LEVEL_FIELDS: [&str; 3] = ["enabledPlugins", "extraKnownMarketplaces", "hooks"];
 
 const PROVIDER_MODEL_FIELD_MAPPINGS: [(&str, &str); 5] = [
@@ -68,6 +70,86 @@ fn merge_json_value_preserving_existing(target: &mut Value, source: &Value) {
         }
         (target_value, source_value) => {
             *target_value = source_value.clone();
+        }
+    }
+}
+
+fn merge_json_value_with_array_union(target: &mut Value, source: &Value) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, source_value) in source_map {
+                match target_map.get_mut(key) {
+                    Some(target_value) => {
+                        merge_json_value_with_array_union(target_value, source_value)
+                    }
+                    None => {
+                        target_map.insert(key.clone(), source_value.clone());
+                    }
+                }
+            }
+        }
+        (Value::Array(target_array), Value::Array(source_array)) => {
+            for source_item in source_array {
+                if !target_array.contains(source_item) {
+                    target_array.push(source_item.clone());
+                }
+            }
+        }
+        (target_value, source_value) => {
+            *target_value = source_value.clone();
+        }
+    }
+}
+
+fn merge_json_object_recursively(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+    for (field_key, field_value) in source {
+        match target.get_mut(field_key) {
+            Some(existing_value) => {
+                merge_json_value_preserving_existing(existing_value, field_value)
+            }
+            None => {
+                target.insert(field_key.clone(), field_value.clone());
+            }
+        }
+    }
+}
+
+fn remove_managed_paths(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+    remove_managed_paths_with_empty_object_policy(target, source, false);
+}
+
+fn remove_extra_managed_paths(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+    remove_managed_paths_with_empty_object_policy(target, source, true);
+}
+
+fn remove_managed_paths_with_empty_object_policy(
+    target: &mut Map<String, Value>,
+    source: &Map<String, Value>,
+    remove_empty_objects: bool,
+) {
+    for (field_key, source_value) in source {
+        let Some(target_value) = target.get_mut(field_key) else {
+            continue;
+        };
+
+        let should_remove_field = match source_value {
+            Value::Object(source_object) if source_object.is_empty() => remove_empty_objects,
+            Value::Object(source_object) => match target_value.as_object_mut() {
+                Some(target_object) => {
+                    remove_managed_paths_with_empty_object_policy(
+                        target_object,
+                        source_object,
+                        remove_empty_objects,
+                    );
+                    target_object.is_empty()
+                }
+                None => true,
+            },
+            _ => true,
+        };
+
+        if should_remove_field {
+            target.remove(field_key);
         }
     }
 }
@@ -178,6 +260,81 @@ fn remove_previous_extra_settings(
 
     if target_env.is_empty() {
         target.remove("env");
+    }
+}
+
+fn sanitize_common_settings_config(
+    common_config: &Value,
+    known_env_fields: &[&str],
+) -> Result<Map<String, Value>, String> {
+    let common_config_object = match common_config {
+        Value::Object(object) => object,
+        Value::Null => return Ok(Map::new()),
+        _ => return Err("Claude common config must be a JSON object".to_string()),
+    };
+
+    let mut sanitized_common_config = common_config_object.clone();
+    for protected_field in PROTECTED_TOP_LEVEL_FIELDS {
+        sanitized_common_config.remove(protected_field);
+    }
+
+    let mut remove_env = false;
+    if let Some(env_value) = sanitized_common_config.get_mut("env") {
+        if let Value::Object(env_object) = env_value {
+            for known_env_field in known_env_fields {
+                env_object.remove(*known_env_field);
+            }
+            remove_env = env_object.is_empty();
+        } else {
+            remove_env = true;
+        }
+    }
+    if remove_env {
+        sanitized_common_config.remove("env");
+    }
+
+    Ok(sanitized_common_config)
+}
+
+fn apply_settings_layers(
+    target: &mut Map<String, Value>,
+    common_config: &Map<String, Value>,
+    extra_settings: &Map<String, Value>,
+    strategy: ClaudeSettingsMergeStrategy,
+) {
+    match strategy {
+        ClaudeSettingsMergeStrategy::ProviderOverridesCommon => {
+            merge_json_object_recursively(target, common_config);
+
+            for (field_key, field_value) in extra_settings {
+                if field_key == "env" {
+                    match target.get_mut(field_key) {
+                        Some(existing_value) => {
+                            merge_json_value_preserving_existing(existing_value, field_value)
+                        }
+                        None => {
+                            target.insert(field_key.clone(), field_value.clone());
+                        }
+                    }
+                } else {
+                    target.insert(field_key.clone(), field_value.clone());
+                }
+            }
+        }
+        ClaudeSettingsMergeStrategy::CommonOverridesProvider => {
+            merge_json_object_recursively(target, extra_settings);
+            merge_json_object_recursively(target, common_config);
+        }
+        ClaudeSettingsMergeStrategy::MergeCommonAndProvider => {
+            let mut merged_layer = Value::Object(common_config.clone());
+            merge_json_value_with_array_union(
+                &mut merged_layer,
+                &Value::Object(extra_settings.clone()),
+            );
+            if let Value::Object(merged_layer_object) = merged_layer {
+                merge_json_object_recursively(target, &merged_layer_object);
+            }
+        }
     }
 }
 
@@ -350,21 +507,40 @@ pub fn merge_claude_settings_for_provider(
     provider_config: &Value,
     known_env_fields: &[&str],
 ) -> Result<Value, String> {
+    merge_claude_settings_for_provider_with_strategy(
+        current_disk_settings,
+        previous_common_config,
+        next_common_config,
+        previous_extra_settings_config,
+        Some(ClaudeSettingsMergeStrategy::ProviderOverridesCommon),
+        next_extra_settings_config,
+        ClaudeSettingsMergeStrategy::ProviderOverridesCommon,
+        provider_config,
+        known_env_fields,
+    )
+}
+
+pub fn merge_claude_settings_for_provider_with_strategy(
+    current_disk_settings: Option<&Value>,
+    previous_common_config: Option<&Value>,
+    next_common_config: &Value,
+    previous_extra_settings_config: Option<&Value>,
+    previous_merge_strategy: Option<ClaudeSettingsMergeStrategy>,
+    next_extra_settings_config: Option<&Value>,
+    next_merge_strategy: ClaudeSettingsMergeStrategy,
+    provider_config: &Value,
+    known_env_fields: &[&str],
+) -> Result<Value, String> {
     let current_settings_object = match current_disk_settings {
         Some(Value::Object(object)) => object.clone(),
         Some(_) => return Err("Current Claude settings must be a JSON object".to_string()),
         None => Map::new(),
     };
 
-    let next_common_config_object = match next_common_config {
-        Value::Object(object) => object.clone(),
-        Value::Null => Map::new(),
-        _ => return Err("Claude common config must be a JSON object".to_string()),
-    };
+    let next_common_config_object =
+        sanitize_common_settings_config(next_common_config, known_env_fields)?;
     let previous_common_config_object = match previous_common_config {
-        Some(Value::Object(object)) => object.clone(),
-        Some(Value::Null) => Map::new(),
-        Some(_) => return Err("Previous Claude common config must be a JSON object".to_string()),
+        Some(value) => sanitize_common_settings_config(value, known_env_fields)?,
         None => next_common_config_object.clone(),
     };
     let previous_extra_settings_object = match previous_extra_settings_config {
@@ -380,97 +556,35 @@ pub fn merge_claude_settings_for_provider(
     };
 
     let mut merged_settings = current_settings_object;
+    let previous_merge_strategy = previous_merge_strategy.unwrap_or_default();
 
     for field_key in previous_common_config_object.keys() {
-        if field_key == "env" {
-            continue;
-        }
-
-        if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
-            continue;
-        }
-
         if !next_common_config_object.contains_key(field_key) {
             merged_settings.remove(field_key);
         }
     }
+    remove_managed_paths(&mut merged_settings, &previous_common_config_object);
 
     if !previous_extra_settings_object.is_empty() {
-        remove_previous_extra_settings(&mut merged_settings, &previous_extra_settings_object);
-    }
-
-    for (field_key, field_value) in &next_common_config_object {
-        if field_key == "env" {
-            continue;
-        }
-
-        if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
-            continue;
-        }
-
-        if let Some(existing_value) = merged_settings.get_mut(field_key) {
-            merge_json_value_preserving_existing(existing_value, field_value);
+        if previous_merge_strategy == ClaudeSettingsMergeStrategy::ProviderOverridesCommon {
+            remove_previous_extra_settings(&mut merged_settings, &previous_extra_settings_object);
         } else {
-            merged_settings.insert(field_key.clone(), field_value.clone());
+            remove_extra_managed_paths(&mut merged_settings, &previous_extra_settings_object);
         }
     }
 
-    for (field_key, field_value) in &next_extra_settings_object {
-        if field_key == "env" {
-            continue;
-        }
-
-        if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
-            continue;
-        }
-
-        if is_provider_model_field(field_key) {
-            continue;
-        }
-
-        if let Some(existing_value) = merged_settings.get_mut(field_key) {
-            *existing_value = field_value.clone();
-        } else {
-            merged_settings.insert(field_key.clone(), field_value.clone());
-        }
-    }
+    apply_settings_layers(
+        &mut merged_settings,
+        &next_common_config_object,
+        &next_extra_settings_object,
+        next_merge_strategy,
+    );
 
     let mut merged_env = merged_settings
         .get("env")
         .and_then(value_as_object)
         .cloned()
         .unwrap_or_default();
-
-    if let Some(previous_common_env) = previous_common_config_object
-        .get("env")
-        .and_then(value_as_object)
-    {
-        for field_key in previous_common_env.keys() {
-            if !known_env_fields.contains(&field_key.as_str()) {
-                merged_env.remove(field_key);
-            }
-        }
-    }
-
-    if let Some(next_common_env) = next_common_config_object
-        .get("env")
-        .and_then(value_as_object)
-    {
-        for (field_key, field_value) in next_common_env {
-            merged_env.insert(field_key.clone(), field_value.clone());
-        }
-    }
-
-    if let Some(next_extra_env) = next_extra_settings_object
-        .get("env")
-        .and_then(value_as_object)
-    {
-        for (field_key, field_value) in next_extra_env {
-            if !known_env_fields.contains(&field_key.as_str()) {
-                merged_env.insert(field_key.clone(), field_value.clone());
-            }
-        }
-    }
 
     for known_env_field in known_env_fields {
         merged_env.remove(*known_env_field);
