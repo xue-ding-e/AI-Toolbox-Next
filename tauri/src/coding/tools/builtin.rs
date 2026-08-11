@@ -225,6 +225,26 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
+    // WorkBuddy AI (international) - supports both Skills and MCP
+    BuiltinTool {
+        key: "workbuddy_ai",
+        display_name: "WorkBuddy AI",
+        relative_skills_dir: Some("~/.workbuddy-ai/skills"),
+        relative_detect_dir: Some("~/.workbuddy-ai"),
+        mcp_config_path: Some("~/.workbuddy-ai/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
+    // WorkBuddy (domestic) - supports both Skills and MCP
+    BuiltinTool {
+        key: "workbuddy",
+        display_name: "WorkBuddy",
+        relative_skills_dir: Some("~/.workbuddy/skills"),
+        relative_detect_dir: Some("~/.workbuddy"),
+        mcp_config_path: Some("~/.workbuddy/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
 ];
 
 /// Get all built-in tools
