@@ -17,18 +17,6 @@
     "pi": "Pi",
     "grok": "Grok"
   },
-  "ohMyPi": {
-    "title": "Oh My Pi",
-    "rootDir": "Runtime root",
-    "providers": "Model providers",
-    "providerKey": "Provider ID",
-    "providerConfig": "Provider config",
-    "addProvider": "Add OMP provider",
-    "editProvider": "Edit OMP provider",
-    "deleteTitle": "Delete this OMP provider?",
-    "overrideOnly": "Built-in provider override",
-    "loadFailed": "Failed to load Oh My Pi config"
-  },
   "providerBilling": {
     "title": "Billing Config",
     "useCustom": "Use custom config",
