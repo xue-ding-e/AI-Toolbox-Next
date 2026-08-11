@@ -17,6 +17,18 @@
     "pi": "Pi",
     "grok": "Grok"
   },
+  "ohMyPi": {
+    "title": "Oh My Pi",
+    "rootDir": "运行时根目录",
+    "providers": "模型供应商",
+    "providerKey": "供应商 ID",
+    "providerConfig": "供应商配置",
+    "addProvider": "添加 OMP 供应商",
+    "editProvider": "编辑 OMP 供应商",
+    "deleteTitle": "删除这个 OMP 供应商？",
+    "overrideOnly": "仅覆盖内置供应商",
+    "loadFailed": "读取 Oh My Pi 配置失败"
+  },
   "providerBilling": {
     "title": "计费配置",
     "useCustom": "使用单独配置",

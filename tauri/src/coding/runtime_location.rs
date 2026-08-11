@@ -1496,6 +1496,7 @@ pub fn get_tool_mcp_config_path_sync(
         "pi" => get_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_pi_mcp_config_path_from_location(&location)),
+        "oh_my_pi" => crate::coding::oh_my_pi::get_omp_mcp_path_from_db(db).ok(),
         _ => None,
     }
 }
@@ -1520,6 +1521,7 @@ pub async fn get_tool_mcp_config_path_async(
             .await
             .ok()
             .map(|location| get_pi_mcp_config_path_from_location(&location)),
+        "oh_my_pi" => crate::coding::oh_my_pi::get_omp_mcp_path_from_db(db).ok(),
         _ => None,
     }
 }

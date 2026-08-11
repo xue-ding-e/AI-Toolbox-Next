@@ -185,6 +185,16 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
+    // Oh My Pi - native MCP configuration. Skills are auto-discovered by OMP.
+    BuiltinTool {
+        key: "oh_my_pi",
+        display_name: "Oh My Pi",
+        relative_skills_dir: None,
+        relative_detect_dir: Some("~/.omp/agent"),
+        mcp_config_path: Some("~/.omp/agent/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
     // QoderWork - supports both Skills and MCP
     BuiltinTool {
         key: "qoder_work",

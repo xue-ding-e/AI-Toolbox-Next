@@ -19,6 +19,8 @@ use crate::coding::{
     },
 };
 
+const OMP_MCP_SCHEMA_URL: &str = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
+
 /// Sync an MCP server to a specific tool's config file
 pub fn sync_server_to_tool(
     db: &crate::db::SqliteDbState,
@@ -175,6 +177,8 @@ fn sync_server_to_json(
         serde_json::json!({})
     };
 
+    ensure_omp_mcp_schema(&mut config, tool_key)?;
+
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)
@@ -202,6 +206,18 @@ fn sync_server_to_json(
     std::fs::write(config_path, content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
+    Ok(())
+}
+
+fn ensure_omp_mcp_schema(config: &mut Value, tool_key: &str) -> Result<(), String> {
+    if tool_key != "oh_my_pi" {
+        return Ok(());
+    }
+    config
+        .as_object_mut()
+        .ok_or_else(|| "OMP MCP config root must be a JSON object".to_string())?
+        .entry("$schema".to_string())
+        .or_insert_with(|| Value::String(OMP_MCP_SCHEMA_URL.to_string()));
     Ok(())
 }
 
@@ -1394,6 +1410,19 @@ mod tests {
     use super::*;
     use crate::coding::mcp::format_configs::get_format_config;
     use serde_json::json;
+
+    #[test]
+    fn omp_schema_is_added_without_overwriting_top_level_fields() {
+        let mut config = json!({
+            "disabledServers": ["legacy"],
+            "mcpServers": {}
+        });
+
+        ensure_omp_mcp_schema(&mut config, "oh_my_pi").expect("add schema");
+
+        assert_eq!(config["$schema"], OMP_MCP_SCHEMA_URL);
+        assert_eq!(config["disabledServers"], json!(["legacy"]));
+    }
 
     fn build_openclaw_stdio_server() -> McpServer {
         McpServer {

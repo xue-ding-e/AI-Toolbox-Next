@@ -2211,6 +2211,12 @@ pub fn run() {
             coding::pi::apply_pi_prompt_config,
             coding::pi::reorder_pi_prompt_configs,
             coding::pi::save_pi_local_prompt_config,
+            // Oh My Pi
+            coding::oh_my_pi::get_omp_settings_config,
+            coding::oh_my_pi::save_omp_settings_config,
+            coding::oh_my_pi::read_omp_runtime_config,
+            coding::oh_my_pi::save_omp_provider,
+            coding::oh_my_pi::delete_omp_provider,
             // OpenClaw
             coding::open_claw::get_openclaw_config_path,
             coding::open_claw::get_openclaw_config_path_info,

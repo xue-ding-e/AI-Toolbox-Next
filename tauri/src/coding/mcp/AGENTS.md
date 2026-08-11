@@ -46,6 +46,7 @@ sequenceDiagram
 - Grok 是明确例外：官方 Grok MCP schema 在 Windows 本机、WSL 和 SSH 都保持裸 `npx`，不写 `cmd /c`；同时使用 `headers` 而非 Codex 的 `http_headers`，不写 `type`，并保留 `cwd/enabled/startup_timeout_sec/tool_timeout_sec/tool_timeouts/bearer_token_env_var`。
 - Codex 与 Grok 共享秒级超时字段 `startup_timeout_sec` / `tool_timeout_sec`，存放在中心存储的 `server_config` 里（不是顶层 OpenCode 毫秒字段 `timeout`）。同步到 Codex `config.toml` 时由 `build_toml_edit_server_config` 写出；未设置则不写，让 Codex 使用官方默认（启动约 10s、工具约 60s）。导入 Codex TOML 时必须回读这两个字段，避免再同步时丢失。
 - Pi 的 MCP 目标不是 Pi 原生能力，而是 `pi-mcp-adapter` 扩展读取的 `<Pi runtime root>/mcp.json`。同步时仍以中心 MCP 存储为 source of truth，只把标准 JSON `mcpServers` 写入该派生配置文件。
+- Oh My Pi 原生读取 `<OMP runtime root>/mcp.json`，根字段为 `mcpServers`。同步目标路径必须消费 OMP 独立 custom root，不能退回 Pi root 或固定 `~/.omp/agent`；AI Toolbox 首次创建文件时写入官方 `$schema` URL，并保留已有的 `disabledServers` / `enabledServers` 等顶层字段。
 - Antigravity 2.0 的远程 HTTP MCP 字段是 `serverUrl`，不是 Gemini/Qwen 的 `httpUrl`，也不是通用 `url`。中心存储仍统一用 `server_config.url`，只在同步到 Antigravity 配置和从 Antigravity 配置扫描时做字段转换；扫描时要兼容历史写出的 `httpUrl`，避免丢用户已有配置。
 - 「导入现有 MCP」扫描除已安装工具配置与 Claude 插件 `.mcp.json` 外，还会只读扫描 CC Switch `~/.cc-switch/cc-switch.db` 的 `mcp_servers` 表。发现结果使用合成 `tool_key = "cc_switch"` / 显示名 `CC Switch`（前端走 pluginGroups 同款分组，无独立按钮）。`mcp_import_from_tool("cc_switch")` 必须单独分支再读该表并 upsert；不要把 CCS 当 runtime tool，也不要写回 CCS。同步目标仍是弹窗勾选的 `enabledTools`，不用 CCS 的 `enabled_*` 列。
 

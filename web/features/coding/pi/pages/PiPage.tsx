@@ -121,6 +121,7 @@ import type { OpenCodeModel, OpenCodeProvider } from '@/types/opencode';
 
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import PiExtensionsSection from '../components/PiExtensionsSection';
+import OhMyPiConfigModal from '../components/OhMyPiConfigModal';
 import styles from './PiPage.module.less';
 
 const { Title, Text, Link } = Typography;
@@ -572,6 +573,7 @@ const PiPage: React.FC = () => {
   const [otherSettingsValid, setOtherSettingsValid] = React.useState(true);
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
+  const [ohMyPiModalOpen, setOhMyPiModalOpen] = React.useState(false);
   const [deleteScopeProvider, setDeleteScopeProvider] = React.useState<PiRuntimeProviderView | null>(null);
   const modelSettingsSaveSeqRef = React.useRef(0);
   const sidebarHidden = sidebarHiddenByPage.pi;
@@ -1844,6 +1846,9 @@ const PiPage: React.FC = () => {
                 >
                   <EyeOutlined /> {t('common.previewConfig')}
                 </Link>
+                <Button size="small" onClick={() => setOhMyPiModalOpen(true)}>
+                  {t('ohMyPi.title')}
+                </Button>
               </div>
               <Space className={styles.pathToolbar} wrap>
                 <Text type="secondary" className={styles.pathLabel}>
@@ -2406,6 +2411,7 @@ const PiPage: React.FC = () => {
             await setSidebarHidden('pi', !visible);
           }}
         />
+        <OhMyPiConfigModal open={ohMyPiModalOpen} onClose={() => setOhMyPiModalOpen(false)} />
       </SectionSidebarLayout>
     </Spin>
   );
