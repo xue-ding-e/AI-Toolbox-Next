@@ -6,6 +6,9 @@ use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
+use crate::coding::oh_my_pi::constants::{
+    OMP_CONFIG_FILE, OMP_MCP_FILE, OMP_MODELS_FILE, OMP_PROMPT_FILE,
+};
 use crate::coding::pi::constants::{
     PI_AUTH_FILE, PI_MCP_FILE, PI_MODELS_FILE, PI_PROMPT_FILE, PI_SETTINGS_FILE,
 };
@@ -1351,11 +1354,65 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     mapping.wsl_path = pi_wsl_target_path_from_location(&location, "trust.json");
                 }
             }
+            "omp-config" => {
+                if let Ok(path) = crate::coding::oh_my_pi::get_omp_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = omp_wsl_target_path(db, OMP_CONFIG_FILE).await;
+                }
+            }
+            "omp-models" => {
+                if let Ok(path) = crate::coding::oh_my_pi::get_omp_models_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = omp_wsl_target_path(db, OMP_MODELS_FILE).await;
+                }
+            }
+            "omp-mcp" => {
+                if let Ok(path) = crate::coding::oh_my_pi::get_omp_mcp_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = omp_wsl_target_path(db, OMP_MCP_FILE).await;
+                }
+            }
+            "omp-agents" => {
+                if let Ok(path) = crate::coding::oh_my_pi::get_omp_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = omp_wsl_target_path(db, OMP_PROMPT_FILE).await;
+                }
+            }
+            "omp-rules" => {
+                if let Ok(location) =
+                    runtime_location::get_oh_my_pi_runtime_location_async(db).await
+                {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("RULES.md")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = omp_wsl_target_path_from_location(&location, "RULES.md");
+                }
+            }
             _ => {}
         }
         resolved.push(mapping);
     }
     resolved
+}
+
+fn omp_wsl_target_path_from_location(
+    location: &runtime_location::RuntimeLocationInfo,
+    file_name: &str,
+) -> String {
+    location
+        .wsl
+        .as_ref()
+        .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+        .unwrap_or_else(|| format!("~/.omp/agent/{file_name}"))
+}
+
+async fn omp_wsl_target_path(db: &SqliteDbState, file_name: &str) -> String {
+    runtime_location::get_oh_my_pi_runtime_location_async(db)
+        .await
+        .map(|location| omp_wsl_target_path_from_location(&location, file_name))
+        .unwrap_or_else(|_| format!("~/.omp/agent/{file_name}"))
 }
 
 fn pi_wsl_target_path_from_location(
@@ -1779,6 +1836,61 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "pi".to_string(),
             windows_path: "~/.pi/agent/trust.json".to_string(),
             wsl_path: "~/.pi/agent/trust.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omp-config".to_string(),
+            name: "Oh My Pi 配置".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/config.yml".to_string(),
+            wsl_path: "~/.omp/agent/config.yml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omp-models".to_string(),
+            name: "Oh My Pi 模型供应商".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/models.yml".to_string(),
+            wsl_path: "~/.omp/agent/models.yml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omp-mcp".to_string(),
+            name: "Oh My Pi MCP 配置".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/mcp.json".to_string(),
+            wsl_path: "~/.omp/agent/mcp.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omp-agents".to_string(),
+            name: "Oh My Pi 全局提示词".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/AGENTS.md".to_string(),
+            wsl_path: "~/.omp/agent/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omp-rules".to_string(),
+            name: "Oh My Pi 规则".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/RULES.md".to_string(),
+            wsl_path: "~/.omp/agent/RULES.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

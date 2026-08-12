@@ -338,6 +338,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "grok-config"
             | "geminicli-settings"
             | "pi-mcp"
+            | "omp-mcp"
     )
 }
 
@@ -361,7 +362,7 @@ async fn strip_cmd_c_from_remote_mcp_file(
                 return Ok(());
             }
         }
-        "geminicli" | "pi" => command_normalize::process_claude_json(&content, false)?,
+        "geminicli" | "pi" | "oh_my_pi" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 

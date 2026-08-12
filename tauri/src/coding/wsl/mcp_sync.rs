@@ -81,6 +81,9 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
     let skip_pi = direct_statuses
         .iter()
         .any(|status| status.module == "pi" && status.is_wsl_direct);
+    let skip_omp = direct_statuses
+        .iter()
+        .any(|status| status.module == "oh_my_pi" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -146,6 +149,7 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                         skip_grok,
                         skip_geminicli,
                         skip_pi,
+                        skip_omp,
                     )
                 })
                 .collect();
@@ -333,6 +337,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "grok-config"
             | "geminicli-settings"
             | "pi-mcp"
+            | "omp-mcp"
     )
 }
 
@@ -343,12 +348,14 @@ fn should_skip_mapped_mcp_config_file_for_wsl_direct(
     skip_grok: bool,
     skip_geminicli: bool,
     skip_pi: bool,
+    skip_omp: bool,
 ) -> bool {
     (module == "opencode" && skip_opencode)
         || (module == "codex" && skip_codex)
         || (module == "grok" && skip_grok)
         || (module == "geminicli" && skip_geminicli)
         || (module == "pi" && skip_pi)
+        || (module == "oh_my_pi" && skip_omp)
 }
 
 /// Strip cmd /c from WSL MCP config file after sync.
@@ -371,7 +378,7 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
                 return Ok(());
             }
         }
-        "geminicli" | "pi" => command_normalize::process_claude_json(&content, false)?,
+        "geminicli" | "pi" | "oh_my_pi" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 
@@ -415,23 +422,26 @@ mod tests {
     #[test]
     fn skips_pi_mcp_file_mapping_when_pi_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, true,
+            "pi", false, false, false, false, true, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, false,
+            "pi", false, false, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "codex", false, false, false, false, true,
+            "codex", false, false, false, false, true, false,
+        ));
+        assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
+            "oh_my_pi", false, false, false, false, false, true,
         ));
     }
 
     #[test]
     fn skips_grok_mcp_file_mapping_when_grok_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, true, false, false,
+            "grok", false, false, true, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, false, false, false,
+            "grok", false, false, false, false, false, false,
         ));
         assert!(is_mapped_mcp_config_file("grok-config"));
     }

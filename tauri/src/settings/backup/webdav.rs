@@ -651,6 +651,13 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
     .flatten();
+    let oh_my_pi_restore_dir_override = should_use_root_override_for_tool(
+        "oh_my_pi",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/oh_my_pi/root-dir.txt"))
+    .flatten();
     let mut restore_result = RestoreResult::default();
     let mut restored_wsl_modules = Vec::new();
 
@@ -710,6 +717,15 @@ pub async fn restore_from_webdav(
         home_dir.join(".pi").join("agent"),
     );
     if let Some(warning) = pi_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (oh_my_pi_restore_dir, oh_my_pi_warning) = resolve_restore_dir_override(
+        "oh_my_pi",
+        oh_my_pi_restore_dir_override,
+        home_dir.join(".omp").join("agent"),
+    );
+    if let Some(warning) = oh_my_pi_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -995,6 +1011,44 @@ pub async fn restore_from_webdav(
                 if relative_path == "auth.json" {
                     set_pi_auth_file_permissions(&outpath);
                 }
+            } else if file_name.starts_with("external-configs/oh_my_pi/") {
+                let relative_path = &file_name["external-configs/oh_my_pi/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "oh_my_pi", relative_path) {
+                    continue;
+                }
+
+                if !oh_my_pi_restore_dir.exists() {
+                    fs::create_dir_all(&oh_my_pi_restore_dir).map_err(|e| {
+                        format!("Failed to create Oh My Pi config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &oh_my_pi_restore_dir,
+                    relative_path,
+                )?
+                else {
+                    continue;
+                };
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "oh_my_pi");
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Oh My Pi config parent directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
             } else if file_name == "models.dev.json" {
                 // Restore models.dev.json to app data directory
                 if let Some(cache_path) =

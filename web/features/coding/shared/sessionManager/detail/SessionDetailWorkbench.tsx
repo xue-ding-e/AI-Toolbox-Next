@@ -463,6 +463,8 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'OpenClaw';
     case 'pi':
       return 'Pi';
+    case 'oh_my_pi':
+      return 'omp';
     case 'codex':
       return 'Codex';
     default:

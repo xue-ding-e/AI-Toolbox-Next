@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 8;
+pub const TARGET_SCHEMA_VERSION: i32 = 9;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -31,6 +31,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 8 {
         run_migration_step(conn, 8, migrate_v8)?;
+    }
+    if current_version < 9 {
+        run_migration_step(conn, 9, migrate_v9)?;
     }
 
     Ok(())
@@ -190,6 +193,21 @@ fn migrate_v8(conn: &Connection) -> Result<(), String> {
         conn,
         DbTable::GrokOfficialAccount,
         &JsonFieldPath::new("provider_id")?,
+    )
+}
+
+fn migrate_v9(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::OhMyPiSettingsConfig)?;
+    create_jsonb_table(conn, DbTable::OhMyPiPromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::OhMyPiPromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::OhMyPiPromptConfig,
+        &JsonFieldPath::new("sort_index")?,
     )
 }
 

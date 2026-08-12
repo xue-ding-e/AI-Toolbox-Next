@@ -23,6 +23,7 @@ use crate::coding::oh_my_openagent::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
+use crate::coding::oh_my_pi::tray_support as omp_tray;
 use crate::coding::pi::tray_support as pi_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +50,7 @@ struct TrayTexts {
     gemini_cli_header: &'static str,
     openclaw_header: &'static str,
     pi_header: &'static str,
+    omp_header: &'static str,
     skills_header: &'static str,
     mcp_header: &'static str,
     no_config: &'static str,
@@ -78,6 +80,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
+            omp_header: "Oh My Pi",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  No configs",
@@ -101,6 +104,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
+            omp_header: "Oh My Pi",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  暂无配置",
@@ -371,6 +375,31 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if let Some(selection) = event_id.strip_prefix("omp_model_") {
+                let selection = selection.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some((provider_key, model_id)) = selection.split_once('/') else {
+                        eprintln!("Invalid OMP model tray selection: {}", selection);
+                        return;
+                    };
+                    if let Err(e) =
+                        omp_tray::apply_omp_model(&app_handle, provider_key, model_id).await
+                    {
+                        eprintln!("Failed to apply Oh My Pi model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("omp_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = omp_tray::apply_omp_prompt_config(&app_handle, &config_id).await
+                    {
+                        eprintln!("Failed to apply Oh My Pi prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if let Some(item_id) = event_id.strip_prefix("openclaw_model_") {
                 let item_id = item_id.to_string();
                 let app_handle = app.clone();
@@ -491,6 +520,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                     "geminicli".to_string(),
                     "openclaw".to_string(),
                     "pi".to_string(),
+                    "oh_my_pi".to_string(),
                 ],
                 tray_texts("zh-CN"),
             )
@@ -514,6 +544,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let openclaw_enabled =
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let pi_enabled = is_tab_visible("pi") && pi_tray::is_enabled_for_tray(app).await;
+    let omp_enabled = is_tab_visible("oh_my_pi") && omp_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
         is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
@@ -703,6 +734,27 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     pi_prompt_data.title = texts.global_prompt.to_string();
+
+    let omp_data = if omp_enabled {
+        omp_tray::get_omp_tray_data(app).await?
+    } else {
+        omp_tray::TrayModelData {
+            title: "默认模型".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+
+    let mut omp_prompt_data = if omp_enabled {
+        omp_tray::get_omp_prompt_tray_data(app).await?
+    } else {
+        omp_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    omp_prompt_data.title = texts.global_prompt.to_string();
 
     let mut skills_data = if skills_enabled {
         skills_tray::get_skills_tray_data(app).await?
@@ -951,12 +1003,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let grok_has_model_items = grok_enabled && !grok_model_data.items.is_empty();
     let gemini_cli_has_items = gemini_cli_enabled && !gemini_cli_data.items.is_empty();
     let pi_has_items = pi_enabled && !pi_data.items.is_empty();
+    let omp_has_items = omp_enabled && !omp_data.items.is_empty();
     let claude_has_prompt_items = claude_enabled && !claude_prompt_data.items.is_empty();
     let codex_has_prompt_items = codex_enabled && !codex_prompt_data.items.is_empty();
     let grok_has_prompt_items = grok_enabled && !grok_prompt_data.items.is_empty();
     let gemini_cli_has_prompt_items =
         gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
     let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
+    let omp_has_prompt_items = omp_enabled && !omp_prompt_data.items.is_empty();
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
     let grok_has_section =
@@ -964,6 +1018,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let gemini_cli_has_section =
         gemini_cli_enabled && (gemini_cli_has_items || gemini_cli_has_prompt_items);
     let pi_has_section = pi_enabled && (pi_has_items || pi_has_prompt_items);
+    let omp_has_section = omp_enabled && (omp_has_items || omp_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
         Some(build_named_prompt_submenu(
             app,
@@ -1014,6 +1069,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             app,
             "pi",
             &pi_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let omp_prompt_submenu = if omp_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "omp",
+            &omp_prompt_data,
             texts,
         )?)
     } else {
@@ -1156,6 +1221,21 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     let pi_model_submenu = if pi_has_items {
         Some(build_pi_model_submenu(app, &pi_data, texts)?)
+    } else {
+        None
+    };
+
+    let omp_header = if omp_has_section {
+        Some(
+            MenuItem::with_id(app, "omp_header", texts.omp_header, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let omp_model_submenu = if omp_has_items {
+        Some(build_omp_model_submenu(app, &omp_data, texts)?)
     } else {
         None
     };
@@ -1314,6 +1394,19 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = pi_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Oh My Pi section if enabled
+    if omp_has_section {
+        if let Some(ref header) = omp_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = omp_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = omp_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -1546,6 +1639,115 @@ fn build_pi_model_submenu<R: Runtime>(
 
         for item in &items {
             let item_id = format!("pi_model_{}", item.id);
+            let model_label = item
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&item.display_name);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                model_label,
+                !item.is_disabled,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            provider_submenu
+                .append(&menu_item)
+                .map_err(|e| e.to_string())?;
+        }
+
+        submenu
+            .append(&provider_submenu)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(submenu)
+}
+
+fn build_omp_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &omp_tray::TrayModelData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu =
+        Submenu::with_id(app, "omp_model_submenu", &title, true).map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "omp_model_empty", texts.no_model, false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+        return Ok(submenu);
+    }
+
+    let mut provider_map: std::collections::HashMap<
+        String,
+        (String, Vec<&omp_tray::TrayModelItem>),
+    > = std::collections::HashMap::new();
+
+    for item in &data.items {
+        let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+        let provider_label = item
+            .display_name
+            .split(" / ")
+            .next()
+            .unwrap_or(&provider_id)
+            .to_string();
+        let entry = provider_map
+            .entry(provider_id)
+            .or_insert_with(|| (provider_label, Vec::new()));
+        entry.1.push(item);
+    }
+
+    let mut providers: Vec<(String, String, Vec<&omp_tray::TrayModelItem>)> = provider_map
+        .into_iter()
+        .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+        .collect();
+    providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (provider_id, provider_label, mut items) in providers {
+        items.sort_by(|a, b| {
+            let a_model = a
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&a.display_name);
+            let b_model = b
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&b.display_name);
+            a_model.cmp(b_model)
+        });
+
+        let safe_provider_id: String = provider_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let provider_submenu = Submenu::with_id(
+            app,
+            format!("omp_provider_{}_submenu", safe_provider_id),
+            &provider_label,
+            true,
+        )
+        .map_err(|e| e.to_string())?;
+
+        for item in &items {
+            let item_id = format!("omp_model_{}", item.id);
             let model_label = item
                 .display_name
                 .split(" / ")
@@ -1832,6 +2034,36 @@ impl NamedPromptTrayItem for pi_tray::TrayPromptItem {
 
     fn is_selected(&self) -> bool {
         self.is_selected
+    }
+}
+
+impl NamedPromptTrayItem for omp_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for omp_tray::TrayPromptData {
+    type Item = omp_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
     }
 }
 

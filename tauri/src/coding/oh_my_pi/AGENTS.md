@@ -1,0 +1,32 @@
+# Oh My Pi 后端模块说明
+
+## 一句话职责
+
+- `oh_my_pi/` 负责 OMP(Oh My Pi)运行时根目录、`models.yml` provider 配置与 `config.yml` 设置的可视化管理;`config.yml` 与认证数据库继续由 OMP 自己管理。
+
+## Source of Truth
+
+- OMP provider 的事实源是当前运行时根目录的 `models.yml`(YAML),自定义根目录存 `oh_my_pi_settings_config` 表的 `common` 记录。
+- OMP 设置的事实源是当前运行时根目录的 `config.yml`(YAML,点分 camelCase 键)。
+- OMP MCP server 主数据仍属于全局 MCP 模块,派生文件是当前运行时根目录的 `mcp.json`。
+- 全局提示词预设存 `oh_my_pi_prompt_config` 表,写入运行时根目录的 `AGENTS.md`。
+
+## 与 Pi 的差异
+
+- OMP 没有 `auth.json`/`models.json`/`settings.json`;凭据(apiKey)直接写在 `models.yml` 的 provider 配置里,默认模型用 `modelRoles.default`(格式 `provider/modelId`)表达,思考级别用 `defaultThinkingLevel`。
+- OMP 扩展是 `omp plugin` 系统(plugins),不是 Pi 的 `extensions` 命令;本地扩展目录是 `<root>/extensions`。
+- OMP 的 skills 由 `agents` 能力自动发现(`~/.agents/skills`),不在 agent 目录下。
+- OMP 与 Pi 都识别 `PI_CODING_AGENT_DIR`,但应用内自定义根目录分别保存。
+
+## Gotchas
+
+- `models.yml` 允许 override-only provider 和未知字段。按 provider key 写入时必须保留其他 provider 及未知字段。
+- 写入 `modelRoles.default` 时必须是 `provider/modelId`(OMP `parseModelString` 按首个 `/` 拆分),裸 provider 无效。
+- 不要接管 `config.yml` 全部字段;其他设置编辑器隐藏并保留 `modelRoles`/`defaultThinkingLevel`/`extensions`/`enabledModels` 等受管键。
+- WSL 场景下选中 `~/.omp` 目录且其 `agent` 子目录为有效运行时布局时,归一化为 `~/.omp/agent`。
+
+## 最小验证
+
+- 新增、修改、删除一个 provider 后,其他 provider 和未知字段保持不变。
+- 保存默认模型后 `config.yml` 的 `modelRoles.default` 为 `provider/modelId`。
+- 安装 `omp` 后运行 `omp plugin list --json` 可列出插件。

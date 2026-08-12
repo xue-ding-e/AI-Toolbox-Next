@@ -44,7 +44,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     auto_backup_max_keep: 10,
     last_auto_backup_time: null,
     auto_check_update: true,
-    visible_tabs: ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw', 'pi', 'gateway', 'image', 'ssh', 'wsl'],
+    visible_tabs: ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'gateway', 'image', 'ssh', 'wsl'],
     sidebar_hidden_by_page: {
       opencode: false,
       claudecode: false,
@@ -53,6 +53,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       openclaw: false,
       geminicli: false,
       pi: false,
+      oh_my_pi: false,
     },
     opencode_allow_clear_applied_oh_my_config: false,
     opencode_use_legacy_oh_my_config: false,

@@ -5,6 +5,7 @@ export * from './grok';
 export * from './openclaw';
 export * from './geminicli';
 export * from './pi';
+export * from './oh_my_pi';
 export * from './skills';
 export * from './image';
 export * from './gateway';

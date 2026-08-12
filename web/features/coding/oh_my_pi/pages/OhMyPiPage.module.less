@@ -1,0 +1,198 @@
+.pageContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.pageTitle {
+  margin: 0 8px 0 0 !important;
+  display: inline-block;
+}
+
+.headerLink {
+  font-size: 12px;
+}
+
+.pathToolbar {
+  max-width: 100%;
+}
+
+.pathLabel,
+.pathText,
+.textAction {
+  font-size: 12px;
+}
+
+.pathText {
+  max-width: min(680px, 48vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.textAction {
+  padding: 0;
+}
+
+.pageHint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  border-left: 2px solid var(--color-border-secondary);
+  padding-left: 8px;
+  margin-top: -12px;
+}
+
+.piSection {
+  scroll-margin-top: 84px;
+}
+
+.promptSection {
+  :global(.ant-collapse) {
+    margin-bottom: 0 !important;
+  }
+}
+
+.modelCard {
+  background: var(--color-bg-container);
+  border-radius: 12px;
+  box-shadow: var(--shadow-container);
+  overflow: hidden;
+}
+
+.modelCardTitle {
+  margin: 0;
+  padding: 12px 20px;
+  background: var(--color-bg-container);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-size: 15px;
+
+  &:global(.ant-typography) {
+    margin-bottom: 0 !important;
+  }
+}
+
+.modelCardContent {
+  padding: 16px 20px;
+}
+
+.modelSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.collapseCard {
+  margin-bottom: 0;
+}
+
+.providerList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.providerCard {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  padding: 12px 14px;
+}
+
+.providerHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.providerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.providerDetails {
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.jsonActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.providerForm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modalSection {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  padding: 14px 16px;
+}
+
+.modalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.advancedEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.advancedToggle {
+  margin-top: -4px;
+}
+
+.advancedToggleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: auto;
+  padding: 0;
+}
+
+@media (max-width: 920px) {
+  .pageHeader {
+    flex-direction: column;
+  }
+
+  .pathText {
+    max-width: 100%;
+  }
+
+  .modelSettingsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .modalGrid {
+    grid-template-columns: 1fr;
+  }
+}

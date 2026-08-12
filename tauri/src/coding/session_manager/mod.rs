@@ -5,6 +5,7 @@ mod grok;
 mod message_blocks;
 mod open_claw;
 mod open_code;
+mod oh_my_pi;
 mod pi;
 mod tool_normalizer;
 mod utils;
@@ -22,8 +23,8 @@ use crate::coding::runtime_location::{
     build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
     get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
     get_grok_runtime_location_async, get_openclaw_runtime_location_async,
-    get_opencode_runtime_location_async, get_pi_runtime_location_async, RuntimeLocationInfo,
-    RuntimeLocationMode, WslLocationInfo,
+    get_oh_my_pi_runtime_location_async, get_opencode_runtime_location_async,
+    get_pi_runtime_location_async, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
 };
 use crate::db::helpers::db_get;
 use crate::db::schema::DbTable;
@@ -41,6 +42,7 @@ const SNAPSHOT_FORMAT_GEMINI_CLI: &str = "gemini-cli-session-json";
 const SNAPSHOT_FORMAT_OPENCLAW: &str = "openclaw-agent-session";
 const SNAPSHOT_FORMAT_OPENCODE: &str = "opencode-official-export";
 const SNAPSHOT_FORMAT_PI: &str = "pi-session-jsonl";
+const SNAPSHOT_FORMAT_OMP: &str = "omp-session-jsonl";
 const SNAPSHOT_FORMAT_GROK: &str = "grok-session-directory";
 const GROK_NATIVE_EXPORT_SCHEMA: &str = "ai-toolbox.grok-native-snapshot.v1";
 
@@ -298,6 +300,9 @@ enum ToolSessionContext {
     Pi {
         sessions_root: PathBuf,
     },
+    OhMyPi {
+        sessions_root: PathBuf,
+    },
     Grok {
         sessions_root: PathBuf,
     },
@@ -412,6 +417,7 @@ enum SessionTool {
     OpenClaw,
     OpenCode,
     Pi,
+    OhMyPi,
     Grok,
 }
 
@@ -424,6 +430,7 @@ impl SessionTool {
             "openclaw" | "open_claw" => Ok(Self::OpenClaw),
             "opencode" | "open_code" => Ok(Self::OpenCode),
             "pi" => Ok(Self::Pi),
+            "oh_my_pi" | "omp" => Ok(Self::OhMyPi),
             "grok" => Ok(Self::Grok),
             _ => Err(format!("Unsupported session tool: {raw}")),
         }
@@ -437,6 +444,7 @@ impl SessionTool {
             Self::OpenClaw => "openclaw",
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
+            Self::OhMyPi => "oh_my_pi",
             Self::Grok => "grok",
         }
     }
@@ -466,6 +474,7 @@ impl ToolSessionContext {
                 sqlite_db_path.display()
             ),
             Self::Pi { sessions_root } => format!("pi:{}", sessions_root.display()),
+            Self::OhMyPi { sessions_root } => format!("oh_my_pi:{}", sessions_root.display()),
             Self::Grok { sessions_root } => format!("grok:{}", sessions_root.display()),
         }
     }
@@ -1183,6 +1192,9 @@ fn delete_session_from_meta(
         ToolSessionContext::Pi { .. } => {
             pi::delete_session(Path::new(&session.source_path))?;
         }
+        ToolSessionContext::OhMyPi { .. } => {
+            oh_my_pi::delete_session(Path::new(&session.source_path))?;
+        }
         ToolSessionContext::Grok { sessions_root } => {
             grok::delete_session(sessions_root, Path::new(&session.source_path))?;
         }
@@ -1663,6 +1675,14 @@ fn import_session_blocking(
                 &exported_file.native_snapshot.payload,
             )?;
         }
+        ToolSessionContext::OhMyPi { sessions_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_OMP)?;
+            oh_my_pi::import_native_snapshot(
+                sessions_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
         ToolSessionContext::Grok { sessions_root } => {
             ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_GROK)?;
             grok::import_native_snapshot(
@@ -1737,6 +1757,11 @@ fn rename_session_blocking(
             invalidate_cache(&context);
             Ok(())
         }
+        ToolSessionContext::OhMyPi { .. } => {
+            oh_my_pi::rename_session(&session.source_path, &title)?;
+            invalidate_cache(&context);
+            Ok(())
+        }
         _ => Err("This session tool does not support title editing".to_string()),
     }
 }
@@ -1785,6 +1810,10 @@ fn build_native_snapshot(
         ToolSessionContext::Pi { sessions_root } => Ok(NativeSnapshot {
             format: SNAPSHOT_FORMAT_PI.to_string(),
             payload: pi::export_native_snapshot(sessions_root, Path::new(source_path))?,
+        }),
+        ToolSessionContext::OhMyPi { sessions_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_OMP.to_string(),
+            payload: oh_my_pi::export_native_snapshot(sessions_root, Path::new(source_path))?,
         }),
         ToolSessionContext::Grok { sessions_root } => Ok(NativeSnapshot {
             format: SNAPSHOT_FORMAT_GROK.to_string(),
@@ -1871,6 +1900,7 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
             ..
         } => open_code::scan_sessions(data_root, sqlite_db_path),
         ToolSessionContext::Pi { sessions_root } => pi::scan_sessions(sessions_root),
+        ToolSessionContext::OhMyPi { sessions_root } => oh_my_pi::scan_sessions(sessions_root),
         ToolSessionContext::Grok { sessions_root } => grok::scan_sessions(sessions_root),
     };
 
@@ -1902,6 +1932,9 @@ fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<Sessi
             ..
         } => open_code::scan_recent_sessions(data_root, sqlite_db_path, limit),
         ToolSessionContext::Pi { sessions_root } => pi::scan_recent_sessions(sessions_root, limit),
+        ToolSessionContext::OhMyPi { sessions_root } => {
+            oh_my_pi::scan_recent_sessions(sessions_root, limit)
+        }
         ToolSessionContext::Grok { sessions_root } => {
             grok::scan_recent_sessions(sessions_root, limit)
         }
@@ -1927,6 +1960,7 @@ fn load_messages(
         ToolSessionContext::OpenClaw { .. } => open_claw::load_messages(Path::new(source_path)),
         ToolSessionContext::OpenCode { .. } => open_code::load_messages(source_path),
         ToolSessionContext::Pi { .. } => pi::load_messages(Path::new(source_path)),
+        ToolSessionContext::OhMyPi { .. } => oh_my_pi::load_messages(Path::new(source_path)),
         ToolSessionContext::Grok { .. } => grok::load_messages(Path::new(source_path)),
     }
 }
@@ -1946,6 +1980,7 @@ fn list_subagent_sessions(
         | ToolSessionContext::OpenClaw { .. }
         | ToolSessionContext::OpenCode { .. }
         | ToolSessionContext::Pi { .. }
+        | ToolSessionContext::OhMyPi { .. }
         | ToolSessionContext::Grok { .. } => Vec::new(),
     }
 }
@@ -2056,6 +2091,9 @@ fn scan_session_content_for_query(
         ToolSessionContext::Pi { .. } => {
             pi::scan_messages_for_query(Path::new(source_path), query_lower)
         }
+        ToolSessionContext::OhMyPi { .. } => {
+            oh_my_pi::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
         ToolSessionContext::Grok { .. } => {
             grok::scan_messages_for_query(Path::new(source_path), query_lower)
         }
@@ -2153,6 +2191,7 @@ fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
             .clone()
             .or_else(|| path_wsl_info(&runtime_location.host_path)),
         ToolSessionContext::Pi { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::OhMyPi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Grok { sessions_root } => path_wsl_info(sessions_root),
     }
 }
@@ -2240,6 +2279,9 @@ fn build_default_wsl_session_context(
         }
         SessionTool::Pi => Some(ToolSessionContext::Pi {
             sessions_root: wsl_home_path(distro, linux_home, ".pi/agent/sessions"),
+        }),
+        SessionTool::OhMyPi => Some(ToolSessionContext::OhMyPi {
+            sessions_root: wsl_home_path(distro, linux_home, ".omp/agent/sessions"),
         }),
         SessionTool::Grok => Some(ToolSessionContext::Grok {
             sessions_root: wsl_home_path(distro, linux_home, ".grok/sessions"),
@@ -2342,6 +2384,12 @@ async fn resolve_context(
             let runtime_location = get_pi_runtime_location_async(db).await?;
             let sessions_root = resolve_pi_sessions_root(&runtime_location)?;
             Ok(ToolSessionContext::Pi { sessions_root })
+        }
+        SessionTool::OhMyPi => {
+            let runtime_location = get_oh_my_pi_runtime_location_async(db).await?;
+            Ok(ToolSessionContext::OhMyPi {
+                sessions_root: runtime_location.host_path.join("sessions"),
+            })
         }
         SessionTool::Grok => {
             let runtime_location = get_grok_runtime_location_async(db).await?;

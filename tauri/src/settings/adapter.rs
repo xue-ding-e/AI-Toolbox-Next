@@ -194,7 +194,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
-    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+    const PRE_OMP_DEFAULT_VISIBLE_TABS: &[&str] = &[
         "opencode",
         "claudecode",
         "codex",
@@ -207,11 +207,26 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
+    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "codex",
+        "grok",
+        "geminicli",
+        "openclaw",
+        "pi",
+        "oh_my_pi",
+        "gateway",
+        "image",
+        "ssh",
+        "wsl",
+    ];
 
     if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_PI_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GROK_DEFAULT_VISIBLE_TABS)
+        || string_vec_matches(&tabs, PRE_OMP_DEFAULT_VISIBLE_TABS)
     {
         return CURRENT_DEFAULT_VISIBLE_TABS
             .iter()
@@ -442,6 +457,7 @@ mod tests {
                 "geminicli",
                 "openclaw",
                 "pi",
+                "oh_my_pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -475,6 +491,7 @@ mod tests {
                 "geminicli",
                 "openclaw",
                 "pi",
+                "oh_my_pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -508,6 +525,7 @@ mod tests {
                 "geminicli",
                 "openclaw",
                 "pi",
+                "oh_my_pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -569,6 +587,44 @@ mod tests {
                 "geminicli",
                 "openclaw",
                 "pi",
+                "oh_my_pi",
+                "gateway",
+                "image",
+                "ssh",
+                "wsl",
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_tabs_pre_omp_default_is_migrated() {
+        let settings = from_db_value(json!({
+            "visible_tabs": [
+                "opencode",
+                "claudecode",
+                "codex",
+                "grok",
+                "geminicli",
+                "openclaw",
+                "pi",
+                "gateway",
+                "image",
+                "ssh",
+                "wsl"
+            ],
+        }));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "opencode",
+                "claudecode",
+                "codex",
+                "grok",
+                "geminicli",
+                "openclaw",
+                "pi",
+                "oh_my_pi",
                 "gateway",
                 "image",
                 "ssh",

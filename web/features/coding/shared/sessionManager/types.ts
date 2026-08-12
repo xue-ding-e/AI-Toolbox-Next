@@ -5,7 +5,8 @@ export type SessionTool =
   | 'geminicli'
   | 'openclaw'
   | 'opencode'
-  | 'pi';
+  | 'pi'
+  | 'oh_my_pi';
 
 export type SessionSourceMode = 'all' | 'local' | 'wsl';
 export type SessionListLoadMode = 'auto' | 'cache-first' | 'full' | 'refresh';

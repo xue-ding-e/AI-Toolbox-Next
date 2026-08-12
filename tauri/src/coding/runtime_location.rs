@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
-use crate::coding::{claude_code, codex, gemini_cli, grok, open_claw, open_code, pi};
+use crate::coding::{claude_code, codex, gemini_cli, grok, oh_my_pi, open_claw, open_code, pi};
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 7] = [
+const MODULE_KEYS: [&str; 8] = [
     "opencode",
     "claude",
     "codex",
@@ -18,6 +18,7 @@ const MODULE_KEYS: [&str; 7] = [
     "openclaw",
     "geminicli",
     "pi",
+    "oh_my_pi",
 ];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
@@ -195,6 +196,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
         "pi" => Some("pi"),
+        "oh_my_pi" | "omp" => Some("oh_my_pi"),
         _ => None,
     }
 }
@@ -290,6 +292,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("pi") => {
             let location = resolve_pi_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("pi", location.clone());
+            Ok(location)
+        }
+        Some("oh_my_pi") => {
+            let location = resolve_oh_my_pi_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("oh_my_pi", location.clone());
             Ok(location)
         }
         Some(_) | None => Err(format!("Unsupported runtime module: {}", module)),
@@ -1063,6 +1070,59 @@ pub async fn get_pi_runtime_location_async(
     get_cached_or_refresh_runtime_location_async(db, "pi").await
 }
 
+pub fn get_oh_my_pi_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("oh_my_pi"))
+}
+
+pub async fn get_oh_my_pi_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "oh_my_pi").await
+}
+
+async fn resolve_oh_my_pi_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let path_info = normalize_stored_oh_my_pi_root_dir(db)?;
+
+    let (path, source) = if let Some(path) = path_info {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_omp_path_without_db()
+    };
+
+    Ok(build_runtime_location(path, source))
+}
+
+fn normalize_stored_oh_my_pi_root_dir(db: &crate::db::SqliteDbState) -> Result<Option<String>, String> {
+    db.with_conn(|conn| {
+        let Some(record) = db_get(conn, DbTable::OhMyPiSettingsConfig, "common")? else {
+            return Ok(None);
+        };
+        let Some(root_dir) = crate::coding::oh_my_pi::adapter::settings_from_db_value(record)
+            .root_dir
+            .filter(|path| !path.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let normalized_root_dir = crate::coding::oh_my_pi::normalize_omp_root_dir(&root_dir);
+        if normalized_root_dir != root_dir {
+            if let Err(error) = db_patch_fields(
+                conn,
+                DbTable::OhMyPiSettingsConfig,
+                "common",
+                &[("root_dir", Value::String(normalized_root_dir.clone()))],
+            ) {
+                log::warn!("Failed to persist normalized OMP root directory: {error}");
+            }
+        }
+        Ok(Some(normalized_root_dir))
+    })
+}
+
 async fn resolve_pi_runtime_location_uncached_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1344,6 +1404,9 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
         "pi" => get_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_pi_skills_path_from_location(&location)),
+        "oh_my_pi" => get_oh_my_pi_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_omp_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1433,6 +1496,10 @@ pub async fn get_tool_skills_path_async(
             .await
             .ok()
             .map(|location| get_pi_skills_path_from_location(&location)),
+        "oh_my_pi" => get_oh_my_pi_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_omp_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1462,6 +1529,39 @@ fn get_pi_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
         build_windows_unc_path(&wsl.distro, &linux_skills_path)
     } else {
         location.host_path.join("skills")
+    }
+}
+
+fn get_omp_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    // OMP 的 skills 是 agents 发现能力读 ~/.agents/skills(用户级),与 agent 目录无关。
+    if let Some(wsl) = &location.wsl {
+        build_windows_unc_path(
+            &wsl.distro,
+            &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.agents/skills"),
+        )
+    } else {
+        home_dir_from_env().join(".agents").join("skills")
+    }
+}
+
+fn home_dir_from_env() -> PathBuf {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("~"))
+}
+
+fn get_omp_mcp_config_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    if let Some(wsl) = &location.wsl {
+        let linux_mcp_path = if location.source == "default" {
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.omp/agent/mcp.json")
+        } else {
+            format!("{}/mcp.json", wsl.linux_path.trim_end_matches('/'))
+        };
+
+        build_windows_unc_path(&wsl.distro, &linux_mcp_path)
+    } else {
+        location.host_path.join("mcp.json")
     }
 }
 
@@ -1496,6 +1596,9 @@ pub fn get_tool_mcp_config_path_sync(
         "pi" => get_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_pi_mcp_config_path_from_location(&location)),
+        "oh_my_pi" => get_oh_my_pi_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_omp_mcp_config_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1520,6 +1623,10 @@ pub async fn get_tool_mcp_config_path_async(
             .await
             .ok()
             .map(|location| get_pi_mcp_config_path_from_location(&location)),
+        "oh_my_pi" => get_oh_my_pi_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_omp_mcp_config_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1553,6 +1660,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "openclaw" => resolve_openclaw_path_without_db(),
         "geminicli" => resolve_gemini_cli_path_without_db(),
         "pi" => resolve_pi_path_without_db(),
+        "oh_my_pi" => resolve_omp_path_without_db(),
         _ => (PathBuf::new(), "default".to_string()),
     }
 }
@@ -1678,6 +1786,25 @@ fn resolve_pi_path_without_db() -> (PathBuf, String) {
 
     (
         pi::get_pi_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.pi/agent")),
+        "default".to_string(),
+    )
+}
+
+fn resolve_omp_path_without_db() -> (PathBuf, String) {
+    if let Ok(env_path) = std::env::var(oh_my_pi::constants::OMP_ENV_KEY) {
+        if !env_path.trim().is_empty() {
+            return (PathBuf::from(env_path), "env".to_string());
+        }
+    }
+
+    if let Some(shell_path) = shell_env::get_env_from_shell_config(oh_my_pi::constants::OMP_ENV_KEY) {
+        if !shell_path.trim().is_empty() {
+            return (PathBuf::from(shell_path), "shell".to_string());
+        }
+    }
+
+    (
+        oh_my_pi::get_omp_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.omp/agent")),
         "default".to_string(),
     )
 }

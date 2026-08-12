@@ -30,6 +30,7 @@ const MODULE_NAMES: Record<string, string> = {
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
   pi: 'Pi',
+  oh_my_pi: 'omp',
 };
 
 // Module tag colors
@@ -41,6 +42,7 @@ const MODULE_COLORS: Record<string, string> = {
   openclaw: 'green',
   geminicli: 'cyan',
   pi: 'magenta',
+  oh_my_pi: 'magenta',
 };
 
 // Map sync module keys to visibleTabs keys
@@ -52,9 +54,10 @@ const MODULE_TO_TAB: Record<string, string> = {
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
+  oh_my_pi: 'oh_my_pi',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi'];
 
 interface WSLSyncModalProps {
   open: boolean;

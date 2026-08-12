@@ -496,4 +496,6 @@ export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw
 export const GeminiCliSessionDetailPage = () => <SessionDetailPage tool="geminicli" />;
 export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;
 
+export const OhMyPiSessionDetailPage = () => <SessionDetailPage tool="oh_my_pi" />;
+
 export default SessionDetailPage;

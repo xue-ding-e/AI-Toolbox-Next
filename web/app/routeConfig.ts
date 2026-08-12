@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, CodexPage, GrokPage, GeminiCliPage, PiPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, CodexPage, GrokPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -15,6 +15,7 @@ import {
   OpenClawSessionDetailPage,
   OpenCodeSessionDetailPage,
   PiSessionDetailPage,
+  OhMyPiSessionDetailPage,
 } from '@/features/coding/shared/sessionManager/detail/SessionDetailPage';
 
 export interface RouteEntry {
@@ -121,6 +122,17 @@ export const PAGE_ROUTES: RouteEntry[] = [
       contentPadding: 'compact',
       ownerTabKey: 'pi',
       parentPath: '/coding/pi',
+    },
+  },
+  { path: '/coding/oh-my-pi', component: OhMyPiPage },
+  {
+    path: '/coding/oh-my-pi/sessions/detail',
+    component: OhMyPiSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'oh_my_pi',
+      parentPath: '/coding/oh-my-pi',
     },
   },
   { path: '/settings', component: SettingsPage },

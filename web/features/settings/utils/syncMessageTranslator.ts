@@ -139,6 +139,31 @@ const BUILTIN_FILE_MAPPINGS = [
 		rustDefaultName: "Pi 信任记录",
 		i18nSuffix: "piTrust",
 	},
+	{
+		id: "omp-config",
+		rustDefaultName: "Oh My Pi 配置",
+		i18nSuffix: "ompConfig",
+	},
+	{
+		id: "omp-models",
+		rustDefaultName: "Oh My Pi 模型供应商",
+		i18nSuffix: "ompModels",
+	},
+	{
+		id: "omp-mcp",
+		rustDefaultName: "Oh My Pi MCP 配置",
+		i18nSuffix: "ompMcp",
+	},
+	{
+		id: "omp-agents",
+		rustDefaultName: "Oh My Pi 全局提示词",
+		i18nSuffix: "ompAgents",
+	},
+	{
+		id: "omp-rules",
+		rustDefaultName: "Oh My Pi 规则",
+		i18nSuffix: "ompRules",
+	},
 ] as const;
 
 /** Map stable `id` and Rust default `name` (zh) → i18n key suffix. */

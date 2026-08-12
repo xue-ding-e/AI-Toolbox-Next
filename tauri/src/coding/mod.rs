@@ -13,6 +13,7 @@ pub mod magic_context;
 pub mod mcp;
 pub mod oh_my_openagent;
 pub mod oh_my_opencode_slim;
+pub mod oh_my_pi;
 pub mod open_claw;
 pub mod open_code;
 pub mod pi;

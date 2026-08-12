@@ -179,6 +179,7 @@ impl Default for AppSettings {
                 "geminicli".to_string(),
                 "openclaw".to_string(),
                 "pi".to_string(),
+                "oh_my_pi".to_string(),
                 "gateway".to_string(),
                 "image".to_string(),
                 "ssh".to_string(),
@@ -205,6 +206,7 @@ pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
         ("openclaw".to_string(), false),
         ("geminicli".to_string(), false),
         ("pi".to_string(), false),
+        ("oh_my_pi".to_string(), false),
     ])
 }
 

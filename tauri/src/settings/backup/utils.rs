@@ -10,7 +10,7 @@ use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::{resolve_central_repo_path_sync, skill_storage_dir_name};
-use crate::coding::{claude_code, codex, gemini_cli, grok, pi, runtime_location};
+use crate::coding::{claude_code, codex, gemini_cli, grok, oh_my_pi, pi, runtime_location};
 use crate::settings::types::{
     BackupCustomEntry, BackupCustomEntryType, BackupFileFilterPathOption, BackupFileFilterRule,
 };
@@ -729,6 +729,17 @@ pub async fn get_pi_runtime_file_path_from_db(
     Ok(path.exists().then_some(path))
 }
 
+pub async fn get_oh_my_pi_runtime_file_path_from_db(
+    db: &crate::db::SqliteDbState,
+    file_name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let root_dir = runtime_location::get_oh_my_pi_runtime_location_async(db)
+        .await?
+        .host_path;
+    let path = root_dir.join(file_name);
+    Ok(path.exists().then_some(path))
+}
+
 fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> {
     let normalized_path = normalize_restore_entry_name(relative_path);
     let relative_path = normalized_path.trim().trim_start_matches('/');
@@ -748,6 +759,7 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "openclaw" => format!("~/.openclaw/{relative_path}"),
         "geminicli" => format!("~/.gemini/{relative_path}"),
         "pi" => format!("~/.pi/agent/{relative_path}"),
+        "oh_my_pi" => format!("~/.omp/agent/{relative_path}"),
         _ => relative_path.to_string(),
     };
 
@@ -885,6 +897,21 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
 
+    for file_name in [
+        "config.yml",
+        "models.yml",
+        "mcp.json",
+        "AGENTS.md",
+        "RULES.md",
+    ] {
+        if get_oh_my_pi_runtime_file_path_from_db(db, file_name)
+            .await?
+            .is_some()
+        {
+            push_backup_filter_option(&mut options, &mut seen, "oh_my_pi", file_name);
+        }
+    }
+
     options.sort_by(|a, b| a.tool.cmp(&b.tool).then(a.file_path.cmp(&b.file_path)));
     Ok(options)
 }
@@ -955,7 +982,7 @@ pub fn read_backup_meta_from_archive<R: Read + Seek>(
 }
 
 /// Runtime-file-owned CLIs: always packaged/restored under external-configs/.
-const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi"];
+const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi", "oh_my_pi"];
 /// DB-backed CLIs: gated by `backup_cli_config_files_enabled`.
 const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "geminicli"];
 
@@ -1060,6 +1087,7 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "geminicli" => Some("geminicli"),
         "pi" => Some("pi"),
+        "oh_my_pi" => Some("oh_my_pi"),
         _ => None,
     }
 }
@@ -1117,6 +1145,7 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
         clear_table(conn, DbTable::GrokCommonConfig)?;
         clear_table(conn, DbTable::GeminiCliCommonConfig)?;
         clear_table(conn, DbTable::PiSettingsConfig)?;
+        clear_table(conn, DbTable::OhMyPiSettingsConfig)?;
         clear_table(conn, DbTable::OpenCodeCommonConfig)?;
         clear_table(conn, DbTable::OpenClawCommonConfig)?;
         Ok(())
@@ -1365,6 +1394,16 @@ pub async fn get_custom_root_dir_path_info(
         }
         "pi" => {
             let location = runtime_location::get_pi_runtime_location_async(db)
+                .await
+                .ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "oh_my_pi" => {
+            let location = runtime_location::get_oh_my_pi_runtime_location_async(db)
                 .await
                 .ok()?;
             if location.source == "custom" {
@@ -2146,6 +2185,7 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
         "openclaw" => &["~/.openclaw/"],
         "geminicli" => &["~/.gemini/"],
         "pi" => &["~/.pi/agent/"],
+        "oh_my_pi" => &["~/.omp/agent/"],
         _ => &[],
     };
 
@@ -2676,6 +2716,43 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 added_zip_directories,
                 &path,
                 "pi",
+                file_name,
+                filter_rules,
+                options,
+            )?;
+        }
+    }
+
+    // Oh My Pi is runtime-file-owned and always packaged (subject to filter rules).
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "oh_my_pi").await {
+        add_directory_to_zip_once(
+            zip,
+            added_zip_directories,
+            "external-configs/oh_my_pi/",
+            options,
+            "Oh My Pi directory",
+        )?;
+        add_text_to_zip(
+            zip,
+            "external-configs/oh_my_pi/root-dir.txt",
+            &custom_root_dir,
+            options,
+        )?;
+    }
+
+    for file_name in [
+        oh_my_pi::constants::OMP_CONFIG_FILE,
+        oh_my_pi::constants::OMP_MODELS_FILE,
+        oh_my_pi::constants::OMP_MCP_FILE,
+        oh_my_pi::constants::OMP_PROMPT_FILE,
+        "RULES.md",
+    ] {
+        if let Some(path) = get_oh_my_pi_runtime_file_path_from_db(db, file_name).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "oh_my_pi",
                 file_name,
                 filter_rules,
                 options,

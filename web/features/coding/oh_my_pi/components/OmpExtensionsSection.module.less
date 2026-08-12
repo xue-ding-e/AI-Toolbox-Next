@@ -1,0 +1,189 @@
+.collapseCard {
+  margin-bottom: 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.customInstallRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.officialPackagesLink {
+  height: auto;
+  padding-inline: 0;
+}
+
+.recommendedList,
+.installedList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.innerCollapse {
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px !important;
+  background: var(--color-bg-container) !important;
+  box-shadow: none !important;
+
+  :global(.ant-collapse-item) {
+    border-bottom: none !important;
+  }
+
+  :global(.ant-collapse-header) {
+    align-items: center !important;
+    padding: 7px 10px !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content) {
+    border-top: 1px solid var(--color-border) !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding: 8px 10px 10px !important;
+    background: transparent !important;
+  }
+}
+
+.extensionItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  // Use box-shadow instead of border so 1px edges don't drop out under
+  // fractional DPR / subpixel grid row heights.
+  border: none;
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+
+.extensionContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.extensionTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.extensionSecondary {
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-all;
+}
+
+.inlineMetaText {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pathText {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemActions {
+  flex-shrink: 0;
+}
+
+.updateAvailableButton {
+  height: auto;
+  padding-inline: 0;
+  color: #d48806 !important;
+
+  &:hover {
+    color: #ad6800 !important;
+  }
+}
+
+.loadingText {
+  padding: 16px 0;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.confirmContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.commandOutput {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .customInstallRow {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendedList,
+  .installedList {
+    grid-template-columns: 1fr;
+  }
+
+  .extensionItem {
+    grid-template-columns: 1fr;
+  }
+
+  .itemActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

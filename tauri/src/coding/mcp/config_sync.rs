@@ -19,6 +19,8 @@ use crate::coding::{
     },
 };
 
+const OMP_MCP_SCHEMA_URL: &str = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
+
 /// Sync an MCP server to a specific tool's config file
 pub fn sync_server_to_tool(
     db: &crate::db::SqliteDbState,
@@ -150,6 +152,20 @@ fn remove_server_from_path(
     }
 }
 
+/// Oh My Pi 的 mcp.json 顶层允许 `$schema`/`mcpServers`/`disabledServers`/`enabledServers`。
+/// AI Toolbox 首次创建文件时写入官方 `$schema`,不覆盖已有顶层字段。
+fn ensure_omp_mcp_schema(config: &mut Value, tool_key: &str) -> Result<(), String> {
+    if tool_key != "oh_my_pi" {
+        return Ok(());
+    }
+    config
+        .as_object_mut()
+        .ok_or_else(|| "OMP MCP config root must be a JSON object".to_string())?
+        .entry("$schema".to_string())
+        .or_insert_with(|| Value::String(OMP_MCP_SCHEMA_URL.to_string()));
+    Ok(())
+}
+
 /// Sync server to JSON/JSONC config file (using json5 for parsing)
 /// json5 is a superset of JSON that supports comments, trailing commas, etc.
 fn sync_server_to_json(
@@ -193,6 +209,8 @@ fn sync_server_to_json(
         .as_object_mut()
         .ok_or(format!("{} is not a JSON object", field))?
         .insert(server.name.clone(), server_config);
+
+    ensure_omp_mcp_schema(&mut config, tool_key)?;
 
     // Write back to file with pretty formatting
     // Note: json5 crate doesn't have serialization, so we write standard JSON

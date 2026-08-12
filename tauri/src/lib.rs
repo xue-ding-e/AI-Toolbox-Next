@@ -1492,6 +1492,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // Oh My Pi sync listener
+                let app_omp = app_handle.clone();
+                let app_omp_clone = app_omp.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_omp.listen("wsl-sync-request-omp", move |_event| {
+                        let app = app_omp_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("oh_my_pi".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
@@ -2211,6 +2236,26 @@ pub fn run() {
             coding::pi::apply_pi_prompt_config,
             coding::pi::reorder_pi_prompt_configs,
             coding::pi::save_pi_local_prompt_config,
+            // Oh My Pi
+            coding::oh_my_pi::get_omp_root_path_info,
+            coding::oh_my_pi::get_omp_settings_config,
+            coding::oh_my_pi::save_omp_settings_config,
+            coding::oh_my_pi::read_omp_runtime_config,
+            coding::oh_my_pi::save_omp_model_settings,
+            coding::oh_my_pi::save_omp_other_settings,
+            coding::oh_my_pi::save_omp_models_provider,
+            coding::oh_my_pi::delete_omp_runtime_provider,
+            coding::oh_my_pi::list_omp_extensions,
+            coding::oh_my_pi::install_omp_extension,
+            coding::oh_my_pi::uninstall_omp_extension,
+            coding::oh_my_pi::update_omp_extensions,
+            coding::oh_my_pi::list_omp_prompt_configs,
+            coding::oh_my_pi::create_omp_prompt_config,
+            coding::oh_my_pi::update_omp_prompt_config,
+            coding::oh_my_pi::delete_omp_prompt_config,
+            coding::oh_my_pi::apply_omp_prompt_config,
+            coding::oh_my_pi::reorder_omp_prompt_configs,
+            coding::oh_my_pi::save_omp_local_prompt_config,
             // OpenClaw
             coding::open_claw::get_openclaw_config_path,
             coding::open_claw::get_openclaw_config_path_info,
