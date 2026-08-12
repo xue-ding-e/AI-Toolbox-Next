@@ -853,10 +853,13 @@ mod tests {
 
     #[test]
     fn packages_path_resolves_under_config_root_plugins() {
-        let root = Path::new(r"C:\Users\tester\.omp\agent");
+        let root = PathBuf::from("~").join(".omp").join("agent");
         assert_eq!(
-            get_omp_packages_path_from_root(root),
-            PathBuf::from(r"C:\Users\tester\.omp\plugins\node_modules")
+            get_omp_packages_path_from_root(&root),
+            PathBuf::from("~")
+                .join(".omp")
+                .join("plugins")
+                .join("node_modules")
         );
     }
 }
