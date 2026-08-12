@@ -97,9 +97,9 @@ import { useSettingsStore } from '@/stores';
 import {
   PI_INPUT_TYPES,
   PI_THINKING_LEVEL_KEYS,
-  PI_THINKING_LEVEL_OPTIONS,
-  buildOmpThinkingLevelMapFromPreset,
-  isOmpThinkingLevelMapEntrySupported,
+  buildOmpThinkingFromPreset,
+  getOmpModelDefaultThinkingLevel,
+  getOmpModelThinkingLevels,
 } from '@/utils/ompModelMetadata';
 import {
   deleteOmpRuntimeProvider,
@@ -270,31 +270,32 @@ const hasProviderConfigContent = (providerConfig: Record<string, unknown>): bool
   })
 );
 
-const buildOmpThinkingLevelOptionLabel = (levelKey: string, mappedValue: unknown): string => {
-  if (typeof mappedValue === 'string' && mappedValue.trim() && mappedValue !== levelKey) {
-    return `${levelKey} (${mappedValue})`;
-  }
-  return levelKey;
-};
-
 const getOmpModelThinkingLevelOptions = (
   model: Record<string, unknown> | undefined,
 ): Array<{ value: string; label: string }> => {
-  if (!model || model.reasoning === false) {
+  const levels = getOmpModelThinkingLevels(model);
+  if (levels.length === 0) {
     return [];
   }
-
-  const thinkingLevelMap = asRecord(model.thinkingLevelMap);
-  if (!isRecordEmpty(thinkingLevelMap)) {
-    return PI_THINKING_LEVEL_KEYS
-      .filter((levelKey) => isOmpThinkingLevelMapEntrySupported(levelKey, thinkingLevelMap))
-      .map((levelKey) => ({
-        value: levelKey,
-        label: buildOmpThinkingLevelOptionLabel(levelKey, thinkingLevelMap[levelKey]),
-      }));
+  const levelSet = new Set(levels);
+  const optionSet = new Set<string>();
+  const options: Array<{ value: string; label: string }> = [];
+  // 标准级别始终打头,再附上模型声明的扩展级别(去重、保序)。
+  for (const levelKey of PI_THINKING_LEVEL_KEYS) {
+    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
+      optionSet.add(levelKey);
+      options.push({ value: levelKey, label: levelKey });
+    }
   }
-
-  return model.reasoning === true ? PI_THINKING_LEVEL_OPTIONS : [];
+  for (const levelKey of levels) {
+    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
+      optionSet.add(levelKey);
+      options.push({ value: levelKey, label: levelKey });
+    }
+  }
+  // OMP 支持 `auto`(自动选择思考级别)作为全局默认思考级别选项。
+  options.push({ value: 'auto', label: 'auto' });
+  return options;
 };
 
 const isOmpThinkingLevelSupported = (
@@ -330,7 +331,7 @@ const buildOmpModelFromOpenCodeModel = (
   model: OpenCodeModel,
 ): Record<string, unknown> => {
   const inputTypes = (model.modalities?.input ?? []).filter((inputType) => PI_INPUT_TYPES.has(inputType));
-  const thinkingLevelMap = buildOmpThinkingLevelMapFromPreset(model.variants);
+  const thinking = buildOmpThinkingFromPreset(model.variants);
 
   return {
     id: model.id || modelId,
@@ -339,7 +340,7 @@ const buildOmpModelFromOpenCodeModel = (
     ...(inputTypes.length > 0 ? { input: inputTypes } : {}),
     ...(typeof model.limit?.context === 'number' ? { contextWindow: model.limit.context } : {}),
     ...(typeof model.limit?.output === 'number' ? { maxTokens: model.limit.output } : {}),
-    ...(!isRecordEmpty(thinkingLevelMap) ? { thinkingLevelMap } : {}),
+    ...(thinking ? { thinking } : {}),
   };
 };
 
@@ -430,7 +431,7 @@ const resolveOmpFavoriteProviderPayload = (
   }
 
   return {
-    providerKey: extractFavoriteProviderRawId('pi', favoriteProvider.providerId),
+    providerKey: extractFavoriteProviderRawId('omp', favoriteProvider.providerId),
     modelsProvider: buildOmpModelsProviderFromOpenCodeProvider(favoriteProvider.providerConfig),
   };
 };
@@ -711,7 +712,7 @@ const OhMyPiPage: React.FC = () => {
     [ompProviders],
   );
   const existingFavoriteProviderIds = React.useMemo(
-    () => existingProviderIds.map((providerId) => buildFavoriteProviderStorageKey('pi', providerId)),
+    () => existingProviderIds.map((providerId) => buildFavoriteProviderStorageKey('omp', providerId)),
     [existingProviderIds],
   );
   const transformOmpFavoriteProviders = React.useCallback(
@@ -777,7 +778,7 @@ const OhMyPiPage: React.FC = () => {
       isRecordEmpty(credentialRecord) ? undefined : credentialRecord,
     );
     await upsertFavoriteProvider(
-      buildFavoriteProviderStorageKey('pi', providerKey),
+      buildFavoriteProviderStorageKey('omp', providerKey),
       favoriteConfig,
     );
   }, []);
@@ -1037,8 +1038,15 @@ const OhMyPiPage: React.FC = () => {
     } else {
       delete nextModel.input;
     }
-    // OMP 不识别 Pi 的 thinkingLevelMap(用 thinking 结构),写入无效,故移除。
+    // OMP 用 `thinking` 结构(efforts/defaultLevel)表达思考级别,不识别 Pi 的
+    // thinkingLevelMap。编辑框编辑 `thinking`,旧的 thinkingLevelMap 一律移除。
     delete nextModel.thinkingLevelMap;
+    const ompThinking = parseJsonRecord(values.thinking);
+    if (!isRecordEmpty(ompThinking)) {
+      nextModel.thinking = ompThinking;
+    } else {
+      delete nextModel.thinking;
+    }
     const compat = parseJsonRecord(values.compat);
     if (!isRecordEmpty(compat)) {
       nextModel.compat = compat;
@@ -1246,10 +1254,10 @@ const OhMyPiPage: React.FC = () => {
     const nextModel = getProviderModelRecords(provider.modelsProvider).find(
       (entry) => entry.id === modelId,
     )?.model;
-    const nextThinkingLevel = isOmpThinkingLevelSupported(
-      runtimeConfig?.modelSettings.thinkingLevel ?? undefined,
-      nextModel,
-    ) ? runtimeConfig?.modelSettings.thinkingLevel ?? '' : '';
+    const currentThinkingLevel = runtimeConfig?.modelSettings.thinkingLevel ?? undefined;
+    const nextThinkingLevel = isOmpThinkingLevelSupported(currentThinkingLevel, nextModel)
+      ? currentThinkingLevel ?? ''
+      : getOmpModelDefaultThinkingLevel(nextModel) ?? '';
     setSaving(true);
     try {
       const nextConfig = await saveOmpModelSettings({
@@ -2198,7 +2206,10 @@ const OhMyPiPage: React.FC = () => {
               ? ompModelModal.model.reasoning
               : undefined,
             inputTypes: stringifyStringArrayField(ompModelModal.model?.input),
-            thinkingLevelMap: stringifyRecordField(ompModelModal.model?.thinkingLevelMap),
+            thinking: typeof ompModelModal.model?.thinking === 'object'
+              && ompModelModal.model.thinking !== null
+              ? JSON.stringify(ompModelModal.model.thinking)
+              : undefined,
             compat: stringifyRecordField(ompModelModal.model?.compat),
             contextLimit: typeof ompModelModal.model?.contextWindow === 'number'
               ? ompModelModal.model.contextWindow
@@ -2221,7 +2232,7 @@ const OhMyPiPage: React.FC = () => {
           showApi
           apiOptions={PI_API_OPTIONS}
           showReasoning
-          showThinkingLevelMap
+          showOmpThinking
           showCompat
           showCost
           limitRequired={false}
@@ -2258,7 +2269,7 @@ const OhMyPiPage: React.FC = () => {
           title={t('ohMyPi.provider.importModalTitle')}
           emptyDescription={t('ohMyPi.provider.noFavoriteProviders')}
           i18nPrefix="ohMyPi"
-          providerFilter={(provider) => isFavoriteProviderForSource('pi', provider)}
+          providerFilter={(provider) => isFavoriteProviderForSource('omp', provider)}
           providerListTransform={transformOmpFavoriteProviders}
         />
 

@@ -1098,29 +1098,35 @@ async fn resolve_oh_my_pi_runtime_location_uncached_async(
 }
 
 fn normalize_stored_oh_my_pi_root_dir(db: &crate::db::SqliteDbState) -> Result<Option<String>, String> {
-    db.with_conn(|conn| {
+    // 先只做 DB 读取(normalize_omp_root_dir 里 contains_omp_runtime_layout 会对
+    // root / root/agent 各做最多 5 次 is_file/is_dir,必须在连接闭包外进行,
+    // 避免在 SQLite 锁持有的同时做文件 I/O)。
+    let stored_root_dir: Option<String> = db.with_conn(|conn| {
         let Some(record) = db_get(conn, DbTable::OhMyPiSettingsConfig, "common")? else {
             return Ok(None);
         };
-        let Some(root_dir) = crate::coding::oh_my_pi::adapter::settings_from_db_value(record)
+        Ok(crate::coding::oh_my_pi::adapter::settings_from_db_value(record)
             .root_dir
-            .filter(|path| !path.trim().is_empty())
-        else {
-            return Ok(None);
-        };
-        let normalized_root_dir = crate::coding::oh_my_pi::normalize_omp_root_dir(&root_dir);
-        if normalized_root_dir != root_dir {
-            if let Err(error) = db_patch_fields(
+            .filter(|path| !path.trim().is_empty()))
+    })?;
+
+    let Some(root_dir) = stored_root_dir else {
+        return Ok(None);
+    };
+
+    // 文件系统探测(可能对不可达的 UNC/WSL 路径做 stat)在闭包外进行。
+    let normalized_root_dir = crate::coding::oh_my_pi::normalize_omp_root_dir(&root_dir);
+    if normalized_root_dir != root_dir {
+        let _ = db.with_conn(|conn| {
+            db_patch_fields(
                 conn,
                 DbTable::OhMyPiSettingsConfig,
                 "common",
                 &[("root_dir", Value::String(normalized_root_dir.clone()))],
-            ) {
-                log::warn!("Failed to persist normalized OMP root directory: {error}");
-            }
-        }
-        Ok(Some(normalized_root_dir))
-    })
+            )
+        });
+    }
+    Ok(Some(normalized_root_dir))
 }
 
 async fn resolve_pi_runtime_location_uncached_async(
@@ -1533,22 +1539,18 @@ fn get_pi_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
 }
 
 fn get_omp_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
-    // OMP 的 skills 是 agents 发现能力读 ~/.agents/skills(用户级),与 agent 目录无关。
+    // OMP native(priority 100)读 <agentDir>/skills(即 ~/.omp/agent/skills),
+    // 而非 agents provider(priority 70,可被 skills.enableAgentsUser 关闭)的
+    // ~/.agents/skills。同步目标必须跟随 agent 目录,否则同名 skill 会被
+    // <agentDir>/skills 遮蔽、且可被一键关闭、与其他 .agents 工具互相污染。
     if let Some(wsl) = &location.wsl {
         build_windows_unc_path(
             &wsl.distro,
-            &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.agents/skills"),
+            &format!("{}/skills", wsl.linux_path.trim_end_matches('/')),
         )
     } else {
-        home_dir_from_env().join(".agents").join("skills")
+        location.host_path.join("skills")
     }
-}
-
-fn home_dir_from_env() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("~"))
 }
 
 fn get_omp_mcp_config_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {

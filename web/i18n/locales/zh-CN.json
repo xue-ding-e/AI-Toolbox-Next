@@ -1482,7 +1482,9 @@
       "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
       "compat": "兼容性 compat",
       "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
-      "limitsBothRequired": "上下文限制和输出限制需同时填写或同时留空"
+      "limitsBothRequired": "上下文限制和输出限制需同时填写或同时留空",
+      "ompThinking": "思考等级（efforts）",
+      "ompThinkingHint": "OMP 模型的 thinking 结构：efforts 为支持的思考级别列表（minimal/low/medium/high/xhigh/max），defaultLevel 为默认级别。"
     },
     "fetchModels": {
       "button": "获取模型",
@@ -4523,7 +4525,9 @@
       "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
       "compat": "兼容性 compat",
       "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
-      "invalidCompat": "兼容性 compat JSON 格式不正确"
+      "invalidCompat": "兼容性 compat JSON 格式不正确",
+      "ompThinking": "思考等级（efforts）",
+      "ompThinkingHint": "OMP 模型的 thinking 结构：efforts 为支持的思考级别列表（minimal/low/medium/high/xhigh/max），defaultLevel 为默认级别。"
     },
     "connectivity": {
       "button": "模型测试"

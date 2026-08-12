@@ -15,6 +15,7 @@ import {
   PI_INPUT_TYPES,
   buildPiThinkingLevelMapFromPreset,
 } from '@/utils/piModelMetadata';
+import { buildOmpThinkingFromPreset } from '@/utils/ompModelMetadata';
 import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
 
 const { Text } = Typography;
@@ -67,6 +68,8 @@ export interface ModelFormValues {
   inputTypes?: string;
   reasoning?: boolean;
   thinkingLevelMap?: string;
+  /** OMP model `thinking` structure (efforts / defaultLevel) as JSON string */
+  thinking?: string;
   compat?: string;
   attachment?: boolean;
   tool_call?: boolean;
@@ -104,6 +107,8 @@ interface ModelFormModalProps {
   showReasoning?: boolean;
   /** Whether to show Pi thinking level map JSON */
   showThinkingLevelMap?: boolean;
+  /** Whether to show the OMP model `thinking` structure JSON (efforts/defaultLevel) */
+  showOmpThinking?: boolean;
   /** Whether to show Pi model compatibility JSON */
   showCompat?: boolean;
   /** Whether to show model cost fields */
@@ -146,6 +151,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   apiOptions = [],
   showReasoning = false,
   showThinkingLevelMap = false,
+  showOmpThinking = false,
   showCompat = false,
   showCost = false,
   limitRequired = true,
@@ -168,6 +174,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [variantsValid, setVariantsValid] = React.useState(true);
   const [jsonThinkingLevelMap, setJsonThinkingLevelMap] = React.useState<unknown>({});
   const [thinkingLevelMapValid, setThinkingLevelMapValid] = React.useState(true);
+  const [jsonOmpThinking, setJsonOmpThinking] = React.useState<unknown>({});
+  const [ompThinkingValid, setOmpThinkingValid] = React.useState(true);
   const [jsonCompat, setJsonCompat] = React.useState<unknown>({});
   const [compatValid, setCompatValid] = React.useState(true);
   const [inputModalities, setInputModalities] = React.useState<string[]>([]);
@@ -241,6 +249,15 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       }
     }
 
+    if (showOmpThinking) {
+      const nextOmpThinking = buildOmpThinkingFromPreset(preset.variants);
+      setJsonOmpThinking(nextOmpThinking ?? {});
+      setOmpThinkingValid(true);
+      if (nextOmpThinking && Object.keys(nextOmpThinking).length > 0) {
+        setAdvancedExpanded(true);
+      }
+    }
+
     // Set modalities if present
     if (preset.modalities) {
       if (preset.modalities.input) {
@@ -286,6 +303,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     const hasThinkingLevelMap = showThinkingLevelMap &&
       typeof jsonThinkingLevelMap === 'object' && jsonThinkingLevelMap !== null &&
       Object.keys(jsonThinkingLevelMap as object).length > 0;
+    const hasOmpThinking = showOmpThinking &&
+      typeof jsonOmpThinking === 'object' && jsonOmpThinking !== null &&
+      Object.keys(jsonOmpThinking as object).length > 0;
     const hasCompat = showCompat &&
       typeof jsonCompat === 'object' && jsonCompat !== null &&
       Object.keys(jsonCompat as object).length > 0;
@@ -296,11 +316,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       costCacheReadValue,
       costCacheWriteValue,
     ].some((value) => typeof value === 'number');
-    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasCompat || hasApi || hasCost;
+    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasOmpThinking || hasCompat || hasApi || hasCost;
   }, [
     jsonOptions,
     jsonVariants,
     jsonThinkingLevelMap,
+    jsonOmpThinking,
     jsonCompat,
     apiValue,
     costInputValue,
@@ -399,6 +420,24 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         } else {
           setJsonThinkingLevelMap({});
           setThinkingLevelMapValid(true);
+        }
+
+        // Parse OMP model thinking JSON
+        if (initialValues.thinking) {
+          try {
+            const parsed = JSON.parse(initialValues.thinking);
+            setJsonOmpThinking(parsed);
+            setOmpThinkingValid(true);
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              shouldExpand = true;
+            }
+          } catch {
+            setJsonOmpThinking({});
+            setOmpThinkingValid(false);
+          }
+        } else {
+          setJsonOmpThinking({});
+          setOmpThinkingValid(true);
         }
 
         // Parse compat JSON
@@ -506,6 +545,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     setThinkingLevelMapValid(isValid);
   };
 
+  const handleOmpThinkingChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setJsonOmpThinking(value);
+    }
+    setOmpThinkingValid(isValid);
+  };
+
   const handleCompatChange = (value: unknown, isValid: boolean) => {
     if (isValid) {
       setJsonCompat(value);
@@ -530,6 +576,11 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       }
 
       if (showThinkingLevelMap && !thinkingLevelMapValid) {
+        message.error(t(getKey('invalidThinkingLevelMap')));
+        return;
+      }
+
+      if (showOmpThinking && !ompThinkingValid) {
         message.error(t(getKey('invalidThinkingLevelMap')));
         return;
       }
@@ -585,6 +636,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
       if (showThinkingLevelMap) {
         result.thinkingLevelMap = JSON.stringify(jsonThinkingLevelMap);
+      }
+
+      if (showOmpThinking) {
+        result.thinking = JSON.stringify(jsonOmpThinking);
       }
 
       if (showCompat) {
@@ -851,7 +906,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           </Form.Item>
         )}
 
-        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showCompat || showApi || showCost) && (
+        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showOmpThinking || showCompat || showApi || showCost) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -958,6 +1013,25 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     "high": "high",
     "xhigh": "xhigh",
     "max": "max"
+}`}
+                    />
+                  </Form.Item>
+                )}
+
+                {showOmpThinking && (
+                  <Form.Item
+                    label={t(getKey('ompThinking'))}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('ompThinkingHint'))}</Text>}
+                  >
+                    <JsonEditor
+                      value={typeof jsonOmpThinking === 'object' && jsonOmpThinking !== null && Object.keys(jsonOmpThinking as object).length === 0 ? undefined : jsonOmpThinking}
+                      onChange={handleOmpThinkingChange}
+                      mode="text"
+                      height={180}
+                      resizable
+                      placeholder={`{
+    "efforts": ["low", "medium", "high"],
+    "defaultLevel": "high"
 }`}
                     />
                   </Form.Item>

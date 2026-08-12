@@ -26,10 +26,7 @@ const OMP_EXTENDED_THINKING_LEVEL_KEYS: [&str; 2] = ["xhigh", "max"];
 const OMP_MODEL_ROLE_KEY: &str = "default";
 
 fn get_home_dir() -> Result<PathBuf, String> {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .map_err(|_| "Failed to get home directory".to_string())
+    dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())
 }
 
 pub fn get_omp_default_root_dir() -> Result<PathBuf, String> {
@@ -77,7 +74,19 @@ pub async fn get_omp_root_dir_from_db_async(db: &SqliteDbState) -> Result<PathBu
 }
 
 pub fn get_omp_config_path_from_root(root_dir: &Path) -> PathBuf {
-    root_dir.join(super::constants::OMP_CONFIG_FILE)
+    // OMP 的 MAIN_CONFIG_FILENAMES = ["config.yml", "config.yaml"]:优先 config.yml,
+    // 仅当 config.yml 不存在时回退到 config.yaml(老用户可能只有 config.yaml)。
+    // 解析到实际存在的文件,读取/写入都作用于同一份配置,避免一保存就新建
+    // config.yml 导致原配置被旁路。
+    let primary = root_dir.join(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE);
+    if primary.is_file() {
+        return primary;
+    }
+    let legacy = root_dir.join(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE_LEGACY);
+    if legacy.is_file() {
+        return legacy;
+    }
+    primary
 }
 
 pub fn get_omp_models_path_from_root(root_dir: &Path) -> PathBuf {
@@ -286,7 +295,16 @@ fn split_provider_model(role: &str) -> (Option<String>, Option<String>) {
     match role.find('/') {
         Some(index) if index > 0 => {
             let provider = role[..index].to_string();
-            let model = role[index + 1..].to_string();
+            let mut model = role[index + 1..].to_string();
+            if let Some(level_sep) = model.rfind(':') {
+                // `modelRoles` role values may carry a `:level` thinking
+                // suffix (e.g. `anthropic/claude-sonnet-4:high`). Strip it so
+                // the resolved model id is the bare model name; the level is
+                // handled separately by `defaultThinkingLevel`.
+                if !model[level_sep + 1..].is_empty() {
+                    model.truncate(level_sep);
+                }
+            }
             (
                 Some(provider),
                 if model.is_empty() { None } else { Some(model) },
@@ -308,15 +326,65 @@ fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
         return false;
     }
 
-    match model
-        .get("thinkingLevelMap")
-        .and_then(Value::as_object)
-        .and_then(|map| map.get(thinking_level))
-    {
-        Some(Value::Null) => false,
-        Some(_) => true,
-        None => !OMP_EXTENDED_THINKING_LEVEL_KEYS.contains(&thinking_level),
+    // OMP 用 `thinking` 结构(不是 Pi 的 `thinkingLevelMap`)表达思考级别。
+    // 支持的级别由 thinking.efforts(或 legacy levels)显式列出;若只有
+    // minLevel/maxLevel 则取区间内的标准级别;未声明 thinking 时回退到标准级别。
+    let thinking = model.get("thinking");
+    let efforts: Option<Vec<String>> = thinking
+        .and_then(|t| t.get("efforts"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        });
+    let levels: Option<Vec<String>> = thinking
+        .and_then(|t| t.get("levels"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        });
+
+    if let Some(list) = efforts.or(levels) {
+        // `off`(关闭思考)与 `auto` 与级别列表正交,始终可用;
+        // 其余级别须在列表中显式出现。
+        if thinking_level == "off" {
+            return true;
+        }
+        return list.iter().any(|level| level == thinking_level);
     }
+
+    if let Some(min_level) = thinking
+        .and_then(|t| t.get("minLevel"))
+        .and_then(Value::as_str)
+    {
+        let max_level = thinking
+            .and_then(|t| t.get("maxLevel"))
+            .and_then(Value::as_str)
+            .unwrap_or("max");
+        let min_index = OMP_THINKING_LEVEL_KEYS
+            .iter()
+            .position(|key| *key == min_level)
+            .unwrap_or(usize::MAX);
+        let max_index = OMP_THINKING_LEVEL_KEYS
+            .iter()
+            .position(|key| *key == max_level)
+            .unwrap_or(usize::MIN);
+        return OMP_THINKING_LEVEL_KEYS
+            .iter()
+            .position(|key| *key == thinking_level)
+            .is_some_and(|index| index >= min_index && index <= max_index);
+    }
+
+    // 没有显式 thinking 配置:标准级别(off..high)可用,扩展级别(xhigh/max)仅当
+    // model 明确声明了对应 effort。
+    !OMP_EXTENDED_THINKING_LEVEL_KEYS.contains(&thinking_level)
 }
 
 fn credential_kind(provider: Option<&Value>, is_builtin: bool) -> OmpCredentialKind {
@@ -416,7 +484,7 @@ fn build_provider_views(settings: &Value, models: &Value) -> Vec<OmpRuntimeProvi
             runtime_files.push(super::constants::OMP_MODELS_FILE.to_string());
         }
         if is_default {
-            runtime_files.push(super::constants::OMP_CONFIG_FILE.to_string());
+            runtime_files.push(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE.to_string());
         }
 
         views.push(OmpRuntimeProviderView {
@@ -501,7 +569,7 @@ fn should_use_omp_agent_subdirectory(selected_root: &Path) -> bool {
 
 fn contains_omp_runtime_layout(root: &Path) -> bool {
     [
-        super::constants::OMP_CONFIG_FILE,
+        crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE,
         super::constants::OMP_MODELS_FILE,
         super::constants::OMP_MCP_FILE,
         super::constants::OMP_PROMPT_FILE,
@@ -1110,26 +1178,40 @@ mod tests {
     }
 
     #[test]
-    fn thinking_level_map_only_defaults_standard_omitted_levels_to_supported() {
+    fn thinking_efforts_list_drives_supported_levels() {
+        // OMP exposes supported levels via `thinking.efforts` (a subset of
+        // minimal/low/medium/high/xhigh/max), not Pi's `thinkingLevelMap`.
         let model = json!({
             "id": "deepseek-v4-pro",
             "reasoning": true,
-            "thinkingLevelMap": {
-                "minimal": null,
-                "low": null,
-                "medium": null,
-                "high": "high",
-                "xhigh": "max"
-            }
+            "thinking": { "efforts": ["high", "xhigh"] }
         });
 
         assert!(model_supports_thinking_level(&model, "off"));
+        assert!(!model_supports_thinking_level(&model, "minimal"));
         assert!(model_supports_thinking_level(&model, "high"));
         assert!(model_supports_thinking_level(&model, "xhigh"));
         assert!(model_supports_thinking_level(&model, "auto"));
         assert!(!model_supports_thinking_level(&model, "max"));
-        assert!(!model_supports_thinking_level(&model, "minimal"));
         assert!(!model_supports_thinking_level(&model, "unknown"));
+    }
+
+    #[test]
+    fn thinking_min_max_range_drives_supported_levels() {
+        let model = json!({
+            "id": "m",
+            "reasoning": true,
+            "thinking": { "minLevel": "medium", "maxLevel": "max" }
+        });
+
+        assert!(model_supports_thinking_level(&model, "medium"));
+        assert!(model_supports_thinking_level(&model, "high"));
+        assert!(model_supports_thinking_level(&model, "xhigh"));
+        assert!(model_supports_thinking_level(&model, "max"));
+        assert!(model_supports_thinking_level(&model, "auto"));
+        assert!(!model_supports_thinking_level(&model, "off"));
+        assert!(!model_supports_thinking_level(&model, "minimal"));
+        assert!(!model_supports_thinking_level(&model, "low"));
     }
 
     #[test]
@@ -1139,6 +1221,12 @@ mod tests {
         assert_eq!(model.as_deref(), Some("openai/gpt-5"));
 
         let (provider, model) = split_provider_model("anthropic/claude-sonnet-4");
+        assert_eq!(provider.as_deref(), Some("anthropic"));
+        assert_eq!(model.as_deref(), Some("claude-sonnet-4"));
+
+        // modelRoles.default may carry a `:level` thinking suffix; it must be
+        // stripped so the resolved model id is the bare model name.
+        let (provider, model) = split_provider_model("anthropic/claude-sonnet-4:high");
         assert_eq!(provider.as_deref(), Some("anthropic"));
         assert_eq!(model.as_deref(), Some("claude-sonnet-4"));
 
@@ -1242,5 +1330,27 @@ mod tests {
     fn normalize_omp_root_dir_preserves_wsl_path_not_ending_with_dot_omp() {
         let path = r"\\wsl.localhost\Ubuntu\home\tester\custom-agent";
         assert_eq!(normalize_omp_root_dir(path), path);
+    }
+
+    #[test]
+    fn config_path_prefers_yml_and_falls_back_to_yaml() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let root = temp_dir.path();
+
+        // 两个都不存在 → 默认 config.yml
+        assert_eq!(
+            get_omp_config_path_from_root(root),
+            root.join(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE)
+        );
+
+        // 仅 config.yaml 存在 → 回退到 config.yaml(老用户场景,避免一保存就新建 yml 旁路原配置)
+        let legacy = root.join(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE_LEGACY);
+        fs::write(&legacy, "theme: { dark: true }\n").expect("write config.yaml");
+        assert_eq!(get_omp_config_path_from_root(root), legacy);
+
+        // config.yml 也存在 → 优先 config.yml
+        let primary = root.join(crate::coding::oh_my_pi::constants::OMP_CONFIG_FILE);
+        fs::write(&primary, "theme: { dark: false }\n").expect("write config.yml");
+        assert_eq!(get_omp_config_path_from_root(root), primary);
     }
 }

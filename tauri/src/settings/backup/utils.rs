@@ -897,8 +897,11 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
 
+    // config.yml/config.yaml 都可能是实际的 OMP 主配置(优先 config.yml,
+    // 老用户可能只有 config.yaml),都纳入可过滤选项。
     for file_name in [
         "config.yml",
+        "config.yaml",
         "models.yml",
         "mcp.json",
         "AGENTS.md",
@@ -2742,6 +2745,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
 
     for file_name in [
         oh_my_pi::constants::OMP_CONFIG_FILE,
+        oh_my_pi::constants::OMP_CONFIG_FILE_LEGACY,
         oh_my_pi::constants::OMP_MODELS_FILE,
         oh_my_pi::constants::OMP_MCP_FILE,
         oh_my_pi::constants::OMP_PROMPT_FILE,

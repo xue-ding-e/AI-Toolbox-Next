@@ -83,7 +83,6 @@ fn omp_wsl_path_prefix(linux_user_root: Option<&str>) -> String {
 fn build_omp_command(
     runtime_location: &RuntimeLocationInfo,
     args: &[&str],
-    offline: bool,
 ) -> Result<OmpCommandInvocation, String> {
     match runtime_location.mode {
         RuntimeLocationMode::LocalWindows => {
@@ -92,9 +91,6 @@ fn build_omp_command(
             let mut command = build_local_tokio_command(&omp_program.path);
             command.args(args);
             command.env(OMP_ENV_KEY, &runtime_location.host_path);
-            if offline {
-                command.env("PI_OFFLINE", "1");
-            }
             Ok(OmpCommandInvocation {
                 command,
                 local_program_label: Some(local_program_label),
@@ -119,9 +115,6 @@ fn build_omp_command(
                 &wsl.linux_path,
                 "env",
             ]);
-            if offline {
-                command.arg("PI_OFFLINE=1");
-            }
             command.arg("omp");
             command.args(args);
             Ok(OmpCommandInvocation {
@@ -179,12 +172,11 @@ fn build_omp_spawn_error(error: &std::io::Error, local_program_label: Option<&st
 async fn run_omp_command(
     runtime_location: &RuntimeLocationInfo,
     args: &[&str],
-    offline: bool,
 ) -> Result<String, String> {
     let OmpCommandInvocation {
         mut command,
         local_program_label,
-    } = build_omp_command(runtime_location, args, offline)?;
+    } = build_omp_command(runtime_location, args)?;
 
     let output = command
         .output()
@@ -212,7 +204,7 @@ async fn run_omp_command(
 }
 
 async fn probe_omp_cli_version(runtime_location: &RuntimeLocationInfo) -> Option<String> {
-    let version = run_omp_command(runtime_location, &["--version"], true)
+    let version = run_omp_command(runtime_location, &["--version"])
         .await
         .ok()?;
     let trimmed = version.lines().next().unwrap_or(version.as_str()).trim();
@@ -476,8 +468,12 @@ async fn enrich_npm_update_availability(
         if extension.kind != OmpExtensionKind::Package {
             continue;
         }
-        let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.source)
-        else {
+        // Use the prefixed `id` (e.g. `npm:name` / `marketplace:...`) for npm
+        // lookup; `source` must stay raw for `omp plugin uninstall`/`upgrade`.
+        // `parse_npm_package_source` requires the `npm:` prefix, so only npm
+        // entries (whose id is `npm:...`) resolve — marketplace entries are
+        // skipped here.
+        let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.id) else {
             continue;
         };
         if pinned_version.is_some() {
@@ -519,7 +515,7 @@ async fn enrich_npm_update_availability(
             if extension.kind != OmpExtensionKind::Package {
                 return extension;
             }
-            let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.source)
+            let Some((package_name, pinned_version)) = parse_npm_package_source(&extension.id)
             else {
                 return extension;
             };
@@ -638,7 +634,7 @@ pub async fn list_omp_extensions(
     let runtime_location = runtime_location::get_oh_my_pi_runtime_location_async(&db).await?;
     let extensions_path = get_omp_extensions_path_from_root(&runtime_location.host_path);
     let packages_path = get_omp_packages_path_from_root(&runtime_location.host_path);
-    let raw = run_omp_command(&runtime_location, &["plugin", "list", "--json"], true).await?;
+    let raw = run_omp_command(&runtime_location, &["plugin", "list", "--json"]).await?;
     let omp_extensions = parse_plugin_list_json(&raw);
     let local_extensions = scan_local_extensions(&extensions_path)?;
     let merged = merge_extensions(omp_extensions, local_extensions);
@@ -670,7 +666,7 @@ pub async fn install_omp_extension(
     let db = state.db();
     let runtime_location = runtime_location::get_oh_my_pi_runtime_location_async(&db).await?;
     let args = ["plugin", "install", source];
-    let output = run_omp_command(&runtime_location, &args, true).await?;
+    let output = run_omp_command(&runtime_location, &args).await?;
     emit_extensions_changed(&app, "omp-extensions");
 
     Ok(OmpExtensionCommandResult {
@@ -705,7 +701,7 @@ pub async fn uninstall_omp_extension(
     }
 
     let args = ["plugin", "uninstall", source];
-    let output = run_omp_command(&runtime_location, &args, true).await?;
+    let output = run_omp_command(&runtime_location, &args).await?;
     emit_extensions_changed(&app, "omp-extensions");
 
     Ok(OmpExtensionCommandResult {
@@ -735,7 +731,7 @@ pub async fn update_omp_extensions(
     } else {
         vec!["plugin".to_string(), "upgrade".to_string()]
     };
-    let output = run_omp_command(&runtime_location, &args.iter().map(String::as_str).collect::<Vec<_>>(), false).await?;
+    let output = run_omp_command(&runtime_location, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
     emit_extensions_changed(&app, "omp-extensions");
 
     Ok(OmpExtensionCommandResult {
@@ -808,6 +804,39 @@ mod tests {
         );
         assert_eq!(parse_npm_package_source("github:owner/repo"), None);
         assert_eq!(parse_npm_package_source("file:./local"), None);
+    }
+
+    #[test]
+    fn npm_plugin_list_entries_resolve_npm_source_from_id() {
+        // parse_plugin_list_json stores the raw package name in `source` (kept
+        // for `omp plugin uninstall`) and the `npm:`-prefixed id. The update
+        // check parses from `id`, so this asserts the id round-trips through
+        // parse_npm_package_source while the bare source is preserved.
+        let raw = r#"{
+            "npm": [
+                { "name": "context-mode", "version": "0.9.1",
+                  "path": "/home/t/.omp/plugins/node_modules/context-mode",
+                  "manifest": {}, "enabledFeatures": [], "enabled": true },
+                { "name": "exa", "version": "1.2.3",
+                  "path": "/home/t/.omp/plugins/node_modules/exa",
+                  "manifest": {}, "enabledFeatures": [], "enabled": true }
+            ],
+            "marketplace": []
+        }"#;
+        let extensions = parse_plugin_list_json(raw);
+        assert_eq!(extensions.len(), 2);
+
+        // source stays bare (used for uninstall/upgrade)
+        assert_eq!(extensions[0].source, "context-mode");
+        assert_eq!(extensions[1].source, "exa");
+        // id carries the npm: prefix and resolves to the package name
+        assert_eq!(extensions[0].id, "npm:context-mode");
+        assert_eq!(extensions[1].id, "npm:exa");
+        for extension in &extensions {
+            let (package_name, _pinned) =
+                parse_npm_package_source(&extension.id).expect("npm id must parse");
+            assert_eq!(package_name, extension.source);
+        }
     }
 
     #[test]

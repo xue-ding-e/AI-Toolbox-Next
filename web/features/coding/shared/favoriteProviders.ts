@@ -3,7 +3,7 @@ import type { ClaudeSettingsMergeStrategy } from '@/types/claudecode';
 import type { OpenCodeProvider } from '@/types/opencode';
 import { isJsonObject } from '../../../utils/json.ts';
 
-export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi';
+export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp';
 
 export interface ClaudeFavoriteProviderPayload {
   name: string;
@@ -44,6 +44,7 @@ const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   grok: 'grok',
   openclaw: 'openclaw',
   pi: 'pi',
+  omp: 'omp',
 };
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
 const OPENCODE_STORAGE_PREFIX = `${STORAGE_KEY_PREFIX.opencode}${SOURCE_PREFIX_SEPARATOR}`;

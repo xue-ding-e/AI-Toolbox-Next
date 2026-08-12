@@ -185,11 +185,11 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
-    // Oh My Pi - runtime root ~/.omp/agent; Skills auto-discovered from ~/.agents/skills.
+    // Oh My Pi - runtime root ~/.omp/agent; native skills dir is <agentDir>/skills.
     BuiltinTool {
         key: "oh_my_pi",
         display_name: "Oh My Pi",
-        relative_skills_dir: Some("~/.agents/skills"),
+        relative_skills_dir: Some("~/.omp/agent/skills"),
         relative_detect_dir: Some("~/.omp/agent"),
         mcp_config_path: Some("~/.omp/agent/mcp.json"),
         mcp_config_format: Some("json"),

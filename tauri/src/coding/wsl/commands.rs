@@ -938,11 +938,13 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 10;
+    const CURRENT_DEFAULTS_VERSION: u64 = 11;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agent", "opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
         &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
+        &["omp-config", "omp-models", "omp-mcp", "omp-agents", "omp-rules"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -973,6 +975,11 @@ async fn backfill_default_mappings(
                 9,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V9,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                11,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V11,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1356,8 +1363,12 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             }
             "omp-config" => {
                 if let Ok(path) = crate::coding::oh_my_pi::get_omp_config_path_async(db).await {
+                    let file_name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| OMP_CONFIG_FILE.to_string());
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = omp_wsl_target_path(db, OMP_CONFIG_FILE).await;
+                    mapping.wsl_path = omp_wsl_target_path(db, &file_name).await;
                 }
             }
             "omp-models" => {

@@ -116,6 +116,10 @@ pub fn delete_session(path: &Path) -> Result<(), String> {
     })
 }
 
+/// OMP 标题不在 `session_info`(那是 Pi 的格式),而是在第一行 256 字节的
+/// `type:"title"` 固宽槽位 + append-only 的 `title_change` 审计条目
+/// (session-entries.ts / session-title-slot.ts)。重命名必须两者都更新才有
+/// 效:更新槽位供 OMP 读取标题,追加 title_change 供审计与列表推导。
 pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
     let normalized_title = next_title.trim();
     if normalized_title.is_empty() {
@@ -125,20 +129,27 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
     let session_path = Path::new(source_path);
     if !session_path.exists() {
         return Err(format!(
-            "Pi session file not found: {}",
+            "OMP session file not found: {}",
             session_path.display()
         ));
     }
 
+    let timestamp = Utc::now().to_rfc3339();
+
+    // 1) 覆盖第一行 title slot(若该行是 `type:"title"` 条目)。
+    update_title_slot_if_present(session_path, &normalized_title, &timestamp)?;
+
+    // 2) 追加 title_change 审计条目(OMP 原生格式,替代 Pi 的 session_info)。
     let entry = json!({
-        "type": "session_info",
+        "type": "title_change",
         "id": new_entry_id(),
         "parentId": null,
-        "timestamp": Utc::now().to_rfc3339(),
-        "name": normalized_title,
+        "timestamp": timestamp,
+        "title": normalized_title,
+        "source": "user",
     });
     let line = serde_json::to_string(&entry)
-        .map_err(|error| format!("Failed to serialize Pi session info: {error}"))?;
+        .map_err(|error| format!("Failed to serialize OMP title change: {error}"))?;
     std::fs::OpenOptions::new()
         .append(true)
         .open(session_path)
@@ -146,7 +157,62 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
             use std::io::Write;
             writeln!(file, "{line}")
         })
-        .map_err(|error| format!("Failed to append Pi session info: {error}"))
+        .map_err(|error| format!("Failed to append OMP title change: {error}"))
+}
+
+/// 若会话文件第一行是 OMP 的 `type:"title"` 固宽槽位,则以相同结构、补齐到
+/// 256 UTF-8 字节(含换行)覆写之;否则保持文件不变(仅靠 title_change)。
+fn update_title_slot_if_present(
+    session_path: &Path,
+    title: &str,
+    updated_at: &str,
+) -> Result<(), String> {
+    let content = std::fs::read_to_string(session_path)
+        .map_err(|error| format!("Failed to read OMP session {}: {error}", session_path.display()))?;
+    let Some((first_line, rest)) = content.split_once('\n') else {
+        return Ok(());
+    };
+    let Ok(value) = serde_json::from_str::<Value>(first_line) else {
+        return Ok(());
+    };
+    if value.get("type").and_then(Value::as_str) != Some("title") {
+        return Ok(());
+    }
+
+    // 槽位 JSON 结构:{ type:"title", v:1, title, source?, updatedAt, pad }
+    // pad 补空格到整行恰好 256 UTF-8 字节(含换行)。重命名来自用户,source 固定 user。
+    let mut slot_value = json!({
+        "type": "title",
+        "v": 1,
+        "title": title,
+        "source": "user",
+        "updatedAt": updated_at,
+        "pad": "",
+    });
+    let slot_json = serde_json::to_string(&slot_value)
+        .map_err(|error| format!("Failed to serialize OMP title slot: {error}"))?;
+    // 计算需要补的空格字节数(字节数而非字符数,英文/数字按 1 字节计,
+    // 非 ASCII 会偏保守,但 256 字节上限由 utf8 长度精确控制)。
+    let slot_bytes = slot_json.len() as isize + 1; // +1 换行
+    let total_bytes = slot_bytes + 1; // pad 至少 1 空格
+    if total_bytes > 256 {
+        return Err("OMP title is too long for the 256-byte session title slot".to_string());
+    }
+    let pad_len = 256 - (slot_json.len() as isize + 1);
+    slot_value["pad"] = json!(" ".repeat(pad_len.max(1) as usize));
+    let slot_json = serde_json::to_string(&slot_value)
+        .map_err(|error| format!("Failed to re-serialize OMP title slot: {error}"))?;
+    // 验证整行恰好 256 字节
+    if (slot_json.len() + 1) != 256 {
+        return Err(format!(
+            "OMP title slot serialized to {} bytes (expected 256)",
+            slot_json.len() + 1
+        ));
+    }
+
+    let new_content = format!("{slot_json}\n{rest}");
+    std::fs::write(session_path, new_content)
+        .map_err(|error| format!("Failed to write OMP title slot: {error}"))
 }
 
 pub fn export_native_snapshot(root: &Path, session_path: &Path) -> Result<Value, String> {
@@ -271,13 +337,32 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        if ts.is_some() && entry_type != "session_info" {
+        if ts.is_some() && !matches!(entry_type, "session_info" | "title" | "title_change") {
             last_active_at = ts.or(last_active_at);
         }
 
-        if entry_type == "session_info" {
+        if entry_type == "title" {
+            // 第一行 OMP 标题槽位是事实源。
             if let Some(name) = value
-                .get("name")
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                latest_session_name = Some(name.to_string());
+            }
+        } else if entry_type == "title_change" {
+            if let Some(name) = value
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                latest_session_name = Some(name.to_string());
+            }
+        } else if entry_type == "session" && latest_session_name.is_none() {
+            if let Some(name) = value
+                .get("title")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
@@ -766,5 +851,37 @@ mod tests {
             message.usage.as_ref().and_then(|usage| usage.input_tokens),
             Some(2166)
         );
+    }
+
+    #[test]
+    fn rename_session_writes_title_change_and_updates_title_slot() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let session_path = temp_dir.path().join("omp-session.jsonl");
+        let first_line = "{\"type\":\"title\",\"v\":1,\"title\":\"Old Title\",\"updatedAt\":\"2026-06-21T09:53:33.916Z\",\"pad\":\"\"}";
+        let header = json!({
+            "type": "session",
+            "id": "sess-1234",
+            "cwd": "/workspace/project",
+            "timestamp": "2026-06-21T09:53:33.000Z"
+        });
+        std::fs::write(&session_path, format!("{first_line}\n{header}\n")).expect("write session");
+
+        rename_session(session_path.to_str().unwrap(), "New Title").expect("rename");
+
+        let content = std::fs::read_to_string(&session_path).expect("read back");
+        let lines: Vec<&str> = content.lines().collect();
+
+        // 第一行仍是 256 字节 title 槽位且标题已更新
+        assert_eq!(content.split_once('\n').unwrap().0.len() + 1, 256, "title slot is 256 bytes");
+        let slot: Value = serde_json::from_str(lines[0]).expect("slot parses");
+        assert_eq!(slot["type"], "title");
+        assert_eq!(slot["title"], "New Title");
+        assert_eq!(slot["source"], "user");
+
+        // 末尾追加了 title_change 条目
+        let last: Value = serde_json::from_str(lines.last().unwrap()).expect("last parses");
+        assert_eq!(last["type"], "title_change");
+        assert_eq!(last["title"], "New Title");
+        assert_eq!(last["source"], "user");
     }
 }

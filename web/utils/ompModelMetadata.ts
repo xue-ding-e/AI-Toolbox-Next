@@ -14,11 +14,66 @@ export const PI_THINKING_LEVEL_OPTIONS = PI_STANDARD_THINKING_LEVEL_KEYS.map((va
 }));
 const PI_EXTENDED_THINKING_LEVELS = new Set<string>(PI_EXTENDED_THINKING_LEVEL_KEYS);
 
+// OMP 模型 `thinking` 结构支持的思考级别词表(不含 off/auto,它们与列表正交)。
+const OMP_THINKING_EFFORT_KEYS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
 );
+
+const asStringArray = (value: unknown): string[] => (
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+);
+
+/** 从 OMP 模型 `thinking` 结构推导可选思考级别列表。 */
+export const getOmpModelThinkingLevels = (
+  model: Record<string, unknown> | undefined,
+): string[] => {
+  if (!model || model.reasoning === false) {
+    return [];
+  }
+
+  const thinking = asRecord(model.thinking);
+  const efforts = asStringArray(thinking.efforts).filter((effort) =>
+    OMP_THINKING_EFFORT_KEYS.some((key) => key === effort),
+  );
+
+  if (efforts.length > 0) {
+    return [...PI_STANDARD_THINKING_LEVEL_KEYS, ...efforts];
+  }
+
+  // legacy range vocabulary (pre-efforts configs)
+  const minLevel = typeof thinking.minLevel === 'string' ? thinking.minLevel : undefined;
+  const maxLevel = typeof thinking.maxLevel === 'string' ? thinking.maxLevel : undefined;
+  if (minLevel || maxLevel) {
+    const minIndex = minLevel
+      ? PI_THINKING_LEVEL_KEYS.indexOf(minLevel as (typeof PI_THINKING_LEVEL_KEYS)[number])
+      : 0;
+    const maxIndex = maxLevel
+      ? PI_THINKING_LEVEL_KEYS.indexOf(maxLevel as (typeof PI_THINKING_LEVEL_KEYS)[number])
+      : PI_THINKING_LEVEL_KEYS.length - 1;
+    if (minIndex >= 0 && maxIndex >= 0 && minIndex <= maxIndex) {
+      return PI_THINKING_LEVEL_KEYS.slice(0, maxIndex + 1).filter((level) =>
+        PI_THINKING_LEVEL_KEYS.indexOf(level) >= minIndex,
+      );
+    }
+  }
+
+  return model.reasoning === true ? [...PI_STANDARD_THINKING_LEVEL_KEYS] : [];
+};
+
+/** 从 OMP 模型 `thinking` 结构读取默认思考级别(取 defaultLevel,无则 undefined)。 */
+export const getOmpModelDefaultThinkingLevel = (
+  model: Record<string, unknown> | undefined,
+): string | undefined => {
+  if (!model || model.reasoning === false) {
+    return undefined;
+  }
+  const thinking = asRecord(model.thinking);
+  return typeof thinking.defaultLevel === 'string' ? thinking.defaultLevel : undefined;
+};
 
 export const normalizeOmpThinkingLevelKey = (key: string): string | undefined => {
   if (key === 'none') {
@@ -61,29 +116,45 @@ export const getPresetThinkingLevelValue = (
   return undefined;
 };
 
-export const buildOmpThinkingLevelMapFromPreset = (
+/** 从 OpenCode preset variants 推导 OMP 的 `thinking` 结构(按 effort 聚合)。 */
+export const buildOmpThinkingFromPreset = (
   variants: Record<string, OpenCodeModelVariant> | undefined,
-): Record<string, string | null> => {
+): Record<string, unknown> | undefined => {
   if (!variants || Object.keys(variants).length === 0) {
-    return {};
+    return undefined;
   }
-  const result: Record<string, string | null> = {};
+  const efforts: string[] = [];
+  let defaultLevel: string | undefined;
   Object.entries(variants).forEach(([variantKey, variant]) => {
     const levelKey = normalizeOmpThinkingLevelKey(variantKey);
     if (!levelKey) {
       return;
     }
     const levelValue = getPresetThinkingLevelValue(variant);
-    if (levelValue !== undefined) {
-      result[levelKey] = levelValue;
+    if (
+      typeof levelValue === 'string'
+      && levelValue !== 'none'
+      && OMP_THINKING_EFFORT_KEYS.some((key) => key === levelValue)
+      && !efforts.includes(levelValue)
+    ) {
+      efforts.push(levelValue);
+      if (variant.disabled !== true && variantKey === 'high') {
+        defaultLevel = levelValue;
+      }
     }
   });
-  if (Object.keys(result).length > 0) {
-    PI_THINKING_LEVEL_KEYS.forEach((levelKey) => {
-      if (!(levelKey in result)) {
-        result[levelKey] = null;
-      }
-    });
+
+  if (efforts.length === 0) {
+    return undefined;
   }
-  return result;
+  // canonical effort ordering
+  efforts.sort(
+    (left, right) =>
+      OMP_THINKING_EFFORT_KEYS.indexOf(left as never) - OMP_THINKING_EFFORT_KEYS.indexOf(right as never),
+  );
+  const thinking: Record<string, unknown> = { efforts };
+  if (defaultLevel) {
+    thinking.defaultLevel = defaultLevel;
+  }
+  return thinking;
 };
