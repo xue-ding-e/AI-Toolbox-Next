@@ -22,7 +22,6 @@ use tauri::{Emitter, Runtime};
 /// OMP 思考级别白名单(OMP 支持 `auto`,比 Pi 多一个)。
 const OMP_THINKING_LEVEL_KEYS: [&str; 8] =
     ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"];
-const OMP_EXTENDED_THINKING_LEVEL_KEYS: [&str; 2] = ["xhigh", "max"];
 const OMP_MODEL_ROLE_KEY: &str = "default";
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -314,77 +313,17 @@ fn split_provider_model(role: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
-    // OMP 的思考词表是 minimal..max(settings.md / EffortSchema),不含 `off`;
-    // `off` 表示不思考,仅在无 thinking 的模型上可选,不在此判断级别支持。
-    if thinking_level == "off" {
-        return false;
-    }
-    if !OMP_THINKING_LEVEL_KEYS.contains(&thinking_level) || thinking_level == "auto" {
-        // `auto` 总会生效;这里只负责非 auto 的判断。
-        if thinking_level == "auto" {
-            return true;
-        }
-        return false;
-    }
-    if model.get("reasoning").and_then(Value::as_bool) != Some(true) {
-        return false;
-    }
-
-    // OMP 用 `thinking` 结构(不是 Pi 的 `thinkingLevelMap`)表达思考级别。
-    // 支持的级别由 thinking.efforts(或 legacy levels)显式列出;若只有
-    // minLevel/maxLevel 则取区间内的标准级别;未声明 thinking 时回退到标准级别。
-    let thinking = model.get("thinking");
-    let efforts: Option<Vec<String>> = thinking
-        .and_then(|t| t.get("efforts"))
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        });
-    let levels: Option<Vec<String>> = thinking
-        .and_then(|t| t.get("levels"))
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        });
-
-    if let Some(list) = efforts.or(levels) {
-        return list.iter().any(|level| level == thinking_level);
-    }
-
-    if let Some(min_level) = thinking
-        .and_then(|t| t.get("minLevel"))
-        .and_then(Value::as_str)
-    {
-        let max_level = thinking
-            .and_then(|t| t.get("maxLevel"))
-            .and_then(Value::as_str)
-            .unwrap_or("max");
-        let min_index = OMP_THINKING_LEVEL_KEYS
-            .iter()
-            .position(|key| *key == min_level)
-            .unwrap_or(usize::MAX);
-        let max_index = OMP_THINKING_LEVEL_KEYS
-            .iter()
-            .position(|key| *key == max_level)
-            .unwrap_or(usize::MIN);
-        return OMP_THINKING_LEVEL_KEYS
-            .iter()
-            .position(|key| *key == thinking_level)
-            .is_some_and(|index| index >= min_index && index <= max_index);
-    }
-
-    // 没有显式 thinking 配置:标准级别(minimal..high)可用,扩展级别
-    // (xhigh/max)仅当 model 明确声明了对应 effort。off 已在函数开头排除。
-    !OMP_EXTENDED_THINKING_LEVEL_KEYS.contains(&thinking_level)
+/// defaultThinkingLevel 的合法取值:off/auto 加 EffortSchema 词表 minimal..max。
+/// 这是全局设置;具体模型是否支持某 effort 由 OMP 运行时 clamp,不在此校验。
+/// 注意 `off` 超出 OMP schema 的 defaultThinkingLevel 枚举([...THINKING_EFFORTS,
+/// "auto"]),但 OMP 运行时读取走 parseConfiguredThinkingLevel(接受 off),且
+/// Settings.get() 不做枚举校验,因此写 off 运行时确实生效;仅 omp config set /
+/// /settings 面板会视为非法值。属"运行时可用、schema 未声明"的取舍。
+/// 之前这里的 per-model 判断(thinking.efforts 是否含该级别)被用于"当前选中
+/// 模型不支持就删除全局 defaultThinkingLevel",那是个错误:defaultThinkingLevel
+/// 是全局键,不该由任一模型的 efforts 反推删除。
+fn is_valid_global_thinking_level(level: &str) -> bool {
+    OMP_THINKING_LEVEL_KEYS.contains(&level)
 }
 
 fn credential_kind(provider: Option<&Value>, is_builtin: bool) -> OmpCredentialKind {
@@ -718,36 +657,13 @@ pub async fn save_omp_model_settings(
         .map(str::to_string)
         .or_else(|| current.thinking_level.clone());
 
-    let should_remove_thinking_level = if let (Some(model), Some(level)) = (model_id.as_deref(), thinking_level.as_deref()) {
-        // `auto` 与 `off` 都不是具体的思考级别词表值(EffortSchema 为
-        // minimal..max):auto 表示自动、off 表示关闭思考,恒可显式写入。
-        if level == "auto" || level == "off" {
-            false
-        } else {
-            let models = read_yaml_object_or_empty(&get_omp_models_path_async(&db).await?)?;
-            // 找一个 provider 下匹配该模型的配置来决定思考级别支持。
-            let mut supported = true;
-            if let Some(provider_key) = provider_key.as_deref() {
-                let provider = models
-                    .get("providers")
-                    .and_then(Value::as_object)
-                    .and_then(|providers| providers.get(provider_key));
-                if let Some(provider) = provider {
-                    let model_config = provider
-                        .get("models")
-                        .and_then(Value::as_array)
-                        .and_then(|list| {
-                            list.iter().find(|m| {
-                                m.get("id").and_then(Value::as_str).map(|id| id == model).unwrap_or(false)
-                            })
-                        });
-                    if let Some(model_config) = model_config {
-                        supported = model_supports_thinking_level(model_config, level);
-                    }
-                }
-            }
-            !supported
-        }
+    // defaultThinkingLevel 是全局设置(不是 per-model),它的取值合法性只由
+    // OMP 的思考级别词表决定,与"当前选中的模型支持哪些 effort"无关。上游
+    // 对单个模型不支持的 effort 是 clamp 而不是删除全局键。因此这里只在
+    // level 完全不是合法词表值(off/auto/minimal..max 之外)时清理,否则
+    // 保留用户显式选择,交由 OMP 运行时钳制。
+    let should_remove_thinking_level = if let Some(level) = thinking_level.as_deref() {
+        !is_valid_global_thinking_level(level)
     } else {
         false
     };
@@ -1180,43 +1096,6 @@ mod tests {
     }
 
     #[test]
-    fn thinking_efforts_list_drives_supported_levels() {
-        // OMP exposes supported levels via `thinking.efforts` (a subset of
-        // minimal/low/medium/high/xhigh/max), not Pi's `thinkingLevelMap`.
-        let model = json!({
-            "id": "deepseek-v4-pro",
-            "reasoning": true,
-            "thinking": { "efforts": ["high", "xhigh"] }
-        });
-
-        assert!(!model_supports_thinking_level(&model, "off"));
-        assert!(!model_supports_thinking_level(&model, "minimal"));
-        assert!(model_supports_thinking_level(&model, "high"));
-        assert!(model_supports_thinking_level(&model, "xhigh"));
-        assert!(model_supports_thinking_level(&model, "auto"));
-        assert!(!model_supports_thinking_level(&model, "max"));
-        assert!(!model_supports_thinking_level(&model, "unknown"));
-    }
-
-    #[test]
-    fn thinking_min_max_range_drives_supported_levels() {
-        let model = json!({
-            "id": "m",
-            "reasoning": true,
-            "thinking": { "minLevel": "medium", "maxLevel": "max" }
-        });
-
-        assert!(model_supports_thinking_level(&model, "medium"));
-        assert!(model_supports_thinking_level(&model, "high"));
-        assert!(model_supports_thinking_level(&model, "xhigh"));
-        assert!(model_supports_thinking_level(&model, "max"));
-        assert!(model_supports_thinking_level(&model, "auto"));
-        assert!(!model_supports_thinking_level(&model, "off"));
-        assert!(!model_supports_thinking_level(&model, "minimal"));
-        assert!(!model_supports_thinking_level(&model, "low"));
-    }
-
-    #[test]
     fn split_provider_model_handles_slashed_model_ids() {
         let (provider, model) = split_provider_model("openrouter/openai/gpt-5");
         assert_eq!(provider.as_deref(), Some("openrouter"));
@@ -1235,6 +1114,18 @@ mod tests {
         let (provider, model) = split_provider_model("bare");
         assert_eq!(provider, None);
         assert_eq!(model, None);
+    }
+
+    #[test]
+    fn global_thinking_level_accepts_full_vocabulary_and_rejects_unknown() {
+        // defaultThinkingLevel 是全局设置:合法值 = off/auto + EffortSchema
+        // 词表 minimal..max;与"当前选中模型支持哪些 effort"无关。
+        for level in ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"] {
+            assert!(is_valid_global_thinking_level(level), "expected {level} valid");
+        }
+        for level in ["none", "ultra", "", "HIGH"] {
+            assert!(!is_valid_global_thinking_level(level), "expected {level:?} invalid");
+        }
     }
 
     #[test]

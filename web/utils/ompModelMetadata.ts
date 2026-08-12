@@ -42,7 +42,17 @@ export const getOmpModelThinkingLevels = (
   );
 
   if (efforts.length > 0) {
-    return [...PI_STANDARD_THINKING_LEVEL_KEYS.slice(1), ...efforts];
+    // 严格按模型声明列表返回(与后端 model_supports_thinking_level 一致):
+    // OMP 的 thinking.efforts 是完整支持集,不是标准级别的超集。之前取
+    // 并集会让 UI 出现模型实际不支持的级别,选中保存后会被后端判为
+    // unsupported → 全局 defaultThinkingLevel 被误删。efforts 须保序去重。
+    const ordered: string[] = [];
+    for (const effort of OMP_THINKING_EFFORT_KEYS) {
+      if (efforts.includes(effort)) {
+        ordered.push(effort);
+      }
+    }
+    return ordered;
   }
 
   // legacy range vocabulary (pre-efforts configs)

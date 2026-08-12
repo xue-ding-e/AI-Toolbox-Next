@@ -1659,7 +1659,7 @@ const OhMyPiPage: React.FC = () => {
     const providerDisplay: ProviderDisplayData = {
       id: provider.providerKey,
       name: provider.displayName,
-      sdkName: getStringField(providerConfig, 'api') || provider.categories.join(', ') || 'pi',
+      sdkName: getStringField(providerConfig, 'api') || provider.categories.join(', ') || 'omp',
       baseUrl: providerBaseUrl
         || provider.sources.map((source) => translateRuntimeLabel('ohMyPi.sourceLabels', source)).join(' / ')
         || t('ohMyPi.provider.builtinHint'),

@@ -160,6 +160,38 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
         .map_err(|error| format!("Failed to append OMP title change: {error}"))
 }
 
+/// 按标题槽位容量截断标题(二分搜索,与上游 truncateTitleForSlot 一致):返回
+/// 一个前缀,使 title 槽 JSON(含 source/updatedAt/空 pad + 换行)不超 256 字节。
+/// 中文等多字节字符按 UTF-8 字节计,避免把字符截成半个。
+fn truncated_title(title: &str, updated_at: &str) -> String {
+    let title_chars: Vec<char> = title.chars().collect();
+    let fits = |chars: usize| -> bool {
+        // 截到前 chars 个字符后,该槽位(空 pad + 换行)是否 <= 256 字节。
+        let candidate: String = title_chars[..chars].iter().collect();
+        let slot = json!({
+            "type": "title",
+            "v": 1,
+            "title": candidate,
+            "source": "user",
+            "updatedAt": updated_at,
+            "pad": "",
+        });
+        serde_json::to_string(&slot).map(|s| s.len() + 1 <= 256).unwrap_or(false)
+    };
+    let (mut low, mut high) = (0usize, title_chars.len());
+    let mut best = 0;
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if fits(mid) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    title_chars[..best].iter().collect()
+}
+
 /// 若会话文件第一行是 OMP 的 `type:"title"` 固宽槽位,则以相同结构、补齐到
 /// 256 UTF-8 字节(含换行)覆写之;否则保持文件不变(仅靠 title_change)。
 fn update_title_slot_if_present(
@@ -184,31 +216,24 @@ fn update_title_slot_if_present(
     let mut slot_value = json!({
         "type": "title",
         "v": 1,
-        "title": title,
+        "title": truncated_title(title, updated_at),
         "source": "user",
         "updatedAt": updated_at,
         "pad": "",
     });
     let slot_json = serde_json::to_string(&slot_value)
         .map_err(|error| format!("Failed to serialize OMP title slot: {error}"))?;
-    // 计算需要补的空格字节数(字节数而非字符数,英文/数字按 1 字节计,
-    // 非 ASCII 会偏保守,但 256 字节上限由 utf8 长度精确控制)。
-    let slot_bytes = slot_json.len() as isize + 1; // +1 换行
-    let total_bytes = slot_bytes + 1; // pad 至少 1 空格
-    if total_bytes > 256 {
-        return Err("OMP title is too long for the 256-byte session title slot".to_string());
+    // pad 补空格到整行恰好 256 UTF-8 字节(含换行)。上限内标题直接落;
+    // 过长时 title 已在 truncated_title 中被按字节截断,保证 pad>=0。
+    if slot_json.len() + 1 > 256 {
+        return Err("OMP title slot cannot fit in 256 bytes".to_string());
     }
-    let pad_len = 256 - (slot_json.len() as isize + 1);
+    let pad_len = 256 - (slot_json.len() + 1);
     slot_value["pad"] = json!(" ".repeat(pad_len.max(1) as usize));
     let slot_json = serde_json::to_string(&slot_value)
         .map_err(|error| format!("Failed to re-serialize OMP title slot: {error}"))?;
     // 验证整行恰好 256 字节
-    if (slot_json.len() + 1) != 256 {
-        return Err(format!(
-            "OMP title slot serialized to {} bytes (expected 256)",
-            slot_json.len() + 1
-        ));
-    }
+    debug_assert_eq!(slot_json.len() + 1, 256, "title slot must be exactly 256 bytes");
 
     let new_content = format!("{slot_json}\n{rest}");
     std::fs::write(session_path, new_content)
