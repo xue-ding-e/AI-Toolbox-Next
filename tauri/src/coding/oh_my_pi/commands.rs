@@ -315,6 +315,11 @@ fn split_provider_model(role: &str) -> (Option<String>, Option<String>) {
 }
 
 fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
+    // OMP 的思考词表是 minimal..max(settings.md / EffortSchema),不含 `off`;
+    // `off` 表示不思考,仅在无 thinking 的模型上可选,不在此判断级别支持。
+    if thinking_level == "off" {
+        return false;
+    }
     if !OMP_THINKING_LEVEL_KEYS.contains(&thinking_level) || thinking_level == "auto" {
         // `auto` 总会生效;这里只负责非 auto 的判断。
         if thinking_level == "auto" {
@@ -352,11 +357,6 @@ fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
         });
 
     if let Some(list) = efforts.or(levels) {
-        // `off`(关闭思考)与 `auto` 与级别列表正交,始终可用;
-        // 其余级别须在列表中显式出现。
-        if thinking_level == "off" {
-            return true;
-        }
         return list.iter().any(|level| level == thinking_level);
     }
 
@@ -382,8 +382,8 @@ fn model_supports_thinking_level(model: &Value, thinking_level: &str) -> bool {
             .is_some_and(|index| index >= min_index && index <= max_index);
     }
 
-    // 没有显式 thinking 配置:标准级别(off..high)可用,扩展级别(xhigh/max)仅当
-    // model 明确声明了对应 effort。
+    // 没有显式 thinking 配置:标准级别(minimal..high)可用,扩展级别
+    // (xhigh/max)仅当 model 明确声明了对应 effort。off 已在函数开头排除。
     !OMP_EXTENDED_THINKING_LEVEL_KEYS.contains(&thinking_level)
 }
 
@@ -719,7 +719,9 @@ pub async fn save_omp_model_settings(
         .or_else(|| current.thinking_level.clone());
 
     let should_remove_thinking_level = if let (Some(model), Some(level)) = (model_id.as_deref(), thinking_level.as_deref()) {
-        if level == "auto" {
+        // `auto` 与 `off` 都不是具体的思考级别词表值(EffortSchema 为
+        // minimal..max):auto 表示自动、off 表示关闭思考,恒可显式写入。
+        if level == "auto" || level == "off" {
             false
         } else {
             let models = read_yaml_object_or_empty(&get_omp_models_path_async(&db).await?)?;
@@ -1187,7 +1189,7 @@ mod tests {
             "thinking": { "efforts": ["high", "xhigh"] }
         });
 
-        assert!(model_supports_thinking_level(&model, "off"));
+        assert!(!model_supports_thinking_level(&model, "off"));
         assert!(!model_supports_thinking_level(&model, "minimal"));
         assert!(model_supports_thinking_level(&model, "high"));
         assert!(model_supports_thinking_level(&model, "xhigh"));

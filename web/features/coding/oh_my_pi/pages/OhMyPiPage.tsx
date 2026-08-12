@@ -280,6 +280,9 @@ const getOmpModelThinkingLevelOptions = (
   const levelSet = new Set(levels);
   const optionSet = new Set<string>();
   const options: Array<{ value: string; label: string }> = [];
+  // `off`(关闭思考)是独立于级别区间的选项,恒可为 defaultThinkingLevel。
+  options.push({ value: 'off', label: 'off' });
+  optionSet.add('off');
   // 标准级别始终打头,再附上模型声明的扩展级别(去重、保序)。
   for (const levelKey of PI_THINKING_LEVEL_KEYS) {
     if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {

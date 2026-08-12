@@ -27,7 +27,8 @@ const asStringArray = (value: unknown): string[] => (
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 );
 
-/** 从 OMP 模型 `thinking` 结构推导可选思考级别列表。 */
+/** 从 OMP 模型 `thinking` 结构推导可选思考级别列表(不含 off;off 表示关闭
+ *  思考,由调用方作为独立选项处理,OMP 的 EffortSchema 词表为 minimal..max)。 */
 export const getOmpModelThinkingLevels = (
   model: Record<string, unknown> | undefined,
 ): string[] => {
@@ -41,7 +42,7 @@ export const getOmpModelThinkingLevels = (
   );
 
   if (efforts.length > 0) {
-    return [...PI_STANDARD_THINKING_LEVEL_KEYS, ...efforts];
+    return [...PI_STANDARD_THINKING_LEVEL_KEYS.slice(1), ...efforts];
   }
 
   // legacy range vocabulary (pre-efforts configs)
@@ -50,18 +51,18 @@ export const getOmpModelThinkingLevels = (
   if (minLevel || maxLevel) {
     const minIndex = minLevel
       ? PI_THINKING_LEVEL_KEYS.indexOf(minLevel as (typeof PI_THINKING_LEVEL_KEYS)[number])
-      : 0;
+      : 1; // 不含 off
     const maxIndex = maxLevel
       ? PI_THINKING_LEVEL_KEYS.indexOf(maxLevel as (typeof PI_THINKING_LEVEL_KEYS)[number])
       : PI_THINKING_LEVEL_KEYS.length - 1;
-    if (minIndex >= 0 && maxIndex >= 0 && minIndex <= maxIndex) {
-      return PI_THINKING_LEVEL_KEYS.slice(0, maxIndex + 1).filter((level) =>
-        PI_THINKING_LEVEL_KEYS.indexOf(level) >= minIndex,
+    if (minIndex >= 1 && maxIndex >= 1 && minIndex <= maxIndex) {
+      return PI_THINKING_LEVEL_KEYS.slice(0, maxIndex + 1).filter(
+        (_level, index) => index >= minIndex,
       );
     }
   }
 
-  return model.reasoning === true ? [...PI_STANDARD_THINKING_LEVEL_KEYS] : [];
+  return model.reasoning === true ? [...PI_STANDARD_THINKING_LEVEL_KEYS.slice(1)] : [];
 };
 
 /** 从 OMP 模型 `thinking` 结构读取默认思考级别(取 defaultLevel,无则 undefined)。 */
