@@ -15,7 +15,7 @@
 
 - OMP 没有 `auth.json`/`models.json`/`settings.json`;凭据(apiKey)直接写在 `models.yml` 的 provider 配置里,默认模型用 `modelRoles.default`(格式 `provider/modelId`)表达,思考级别用 `defaultThinkingLevel`。
 - OMP 扩展是 `omp plugin` 系统(plugins),不是 Pi 的 `extensions` 命令;本地扩展目录是 `<root>/extensions`。
-- OMP 的 skills 由 `agents` 能力自动发现(`~/.agents/skills`),不在 agent 目录下。
+- OMP 的 skills 由 native 能力(priority 100)从 `<agentDir>/skills`(即 `~/.omp/agent/skills`)发现,应用把 skills 同步到该目录;不是 agents 能力(priority 70,可被 `skills.enableAgentsUser` 关闭)的 `~/.agents/skills`。
 - OMP 与 Pi 都识别 `PI_CODING_AGENT_DIR`,但应用内自定义根目录分别保存。
 
 ## Gotchas

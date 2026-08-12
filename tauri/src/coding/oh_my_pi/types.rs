@@ -9,15 +9,6 @@ pub struct OmpPathInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OmpSettingsConfigRecord {
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_dir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OmpSettingsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,20 +23,6 @@ pub struct OmpSettingsConfigInput {
     pub root_dir: Option<String>,
     #[serde(default)]
     pub clear_root_dir: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OmpPromptConfigRecord {
-    pub id: String,
-    pub name: String,
-    pub content: String,
-    pub is_applied: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sort_index: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

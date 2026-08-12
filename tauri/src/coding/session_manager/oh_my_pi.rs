@@ -185,6 +185,10 @@ fn truncated_title(title: &str, updated_at: &str) -> String {
         if fits(mid) {
             best = mid;
             low = mid + 1;
+        } else if mid == 0 {
+            // 空标题槽都超 256 字节(updated_at 定长因此实际不可达,纯防御)。
+            // best 保持 0(空标题),直接退出,避免 mid-1 在 usize 下溢。
+            break;
         } else {
             high = mid - 1;
         }

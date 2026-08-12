@@ -19,6 +19,10 @@ pub fn settings_from_db_value(value: Value) -> OmpSettingsConfig {
 }
 
 pub fn settings_to_db_value(root_dir: Option<&str>) -> Value {
+    // 注意:这是整条记录重建,不是 patch。当前记录只有 root_dir/updated_at
+    // 两个字段,所以无损;但若日后给 OhMyPiSettingsConfig 增加字段(例如上游
+    // OMP_PROFILE 对应的 profile),这里会把存量记录里未随之写入的字段静默
+    // 清掉。届时应改用 db_patch_fields 做局部更新。(Pi 的 settings 同写法。)
     let now = Local::now().to_rfc3339();
     let mut value = json!({ "updated_at": now });
     if let Some(root_dir) = root_dir.filter(|dir| !dir.trim().is_empty()) {

@@ -42,7 +42,7 @@ export const getOmpModelThinkingLevels = (
   );
 
   if (efforts.length > 0) {
-    // 严格按模型声明列表返回(与后端 model_supports_thinking_level 一致):
+    // 严格按模型声明列表返回(对应上游 getSupportedEfforts):
     // OMP 的 thinking.efforts 是完整支持集,不是标准级别的超集。之前取
     // 并集会让 UI 出现模型实际不支持的级别,选中保存后会被后端判为
     // unsupported → 全局 defaultThinkingLevel 被误删。efforts 须保序去重。
@@ -72,6 +72,10 @@ export const getOmpModelThinkingLevels = (
     }
   }
 
+  // 模型无 thinking 块:上游 getSupportedEfforts 对它返回空数组(即 OMP 认为该
+  // 模型不受控,不声明任何 effort)。这里回退到全局词表 minimal..high 是给用户
+  // 一个可选的降级 UI——因为 defaultThinkingLevel 是全局键、后端也不再据此
+  // gating,这个兜底无害;语义是"全局词表兜底",而非"该模型声称支持这些级别"。
   return model.reasoning === true ? [...PI_STANDARD_THINKING_LEVEL_KEYS.slice(1)] : [];
 };
 

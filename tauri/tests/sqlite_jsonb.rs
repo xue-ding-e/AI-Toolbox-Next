@@ -57,6 +57,10 @@ fn jsonb_probe_and_schema_migration_create_all_tables() {
         "idx_grok_official_account_sort_index",
         "idx_grok_prompt_config_is_applied",
         "idx_grok_prompt_config_sort_index",
+        // v9: Oh My Pi prompt indexes are only created by migrate_v9 (no
+        // create_initial_indexes fallback), so assert them explicitly.
+        "idx_oh_my_pi_prompt_config_is_applied",
+        "idx_oh_my_pi_prompt_config_sort_index",
     ] {
         let exists: i64 = conn
             .query_row(
