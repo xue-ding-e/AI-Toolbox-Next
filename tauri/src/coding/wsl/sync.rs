@@ -1,4 +1,4 @@
-use super::types::{FileMapping, SyncResult, WSLDetectResult};
+use super::types::{normalize_directory_excludes, FileMapping, SyncResult, WSLDetectResult};
 use std::path::Path;
 use std::process::Command;
 
@@ -293,7 +293,12 @@ pub fn sync_file_mapping(mapping: &FileMapping, distro: &str) -> Result<Vec<Stri
         if !Path::new(&windows_path).exists() {
             return Ok(vec![]);
         }
-        sync_directory(&windows_path, &mapping.wsl_path, distro)
+        sync_directory_with_excludes(
+            &windows_path,
+            &mapping.wsl_path,
+            distro,
+            &mapping.directory_excludes,
+        )
     } else if mapping.is_pattern {
         // Pattern mode: handle wildcards
         sync_pattern_files(&windows_path, &mapping.wsl_path, distro)
@@ -362,11 +367,49 @@ fn build_directory_copy_command(wsl_source_path: &str, wsl_target_path: &str) ->
     )
 }
 
-/// Sync a directory (recursive copy)
+/// Build a directory copy command that excludes entries whose name matches any
+/// of the exclude list, at any nesting depth (recursive), matching the SSH
+/// semantic. Excludes are passed as bash positional parameters ($1..$n) and
+/// turned into `--exclude` args inside `tar`, so the command text itself needs
+/// no escaping; `--exclude=name` matches any path segment named `name`.
+fn build_directory_copy_command_with_excludes(
+    wsl_source_path: &str,
+    wsl_target_path: &str,
+) -> String {
+    format!(
+        "set -e; set -o pipefail; \
+         source=\"{}\"; \
+         target=\"{}\"; \
+         parent=$(dirname \"$target\"); \
+         mkdir -p \"$parent\"; \
+         tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
+         trap 'rm -rf \"$tmp\"' EXIT; \
+         excl_args=(); \
+         for excl in \"$@\"; do excl_args+=(--exclude=\"$excl\"); done; \
+         tar -C \"$source\" \"${{excl_args[@]}}\" -cf - . | tar -C \"$tmp\" -xf -; \
+         rm -rf \"$target\"; \
+         mv \"$tmp\" \"$target\"; \
+         trap - EXIT",
+        wsl_source_path, wsl_target_path
+    )
+}
+
+/// Sync a directory (recursive copy) without exclusions.
 pub fn sync_directory(
     windows_path: &str,
     wsl_path: &str,
     distro: &str,
+) -> Result<Vec<String>, String> {
+    sync_directory_with_excludes(windows_path, wsl_path, distro, &[])
+}
+
+/// Sync a directory (recursive copy), skipping any top-level entry whose name is
+/// in `directory_excludes`.
+pub fn sync_directory_with_excludes(
+    windows_path: &str,
+    wsl_path: &str,
+    distro: &str,
+    directory_excludes: &[String],
 ) -> Result<Vec<String>, String> {
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
@@ -397,13 +440,26 @@ pub fn sync_directory(
         }
     }
 
+    let excludes = normalize_directory_excludes(directory_excludes);
+
     // Copy into a temporary directory first, then replace the target only after
     // the recursive copy succeeds. Preserve symlinks inside the source instead
     // of dereferencing them; plugin caches can contain stale "latest" links.
-    let command = build_directory_copy_command(&wsl_source_path, &wsl_target_path);
+    let command = if excludes.is_empty() {
+        build_directory_copy_command(&wsl_source_path, &wsl_target_path)
+    } else {
+        build_directory_copy_command_with_excludes(&wsl_source_path, &wsl_target_path)
+    };
 
-    let output = create_wsl_command()
-        .args(["-d", distro, "--exec", "bash", "-c", &command])
+    let mut cmd = create_wsl_command();
+    cmd.args(["-d", distro, "--exec", "bash", "-c", command.as_str()]);
+    if !excludes.is_empty() {
+        // `bash -c script arg0 arg1...` maps arg0 to $0 and the rest to $@; the
+        // loop in the command reads them via "$@".
+        cmd.arg("wsl-sync");
+        cmd.args(excludes.iter());
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to execute WSL directory command: {}", e))?;
 
@@ -463,6 +519,20 @@ mod tests {
         let copy_index = command.find("cp -R -P").expect("copy command");
         let replace_index = command.find("rm -rf \"$target\"").expect("replace command");
         assert!(copy_index < replace_index);
+    }
+
+    #[test]
+    fn directory_copy_command_with_excludes_builds_tar_exclude_args() {
+        let command = build_directory_copy_command_with_excludes(
+            "/mnt/c/Users/Test User/.config/opencode/agents",
+            "$HOME/.config/opencode/agents",
+        );
+
+        assert!(command.contains("excl_args+=(--exclude=\"$excl\")"));
+        assert!(command.contains(
+            "tar -C \"$source\" \"${excl_args[@]}\" -cf - . | tar -C \"$tmp\" -xf -"
+        ));
+        assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
     }
 }
 

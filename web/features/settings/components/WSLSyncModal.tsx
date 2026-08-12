@@ -17,6 +17,7 @@ import {
 } from '@/features/settings/utils/syncMessageTranslator';
 import { FileMappingModal } from './FileMappingModal';
 import { wslDeleteFileMapping, wslResetFileMappings, wslOpenTerminal, wslOpenFolder, wslGetDistroState } from '@/services/wslSyncApi';
+import { DEFAULT_SSH_DIRECTORY_EXCLUDES } from '@/types/sshsync';
 import type { FileMapping, WslDirectModuleStatus } from '@/types/wslsync';
 
 const { Text } = Typography;
@@ -121,6 +122,13 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
   const isModuleDisabled = useCallback((module: string) => {
     return Boolean(getModuleStatus(module)?.isWslDirect);
   }, [getModuleStatus]);
+
+  const getDirectoryExcludes = useCallback((mapping: FileMapping): string[] => {
+    if (!mapping.isDirectory) {
+      return [];
+    }
+    return mapping.directoryExcludes ?? [...DEFAULT_SSH_DIRECTORY_EXCLUDES];
+  }, []);
 
   const areAllVisibleModulesWslDirect = React.useMemo(() => {
     return visibleModuleKeys.length > 0 && visibleModuleKeys.every((moduleKey) => isModuleDisabled(moduleKey));
@@ -296,6 +304,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
       enabled: true,
       isPattern: false,
       isDirectory: false,
+      directoryExcludes: [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
       cleanupPaths: [],
     };
     setEditingMapping(newMapping);
@@ -440,6 +449,24 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {item.windowsPath} → {item.wslPath}
                     </Text>
+                    {item.isDirectory && getDirectoryExcludes(item).length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                          {t('settings.wsl.directoryExcludes')}:
+                        </Text>
+                        <Space size={[4, 2]} wrap>
+                          {getDirectoryExcludes(item).map((exclude) => (
+                            <Tag
+                              key={exclude}
+                              color="default"
+                              style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {exclude}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    )}
                     {(item.cleanupPaths?.length ?? 0) > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>

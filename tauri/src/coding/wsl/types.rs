@@ -19,7 +19,33 @@ pub struct FileMapping {
     pub is_pattern: bool,
     pub is_directory: bool,
     #[serde(default)]
+    pub directory_excludes: Vec<String>,
+    #[serde(default)]
     pub cleanup_paths: Vec<String>,
+}
+
+/// Normalize a list of directory exclude names, matching the SSH variant.
+///
+/// Each exclude must be a single path segment (no `/` or `\`); empty entries,
+/// absolute-looking entries, and duplicates are dropped.
+pub fn normalize_directory_excludes(excludes: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = Vec::new();
+
+    for exclude in excludes {
+        let name = exclude
+            .trim()
+            .trim_matches(|c| c == '/' || c == '\\')
+            .trim();
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            normalized.push(name.to_string());
+        }
+    }
+
+    normalized
 }
 
 // ============================================================================

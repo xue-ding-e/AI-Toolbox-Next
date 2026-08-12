@@ -527,28 +527,22 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {getDisplayLocalPath(item)} → {item.remotePath}
                     </Text>
-                    {item.isDirectory && (
+                    {item.isDirectory && getDirectoryExcludes(item).length > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
                           {t('settings.ssh.directoryExcludes')}:
                         </Text>
-                        {getDirectoryExcludes(item).length > 0 ? (
-                          <Space size={[4, 2]} wrap>
-                            {getDirectoryExcludes(item).map((exclude) => (
-                              <Tag
-                                key={exclude}
-                                color="default"
-                                style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
-                              >
-                                {exclude}
-                              </Tag>
-                            ))}
-                          </Space>
-                        ) : (
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            {t('settings.ssh.noDirectoryExcludes')}
-                          </Text>
-                        )}
+                        <Space size={[4, 2]} wrap>
+                          {getDirectoryExcludes(item).map((exclude) => (
+                            <Tag
+                              key={exclude}
+                              color="default"
+                              style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {exclude}
+                            </Tag>
+                          ))}
+                        </Space>
                       </div>
                     )}
                     {(item.cleanupPaths?.length ?? 0) > 0 && (

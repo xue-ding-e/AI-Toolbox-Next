@@ -1100,7 +1100,7 @@ async fn backfill_default_file_mappings(
     // Bump this number whenever new default file_mappings are added.
     const CURRENT_DEFAULTS_VERSION: u64 = 11;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agent", "opencode-agents"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
         &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
@@ -1698,18 +1698,6 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             cleanup_paths: vec![],
         },
         SSHFileMapping {
-            id: "opencode-agent".to_string(),
-            name: "OpenCode Agent 配置（agent）".to_string(),
-            module: "opencode".to_string(),
-            local_path: "~/.config/opencode/agent".to_string(),
-            remote_path: "~/.config/opencode/agent".to_string(),
-            enabled: true,
-            is_pattern: false,
-            is_directory: true,
-            directory_excludes: vec![],
-            cleanup_paths: vec![],
-        },
-        SSHFileMapping {
             id: "opencode-agents".to_string(),
             name: "OpenCode Agent 配置（agents）".to_string(),
             module: "opencode".to_string(),
@@ -2209,22 +2197,20 @@ mod tests {
     }
 
     #[test]
-    fn defaults_backfill_v8_only_adds_opencode_agent_directories_for_existing_v7_users() {
-        for mapping_id in ["opencode-agent", "opencode-agents"] {
-            assert!(should_backfill_default_mapping(
-                7,
-                4,
-                mapping_id,
-                7,
-                &["opencode-agent", "opencode-agents"],
-            ));
-        }
+    fn defaults_backfill_v8_only_adds_opencode_agents_directory_for_existing_v7_users() {
+        assert!(should_backfill_default_mapping(
+            7,
+            4,
+            "opencode-agents",
+            7,
+            &["opencode-agents"],
+        ));
         assert!(!should_backfill_default_mapping(
             7,
             4,
             "opencode-prompt",
             7,
-            &["opencode-agent", "opencode-agents"],
+            &["opencode-agents"],
         ));
     }
 
@@ -2253,20 +2239,18 @@ mod tests {
     }
 
     #[test]
-    fn opencode_agent_default_mappings_are_separate_directories() {
+    fn opencode_agents_default_mapping_is_the_only_agent_directory() {
         let mappings = default_file_mappings();
-        for (mapping_id, path) in [
-            ("opencode-agent", "~/.config/opencode/agent"),
-            ("opencode-agents", "~/.config/opencode/agents"),
-        ] {
-            let mapping = mappings
-                .iter()
-                .find(|mapping| mapping.id == mapping_id)
-                .expect("OpenCode Agent mapping exists");
-            assert!(mapping.is_directory);
-            assert_eq!(mapping.local_path, path);
-            assert_eq!(mapping.remote_path, path);
-        }
+        // OpenCode's canonical Markdown Agent directory is the plural `agents/`;
+        // the singular `agent/` is only a legacy alias and is no longer shipped.
+        assert!(mappings.iter().all(|m| m.id != "opencode-agent"));
+        let mapping = mappings
+            .iter()
+            .find(|mapping| mapping.id == "opencode-agents")
+            .expect("OpenCode agents mapping exists");
+        assert!(mapping.is_directory);
+        assert_eq!(mapping.local_path, "~/.config/opencode/agents");
+        assert_eq!(mapping.remote_path, "~/.config/opencode/agents");
     }
 
     #[test]

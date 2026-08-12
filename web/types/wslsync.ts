@@ -14,6 +14,7 @@ export interface FileMapping {
   enabled: boolean;
   isPattern: boolean;
   isDirectory: boolean;
+  directoryExcludes: string[];
   cleanupPaths: string[];
 }
 

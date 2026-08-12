@@ -13,6 +13,7 @@ import {
   normalizeCleanupPaths,
   supportsCleanupPaths,
 } from '@/features/settings/utils/fileMappingCleanup';
+import { DEFAULT_SSH_DIRECTORY_EXCLUDES } from '@/types/sshsync';
 import type { FileMapping } from '@/types/wslsync';
 
 interface FileMappingModalProps {
@@ -60,17 +61,49 @@ const detectPathIssues = (windowsPath: string, wslPath: string): PathIssue => {
   };
 };
 
+const normalizeDirectoryExcludes = (values: unknown): string[] => {
+  const items = Array.isArray(values) ? values : [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const item of items) {
+    if (typeof item !== 'string') {
+      continue;
+    }
+    const name = item.trim().replace(/^[\\/]+|[\\/]+$/g, '').trim();
+    if (!name || name.includes('/') || name.includes('\\') || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push(name);
+  }
+
+  return normalized;
+};
+
 export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClose, mapping }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
 
   const isEdit = mapping !== null;
 
+  const handleDirectoryModeChange = (checked: boolean) => {
+    if (!checked) {
+      return;
+    }
+
+    const currentExcludes = form.getFieldValue('directoryExcludes');
+    if (!Array.isArray(currentExcludes) || currentExcludes.length === 0) {
+      form.setFieldValue('directoryExcludes', [...DEFAULT_SSH_DIRECTORY_EXCLUDES]);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       if (mapping && mapping.id) {
         form.setFieldsValue({
           ...mapping,
+          directoryExcludes: mapping.directoryExcludes ?? [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
           cleanupPaths: mapping.cleanupPaths ?? [],
         });
       } else {
@@ -80,6 +113,7 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           enabled: true,
           isPattern: false,
           isDirectory: false,
+          directoryExcludes: [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
           cleanupPaths: [],
         });
       }
@@ -154,6 +188,9 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
       const newMapping: FileMapping = {
         ...values,
         id,
+        directoryExcludes: values.isDirectory
+          ? normalizeDirectoryExcludes(values.directoryExcludes)
+          : [],
         cleanupPaths: supportsCleanupPaths({
           isDirectory: values.isDirectory,
           isPattern: values.isPattern,
@@ -256,7 +293,34 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           valuePropName="checked"
           extra={t('settings.wsl.directoryModeHint')}
         >
-          <Switch />
+          <Switch onChange={handleDirectoryModeChange} />
+        </Form.Item>
+
+        <Form.Item
+          noStyle
+          shouldUpdate={(previousValues, currentValues) =>
+            previousValues.isDirectory !== currentValues.isDirectory
+          }
+        >
+          {({ getFieldValue }) => {
+            if (!getFieldValue('isDirectory')) {
+              return null;
+            }
+
+            return (
+              <Form.Item
+                name="directoryExcludes"
+                label={t('settings.wsl.directoryExcludes')}
+                extra={t('settings.wsl.directoryExcludesHint')}
+              >
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',', '\n']}
+                  placeholder={t('settings.wsl.directoryExcludesPlaceholder')}
+                />
+              </Form.Item>
+            );
+          }}
         </Form.Item>
 
         <Form.Item

@@ -11,7 +11,10 @@ use walkdir::WalkDir;
 use crate::coding::runtime_location;
 use crate::db::SqliteDbState;
 
-const AGENT_DIRECTORY_NAMES: [&str; 2] = ["agent", "agents"];
+// OpenCode's canonical Markdown Agent directory is the plural `agents/`; the
+// singular `agent/` is only a legacy alias and is no longer handled by this
+// module (see opencode.ai/docs/agents).
+const AGENT_DIRECTORY_NAMES: [&str; 1] = ["agents"];
 const BUILT_IN_AGENT_NAMES: [&str; 8] = [
     "build",
     "plan",
@@ -426,6 +429,18 @@ mod tests {
         .is_ok());
         assert!(ensure_safe_agent_path(
             Path::new("/home/test/.config/opencode/prompts/review.md"),
+            &roots,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_singular_agent_directory() {
+        // The singular `agent/` is only a legacy OpenCode alias; this module now
+        // accepts only the canonical plural `agents/` directory.
+        let roots = vec![Path::new("/home/test/.config/opencode").to_path_buf()];
+        assert!(ensure_safe_agent_path(
+            Path::new("/home/test/.config/opencode/agent/review.md"),
             &roots,
         )
         .is_err());
