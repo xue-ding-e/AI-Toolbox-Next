@@ -71,6 +71,7 @@ sequenceDiagram
 - UI 允许用户添加文件过滤规则时，后端不能只在少数固定文件处硬编码判断；所有 `external-configs/<tool>/<relative_path>` 的写入和恢复都必须经过同一个过滤 helper，确保用户规则真实生效。
 - 恢复操作应使用操作开始前的当前过滤规则，避免旧备份里的 settings 覆盖当前用户用于保护本机路径的排除规则。
 - 过滤只影响文件是否进入备份包/是否从备份包恢复，不影响数据库状态。跳过 auth.json 不会清理数据库中的 provider 配置。
+- OpenList/AList 的 WebDAV 下载若走「302 重定向」策略，GET 会被 302 指向上游网盘 CDN 签名地址（115 防盗链），通用客户端拿不到 Cookie/IP 绑定会得到 403。这不是账号认证错误：列目录（PROPFIND）和上传（PUT）都能过，唯独下载/恢复 GET 报 403，且内网（出口 IP 匹配）能下、公网/Bind 不匹配会 403。修复在服务端（改「本机代理/本地代理」下载策略、升级服务端、或改用原生驱动），本 app 无法根治。对应地，WebDAV 下载（GET）的错误映射不能用通用 403→authFailed：要比较 `response.url()` host 与配置 host，若 403 且被重定向到外部 host，则应返回 `settings.webdav.errors.downloadRedirect` 型诊断，避免误导「改用户名密码」。
 
 ## 跨模块依赖
 

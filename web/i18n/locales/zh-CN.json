@@ -6,7 +6,7 @@
   "subModules": {
     "notes": "笔记",
     "opencode": "OpenCode",
-    "claudecode": "Claude",
+    "claudecode": "Claude Code",
     "codex": "Codex",
     "openclaw": "OpenClaw",
     "geminicli": "Gemini",
@@ -976,7 +976,8 @@
         "serverError": "服务器错误，请稍后重试",
         "networkError": "网络连接失败，请检查网络或代理设置",
         "sslError": "SSL 证书错误，请检查服务器证书或尝试使用 HTTP",
-        "timeout": "连接超时，请检查网络或服务器地址"
+        "timeout": "连接超时，请检查网络或服务器地址",
+        "downloadRedirect": "下载被重定向到了外部地址且被拒绝访问。这通常是 OpenList/AList 开启了「302 重定向」下载策略、上游网盘防盗链拦截所致。请在服务端把 WebDAV 下载策略改为「本机代理 / 本地代理」，或升级服务端 / 改用原生驱动后重试"
       },
       "suggestions": {
         "contactAdmin": "如问题持续，请联系 WebDAV 服务管理员"
@@ -1774,7 +1775,7 @@
       "backgroundTaskHint": "配置后台任务并发限制",
       "browserAutomationSettings": "浏览器自动化",
       "browserAutomationHint": "配置浏览器自动化引擎",
-      "claudeCodeSettings": "Claude",
+      "claudeCodeSettings": "Claude Code",
       "claudeCodeHint": "配置 Claude Code 兼容层功能",
       "otherFields": "其他配置",
       "otherFieldsHint": "自定义配置字段将平铺写入配置文件顶层。官方当前名称为 oh-my-openagent，同时兼容旧的 oh-my-opencode 配置文件名。切换配置时，Agents Profile 的字段会深度合并并覆盖全局配置的同名字段。",

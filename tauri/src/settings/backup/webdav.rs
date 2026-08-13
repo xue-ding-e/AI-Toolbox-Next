@@ -115,6 +115,33 @@ fn analyze_http_error(status: reqwest::StatusCode, url: &str) -> WebDAVError {
     }
 }
 
+/// 分析 WebDAV 下载（GET）失败响应，并识别「下载被重定向到外部 host」的场景。
+///
+/// 某些 WebDAV 服务端（如 OpenList/AList 开启「302 重定向」下载策略）对 GET 返回 3xx，
+/// 把下载重定向到上游网盘的 CDN 签名地址（如 115 防盗链链接）。通用客户端拿不到 CDN
+/// 要求的 Cookie/IP 绑定信息，会得到 403；这种 403 跟“账号认证失败”无关，直接映射成
+/// `authFailed` 会误导用户。当最终响应 host 与配置的 WebDAV host 不同且返回 403 时，
+/// 返回专门针对该场景的诊断提示；其余情况沿用通用 `analyze_http_error` 语义。
+fn analyze_download_error(resp: &reqwest::Response, original_url: &str) -> WebDAVError {
+    let original_host = reqwest::Url::parse(original_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned));
+    let redirected_external = original_host
+        .as_deref()
+        .map(|origin| resp.url().host_str() != Some(origin))
+        .unwrap_or(false);
+
+    if resp.status().as_u16() == 403 && redirected_external {
+        WebDAVError::new(
+            "DOWNLOAD_REDIRECT",
+            "Download was redirected to an external CDN that refused access",
+            "settings.webdav.errors.downloadRedirect",
+        )
+    } else {
+        analyze_http_error(resp.status(), original_url)
+    }
+}
+
 /// 分析 reqwest 错误并返回详细信息
 fn analyze_reqwest_error(err: &reqwest::Error, url: &str) -> WebDAVError {
     if err.is_timeout() {
@@ -528,7 +555,7 @@ pub async fn restore_from_webdav(
                     format!("Failed to read response: {}", e)
                 })?
             } else {
-                let error = analyze_http_error(resp.status(), &full_url);
+                let error = analyze_download_error(&resp, &full_url);
                 error!("WebDAV download failed: {:?}", error);
                 return Err(error.to_json());
             }

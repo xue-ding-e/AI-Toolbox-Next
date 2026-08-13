@@ -6,7 +6,7 @@
   "subModules": {
     "notes": "Notes",
     "opencode": "OpenCode",
-    "claudecode": "Claude",
+    "claudecode": "Claude Code",
     "codex": "Codex",
     "openclaw": "OpenClaw",
     "geminicli": "Gemini",
@@ -976,7 +976,8 @@
         "serverError": "Server error. Please try again later",
         "networkError": "Network connection failed. Please check your network or proxy settings",
         "sslError": "SSL certificate error. Please check the server certificate or try using HTTP",
-        "timeout": "Connection timeout. Please check your network or server address"
+        "timeout": "Connection timeout. Please check your network or server address",
+        "downloadRedirect": "The download was redirected to an external URL that refused access. This usually happens when the server (e.g. OpenList/AList) uses a \"302 redirect\" download policy and the upstream cloud drive blocks the request via hotlink protection. Switch the server's WebDAV download policy to \"Web Proxy / Local Proxy\", upgrade the server, or use the native driver, then retry."
       },
       "suggestions": {
         "contactAdmin": "If the problem persists, please contact your WebDAV service administrator"
@@ -1681,7 +1682,7 @@
       "backgroundTaskHint": "Configure background task concurrency limits",
       "browserAutomationSettings": "Browser Automation",
       "browserAutomationHint": "Configure browser automation engine",
-      "claudeCodeSettings": "Claude",
+      "claudeCodeSettings": "Claude Code",
       "claudeCodeHint": "Configure Claude Code compatibility features",
       "otherFields": "Other Configuration",
       "otherFieldsHint": "Custom configuration fields will be flattened into the top level of the plugin config file. The official name is now oh-my-openagent, while the legacy oh-my-opencode filename is still supported. When switching profiles, the Agents Profile fields will be deeply merged and override the global config fields with the same name.",
