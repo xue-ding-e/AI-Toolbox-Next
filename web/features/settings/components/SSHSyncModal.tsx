@@ -491,36 +491,45 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
           size="small"
           dataSource={filteredMappings}
           renderItem={(item: SSHFileMapping) => (
-            <List.Item
-              actions={[
-                <Tooltip key="edit" title={t('common.edit')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => handleEditMapping(item)}
-                    disabled={!enabled}
-                  />
-                </Tooltip>,
-                <Tooltip key="delete" title={t('common.delete')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => handleDeleteMapping(item)}
-                    disabled={!enabled}
-                  />
-                </Tooltip>,
-              ]}
-            >
+            <List.Item>
               <List.Item.Meta
                 title={
-                  <Space>
-                     <Text>{getMappingDisplayName(item)}</Text>
-                    <Tag color={MODULE_COLORS[item.module] || 'default'}>{MODULE_NAMES[item.module] || item.module}</Tag>
-                    {!item.enabled && <Tag>{t('settings.ssh.disabled')}</Tag>}
-                  </Space>
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Space>
+                       <Text>{getMappingDisplayName(item)}</Text>
+                      <Tag color={MODULE_COLORS[item.module] || 'default'}>{MODULE_NAMES[item.module] || item.module}</Tag>
+                      {!item.enabled && <Tag>{t('settings.ssh.disabled')}</Tag>}
+                    </Space>
+                    <div
+                      style={{
+                        marginInlineStart: 'auto',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <Tooltip title={t('common.edit')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<EditOutlined />}
+                          onClick={() => handleEditMapping(item)}
+                          disabled={!enabled}
+                        />
+                      </Tooltip>
+                      <Tooltip title={t('common.delete')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => handleDeleteMapping(item)}
+                          disabled={!enabled}
+                        />
+                      </Tooltip>
+                    </div>
+                  </div>
                 }
                 description={
                   <Space orientation="vertical" size={2}>
@@ -528,22 +537,20 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                       {getDisplayLocalPath(item)} → {item.remotePath}
                     </Text>
                     {item.isDirectory && getDirectoryExcludes(item).length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                      <Space size={[4, 2]} wrap>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
                           {t('settings.ssh.directoryExcludes')}:
                         </Text>
-                        <Space size={[4, 2]} wrap>
-                          {getDirectoryExcludes(item).map((exclude) => (
-                            <Tag
-                              key={exclude}
-                              color="default"
-                              style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
-                            >
-                              {exclude}
-                            </Tag>
-                          ))}
-                        </Space>
-                      </div>
+                        {getDirectoryExcludes(item).map((exclude) => (
+                          <Tag
+                            key={exclude}
+                            color="default"
+                            style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
+                          >
+                            {exclude}
+                          </Tag>
+                        ))}
+                      </Space>
                     )}
                     {(item.cleanupPaths?.length ?? 0) > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>

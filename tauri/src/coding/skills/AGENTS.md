@@ -435,6 +435,25 @@ skills-git-cache/
    - source_revision: 新版本号
    - updated_targets: 重新同步的工具列表
 
+### 4.6.1 一键更新全部与定时自动更新
+
+为了复用单 skill 更新链路，`skills_update_managed` 的函数体被抽成内部函数 `update_managed_skill_internal(app, state, skill_id)`（含 `source_type=="central"` 分支），命令本身只做薄包装 + emit `skills-changed`。
+
+**一键更新全部：** `skills_update_all` / 内部共享 `update_all_skills_internal(app, state)`。
+
+- 遍历 `skill_store::get_managed_skills` 全部记录（含 `management_enabled=false`；禁用项 enabled_tools 为空，更新只刷新中央仓库内容、不重同步工具，安全）。
+- 逐个调用 `update_managed_skill_internal`，**顺序串行**执行（复用 git_fetcher 全局锁的串行语义，避免并发拉取同一 repo 缓存）。
+- 单个 skill 失败仅记入 `errors`，不中断其余；结束后 emit 一次 `skills-changed` 供 WSL/SSH 后续链路消费。
+- 返回 `UpdateAllResultDto { total, updated, errors }`。
+
+**定时自动更新（cron）：** 新模块 `auto_update.rs`，`auto_update::start(app)` 在 lib.rs setup 中与 `auth_refresh::start` 一同启动，用 `AtomicBool` 保证单进程只启动一次。
+
+- 配置存于 `skill_preferences`：`auto_update_enabled` / `auto_update_schedule`（5 字段 cron `分 时 日 月 周`，默认 `"0 3 * * *"`）。`auto_update::start` 每 tick 读 `skill_store::get_skill_preferences` 判断。
+- **Source of Truth：** 统一以 cron 表达式作为唯一调度事实。前端"每天定点 HH:MM"只是把时间转成 `"mm hh * * *"` 的便捷入口，不是第二套存储；预览与执行共用 `cron_utils::parse_cron` / `next_n_occurrences`（`croner`，`find_next_occurrence(&Local::now(), false)` 本地时区计算）。
+- 调度：启动约 60s 后若 enabled 先跑一次 startup pass（`last_run = now`）；之后每 60s tick 一次，`cron.find_next_occurrence(&last_run, false) <= now` 时执行 `update_all_skills_internal` 并更新 `last_run = now`。
+- 复用同一个 `update_all_skills_internal`；**定时场景只 `log::debug`，静默失败，不弹 UI 打扰用户**。非法 schedule 仅 debug 跳过（保存命令已用 `parse_cron` 校验，属兜底）。配置变更在下一 tick（≤60s）生效，无需重启。
+- **Gotcha：** `skills_set_auto_update` 保存前必须校验 cron 可解析，避免 enabled 状态下持久化坏表达式；`skills_preview_auto_update_schedule` 的 count 钳制 1..=100（默认 10）。
+
 ### 4.7 工具同步流程
 
 将技能同步到指定工具。
@@ -804,6 +823,10 @@ description: "可选的描述"
 | skills_sync_to_tool | 同步技能到工具 |
 | skills_unsync_from_tool | 取消同步 |
 | skills_update_managed | 更新技能（从源重新拉取） |
+| skills_update_all | 更新全部：遍历所有 managed skill 逐个从源更新，聚合结果，单点失败不阻断其余 |
+| skills_get_auto_update | 获取定时自动更新配置（enabled / schedule cron 表达式） |
+| skills_set_auto_update | 保存定时自动更新配置（保存前校验 cron 可解析） |
+| skills_preview_auto_update_schedule | 计算 cron 表达式最近 N 次触发时间（本地时区，count 1..=100 默认 10） |
 | skills_delete_managed | 删除技能 |
 | skills_get_onboarding_plan | 获取技能发现计划 |
 | skills_import_existing | 导入现有技能 |

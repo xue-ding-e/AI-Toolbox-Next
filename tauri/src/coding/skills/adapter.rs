@@ -340,6 +340,15 @@ pub fn from_db_skill_preferences(value: Value) -> SkillPreferences {
             .get("show_skills_in_tray")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        auto_update_enabled: value
+            .get("auto_update_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        auto_update_schedule: value
+            .get("auto_update_schedule")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "0 3 * * *".to_string()),
         updated_at: value
             .get("updated_at")
             .and_then(|v| v.as_i64())
@@ -364,6 +373,8 @@ pub fn to_skill_preferences_payload(prefs: &SkillPreferences) -> Value {
         "known_tool_versions": prefs.known_tool_versions,
         "installed_tools": prefs.installed_tools,
         "show_skills_in_tray": prefs.show_skills_in_tray,
+        "auto_update_enabled": prefs.auto_update_enabled,
+        "auto_update_schedule": prefs.auto_update_schedule,
         "updated_at": prefs.updated_at,
     })
 }
@@ -469,5 +480,40 @@ mod tests {
 
         let payload = to_skill_preferences_payload(&prefs);
         assert!(payload.get("central_repo_path").is_none());
+    }
+
+    #[test]
+    fn skill_preferences_auto_update_defaults_off_default_schedule() {
+        let missing = from_db_skill_preferences(json!({}));
+        assert!(!missing.auto_update_enabled);
+        assert_eq!(missing.auto_update_schedule, "0 3 * * *");
+
+        let explicit = from_db_skill_preferences(json!({
+            "auto_update_enabled": true,
+            "auto_update_schedule": "30 9 * * *",
+        }));
+        assert!(explicit.auto_update_enabled);
+        assert_eq!(explicit.auto_update_schedule, "30 9 * * *");
+    }
+
+    #[test]
+    fn skill_preferences_auto_update_payload_roundtrip() {
+        let mut prefs = SkillPreferences::default();
+        prefs.auto_update_enabled = true;
+        prefs.auto_update_schedule = "0 */6 * * *".to_string();
+
+        let payload = to_skill_preferences_payload(&prefs);
+        assert_eq!(
+            payload.get("auto_update_enabled").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload.get("auto_update_schedule").and_then(Value::as_str),
+            Some("0 */6 * * *")
+        );
+
+        let restored = from_db_skill_preferences(payload);
+        assert!(restored.auto_update_enabled);
+        assert_eq!(restored.auto_update_schedule, "0 */6 * * *");
     }
 }

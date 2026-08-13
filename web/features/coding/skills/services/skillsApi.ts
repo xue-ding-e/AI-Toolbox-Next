@@ -5,6 +5,8 @@ import type {
   InstallResult,
   SyncResult,
   UpdateResult,
+  UpdateAllResult,
+  AutoUpdateConfig,
   GitSkillCandidate,
   OnboardingPlan,
   SkillRepo,
@@ -150,6 +152,25 @@ export const unsyncSkillFromTool = async (
 // Update/Delete Skills
 export const updateManagedSkill = async (skillId: string): Promise<UpdateResult> => {
   return invoke<UpdateResult>('skills_update_managed', { skillId });
+};
+
+export const updateAllSkills = async (): Promise<UpdateAllResult> => {
+  return invoke<UpdateAllResult>('skills_update_all');
+};
+
+export const getAutoUpdate = async (): Promise<AutoUpdateConfig> => {
+  return invoke<AutoUpdateConfig>('skills_get_auto_update');
+};
+
+export const setAutoUpdate = async (config: AutoUpdateConfig): Promise<AutoUpdateConfig> => {
+  return invoke<AutoUpdateConfig>('skills_set_auto_update', { config });
+};
+
+export const previewAutoUpdateSchedule = async (
+  schedule: string,
+  count?: number,
+): Promise<string[]> => {
+  return invoke<string[]>('skills_preview_auto_update_schedule', { schedule, count });
 };
 
 export const deleteManagedSkill = async (

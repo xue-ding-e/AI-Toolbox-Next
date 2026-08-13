@@ -1222,6 +1222,9 @@ pub fn run() {
                 // Shared official-account OAuth refresh: startup pass + per-tool intervals.
                 coding::auth_refresh::start(app_handle.clone());
 
+                // Scheduled skills auto-update: startup pass + configurable interval.
+                coding::skills::auto_update::start(app_handle.clone());
+
                 // 注册 SSH 会话状态
                 let ssh_session = coding::ssh::SshSessionState(std::sync::Arc::new(
                     tokio::sync::Mutex::new(coding::ssh::SshSession::new()),
@@ -2358,6 +2361,10 @@ pub fn run() {
             coding::skills::skills_sync_to_tool,
             coding::skills::skills_unsync_from_tool,
             coding::skills::skills_update_managed,
+            coding::skills::skills_update_all,
+            coding::skills::skills_get_auto_update,
+            coding::skills::skills_set_auto_update,
+            coding::skills::skills_preview_auto_update_schedule,
             coding::skills::skills_delete_managed,
             coding::skills::skills_get_onboarding_plan,
             coding::skills::skills_import_existing,

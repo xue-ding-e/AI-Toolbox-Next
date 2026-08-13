@@ -41,7 +41,7 @@ import type {
 import styles from './OmpExtensionsSection.module.less';
 
 const { Text, Paragraph } = Typography;
-const PI_PACKAGES_URL = 'https://github.com/can1357/oh-my-pi';
+const PI_PACKAGES_URL = 'https://omp.sh/docs/plugins';
 
 interface RecommendedOmpExtension {
   name: string;

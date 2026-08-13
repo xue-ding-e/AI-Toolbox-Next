@@ -570,6 +570,8 @@ pub async fn get_setting(state: &SqliteDbState, key: &str) -> Result<Option<Stri
         "git_cache_cleanup_days" => Some(prefs.git_cache_cleanup_days.to_string()),
         "git_cache_ttl_secs" => Some(prefs.git_cache_ttl_secs.to_string()),
         "show_skills_in_tray" => Some(prefs.show_skills_in_tray.to_string()),
+        "auto_update_enabled" => Some(prefs.auto_update_enabled.to_string()),
+        "auto_update_schedule" => Some(prefs.auto_update_schedule.clone()),
         _ => None,
     };
 
@@ -602,6 +604,12 @@ pub async fn set_setting(state: &SqliteDbState, key: &str, value: &str) -> Resul
         }
         "show_skills_in_tray" => {
             prefs.show_skills_in_tray = value == "true";
+        }
+        "auto_update_enabled" => {
+            prefs.auto_update_enabled = value == "true";
+        }
+        "auto_update_schedule" => {
+            prefs.auto_update_schedule = value.to_string();
         }
         _ => return Err(format!("Unknown setting key: {}", key)),
     };

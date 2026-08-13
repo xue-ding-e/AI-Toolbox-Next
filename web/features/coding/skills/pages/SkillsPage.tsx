@@ -240,6 +240,7 @@ const SkillsPage: React.FC = () => {
   const [inventoryModalOpen, setInventoryModalOpen] = React.useState(false);
   const [enabledFilter, setEnabledFilter] = React.useState<SkillEnabledFilter>('all');
   const [groupToolMode, setGroupToolMode] = React.useState(false);
+  const [updatingAll, setUpdatingAll] = React.useState(false);
   const [gridColumnSetting, setGridColumnSetting] = React.useState<ManagementGridColumnSetting>('auto');
   const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<SkillViewMode>('flat');
@@ -272,6 +273,36 @@ const SkillsPage: React.FC = () => {
     hasUserSelectedViewModeRef.current = true;
     setViewMode(mode);
   }, []);
+
+  const handleUpdateAll = React.useCallback(() => {
+    Modal.confirm({
+      title: t('skills.updateAll.confirmTitle'),
+      content: t('skills.updateAll.confirmContent'),
+      okText: t('skills.updateAll.run'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setUpdatingAll(true);
+        try {
+          const result = await api.updateAllSkills();
+          await refresh();
+          if (result.errors.length === 0) {
+            message.success(t('skills.updateAll.success', { count: result.updated.length }));
+          } else {
+            message.warning(
+              t('skills.updateAll.partial', {
+                updated: result.updated.length,
+                failed: result.errors.length,
+              }),
+            );
+          }
+        } catch (error) {
+          message.error(String(error));
+        } finally {
+          setUpdatingAll(false);
+        }
+      },
+    });
+  }, [t, refresh]);
 
   const allTools = getAllTools();
 
@@ -798,6 +829,15 @@ const SkillsPage: React.FC = () => {
             onClick={() => setImportModalOpen(true)}
           >
             {t('skills.importExisting')}
+          </ManagementButton>
+          <ManagementButton
+            variant="subtle"
+            controlSize="compact"
+            icon={<RefreshCw size={14} aria-hidden="true" />}
+            disabled={updatingAll || actionLoading}
+            onClick={handleUpdateAll}
+          >
+            {t('skills.updateAll.label')}
           </ManagementButton>
           <ManagementButton
             variant="primary"

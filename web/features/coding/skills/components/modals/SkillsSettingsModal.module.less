@@ -48,6 +48,99 @@
   margin-top: 6px;
 }
 
+.scheduleControlRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.cronInput {
+  width: 150px;
+  min-width: 0;
+  flex-shrink: 1;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--color-border-secondary);
+  }
+
+  &:disabled {
+    background: var(--color-bg-layout);
+    color: var(--color-text-tertiary);
+    cursor: not-allowed;
+  }
+}
+
+.previewButton {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.timeSelect {
+  width: 56px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--color-border-secondary);
+  }
+
+  &:disabled {
+    background: var(--color-bg-layout);
+    color: var(--color-text-tertiary);
+    cursor: not-allowed;
+  }
+}
+
+.timeColon {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.previewList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.previewItem {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.previewHint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.previewError {
+  font-size: 12px;
+  color: var(--color-text-error);
+  word-break: break-all;
+}
+
 .pathRow {
   display: flex;
   align-items: center;

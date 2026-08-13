@@ -88,7 +88,18 @@
       "reasoning": true,
       "tool_call": true,
       "temperature": true,
-      "attachment": false
+      "attachment": false,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
     },
     {
       "id": "glm-5.1",
@@ -257,7 +268,18 @@
       },
       "reasoning": true,
       "tool_call": true,
-      "attachment": true
+      "attachment": true,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
     },
     {
       "id": "kimi-k2.7-code",
@@ -461,7 +483,47 @@
       "reasoning": true,
       "tool_call": true,
       "temperature": true,
-      "attachment": true
+      "attachment": true,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "contextLimit": 1000000,
+      "outputLimit": 384000,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
     },
     {
       "id": "deepseek-v4-pro",
@@ -479,7 +541,47 @@
       "reasoning": true,
       "tool_call": true,
       "temperature": true,
-      "attachment": true
+      "attachment": true,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "contextLimit": 1000000,
+      "outputLimit": 384000,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
     },
     {
       "id": "deepseek-v3.2",

@@ -61,6 +61,9 @@ sequenceDiagram
 - sliders 选项浮层的信息架构固定为“视图与筛选 / 数据管理”：即时生效的筛选、分组、模式切换使用轻量一体化 segmented；会打开 modal 或文件流程的分组管理、Inventory 导入导出使用列表 action item，并在点击时先关闭浮层再进入流程。不要把 action item 重新做成 segmented 或把 segmented 包进多层线框卡片。
 - Skill 卡片不要重复展示已有上下文：所属分组只在需要补充归属的视图中弱化呈现，分组视图已有 section/header 提供归属时不要在卡片内重复。`description` 摘要、`user_note` 管理备注等可选文本渲染前先 trim，避免空白字段撑出空内容块；具体展示层级应服从当前页面设计，不把一次性视觉回滚固化为长期卡片结构规则。
 - Skill 卡片打开路径交互必须区分两个入口：中央仓库入口优先定位 `central_path/SKILL.md`，失败或缺失时 fallback 到 `central_path`；本地来源文件夹图标只打开 `source_ref`，不 fallback 到 `central_path`。启用/禁用属于低频维护动作，收进更多菜单但不能禁用恢复路径。
+- “更新全部”是 top 工具栏的全局动作（`updateAllSkills`），走后端聚合的 `skills_update_all`，确认后按 `updated/errors` 数量给出全部成功或部分失败提示；它和 grouped/selection 下的“批量刷新”（逐个 `updateManagedSkill`）不同，两者都复用后端单 skill 更新链路，但批量刷新不会聚合。更新过程中复用 `actionLoading`/`updatingAll` 禁用入口，避免重复触发。
+- 定时自动更新配置放在设置弹窗：模式分“每天定点 HH:MM”和“自定义 5 字段 cron”（`分 时 日 月 周`），统一以 cron 字符串存后端（`getAutoUpdate`/`setAutoUpdate`）。每天模式只在回填补进纯 `"mm hh * * *"` 形态时才显示为 daily，其余一律落到自定义表达式输入框。
+- 预览"最近 10 次触发时间"由前端对当前 `schedule` **防抖 300ms** 调 `previewAutoUpdateSchedule` 实时刷新；预览与执行共用后端 cron 引擎，避免两套解析器不一致。非法表达式时输入框不阻断编辑，预览区显示后端错误提示即可。实际调度由后端 `auto_update` 任务在后台静默执行，前端不监听其结果。
 
 ## 跨模块依赖
 

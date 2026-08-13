@@ -16,6 +16,7 @@ use super::central_repo::{
     to_relative_central_path,
 };
 use super::content_hash::hash_dir;
+use super::cron_utils::parse_cron;
 use super::git_fetcher::{set_proxy, GitProxyMode};
 use super::installer::{
     install_git_skill, install_git_skill_from_selection, install_local_skill,
@@ -35,14 +36,15 @@ use super::tool_adapters::{
 };
 use super::types::{
     now_ms, AdoptCentralSkillsResultDto, ApplyCentralRepoPathOptionsDto,
-    ApplyCentralRepoPathResultDto, CentralRepoConflictDto, CentralRepoMigrationCandidateDto,
-    CentralRepoPathPreviewDto, CentralRepoPathStatusDto, CentralRepoScanDto,
-    CentralRepoTargetImpactDto, CentralSkillMatchDto, CentralSkillRepairCandidateDto, CustomTool,
-    CustomToolDto, DeleteManagedSkillOptionsDto, DetectedCentralSkillDto, GitSkillCandidate,
-    InstallResultDto, ManagedSkillDto, ManagedSkillSummaryDto, OnboardingPlan, Skill,
-    SkillGroupDto, SkillGroupRecord, SkillInventoryGroupJson, SkillInventoryJson,
-    SkillInventoryPreviewDto, SkillInventorySkillJson, SkillRepo, SkillRepoDto, SkillTarget,
-    SkillTargetDto, SyncResultDto, ToolInfoDto, ToolStatusDto, UpdateResultDto,
+    ApplyCentralRepoPathResultDto, AutoUpdateConfigDto, CentralRepoConflictDto,
+    CentralRepoMigrationCandidateDto, CentralRepoPathPreviewDto, CentralRepoPathStatusDto,
+    CentralRepoScanDto, CentralRepoTargetImpactDto, CentralSkillMatchDto,
+    CentralSkillRepairCandidateDto, CustomTool, CustomToolDto, DeleteManagedSkillOptionsDto,
+    DetectedCentralSkillDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
+    ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillGroupDto, SkillGroupRecord,
+    SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
+    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
+    ToolStatusDto, UpdateAllErrorDto, UpdateAllResultDto, UpdateResultDto,
 };
 use crate::coding::runtime_location;
 use crate::http_client;
@@ -1818,30 +1820,29 @@ pub async fn skills_unsync_from_tool<R: Runtime>(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn skills_update_managed(
-    app: tauri::AppHandle,
-    state: State<'_, SqliteDbState>,
-    skillId: String,
+/// Update a single managed skill from its source (shared by single update and bulk update).
+async fn update_managed_skill_internal(
+    app: &tauri::AppHandle,
+    state: &State<'_, SqliteDbState>,
+    skill_id: &str,
 ) -> Result<UpdateResultDto, String> {
-    if let Some(mut skill) = skill_store::get_skill_by_id(&state, &skillId).await? {
+    if let Some(mut skill) = skill_store::get_skill_by_id(state, skill_id).await? {
         if skill.source_type == "central" {
-            let source_path = resolve_skill_source_path(&app, &state, &skill).await?;
+            let source_path = resolve_skill_source_path(app, state, &skill).await?;
             if !source_path.is_dir() {
                 return Err(format!(
                     "Central Skill source path is missing or not a directory: {}",
                     source_path.display()
                 ));
             }
-            refresh_central_skill_hash_if_needed(&state, &mut skill, &source_path).await?;
+            refresh_central_skill_hash_if_needed(state, &mut skill, &source_path).await?;
 
-            let custom_tools = skill_store::get_custom_tools(&state)
-                .await
-                .unwrap_or_default();
+            let custom_tools = skill_store::get_custom_tools(state).await.unwrap_or_default();
             let mut updated_targets = Vec::new();
             let mut sync_errors = Vec::new();
             for tool in skill.enabled_tools.clone() {
                 match sync_skill_to_tool_record(
-                    &state,
+                    state,
                     &skill,
                     &tool,
                     &source_path,
@@ -1861,7 +1862,6 @@ pub async fn skills_update_managed(
                 ));
             }
 
-            let _ = app.emit("skills-changed", "window");
             return Ok(UpdateResultDto {
                 skill_id: skill.id,
                 name: skill.name,
@@ -1872,12 +1872,9 @@ pub async fn skills_update_managed(
         }
     }
 
-    let res = update_managed_skill_from_source(&app, &state, &skillId)
+    let res = update_managed_skill_from_source(app, state, skill_id)
         .await
         .map_err(|e| format_error(e))?;
-
-    // Emit skills-changed for WSL sync
-    let _ = app.emit("skills-changed", "window");
 
     Ok(UpdateResultDto {
         skill_id: res.skill_id,
@@ -1886,6 +1883,61 @@ pub async fn skills_update_managed(
         source_revision: res.source_revision,
         updated_targets: res.updated_targets,
     })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_update_managed(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+    skillId: String,
+) -> Result<UpdateResultDto, String> {
+    let res = update_managed_skill_internal(&app, &state, &skillId).await?;
+
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
+
+    Ok(res)
+}
+
+/// Run an update pass over all managed skills, aggregating per-skill results. Shared by
+/// the one-click command and the scheduled auto-update task. Emits `skills-changed` once.
+pub(crate) async fn update_all_skills_internal(
+    app: &tauri::AppHandle,
+    state: &State<'_, SqliteDbState>,
+) -> Result<UpdateAllResultDto, String> {
+    let skills = skill_store::get_managed_skills(state).await?;
+    let total = skills.len();
+    let mut updated = Vec::new();
+    let mut errors = Vec::new();
+
+    for skill in skills {
+        match update_managed_skill_internal(app, state, &skill.id).await {
+            Ok(result) => updated.push(result),
+            Err(error) => errors.push(UpdateAllErrorDto {
+                skill_id: skill.id.clone(),
+                name: skill.name.clone(),
+                error,
+            }),
+        }
+    }
+
+    // Emit skills-changed once after the whole pass for WSL sync
+    let _ = app.emit("skills-changed", "window");
+
+    Ok(UpdateAllResultDto {
+        total,
+        updated,
+        errors,
+    })
+}
+
+#[tauri::command]
+pub async fn skills_update_all(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+) -> Result<UpdateAllResultDto, String> {
+    update_all_skills_internal(&app, &state).await
 }
 
 #[tauri::command]
@@ -2027,6 +2079,46 @@ pub async fn skills_get_git_cache_path(app: tauri::AppHandle) -> Result<String, 
         std::fs::create_dir_all(&cache_path).map_err(|e| e.to_string())?;
     }
     Ok(cache_path.to_string_lossy().to_string())
+}
+
+// --- Auto Update ---
+
+#[tauri::command]
+pub async fn skills_get_auto_update(
+    state: State<'_, SqliteDbState>,
+) -> Result<AutoUpdateConfigDto, String> {
+    let prefs = skill_store::get_skill_preferences(&state).await?;
+    Ok(AutoUpdateConfigDto {
+        enabled: prefs.auto_update_enabled,
+        schedule: prefs.auto_update_schedule,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_set_auto_update(
+    state: State<'_, SqliteDbState>,
+    config: AutoUpdateConfigDto,
+) -> Result<AutoUpdateConfigDto, String> {
+    let schedule = config.schedule.trim().to_string();
+    // Validate before persisting so an enabled config never holds a broken schedule.
+    parse_cron(&schedule)?;
+    skill_store::set_setting(&state, "auto_update_enabled", &config.enabled.to_string()).await?;
+    skill_store::set_setting(&state, "auto_update_schedule", &schedule).await?;
+    Ok(AutoUpdateConfigDto {
+        enabled: config.enabled,
+        schedule,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_preview_auto_update_schedule(
+    schedule: String,
+    count: Option<u32>,
+) -> Result<Vec<String>, String> {
+    let count = (count.unwrap_or(10)).clamp(1, 100) as usize;
+    super::cron_utils::next_n_occurrences(&schedule, count)
 }
 
 // --- Preferred Tools ---

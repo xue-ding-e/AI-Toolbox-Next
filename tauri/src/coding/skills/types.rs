@@ -81,6 +81,8 @@ pub struct SkillPreferences {
     pub known_tool_versions: Option<Value>,
     pub installed_tools: Option<Vec<String>>, // Detected installed tools
     pub show_skills_in_tray: bool,            // Show skills in system tray quick menu
+    pub auto_update_enabled: bool,            // Enable scheduled auto-update of all skills
+    pub auto_update_schedule: String,         // 5-field cron expression (min hour dom mon dow)
     pub updated_at: i64,
 }
 
@@ -95,6 +97,8 @@ impl Default for SkillPreferences {
             known_tool_versions: None,
             installed_tools: None,
             show_skills_in_tray: false,
+            auto_update_enabled: false,
+            auto_update_schedule: "0 3 * * *".to_string(),
             updated_at: 0,
         }
     }
@@ -389,6 +393,30 @@ pub struct UpdateResultDto {
     pub content_hash: Option<String>,
     pub source_revision: Option<String>,
     pub updated_targets: Vec<String>,
+}
+
+/// DTO for a single failed skill during a bulk update
+#[derive(Debug, Serialize)]
+pub struct UpdateAllErrorDto {
+    pub skill_id: String,
+    pub name: String,
+    pub error: String,
+}
+
+/// DTO for update-all result
+#[derive(Debug, Serialize)]
+pub struct UpdateAllResultDto {
+    pub total: usize,
+    pub updated: Vec<UpdateResultDto>,
+    pub errors: Vec<UpdateAllErrorDto>,
+}
+
+/// DTO for scheduled auto-update configuration
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdateConfigDto {
+    pub enabled: bool,
+    pub schedule: String,
 }
 
 /// Git skill candidate for multi-skill repos

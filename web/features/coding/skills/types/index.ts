@@ -90,6 +90,23 @@ export interface UpdateResult {
   updated_targets: string[];
 }
 
+export interface UpdateAllError {
+  skill_id: string;
+  name: string;
+  error: string;
+}
+
+export interface UpdateAllResult {
+  total: number;
+  updated: UpdateResult[];
+  errors: UpdateAllError[];
+}
+
+export interface AutoUpdateConfig {
+  enabled: boolean;
+  schedule: string;
+}
+
 export interface GitSkillCandidate {
   name: string;
   description: string | null;

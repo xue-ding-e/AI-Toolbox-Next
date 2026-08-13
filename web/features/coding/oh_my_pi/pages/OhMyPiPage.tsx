@@ -1781,7 +1781,7 @@ const OhMyPiPage: React.FC = () => {
                   className={styles.headerLink}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void openUrl('https://pi.dev/docs/latest/quickstart');
+                    void openUrl('https://omp.sh/docs');
                   }}
                 >
                   <LinkOutlined /> {t('ohMyPi.viewDocs')}

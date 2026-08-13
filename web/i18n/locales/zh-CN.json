@@ -3353,7 +3353,30 @@
     },
     "groupCentral": "全局目录 Skills",
     "sourceCentral": "全局目录",
-    "sourceFolderMissing": "原始来源目录不存在，可能已被移动或删除"
+    "sourceFolderMissing": "原始来源目录不存在，可能已被移动或删除",
+    "updateAll": {
+      "label": "更新全部",
+      "confirmTitle": "更新全部技能",
+      "confirmContent": "将从各自的来源遍历更新所有已管理的技能（包括 Git、本地和中央仓库），单个失败不会中断其余。是否继续？",
+      "run": "更新",
+      "success": "已更新 {{count}} 个技能",
+      "partial": "更新完成：{{updated}} 个成功，{{failed}} 个失败"
+    },
+    "autoUpdate": {
+      "enabled": "自动更新",
+      "enabledHint": "定期自动从各自来源更新所有已管理技能；仅在后台静默执行，失败不打扰。",
+      "schedule": "更新计划",
+      "modeDaily": "每天",
+      "modeCron": "自定义",
+      "hour": "小时",
+      "minute": "分钟",
+      "cronHint": "5 字段 cron：分 时 日 月 周，例如 30 9 * * *。",
+      "previewTitle": "最近 10 次触发时间",
+      "previewLoading": "计算中…",
+      "previewEmpty": "输入有效计划后这里会显示触发时间。",
+      "preview": "预览",
+      "dailyHint": "每天在所选时间自动更新。"
+    }
   },
   "mcp": {
     "title": "MCP 管理",

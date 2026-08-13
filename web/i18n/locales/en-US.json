@@ -3356,7 +3356,30 @@
     },
     "groupCentral": "Global directory Skills",
     "sourceCentral": "Global directory",
-    "sourceFolderMissing": "Original source folder not found. It may have been moved or deleted."
+    "sourceFolderMissing": "Original source folder not found. It may have been moved or deleted.",
+    "updateAll": {
+      "label": "Update all",
+      "confirmTitle": "Update all skills",
+      "confirmContent": "This will update all managed skills from their sources (Git, local, and central). A single failure won't stop the rest. Continue?",
+      "run": "Update",
+      "success": "Updated {{count}} skills",
+      "partial": "Update finished: {{updated}} succeeded, {{failed}} failed"
+    },
+    "autoUpdate": {
+      "enabled": "Auto-update",
+      "enabledHint": "Periodically update all managed skills from their sources; runs silently in the background and never interrupts on failure.",
+      "schedule": "Schedule",
+      "modeDaily": "Daily",
+      "modeCron": "Custom",
+      "hour": "Hour",
+      "minute": "Minute",
+      "cronHint": "5-field cron: minute hour day month weekday, e.g. 30 9 * * *.",
+      "previewTitle": "Next 10 trigger times",
+      "previewLoading": "Computing…",
+      "previewEmpty": "Enter a valid schedule to see trigger times here.",
+      "preview": "Preview",
+      "dailyHint": "Runs every day at the selected time."
+    }
   },
   "mcp": {
     "title": "MCP Management",

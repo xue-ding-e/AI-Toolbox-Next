@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, InputNumber, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch, Radio, Alert } from 'antd';
-import { FolderOpenOutlined, DeleteOutlined, PlusOutlined, ClearOutlined, ReloadOutlined, SwapOutlined } from '@ant-design/icons';
+import { FolderOpenOutlined, DeleteOutlined, PlusOutlined, ClearOutlined, ReloadOutlined, SwapOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -13,6 +13,10 @@ import {
   type ManagementGridColumnSetting,
 } from '@/features/coding/shared/management';
 import styles from './SkillsSettingsModal.module.less';
+
+const pad2 = (value: number) => String(value).padStart(2, '0');
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => pad2(i));
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) => pad2(i));
 
 interface SkillsSettingsModalProps {
   open: boolean;
@@ -56,6 +60,15 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
   const [defaultViewMode, setDefaultViewMode] = React.useState<SkillViewMode>('flat');
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = React.useState(false);
+  const [scheduleMode, setScheduleMode] = React.useState<'daily' | 'cron'>('daily');
+  const [dailyHour, setDailyHour] = React.useState('09');
+  const [dailyMinute, setDailyMinute] = React.useState('30');
+  const [cronExpr, setCronExpr] = React.useState('0 3 * * *');
+  const [previewTimes, setPreviewTimes] = React.useState<string[]>([]);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [showClearAllModal, setShowClearAllModal] = React.useState(false);
   const [clearAllConfirmText, setClearAllConfirmText] = React.useState('');
   const [clearingAll, setClearingAll] = React.useState(false);
@@ -67,6 +80,19 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
     api.getShowSkillsInTray().then(setShowInTray).catch(console.error);
     api.getDefaultViewMode().then(setDefaultViewMode).catch(console.error);
+    api.getAutoUpdate().then((config) => {
+      setAutoUpdateEnabled(config.enabled);
+      const match = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(config.schedule.trim());
+      if (match) {
+        // Cron fits the "daily at HH:MM" shape -> show it in the daily preset.
+        setScheduleMode('daily');
+        setDailyHour(String(Number(match[2])).padStart(2, '0'));
+        setDailyMinute(String(Number(match[1])).padStart(2, '0'));
+      } else {
+        setScheduleMode('cron');
+        setCronExpr(config.schedule.trim());
+      }
+    }).catch(console.error);
     loadCustomTools();
     loadSkills();
 
@@ -264,12 +290,39 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     return [...installedBuiltin, ...customToolItems, ...notInstalledBuiltin];
   }, [allTools, customTools]);
 
+  const effectiveSchedule = React.useMemo(() => {
+    return scheduleMode === 'daily'
+      ? `${dailyMinute} ${dailyHour} * * *`
+      : cronExpr.trim();
+  }, [scheduleMode, dailyHour, dailyMinute, cronExpr]);
+
+  // Fetch the next 10 trigger times from the backend cron engine when the
+  // preview modal opens.
+  const handleOpenPreview = async () => {
+    setPreviewModalOpen(true);
+    setPreviewLoading(true);
+    setPreviewTimes([]);
+    setPreviewError(null);
+    try {
+      const times = await api.previewAutoUpdateSchedule(effectiveSchedule, 10);
+      setPreviewTimes(times);
+    } catch (error) {
+      setPreviewError(String(error));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setLoading(true);
     try {
       await api.setGitCacheCleanupDays(cleanupDays);
       await api.setPreferredTools(preferredTools);
       await api.setDefaultViewMode(defaultViewMode);
+      await api.setAutoUpdate({
+        enabled: autoUpdateEnabled,
+        schedule: effectiveSchedule,
+      });
       await loadToolStatus(); // Refresh global store
       onDefaultViewModeApply?.(defaultViewMode);
       message.success(t('common.success'));
@@ -511,6 +564,84 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
             <Radio value="grouped">{t('skills.viewGrouped')}</Radio>
           </Radio.Group>
           <p className={styles.hint}>{t('skills.defaultViewModeHint')}</p>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('skills.autoUpdate.enabled')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <Switch checked={autoUpdateEnabled} onChange={setAutoUpdateEnabled} />
+          <p className={styles.hint}>{t('skills.autoUpdate.enabledHint')}</p>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('skills.autoUpdate.schedule')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <div className={styles.scheduleControlRow}>
+            <Radio.Group
+              value={scheduleMode}
+              disabled={!autoUpdateEnabled}
+              onChange={(event) => setScheduleMode(event.target.value)}
+            >
+              <Radio value="daily">{t('skills.autoUpdate.modeDaily')}</Radio>
+              <Radio value="cron">{t('skills.autoUpdate.modeCron')}</Radio>
+            </Radio.Group>
+            {scheduleMode === 'daily' ? (
+              <>
+                <select
+                  className={styles.timeSelect}
+                  value={dailyHour}
+                  disabled={!autoUpdateEnabled}
+                  onChange={(e) => setDailyHour(e.target.value)}
+                  aria-label={t('skills.autoUpdate.hour')}
+                >
+                  {HOUR_OPTIONS.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                <span className={styles.timeColon} aria-hidden="true">:</span>
+                <select
+                  className={styles.timeSelect}
+                  value={dailyMinute}
+                  disabled={!autoUpdateEnabled}
+                  onChange={(e) => setDailyMinute(e.target.value)}
+                  aria-label={t('skills.autoUpdate.minute')}
+                >
+                  {MINUTE_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <input
+                className={styles.cronInput}
+                value={cronExpr}
+                placeholder="0 9 * * *"
+                spellCheck={false}
+                disabled={!autoUpdateEnabled}
+                onChange={(e) => setCronExpr(e.target.value)}
+              />
+            )}
+            <Button
+              size="small"
+              icon={<ClockCircleOutlined />}
+              onClick={handleOpenPreview}
+              disabled={!autoUpdateEnabled}
+              className={styles.previewButton}
+            >
+              {t('skills.autoUpdate.preview')}
+            </Button>
+          </div>
+          <p className={styles.hint}>
+            {scheduleMode === 'daily'
+              ? t('skills.autoUpdate.dailyHint')
+              : t('skills.autoUpdate.cronHint')}
+          </p>
         </div>
       </div>
 
@@ -1022,6 +1153,30 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
               {t('skills.clearAll.confirm')}
             </Button>
           </Space>
+        </div>
+      </Modal>
+
+      <Modal
+        title={t('skills.autoUpdate.previewTitle')}
+        open={previewModalOpen}
+        onCancel={() => setPreviewModalOpen(false)}
+        footer={null}
+        width={440}
+      >
+        <div className={styles.previewBody}>
+          {previewLoading ? (
+            <div className={styles.previewHint}>{t('skills.autoUpdate.previewLoading')}</div>
+          ) : previewError ? (
+            <div className={styles.previewError}>{previewError}</div>
+          ) : previewTimes.length > 0 ? (
+            <ul className={styles.previewList}>
+              {previewTimes.map((time, i) => (
+                <li key={i} className={styles.previewItem}>{time}</li>
+              ))}
+            </ul>
+          ) : (
+            <div className={styles.previewHint}>{t('skills.autoUpdate.previewEmpty')}</div>
+          )}
         </div>
       </Modal>
     </Modal>
