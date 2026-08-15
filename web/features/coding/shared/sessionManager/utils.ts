@@ -128,6 +128,8 @@ export function getToolLabel(tool: SessionMeta['providerId'], t: TFunction): str
       return t('subModules.opencode');
     case 'pi':
       return t('subModules.pi');
+    case 'dsh':
+      return t('subModules.dsh');
     case 'codex':
     default:
       return t('subModules.codex');

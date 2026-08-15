@@ -48,7 +48,10 @@ export const buildPiModelFromPreset = (
   if (cacheWriteCost !== undefined) {
     piCost.cacheWrite = cacheWriteCost;
   }
-  const thinkingLevelMap = buildPiThinkingLevelMapFromPreset(preset.variants);
+  const thinkingLevelMap = Object.fromEntries(
+    Object.entries(buildPiThinkingLevelMapFromPreset(preset.variants))
+      .filter(([, value]) => value !== null && value !== undefined && value !== ''),
+  );
 
   return {
     id: modelId,

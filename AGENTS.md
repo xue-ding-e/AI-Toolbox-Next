@@ -38,6 +38,8 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/auth_refresh/` | 官方账号 OAuth 共享调度：启动首次 + 周期 ensure_fresh（Grok/Codex/Gemini） |
 | `tauri/src/coding/claude_code/` | Claude Code 后端配置、prompt、plugin、MCP 与 WSL 同步约束 |
 | `tauri/src/coding/codex/` | Codex 后端配置、auth/config.toml、prompt、plugin 与 WSL 同步约束 |
+| `tauri/src/coding/claude_desktop/` | Claude Desktop 3P profile 配置（deploymentMode+configLibrary+_meta）、Direct 应用、快照回滚与恢复官方；网关接管由 proxy_gateway 的 GatewayCliKey::ClaudeDesktop 驱动 |
+| `tauri/src/coding/hermes/` | Hermes Agent 运行时 config.yaml 的 custom_providers/模型/MCP 可视化与同步 |
 | `tauri/src/coding/grok/` | Grok CLI 后端 provider、config/auth、官方账号、prompt、plugin 与同步约束 |
 | `tauri/src/coding/gemini_cli/` | Gemini CLI 后端配置、env/settings、prompt、usage、tray 与 WSL/SSH/备份同步约束 |
 | `tauri/src/coding/mcp/` | MCP Server 后端存储、工具配置同步、导入导出与 WSL 联动 |
@@ -55,6 +57,8 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/ssh/` | SSH 连接、文件映射、手动同步、MCP/Skills 远端同步 |
 | `tauri/resources/` | 编译期嵌入的模型默认数据资源：`preset_models.json`/`models.dev.json` 的来源、顺序语义与缓存边界 |
 | `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
+| `web/features/coding/claudedesktop/` | Claude Desktop 前端页面、provider/模型映射与通用配置交互（复用 claudecode 样式与网关接管按钮） |
+| `web/features/coding/hermes/` | Hermes 前端页面、custom_providers 与模型设置交互（复用 pi 样式） |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |

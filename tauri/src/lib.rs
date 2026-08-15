@@ -1520,6 +1520,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // dsh sync listener
+                let app_dsh = app_handle.clone();
+                let app_dsh_clone = app_dsh.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_dsh.listen("wsl-sync-request-dsh", move |_event| {
+                        let app = app_dsh_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("dsh".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
@@ -2014,6 +2039,71 @@ pub fn run() {
             coding::claude_code::get_claude_onboarding_status,
             coding::claude_code::apply_claude_onboarding_skip,
             coding::claude_code::clear_claude_onboarding_skip,
+            // Claude Desktop
+            coding::claude_desktop::get_claude_desktop_paths,
+            coding::claude_desktop::get_claude_desktop_status,
+            coding::claude_desktop::get_claude_desktop_preview,
+            coding::claude_desktop::list_claude_desktop_providers,
+            coding::claude_desktop::create_claude_desktop_provider,
+            coding::claude_desktop::update_claude_desktop_provider,
+            coding::claude_desktop::toggle_claude_desktop_provider_disabled,
+            coding::claude_desktop::delete_claude_desktop_provider,
+            coding::claude_desktop::reorder_claude_desktop_providers,
+            coding::claude_desktop::select_claude_desktop_provider,
+            coding::claude_desktop::apply_claude_desktop_provider,
+            coding::claude_desktop::get_claude_desktop_common_config,
+            coding::claude_desktop::save_claude_desktop_common_config,
+            coding::claude_desktop::import_claude_desktop_providers_from_claude,
+            coding::claude_desktop::ensure_claude_desktop_official_provider,
+            coding::claude_desktop::list_claude_desktop_prompt_configs,
+            coding::claude_desktop::create_claude_desktop_prompt_config,
+            coding::claude_desktop::update_claude_desktop_prompt_config,
+            coding::claude_desktop::delete_claude_desktop_prompt_config,
+            coding::claude_desktop::apply_claude_desktop_prompt_config,
+            coding::claude_desktop::reorder_claude_desktop_prompt_configs,
+            coding::claude_desktop::save_claude_desktop_local_prompt_config,
+            // Hermes
+            coding::hermes::get_hermes_default_config_dir,
+            coding::hermes::get_hermes_config_dir_without_db,
+            coding::hermes::get_hermes_root_path_info,
+            coding::hermes::get_hermes_settings_config,
+            coding::hermes::save_hermes_settings_config,
+            coding::hermes::read_hermes_runtime_config,
+            coding::hermes::save_hermes_models_provider,
+            coding::hermes::delete_hermes_runtime_provider,
+            coding::hermes::save_hermes_model_settings,
+            coding::hermes::save_hermes_other_settings,
+            coding::hermes::get_hermes_memory,
+            coding::hermes::set_hermes_memory,
+            coding::hermes::get_hermes_memory_limits,
+            coding::hermes::set_hermes_memory_enabled,
+            coding::hermes::list_hermes_prompt_configs,
+            coding::hermes::create_hermes_prompt_config,
+            coding::hermes::update_hermes_prompt_config,
+            coding::hermes::delete_hermes_prompt_config,
+            coding::hermes::apply_hermes_prompt_config,
+            coding::hermes::reorder_hermes_prompt_configs,
+            coding::hermes::save_hermes_local_prompt_config,
+            coding::dsh::get_dsh_default_config_dir,
+            coding::dsh::get_dsh_config_dir_without_db,
+            coding::dsh::get_dsh_path_info,
+            coding::dsh::get_dsh_settings_config,
+            coding::dsh::save_dsh_settings_config,
+            coding::dsh::read_dsh_runtime_config,
+            coding::dsh::save_dsh_models_provider,
+            coding::dsh::delete_dsh_runtime_provider,
+            coding::dsh::save_dsh_model_settings,
+            coding::dsh::save_dsh_credential,
+            coding::dsh::delete_dsh_credential,
+            coding::dsh::get_dsh_credential_value,
+            coding::dsh::save_dsh_other_settings,
+            coding::dsh::list_dsh_prompt_configs,
+            coding::dsh::create_dsh_prompt_config,
+            coding::dsh::update_dsh_prompt_config,
+            coding::dsh::delete_dsh_prompt_config,
+            coding::dsh::apply_dsh_prompt_config,
+            coding::dsh::reorder_dsh_prompt_configs,
+            coding::dsh::save_dsh_local_prompt_config,
             // Preset Models
             coding::preset_models::fetch_remote_preset_models,
             coding::preset_models::load_cached_preset_models,
@@ -2265,6 +2355,7 @@ pub fn run() {
             coding::open_claw::read_openclaw_config,
             coding::open_claw::save_openclaw_config,
             coding::open_claw::backup_openclaw_config,
+            coding::open_claw::scan_openclaw_config_health,
             coding::open_claw::get_openclaw_common_config,
             coding::open_claw::save_openclaw_common_config,
             coding::open_claw::get_openclaw_agents_defaults,

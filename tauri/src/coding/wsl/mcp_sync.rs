@@ -84,6 +84,12 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
     let skip_omp = direct_statuses
         .iter()
         .any(|status| status.module == "oh_my_pi" && status.is_wsl_direct);
+    let skip_claude_desktop = direct_statuses
+        .iter()
+        .any(|status| status.module == "claude_desktop" && status.is_wsl_direct);
+    let skip_hermes = direct_statuses
+        .iter()
+        .any(|status| status.module == "hermes" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -150,6 +156,8 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                         skip_geminicli,
                         skip_pi,
                         skip_omp,
+                        skip_claude_desktop,
+                        skip_hermes,
                     )
                 })
                 .collect();
@@ -338,6 +346,8 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "geminicli-settings"
             | "pi-mcp"
             | "omp-mcp"
+            | "hermes-config"
+            | "claude-desktop-config"
     )
 }
 
@@ -349,6 +359,8 @@ fn should_skip_mapped_mcp_config_file_for_wsl_direct(
     skip_geminicli: bool,
     skip_pi: bool,
     skip_omp: bool,
+    skip_claude_desktop: bool,
+    skip_hermes: bool,
 ) -> bool {
     (module == "opencode" && skip_opencode)
         || (module == "codex" && skip_codex)
@@ -356,6 +368,8 @@ fn should_skip_mapped_mcp_config_file_for_wsl_direct(
         || (module == "geminicli" && skip_geminicli)
         || (module == "pi" && skip_pi)
         || (module == "oh_my_pi" && skip_omp)
+        || (module == "claude_desktop" && skip_claude_desktop)
+        || (module == "hermes" && skip_hermes)
 }
 
 /// Strip cmd /c from WSL MCP config file after sync.
@@ -378,7 +392,10 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
                 return Ok(());
             }
         }
-        "geminicli" | "pi" | "oh_my_pi" => command_normalize::process_claude_json(&content, false)?,
+        "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
+            command_normalize::process_claude_json(&content, false)?
+        }
+        // Hermes config.yaml is YAML; no cmd /c normalization is applied.
         _ => return Ok(()),
     };
 
@@ -422,26 +439,26 @@ mod tests {
     #[test]
     fn skips_pi_mcp_file_mapping_when_pi_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, true, false,
+            "pi", false, false, false, false, true, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, false, false,
+            "pi", false, false, false, false, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "codex", false, false, false, false, true, false,
+            "codex", false, false, false, false, true, false, false, false,
         ));
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "oh_my_pi", false, false, false, false, false, true,
+            "oh_my_pi", false, false, false, false, false, true, false, false,
         ));
     }
 
     #[test]
     fn skips_grok_mcp_file_mapping_when_grok_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, true, false, false, false,
+            "grok", false, false, true, false, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, false, false, false, false,
+            "grok", false, false, false, false, false, false, false, false,
         ));
         assert!(is_mapped_mcp_config_file("grok-config"));
     }

@@ -49,6 +49,9 @@ fn import_session_usage_blocking(
             GatewayCliKey::Gemini,
         ],
         GatewaySessionImportCli::Claude => vec![GatewayCliKey::Claude],
+        // Claude Desktop has no CLI-style session log import; routed to an empty
+        // scan so it compiles exhaustively but stays a no-op.
+        GatewaySessionImportCli::ClaudeDesktop => vec![GatewayCliKey::ClaudeDesktop],
         GatewaySessionImportCli::Codex => vec![GatewayCliKey::Codex],
         GatewaySessionImportCli::Grok => vec![GatewayCliKey::Grok],
         GatewaySessionImportCli::Gemini => vec![GatewayCliKey::Gemini],
@@ -154,7 +157,8 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<Path
                 push_unique(&mut roots, home.join(".gemini").join("tmp"));
             }
         }
-        GatewayCliKey::OpenCode => {}
+        // Claude Desktop has no CLI-style session log roots to scan.
+        GatewayCliKey::ClaudeDesktop | GatewayCliKey::OpenCode => {}
     }
     roots
 }

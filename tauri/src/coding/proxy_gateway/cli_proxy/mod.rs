@@ -12,7 +12,10 @@ use super::types::{
     GatewayManagedTarget, GatewayProxyMode, ProviderPriorityEntry, ProxyGatewaySettings,
     ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
+use crate::coding::claude_desktop::config_writer as claude_desktop_config_writer;
 use crate::coding::runtime_location::{self, RuntimeLocationMode};
+use crate::db::helpers::db_get;
+use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -23,10 +26,10 @@ use toml_edit::{value, DocumentMut, Item};
 
 const GATEWAY_PROVIDER_ID: &str = "ai-toolbox-gateway";
 const GATEWAY_API_KEY: &str = "ai-toolbox-gateway";
-const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-4-6";
-const CLAUDE_STANDARD_HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
-const CLAUDE_STANDARD_SONNET_MODEL: &str = "claude-sonnet-4-6";
-const CLAUDE_STANDARD_OPUS_MODEL: &str = "claude-opus-4-7";
+const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-5";
+const CLAUDE_STANDARD_HAIKU_MODEL: &str = "claude-haiku-4-5";
+const CLAUDE_STANDARD_SONNET_MODEL: &str = "claude-sonnet-5";
+const CLAUDE_STANDARD_OPUS_MODEL: &str = "claude-opus-5";
 const CLAUDE_STANDARD_FABLE_MODEL: &str = "claude-fable-5";
 const CLAUDE_SETTINGS_KIND: &str = "claude_settings_json";
 const CODEX_CONFIG_KIND: &str = "codex_config_toml";
@@ -34,6 +37,38 @@ const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GROK_CONFIG_KIND: &str = "grok_config_toml";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
+const DESKTOP_NORMAL_CONFIG_KIND: &str = "claude_desktop_normal_config_json";
+const DESKTOP_THREEP_CONFIG_KIND: &str = "claude_desktop_threep_config_json";
+const DESKTOP_PROFILE_KIND: &str = "claude_desktop_profile_json";
+const DESKTOP_META_KIND: &str = "claude_desktop_meta_json";
+
+// Claude Desktop's gateway-managed fields, expressed as JSON paths so the
+// manifest tracks what the gateway owns per file.
+const DESKTOP_NORMAL_MANAGED_FIELDS: [&str; 1] = ["deploymentMode"];
+
+const DESKTOP_THREEP_MANAGED_FIELDS: [&str; 6] = [
+    "deploymentMode",
+    "enterpriseConfig.disableDeploymentModeChooser",
+    "enterpriseConfig.inferenceGatewayApiKey",
+    "enterpriseConfig.inferenceGatewayAuthScheme",
+    "enterpriseConfig.inferenceGatewayBaseUrl",
+    "enterpriseConfig.inferenceProvider",
+];
+
+// The on-disk 3P profile file is wholly owned by the gateway.
+const DESKTOP_PROFILE_MANAGED_FIELDS: [&str; 5] = [
+    "inferenceGatewayApiKey",
+    "inferenceGatewayBaseUrl",
+    "inferenceProvider",
+    "inferenceModels",
+    "coworkEgressAllowedHosts",
+];
+
+const DESKTOP_META_MANAGED_FIELDS: [&str; 2] = ["appliedId", "entries"];
+
+/// Sentinel token written into Claude Desktop's 3P profile auth so the gateway
+/// profile remains syntactically complete; the local gateway does not require it.
+const DESKTOP_GATEWAY_API_KEY: &str = GATEWAY_API_KEY;
 
 const CLAUDE_MANAGED_FIELDS: [&str; 12] = [
     "env.ANTHROPIC_BASE_URL",
@@ -440,6 +475,7 @@ pub async fn engage_single_cli(
     write_manifest(paths, cli_key, &manifest)?;
     let codex_auth_backup_content = codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
     if let Err(error) = apply_gateway_config(
+        db,
         cli_key,
         &mut targets,
         &effective_origin,
@@ -489,6 +525,7 @@ pub async fn engage_failover_cli(
         let codex_auth_backup_content =
             codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
         if let Err(error) = apply_gateway_config(
+            db,
             cli_key,
             &mut targets,
             &manifest.base_origin,
@@ -500,6 +537,7 @@ pub async fn engage_failover_cli(
         ) {
             // Roll back half-applied failover fields to the single-mode gateway config.
             let _ = apply_gateway_config(
+                db,
                 cli_key,
                 &mut targets,
                 &manifest.base_origin,
@@ -546,6 +584,7 @@ pub async fn disengage_failover_cli(
         let codex_auth_backup_content =
             codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
         apply_gateway_config(
+            db,
             cli_key,
             &mut targets,
             &manifest.base_origin,
@@ -777,7 +816,11 @@ pub async fn ensure_proxyable_provider(
 fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
     matches!(
         cli_key,
-        GatewayCliKey::Claude | GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::Gemini
+        GatewayCliKey::Claude
+            | GatewayCliKey::ClaudeDesktop
+            | GatewayCliKey::Codex
+            | GatewayCliKey::Grok
+            | GatewayCliKey::Gemini
     )
 }
 
@@ -785,6 +828,41 @@ async fn resolve_targets(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
 ) -> Result<CliProxyTargets, String> {
+    // Claude Desktop is a config-file-path module (not a CLI root dir): it owns
+    // four on-disk files (normal + 3p config, profile, meta). There is no WSL
+    // Direct variant, so is_wsl_direct stays false.
+    if cli_key == GatewayCliKey::ClaudeDesktop {
+        let desktop = claude_desktop_config_writer::current_platform_paths()
+            .map_err(|error| format!("Claude Desktop: {error}"))?;
+        let files = vec![
+            CliProxyTarget {
+                kind: DESKTOP_NORMAL_CONFIG_KIND,
+                path: desktop.normal_config_path,
+                managed_fields: static_managed_fields(&DESKTOP_NORMAL_MANAGED_FIELDS),
+            },
+            CliProxyTarget {
+                kind: DESKTOP_THREEP_CONFIG_KIND,
+                path: desktop.threep_config_path,
+                managed_fields: static_managed_fields(&DESKTOP_THREEP_MANAGED_FIELDS),
+            },
+            CliProxyTarget {
+                kind: DESKTOP_PROFILE_KIND,
+                path: desktop.profile_path,
+                managed_fields: static_managed_fields(&DESKTOP_PROFILE_MANAGED_FIELDS),
+            },
+            CliProxyTarget {
+                kind: DESKTOP_META_KIND,
+                path: desktop.meta_path,
+                managed_fields: static_managed_fields(&DESKTOP_META_MANAGED_FIELDS),
+            },
+        ];
+        return Ok(CliProxyTargets {
+            runtime_root: desktop.config_library_path,
+            is_wsl_direct: false,
+            files,
+        });
+    }
+
     let location = match cli_key {
         GatewayCliKey::Claude => runtime_location::get_claude_runtime_location_async(db).await?,
         GatewayCliKey::Codex => runtime_location::get_codex_runtime_location_async(db).await?,
@@ -796,6 +874,9 @@ async fn resolve_targets(
             return Err(
                 "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
             )
+        }
+        GatewayCliKey::ClaudeDesktop => {
+            unreachable!("ClaudeDesktop is handled by the early return in resolve_targets")
         }
     };
     let is_wsl_direct = location.mode == RuntimeLocationMode::WslDirect;
@@ -838,6 +919,9 @@ async fn resolve_targets(
             },
         ],
         GatewayCliKey::OpenCode => Vec::new(),
+        GatewayCliKey::ClaudeDesktop => {
+            unreachable!("ClaudeDesktop is handled by the early return in resolve_targets")
+        }
     };
 
     Ok(CliProxyTargets {
@@ -1340,6 +1424,7 @@ fn sync_manifest_managed_fields(manifest: &mut CliProxyManifest, targets: &CliPr
 }
 
 fn apply_gateway_config(
+    db: &SqliteDbState,
     cli_key: GatewayCliKey,
     targets: &mut CliProxyTargets,
     base_origin: &str,
@@ -1361,6 +1446,24 @@ fn apply_gateway_config(
                 mode == GatewayProxyMode::Failover,
                 claude_backup_content,
             )
+        }
+        GatewayCliKey::ClaudeDesktop => {
+            let Some(primary_provider) = primary_provider else {
+                return Err("Claude Desktop Gateway proxy requires a primary provider".to_string());
+            };
+            log::warn!("[desktop-gateway] apply_gateway_config entry");
+            let model_specs = desktop_gateway_model_specs(db, &primary_provider.id)?;
+            log::warn!(
+                "[desktop-gateway] model_specs count = {}",
+                model_specs.len()
+            );
+            let result = apply_desktop_gateway_config(
+                targets,
+                &cli_gateway_endpoint(cli_key, base_origin),
+                model_specs,
+            );
+            log::warn!("[desktop-gateway] apply_desktop_gateway_config result = {:?}", result.is_ok());
+            result
         }
         GatewayCliKey::Codex => {
             let provider_id = patch_codex_config(
@@ -1414,6 +1517,11 @@ fn restore_gateway_config(
                 path,
                 backup_content(paths, cli_key, manifest, CLAUDE_SETTINGS_KIND)?.as_deref(),
             )
+        }
+        GatewayCliKey::ClaudeDesktop => {
+            let desktop = claude_desktop_config_writer::current_platform_paths()
+                .map_err(|error| format!("Claude Desktop: {error}"))?;
+            claude_desktop_config_writer::restore_official(&desktop)
         }
         GatewayCliKey::Codex => {
             let config_path = required_target_path(targets, CODEX_CONFIG_KIND)?;
@@ -1509,6 +1617,9 @@ fn current_cli_gateway_endpoint(
         GatewayCliKey::Claude => {
             current_claude_gateway_endpoint(required_target_path(targets, CLAUDE_SETTINGS_KIND)?)
         }
+        GatewayCliKey::ClaudeDesktop => current_claude_desktop_gateway_endpoint(
+            required_target_path(targets, DESKTOP_PROFILE_KIND)?,
+        ),
         GatewayCliKey::Codex => {
             current_codex_gateway_endpoint(required_target_path(targets, CODEX_CONFIG_KIND)?)
         }
@@ -1526,6 +1637,7 @@ fn cli_gateway_endpoint(cli_key: GatewayCliKey, base_origin: &str) -> String {
     let base_origin = base_origin.trim_end_matches('/');
     match cli_key {
         GatewayCliKey::Claude => format!("{base_origin}/anthropic"),
+        GatewayCliKey::ClaudeDesktop => format!("{base_origin}/claude-desktop"),
         GatewayCliKey::Codex => format!("{base_origin}/openai/v1"),
         GatewayCliKey::Grok => format!("{base_origin}/grok/v1"),
         GatewayCliKey::Gemini => format!("{base_origin}/gemini/v1beta"),
@@ -1544,6 +1656,69 @@ fn current_claude_gateway_endpoint(path: &Path) -> Result<Option<String>, String
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string))
+}
+
+/// Read the Claude Desktop 3P profile's `inferenceGatewayBaseUrl` (the gateway
+/// endpoint Claude Desktop is currently routed through).
+fn current_claude_desktop_gateway_endpoint(path: &Path) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = read_json_file(path)?;
+    Ok(value
+        .get("inferenceGatewayBaseUrl")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+/// Read the primary Claude Desktop provider's model routes and turn them into
+/// gateway-profile `inferenceModels` specs so the app menu shows the mapped models.
+fn desktop_gateway_model_specs(
+    db: &SqliteDbState,
+    provider_id: &str,
+) -> Result<Vec<claude_desktop_config_writer::GatewayModelSpec>, String> {
+    let raw = db.with_conn(|conn| db_get(conn, DbTable::ClaudeDesktopProvider, provider_id))?;
+    let Some(raw) = raw else {
+        log::warn!("[desktop-gateway] no provider row found for id {provider_id}");
+        return Ok(Vec::new());
+    };
+    let provider = crate::coding::claude_desktop::adapter::from_db_value_provider(raw);
+    log::warn!(
+        "[desktop-gateway] provider '{}' meta={:?}",
+        provider.name,
+        provider.meta
+    );
+    let settings_config = serde_json::from_str::<Value>(&provider.settings_config).ok();
+    Ok(claude_desktop_config_writer::desktop_proxy_model_specs(
+        provider.meta.as_ref(),
+        settings_config.as_ref(),
+    ))
+}
+
+/// Rewrite the Claude Desktop 3P files so the app is routed through the local
+/// gateway. Writes deploymentMode 3p, a gateway profile pointing at
+/// `gateway_endpoint` with a sentinel api key, applies the profile id, and
+/// surfaces the provider's mapped models in `inferenceModels`.
+fn apply_desktop_gateway_config(
+    _targets: &CliProxyTargets,
+    gateway_endpoint: &str,
+    model_specs: Vec<claude_desktop_config_writer::GatewayModelSpec>,
+) -> Result<(), String> {
+    log::warn!(
+        "[desktop-gateway] writing gateway profile with {} model specs",
+        model_specs.len()
+    );
+    let desktop = claude_desktop_config_writer::current_platform_paths()
+        .map_err(|error| format!("Claude Desktop: {error}"))?;
+    let model_specs = (!model_specs.is_empty()).then_some(model_specs.as_slice());
+    claude_desktop_config_writer::apply_gateway_proxy_profile(
+        &desktop,
+        gateway_endpoint,
+        DESKTOP_GATEWAY_API_KEY,
+        model_specs,
+    )
 }
 
 fn active_codex_model_provider_id(document: &DocumentMut) -> Option<String> {
@@ -3356,7 +3531,9 @@ base_url = "http://127.0.0.1:9999/openai/v1"
             "provider-1",
         )
         .unwrap();
+        let db = crate::db::SqliteDbState::in_memory_for_test().unwrap();
         apply_gateway_config(
+            &db,
             GatewayCliKey::Claude,
             &mut targets,
             "http://127.0.0.1:37123",

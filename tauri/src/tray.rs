@@ -25,6 +25,9 @@ use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::oh_my_pi::tray_support as omp_tray;
 use crate::coding::pi::tray_support as pi_tray;
+use crate::coding::claude_desktop::tray_support as claude_desktop_tray;
+use crate::coding::hermes::tray_support as hermes_tray;
+use crate::coding::dsh::tray_support as dsh_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
@@ -51,6 +54,9 @@ struct TrayTexts {
     openclaw_header: &'static str,
     pi_header: &'static str,
     omp_header: &'static str,
+    claude_desktop_header: &'static str,
+    hermes_header: &'static str,
+    dsh_header: &'static str,
     skills_header: &'static str,
     mcp_header: &'static str,
     no_config: &'static str,
@@ -81,6 +87,9 @@ fn tray_texts(language: &str) -> TrayTexts {
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
             omp_header: "Oh My Pi",
+            claude_desktop_header: "Claude Desktop",
+            hermes_header: "Hermes",
+            dsh_header: "DeepSeek Harness",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  No configs",
@@ -105,6 +114,9 @@ fn tray_texts(language: &str) -> TrayTexts {
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
             omp_header: "Oh My Pi",
+            claude_desktop_header: "Claude Desktop",
+            hermes_header: "Hermes",
+            dsh_header: "DeepSeek Harness",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  暂无配置",
@@ -400,6 +412,72 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if let Some(provider_id) = event_id.strip_prefix("claude_desktop_provider_") {
+                let provider_id = provider_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = claude_desktop_tray::apply_claude_desktop_provider(
+                        &app_handle,
+                        &provider_id,
+                    )
+                    .await
+                    {
+                        eprintln!("Failed to apply Claude Desktop provider: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(selection) = event_id.strip_prefix("hermes_model_") {
+                let selection = selection.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some((provider_key, model_id)) = selection.split_once('/') else {
+                        eprintln!("Invalid Hermes model tray selection: {}", selection);
+                        return;
+                    };
+                    if let Err(e) =
+                        hermes_tray::apply_hermes_model(&app_handle, provider_key, model_id).await
+                    {
+                        eprintln!("Failed to apply Hermes model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("hermes_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        hermes_tray::apply_hermes_prompt_config(&app_handle, &config_id).await
+                    {
+                        eprintln!("Failed to apply Hermes prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(selection) = event_id.strip_prefix("dsh_model_") {
+                let selection = selection.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some((provider_key, model_id)) = selection.split_once('/') else {
+                        eprintln!("Invalid dsh model tray selection: {}", selection);
+                        return;
+                    };
+                    if let Err(e) =
+                        dsh_tray::apply_dsh_model(&app_handle, provider_key, model_id).await
+                    {
+                        eprintln!("Failed to apply dsh model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("dsh_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        dsh_tray::apply_dsh_prompt_config(&app_handle, &config_id).await
+                    {
+                        eprintln!("Failed to apply dsh prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if let Some(item_id) = event_id.strip_prefix("openclaw_model_") {
                 let item_id = item_id.to_string();
                 let app_handle = app.clone();
@@ -521,6 +599,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                     "openclaw".to_string(),
                     "pi".to_string(),
                     "oh_my_pi".to_string(),
+                    "claudedesktop".to_string(),
+                    "hermes".to_string(),
+                    "dsh".to_string(),
                 ],
                 tray_texts("zh-CN"),
             )
@@ -545,6 +626,10 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let pi_enabled = is_tab_visible("pi") && pi_tray::is_enabled_for_tray(app).await;
     let omp_enabled = is_tab_visible("oh_my_pi") && omp_tray::is_enabled_for_tray(app).await;
+    let claude_desktop_enabled = is_tab_visible("claudedesktop")
+        && claude_desktop_tray::is_enabled_for_tray(app).await;
+    let hermes_enabled = is_tab_visible("hermes") && hermes_tray::is_enabled_for_tray(app).await;
+    let dsh_enabled = is_tab_visible("dsh") && dsh_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
         is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
@@ -755,6 +840,57 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     omp_prompt_data.title = texts.global_prompt.to_string();
+
+    let claude_desktop_data = if claude_desktop_enabled {
+        claude_desktop_tray::get_claude_desktop_tray_data(app).await?
+    } else {
+        claude_desktop_tray::TrayProviderData {
+            title: texts.claude_desktop_header.to_string(),
+            items: vec![],
+        }
+    };
+
+    let hermes_data = if hermes_enabled {
+        hermes_tray::get_hermes_tray_data(app).await?
+    } else {
+        hermes_tray::TrayModelData {
+            title: "默认模型".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+
+    let mut hermes_prompt_data = if hermes_enabled {
+        hermes_tray::get_hermes_prompt_tray_data(app).await?
+    } else {
+        hermes_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    hermes_prompt_data.title = texts.global_prompt.to_string();
+
+    let dsh_data = if dsh_enabled {
+        dsh_tray::get_dsh_tray_data(app).await?
+    } else {
+        dsh_tray::TrayModelData {
+            title: "默认模型".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+
+    let mut dsh_prompt_data = if dsh_enabled {
+        dsh_tray::get_dsh_prompt_tray_data(app).await?
+    } else {
+        dsh_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    dsh_prompt_data.title = texts.global_prompt.to_string();
 
     let mut skills_data = if skills_enabled {
         skills_tray::get_skills_tray_data(app).await?
@@ -1011,6 +1147,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
     let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
     let omp_has_prompt_items = omp_enabled && !omp_prompt_data.items.is_empty();
+    let claude_desktop_has_items =
+        claude_desktop_enabled && !claude_desktop_data.items.is_empty();
+    let hermes_has_items = hermes_enabled && !hermes_data.items.is_empty();
+    let hermes_has_prompt_items = hermes_enabled && !hermes_prompt_data.items.is_empty();
+    let dsh_has_items = dsh_enabled && !dsh_data.items.is_empty();
+    let dsh_has_prompt_items = dsh_enabled && !dsh_prompt_data.items.is_empty();
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
     let grok_has_section =
@@ -1019,6 +1161,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         gemini_cli_enabled && (gemini_cli_has_items || gemini_cli_has_prompt_items);
     let pi_has_section = pi_enabled && (pi_has_items || pi_has_prompt_items);
     let omp_has_section = omp_enabled && (omp_has_items || omp_has_prompt_items);
+    let claude_desktop_has_section = claude_desktop_enabled && claude_desktop_has_items;
+    let hermes_has_section = hermes_enabled && (hermes_has_items || hermes_has_prompt_items);
+    let dsh_has_section = dsh_enabled && (dsh_has_items || dsh_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
         Some(build_named_prompt_submenu(
             app,
@@ -1081,6 +1226,21 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             &omp_prompt_data,
             texts,
         )?)
+    } else {
+        None
+    };
+    let hermes_prompt_submenu = if hermes_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "hermes",
+            &hermes_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let dsh_prompt_submenu = if dsh_has_prompt_items {
+        Some(build_named_prompt_submenu(app, "dsh", &dsh_prompt_data, texts)?)
     } else {
         None
     };
@@ -1236,6 +1396,72 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     let omp_model_submenu = if omp_has_items {
         Some(build_omp_model_submenu(app, &omp_data, texts)?)
+    } else {
+        None
+    };
+
+    // Claude Desktop section (only if enabled and has items)
+    let claude_desktop_header = if claude_desktop_has_section {
+        Some(
+            MenuItem::with_id(
+                app,
+                "claude_desktop_header",
+                &claude_desktop_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    // Build Claude Desktop provider items
+    let mut claude_desktop_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if claude_desktop_has_items {
+        for item in claude_desktop_data.items {
+            let item_id = format!("claude_desktop_provider_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,
+                    item.is_selected,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            claude_desktop_items.push(menu_item);
+        }
+    }
+
+    // Hermes section (only if enabled and has items)
+    let hermes_header = if hermes_has_section {
+        Some(
+            MenuItem::with_id(app, "hermes_header", texts.hermes_header, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let hermes_model_submenu = if hermes_has_items {
+        Some(build_hermes_model_submenu(app, &hermes_data, texts)?)
+    } else {
+        None
+    };
+
+    // dsh section (only if enabled and has items)
+    let dsh_header = if dsh_has_section {
+        Some(MenuItem::with_id(app, "dsh_header", texts.dsh_header, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    let dsh_model_submenu = if dsh_has_items {
+        Some(build_dsh_model_submenu(app, &dsh_data, texts)?)
     } else {
         None
     };
@@ -1407,6 +1633,42 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = omp_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Claude Desktop section if enabled
+    if claude_desktop_has_section {
+        if let Some(ref header) = claude_desktop_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &claude_desktop_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Hermes section if enabled
+    if hermes_has_section {
+        if let Some(ref header) = hermes_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = hermes_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = hermes_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add dsh section if enabled
+    if dsh_has_section {
+        if let Some(ref header) = dsh_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = dsh_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = dsh_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -1775,6 +2037,224 @@ fn build_omp_model_submenu<R: Runtime>(
     Ok(submenu)
 }
 
+fn build_hermes_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &hermes_tray::TrayModelData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu =
+        Submenu::with_id(app, "hermes_model_submenu", &title, true).map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "hermes_model_empty", texts.no_model, false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+        return Ok(submenu);
+    }
+
+    let mut provider_map: std::collections::HashMap<
+        String,
+        (String, Vec<&hermes_tray::TrayModelItem>),
+    > = std::collections::HashMap::new();
+
+    for item in &data.items {
+        let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+        let provider_label = item
+            .display_name
+            .split(" / ")
+            .next()
+            .unwrap_or(&provider_id)
+            .to_string();
+        let entry = provider_map
+            .entry(provider_id)
+            .or_insert_with(|| (provider_label, Vec::new()));
+        entry.1.push(item);
+    }
+
+    let mut providers: Vec<(String, String, Vec<&hermes_tray::TrayModelItem>)> = provider_map
+        .into_iter()
+        .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+        .collect();
+    providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (provider_id, provider_label, mut items) in providers {
+        items.sort_by(|a, b| {
+            let a_model = a
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&a.display_name);
+            let b_model = b
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&b.display_name);
+            a_model.cmp(b_model)
+        });
+
+        let safe_provider_id: String = provider_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let provider_submenu = Submenu::with_id(
+            app,
+            format!("hermes_provider_{}_submenu", safe_provider_id),
+            &provider_label,
+            true,
+        )
+        .map_err(|e| e.to_string())?;
+
+        for item in &items {
+            let item_id = format!("hermes_model_{}", item.id);
+            let model_label = item
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&item.display_name);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                model_label,
+                !item.is_disabled,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            provider_submenu
+                .append(&menu_item)
+                .map_err(|e| e.to_string())?;
+        }
+
+        submenu
+            .append(&provider_submenu)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(submenu)
+}
+
+fn build_dsh_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &dsh_tray::TrayModelData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu =
+        Submenu::with_id(app, "dsh_model_submenu", &title, true).map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "dsh_model_empty", texts.no_model, false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+        return Ok(submenu);
+    }
+
+    let mut provider_map: std::collections::HashMap<
+        String,
+        (String, Vec<&dsh_tray::TrayModelItem>),
+    > = std::collections::HashMap::new();
+
+    for item in &data.items {
+        let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+        let provider_label = item
+            .display_name
+            .split(" / ")
+            .next()
+            .unwrap_or(&provider_id)
+            .to_string();
+        let entry = provider_map
+            .entry(provider_id)
+            .or_insert_with(|| (provider_label, Vec::new()));
+        entry.1.push(item);
+    }
+
+    let mut providers: Vec<(String, String, Vec<&dsh_tray::TrayModelItem>)> = provider_map
+        .into_iter()
+        .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+        .collect();
+    providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (provider_id, provider_label, mut items) in providers {
+        items.sort_by(|a, b| {
+            let a_model = a
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&a.display_name);
+            let b_model = b
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&b.display_name);
+            a_model.cmp(b_model)
+        });
+
+        let safe_provider_id: String = provider_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let provider_submenu = Submenu::with_id(
+            app,
+            format!("dsh_provider_{}_submenu", safe_provider_id),
+            &provider_label,
+            true,
+        )
+        .map_err(|e| e.to_string())?;
+
+        for item in &items {
+            let item_id = format!("dsh_model_{}", item.id);
+            let model_label = item
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&item.display_name);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                model_label,
+                !item.is_disabled,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            provider_submenu
+                .append(&menu_item)
+                .map_err(|e| e.to_string())?;
+        }
+
+        submenu
+            .append(&provider_submenu)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(submenu)
+}
+
 fn build_prompt_submenu<R: Runtime>(
     app: &AppHandle<R>,
     data: &opencode_tray::TrayPromptData,
@@ -2009,6 +2489,66 @@ impl NamedPromptTrayItem for gemini_cli_tray::TrayPromptItem {
 
 impl NamedPromptTrayData for gemini_cli_tray::TrayPromptData {
     type Item = gemini_cli_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for hermes_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for hermes_tray::TrayPromptData {
+    type Item = hermes_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for dsh_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for dsh_tray::TrayPromptData {
+    type Item = dsh_tray::TrayPromptItem;
 
     fn title(&self) -> &str {
         &self.title

@@ -49,7 +49,41 @@ fn resolve_special_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
     match tool.key.as_str() {
         "opencode" => crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync(),
         "github_copilot_intellij" => resolve_github_copilot_intellij_mcp_path(),
+        // MCP lives in the normal Claude Desktop config JSON (`mcpServers`).
+        "claude_desktop" => crate::coding::claude_desktop::config_writer::current_platform_paths()
+            .map(|paths| paths.normal_config_path)
+            .ok(),
+        "hermes" => resolve_hermes_mcp_config_path(),
+        "dsh" => resolve_dsh_mcp_config_path(),
         _ => None,
+    }
+}
+
+/// Resolve the dsh `settings.yaml` for the current platform.
+/// Windows: `%USERPROFILE%\.dsh\settings.yaml`; other platforms: `~/.dsh/settings.yaml`.
+fn resolve_dsh_mcp_config_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        dirs::home_dir().map(|home| home.join(".dsh").join("settings.yaml"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir().map(|home| home.join(".dsh").join("settings.yaml"))
+    }
+}
+
+/// Resolve the Hermes `config.yaml` (holds `mcp_servers`) for the current platform.
+/// Windows: `%LOCALAPPDATA%\hermes\config.yaml`; other platforms: `~/.hermes/config.yaml`.
+fn resolve_hermes_mcp_config_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_local_dir().map(|dir| dir.join("hermes").join("config.yaml"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir().map(|home| home.join(".hermes").join("config.yaml"))
     }
 }
 
@@ -62,7 +96,10 @@ pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
 
     // Some MCP targets have OS-specific paths that cannot be represented by a
     // single static storage string.
-    if matches!(tool.key.as_str(), "opencode" | "github_copilot_intellij") {
+    if matches!(
+        tool.key.as_str(),
+        "opencode" | "github_copilot_intellij" | "claude_desktop" | "hermes" | "dsh"
+    ) {
         if let Some(config_path) = resolve_mcp_config_path(tool) {
             if config_path.exists() {
                 return true;

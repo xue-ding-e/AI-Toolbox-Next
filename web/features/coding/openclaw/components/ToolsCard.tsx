@@ -4,15 +4,12 @@ import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { setOpenClawTools } from '@/services/openclawApi';
 import type { OpenClawToolsConfig } from '@/types/openclaw';
+import { OPENCLAW_PROFILE_OPTIONS } from '../constants';
 
 const { Text } = Typography;
 
-const PROFILE_OPTIONS = [
-  { value: 'default', labelKey: 'openclaw.tools.profileDefault' },
-  { value: 'strict', labelKey: 'openclaw.tools.profileStrict' },
-  { value: 'permissive', labelKey: 'openclaw.tools.profilePermissive' },
-  { value: 'custom', labelKey: 'openclaw.tools.profileCustom' },
-];
+const PROFILE_OPTIONS = OPENCLAW_PROFILE_OPTIONS;
+const DEFAULT_PROFILE = 'coding';
 
 interface Props {
   tools: OpenClawToolsConfig | null;
@@ -27,7 +24,7 @@ const formItemLayout = {
 const ToolsCard: React.FC<Props> = ({ tools, onSaved }) => {
   const { t } = useTranslation();
   const [saving, setSaving] = React.useState(false);
-  const [profile, setProfile] = React.useState('default');
+  const [profile, setProfile] = React.useState(DEFAULT_PROFILE);
   const [allowList, setAllowList] = React.useState<string[]>([]);
   const [denyList, setDenyList] = React.useState<string[]>([]);
   const [allowInput, setAllowInput] = React.useState('');

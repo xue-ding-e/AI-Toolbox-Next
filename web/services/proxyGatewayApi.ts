@@ -4,7 +4,13 @@ import type { ConnectivityTestResponse } from './opencodeApi';
 const MODEL_PRICING_REMOTE_URL =
   'https://raw.githubusercontent.com/coulsontl/ai-toolbox/main/tauri/resources/model_pricing.json';
 
-export type GatewayCliKey = 'claude' | 'codex' | 'grok' | 'gemini' | 'opencode';
+export type GatewayCliKey =
+  | 'claude'
+  | 'codex'
+  | 'grok'
+  | 'gemini'
+  | 'opencode'
+  | 'claude_desktop';
 export type GatewayPricingModelSource = 'upstream' | 'requested';
 export type GatewayProxyMode = 'single' | 'failover';
 

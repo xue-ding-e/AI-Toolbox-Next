@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use super::adapter;
 use super::types::*;
@@ -30,13 +30,20 @@ fn get_default_config_path() -> Result<String, String> {
     get_default_config_path_for_runtime()
 }
 
-/// Internal function to save config and emit events
+/// Internal function to save config and emit events.
+///
+/// 走 JSON5 round-trip 写引擎:只对发生变化的顶层节做原位替换,
+/// 保留其它节的注释与格式;带原子写、写入前备份与外部变更冲突检测。
 pub async fn apply_config_internal<R: tauri::Runtime>(
     state: tauri::State<'_, SqliteDbState>,
     app: &tauri::AppHandle<R>,
     config: OpenClawConfig,
     from_tray: bool,
 ) -> Result<(), String> {
+    use super::roundtrip;
+
+    // 先读取配置路径(需消费 state),再读取保留数。
+    let retain_count = backup_retain_count_from_state(&state);
     let config_path_str = get_openclaw_config_path(state).await?;
     let config_path = Path::new(&config_path_str);
 
@@ -48,12 +55,24 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         }
     }
 
-    // Serialize with pretty printing
-    let json_content = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+    let backup_dir = app_data_dir.join("backups").join("openclaw");
 
-    fs::write(config_path, json_content)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
+    let mut new_value = serde_json::to_value(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    roundtrip::migrate_legacy_timeout(&mut new_value);
+
+    let mut document = roundtrip::OpenClawConfigDocument::load(config_path)?;
+    let old_value: serde_json::Value = match &document.original_source {
+        Some(src) => json5::from_str(src)
+            .map_err(|e| format!("Failed to parse current config as JSON5: {}", e))?,
+        None => serde_json::json!({}),
+    };
+    document.apply_root_section_diff(&old_value, &new_value)?;
+    let _outcome = document.save(&backup_dir, retain_count)?;
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("openclaw-config-changed", payload);
@@ -63,6 +82,14 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let _ = app.emit("wsl-sync-request-openclaw", ());
 
     Ok(())
+}
+
+/// 备份保留数:`settings.auto_backup_max_keep`(0 = 不限),读取失败按不限处理。
+fn backup_retain_count_from_state(state: &SqliteDbState) -> usize {
+    match crate::settings::store::load_settings_from_sqlite_state(state) {
+        Ok(settings) if settings.auto_backup_max_keep > 0 => settings.auto_backup_max_keep as usize,
+        _ => usize::MAX,
+    }
 }
 
 /// Read and parse the config file, returning the OpenClawConfig
@@ -191,11 +218,13 @@ pub async fn save_openclaw_config<R: tauri::Runtime>(
     apply_config_internal(state, &app, config, false).await
 }
 
-/// Backup OpenClaw configuration file
+/// Backup OpenClaw configuration file to app-data `backups/openclaw` dir
 #[tauri::command]
-pub async fn backup_openclaw_config(
+pub async fn backup_openclaw_config<R: tauri::Runtime>(
     state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle<R>,
 ) -> Result<String, String> {
+    let retain_count = backup_retain_count_from_state(&state);
     let config_path_str = get_openclaw_config_path(state).await?;
     let config_path = Path::new(&config_path_str);
 
@@ -203,13 +232,44 @@ pub async fn backup_openclaw_config(
         return Err("Config file does not exist".to_string());
     }
 
-    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let backup_path_str = format!("{}.bak.{}", config_path_str, timestamp);
+    let source = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    fs::copy(config_path, &backup_path_str)
-        .map_err(|e| format!("Failed to backup config file: {}", e))?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+    let backup_path = super::roundtrip::create_openclaw_backup(
+        &source,
+        &app_data_dir.join("backups").join("openclaw"),
+        retain_count,
+    )?;
 
-    Ok(backup_path_str)
+    Ok(backup_path.display().to_string())
+}
+
+/// Scan OpenClaw config for health warnings (invalid profile, legacy timeout, …)
+#[tauri::command]
+pub async fn scan_openclaw_config_health(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<Vec<OpenClawHealthWarning>, String> {
+    let config_path_str = get_openclaw_config_path(state).await?;
+    let config_path = Path::new(&config_path_str);
+
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let mut warnings = super::roundtrip::scan_openclaw_health_from_source(&content);
+    for warning in warnings.iter_mut() {
+        if warning.code == "config_parse_failed" && warning.path.is_none() {
+            warning.path = Some(config_path_str.clone());
+        }
+    }
+    Ok(warnings)
 }
 
 // ============================================================================

@@ -5,7 +5,9 @@ use toml_edit::{DocumentMut, Item};
 
 pub(crate) fn native_cli_protocol(cli_key: GatewayCliKey) -> Option<AiProtocol> {
     match cli_key {
-        GatewayCliKey::Claude => Some(AiProtocol::AnthropicMessages),
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
+            Some(AiProtocol::AnthropicMessages)
+        }
         GatewayCliKey::Codex => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Grok => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Gemini => Some(AiProtocol::GeminiNative),
@@ -80,6 +82,9 @@ fn provider_target_protocol(
                     .and_then(|value| AiProtocol::from_api_format(&value))
             })
             .unwrap_or(AiProtocol::OpenAiChat),
+        GatewayCliKey::ClaudeDesktop => {
+            protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::AnthropicMessages)
+        }
         GatewayCliKey::Gemini => {
             protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::GeminiNative)
         }

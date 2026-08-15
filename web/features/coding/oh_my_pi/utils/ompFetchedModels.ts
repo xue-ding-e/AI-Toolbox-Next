@@ -1,9 +1,7 @@
 import type { FetchedModel } from '../../../../components/common/FetchModelsModal/types.ts';
 import type { PresetModel } from '../../../../constants/presetModels.ts';
-import {
-  PI_INPUT_TYPES,
-  buildPiThinkingLevelMapFromPreset,
-} from '../../../../utils/piModelMetadata.ts';
+import { PI_INPUT_TYPES } from '../../../../utils/piModelMetadata.ts';
+import { buildOmpThinkingFromPreset } from '../../../../utils/ompModelMetadata.ts';
 
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -19,12 +17,14 @@ const getNumberField = (value: Record<string, unknown>, key: string): number | u
 const isRecordEmpty = (value: Record<string, unknown>): boolean => Object.keys(value).length === 0;
 
 /**
- * Build a Pi model from a preset, keeping the upstream model id verbatim.
+ * Build an OMP model from a preset, keeping the upstream model id verbatim.
  *
- * Preset matching is case-insensitive for capability enrichment only.
- * Never rewrite the upstream id to the preset's canonical casing.
+ * OMP expresses thinking levels as `thinking: { efforts, defaultLevel }` (via
+ * buildOmpThinkingFromPreset) — not Pi's `thinkingLevelMap`, which the page
+ * drops on save. Preset matching is case-insensitive for capability
+ * enrichment only; never rewrite the upstream id casing.
  */
-export const buildPiModelFromPreset = (
+export const buildOmpModelFromPreset = (
   preset: PresetModel,
   modelId: string,
   fallbackName: string,
@@ -48,7 +48,7 @@ export const buildPiModelFromPreset = (
   if (cacheWriteCost !== undefined) {
     piCost.cacheWrite = cacheWriteCost;
   }
-  const thinkingLevelMap = buildPiThinkingLevelMapFromPreset(preset.variants);
+  const ompThinking = buildOmpThinkingFromPreset(preset.variants);
 
   return {
     id: modelId,
@@ -58,12 +58,12 @@ export const buildPiModelFromPreset = (
     ...(preset.contextLimit ? { contextWindow: preset.contextLimit } : {}),
     ...(preset.outputLimit ? { maxTokens: preset.outputLimit } : {}),
     ...(!isRecordEmpty(piCost) ? { cost: piCost } : {}),
-    ...(!isRecordEmpty(thinkingLevelMap) ? { thinkingLevelMap } : {}),
+    ...(ompThinking !== undefined ? { thinking: ompThinking } : {}),
   };
 };
 
 /**
- * Convert a fetched upstream model into a Pi models.json entry.
+ * Convert a fetched upstream model into an OMP models entry.
  * Preset metadata enriches capabilities but never rewrites model id casing.
  */
 export const buildFetchedOmpModel = (
@@ -71,7 +71,7 @@ export const buildFetchedOmpModel = (
   matchedPresetModel?: PresetModel | null,
 ): Record<string, unknown> => {
   if (matchedPresetModel) {
-    return buildPiModelFromPreset(
+    return buildOmpModelFromPreset(
       matchedPresetModel,
       fetchedModel.id,
       fetchedModel.name || fetchedModel.id,
@@ -83,7 +83,7 @@ export const buildFetchedOmpModel = (
   };
 };
 
-/** Map Pi provider api string to preset SDK npm group. */
+/** Map OMP provider api string to preset SDK npm group. */
 export function ompApiToSdkName(api?: string): string {
   switch (api) {
     case 'anthropic-messages':

@@ -174,15 +174,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(
-            settings.enabled_cli_keys,
-            vec![
-                GatewayCliKey::Claude,
-                GatewayCliKey::Codex,
-                GatewayCliKey::Grok,
-                GatewayCliKey::Gemini
-            ]
-        );
+        assert_eq!(settings.enabled_cli_keys, GatewayCliKey::supported_mvp());
     }
 
     #[test]

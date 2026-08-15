@@ -80,6 +80,9 @@ interface ProviderCardProps {
 
   /** i18n prefix for translations */
   i18nPrefix?: I18nPrefix;
+
+  /** Short tag shown beside the model-section title (e.g. "内置 · 适配器默认模型"). */
+  modelSourceTag?: string;
 }
 
 /**
@@ -110,6 +113,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onToggleDisabled,
   connectivityStatus,
   i18nPrefix = 'settings',
+  modelSourceTag,
 }) => {
   const { t } = useTranslation();
 
@@ -431,9 +435,16 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   key: provider.id,
                   label: (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <Text strong style={{ fontSize: 13 }}>
-                        {t(`${i18nPrefix}.model.title`)} ({models.length + (officialModels?.length || 0)})
-                      </Text>
+                      <Space size={8}>
+                        <Text strong style={{ fontSize: 13 }}>
+                          {t(`${i18nPrefix}.model.title`)} ({models.length + (officialModels?.length || 0)})
+                        </Text>
+                        {modelSourceTag && (
+                          <Tag color="blue" style={{ fontSize: 11, marginLeft: 0 }}>
+                            {modelSourceTag}
+                          </Tag>
+                        )}
+                      </Space>
                       <Space size={4} onClick={(e) => e.stopPropagation()}>
                         {extraActions}
                         {onAddModel && (

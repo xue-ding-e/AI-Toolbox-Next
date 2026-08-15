@@ -35,13 +35,15 @@ const { Text } = Typography;
 // Module display names
 const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
-  claude: 'Claude',
+  claude: 'Claude Code',
+  claude_desktop: 'Claude Desktop',
   codex: 'Codex',
   grok: 'Grok',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
   pi: 'Pi',
   oh_my_pi: 'omp',
+  hermes: 'Hermes',
 };
 
 // Module tag colors
@@ -85,7 +87,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   oh_my_pi: 'oh_my_pi',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes'];
 
 interface SSHSyncModalProps {
   open: boolean;

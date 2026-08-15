@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 #[serde(rename_all = "snake_case")]
 pub enum GatewayCliKey {
     Claude,
+    ClaudeDesktop,
     Codex,
     Grok,
     Gemini,
@@ -16,6 +17,7 @@ impl GatewayCliKey {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
+            Self::ClaudeDesktop => "claude_desktop",
             Self::Codex => "codex",
             Self::Grok => "grok",
             Self::Gemini => "gemini",
@@ -24,7 +26,7 @@ impl GatewayCliKey {
     }
 
     pub fn supported_mvp() -> Vec<Self> {
-        vec![Self::Claude, Self::Codex, Self::Grok, Self::Gemini]
+        vec![Self::Claude, Self::ClaudeDesktop, Self::Codex, Self::Grok, Self::Gemini]
     }
 }
 
@@ -737,6 +739,7 @@ impl Default for GatewayCliKey {
 pub enum GatewaySessionImportCli {
     All,
     Claude,
+    ClaudeDesktop,
     Codex,
     Grok,
     Gemini,

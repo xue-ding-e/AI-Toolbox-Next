@@ -1685,6 +1685,36 @@ base_url = "https://openai.example.com/v1"
     }
 
     #[test]
+    fn route_request_answers_desktop_hello_probe_locally() {
+        // Claude Desktop 3P pings `HEAD /api/hello` on the gateway base URL.
+        // Must answer 200 locally without any provider configured — never
+        // forward to an upstream that would 404.
+        let request = debug_request("HEAD", "/claude-desktop/api/hello", b"");
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), None, None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.cli_key, Some(GatewayCliKey::ClaudeDesktop));
+        assert_eq!(response.provider_id, None);
+        assert_eq!(response.attempt_count, 0);
+    }
+
+    #[test]
+    fn route_request_answers_claude_code_hello_probe_locally() {
+        // Claude Code also warms the gateway with `GET /api/hello`.
+        let request = debug_request("GET", "/anthropic/api/hello", b"");
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), None, None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.cli_key, Some(GatewayCliKey::Claude));
+        assert_eq!(response.provider_id, None);
+        assert_eq!(response.attempt_count, 0);
+    }
+
+    #[test]
     fn route_request_preserves_streaming_response_body_stream() {
         let (base_url, captured_rx) = start_test_streaming_upstream();
         let body = br#"{"model":"claude-sonnet-4-6","stream":true,"messages":[{"role":"user","content":"say hi"}]}"#;

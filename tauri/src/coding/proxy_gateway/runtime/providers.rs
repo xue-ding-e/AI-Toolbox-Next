@@ -7,7 +7,7 @@ use crate::coding::proxy_gateway::{
     cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
     provider_profiles::load_gateway_provider_profiles_for_runtime, transformer::AiProtocol,
 };
-use crate::coding::{claude_code, codex, gemini_cli, grok};
+use crate::coding::{claude_code, claude_desktop, codex, gemini_cli, grok};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -96,6 +96,7 @@ pub(crate) async fn load_candidate_providers_with_settings_and_selection(
 ) -> Result<Vec<UpstreamProvider>, String> {
     let table = match cli_key {
         GatewayCliKey::Claude => DbTable::ClaudeProvider,
+        GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
         GatewayCliKey::Codex => DbTable::CodexProvider,
         GatewayCliKey::Grok => DbTable::GrokProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
@@ -137,6 +138,7 @@ pub(crate) async fn load_provider_by_id_for_connectivity_test(
 ) -> Result<UpstreamProvider, String> {
     let table = match cli_key {
         GatewayCliKey::Claude => DbTable::ClaudeProvider,
+        GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
         GatewayCliKey::Codex => DbTable::CodexProvider,
         GatewayCliKey::Grok => DbTable::GrokProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
@@ -562,6 +564,53 @@ fn provider_from_record(
                 model_mapping: UpstreamModelMapping::default(),
             }))
         }
+        // Claude Desktop reuses the Claude Code settings shape: its 3P profile
+        // points at the local gateway while the DB record still holds the real
+        // upstream channel config, so the same env-headedness applies here.
+        GatewayCliKey::ClaudeDesktop => {
+            let provider = claude_desktop::adapter::from_db_value_provider(record);
+            if provider.is_disabled {
+                return Ok(None);
+            }
+            if is_official_provider_category(&provider.category) {
+                return Ok(None);
+            }
+            let settings = parse_json_config(
+                &provider.settings_config,
+                "Claude Desktop provider settings_config",
+            )?;
+            let env = settings.get("env").and_then(Value::as_object);
+            let target_protocol = claude_target_protocol(&meta, &settings);
+            let (api_key, mut auth_strategy) = claude_auth_from_settings(
+                env,
+                &settings,
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &provider.name,
+            )?;
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
+            let base_url = json_object_string(env, "ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
+            let model_mapping = claude_desktop_model_mapping(&provider.meta, &settings);
+            Ok(Some(UpstreamProvider {
+                cli_key,
+                id: provider.id,
+                name: provider.name,
+                base_url,
+                api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url,
+                sort_index: provider.sort_index,
+                meta,
+                model_mapping,
+            }))
+        }
         GatewayCliKey::OpenCode => unreachable!("OpenCode is rejected before query"),
     }
 }
@@ -747,6 +796,7 @@ fn apply_gateway_profile_reference(cli_key: GatewayCliKey, meta: &mut ProviderGa
 fn gateway_profile_tool_for_cli(cli_key: GatewayCliKey) -> Option<&'static str> {
     match cli_key {
         GatewayCliKey::Claude => Some("claude"),
+        GatewayCliKey::ClaudeDesktop => Some("claude_desktop"),
         GatewayCliKey::Codex => Some("codex"),
         GatewayCliKey::Grok => Some("grok"),
         GatewayCliKey::Gemini => Some("gemini"),
@@ -1324,6 +1374,51 @@ fn claude_model_mapping_from_settings(settings: &Value) -> UpstreamModelMapping 
     }
 }
 
+/// Claude Desktop model mapping. Starts from env/settings defaults (for the
+/// `model` fallback + reasoning slot) then overlays the role routes stored in
+/// `meta.claudeDesktopModelRoutes` — the single source of truth that also
+/// drives the 3P profile's `inferenceModels`. The 3P app only ever sends the
+/// claude-safe route IDs (`claude-sonnet-5` …), so the gateway rewrites them to
+/// the real upstream models via this mapping.
+fn claude_desktop_model_mapping(
+    meta: &Option<Value>,
+    settings: &Value,
+) -> UpstreamModelMapping {
+    let mut mapping = claude_model_mapping_from_settings(settings);
+    let Some(routes) = meta
+        .as_ref()
+        .and_then(|m| {
+            m.get("claudeDesktopModelRoutes").or_else(|| {
+                m.get("claude_desktop_model_routes")
+            })
+        })
+        .and_then(Value::as_object)
+    else {
+        return mapping;
+    };
+    for (route_id, route) in routes {
+        let Some(model) = route
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+        let id = route_id.to_ascii_lowercase();
+        if id.contains("sonnet") {
+            mapping.sonnet_model = Some(model.to_string());
+        } else if id.contains("opus") {
+            mapping.opus_model = Some(model.to_string());
+        } else if id.contains("fable") {
+            mapping.fable_model = Some(model.to_string());
+        } else if id.contains("haiku") {
+            mapping.haiku_model = Some(model.to_string());
+        }
+    }
+    mapping
+}
+
 fn json_value_string(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -1537,6 +1632,59 @@ api_key = "secret"
             mapping.reasoning_model.as_deref(),
             Some("provider-reasoning")
         );
+    }
+
+    #[test]
+    fn claude_desktop_model_mapping_reads_role_routes_from_meta() {
+        let mapping = claude_desktop_model_mapping(
+            &Some(serde_json::json!({
+                "claudeDesktopModelRoutes": {
+                    "claude-sonnet-5": {"model": "deepseek-sonnet", "supports1m": false},
+                    "claude-opus-5": {"model": "deepseek-v4-flash-0731[1M]"},
+                    "claude-fable-5": {"model": "deepseek-fable"},
+                    "claude-haiku-4-5": {"model": "deepseek-haiku"}
+                }
+            })),
+            &serde_json::json!({}),
+        );
+
+        assert_eq!(mapping.sonnet_model.as_deref(), Some("deepseek-sonnet"));
+        assert_eq!(
+            mapping.opus_model.as_deref(),
+            Some("deepseek-v4-flash-0731[1M]")
+        );
+        assert_eq!(mapping.fable_model.as_deref(), Some("deepseek-fable"));
+        assert_eq!(mapping.haiku_model.as_deref(), Some("deepseek-haiku"));
+    }
+
+    #[test]
+    fn claude_desktop_model_mapping_falls_back_to_settings_when_routes_missing() {
+        let mapping = claude_desktop_model_mapping(
+            &Some(serde_json::json!({})),
+            &serde_json::json!({
+                "sonnetModel": "settings-sonnet",
+                "env": {"ANTHROPIC_DEFAULT_OPUS_MODEL": "settings-opus"}
+            }),
+        );
+
+        assert_eq!(mapping.sonnet_model.as_deref(), Some("settings-sonnet"));
+        assert_eq!(mapping.opus_model.as_deref(), Some("settings-opus"));
+    }
+
+    #[test]
+    fn claude_desktop_model_mapping_ignores_empty_route_model() {
+        let mapping = claude_desktop_model_mapping(
+            &Some(serde_json::json!({
+                "claudeDesktopModelRoutes": {
+                    "claude-sonnet-5": {"model": "  ", "supports1m": false},
+                    "claude-opus-5": {"model": "deepseek-opus"}
+                }
+            })),
+            &serde_json::json!({}),
+        );
+
+        assert_eq!(mapping.sonnet_model, None);
+        assert_eq!(mapping.opus_model.as_deref(), Some("deepseek-opus"));
     }
 
     #[test]

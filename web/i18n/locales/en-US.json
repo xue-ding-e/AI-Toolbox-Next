@@ -17,7 +17,10 @@
     "pi": "Pi",
     "grok": "Grok",
     "ohMyPi": "omp",
-    "oh_my_pi": "omp"
+    "oh_my_pi": "omp",
+    "claudedesktop": "Claude Desktop",
+    "hermes": "Hermes",
+    "dsh": "dsh"
   },
   "providerBilling": {
     "title": "Billing Config",
@@ -568,7 +571,9 @@
         "codexDesc": "Future takeover for Codex config/auth",
         "gemini": "Gemini CLI",
         "geminiDesc": "Future takeover for Gemini settings",
-        "grok": "Grok"
+        "grok": "Grok",
+        "claude_desktop": "Claude Desktop",
+        "claude_desktopDesc": "Future takeover for Claude Desktop 3P gateway config"
       },
       "cliStatus": {
         "direct": "Direct",
@@ -2970,25 +2975,41 @@
       "fallbacks": "Fallback Models",
       "fallbacksPlaceholder": "Select fallback models",
       "moreParams": "More Parameters",
-      "moreParamsTitle": "Agent Parameters"
+      "moreParamsTitle": "Agent Parameters",
+      "legacyTimeoutHint": "`timeout` is deprecated; it will be migrated to `timeoutSeconds` on save."
     },
     "env": {
+      "title": "Environment",
+      "varsTitle": "Environment variables (vars)",
+      "shellEnvTitle": "Shell environment (shellEnv)",
       "addVariable": "Add Variable",
       "keyPlaceholder": "Variable name",
       "valuePlaceholder": "Variable value",
       "save": "Save",
-      "emptyText": "No environment variables configured."
+      "emptyText": "Nothing configured."
     },
     "tools": {
+      "title": "Tools",
       "profile": "Profile",
-      "profileDefault": "default",
-      "profileStrict": "strict",
-      "profilePermissive": "permissive",
-      "profileCustom": "custom",
+      "profileMinimal": "minimal",
+      "profileCoding": "coding",
+      "profileMessaging": "messaging",
+      "profileFull": "full",
       "allowList": "Allow List",
       "denyList": "Deny List",
       "addPattern": "Add Pattern",
       "save": "Save"
+    },
+    "healthBanner": {
+      "title": "OpenClaw config has issues",
+      "refresh": "Refresh",
+      "warning": {
+        "configParseFailed": "Config cannot be parsed as JSON5",
+        "invalidToolsProfile": "`tools.profile` uses an unsupported value; valid values",
+        "legacyTimeout": "`agents.defaults.timeout` is deprecated; use `timeoutSeconds`",
+        "stringifiedEnvVars": "`env.vars` should be an object; the current value looks stringified",
+        "stringifiedEnvShellEnv": "`env.shellEnv` should be an object; the current value looks stringified"
+      }
     },
     "other": {
       "title": "Other Configuration",
@@ -4635,6 +4656,323 @@
       "officialPackages": "Official",
       "openPackagesDirectory": "Open Package Folder",
       "packagesPathLabel": "Package folder"
+    }
+  },
+  "dsh": {
+    "title": "DeepSeek Harness Configuration",
+    "pageHint": "Manage dsh (DeepSeek Harness) model providers, the default model, and the global prompt.",
+    "viewDocs": "Official Documentation",
+    "configPath": "Configuration File Path",
+    "openFolder": "Open Folder",
+    "refreshConfig": "Refresh Config",
+    "syncModels": "Sync Models",
+    "modelsRefreshSuccess": "Preset models refreshed",
+    "invalidJson": "Invalid JSON format",
+    "preview": {
+      "title": "Configuration Preview"
+    },
+    "modelSettings": {
+      "title": "Default Model",
+      "defaultProvider": "Default Provider",
+      "defaultProviderPlaceholder": "Select default provider",
+      "defaultModel": "Default Model",
+      "defaultModelPlaceholder": "Select default model",
+      "reasoningEffort": "Reasoning Effort",
+      "reasoningEffortPlaceholder": "Select reasoning effort"
+    },
+    "provider": {
+      "title": "Model Providers",
+      "addSupplier": "Add Provider",
+      "addSupplierTitle": "Add Provider",
+      "editSupplierTitle": "Edit Provider {{name}}",
+      "emptyText": "No providers yet",
+      "builtinHint": "Built-in provider",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "e.g., deepseek",
+      "providerKeyRequired": "Please enter a provider key",
+      "displayName": "Display Name",
+      "displayNamePlaceholder": "Provider display name",
+      "basicSection": "Basic Info",
+      "configSection": "Connection Settings",
+      "apiType": "API Type",
+      "apiTypePlaceholder": "Select API type",
+      "baseUrl": "Base URL",
+      "providerApiKey": "API Key",
+      "providerApiKeyPlaceholder": "Enter an API key to store it in the credentials file",
+      "modelOverridesJson": "Model overrides (modelOverrides)",
+      "configAdvancedJson": "Raw provider config (models)",
+      "selectAtLeastOneSection": "Please fill in at least one configuration section",
+      "deleteConfirmTitle": "Delete Provider",
+      "deleteConfirmContent": "Are you sure you want to delete provider {{providerKey}} ({{scope}})?",
+      "deleteScope": {
+        "credential": "credential",
+        "provider": "provider config",
+        "both": "both"
+      },
+      "deleteScopeModalTitle": "Choose Delete Scope",
+      "deleteScopeModalContent": "Are you sure you want to delete provider {{providerKey}}? Choose what to delete.",
+      "deleteProviderConfig": "Delete Provider Config",
+      "deleteCredential": "Delete Credential",
+      "deleteBoth": "Delete Both",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "deleteProvider": "Delete Provider",
+      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?"
+    },
+    "model": {
+      "title": "Models",
+      "emptyText": "No models yet",
+      "modelSourceBuiltin": "Built-in · adapter default models",
+      "addModel": "Add Model",
+      "editModel": "Edit Model",
+      "deleteModel": "Delete Model",
+      "confirmDelete": "Are you sure you want to delete model \"{{name}}\"?",
+      "selectModel": "Select model {{name}}",
+      "setAsPrimary": "Set as Default",
+      "alreadyPrimary": "Already default model",
+      "setAsPrimarySuccess": "{{name}} has been set as the default model",
+      "currentPrimary": "Current default",
+      "id": "Model ID",
+      "idPlaceholder": "Model identifier, e.g., deepseek-chat",
+      "idRequired": "Please enter a model ID",
+      "idExists": "This model ID already exists",
+      "name": "Model Name",
+      "namePlaceholder": "Model display name",
+      "nameOptionalPlaceholder": "Leave empty to use model ID",
+      "contextLimit": "Context Limit",
+      "contextLimitPlaceholder": "e.g., 128000 (optional)",
+      "outputLimit": "Output Limit",
+      "outputLimitPlaceholder": "e.g., 8000 (optional)",
+      "batchDelete": "Batch Delete Models",
+      "cancelBatchDelete": "Exit Batch Delete",
+      "deleteSelected": "Delete Selected ({{count}})",
+      "batchDeleteConfirmTitle": "Confirm Batch Delete",
+      "batchDeleteConfirmContent": "Are you sure you want to delete the selected {{count}} model(s)?",
+      "batchDeleteSuccess": "Deleted {{count}} model(s)",
+      "inputTypes": "Input Types",
+      "inputTypesPlaceholder": "Select text or image",
+      "inputTypesHint": "Select the input types supported by this model.",
+      "capabilities": "Capabilities",
+      "capabilitiesHint": "Whether the model has corresponding capabilities",
+      "reasoning": "Reasoning",
+      "thinkingLevelMap": "Thinking Level Map",
+      "thinkingLevelMapHint": "Model-level thinking level support/mapping table.",
+      "invalidThinkingLevelMap": "Invalid thinking level map JSON format",
+      "ompThinking": "Thinking (efforts)",
+      "ompThinkingHint": "Model thinking structure: efforts is the supported level list (minimal/low/medium/high/xhigh/max), defaultLevel is the default level.",
+      "compat": "Compatibility compat",
+      "compatHint": "Model-level compatibility overrides merged with provider compat. Leave empty to remove model compat.",
+      "invalidCompat": "Invalid compat JSON format",
+      "api": "API type",
+      "apiPlaceholder": "Leave empty to inherit provider",
+      "apiHint": "Set only when this model needs to override the provider API type.",
+      "cost": "Cost",
+      "costHint": "Cost per million tokens.",
+      "costInput": "Input",
+      "costOutput": "Output",
+      "costCacheRead": "Cache Read",
+      "costCacheWrite": "Cache Write"
+    },
+    "official": {
+      "officialModels": "Official Models",
+      "freeModel": "Free",
+      "modelReadOnlyHint": "Official models, read-only",
+      "contextLimit": "Context Limit",
+      "outputLimit": "Output Limit"
+    },
+    "fetchModels": {
+      "button": "Fetch Models",
+      "applySuccess": "Applied {{addCount}} model(s), removed {{removeCount}}"
+    },
+    "connectivity": {
+      "button": "Connectivity Test"
+    },
+    "otherConfig": {
+      "title": "Other Configuration",
+      "hint": "Maintain other dsh configuration as JSON; auto-saves on blur",
+      "autoSaveHint": "Auto-save"
+    },
+    "rootPathSource": {
+      "customize": "Customize Root Directory",
+      "modal": {
+        "title": "Customize Config Directory",
+        "currentSource": "Current Source",
+        "sourceCustom": "App Settings",
+        "sourceEnv": "Environment Variable DSH_HOME",
+        "sourceShell": "Shell Config DSH_HOME",
+        "sourceDefault": "Default Path",
+        "description": "dsh's settings.yaml, .credentials.yaml, models.yaml, and AGENTS.md are all derived from this config directory.",
+        "envWarningTitle": "Environment Variable Setup Required",
+        "envWarningDesc": "A custom path here only affects where AI Toolbox reads and writes. To have dsh itself use this directory, you must set DSH_HOME manually.",
+        "envHint": "Environment variable DSH_HOME detected: {{path}}",
+        "shellHint": "Shell config DSH_HOME detected: {{path}}",
+        "customPath": "Config directory",
+        "placeholder": "Enter or select the dsh config directory",
+        "saveSuccess": "dsh config directory saved",
+        "resetSuccess": "Reset to default config directory",
+        "reset": "Reset to Default",
+        "folderOnlyTitle": "Select a Folder",
+        "folderOnlyDesc": "Do not select a specific file. dsh will derive settings.yaml, .credentials.yaml, models.yaml, and AGENTS.md under the chosen folder."
+      }
+    },
+    "sourceLabels": {
+      "official_builtin": "Built-in",
+      "credentials_yaml": "credentials.yaml",
+      "models_yaml": "models.yaml"
+    },
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default dsh Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\n\nMarkdown is supported and will be written to dsh `AGENTS.md` when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    }
+  },
+  "hermes": {
+    "title": "Hermes",
+    "pageHint": "Hermes reads a single config.yaml; provider facts come from the runtime file. Built-in (read-only) providers are managed by the providers: dict.",
+    "configPath": "Config path",
+    "openFolder": "Open folder",
+    "refreshConfig": "Refresh Config",
+    "rootPathSource": {
+      "customize": "Customize Root Directory",
+      "modal": {
+        "title": "Customize Hermes Config Directory",
+        "currentSource": "Current Source",
+        "sourceCustom": "App Settings",
+        "sourceEnv": "Environment Variable HERMES_HOME",
+        "sourceShell": "Shell Config HERMES_HOME",
+        "sourceDefault": "Default Path",
+        "customPath": "Config Directory",
+        "reset": "Reset to Default",
+        "description": "Hermes reads config.yaml, SOUL.md, memories, and skills from this directory.",
+        "envWarningTitle": "Environment Variable Setup Required",
+        "envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Hermes itself should also use this directory, set HERMES_HOME manually.",
+        "envHint": "Hermes is currently using the directory defined by HERMES_HOME: {{path}}.",
+        "shellHint": "Hermes is currently using the HERMES_HOME defined in your shell config: {{path}}.",
+        "placeholder": "Enter or select Hermes config directory",
+        "saveSuccess": "Hermes config directory saved",
+        "resetSuccess": "Reset to default config directory",
+        "folderOnlyTitle": "Please select a folder",
+        "folderOnlyDesc": "Do not select a specific file. Hermes reads config.yaml and looks for SOUL.md inside the selected folder."
+      }
+    },
+    "memory": {
+      "title": "Memory",
+      "agentTab": "Agent memory (MEMORY.md)",
+      "userTab": "User profile (USER.md)",
+      "usage": "{{current}} / {{limit}} chars",
+      "overLimit": "over budget",
+      "editorPlaceholder": "Hermes truncates over-budget content at load time."
+    },
+    "provider": {
+      "title": "Providers",
+      "emptyText": "No providers configured.",
+      "addSupplier": "Add provider",
+      "addTitle": "Add Provider",
+      "editTitle": "Edit Provider",
+      "deleteConfirmTitle": "Delete provider?",
+      "deleteConfirmContent": "Remove \"{{name}}\" from custom_providers in config.yaml?",
+      "readOnly": "read-only",
+      "readOnlyRemains": "{{name}} is a read-only Hermes built-in provider (providers: dict) and cannot be removed here. To remove it, edit config.yaml's providers: section or use the Hermes UI.",
+      "advancedHint": "Full provider config that is written to config.yaml (name is set from the provider name).",
+      "baseUrl": "Base URL",
+      "apiKey": "API key",
+      "apiMode": "API mode",
+      "apiModePlaceholder": "anthropic / openai / ...",
+      "providerKey": "Provider name",
+      "providerKeyPlaceholder": "e.g. anthropic",
+      "providerKeyRequired": "Provider name is required.",
+      "configJson": "Provider config (JSON)",
+      "basicSection": "Basic"
+    },
+    "modelSettings": {
+      "title": "Model Settings",
+      "defaultProvider": "Default provider",
+      "defaultProviderPlaceholder": "Select a provider",
+      "defaultModel": "Default model",
+      "defaultModelPlaceholder": "Select a model"
+    },
+    "otherConfig": {
+      "title": "Other Configuration",
+      "hint": "Top-level config.yaml keys not managed by this page (agent, etc.).",
+      "autoSaveHint": "Auto-saves on blur."
+    },
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple Hermes global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `SOUL.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default Hermes Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\n\nMarkdown is supported and will be written to Hermes `SOUL.md` when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `SOUL.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    },
+    "preview": {
+      "title": "Preview config"
+    },
+    "model": {
+      "idRequired": "Model ID is required.",
+      "idExists": "Model ID already exists.",
+      "setAsDefaultSuccess": "Set as default."
+    },
+    "connectivity": {
+      "button": "Test"
+    },
+    "invalidJson": "Invalid JSON."
+  },
+  "claudedesktop": {
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\".",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default Coding Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\n\nMarkdown is supported and will be written to Claude Desktop `AGENTS.md` when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     }
   }
 }

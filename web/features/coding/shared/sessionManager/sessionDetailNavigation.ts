@@ -14,6 +14,7 @@ export interface SessionManagerRefreshEventDetail {
 
 const SESSION_TOOL_BASE_PATH: Record<SessionTool, string> = {
   claudecode: '/coding/claudecode',
+  claudedesktop: '/coding/claudedesktop',
   codex: '/coding/codex',
   grok: '/coding/grok',
   geminicli: '/coding/geminicli',
@@ -21,6 +22,8 @@ const SESSION_TOOL_BASE_PATH: Record<SessionTool, string> = {
   opencode: '/coding/opencode',
   pi: '/coding/pi',
   oh_my_pi: '/coding/oh-my-pi',
+  hermes: '/coding/hermes',
+  dsh: '/coding/dsh',
 };
 
 export const getSessionToolBasePath = (tool: SessionTool) => SESSION_TOOL_BASE_PATH[tool];

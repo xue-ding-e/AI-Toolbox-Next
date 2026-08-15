@@ -1,0 +1,49 @@
+//! DeepSeek Harness (dsh) path / provider constants.
+
+/// Environment variable used by dsh to override its config directory (`~/.dsh`).
+pub const DSH_ENV_KEY: &str = "DSH_HOME";
+/// The namespaced YAML file dsh reads for its stack configuration.
+pub const DSH_SETTINGS_FILE: &str = "settings.yaml";
+/// Separate credentials file holding `REF: secret` entries (REF is a POSIX env var name).
+pub const DSH_CREDENTIALS_FILE: &str = ".credentials.yaml";
+/// Global prompt file authored into the config directory.
+pub const DSH_PROMPT_FILE: &str = "AGENTS.md";
+
+/// The settings.yaml section under which llm-pi-ai plugin providers are stored
+/// as a dictionary keyed by route id (`settings["llm-pi-ai"]["providers"][route]`).
+pub const DSH_LLM_PI_AI_SECTION: &str = "llm-pi-ai";
+/// The providers sub-key of the llm-pi-ai section.
+pub const DSH_PROVIDERS_KEY: &str = "providers";
+/// The top-level default-model section (`{ provider, model, reasoningEffort }`).
+pub const DSH_DEFAULT_MODEL_SECTION: &str = "agent-default-model";
+
+/// Known dsh provider routes with official display names.
+///
+/// Aligned with the dsh runtime's built-in/known providers plus the common
+/// aggregators users configure. This list is only used for display and built-in
+/// tagging; the authoritative provider fact source is `settings.yaml`'s
+/// `llm-pi-ai.providers.<route>` entries.
+pub const DSH_BUILTIN_PROVIDERS: [(&str, &str); 10] = [
+    ("deepseek", "DeepSeek"),
+    ("anthropic", "Anthropic"),
+    ("openai", "OpenAI"),
+    ("google", "Google"),
+    ("openrouter", "OpenRouter"),
+    ("groq", "Groq"),
+    ("mistral", "Mistral"),
+    ("xai", "xAI"),
+    ("qwen", "Qwen"),
+    ("glm", "Zhipu GLM"),
+];
+
+pub fn is_builtin_provider(provider_key: &str) -> bool {
+    DSH_BUILTIN_PROVIDERS
+        .iter()
+        .any(|(key, _)| *key == provider_key)
+}
+
+pub fn builtin_provider_name(provider_key: &str) -> Option<&'static str> {
+    DSH_BUILTIN_PROVIDERS
+        .iter()
+        .find_map(|(key, name)| (*key == provider_key).then_some(*name))
+}

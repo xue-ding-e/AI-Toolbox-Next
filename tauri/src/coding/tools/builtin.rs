@@ -255,6 +255,41 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
+    // Claude Desktop - config-file module; MCP lives in the normal config JSON's
+    // `mcpServers`. Path is platform-resolved in detection.rs.
+    BuiltinTool {
+        key: "claude_desktop",
+        display_name: "Claude Desktop",
+        relative_skills_dir: None,
+        relative_detect_dir: None,
+        mcp_config_path: Some("%LOCALAPPDATA%/Claude/claude_desktop_config.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
+    // Hermes - runtime config.yaml holds `mcp_servers`; path is platform-resolved
+    // in detection.rs (Windows: %LOCALAPPDATA%/hermes, others ~/.hermes).
+    BuiltinTool {
+        key: "hermes",
+        display_name: "Hermes",
+        relative_skills_dir: None,
+        relative_detect_dir: None,
+        mcp_config_path: Some("~/.hermes/config.yaml"),
+        mcp_config_format: Some("yaml"),
+        mcp_field: Some("mcp_servers"),
+    },
+    // dsh - DeepSeek Harness. The runtime config (`settings.yaml`) is a single
+    // namespaced doc; MCP is wired at the deployment layer (cordis.yml), so this
+    // module points detection at the settings file to register the tool. The
+    // `mcp_field` is intentionally None (no mcp_servers key managed here).
+    BuiltinTool {
+        key: "dsh",
+        display_name: "DeepSeek Harness",
+        relative_skills_dir: None,
+        relative_detect_dir: None,
+        mcp_config_path: Some("~/.dsh/settings.yaml"),
+        mcp_config_format: Some("yaml"),
+        mcp_field: None,
+    },
 ];
 
 /// Get all built-in tools

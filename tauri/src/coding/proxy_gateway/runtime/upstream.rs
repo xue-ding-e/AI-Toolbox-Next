@@ -665,6 +665,23 @@ pub(super) async fn route_request_with_options(
         return response;
     }
 
+    if is_gateway_hello_probe(request, &route) {
+        // Anthropic Messages gateways (Claude Desktop 3P, Claude Code) send a
+        // best-effort `HEAD/GET /api/hello` connection-warming probe. Answer it
+        // locally with 200 OK like cc-switch's local proxy instead of forwarding
+        // to upstream providers that don't implement the path.
+        let mut response = json_response(
+            200,
+            "OK",
+            json!({"ok": true}),
+            route.route_name,
+            None,
+            "gateway hello probe answered locally",
+        );
+        response.cli_key = Some(route.cli_key);
+        return response;
+    }
+
     let Some(db) = context.db.as_ref() else {
         return json_response(
             503,
@@ -687,12 +704,24 @@ fn is_cli_route_probe(request: &DebugHttpRequest, route: &GatewayRoute) -> bool 
         return false;
     }
     match route.cli_key {
-        GatewayCliKey::Claude => route.forwarded_path == "/",
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => route.forwarded_path == "/",
         GatewayCliKey::Codex => route.forwarded_path == "/v1",
         GatewayCliKey::Grok => route.forwarded_path == "/v1",
         GatewayCliKey::Gemini => route.forwarded_path == "/v1beta",
         GatewayCliKey::OpenCode => false,
     }
+}
+
+/// Anthropic Messages gateways receive a best-effort connection-warming probe
+/// (`HEAD/GET /api/hello`) from both Claude Desktop (3P gateway) and Claude
+/// Code. Return 200 locally without touching any upstream provider.
+fn is_gateway_hello_probe(request: &DebugHttpRequest, route: &GatewayRoute) -> bool {
+    matches!(request.method.as_str(), "GET" | "HEAD")
+        && route.forwarded_path == "/api/hello"
+        && matches!(
+            route.cli_key,
+            GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop
+        )
 }
 
 async fn forward_to_upstream(
@@ -4665,6 +4694,23 @@ fn resolve_upstream_model_id(
                 .unwrap_or(requested_model);
             strip_one_m_context_marker(resolved_model).to_string()
         }
+        // Claude Desktop always sends the profile route IDs (claude-sonnet-5
+        // etc.) — the 3P app never holds the real upstream model, so the
+        // gateway must rewrite by provider family in every mode, unlike Claude
+        // code where the CLI carries the real model in single mode. Only
+        // connectivity-test requests (provider_override) pass through.
+        GatewayCliKey::ClaudeDesktop => {
+            if !allow_provider_model_mapping {
+                return strip_one_m_context_marker(requested_model).to_string();
+            }
+            let resolved_model = resolve_claude_upstream_model_id(
+                requested_model,
+                &provider.model_mapping,
+                is_claude_reasoning_request(request, requested_model),
+            )
+            .unwrap_or_else(|| requested_model.to_string());
+            strip_one_m_context_marker(&resolved_model).to_string()
+        }
         GatewayCliKey::Gemini | GatewayCliKey::OpenCode => {
             strip_one_m_context_marker(requested_model).to_string()
         }
@@ -7823,7 +7869,7 @@ fn strip_one_m_context_marker(model: &str) -> &str {
 
 fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
     match route.cli_key {
-        GatewayCliKey::Claude => {
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
             if route.forwarded_path == "/v1/messages" || route.forwarded_path == "/messages" {
                 Some(AiProtocol::AnthropicMessages)
             } else {
@@ -9768,7 +9814,7 @@ mod tests {
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
             target_protocol: match cli_key {
-                GatewayCliKey::Claude => {
+                GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
                     crate::coding::proxy_gateway::transformer::AiProtocol::AnthropicMessages
                 }
                 GatewayCliKey::Codex | GatewayCliKey::Grok => {
@@ -9782,7 +9828,9 @@ mod tests {
                 }
             },
             auth_strategy: match cli_key {
-                GatewayCliKey::Claude => ProviderAuthStrategy::AnthropicApiKey,
+                GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
+                    ProviderAuthStrategy::AnthropicApiKey
+                }
                 GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => {
                     ProviderAuthStrategy::Bearer
                 }
@@ -11291,6 +11339,75 @@ data: {data}\r\n\r\n"
         assert_eq!(
             resolve_model("claude-opus-4-7", &provider, true),
             "claude-opus-4-7"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_maps_route_id_to_provider_model_in_single_mode() {
+        let provider = provider_for_cli(GatewayCliKey::ClaudeDesktop);
+        let mut provider = provider;
+        provider.model_mapping.opus_model = Some("deepseek-v4-flash-0731".to_string());
+        provider.model_mapping.default_model = Some("deepseek-default".to_string());
+
+        // Desktop app only sends the profile route ID; the gateway must map it
+        // even in single mode (no CLI rewrite exists for the 3P app).
+        assert_eq!(
+            resolve_model("claude-opus-5", &provider, false),
+            "deepseek-v4-flash-0731"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_maps_reasoning_request_to_family_model() {
+        let provider = provider_for_cli(GatewayCliKey::ClaudeDesktop);
+        let mut provider = provider;
+        provider.model_mapping.haiku_model = Some("deepseek-haiku".to_string());
+        provider.model_mapping.sonnet_model = Some("deepseek-sonnet".to_string());
+
+        let request = debug_request(br#"{"model":"claude-sonnet-5","thinking":{"type":"enabled","budget_tokens":2048}}"#);
+        assert_eq!(
+            resolve_upstream_model_id(&request, "claude-sonnet-5", &provider, true, true),
+            "deepseek-sonnet"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_maps_haiku_route_id() {
+        let provider = provider_for_cli(GatewayCliKey::ClaudeDesktop);
+        let mut provider = provider;
+        provider.model_mapping.haiku_model = Some("deepseek-haiku".to_string());
+
+        assert_eq!(
+            resolve_model("claude-haiku-4-5", &provider, true),
+            "deepseek-haiku"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_provider_override_preserves_requested_model() {
+        let provider = provider_for_cli(GatewayCliKey::ClaudeDesktop);
+        let mut provider = provider;
+        provider.model_mapping.opus_model = Some("deepseek-v4-flash-0731".to_string());
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "claude-opus-5",
+                &provider,
+                false,
+                false,
+            ),
+            "claude-opus-5"
+        );
+    }
+
+    #[test]
+    fn claude_desktop_passthrough_when_no_mapping_exists() {
+        let provider = provider_for_cli(GatewayCliKey::ClaudeDesktop);
+
+        assert_eq!(
+            resolve_model("claude-sonnet-5", &provider, true),
+            "claude-sonnet-5"
         );
     }
 

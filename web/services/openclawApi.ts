@@ -11,6 +11,7 @@ import type {
   OpenClawCommonConfig,
   OpenClawAgentsDefaults,
   OpenClawEnvConfig,
+  OpenClawHealthWarning,
   OpenClawToolsConfig,
   ReadOpenClawConfigResult,
   OpenClawProviderConfig,
@@ -117,6 +118,13 @@ export const getOpenClawTools = async (): Promise<OpenClawToolsConfig | null> =>
  */
 export const setOpenClawTools = async (tools: OpenClawToolsConfig): Promise<void> => {
   await invoke('set_openclaw_tools', { tools });
+};
+
+/**
+ * Scan OpenClaw config for health warnings
+ */
+export const scanOpenClawConfigHealth = async (): Promise<OpenClawHealthWarning[]> => {
+  return await invoke<OpenClawHealthWarning[]>('scan_openclaw_config_health');
 };
 
 export interface AllApiHubProfileInfo {

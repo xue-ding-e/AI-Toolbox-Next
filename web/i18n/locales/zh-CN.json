@@ -17,7 +17,10 @@
     "pi": "Pi",
     "grok": "Grok",
     "ohMyPi": "omp",
-    "oh_my_pi": "omp"
+    "oh_my_pi": "omp",
+    "claudedesktop": "Claude Desktop",
+    "hermes": "Hermes",
+    "dsh": "dsh"
   },
   "providerBilling": {
     "title": "计费配置",
@@ -568,7 +571,9 @@
         "codexDesc": "后续接管 Codex config/auth",
         "gemini": "Gemini CLI",
         "geminiDesc": "后续接管 Gemini settings",
-        "grok": "Grok"
+        "grok": "Grok",
+        "claude_desktop": "Claude Desktop",
+        "claude_desktopDesc": "后续接管 Claude Desktop 3P 网关配置"
       },
       "cliStatus": {
         "direct": "未接管",
@@ -2967,25 +2972,41 @@
       "fallbacks": "回退模型",
       "fallbacksPlaceholder": "选择回退模型",
       "moreParams": "更多参数",
-      "moreParamsTitle": "Agent 参数"
+      "moreParamsTitle": "Agent 参数",
+      "legacyTimeoutHint": "`timeout` 已废弃，保存时将自动迁移为 `timeoutSeconds`。"
     },
     "env": {
+      "title": "环境变量",
+      "varsTitle": "环境变量（vars）",
+      "shellEnvTitle": "Shell 环境（shellEnv）",
       "addVariable": "添加变量",
       "keyPlaceholder": "变量名",
       "valuePlaceholder": "变量值",
       "save": "保存",
-      "emptyText": "暂无环境变量配置。"
+      "emptyText": "暂无配置。"
     },
     "tools": {
+      "title": "工具权限",
       "profile": "配置档",
-      "profileDefault": "默认",
-      "profileStrict": "严格",
-      "profilePermissive": "宽松",
-      "profileCustom": "自定义",
+      "profileMinimal": "minimal",
+      "profileCoding": "coding",
+      "profileMessaging": "messaging",
+      "profileFull": "full",
       "allowList": "允许列表",
       "denyList": "拒绝列表",
       "addPattern": "添加规则",
       "save": "保存"
+    },
+    "healthBanner": {
+      "title": "OpenClaw 配置存在以下问题",
+      "refresh": "刷新",
+      "warning": {
+        "configParseFailed": "配置无法解析为 JSON5",
+        "invalidToolsProfile": "`tools.profile` 使用了不受支持的值，合法值",
+        "legacyTimeout": "`agents.defaults.timeout` 已废弃，请改用 `timeoutSeconds`",
+        "stringifiedEnvVars": "`env.vars` 应为对象，当前值疑似被字符串化",
+        "stringifiedEnvShellEnv": "`env.shellEnv` 应为对象，当前值疑似被字符串化"
+      }
     },
     "other": {
       "title": "其他配置",
@@ -4632,6 +4653,323 @@
       "officialPackages": "官方链接",
       "openPackagesDirectory": "打开包目录",
       "packagesPathLabel": "包目录"
+    }
+  },
+  "dsh": {
+    "title": "DeepSeek Harness 配置管理",
+    "pageHint": "管理 dsh（DeepSeek Harness）的模型供应商、默认模型与全局提示词。",
+    "viewDocs": "官方文档",
+    "configPath": "配置文件路径",
+    "openFolder": "打开文件夹",
+    "refreshConfig": "刷新配置",
+    "syncModels": "同步模型",
+    "modelsRefreshSuccess": "预设模型已刷新",
+    "invalidJson": "JSON 格式不正确",
+    "preview": {
+      "title": "配置预览"
+    },
+    "modelSettings": {
+      "title": "默认模型",
+      "defaultProvider": "默认供应商",
+      "defaultProviderPlaceholder": "选择默认供应商",
+      "defaultModel": "默认模型",
+      "defaultModelPlaceholder": "选择默认模型",
+      "reasoningEffort": "推理强度",
+      "reasoningEffortPlaceholder": "选择推理强度"
+    },
+    "provider": {
+      "title": "模型供应商",
+      "addSupplier": "新增供应商",
+      "addSupplierTitle": "新增供应商",
+      "editSupplierTitle": "编辑供应商 {{name}}",
+      "emptyText": "暂无供应商",
+      "builtinHint": "内置供应商",
+      "providerKey": "供应商 Key",
+      "providerKeyPlaceholder": "如 deepseek",
+      "providerKeyRequired": "请输入供应商 Key",
+      "displayName": "显示名称",
+      "displayNamePlaceholder": "供应商显示名称",
+      "basicSection": "基本信息",
+      "configSection": "连接配置",
+      "apiType": "API 类型",
+      "apiTypePlaceholder": "选择 API 类型",
+      "baseUrl": "Base URL",
+      "providerApiKey": "API Key",
+      "providerApiKeyPlaceholder": "输入 API Key 保存到凭证文件",
+      "modelOverridesJson": "模型覆盖（modelOverrides）",
+      "configAdvancedJson": "供应商原始配置（models）",
+      "selectAtLeastOneSection": "请至少填写一个配置区块",
+      "deleteConfirmTitle": "删除供应商",
+      "deleteConfirmContent": "确定删除供应商 {{providerKey}}（{{scope}}）吗？",
+      "deleteScope": {
+        "credential": "凭证",
+        "provider": "供应商配置",
+        "both": "全部"
+      },
+      "deleteScopeModalTitle": "选择删除范围",
+      "deleteScopeModalContent": "确定删除供应商 {{providerKey}} 吗？请选择需要删除的内容。",
+      "deleteProviderConfig": "删除供应商配置",
+      "deleteCredential": "删除凭证",
+      "deleteBoth": "全部删除",
+      "enabled": "已启用",
+      "disabled": "已禁用",
+      "deleteProvider": "删除供应商",
+      "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？"
+    },
+    "model": {
+      "title": "模型",
+      "emptyText": "暂无模型",
+      "modelSourceBuiltin": "内置 · 适配器默认模型",
+      "addModel": "新增模型",
+      "editModel": "编辑模型",
+      "deleteModel": "删除模型",
+      "confirmDelete": "确定要删除模型 \"{{name}}\" 吗？",
+      "selectModel": "选择模型 {{name}}",
+      "setAsPrimary": "设为默认",
+      "alreadyPrimary": "已是默认模型",
+      "setAsPrimarySuccess": "已将 {{name}} 设为默认模型",
+      "currentPrimary": "当前默认",
+      "id": "模型 ID",
+      "idPlaceholder": "模型标识符，如 deepseek-chat",
+      "idRequired": "请输入模型 ID",
+      "idExists": "该模型 ID 已存在",
+      "name": "模型名称",
+      "namePlaceholder": "模型显示名称",
+      "nameOptionalPlaceholder": "留空则使用模型 ID",
+      "contextLimit": "上下文限制",
+      "contextLimitPlaceholder": "如 128000（可选）",
+      "outputLimit": "输出限制",
+      "outputLimitPlaceholder": "如 8000（可选）",
+      "batchDelete": "批量删除模型",
+      "cancelBatchDelete": "退出批量删除",
+      "deleteSelected": "删除所选 {{count}}",
+      "batchDeleteConfirmTitle": "确认批量删除模型",
+      "batchDeleteConfirmContent": "确定删除选中的 {{count}} 个模型吗？",
+      "batchDeleteSuccess": "已删除 {{count}} 个模型",
+      "inputTypes": "输入类型",
+      "inputTypesPlaceholder": "选择 text 或 image",
+      "inputTypesHint": "选择模型支持的输入类型。",
+      "capabilities": "模型能力",
+      "capabilitiesHint": "模型是否具备相应能力",
+      "reasoning": "推理",
+      "thinkingLevelMap": "思考等级映射",
+      "thinkingLevelMapHint": "模型级思考等级支持/映射表。",
+      "invalidThinkingLevelMap": "思考等级映射 JSON 格式不正确",
+      "ompThinking": "思考等级（efforts）",
+      "ompThinkingHint": "模型的 thinking 结构：efforts 为支持的思考级别列表（minimal/low/medium/high/xhigh/max），defaultLevel 为默认级别。",
+      "compat": "兼容性 compat",
+      "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
+      "invalidCompat": "兼容性配置 JSON 格式不正确",
+      "api": "API 类型",
+      "apiPlaceholder": "留空则继承供应商",
+      "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
+      "cost": "成本",
+      "costHint": "单位为每百万 token 的费用。",
+      "costInput": "输入",
+      "costOutput": "输出",
+      "costCacheRead": "缓存读取",
+      "costCacheWrite": "缓存写入"
+    },
+    "official": {
+      "officialModels": "官方模型",
+      "freeModel": "免费",
+      "modelReadOnlyHint": "官方模型，只读不可编辑",
+      "contextLimit": "上下文限制",
+      "outputLimit": "输出限制"
+    },
+    "fetchModels": {
+      "button": "拉取模型",
+      "applySuccess": "已应用 {{addCount}} 个模型，移除 {{removeCount}} 个"
+    },
+    "connectivity": {
+      "button": "连通性测试"
+    },
+    "otherConfig": {
+      "title": "其他配置",
+      "hint": "以 JSON 维护 dsh 的其他配置项，失焦自动保存",
+      "autoSaveHint": "自动保存"
+    },
+    "rootPathSource": {
+      "customize": "自定义配置目录",
+      "modal": {
+        "title": "自定义配置目录",
+        "currentSource": "当前来源",
+        "sourceCustom": "应用内设置",
+        "sourceEnv": "环境变量 DSH_HOME",
+        "sourceShell": "Shell 配置 DSH_HOME",
+        "sourceDefault": "默认路径",
+        "description": "dsh 的 settings.yaml、.credentials.yaml、models.yaml 和 AGENTS.md 都会从这个配置目录派生。",
+        "envWarningTitle": "环境变量需手动配置",
+        "envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 dsh 本体也使用该目录，请自行设置 DSH_HOME。",
+        "envHint": "检测到环境变量 DSH_HOME: {{path}}",
+        "shellHint": "检测到 Shell 配置 DSH_HOME: {{path}}",
+        "customPath": "配置目录",
+        "placeholder": "输入或选择 dsh 配置目录",
+        "saveSuccess": "dsh 配置目录已保存",
+        "resetSuccess": "已重置为默认配置目录",
+        "reset": "重置为默认",
+        "folderOnlyTitle": "请选择文件夹",
+        "folderOnlyDesc": "不要选择具体文件，dsh 会在所选文件夹下派生 settings.yaml、.credentials.yaml、models.yaml 和 AGENTS.md。"
+      }
+    },
+    "sourceLabels": {
+      "official_builtin": "内置",
+      "credentials_yaml": "credentials.yaml",
+      "models_yaml": "models.yaml"
+    },
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "可通过右上角「添加配置」预设多套 dsh 全局提示词方案，并通过「应用」或系统托盘快捷切换。",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `AGENTS.md` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "如：默认 dsh 助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 请输入提示词内容\n\n支持 Markdown，应用后会写入 dsh 的 `AGENTS.md`。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+    }
+  },
+  "hermes": {
+    "title": "Hermes 配置管理",
+    "pageHint": "Hermes 读取单个 config.yaml；渠道信息来自运行时文件。内置（只读）渠道由 providers: 字典管理。",
+    "configPath": "配置文件路径",
+    "openFolder": "打开文件夹",
+    "refreshConfig": "刷新配置",
+    "rootPathSource": {
+      "customize": "自定义配置目录",
+      "modal": {
+        "title": "自定义 Hermes 配置目录",
+        "currentSource": "当前来源",
+        "sourceCustom": "应用设置",
+        "sourceEnv": "环境变量 HERMES_HOME",
+        "sourceShell": "Shell 配置 HERMES_HOME",
+        "sourceDefault": "默认路径",
+        "customPath": "配置目录",
+        "reset": "恢复默认",
+        "description": "Hermes 从这个目录读取 config.yaml、SOUL.md、memories 与 skills。",
+        "envWarningTitle": "需要设置环境变量",
+        "envWarningDesc": "应用级自定义路径只影响 AI Toolbox 读写文件的位置。如果 Hermes 本身也应使用该目录，请手动设置 HERMES_HOME。",
+        "envHint": "Hermes 当前使用 HERMES_HOME 指向的目录:{{path}}。",
+        "shellHint": "Hermes 当前使用 shell 配置中定义的 HERMES_HOME 指向的目录:{{path}}。",
+        "placeholder": "输入或选择 Hermes 配置目录",
+        "saveSuccess": "Hermes 配置目录已保存",
+        "resetSuccess": "已恢复默认配置目录",
+        "folderOnlyTitle": "请选择一个文件夹",
+        "folderOnlyDesc": "不要选择具体文件。Hermes 会在所选文件夹内读取 config.yaml 并查找 SOUL.md。"
+      }
+    },
+    "memory": {
+      "title": "记忆",
+      "agentTab": "智能体记忆 (MEMORY.md)",
+      "userTab": "用户档案 (USER.md)",
+      "usage": "{{current}} / {{limit}} 字符",
+      "overLimit": "超出预算",
+      "editorPlaceholder": "Hermes 会在加载时截断超出预算的内容。"
+    },
+    "provider": {
+      "title": "供应商列表",
+      "emptyText": "尚未配置任何渠道。",
+      "addSupplier": "添加渠道",
+      "addTitle": "添加渠道",
+      "editTitle": "编辑渠道",
+      "deleteConfirmTitle": "删除渠道？",
+      "deleteConfirmContent": "从 config.yaml 的 custom_providers 中移除 \"{{name}}\"？",
+      "readOnly": "只读",
+      "readOnlyRemains": "{{name}} 是 Hermes 内置的只读渠道（providers: 字典），无法在此删除。如需移除，请编辑 config.yaml 的 providers: 段或使用 Hermes UI。",
+      "advancedHint": "完整的渠道配置，将写入 config.yaml（名称取自渠道名）。",
+      "baseUrl": "Base URL",
+      "apiKey": "API 密钥",
+      "apiMode": "API 模式",
+      "apiModePlaceholder": "anthropic / openai / ...",
+      "providerKey": "渠道名称",
+      "providerKeyPlaceholder": "例如 anthropic",
+      "providerKeyRequired": "渠道名称必填。",
+      "configJson": "渠道配置（JSON）",
+      "basicSection": "基础"
+    },
+    "modelSettings": {
+      "title": "默认模型设置",
+      "defaultProvider": "默认渠道",
+      "defaultProviderPlaceholder": "选择渠道",
+      "defaultModel": "默认模型",
+      "defaultModelPlaceholder": "选择模型"
+    },
+    "otherConfig": {
+      "title": "其他配置",
+      "hint": "本页面未管理的最顶层 config.yaml 键（agent 等）。",
+      "autoSaveHint": "失焦时自动保存。"
+    },
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "使用「添加配置」准备多份 Hermes 全局提示词预设，然后通过「应用」或托盘菜单快速切换。",
+      "sectionWarning": "预设存储在应用数据库中。请勿手动编辑本地的 `SOUL.md`；下次应用配置时会被覆盖。",
+      "emptyText": "还没有提示词预设。使用右上角按钮添加一份。",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "例如：默认 Hermes 助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 输入提示词内容\n\n支持 Markdown，应用时将写入 Hermes 的 `SOUL.md`。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前",
+      "localConfigHint": "从本地 `SOUL.md` 加载，编辑后将保存到数据库",
+      "confirmDelete": "确定要删除 \"{{name}}\" 吗?"
+    },
+    "preview": {
+      "title": "预览配置"
+    },
+    "model": {
+      "idRequired": "模型 ID 必填。",
+      "idExists": "模型 ID 已存在。",
+      "setAsDefaultSuccess": "已设为默认。"
+    },
+    "connectivity": {
+      "button": "测试"
+    },
+    "invalidJson": "JSON 无效。"
+  },
+  "claudedesktop": {
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "可通过右上角「添加配置」预设多套全局提示词方案，适配不同协作风格或项目场景，并通过「应用」快速切换。",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `AGENTS.md` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "如：默认开发助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 请输入提示词内容\n\n支持 Markdown，应用后会写入 Claude Desktop 的 `AGENTS.md`。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
     }
   }
 }

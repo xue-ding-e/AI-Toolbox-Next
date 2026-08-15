@@ -145,7 +145,9 @@ fn from_json_response_with_provider_type(
     provider_type: Option<&str>,
 ) -> TokenUsage {
     let mut usage = match cli_key {
-        GatewayCliKey::Claude => claude_usage(value, provider_type),
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
+            claude_usage(value, provider_type)
+        }
         GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => openai_usage(value),
         GatewayCliKey::Gemini => gemini_usage(value),
     };
@@ -157,7 +159,7 @@ fn from_json_response_with_provider_type(
 
 fn extract_envelope_id(cli_key: GatewayCliKey, value: &Value) -> Option<String> {
     let paths: &[&str] = match cli_key {
-        GatewayCliKey::Claude => &[
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => &[
             "/message/id",
             "/id",
             "/response/id",

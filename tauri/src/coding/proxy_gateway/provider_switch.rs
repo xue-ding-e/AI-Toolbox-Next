@@ -146,6 +146,7 @@ fn provider_needs_gateway_proxy_for_switch(
 fn provider_table(cli_key: GatewayCliKey) -> Option<DbTable> {
     match cli_key {
         GatewayCliKey::Claude => Some(DbTable::ClaudeProvider),
+        GatewayCliKey::ClaudeDesktop => Some(DbTable::ClaudeDesktopProvider),
         GatewayCliKey::Codex => Some(DbTable::CodexProvider),
         GatewayCliKey::Grok => Some(DbTable::GrokProvider),
         GatewayCliKey::Gemini => Some(DbTable::GeminiCliProvider),
@@ -225,6 +226,16 @@ async fn apply_direct_provider<R: Runtime>(
             )
             .await
         }
+        GatewayCliKey::ClaudeDesktop => {
+            crate::coding::claude_desktop::commands::apply_config_internal_with_sync(
+                &db,
+                app,
+                provider_id,
+                from_tray,
+                true,
+            )
+            .await
+        }
         GatewayCliKey::Codex => {
             crate::coding::codex::commands::apply_config_internal_with_sync(
                 &db,
@@ -269,6 +280,14 @@ async fn apply_direct_provider_without_events<R: Runtime>(
     match cli_key {
         GatewayCliKey::Claude => {
             crate::coding::claude_code::commands::apply_config_internal_without_events(
+                &db,
+                app,
+                provider_id,
+            )
+            .await
+        }
+        GatewayCliKey::ClaudeDesktop => {
+            crate::coding::claude_desktop::commands::apply_config_internal_without_events(
                 &db,
                 app,
                 provider_id,
@@ -328,6 +347,7 @@ fn emit_gateway_cli_config_changed<R: Runtime>(app: &AppHandle<R>, payload: &'st
 fn emit_gateway_cli_wsl_sync_request<R: Runtime>(app: &AppHandle<R>, cli_key: GatewayCliKey) {
     let event_name = match cli_key {
         GatewayCliKey::Claude => "wsl-sync-request-claude",
+        GatewayCliKey::ClaudeDesktop => "wsl-sync-request-claudedesktop",
         GatewayCliKey::Codex => "wsl-sync-request-codex",
         GatewayCliKey::Grok => "wsl-sync-request-grok",
         GatewayCliKey::Gemini => "wsl-sync-request-geminicli",

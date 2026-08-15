@@ -27,11 +27,12 @@ import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
 import PiIcon from '@/assets/pi.svg';
 import OmpIcon from '@/assets/omp.svg';
-import { Gemini, Grok, OpenClaw as OpenClawIcon } from '@lobehub/icons';
+import { Gemini, Grok, HermesAgent, OpenClaw as OpenClawIcon, DeepSeek } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
   claudecode: ClaudeIcon,
+  claudedesktop: ClaudeIcon,
   codex: ChatgptIcon,
   pi: PiIcon,
   oh_my_pi: OmpIcon,
@@ -223,6 +224,10 @@ const MainLayout: React.FC = () => {
                             <Grok size={16} className={styles.tabIconColor} />
                           ) : tab.key === 'geminicli' ? (
                             <Gemini.Color size={16} className={styles.tabIconColor} />
+                          ) : tab.key === 'hermes' ? (
+                            <HermesAgent size={16} className={styles.tabIconFixed} />
+                          ) : tab.key === 'dsh' ? (
+                            <DeepSeek.Color size={16} className={styles.tabIconColor} />
                           ) : TAB_ICONS[tab.key] ? (
                             <img src={TAB_ICONS[tab.key]} className={styles.tabIcon} alt="" />
                           ) : null}

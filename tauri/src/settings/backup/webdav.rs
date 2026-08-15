@@ -7,9 +7,10 @@ use tauri::Manager;
 use zip::ZipArchive;
 
 use super::utils::{
-    clear_restored_cli_custom_roots, create_backup_zip, get_claude_mcp_restore_path,
-    get_claude_restore_dir, get_codex_restore_dir, get_db_path, get_gemini_cli_restore_dir,
-    get_grok_restore_dir, get_image_assets_dir, get_opencode_auth_restore_path,
+    clear_restored_cli_custom_roots, create_backup_zip, get_claude_desktop_settings_paths,
+    get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
+    get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir, get_dsh_restore_dir,
+    get_image_assets_dir, get_opencode_auth_restore_path,
     get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file,
     normalize_restore_entry_name, push_restore_warning, read_backup_meta_from_archive,
     read_root_dir_override, record_restored_external_config_wsl_module,
@@ -685,6 +686,20 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/oh_my_pi/root-dir.txt"))
     .flatten();
+    let hermes_restore_dir_override = should_use_root_override_for_tool(
+        "hermes",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/hermes/root-dir.txt"))
+    .flatten();
+    let dsh_restore_dir_override = should_use_root_override_for_tool(
+        "dsh",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/dsh/root-dir.txt"))
+    .flatten();
     let mut restore_result = RestoreResult::default();
     let mut restored_wsl_modules = Vec::new();
 
@@ -753,6 +768,24 @@ pub async fn restore_from_webdav(
         home_dir.join(".omp").join("agent"),
     );
     if let Some(warning) = oh_my_pi_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (hermes_restore_dir, hermes_warning) = resolve_restore_dir_override(
+        "hermes",
+        hermes_restore_dir_override,
+        get_hermes_restore_dir()?,
+    );
+    if let Some(warning) = hermes_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (dsh_restore_dir, dsh_warning) = resolve_restore_dir_override(
+        "dsh",
+        dsh_restore_dir_override,
+        get_dsh_restore_dir()?,
+    );
+    if let Some(warning) = dsh_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -1072,6 +1105,117 @@ pub async fn restore_from_webdav(
                         })?;
                     }
                 }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/hermes/") {
+                let relative_path = &file_name["external-configs/hermes/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "hermes", relative_path) {
+                    continue;
+                }
+
+                if !hermes_restore_dir.exists() {
+                    fs::create_dir_all(&hermes_restore_dir).map_err(|e| {
+                        format!("Failed to create Hermes config directory: {}", e)
+                    })?;
+                }
+
+                let outpath = hermes_restore_dir.join(relative_path);
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Hermes parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "hermes");
+                let mut outfile =
+                    std::fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/dsh/") {
+                let relative_path = &file_name["external-configs/dsh/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "dsh", relative_path) {
+                    continue;
+                }
+
+                if !dsh_restore_dir.exists() {
+                    fs::create_dir_all(&dsh_restore_dir).map_err(|e| {
+                        format!("Failed to create dsh config directory: {}", e)
+                    })?;
+                }
+
+                let outpath = dsh_restore_dir.join(relative_path);
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create dsh parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "dsh");
+                let mut outfile =
+                    std::fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                if relative_path == ".credentials.yaml" {
+                    harden_restored_sensitive_file(&outpath)?;
+                }
+            } else if file_name.starts_with("external-configs/claude_desktop/") {
+                let relative_path = &file_name["external-configs/claude_desktop/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(
+                    &filter_rules,
+                    "claude_desktop",
+                    relative_path,
+                ) {
+                    continue;
+                }
+
+                let Some((normal_config_path, config_library_path)) =
+                    get_claude_desktop_settings_paths()
+                else {
+                    continue;
+                };
+                let outpath = if relative_path == "claude_desktop_config.json" {
+                    normal_config_path
+                } else if let Some(rest) = relative_path.strip_prefix("configLibrary/") {
+                    config_library_path.join(rest)
+                } else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Claude Desktop parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(
+                    &mut restored_wsl_modules,
+                    "claude_desktop",
+                );
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

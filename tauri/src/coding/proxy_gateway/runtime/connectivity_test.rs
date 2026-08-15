@@ -113,7 +113,7 @@ fn build_gateway_connectivity_request(
     stream: bool,
 ) -> Result<DebugHttpRequest, String> {
     let body = match cli_key {
-        GatewayCliKey::Claude => json!({
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => json!({
             "model": model_id,
             "max_tokens": 1024,
             "messages": [
@@ -184,6 +184,7 @@ fn build_gateway_connectivity_request(
 fn gateway_connectivity_path(cli_key: GatewayCliKey, model_id: &str, stream: bool) -> String {
     match cli_key {
         GatewayCliKey::Claude => "/anthropic/v1/messages".to_string(),
+        GatewayCliKey::ClaudeDesktop => "/claude-desktop/v1/messages".to_string(),
         GatewayCliKey::Codex => "/openai/v1/responses".to_string(),
         GatewayCliKey::Grok => "/grok/v1/responses".to_string(),
         GatewayCliKey::Gemini => {

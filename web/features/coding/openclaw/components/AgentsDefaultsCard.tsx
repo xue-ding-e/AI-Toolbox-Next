@@ -1,5 +1,5 @@
 import React from 'react';
-import { Form, Modal, Select, Typography, message } from 'antd';
+import { Alert, Form, Modal, Select, Typography, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { setOpenClawAgentsDefaults } from '@/services/openclawApi';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -161,6 +161,14 @@ const AgentsDefaultsCard = React.forwardRef<AgentsDefaultsCardRef, Props>(({ def
 
   return (
     <>
+      {defaults?.timeout !== undefined && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('openclaw.agents.legacyTimeoutHint')}
+        />
+      )}
       <Form layout="horizontal" {...formItemLayout}>
         {/* Primary Model */}
         <Form.Item label={<Text strong>{t('openclaw.agents.primaryModel')}</Text>}>

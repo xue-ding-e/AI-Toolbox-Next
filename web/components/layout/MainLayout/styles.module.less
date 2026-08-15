@@ -87,6 +87,7 @@
 /* Tabs area - center */
 .tabsArea {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   height: 100%;
@@ -97,18 +98,44 @@
   display: flex;
   align-items: center;
   height: 100%;
+  min-width: 0;
+  /* When tabs overflow, let the tab strip scroll so the right actions stay visible */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    height: 0;
+  }
 
   :global(.ant-tabs) {
     height: 100%;
+    min-width: 0;
   }
 
   :global(.ant-tabs-nav) {
     margin-bottom: 0;
     height: 100%;
+    min-width: 0;
 
     &::before {
       border-bottom: none;
     }
+  }
+
+  /* Let the tab strip scroll horizontally when it overflows instead of
+     clipping tabs into the "+N" dropdown, so the right-side actions always
+     stay fully visible. */
+  :global(.ant-tabs-nav-wrap) {
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  :global(.ant-tabs-nav-wrap::-webkit-scrollbar) {
+    display: none;
+  }
+  :global(.ant-tabs-nav-operations) {
+    display: none !important;
   }
 
   :global(.ant-tabs-tab) {
@@ -136,6 +163,17 @@
     width: 16px;
     height: 16px;
     display: block;
+  }
+
+  // Fixed-color variant for lobehub monochrome icons (which fill with
+  // `currentColor`). Without an explicit color they inherit the antd tabs
+  // active/hover blue; this keeps them at a stable secondary-text color, same
+  // as the static <img> tabs.
+  .tabIconFixed {
+    width: 16px;
+    height: 16px;
+    display: block;
+    color: var(--color-text-secondary);
   }
 
   // Dark mode: invert dark icons to make them visible
@@ -167,6 +205,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 /* Vertical divider between action items */

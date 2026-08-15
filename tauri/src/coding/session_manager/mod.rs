@@ -1,7 +1,10 @@
 mod claude_code;
+mod claude_desktop;
 mod codex;
+mod dsh;
 mod gemini_cli;
 mod grok;
+mod hermes;
 mod message_blocks;
 mod open_claw;
 mod open_code;
@@ -306,6 +309,16 @@ enum ToolSessionContext {
     Grok {
         sessions_root: PathBuf,
     },
+    ClaudeDesktop {
+        // Claude Desktop is a GUI with no CLI session files; kept minimal.
+        sessions_root: PathBuf,
+    },
+    Hermes {
+        sessions_root: PathBuf,
+    },
+    Dsh {
+        sessions_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +432,9 @@ enum SessionTool {
     Pi,
     OhMyPi,
     Grok,
+    ClaudeDesktop,
+    Hermes,
+    Dsh,
 }
 
 impl SessionTool {
@@ -432,6 +448,9 @@ impl SessionTool {
             "pi" => Ok(Self::Pi),
             "oh_my_pi" | "omp" => Ok(Self::OhMyPi),
             "grok" => Ok(Self::Grok),
+            "claudedesktop" | "claude_desktop" => Ok(Self::ClaudeDesktop),
+            "hermes" => Ok(Self::Hermes),
+            "dsh" => Ok(Self::Dsh),
             _ => Err(format!("Unsupported session tool: {raw}")),
         }
     }
@@ -446,6 +465,9 @@ impl SessionTool {
             Self::Pi => "pi",
             Self::OhMyPi => "oh_my_pi",
             Self::Grok => "grok",
+            Self::ClaudeDesktop => "claudedesktop",
+            Self::Hermes => "hermes",
+            Self::Dsh => "dsh",
         }
     }
 }
@@ -476,6 +498,11 @@ impl ToolSessionContext {
             Self::Pi { sessions_root } => format!("pi:{}", sessions_root.display()),
             Self::OhMyPi { sessions_root } => format!("oh_my_pi:{}", sessions_root.display()),
             Self::Grok { sessions_root } => format!("grok:{}", sessions_root.display()),
+            Self::ClaudeDesktop { sessions_root } => {
+                format!("claudedesktop:{}", sessions_root.display())
+            }
+            Self::Hermes { sessions_root } => format!("hermes:{}", sessions_root.display()),
+            Self::Dsh { sessions_root } => format!("dsh:{}", sessions_root.display()),
         }
     }
 }
@@ -1198,6 +1225,15 @@ fn delete_session_from_meta(
         ToolSessionContext::Grok { sessions_root } => {
             grok::delete_session(sessions_root, Path::new(&session.source_path))?;
         }
+        ToolSessionContext::Hermes { sessions_root } => {
+            hermes::delete_session(sessions_root, &session.source_path)?;
+        }
+        // Claude Desktop deletion is not wired up yet; sessions are read-only.
+        ToolSessionContext::ClaudeDesktop { .. } => {}
+        // Dsh sessions are artifact directories under its sessions root.
+        ToolSessionContext::Dsh { sessions_root } => {
+            dsh::delete_session(sessions_root, &session.source_path)?;
+        }
     }
 
     Ok(())
@@ -1691,6 +1727,11 @@ fn import_session_blocking(
                 &exported_file.native_snapshot.payload,
             )?;
         }
+        ToolSessionContext::ClaudeDesktop { .. }
+        | ToolSessionContext::Hermes { .. }
+        | ToolSessionContext::Dsh { .. } => {
+            return Err("Session import is not supported for this tool".to_string());
+        }
     }
 
     invalidate_cache(&context);
@@ -1819,6 +1860,11 @@ fn build_native_snapshot(
             format: SNAPSHOT_FORMAT_GROK.to_string(),
             payload: grok::export_native_snapshot(sessions_root, Path::new(source_path))?,
         }),
+        ToolSessionContext::ClaudeDesktop { .. }
+        | ToolSessionContext::Hermes { .. }
+        | ToolSessionContext::Dsh { .. } => {
+            Err("Session export is not supported for this tool".to_string())
+        }
     }
 }
 
@@ -1902,6 +1948,11 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
         ToolSessionContext::Pi { sessions_root } => pi::scan_sessions(sessions_root),
         ToolSessionContext::OhMyPi { sessions_root } => oh_my_pi::scan_sessions(sessions_root),
         ToolSessionContext::Grok { sessions_root } => grok::scan_sessions(sessions_root),
+        ToolSessionContext::Hermes { sessions_root } => hermes::scan_sessions(sessions_root),
+        ToolSessionContext::Dsh { sessions_root } => dsh::scan_sessions(sessions_root),
+        ToolSessionContext::ClaudeDesktop { sessions_root } => {
+            claude_desktop::scan_sessions(sessions_root)
+        }
     };
 
     sessions.sort_by(|left, right| {
@@ -1938,6 +1989,15 @@ fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<Sessi
         ToolSessionContext::Grok { sessions_root } => {
             grok::scan_recent_sessions(sessions_root, limit)
         }
+        ToolSessionContext::Hermes { sessions_root } => {
+            hermes::scan_recent_sessions(sessions_root, limit)
+        }
+        ToolSessionContext::Dsh { sessions_root } => {
+            dsh::scan_recent_sessions(sessions_root, limit)
+        }
+        ToolSessionContext::ClaudeDesktop { sessions_root } => {
+            claude_desktop::scan_recent_sessions(sessions_root, limit)
+        }
     };
 
     sessions.sort_by(|left, right| {
@@ -1962,6 +2022,11 @@ fn load_messages(
         ToolSessionContext::Pi { .. } => pi::load_messages(Path::new(source_path)),
         ToolSessionContext::OhMyPi { .. } => oh_my_pi::load_messages(Path::new(source_path)),
         ToolSessionContext::Grok { .. } => grok::load_messages(Path::new(source_path)),
+        ToolSessionContext::Hermes { .. } => hermes::load_messages(source_path),
+        ToolSessionContext::Dsh { .. } => dsh::load_messages(source_path),
+        ToolSessionContext::ClaudeDesktop { .. } => {
+            claude_desktop::load_messages(Path::new(source_path))
+        }
     }
 }
 
@@ -1981,7 +2046,10 @@ fn list_subagent_sessions(
         | ToolSessionContext::OpenCode { .. }
         | ToolSessionContext::Pi { .. }
         | ToolSessionContext::OhMyPi { .. }
-        | ToolSessionContext::Grok { .. } => Vec::new(),
+        | ToolSessionContext::Grok { .. }
+        | ToolSessionContext::ClaudeDesktop { .. }
+        | ToolSessionContext::Hermes { .. }
+        | ToolSessionContext::Dsh { .. } => Vec::new(),
     }
 }
 
@@ -2097,6 +2165,9 @@ fn scan_session_content_for_query(
         ToolSessionContext::Grok { .. } => {
             grok::scan_messages_for_query(Path::new(source_path), query_lower)
         }
+        ToolSessionContext::Hermes { .. } => hermes::scan_messages_for_query(source_path, query_lower),
+        ToolSessionContext::Dsh { .. } => dsh::scan_messages_for_query(source_path, query_lower),
+        ToolSessionContext::ClaudeDesktop { .. } => Ok(false),
     }
 }
 
@@ -2193,6 +2264,9 @@ fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
         ToolSessionContext::Pi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::OhMyPi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Grok { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::ClaudeDesktop { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::Hermes { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::Dsh { sessions_root } => path_wsl_info(sessions_root),
     }
 }
 
@@ -2285,6 +2359,17 @@ fn build_default_wsl_session_context(
         }),
         SessionTool::Grok => Some(ToolSessionContext::Grok {
             sessions_root: wsl_home_path(distro, linux_home, ".grok/sessions"),
+        }),
+        // Claude Desktop GUI / Hermes have no WSL session dirs; keep minimal empty scans.
+        SessionTool::ClaudeDesktop => Some(ToolSessionContext::ClaudeDesktop {
+            sessions_root: wsl_home_path(distro, linux_home, ".claude/desktop"),
+        }),
+        SessionTool::Hermes => Some(ToolSessionContext::Hermes {
+            // Hermes session root is its config directory (holds state.db + sessions/).
+            sessions_root: wsl_home_path(distro, linux_home, ".hermes"),
+        }),
+        SessionTool::Dsh => Some(ToolSessionContext::Dsh {
+            sessions_root: wsl_home_path(distro, linux_home, ".dsh/sessions"),
         }),
     }
 }
@@ -2395,6 +2480,44 @@ async fn resolve_context(
             let runtime_location = get_grok_runtime_location_async(db).await?;
             Ok(ToolSessionContext::Grok {
                 sessions_root: runtime_location.host_path.join("sessions"),
+            })
+        }
+        SessionTool::ClaudeDesktop => {
+            // Claude Desktop (3P/local-agent mode) persists sessions under
+            // `<Claude-3p>/local-agent-mode-sessions/**`. The paths struct only
+            // exposes configLibrary; its parent is the Claude-3p data root.
+            let root = crate::coding::claude_desktop::config_writer::current_platform_paths()
+                .map(|paths| {
+                    paths
+                        .config_library_path
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_default()
+                        .join("local-agent-mode-sessions")
+                })
+                .unwrap_or_default();
+            Ok(ToolSessionContext::ClaudeDesktop {
+                sessions_root: root,
+            })
+        }
+        SessionTool::Hermes => {
+            let config_dir = crate::coding::hermes::get_hermes_config_dir_from_db_async(db)
+                .await
+                .map(|(dir, _)| dir)
+                .unwrap_or_default();
+            // Hermes keeps `state.db` and `sessions/` directly under its config
+            // root, so the session root maps to the config directory itself.
+            Ok(ToolSessionContext::Hermes {
+                sessions_root: config_dir,
+            })
+        }
+        SessionTool::Dsh => {
+            let config_dir = crate::coding::dsh::get_dsh_config_dir_from_db_async(db)
+                .await
+                .map(|(dir, _)| dir)
+                .unwrap_or_default();
+            Ok(ToolSessionContext::Dsh {
+                sessions_root: config_dir.join("sessions"),
             })
         }
     }

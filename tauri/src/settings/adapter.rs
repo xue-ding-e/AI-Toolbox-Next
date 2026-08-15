@@ -207,7 +207,8 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
-    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+    // Previous default before Claude Desktop (claudedesktop) and Hermes were added.
+    const PRE_DESKTOP_DEFAULT_VISIBLE_TABS: &[&str] = &[
         "opencode",
         "claudecode",
         "codex",
@@ -221,12 +222,30 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
+    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "claudedesktop",
+        "codex",
+        "grok",
+        "geminicli",
+        "openclaw",
+        "pi",
+        "oh_my_pi",
+        "hermes",
+        "gateway",
+        "image",
+        "ssh",
+        "wsl",
+    ];
+    const CURRENT_DEFAULT_TAB_SET: &[&str] = &["claudedesktop", "hermes"];
 
     if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_PI_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GROK_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_OMP_DEFAULT_VISIBLE_TABS)
+        || string_vec_matches(&tabs, PRE_DESKTOP_DEFAULT_VISIBLE_TABS)
     {
         return CURRENT_DEFAULT_VISIBLE_TABS
             .iter()
@@ -234,7 +253,33 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
             .collect();
     }
 
-    tabs
+    // Additive migration for the new Claude Desktop / Hermes tabs: keep any custom
+    // order the user already has, but insert the missing default tabs at their
+    // default position so existing users still see them.
+    let mut result = tabs.clone();
+    for missing in CURRENT_DEFAULT_TAB_SET.iter() {
+        if result.iter().any(|tab| tab.as_str() == *missing) {
+            continue;
+        }
+        let default_idx = CURRENT_DEFAULT_VISIBLE_TABS
+            .iter()
+            .position(|def| *def == *missing)
+            .unwrap_or(CURRENT_DEFAULT_VISIBLE_TABS.len());
+        let mut insert_at = result.len();
+        for (i, tab) in result.iter().enumerate() {
+            if let Some(pos) = CURRENT_DEFAULT_VISIBLE_TABS
+                .iter()
+                .position(|def| *def == tab.as_str())
+            {
+                if pos > default_idx {
+                    insert_at = i;
+                    break;
+                }
+            }
+        }
+        result.insert(insert_at, (*missing).to_string());
+    }
+    result
 }
 
 fn string_vec_matches(values: &[String], expected: &[&str]) -> bool {
@@ -452,12 +497,14 @@ mod tests {
             vec![
                 "opencode",
                 "claudecode",
+                "claudedesktop",
                 "codex",
                 "grok",
                 "geminicli",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "hermes",
                 "gateway",
                 "image",
                 "ssh",
@@ -486,12 +533,14 @@ mod tests {
             vec![
                 "opencode",
                 "claudecode",
+                "claudedesktop",
                 "codex",
                 "grok",
                 "geminicli",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "hermes",
                 "gateway",
                 "image",
                 "ssh",
@@ -520,12 +569,14 @@ mod tests {
             vec![
                 "opencode",
                 "claudecode",
+                "claudedesktop",
                 "codex",
                 "grok",
                 "geminicli",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "hermes",
                 "gateway",
                 "image",
                 "ssh",
@@ -535,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_tabs_custom_order_is_preserved() {
+    fn visible_tabs_custom_order_inserts_new_default_tabs() {
         let settings = from_db_value(json!({
             "visible_tabs": [
                 "codex",
@@ -550,11 +601,13 @@ mod tests {
         assert_eq!(
             settings.visible_tabs,
             vec![
+                "claudedesktop",
                 "codex",
                 "opencode",
                 "geminicli",
                 "claudecode",
                 "openclaw",
+                "hermes",
                 "image",
             ]
         );
@@ -582,12 +635,14 @@ mod tests {
             vec![
                 "opencode",
                 "claudecode",
+                "claudedesktop",
                 "codex",
                 "grok",
                 "geminicli",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "hermes",
                 "gateway",
                 "image",
                 "ssh",
@@ -619,12 +674,14 @@ mod tests {
             vec![
                 "opencode",
                 "claudecode",
+                "claudedesktop",
                 "codex",
                 "grok",
                 "geminicli",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "hermes",
                 "gateway",
                 "image",
                 "ssh",

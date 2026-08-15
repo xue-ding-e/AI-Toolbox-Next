@@ -47,7 +47,7 @@ export interface BackupFileFilterPathOption {
   file_path: string;
 }
 
-export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi'] as const;
+export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'] as const;
 
 export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
 
@@ -62,12 +62,15 @@ type LegacySidebarVisibilityValue = boolean | {
 export const createDefaultSidebarHiddenByPage = (): SidebarHiddenByPage => ({
   opencode: false,
   claudecode: false,
+  claudedesktop: false,
   codex: false,
   grok: false,
   openclaw: false,
   geminicli: false,
   pi: false,
   oh_my_pi: false,
+  hermes: false,
+  dsh: false,
 });
 
 export const normalizeSidebarHiddenByPage = (
@@ -164,7 +167,7 @@ export const defaultSettings: AppSettings = {
   auto_backup_max_keep: 10,
   last_auto_backup_time: null,
   auto_check_update: true,
-  visible_tabs: ['opencode', 'claudecode', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'gateway', 'image', 'ssh', 'wsl'],
+  visible_tabs: ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'gateway', 'image', 'ssh', 'wsl'],
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
   opencode_allow_clear_applied_oh_my_config: false,
   opencode_use_legacy_oh_my_config: false,

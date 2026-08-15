@@ -30,6 +30,7 @@ export interface OpenClawProviderConfig {
   apiKey?: string;
   api?: string;
   models: OpenClawModel[];
+  headers?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -83,6 +84,13 @@ export interface OpenClawConfig {
 export interface OpenClawConfigPathInfo {
   path: string;
   source: 'custom' | 'default';
+}
+
+/** OpenClaw 配置健康检查警告 */
+export interface OpenClawHealthWarning {
+  code: string;
+  message: string;
+  path?: string;
 }
 
 export type ReadOpenClawConfigResult =

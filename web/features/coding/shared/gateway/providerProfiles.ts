@@ -1,6 +1,11 @@
 import { normalizeGatewayApiFormat, type GatewayApiFormat } from './providerProtocol';
 
-export type GatewayProviderToolKey = 'claude' | 'codex' | 'grok' | 'gemini';
+export type GatewayProviderToolKey =
+  | 'claude'
+  | 'codex'
+  | 'grok'
+  | 'gemini'
+  | 'claude_desktop';
 
 export interface GatewayProviderProfileReference {
   tool?: GatewayProviderToolKey;
@@ -132,7 +137,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const normalizeGatewayProviderTool = (value?: string | null): GatewayProviderToolKey | undefined => {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === 'claude' || normalized === 'codex' || normalized === 'grok' || normalized === 'gemini') {
+  if (
+    normalized === 'claude' ||
+    normalized === 'codex' ||
+    normalized === 'grok' ||
+    normalized === 'gemini' ||
+    normalized === 'claude_desktop'
+  ) {
     return normalized;
   }
   return undefined;

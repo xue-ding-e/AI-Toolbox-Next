@@ -30,6 +30,9 @@ export const MODULES: Module[] = [
       { key: 'openclaw', labelKey: 'subModules.openclaw', path: '/coding/openclaw' },
       { key: 'pi', labelKey: 'subModules.pi', path: '/coding/pi' },
       { key: 'oh_my_pi', labelKey: 'subModules.ohMyPi', path: '/coding/oh-my-pi' },
+      { key: 'claudedesktop', labelKey: 'subModules.claudedesktop', path: '/coding/claudedesktop' },
+      { key: 'hermes', labelKey: 'subModules.hermes', path: '/coding/hermes' },
+      { key: 'dsh', labelKey: 'subModules.dsh', path: '/coding/dsh' },
     ],
   },
   // {

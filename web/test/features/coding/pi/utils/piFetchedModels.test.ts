@@ -69,3 +69,31 @@ test('piApiToSdkName maps known Pi APIs', () => {
   assert.equal(piApiToSdkName('google-generative-ai'), '@ai-sdk/google');
   assert.equal(piApiToSdkName('openai-completions'), '@ai-sdk/openai-compatible');
 });
+
+const thinkingPreset: PresetModel = {
+  id: 'deepseek-reasoner',
+  name: 'DeepSeek Reasoner',
+  variants: {
+    low: { reasoningEffort: 'low' },
+    high: { reasoningEffort: 'high' },
+    max: { reasoningEffort: 'max' },
+  },
+};
+
+test('buildFetchedPiModel drops null thinking levels from preset variants', () => {
+  const model = buildFetchedPiModel(
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+    thinkingPreset,
+  );
+
+  assert.deepEqual(model.thinkingLevelMap, { low: 'low', high: 'high', max: 'max' });
+});
+
+test('buildFetchedPiModel omits thinkingLevelMap when preset has no variants', () => {
+  const model = buildFetchedPiModel(
+    { id: 'minimax-m3' },
+    minimaxPreset,
+  );
+
+  assert.equal('thinkingLevelMap' in model, false);
+});

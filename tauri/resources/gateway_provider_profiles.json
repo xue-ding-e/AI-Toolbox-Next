@@ -33,6 +33,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.deepseek.com/anthropic",
+              "models": {
+                "primary": "deepseek-v4-pro",
+                "haiku": "deepseek-v4-flash",
+                "sonnet": "deepseek-v4-pro",
+                "opus": "deepseek-v4-pro"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_responses",
           "endpoints": [
@@ -251,6 +268,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+              "models": {
+                "primary": "glm-5.1",
+                "haiku": "glm-5.1",
+                "sonnet": "glm-5.1",
+                "opus": "glm-5.1"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_chat",
           "endpoints": [
@@ -382,6 +416,23 @@
               "apiFormat": "openai_chat",
               "baseUrl": "https://api.z.ai/api/coding/paas/v4",
               "model": "glm-5.2"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.z.ai/api/anthropic",
+              "models": {
+                "primary": "glm-5.1",
+                "haiku": "glm-5.1",
+                "sonnet": "glm-5.1",
+                "opus": "glm-5.1"
+              }
             }
           ]
         },
@@ -519,6 +570,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://ark.cn-beijing.volces.com/api/compatible",
+              "models": {
+                "primary": "doubao-seed-2-1-pro",
+                "haiku": "doubao-seed-2-1-pro",
+                "sonnet": "doubao-seed-2-1-pro",
+                "opus": "doubao-seed-2-1-pro"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_responses",
           "endpoints": [
@@ -603,6 +671,17 @@
               "apiFormat": "openai_responses",
               "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
               "model": "qwen3-coder-plus"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic"
             }
           ]
         },
@@ -691,6 +770,17 @@
               "apiFormat": "openai_responses",
               "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
               "model": "qwen3-coder-plus"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic"
             }
           ]
         },
@@ -785,6 +875,23 @@
               "apiFormat": "openai_chat",
               "baseUrl": "https://api.moonshot.cn/v1",
               "model": "kimi-k2.7-code"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.moonshot.cn/anthropic",
+              "models": {
+                "primary": "kimi-k2.7-code",
+                "haiku": "kimi-k2.7-code",
+                "sonnet": "kimi-k2.7-code",
+                "opus": "kimi-k2.7-code"
+              }
             }
           ]
         },
@@ -914,6 +1021,17 @@
               "apiFormat": "openai_chat",
               "baseUrl": "https://api.kimi.com/coding/v1",
               "model": "kimi-for-coding"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.kimi.com/coding/"
             }
           ]
         },
@@ -1052,6 +1170,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api-inference.modelscope.cn",
+              "models": {
+                "primary": "ZhipuAI/GLM-5.1",
+                "haiku": "ZhipuAI/GLM-5.1",
+                "sonnet": "ZhipuAI/GLM-5.1",
+                "opus": "ZhipuAI/GLM-5.1"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_chat",
           "endpoints": [
@@ -1186,6 +1321,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.longcat.chat/anthropic",
+              "models": {
+                "primary": "LongCat-Flash-Chat",
+                "haiku": "LongCat-Flash-Chat",
+                "sonnet": "LongCat-Flash-Chat",
+                "opus": "LongCat-Flash-Chat"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_responses",
           "endpoints": [
@@ -1279,6 +1431,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.xiaomimimo.com/anthropic",
+              "models": {
+                "primary": "mimo-v2.5-pro",
+                "haiku": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+                "opus": "mimo-v2.5-pro"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_responses",
           "endpoints": [
@@ -1369,6 +1538,23 @@
               "apiFormat": "openai_responses",
               "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
               "model": "mimo-v2.5-pro"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+              "models": {
+                "primary": "mimo-v2.5-pro",
+                "haiku": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+                "opus": "mimo-v2.5-pro"
+              }
             }
           ]
         },
@@ -1813,6 +1999,23 @@
             }
           ]
         },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.minimaxi.com/anthropic",
+              "models": {
+                "primary": "MiniMax-M2.7",
+                "haiku": "MiniMax-M2.7",
+                "sonnet": "MiniMax-M2.7",
+                "opus": "MiniMax-M2.7"
+              }
+            }
+          ]
+        },
         "codex": {
           "defaultEndpointId": "openai_chat",
           "endpoints": [
@@ -1917,6 +2120,23 @@
               "apiFormat": "openai_chat",
               "baseUrl": "https://api.minimax.io/v1",
               "model": "MiniMax-M2.7"
+            }
+          ]
+        },
+        "claude_desktop": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.minimax.io/anthropic",
+              "models": {
+                "primary": "MiniMax-M2.7",
+                "haiku": "MiniMax-M2.7",
+                "sonnet": "MiniMax-M2.7",
+                "opus": "MiniMax-M2.7"
+              }
             }
           ]
         },

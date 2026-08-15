@@ -294,6 +294,27 @@ pub fn get_grok_restore_dir() -> Result<PathBuf, String> {
     grok::get_grok_root_dir_without_db()
 }
 
+/// Platform-default Hermes config directory (used as the restore fallback).
+pub fn get_hermes_restore_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| get_home_dir().unwrap_or_default().join("AppData").join("Local"));
+        Ok(local.join("hermes"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(get_home_dir()?.join(".hermes"))
+    }
+}
+
+/// Platform-default dsh config directory: `~/.dsh` (used as the restore fallback).
+pub fn get_dsh_restore_dir() -> Result<PathBuf, String> {
+    Ok(get_home_dir()?.join(".dsh"))
+}
+
 pub fn harden_restored_sensitive_file(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -740,6 +761,75 @@ pub async fn get_oh_my_pi_runtime_file_path_from_db(
     Ok(path.exists().then_some(path))
 }
 
+/// Resolve the Hermes config directory (custom > env > shell > default).
+pub async fn get_hermes_config_dir_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await?;
+    Ok(Some(config_dir))
+}
+
+/// Resolve the Hermes `config.yaml` path if it exists on disk.
+pub async fn get_hermes_config_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::hermes::constants::HERMES_CONFIG_FILE);
+    Ok(path.exists().then_some(path))
+}
+
+/// Resolve the Hermes global prompt `SOUL.md` path if it exists on disk.
+pub async fn get_hermes_prompt_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::hermes::constants::HERMES_PROMPT_FILE);
+    Ok(path.exists().then_some(path))
+}
+
+/// Resolve the dsh config directory (custom > env > shell > default).
+pub async fn get_dsh_config_dir_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await?;
+    Ok(Some(config_dir))
+}
+
+/// Resolve the dsh `settings.yaml` path if it exists on disk.
+pub async fn get_dsh_config_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::dsh::constants::DSH_SETTINGS_FILE);
+    Ok(path.exists().then_some(path))
+}
+
+/// Resolve the dsh `.credentials.yaml` path if it exists on disk.
+pub async fn get_dsh_credentials_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::dsh::constants::DSH_CREDENTIALS_FILE);
+    Ok(path.exists().then_some(path))
+}
+
+/// Resolve the dsh global prompt `AGENTS.md` path if it exists on disk.
+pub async fn get_dsh_prompt_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::dsh::constants::DSH_PROMPT_FILE);
+    Ok(path.exists().then_some(path))
+}
+
+/// Resolve the Claude Desktop on-disk settings paths for the current platform.
+/// Returns `(normal_config_path, config_library_path)` on supported platforms.
+pub fn get_claude_desktop_settings_paths() -> Option<(PathBuf, PathBuf)> {
+    crate::coding::claude_desktop::config_writer::current_platform_paths()
+        .map(|paths| (paths.normal_config_path, paths.config_library_path))
+        .ok()
+}
+
 fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> {
     let normalized_path = normalize_restore_entry_name(relative_path);
     let relative_path = normalized_path.trim().trim_start_matches('/');
@@ -760,6 +850,17 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "geminicli" => format!("~/.gemini/{relative_path}"),
         "pi" => format!("~/.pi/agent/{relative_path}"),
         "oh_my_pi" => format!("~/.omp/agent/{relative_path}"),
+        "hermes" if relative_path == "config.yaml" => "~/.hermes/config.yaml".to_string(),
+        "hermes" if relative_path == "SOUL.md" => "~/.hermes/SOUL.md".to_string(),
+        "hermes" => format!("~/.hermes/{relative_path}"),
+        "dsh" => format!("~/.dsh/{relative_path}"),
+        "claude_desktop" if relative_path == "claude_desktop_config.json" => {
+            "%LOCALAPPDATA%/Claude/claude_desktop_config.json".to_string()
+        }
+        "claude_desktop" if relative_path.starts_with("configLibrary/") => {
+            format!("%LOCALAPPDATA%/Claude-3p/{relative_path}")
+        }
+        "claude_desktop" => format!("%LOCALAPPDATA%/Claude-3p/{relative_path}"),
         _ => relative_path.to_string(),
     };
 
@@ -915,6 +1016,35 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
 
+    if get_hermes_config_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "hermes", "config.yaml");
+    }
+    if get_hermes_prompt_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "hermes", "SOUL.md");
+    }
+
+    if get_dsh_config_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "dsh", "settings.yaml");
+    }
+    if get_dsh_credentials_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "dsh", ".credentials.yaml");
+    }
+    if get_dsh_prompt_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "dsh", "AGENTS.md");
+    }
+
+    if let Some((normal_config_path, config_library_path)) = get_claude_desktop_settings_paths() {
+        if normal_config_path.exists() {
+            push_backup_filter_option(
+                &mut options,
+                &mut seen,
+                "claude_desktop",
+                "claude_desktop_config.json",
+            );
+        }
+        let _ = config_library_path;
+    }
+
     options.sort_by(|a, b| a.tool.cmp(&b.tool).then(a.file_path.cmp(&b.file_path)));
     Ok(options)
 }
@@ -985,9 +1115,9 @@ pub fn read_backup_meta_from_archive<R: Read + Seek>(
 }
 
 /// Runtime-file-owned CLIs: always packaged/restored under external-configs/.
-const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi", "oh_my_pi"];
+const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi", "oh_my_pi", "hermes", "dsh"];
 /// DB-backed CLIs: gated by `backup_cli_config_files_enabled`.
-const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "geminicli"];
+const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "geminicli", "claude_desktop"];
 
 pub fn is_always_backup_cli_tool(tool: &str) -> bool {
     ALWAYS_BACKUP_CLI_TOOLS.contains(&tool)
@@ -1414,6 +1544,16 @@ pub async fn get_custom_root_dir_path_info(
             } else {
                 None
             }
+        }
+        "hermes" => {
+            let (config_dir, source) =
+                crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await.ok()?;
+            (source == "custom").then(|| config_dir.to_string_lossy().to_string())
+        }
+        "dsh" => {
+            let (config_dir, source) =
+                crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await.ok()?;
+            (source == "custom").then(|| config_dir.to_string_lossy().to_string())
         }
         _ => None,
     }
@@ -2761,6 +2901,141 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 filter_rules,
                 options,
             )?;
+        }
+    }
+
+    // Hermes is runtime-file-owned and always packaged (subject to filter rules).
+    let hermes_config_path = get_hermes_config_path_from_db_async(db).await?;
+    let hermes_prompt_path = get_hermes_prompt_path_from_db_async(db).await?;
+    if hermes_config_path.is_some() || hermes_prompt_path.is_some() {
+        add_directory_to_zip_once(
+            zip,
+            added_zip_directories,
+            "external-configs/hermes/",
+            options,
+            "Hermes directory",
+        )?;
+        if let Some(custom_config_dir) = get_custom_root_dir_path_info(db, "hermes").await {
+            add_text_to_zip(
+                zip,
+                "external-configs/hermes/root-dir.txt",
+                &custom_config_dir,
+                options,
+            )?;
+        }
+    }
+    if let Some(path) = hermes_config_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "hermes",
+            "config.yaml",
+            filter_rules,
+            options,
+        )?;
+    }
+    if let Some(path) = hermes_prompt_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "hermes",
+            "AGENTS.md",
+            filter_rules,
+            options,
+        )?;
+    }
+
+    // dsh is runtime-file-owned and always packaged (subject to filter rules).
+    let dsh_config_path = get_dsh_config_path_from_db_async(db).await?;
+    let dsh_credentials_path = get_dsh_credentials_path_from_db_async(db).await?;
+    let dsh_prompt_path = get_dsh_prompt_path_from_db_async(db).await?;
+    if dsh_config_path.is_some()
+        || dsh_credentials_path.is_some()
+        || dsh_prompt_path.is_some()
+    {
+        add_directory_to_zip_once(
+            zip,
+            added_zip_directories,
+            "external-configs/dsh/",
+            options,
+            "dsh directory",
+        )?;
+        if let Some(custom_config_dir) = get_custom_root_dir_path_info(db, "dsh").await {
+            add_text_to_zip(
+                zip,
+                "external-configs/dsh/root-dir.txt",
+                &custom_config_dir,
+                options,
+            )?;
+        }
+    }
+    if let Some(path) = dsh_config_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "dsh",
+            "settings.yaml",
+            filter_rules,
+            options,
+        )?;
+    }
+    if let Some(path) = dsh_credentials_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "dsh",
+            ".credentials.yaml",
+            filter_rules,
+            options,
+        )?;
+    }
+    if let Some(path) = dsh_prompt_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "dsh",
+            "AGENTS.md",
+            filter_rules,
+            options,
+        )?;
+    }
+
+    // Claude Desktop is DB-backed (optional) and gated by the optional CLI switch.
+    if include_optional_cli_runtime {
+        if let Some((normal_config_path, config_library_path)) = get_claude_desktop_settings_paths() {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/claude_desktop/",
+                options,
+                "Claude Desktop directory",
+            )?;
+            if normal_config_path.exists() {
+                add_external_config_file_to_zip(
+                    zip,
+                    added_zip_directories,
+                    &normal_config_path,
+                    "claude_desktop",
+                    "claude_desktop_config.json",
+                    filter_rules,
+                    options,
+                )?;
+            }
+            if config_library_path.exists() {
+                add_external_config_directory_contents_to_zip(
+                    zip,
+                    &config_library_path,
+                    "claude_desktop",
+                    "configLibrary",
+                    filter_rules,
+                    options,
+                )?;
+            }
         }
     }
     Ok(())

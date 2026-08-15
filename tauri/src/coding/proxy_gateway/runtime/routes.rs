@@ -10,13 +10,20 @@ pub(super) struct GatewayRoute {
 
 pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> {
     let (path, query) = split_request_target(request_target);
-    match strip_cli_prefix(&path, "/anthropic") {
+    match strip_cli_prefix(&path, "/claude-desktop") {
         Some(forwarded_path) => Some(GatewayRoute {
-            cli_key: GatewayCliKey::Claude,
-            route_name: "anthropic",
+            cli_key: GatewayCliKey::ClaudeDesktop,
+            route_name: "claude_desktop",
             forwarded_path,
             query,
         }),
+        None => match strip_cli_prefix(&path, "/anthropic") {
+            Some(forwarded_path) => Some(GatewayRoute {
+                cli_key: GatewayCliKey::Claude,
+                route_name: "anthropic",
+                forwarded_path,
+                query,
+            }),
         None => match strip_cli_prefix(&path, "/openai") {
             Some(forwarded_path)
                 if forwarded_path == "/v1" || forwarded_path.starts_with("/v1/") =>
@@ -52,12 +59,25 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                 },
             },
         },
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_desktop_route_strips_prefix_and_keeps_messages_path() {
+        let route = match_gateway_route("/claude-desktop/v1/messages").expect("desktop route");
+        assert_eq!(route.cli_key, GatewayCliKey::ClaudeDesktop);
+        assert_eq!(route.route_name, "claude_desktop");
+        assert_eq!(route.forwarded_path, "/v1/messages");
+
+        let probe = match_gateway_route("/claude-desktop").expect("desktop probe route");
+        assert_eq!(probe.cli_key, GatewayCliKey::ClaudeDesktop);
+        assert_eq!(probe.forwarded_path, "/");
+    }
 
     #[test]
     fn grok_route_accepts_probe_and_responses_only() {

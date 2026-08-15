@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, CodexPage, GrokPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -9,6 +9,7 @@ import { ImagePage } from '@/features/coding/image';
 import { GatewayPage } from '@/features/coding/gateway';
 import {
   ClaudeCodeSessionDetailPage,
+  ClaudeDesktopSessionDetailPage,
   CodexSessionDetailPage,
   GrokSessionDetailPage,
   GeminiCliSessionDetailPage,
@@ -16,6 +17,8 @@ import {
   OpenCodeSessionDetailPage,
   PiSessionDetailPage,
   OhMyPiSessionDetailPage,
+  HermesSessionDetailPage,
+  DshSessionDetailPage,
 } from '@/features/coding/shared/sessionManager/detail/SessionDetailPage';
 
 export interface RouteEntry {
@@ -133,6 +136,39 @@ export const PAGE_ROUTES: RouteEntry[] = [
       contentPadding: 'compact',
       ownerTabKey: 'oh_my_pi',
       parentPath: '/coding/oh-my-pi',
+    },
+  },
+  { path: '/coding/claudedesktop', component: ClaudeDesktopPage },
+  {
+    path: '/coding/claudedesktop/sessions/detail',
+    component: ClaudeDesktopSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'claudedesktop',
+      parentPath: '/coding/claudedesktop',
+    },
+  },
+  { path: '/coding/hermes', component: HermesPage },
+  {
+    path: '/coding/hermes/sessions/detail',
+    component: HermesSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'hermes',
+      parentPath: '/coding/hermes',
+    },
+  },
+  { path: '/coding/dsh', component: DshPage },
+  {
+    path: '/coding/dsh/sessions/detail',
+    component: DshSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'dsh',
+      parentPath: '/coding/dsh',
     },
   },
   { path: '/settings', component: SettingsPage },

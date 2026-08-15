@@ -6,6 +6,9 @@ use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
+use crate::coding::dsh::constants::{
+    DSH_CREDENTIALS_FILE, DSH_PROMPT_FILE, DSH_SETTINGS_FILE,
+};
 use crate::coding::oh_my_pi::constants::{
     OMP_CONFIG_FILE, OMP_MCP_FILE, OMP_MODELS_FILE, OMP_PROMPT_FILE,
 };
@@ -938,13 +941,17 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 11;
+    const CURRENT_DEFAULTS_VERSION: u64 = 13;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
         &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
         &["omp-config", "omp-models", "omp-mcp", "omp-agents", "omp-rules"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V12: &[&str] =
+        &["hermes-config", "hermes-prompt", "claude-desktop-config"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
+        &["dsh-config", "dsh-credentials", "dsh-prompt"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -980,6 +987,16 @@ async fn backfill_default_mappings(
                 11,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V11,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                12,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V12,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                13,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V13,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1399,6 +1416,48 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .to_string_lossy()
                         .to_string();
                     mapping.wsl_path = omp_wsl_target_path_from_location(&location, "RULES.md");
+                }
+            }
+            "hermes-config" | "hermes-prompt" => {
+                if let Ok((config_dir, _)) =
+                    crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await
+                {
+                    let file_name = if mapping.id == "hermes-config" {
+                        crate::coding::hermes::constants::HERMES_CONFIG_FILE
+                    } else {
+                        crate::coding::hermes::constants::HERMES_PROMPT_FILE
+                    };
+                    mapping.windows_path = config_dir
+                        .join(file_name)
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = format!("~/.hermes/{file_name}");
+                }
+            }
+            "dsh-config" | "dsh-credentials" | "dsh-prompt" => {
+                if let Ok((config_dir, _)) =
+                    crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await
+                {
+                    let file_name = match mapping.id.as_str() {
+                        "dsh-credentials" => DSH_CREDENTIALS_FILE,
+                        "dsh-prompt" => DSH_PROMPT_FILE,
+                        _ => DSH_SETTINGS_FILE,
+                    };
+                    mapping.windows_path = config_dir
+                        .join(file_name)
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = format!("~/.dsh/{file_name}");
+                }
+            }
+            "claude-desktop-config" => {
+                if let Ok(paths) =
+                    crate::coding::claude_desktop::config_writer::current_platform_paths()
+                {
+                    mapping.windows_path =
+                        paths.normal_config_path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        "~/.claude/desktop/claude_desktop_config.json".to_string();
                 }
             }
             _ => {}
@@ -1928,6 +1987,82 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             windows_path: "~/.omp/agent/RULES.md".to_string(),
             wsl_path: "~/.omp/agent/RULES.md".to_string(),
             enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // Hermes - runtime config.yaml + authored global prompt.
+        FileMapping {
+            id: "hermes-config".to_string(),
+            name: "Hermes 配置".to_string(),
+            module: "hermes".to_string(),
+            windows_path: "~/.hermes/config.yaml".to_string(),
+            wsl_path: "~/.hermes/config.yaml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "hermes-prompt".to_string(),
+            name: "Hermes 全局提示词".to_string(),
+            module: "hermes".to_string(),
+            windows_path: "~/.hermes/SOUL.md".to_string(),
+            wsl_path: "~/.hermes/SOUL.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // dsh - runtime settings.yaml + separate credentials file + authored prompt.
+        FileMapping {
+            id: "dsh-config".to_string(),
+            name: "DeepSeek Harness 配置".to_string(),
+            module: "dsh".to_string(),
+            windows_path: "~/.dsh/settings.yaml".to_string(),
+            wsl_path: "~/.dsh/settings.yaml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "dsh-credentials".to_string(),
+            name: "DeepSeek Harness 凭据".to_string(),
+            module: "dsh".to_string(),
+            windows_path: "~/.dsh/.credentials.yaml".to_string(),
+            wsl_path: "~/.dsh/.credentials.yaml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "dsh-prompt".to_string(),
+            name: "DeepSeek Harness 全局提示词".to_string(),
+            module: "dsh".to_string(),
+            windows_path: "~/.dsh/AGENTS.md".to_string(),
+            wsl_path: "~/.dsh/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // Claude Desktop - config-file module. WSL/GUI target is not the normal
+        // Claude Code layout, so sync is best-effort and disabled by default.
+        FileMapping {
+            id: "claude-desktop-config".to_string(),
+            name: "Claude Desktop 配置".to_string(),
+            module: "claude_desktop".to_string(),
+            windows_path: "%APPDATA%/Claude/claude_desktop_config.json".to_string(),
+            wsl_path: "~/.claude/desktop/claude_desktop_config.json".to_string(),
+            enabled: false,
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],

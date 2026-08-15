@@ -57,6 +57,8 @@ pub struct OpenClawProviderConfig {
     pub api: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<OpenClawModel>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -154,6 +156,30 @@ pub struct OpenClawConfig {
 pub struct OpenClawConfigPathInfo {
     pub path: String,
     pub source: String, // "custom" | "default"
+}
+
+// ============================================================================
+// Health scan & write outcome
+// ============================================================================
+
+/// OpenClaw 配置健康检查警告
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenClawHealthWarning {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// OpenClaw 配置写入结果(备份路径 + 健康扫描警告)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenClawWriteOutcome {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<OpenClawHealthWarning>,
 }
 
 // ============================================================================

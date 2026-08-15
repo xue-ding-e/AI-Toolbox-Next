@@ -1638,6 +1638,7 @@ fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
     let mut names = HashMap::new();
     for (app_type, table) in [
         ("claude", "claude_provider"),
+        ("claude_desktop", "claude_desktop_provider"),
         ("codex", "codex_provider"),
         ("gemini", "gemini_cli_provider"),
         ("grok", "grok_provider"),
@@ -1707,6 +1708,7 @@ fn load_opencode_provider_names(
 fn cli_key_from_app_type(app_type: &str) -> Option<GatewayCliKey> {
     match app_type {
         "claude" => Some(GatewayCliKey::Claude),
+        "claude_desktop" => Some(GatewayCliKey::ClaudeDesktop),
         "codex" => Some(GatewayCliKey::Codex),
         "grok" => Some(GatewayCliKey::Grok),
         "gemini" => Some(GatewayCliKey::Gemini),
@@ -2269,6 +2271,7 @@ mod tests {
     ) {
         let table = match cli_key {
             GatewayCliKey::Claude => DbTable::ClaudeProvider,
+            GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
             GatewayCliKey::Codex => DbTable::CodexProvider,
             GatewayCliKey::Grok => DbTable::GrokProvider,
             GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
@@ -2378,6 +2381,7 @@ mod tests {
         request_headers.insert("authorization".to_string(), "Bearer redacted".to_string());
         let (route_name, path) = match cli_key {
             GatewayCliKey::Claude => ("claude_messages", "/v1/messages"),
+            GatewayCliKey::ClaudeDesktop => ("claude_desktop_messages", "/v1/messages"),
             GatewayCliKey::Codex => ("codex_responses", "/v1/responses"),
             GatewayCliKey::Grok => ("grok_responses", "/v1/responses"),
             GatewayCliKey::Gemini => ("gemini_generate", "/v1beta/models/gemini:generateContent"),

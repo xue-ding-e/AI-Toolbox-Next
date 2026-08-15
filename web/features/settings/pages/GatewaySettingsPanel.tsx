@@ -29,7 +29,10 @@ import styles from './GatewaySettingsPanel.module.less';
 
 type BusyAction = 'load' | 'autosave';
 type NoticeKind = 'success' | 'error' | 'info';
-type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'gemini'>;
+type SupportedGatewayCliKey = Extract<
+  GatewayCliKey,
+  'claude' | 'codex' | 'grok' | 'gemini' | 'claude_desktop'
+>;
 
 interface NoticeState {
   kind: NoticeKind;
@@ -57,6 +60,10 @@ const CLI_OPTIONS: CliOption[] = [
   {
     key: 'gemini',
     labelKey: 'settings.gateway.cli.gemini',
+  },
+  {
+    key: 'claude_desktop',
+    labelKey: 'settings.gateway.cli.claude_desktop',
   },
 ];
 

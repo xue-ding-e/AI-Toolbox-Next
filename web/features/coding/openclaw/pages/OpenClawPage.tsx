@@ -25,6 +25,8 @@ import {
   ImportOutlined,
   ThunderboltOutlined,
   MessageOutlined,
+  EnvironmentOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -52,6 +54,9 @@ import {
   getOpenClawConfigPathInfo,
   backupOpenClawConfig,
   getOpenClawAgentsDefaults,
+  getOpenClawEnv,
+  getOpenClawTools,
+  scanOpenClawConfigHealth,
 } from '@/services/openclawApi';
 import {
   listFavoriteProviders,
@@ -70,6 +75,9 @@ import type {
   OpenClawProviderConfig,
   OpenClawModel,
   OpenClawAgentsDefaults,
+  OpenClawEnvConfig,
+  OpenClawHealthWarning,
+  OpenClawToolsConfig,
 } from '@/types/openclaw';
 import type { OpenCodeProvider } from '@/types/opencode';
 
@@ -92,6 +100,9 @@ import ImportFromOpenCodeModal, {
 } from '../components/ImportFromOpenCodeModal';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import AgentsDefaultsCard, { type AgentsDefaultsCardRef } from '../components/AgentsDefaultsCard';
+import EnvCard from '../components/EnvCard';
+import ToolsCard from '../components/ToolsCard';
+import OpenClawHealthBanner from '../components/OpenClawHealthBanner';
 import OpenClawConfigPathModal from '../components/OpenClawConfigPathModal';
 import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
@@ -194,14 +205,24 @@ const OpenClawPage: React.FC = () => {
       order: 2,
     },
     {
+      id: 'openclaw-env',
+      title: t('openclaw.env.title'),
+      order: 3,
+    },
+    {
+      id: 'openclaw-tools',
+      title: t('openclaw.tools.title'),
+      order: 4,
+    },
+    {
       id: 'openclaw-other',
       title: t('openclaw.other.title'),
-      order: 3,
+      order: 5,
     },
     {
       id: 'openclaw-session-manager',
       title: t('sessionManager.title'),
-      order: 4,
+      order: 6,
     },
   ], [t]);
 
@@ -217,6 +238,9 @@ const OpenClawPage: React.FC = () => {
 
   // Section data
   const [agentsDefaults, setAgentsDefaults] = React.useState<OpenClawAgentsDefaults | null>(null);
+  const [env, setEnv] = React.useState<OpenClawEnvConfig | null>(null);
+  const [tools, setTools] = React.useState<OpenClawToolsConfig | null>(null);
+  const [healthWarnings, setHealthWarnings] = React.useState<OpenClawHealthWarning[]>([]);
 
   // Modal states
   const [previewOpen, setPreviewOpen] = React.useState(false);
@@ -245,6 +269,8 @@ const OpenClawPage: React.FC = () => {
   // Collapse states
   const [providersCollapsed, setProvidersCollapsed] = React.useState(false);
   const [agentsCollapsed, setAgentsCollapsed] = React.useState(false);
+  const [envCollapsed, setEnvCollapsed] = React.useState(true);
+  const [toolsCollapsed, setToolsCollapsed] = React.useState(true);
   const [otherCollapsed, setOtherCollapsed] = React.useState(true);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
 
@@ -260,12 +286,14 @@ const OpenClawPage: React.FC = () => {
       setLoading(true);
       setParseError(null);
 
-      const [pathInfo, result] = await Promise.all([
+      const [pathInfo, result, warnings] = await Promise.all([
         getOpenClawConfigPathInfo(),
         readOpenClawConfigWithResult(),
+        scanOpenClawConfigHealth(),
       ]);
 
       setConfigPathInfo(pathInfo);
+      setHealthWarnings(result.status === 'parseError' ? [] : warnings);
 
       switch (result.status) {
         case 'success':
@@ -301,8 +329,14 @@ const OpenClawPage: React.FC = () => {
 
   const loadSectionData = React.useCallback(async () => {
     try {
-      const defaults = await getOpenClawAgentsDefaults();
+      const [defaults, envData, toolsData] = await Promise.all([
+        getOpenClawAgentsDefaults(),
+        getOpenClawEnv(),
+        getOpenClawTools(),
+      ]);
       setAgentsDefaults(defaults);
+      setEnv(envData);
+      setTools(toolsData);
     } catch (error) {
       console.error('Failed to load section data:', error);
     }
@@ -1074,6 +1108,10 @@ const OpenClawPage: React.FC = () => {
             return <RobotOutlined />;
           case 'openclaw-providers':
             return <DatabaseOutlined />;
+          case 'openclaw-env':
+            return <EnvironmentOutlined />;
+          case 'openclaw-tools':
+            return <ToolOutlined />;
           case 'openclaw-other':
             return <SettingOutlined />;
           case 'openclaw-session-manager':
@@ -1089,6 +1127,12 @@ const OpenClawPage: React.FC = () => {
             break;
           case 'openclaw-providers':
             setProvidersCollapsed(false);
+            break;
+          case 'openclaw-env':
+            setEnvCollapsed(false);
+            break;
+          case 'openclaw-tools':
+            setToolsCollapsed(false);
             break;
           case 'openclaw-other':
             setOtherCollapsed(false);
@@ -1209,6 +1253,8 @@ const OpenClawPage: React.FC = () => {
                 {t('openclaw.configFileHint')}
               </div>
             </div>
+
+            <OpenClawHealthBanner warnings={healthWarnings} onReload={handleRefresh} />
 
             {/* ===== AGENTS DEFAULTS COLLAPSE ===== */}
             <div
@@ -1365,6 +1411,56 @@ const OpenClawPage: React.FC = () => {
               />
             </div>
 
+            {/* ===== ENV COLLAPSE ===== */}
+            <div
+              id="openclaw-env"
+              data-sidebar-section="true"
+              data-sidebar-title={t('openclaw.env.title')}
+            >
+              <Collapse
+                className={styles.collapseCard}
+                activeKey={envCollapsed ? [] : ['env']}
+                onChange={(keys) => setEnvCollapsed(!keys.includes('env'))}
+                items={[
+                  {
+                    key: 'env',
+                    label: (
+                      <Text strong>
+                        <EnvironmentOutlined style={{ marginRight: 8 }} />
+                        {t('openclaw.env.title')}
+                      </Text>
+                    ),
+                    children: <EnvCard env={env} onSaved={handleSectionSaved} />,
+                  },
+                ]}
+              />
+            </div>
+
+            {/* ===== TOOLS COLLAPSE ===== */}
+            <div
+              id="openclaw-tools"
+              data-sidebar-section="true"
+              data-sidebar-title={t('openclaw.tools.title')}
+            >
+              <Collapse
+                className={styles.collapseCard}
+                activeKey={toolsCollapsed ? [] : ['tools']}
+                onChange={(keys) => setToolsCollapsed(!keys.includes('tools'))}
+                items={[
+                  {
+                    key: 'tools',
+                    label: (
+                      <Text strong>
+                        <ToolOutlined style={{ marginRight: 8 }} />
+                        {t('openclaw.tools.title')}
+                      </Text>
+                    ),
+                    children: <ToolsCard tools={tools} onSaved={handleSectionSaved} />,
+                  },
+                ]}
+              />
+            </div>
+
             {/* ===== OTHER CONFIG COLLAPSE ===== */}
             <div
               id="openclaw-other"
@@ -1396,8 +1492,8 @@ const OpenClawPage: React.FC = () => {
                           resizable
                           mode="text"
                           placeholder={`{
-    "env": {},
-    "tools": { "profile": "default" }
+    "env": { "vars": {}, "shellEnv": {} },
+    "tools": { "profile": "coding" }
 }`}
                         />
                         <div style={{ marginTop: 8 }}>

@@ -1,5 +1,6 @@
 pub mod adapter;
 pub mod commands;
+pub mod roundtrip;
 pub mod tray_support;
 pub mod types;
 

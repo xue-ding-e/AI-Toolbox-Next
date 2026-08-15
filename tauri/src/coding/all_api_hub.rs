@@ -321,6 +321,7 @@ pub fn candidate_to_openclaw_provider(
         api_key: candidate.api_key.clone(),
         api: Some(candidate.api_protocol.clone()),
         models: Vec::<OpenClawModel>::new(),
+        headers: HashMap::new(),
         extra: HashMap::new(),
     }
 }

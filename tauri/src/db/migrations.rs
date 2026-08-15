@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 9;
+pub const TARGET_SCHEMA_VERSION: i32 = 12;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -34,6 +34,15 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 9 {
         run_migration_step(conn, 9, migrate_v9)?;
+    }
+    if current_version < 10 {
+        run_migration_step(conn, 10, migrate_v10)?;
+    }
+    if current_version < 11 {
+        run_migration_step(conn, 11, migrate_v11)?;
+    }
+    if current_version < 12 {
+        run_migration_step(conn, 12, migrate_v12)?;
     }
 
     Ok(())
@@ -207,6 +216,61 @@ fn migrate_v9(conn: &Connection) -> Result<(), String> {
     create_json_index(
         conn,
         DbTable::OhMyPiPromptConfig,
+        &JsonFieldPath::new("sort_index")?,
+    )
+}
+
+fn migrate_v10(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::ClaudeDesktopProvider)?;
+    create_json_index(
+        conn,
+        DbTable::ClaudeDesktopProvider,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::ClaudeDesktopProvider,
+        &JsonFieldPath::new("sort_index")?,
+    )?;
+    create_jsonb_table(conn, DbTable::HermesSettingsConfig)?;
+    create_jsonb_table(conn, DbTable::HermesPromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::HermesPromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::HermesPromptConfig,
+        &JsonFieldPath::new("sort_index")?,
+    )
+}
+
+fn migrate_v11(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::ClaudeDesktopPromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::ClaudeDesktopPromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::ClaudeDesktopPromptConfig,
+        &JsonFieldPath::new("sort_index")?,
+    )
+}
+
+fn migrate_v12(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::DshSettingsConfig)?;
+    create_jsonb_table(conn, DbTable::DshPromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::DshPromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::DshPromptConfig,
         &JsonFieldPath::new("sort_index")?,
     )
 }

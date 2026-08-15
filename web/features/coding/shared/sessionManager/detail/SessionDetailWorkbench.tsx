@@ -454,7 +454,7 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
 function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): string {
   switch (providerId) {
     case 'claudecode':
-      return 'Claude';
+      return 'Claude Code';
     case 'geminicli':
       return 'Gemini';
     case 'opencode':
@@ -463,6 +463,8 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'OpenClaw';
     case 'pi':
       return 'Pi';
+    case 'dsh':
+      return 'dsh';
     case 'oh_my_pi':
       return 'omp';
     case 'codex':

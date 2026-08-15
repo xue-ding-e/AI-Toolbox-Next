@@ -2,11 +2,14 @@ export type SessionTool =
   | 'codex'
   | 'grok'
   | 'claudecode'
+  | 'claudedesktop'
   | 'geminicli'
   | 'openclaw'
   | 'opencode'
   | 'pi'
-  | 'oh_my_pi';
+  | 'oh_my_pi'
+  | 'hermes'
+  | 'dsh';
 
 export type SessionSourceMode = 'all' | 'local' | 'wsl';
 export type SessionListLoadMode = 'auto' | 'cache-first' | 'full' | 'refresh';

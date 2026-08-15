@@ -498,4 +498,8 @@ export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;
 
 export const OhMyPiSessionDetailPage = () => <SessionDetailPage tool="oh_my_pi" />;
 
+export const HermesSessionDetailPage = () => <SessionDetailPage tool="hermes" />;
+export const ClaudeDesktopSessionDetailPage = () => <SessionDetailPage tool="claudedesktop" />;
+export const DshSessionDetailPage = () => <SessionDetailPage tool="dsh" />;
+
 export default SessionDetailPage;

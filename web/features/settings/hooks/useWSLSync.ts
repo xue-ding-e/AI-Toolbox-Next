@@ -59,7 +59,7 @@ const TAB_TO_MODULE: Record<string, string> = {
   geminicli: 'geminicli',
   pi: 'pi',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes'];
 
 const notify = <T,>(listeners: Set<(value: T) => void>, value: T) => {
   listeners.forEach((listener) => listener(value));

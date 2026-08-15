@@ -102,6 +102,21 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     let omp_app = app.clone();
     reapply_cli(&mut summary, "oh_my_pi", async move { reapply_omp(&omp_app).await }).await;
 
+    let claude_desktop_app = app.clone();
+    reapply_cli(&mut summary, "claude_desktop", async move {
+        reapply_claude_desktop(&claude_desktop_app).await
+    })
+    .await;
+
+    let hermes_app = app.clone();
+    reapply_cli(&mut summary, "hermes", async move {
+        reapply_hermes(&hermes_app).await
+    })
+    .await;
+
+    let dsh_app = app.clone();
+    reapply_cli(&mut summary, "dsh", async move { reapply_dsh(&dsh_app).await }).await;
+
     let plugin_summary = reapply_applied_opencode_plugins_after_restore(app).await;
     summary.applied.extend(plugin_summary.applied);
     summary.warnings.extend(plugin_summary.warnings);
@@ -193,6 +208,9 @@ fn wsl_module_for_reapply_label(label: &str) -> Option<&'static str> {
         "opencode" | "oh-my-openagent" | "oh-my-opencode-slim" => Some("opencode"),
         "pi" => Some("pi"),
         "oh_my_pi" => Some("oh_my_pi"),
+        "claude_desktop" => Some("claude_desktop"),
+        "hermes" => Some("hermes"),
+        "dsh" => Some("dsh"),
         _ => None,
     }
 }
@@ -217,6 +235,9 @@ pub fn unchanged_wsl_modules(changed_modules: &[String]) -> Vec<String> {
         "geminicli",
         "pi",
         "oh_my_pi",
+        "claude_desktop",
+        "hermes",
+        "dsh",
     ];
 
     ALL_WSL_FILE_MODULES
@@ -695,6 +716,94 @@ async fn reapply_omp<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
     apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
         oh_my_pi::apply_omp_prompt_config_internal_without_events(app.state(), app, &prompt_id)
             .await
+    })
+    .await;
+    result
+}
+
+async fn reapply_claude_desktop<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::claude_desktop;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    // Claude Desktop is DB-backed (optional), so reapplying the applied provider
+    // reconstructs the 3P profile files when their disk copies were skipped.
+    let provider_id = resolve_record_id(
+        &mut result,
+        "provider",
+        first_applied_provider_id(&db, DbTable::ClaudeDesktopProvider),
+    );
+    if provider_id.is_none() {
+        return result;
+    }
+
+    apply_record(&mut result, "provider", provider_id, |provider_id| async move {
+        claude_desktop::apply_config_internal_without_events(&db, app, &provider_id).await
+    })
+    .await;
+    result
+}
+
+async fn reapply_hermes<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::hermes;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    // Hermes provider/model fact source is the runtime config.yaml (always
+    // restored from the backup), so only the DB-backed prompt preset is reapplied.
+    let prompt_id = resolve_record_id(
+        &mut result,
+        "prompt",
+        first_applied_prompt_id(&db, DbTable::HermesPromptConfig),
+    );
+    if prompt_id.is_none() {
+        return result;
+    }
+
+    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+        hermes::apply_hermes_prompt_config_internal_without_events(app.state(), app, &prompt_id)
+            .await
+    })
+    .await;
+    result
+}
+
+async fn reapply_dsh<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::dsh;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    // dsh provider/model fact source is the runtime settings.yaml (always
+    // restored from the backup), so only the DB-backed prompt preset is reapplied.
+    let prompt_id = resolve_record_id(
+        &mut result,
+        "prompt",
+        first_applied_prompt_id(&db, DbTable::DshPromptConfig),
+    );
+    if prompt_id.is_none() {
+        return result;
+    }
+
+    match dsh::get_dsh_prompt_path_async(&db).await {
+        Ok(path) => {
+            if let Err(error) = probe_runtime_path(path).await {
+                result.warnings.push(error);
+                return result;
+            }
+        }
+        Err(error) => {
+            result
+                .warnings
+                .push(format!("failed to resolve prompt path: {error}"));
+            return result;
+        }
+    }
+
+    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+        dsh::apply_dsh_prompt_config_internal_without_events(app.state(), app, &prompt_id).await
     })
     .await;
     result
