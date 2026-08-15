@@ -27,6 +27,7 @@ import {
   MessageOutlined,
   EnvironmentOutlined,
   ToolOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -57,6 +58,8 @@ import {
   getOpenClawEnv,
   getOpenClawTools,
   scanOpenClawConfigHealth,
+  openOpenClawWebUi,
+  launchOpenClawGateway,
 } from '@/services/openclawApi';
 import {
   listFavoriteProviders,
@@ -68,6 +71,7 @@ import { findPresetModelById } from '@/constants/presetModels';
 import {
   buildFetchedOpenClawModel,
 } from '../utils/openClawFetchedModels';
+import { applyOpenClawUserAgent } from '../utils/providerHeaders';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import type {
   OpenClawConfig,
@@ -612,7 +616,10 @@ const OpenClawPage: React.FC = () => {
       if (values.api) providerConfig.api = values.api;
       else delete providerConfig.api;
 
-      providers[values.providerId] = providerConfig;
+      providers[values.providerId] = applyOpenClawUserAgent(
+        providerConfig,
+        Boolean(values.userAgent),
+      );
 
       const newConfig: OpenClawConfig = {
         ...currentConfig,
@@ -1072,6 +1079,26 @@ const OpenClawPage: React.FC = () => {
     loadSectionData();
   };
 
+  const handleOpenWebUi = async () => {
+    try {
+      await openOpenClawWebUi();
+    } catch {
+      Modal.confirm({
+        title: t('openclaw.openWebUi'),
+        content: t('openclaw.openWebUiOffline'),
+        okText: t('openclaw.launchGateway'),
+        onOk: async () => {
+          try {
+            await launchOpenClawGateway();
+            message.success(t('openclaw.gatewayLaunched'));
+          } catch {
+            message.error(t('common.error'));
+          }
+        },
+      });
+    }
+  };
+
   const handleOpenFolder = async () => {
     if (configPathInfo?.path) {
       try {
@@ -1231,6 +1258,15 @@ const OpenClawPage: React.FC = () => {
                       style={{ padding: 0, fontSize: 12 }}
                     >
                       {t('openclaw.refreshConfig')}
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<GlobalOutlined />}
+                      onClick={handleOpenWebUi}
+                      style={{ padding: 0, fontSize: 12 }}
+                    >
+                      {t('openclaw.openWebUi')}
                     </Button>
                   </Space>
                 </div>

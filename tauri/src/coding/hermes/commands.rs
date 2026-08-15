@@ -1628,6 +1628,31 @@ pub async fn save_hermes_local_prompt_config(
     Ok(get_hermes_prompt_from_sqlite(state.db(), &created.id)?.unwrap_or(created))
 }
 
+// ============================================================================
+// Hermes Web UI
+// ============================================================================
+
+/// 打开 Hermes Web UI:探测本地服务在线后,用系统浏览器打开。
+/// 服务离线返回 `Err`,前端据此引导用户启动 dashboard。
+#[tauri::command]
+pub async fn open_hermes_web_ui(path: Option<String>) -> Result<(), String> {
+    use super::web_ui;
+
+    let port = web_ui::resolve_web_port();
+    if !web_ui::probe_web_up(port).await {
+        return Err("Hermes Web UI 未运行,请先启动 Hermes dashboard".to_string());
+    }
+    web_ui::open_web_ui_browser(port, path.as_deref())
+}
+
+/// 在用户终端里非阻塞启动 `hermes dashboard`(Hermes 的 web dashboard 进程)。
+#[tauri::command]
+pub async fn launch_hermes_dashboard() -> Result<(), String> {
+    use super::web_ui;
+
+    web_ui::launch_dashboard_in_terminal()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

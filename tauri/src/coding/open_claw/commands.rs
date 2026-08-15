@@ -479,3 +479,57 @@ pub async fn resolve_openclaw_all_api_hub_providers(
         })
         .collect())
 }
+
+// ============================================================================
+// OpenClaw Control UI
+// ============================================================================
+
+/// 从 openclaw.json 读取顶层 `gateway.port`(供 Web UI 端口解析;任何读取/解析失败容错为 None)。
+async fn read_openclaw_gateway_port(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<Option<u16>, String> {
+    let config_path_str = get_openclaw_config_path(state).await?;
+    let config_path = Path::new(&config_path_str);
+
+    if !config_path.exists() {
+        return Ok(None);
+    }
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
+    let Ok(value) = json5::from_str::<serde_json::Value>(&content) else {
+        return Ok(None);
+    };
+
+    Ok(value
+        .get("gateway")
+        .and_then(|gateway| gateway.get("port"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok()))
+}
+
+/// 打开 OpenClaw Control UI:解析端口(env > openclaw.json gateway.port > 默认)并探测
+/// 在线后用系统浏览器打开。服务离线返回 `Err`,前端据此引导用户启动 gateway。
+#[tauri::command]
+pub async fn open_openclaw_web_ui(
+    state: tauri::State<'_, SqliteDbState>,
+    path: Option<String>,
+) -> Result<(), String> {
+    use super::web_ui;
+
+    let config_port = read_openclaw_gateway_port(state).await?;
+    let port = web_ui::resolve_web_port(config_port);
+    if !web_ui::probe_web_up(port).await {
+        return Err("OpenClaw Web UI (Control UI) 未运行,请先启动 openclaw gateway".to_string());
+    }
+    web_ui::open_browser(port, path.as_deref())
+}
+
+/// 在用户终端里非阻塞启动 `openclaw gateway`(OpenClaw 常驻服务)。
+#[tauri::command]
+pub async fn launch_openclaw_gateway() -> Result<(), String> {
+    use super::web_ui;
+
+    web_ui::launch_gateway_in_terminal()
+}

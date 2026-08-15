@@ -316,7 +316,7 @@ const DshPage: React.FC = () => {
     },
     {
       id: 'dsh-providers',
-      title: t('dsh.provider.title', { defaultValue: '模型供应商' }),
+      title: t('dsh.provider.title', { defaultValue: '供应商列表' }),
       order: 2,
     },
     {
@@ -1513,7 +1513,7 @@ const DshPage: React.FC = () => {
             id="dsh-providers"
             className={styles.dshSection}
             data-dsh-sidebar-section="true"
-            data-sidebar-title={t('dsh.provider.title', { defaultValue: '模型供应商' })}
+            data-sidebar-title={t('dsh.provider.title', { defaultValue: '供应商列表' })}
           >
             <Collapse
               className={styles.collapseCard}
@@ -1523,7 +1523,7 @@ const DshPage: React.FC = () => {
                   label: (
                     <Space>
                       <ApiOutlined />
-                      <Text strong>{t('dsh.provider.title', { defaultValue: '模型供应商' })}</Text>
+                      <Text strong>{t('dsh.provider.title', { defaultValue: '供应商列表' })}</Text>
                     </Space>
                   ),
                   extra: (

@@ -2867,7 +2867,11 @@
     "configPath": "配置路径",
     "openFolder": "打开文件夹",
     "viewDocs": "查看文档",
-    "refreshConfig": "刷新",
+    "refreshConfig": "刷新配置",
+    "openWebUi": "打开 Control UI",
+    "openWebUiOffline": "OpenClaw Control UI 未运行，是否启动 gateway 服务？",
+    "launchGateway": "启动 gateway",
+    "gatewayLaunched": "已启动 OpenClaw gateway，稍候再点击“打开 Control UI”。",
     "previewConfig": "预览配置",
     "customConfigPath": "自定义配置路径",
     "configFileHint": "OpenClaw 的配置始终以本地配置文件为准，本页面仅做可视化编辑，所有更改直接读写配置文件。",
@@ -2936,7 +2940,9 @@
       "completeUrlAndKey": "请先填写 Base URL 和 API Key",
       "fetchModelsApplySuccess": "模型列表已更新：新增 {{addCount}} 个，清理 {{removeCount}} 个",
       "extraParams": "额外参数",
-      "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。"
+      "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。",
+      "userAgent": "发送 User-Agent",
+      "userAgentHint": "部分供应商需要浏览器 User-Agent 才能正常访问。"
     },
     "provider": {
       "deleteProvider": "删除供应商",
@@ -4678,7 +4684,7 @@
       "reasoningEffortPlaceholder": "选择推理强度"
     },
     "provider": {
-      "title": "模型供应商",
+      "title": "供应商列表",
       "addSupplier": "新增供应商",
       "addSupplierTitle": "新增供应商",
       "editSupplierTitle": "编辑供应商 {{name}}",
@@ -4847,6 +4853,10 @@
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "refreshConfig": "刷新配置",
+    "openWebUi": "打开 Web UI",
+    "openWebUiOffline": "Hermes Web UI 未运行，是否启动 dashboard 服务？",
+    "launchDashboard": "启动 dashboard",
+    "dashboardLaunched": "已启动 Hermes dashboard，稍候再点击“打开 Web UI”。",
     "rootPathSource": {
       "customize": "自定义配置目录",
       "modal": {

@@ -22,6 +22,7 @@ import {
   EyeOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
+  GlobalOutlined,
   PlusOutlined,
   QuestionCircleOutlined,
   ReloadOutlined,
@@ -59,6 +60,8 @@ import { refreshTrayMenu } from '@/services/appApi';
 import {
   deleteHermesRuntimeProvider,
   getHermesSettingsConfig,
+  launchHermesDashboard,
+  openHermesWebUi,
   readHermesRuntimeConfig,
   saveHermesModelSettings,
   saveHermesModelsProvider,
@@ -667,6 +670,32 @@ const HermesPage: React.FC = () => {
     void refreshTrayMenu();
   };
 
+  const handleOpenWebUi = async () => {
+    try {
+      await openHermesWebUi();
+    } catch {
+      Modal.confirm({
+        title: t('hermes.openWebUi', { defaultValue: 'Open Web UI' }),
+        content: t('hermes.openWebUiOffline', {
+          defaultValue: 'Hermes Web UI is not running. Launch the dashboard service?',
+        }),
+        okText: t('hermes.launchDashboard', { defaultValue: 'Launch Dashboard' }),
+        onOk: async () => {
+          try {
+            await launchHermesDashboard();
+            message.success(
+              t('hermes.dashboardLaunched', {
+                defaultValue: 'Hermes dashboard launched — retry "Open Web UI" shortly.',
+              })
+            );
+          } catch {
+            message.error(t('common.error'));
+          }
+        },
+      });
+    }
+  };
+
   // Derived values for the inlined shared ModelFormModal (mirrors the old HermesModelModal).
   const modelModalProvider = modelModal?.provider ?? hermesProviders[0];
   const modelModalRecord = modelModal?.modelId
@@ -804,6 +833,15 @@ const HermesPage: React.FC = () => {
                   className={styles.textAction}
                 >
                   {t('hermes.refreshConfig', { defaultValue: 'Refresh' })}
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<GlobalOutlined />}
+                  onClick={handleOpenWebUi}
+                  className={styles.textAction}
+                >
+                  {t('hermes.openWebUi', { defaultValue: 'Open Web UI' })}
                 </Button>
               </Space>
             </div>

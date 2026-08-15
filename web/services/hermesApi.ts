@@ -73,3 +73,13 @@ export const setHermesMemoryEnabled = async (
 ): Promise<HermesMemoryLimits> => {
   return await invoke<HermesMemoryLimits>('set_hermes_memory_enabled', { kind, enabled });
 };
+
+/** 探测并打开 Hermes 本地 Web UI;服务离线时 reject。 */
+export const openHermesWebUi = async (path?: string): Promise<void> => {
+  await invoke('open_hermes_web_ui', { path });
+};
+
+/** 在用户终端启动 Hermes dashboard(`hermes dashboard`)。 */
+export const launchHermesDashboard = async (): Promise<void> => {
+  await invoke('launch_hermes_dashboard');
+};

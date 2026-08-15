@@ -2084,6 +2084,8 @@ pub fn run() {
             coding::hermes::apply_hermes_prompt_config,
             coding::hermes::reorder_hermes_prompt_configs,
             coding::hermes::save_hermes_local_prompt_config,
+            coding::hermes::open_hermes_web_ui,
+            coding::hermes::launch_hermes_dashboard,
             coding::dsh::get_dsh_default_config_dir,
             coding::dsh::get_dsh_config_dir_without_db,
             coding::dsh::get_dsh_path_info,
@@ -2366,6 +2368,8 @@ pub fn run() {
             coding::open_claw::set_openclaw_tools,
             coding::open_claw::list_openclaw_all_api_hub_providers,
             coding::open_claw::resolve_openclaw_all_api_hub_providers,
+            coding::open_claw::open_openclaw_web_ui,
+            coding::open_claw::launch_openclaw_gateway,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenAgent

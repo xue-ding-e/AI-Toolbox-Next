@@ -1,9 +1,10 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Button } from 'antd';
+import { Modal, Form, Input, Select, Button, Switch } from 'antd';
 import { EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { OpenClawProviderConfig } from '@/types/openclaw';
+import { hasOpenClawUserAgent } from '../utils/providerHeaders';
 
 const API_PROTOCOLS = [
   { value: 'openai-completions', label: 'OpenAI Completions' },
@@ -18,6 +19,8 @@ export interface ProviderFormValues {
   baseUrl?: string;
   apiKey?: string;
   api?: string;
+  /** 是否发送浏览器 User-Agent(写入 headers["User-Agent"]) */
+  userAgent?: boolean;
 }
 
 interface Props {
@@ -55,10 +58,11 @@ const OpenClawProviderFormModal: React.FC<Props> = ({
           baseUrl: editingProvider.config.baseUrl || '',
           apiKey: editingProvider.config.apiKey || '',
           api: editingProvider.config.api || 'openai-completions',
+          userAgent: hasOpenClawUserAgent(editingProvider.config),
         });
       } else {
         form.resetFields();
-        form.setFieldsValue({ api: 'openai-completions' });
+        form.setFieldsValue({ api: 'openai-completions', userAgent: false });
       }
       setShowApiKey(false);
     }
@@ -144,6 +148,15 @@ const OpenClawProviderFormModal: React.FC<Props> = ({
               />
             }
           />
+        </Form.Item>
+
+        <Form.Item
+          name="userAgent"
+          label={t('openclaw.providers.userAgent')}
+          valuePropName="checked"
+          extra={t('openclaw.providers.userAgentHint')}
+        >
+          <Switch />
         </Form.Item>
 
         </Form>

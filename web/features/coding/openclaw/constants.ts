@@ -14,3 +14,10 @@ export const OPENCLAW_PROFILE_OPTIONS: { value: OpenClawToolsProfile; labelKey: 
   { value: 'messaging', labelKey: 'openclaw.tools.profileMessaging' },
   { value: 'full', labelKey: 'openclaw.tools.profileFull' },
 ];
+
+/**
+ * 发送 User-Agent 时写入 `headers["User-Agent"]` 的默认值(对齐 cc-switch)。
+ * 部分供应商需要浏览器 User-Agent 才能正常访问。
+ */
+export const OPENCLAW_DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0';

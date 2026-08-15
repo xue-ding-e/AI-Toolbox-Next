@@ -127,6 +127,20 @@ export const scanOpenClawConfigHealth = async (): Promise<OpenClawHealthWarning[
   return await invoke<OpenClawHealthWarning[]>('scan_openclaw_config_health');
 };
 
+/**
+ * Probe and open the OpenClaw Control UI; rejects when the gateway is offline.
+ */
+export const openOpenClawWebUi = async (path?: string): Promise<void> => {
+  await invoke('open_openclaw_web_ui', { path });
+};
+
+/**
+ * Launch the OpenClaw gateway (`openclaw gateway`) in a user terminal.
+ */
+export const launchOpenClawGateway = async (): Promise<void> => {
+  await invoke('launch_openclaw_gateway');
+};
+
 export interface AllApiHubProfileInfo {
   profileName: string;
   extensionId: string;

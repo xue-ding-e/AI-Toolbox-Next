@@ -2870,7 +2870,11 @@
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
-    "refreshConfig": "Refresh",
+    "refreshConfig": "Refresh Config",
+    "openWebUi": "Open Control UI",
+    "openWebUiOffline": "OpenClaw Control UI isn't running. Launch the gateway service?",
+    "launchGateway": "Launch Gateway",
+    "gatewayLaunched": "OpenClaw gateway launched — retry “Open Control UI” shortly.",
     "previewConfig": "Preview Config",
     "customConfigPath": "Custom Config Path",
     "configFileHint": "OpenClaw configuration is always based on the local config file. This page provides visual editing only — all changes are read from and written directly to the config file.",
@@ -2939,7 +2943,9 @@
       "completeUrlAndKey": "Please complete Base URL and API Key first",
       "fetchModelsApplySuccess": "Model list updated: added {{addCount}}, removed {{removeCount}}",
       "extraParams": "Extra Params",
-      "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file."
+      "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file.",
+      "userAgent": "Send User-Agent",
+      "userAgentHint": "Some providers require a browser User-Agent to work."
     },
     "provider": {
       "deleteProvider": "Delete Provider",
@@ -4681,7 +4687,7 @@
       "reasoningEffortPlaceholder": "Select reasoning effort"
     },
     "provider": {
-      "title": "Model Providers",
+      "title": "Provider List",
       "addSupplier": "Add Provider",
       "addSupplierTitle": "Add Provider",
       "editSupplierTitle": "Edit Provider {{name}}",
@@ -4850,6 +4856,10 @@
     "configPath": "Config path",
     "openFolder": "Open folder",
     "refreshConfig": "Refresh Config",
+    "openWebUi": "Open Web UI",
+    "openWebUiOffline": "Hermes Web UI is not running. Launch the dashboard service?",
+    "launchDashboard": "Launch Dashboard",
+    "dashboardLaunched": "Hermes dashboard launched — retry “Open Web UI” shortly.",
     "rootPathSource": {
       "customize": "Customize Root Directory",
       "modal": {
