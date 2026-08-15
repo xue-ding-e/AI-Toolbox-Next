@@ -49,6 +49,7 @@ sequenceDiagram
 - `SessionManagerPanel` 依赖 `tool + sourcePath` 契约，不能把 `sourcePath` 当作纯展示字段。
 - 改会话详情展示时，要优先维护 `sessionManager/detail/domain/` 的纯函数，再让组件消费这些结果。搜索、过滤、导航和工具卡片预览必须基于同一套 normalized blocks，否则多 CLI 会出现同一消息在不同入口表现不一致的问题。
 - 会话详情视觉结构参考 `D:\GitHub\claude-code-history-viewer`，但不要引入左侧 ProjectTree。普通 user/assistant 文本使用轻量 meta 行 + 聊天气泡，不放消息右下角的长文本“展开/收起”；tool/thinking/system/summary/image/unknown 等结构化 block 使用紧凑 Renderer 卡片，卡片默认收起并通过 header 展开。不要把每条消息重新包成带编号 rail、Tag header、整块 border 的日志卡片，也不要把工具卡嵌在普通文本气泡里。
+- 会话详情底部状态栏是 workbench 的网格行，`sourcePath` 必须作为可换行的整行内容处理；状态栏和路径节点都要允许收缩，Windows 长路径使用 `overflow-wrap: anywhere`，不能用 `white-space: nowrap` 让 grid 最小内容宽度撑开整个详情页。
 - 会话详情顶部过滤 chip 是独立“显示/隐藏”开关，不是单选 Tab。用户/助手、文本/思考过程/工具调用/命令都应分别维护布尔可见状态；点击某个类型只切换该类型，不能影响其他类型。关闭内容类型时还要在 renderer 层隐藏对应 block，而不是只做整条消息级过滤。
 - 会话详情的 `roleFilter` / `contentFilter` 是进程内偏好，不是会话私有态：用模块级 `rememberedSessionRoleFilter` / `rememberedSessionContentFilter` 跨会话、跨工具详情页保留；切换 `sourcePath` 时只重置搜索词、搜索范围、滚动、匹配与 navigator 折叠，不能把六个 chip 重置回默认全开。不写 SQLite/localStorage；重启应用回到默认全开。
 - 会话详情右侧 `MessageNavigator` 要按参考项目侧栏处理：标题显示“消息”、带总数、用户过滤按钮、收起/展开按钮、本地“筛选消息...”输入框，条目使用彩色点 + `#turnIndex` + 工具标记 + 时间 + 两行预览。不要把 `(assistant message)`、`unknown` 或纯占位工具消息放进 navigator；二级页外层上下左右只保留很小一致间距，workbench 需要填满页面主体，不能再用内部 `vh` 限高制造底部空白。

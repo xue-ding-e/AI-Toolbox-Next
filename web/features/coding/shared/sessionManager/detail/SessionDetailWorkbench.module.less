@@ -476,9 +476,9 @@
   flex-direction: column;
   gap: 4px;
   width: 100%;
-  max-width: 920px;
+  max-width: none;
   padding: 0 2px;
-  margin: 0 auto 10px;
+  margin: 0 0 10px;
 }
 
 .messageRoleUser {
@@ -1575,6 +1575,7 @@
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  min-width: 0;
   min-height: 32px;
   padding-top: 8px;
   border-top: 1px solid var(--color-border);
@@ -1583,10 +1584,12 @@
 }
 
 .statusSourcePath {
+  flex: 1 1 100%;
+  width: 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 @media (max-width: 1100px) {
