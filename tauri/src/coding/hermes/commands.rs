@@ -1896,3 +1896,39 @@ model:
         assert_eq!(ms.max_tokens, None);
     }
 }
+
+// ============================================================================
+// All API Hub import (Hermes)
+// ============================================================================
+
+#[tauri::command]
+pub async fn list_hermes_all_api_hub_providers(
+) -> Result<crate::coding::all_api_hub::AllApiHubProvidersResult, String> {
+    let discovery = crate::coding::all_api_hub::list_provider_candidates()?;
+    let providers = crate::coding::all_api_hub::build_all_api_hub_items(
+        &discovery.providers,
+        crate::coding::all_api_hub::candidate_to_hermes_provider,
+    );
+    Ok(crate::coding::all_api_hub::AllApiHubProvidersResult {
+        found: discovery.found,
+        profiles: discovery.profiles,
+        providers,
+        message: discovery.message,
+    })
+}
+
+#[tauri::command]
+pub async fn resolve_hermes_all_api_hub_providers(
+    state: tauri::State<'_, crate::db::SqliteDbState>,
+    request: crate::coding::all_api_hub::AllApiHubResolveRequest,
+) -> Result<Vec<crate::coding::all_api_hub::AllApiHubProviderItem>, String> {
+    let providers = crate::coding::all_api_hub::resolve_provider_candidates_with_keys(
+        &state,
+        &request.provider_ids,
+    )
+    .await?;
+    Ok(crate::coding::all_api_hub::build_all_api_hub_items(
+        &providers,
+        crate::coding::all_api_hub::candidate_to_hermes_provider,
+    ))
+}

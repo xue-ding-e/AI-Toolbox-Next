@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { AllApiHubProviderItem, AllApiHubProvidersResult } from '@/types/allApiHub';
 import type {
   DshCredentialInput,
   DshModelSettingsInput,
@@ -65,4 +66,15 @@ export const deleteDshRuntimeProvider = async (
   providerKey: string,
 ): Promise<DshRuntimeConfig> => {
   return await invoke<DshRuntimeConfig>('delete_dsh_runtime_provider', { providerKey });
+};
+export const listDshAllApiHubProviders = async (): Promise<AllApiHubProvidersResult> => {
+  return await invoke<AllApiHubProvidersResult>('list_dsh_all_api_hub_providers');
+};
+
+export const resolveDshAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<AllApiHubProviderItem[]> => {
+  return await invoke<AllApiHubProviderItem[]>('resolve_dsh_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

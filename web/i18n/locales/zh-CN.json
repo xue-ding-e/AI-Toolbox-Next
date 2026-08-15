@@ -403,7 +403,7 @@
       "modelsHint": "为当前渠道维护模型列表和能力标签。",
       "actions": {
         "addChannel": "新增渠道",
-        "addModel": "新增模型"
+        "addModel": "添加模型"
       },
       "fields": {
         "name": "名称",
@@ -1119,6 +1119,7 @@
       "extensionNotFound": "未找到 All API Hub 浏览器插件，请确认 Chrome 或 Edge 已安装且插件已启用。",
       "importSelected": "导入选中",
       "importSuccess": "成功从 All API Hub 导入 {{count}} 个供应商",
+      "importPartial": "All API Hub 导入完成：{{ok}} 成功，{{fail}} 失败",
       "importAllApiHubProtocolTitle": "导入前请确认",
       "importAllApiHubProtocolDesc": "检测到所选供应商将以 OpenAI Compatible 方式导入。这个兼容层虽然通常可用，但模型能力、参数支持和接口行为可能与原站点并不完全一致。建议导入后立即进入编辑页，手动检查 Base URL、模型列表以及必要的额外参数。",
       "importAllApiHubMissingApiKeyDesc": "检测到所选供应商未获取到 API Key。导入后请进入编辑页手动填写 API Key，否则无法正常使用。",
@@ -2866,7 +2867,7 @@
     "title": "OpenClaw 配置管理",
     "configPath": "配置路径",
     "openFolder": "打开文件夹",
-    "viewDocs": "查看文档",
+    "viewDocs": "官方文档",
     "refreshConfig": "刷新配置",
     "openWebUi": "打开 Control UI",
     "openWebUiOffline": "OpenClaw Control UI 未运行，是否启动 gateway 服务？",
@@ -2910,6 +2911,12 @@
       "importFromAllApiHub": "从 All API Hub 导入",
       "importSuccess": "成功从 OpenCode 导入 {{count}} 个供应商",
       "importAllApiHubSuccess": "成功从 All API Hub 导入 {{count}} 个供应商",
+      "batchDelete": "批量删除模型",
+      "cancelBatchDelete": "取消批量删除",
+      "deleteSelected": "删除所选 {{count}}",
+      "batchDeleteConfirmTitle": "批量删除模型",
+      "batchDeleteConfirmContent": "确定删除选中的 {{count}} 个模型吗？",
+      "batchDeleteSuccess": "已删除 {{count}} 个模型",
       "importNoConfig": "未找到 OpenCode 配置",
       "noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
       "importSelected": "导入选中",
@@ -4726,7 +4733,7 @@
       "title": "模型",
       "emptyText": "暂无模型",
       "modelSourceBuiltin": "内置 · 适配器默认模型",
-      "addModel": "新增模型",
+      "addModel": "添加模型",
       "editModel": "编辑模型",
       "deleteModel": "删除模型",
       "confirmDelete": "确定要删除模型 \"{{name}}\" 吗？",
@@ -4852,6 +4859,7 @@
     "pageHint": "Hermes 读取单个 config.yaml；渠道信息来自运行时文件。内置（只读）渠道由 providers: 字典管理。",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
+    "viewDocs": "官方文档",
     "refreshConfig": "刷新配置",
     "openWebUi": "打开 Web UI",
     "openWebUiOffline": "Hermes Web UI 未运行，是否启动 dashboard 服务？",
@@ -4950,10 +4958,17 @@
     "model": {
       "idRequired": "模型 ID 必填。",
       "idExists": "模型 ID 已存在。",
-      "setAsDefaultSuccess": "已设为默认。"
+      "setAsDefaultSuccess": "已设为默认。",
+      "batchDelete": "批量删除模型",
+      "cancelBatchDelete": "退出批量删除",
+      "deleteSelected": "删除所选 {{count}}",
+      "batchDeleteConfirmTitle": "批量删除模型",
+      "batchDeleteConfirmContent": "确定删除选中的 {{count}} 个模型吗？",
+      "batchDeleteSuccess": "已删除 {{count}} 个模型",
+      "fetchModels": "拉取模型"
     },
     "connectivity": {
-      "button": "测试"
+      "button": "连通性测试"
     },
     "invalidJson": "JSON 无效。"
   },

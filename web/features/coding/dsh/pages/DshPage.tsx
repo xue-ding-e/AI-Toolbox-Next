@@ -1,4 +1,5 @@
 import React from 'react';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import {
   Button,
   Collapse,
@@ -28,6 +29,7 @@ import {
   LinkOutlined,
   MessageOutlined,
   PlusOutlined,
+  ImportOutlined,
   ReloadOutlined,
   RightOutlined,
   RobotOutlined,
@@ -71,14 +73,28 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   fetchRemotePresetModels,
+  hasAllApiHubExtension,
   refreshTrayMenu,
 } from '@/services/appApi';
 import { useSettingsStore } from '@/stores';
 import {
+  hasCcSwitchDb,
+  type CcSwitchProviderCandidate,
+} from '@/services/ccSwitchApi';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import type { AllApiHubProviderItem } from '@/types/allApiHub';
+import {
+  buildDshProviderFromAllApiHub,
+  extractDshProviderFromCcSwitch,
+} from '../utils/importMapping';
+import {
   deleteDshCredential,
   deleteDshRuntimeProvider,
   getDshSettingsConfig,
+  listDshAllApiHubProviders,
   readDshRuntimeConfig,
+  resolveDshAllApiHubProviders,
   saveDshCredential,
   saveDshModelSettings,
   saveDshModelsProvider,
@@ -285,6 +301,10 @@ const DshPage: React.FC = () => {
   const [runtimeConfig, setRuntimeConfig] = React.useState<DshRuntimeConfig | null>(null);
   const [modelForm] = Form.useForm();
   const [providerModal, setProviderModal] = React.useState<ProviderJsonModalState | null>(null);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [providerModalForm] = Form.useForm();
   const [providerConfigJson, setProviderConfigJson] = React.useState<Record<string, unknown>>({});
   const [providerModelOverridesJson, setProviderModelOverridesJson] = React.useState<Record<string, unknown>>({});
@@ -1209,6 +1229,99 @@ const DshPage: React.FC = () => {
     }
   };
 
+  const handleImportFromAllApiHub = React.useCallback(
+    async (imported: AllApiHubProviderItem[]) => {
+      const existingKeys = new Set(dshProviders.map((provider) => provider.providerKey));
+      let ok = 0;
+      let fail = 0;
+      for (const item of imported) {
+        if (existingKeys.has(item.providerId)) {
+          continue;
+        }
+        const { providerKey, provider, apiKey, credentialRef } = buildDshProviderFromAllApiHub(item);
+        try {
+          if (apiKey) {
+            await saveDshCredential({ refName: credentialRef, value: apiKey });
+          }
+          await saveDshModelsProvider({ providerKey, provider });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import All API Hub provider:', item.name, error);
+          fail += 1;
+        }
+      }
+
+      setAllApiHubImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        message.success(t('common.allApiHub.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        message.warning(t('common.allApiHub.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        message.error(t('common.error'));
+      }
+
+      await loadConfig(true);
+      void refreshTrayMenu();
+    },
+    [dshProviders, loadConfig, t],
+  );
+
+  const handleImportFromCcSwitch = async (imported: CcSwitchProviderCandidate[]) => {
+    const existingKeys = new Set(dshProviders.map((provider) => provider.providerKey));
+    let ok = 0;
+    let fail = 0;
+    for (const candidate of imported) {
+      if (existingKeys.has(candidate.name)) {
+        continue;
+      }
+      const mapped = extractDshProviderFromCcSwitch(candidate);
+      if (!mapped) {
+        continue;
+      }
+      try {
+        if (mapped.apiKey) {
+          await saveDshCredential({ refName: mapped.credentialRef, value: mapped.apiKey });
+        }
+        await saveDshModelsProvider({ providerKey: candidate.name, provider: mapped.provider });
+        ok += 1;
+      } catch (error) {
+        console.error('Failed to import CC Switch provider:', candidate.name, error);
+        fail += 1;
+      }
+    }
+
+    setCcSwitchImportModalOpen(false);
+    if (ok > 0 && fail === 0) {
+      message.success(t('common.ccSwitch.importSuccess', { count: ok }));
+    } else if (ok > 0 && fail > 0) {
+      message.warning(t('common.ccSwitch.importPartial', { ok, fail }));
+    } else if (fail > 0) {
+      message.error(t('common.error'));
+    }
+
+    await loadConfig(true);
+    void refreshTrayMenu();
+  };
+
+  React.useEffect(() => {
+    const checkAllApiHub = async () => {
+      try {
+        setAllApiHubAvailable(await hasAllApiHubExtension());
+      } catch {
+        setAllApiHubAvailable(false);
+      }
+    };
+    void checkAllApiHub();
+    const checkCcSwitch = async () => {
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch {
+        setCcSwitchAvailable(false);
+      }
+    };
+    void checkCcSwitch();
+  }, []);
+
   const handleRefreshConfig = () => {
     void loadConfig(true);
     void refreshTrayMenu();
@@ -1556,6 +1669,28 @@ const DshPage: React.FC = () => {
                       ) : (
                         <Empty description={t('dsh.provider.emptyText', { defaultValue: '暂无供应商' })} />
                       )}
+                      <div style={{ marginTop: 12 }}>
+                        <Space wrap>
+                          {allApiHubAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<AllApiHubIcon />}
+                              onClick={() => setAllApiHubImportModalOpen(true)}
+                            >
+                              {t('common.allApiHub.importFromAllApiHub')}
+                            </Button>
+                          )}
+                          {ccSwitchAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<ImportOutlined />}
+                              onClick={() => setCcSwitchImportModalOpen(true)}
+                            >
+                              {t('common.ccSwitch.importFromCcSwitch')}
+                            </Button>
+                          )}
+                        </Space>
+                      </div>
                     </div>
                   ),
                 },
@@ -1855,6 +1990,27 @@ const DshPage: React.FC = () => {
           onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
         />
+
+        {allApiHubAvailable && (
+          <ImportFromAllApiHubModalForTool
+            open={allApiHubImportModalOpen}
+            existingProviderIds={dshProviders.map((provider) => provider.providerKey)}
+            onCancel={() => setAllApiHubImportModalOpen(false)}
+            onImport={handleImportFromAllApiHub}
+            listProviders={listDshAllApiHubProviders}
+            resolveProviders={resolveDshAllApiHubProviders}
+          />
+        )}
+
+        {ccSwitchAvailable && (
+          <ImportFromCcSwitchModal
+            open={ccSwitchImportModalOpen}
+            appType="claude"
+            existingProviderIds={dshProviders.map((provider) => provider.providerKey)}
+            onClose={() => setCcSwitchImportModalOpen(false)}
+            onImport={handleImportFromCcSwitch}
+          />
+        )}
 
         <JsonPreviewModal
           open={previewModalOpen}

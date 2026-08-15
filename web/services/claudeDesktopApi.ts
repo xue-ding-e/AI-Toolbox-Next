@@ -6,6 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import type { AllApiHubProviderItem, AllApiHubProvidersResult } from '@/types/allApiHub';
 import type {
   ClaudeDesktopCommonConfig,
   ClaudeDesktopCommonConfigInput,
@@ -97,4 +98,16 @@ export const importClaudeDesktopProvidersFromClaude = async (): Promise<number> 
 /** Ensure the seeded "Claude Desktop Official" provider exists. */
 export const ensureClaudeDesktopOfficialProvider = async (): Promise<ClaudeDesktopProvider> => {
   return await invoke<ClaudeDesktopProvider>('ensure_claude_desktop_official_provider');
+};
+
+export const listClaudeDesktopAllApiHubProviders = async (): Promise<AllApiHubProvidersResult> => {
+  return await invoke<AllApiHubProvidersResult>('list_claude_desktop_all_api_hub_providers');
+};
+
+export const resolveClaudeDesktopAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<AllApiHubProviderItem[]> => {
+  return await invoke<AllApiHubProviderItem[]>('resolve_claude_desktop_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

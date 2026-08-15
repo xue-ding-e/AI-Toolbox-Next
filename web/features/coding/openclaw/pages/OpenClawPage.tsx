@@ -262,6 +262,8 @@ const OpenClawPage: React.FC = () => {
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [favoriteImportModalOpen, setFavoriteImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
+  const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<Record<string, string[]>>({});
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
@@ -698,6 +700,81 @@ const OpenClawPage: React.FC = () => {
     } catch (error) {
       console.error('Failed to delete model:', error);
       message.error(t('common.error'));
+    }
+  };
+
+  const handleToggleBatchDeleteMode = (providerId: string) => {
+    setBatchDeleteProviderId((prev) => {
+      const next = prev === providerId ? null : providerId;
+      if (next === null) {
+        setSelectedModelIdsByProvider((selected) => {
+          const copy = { ...selected };
+          delete copy[providerId];
+          return copy;
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleToggleModelSelection = (providerId: string, modelId: string, selected: boolean) => {
+    setSelectedModelIdsByProvider((prev) => {
+      const current = prev[providerId] ?? [];
+      if (selected) {
+        return { ...prev, [providerId]: current.includes(modelId) ? current : [...current, modelId] };
+      }
+      return { ...prev, [providerId]: current.filter((id) => id !== modelId) };
+    });
+  };
+
+  const handleBatchDeleteModels = async (providerId: string) => {
+    if (!config?.models?.providers?.[providerId]) {
+      return;
+    }
+    const provider = config.models.providers[providerId];
+    const selected = selectedModelIdsByProvider[providerId] ?? [];
+    if (selected.length === 0) {
+      return;
+    }
+    const selectedSet = new Set(selected);
+    const nextProvider = {
+      ...provider,
+      models: (provider.models || []).filter((model) => !selectedSet.has(model.id)),
+    };
+    try {
+      const newConfig: OpenClawConfig = {
+        ...config,
+        models: {
+          ...config.models,
+          providers: {
+            ...config.models.providers,
+            [providerId]: nextProvider,
+          },
+        },
+      };
+      await saveOpenClawConfig(newConfig);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('openclaw', providerId),
+          buildOpenClawFavoriteProviderConfig(providerId, nextProvider),
+        );
+        await loadFavoriteProviders();
+      } catch (favoriteError) {
+        console.error('Failed to update OpenClaw favorite provider after batch delete:', favoriteError);
+      }
+      message.success(t('openclaw.providers.batchDeleteSuccess', { count: selected.length }));
+      loadConfig();
+      refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to batch delete models:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchDeleteProviderId(null);
+      setSelectedModelIdsByProvider((prev) => {
+        const copy = { ...prev };
+        delete copy[providerId];
+        return copy;
+      });
     }
   };
 
@@ -1415,6 +1492,11 @@ const OpenClawPage: React.FC = () => {
                                   onConnectivityTest={() => handleOpenConnectivityTest(providerId)}
                                   onFetchModels={() => handleOpenFetchModels(providerId)}
                                   connectivityStatus={connectivityStatuses[providerId]}
+                                  modelSelectionMode={batchDeleteProviderId === providerId}
+                                  selectedModelIds={selectedModelIdsByProvider[providerId] ?? []}
+                                  onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(providerId, modelId, selected)}
+                                  onToggleBatchDeleteMode={() => handleToggleBatchDeleteMode(providerId)}
+                                  onBatchDeleteModels={() => handleBatchDeleteModels(providerId)}
                                 />
                               ))}
                             </SortableContext>

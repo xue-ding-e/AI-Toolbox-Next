@@ -2062,6 +2062,8 @@ pub fn run() {
             coding::claude_desktop::apply_claude_desktop_prompt_config,
             coding::claude_desktop::reorder_claude_desktop_prompt_configs,
             coding::claude_desktop::save_claude_desktop_local_prompt_config,
+            coding::claude_desktop::list_claude_desktop_all_api_hub_providers,
+            coding::claude_desktop::resolve_claude_desktop_all_api_hub_providers,
             // Hermes
             coding::hermes::get_hermes_default_config_dir,
             coding::hermes::get_hermes_config_dir_without_db,
@@ -2086,6 +2088,8 @@ pub fn run() {
             coding::hermes::save_hermes_local_prompt_config,
             coding::hermes::open_hermes_web_ui,
             coding::hermes::launch_hermes_dashboard,
+            coding::hermes::list_hermes_all_api_hub_providers,
+            coding::hermes::resolve_hermes_all_api_hub_providers,
             coding::dsh::get_dsh_default_config_dir,
             coding::dsh::get_dsh_config_dir_without_db,
             coding::dsh::get_dsh_path_info,
@@ -2106,6 +2110,8 @@ pub fn run() {
             coding::dsh::apply_dsh_prompt_config,
             coding::dsh::reorder_dsh_prompt_configs,
             coding::dsh::save_dsh_local_prompt_config,
+            coding::dsh::list_dsh_all_api_hub_providers,
+            coding::dsh::resolve_dsh_all_api_hub_providers,
             // Preset Models
             coding::preset_models::fetch_remote_preset_models,
             coding::preset_models::load_cached_preset_models,

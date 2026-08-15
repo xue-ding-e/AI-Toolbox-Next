@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Space, Tooltip } from 'antd';
-import { ApiOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { Button, Modal, Space, Tooltip } from 'antd';
+import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import ProviderCard from '@/components/common/ProviderCard';
 import type {
@@ -22,6 +22,12 @@ interface Props {
   onAddModel: () => void;
   onEditModel: (model: OpenClawModel) => void;
   onDeleteModel: (modelId: string) => void;
+  /** 批量删除模型:多选 + 切换 + 确认执行 */
+  modelSelectionMode?: boolean;
+  selectedModelIds?: string[];
+  onToggleModelSelection?: (modelId: string, selected: boolean) => void;
+  onToggleBatchDeleteMode?: () => void;
+  onBatchDeleteModels?: () => void;
   onConnectivityTest: () => void;
   onFetchModels: () => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
@@ -56,11 +62,18 @@ const OpenClawProviderCard: React.FC<Props> = ({
   onConnectivityTest,
   onFetchModels,
   connectivityStatus,
+  modelSelectionMode,
+  selectedModelIds,
+  onToggleModelSelection,
+  onToggleBatchDeleteMode,
+  onBatchDeleteModels,
 }) => {
   const { t } = useTranslation();
 
   const isAuthReady = Boolean(config.baseUrl?.trim() && config.apiKey?.trim());
   const authTooltip = !isAuthReady ? t('openclaw.providers.completeUrlAndKey') : '';
+  const isBatchDeleteMode = Boolean(modelSelectionMode);
+  const selectedModelCount = selectedModelIds?.length ?? 0;
 
   const provider = toProviderDisplayData(providerId, config);
   const models = (config.models || []).map(toModelDisplayData);
@@ -90,9 +103,46 @@ const OpenClawProviderCard: React.FC<Props> = ({
         if (model) onEditModel(model);
       }}
       onDeleteModel={onDeleteModel}
+      modelSelectionMode={modelSelectionMode}
+      selectedModelIds={selectedModelIds}
+      onToggleModelSelection={onToggleModelSelection}
       connectivityStatus={connectivityStatus}
       extraActions={
-        <Space size={0}>
+        <Space size={4}>
+          {onToggleBatchDeleteMode && (
+            <>
+              <Button
+                size="small"
+                type="text"
+                style={{ fontSize: 12 }}
+                onClick={onToggleBatchDeleteMode}
+              >
+                <DeleteOutlined style={{ marginRight: 4 }} />
+                {isBatchDeleteMode
+                  ? t('openclaw.providers.cancelBatchDelete')
+                  : t('openclaw.providers.batchDelete')}
+              </Button>
+              {isBatchDeleteMode && (
+                <Button
+                  size="small"
+                  danger
+                  style={{ fontSize: 12 }}
+                  disabled={selectedModelCount === 0}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: t('openclaw.providers.batchDeleteConfirmTitle'),
+                      content: t('openclaw.providers.batchDeleteConfirmContent', { count: selectedModelCount }),
+                      okText: t('common.delete'),
+                      cancelText: t('common.cancel'),
+                      onOk: () => onBatchDeleteModels?.(),
+                    });
+                  }}
+                >
+                  {t('openclaw.providers.deleteSelected', { count: selectedModelCount })}
+                </Button>
+              )}
+            </>
+          )}
           <Tooltip title={authTooltip}>
             <span>
               <Button

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { AllApiHubProviderItem, AllApiHubProvidersResult } from '@/types/allApiHub';
 import type {
   HermesMemoryKind,
   HermesMemoryLimits,
@@ -82,4 +83,16 @@ export const openHermesWebUi = async (path?: string): Promise<void> => {
 /** 在用户终端启动 Hermes dashboard(`hermes dashboard`)。 */
 export const launchHermesDashboard = async (): Promise<void> => {
   await invoke('launch_hermes_dashboard');
+};
+
+export const listHermesAllApiHubProviders = async (): Promise<AllApiHubProvidersResult> => {
+  return await invoke<AllApiHubProvidersResult>('list_hermes_all_api_hub_providers');
+};
+
+export const resolveHermesAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<AllApiHubProviderItem[]> => {
+  return await invoke<AllApiHubProviderItem[]>('resolve_hermes_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

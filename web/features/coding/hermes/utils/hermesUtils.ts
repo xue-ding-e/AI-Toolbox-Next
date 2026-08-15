@@ -91,6 +91,40 @@ export const hermesApiModeToSdkName = (apiMode?: string): string => {
   return '@ai-sdk/openai-compatible';
 };
 
+/** 把模型的 `reasoningEfforts`(思考等级映射)转成 JsonEditor 可编辑的 JSON 字符串。 */
+export const stringifyReasoningEfforts = (value: unknown): string | undefined => {
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) {
+    return undefined;
+  }
+  return JSON.stringify(record, null, 2);
+};
+
+/**
+ * 解析思考等级的 JsonEditor 值。仅保留"有非空字符串值"的条目(丢弃 null / 空值 /
+ * 数字等),空映射或非法 JSON 返回 undefined(表示不写入字段)。
+ */
+export const parseThinkingLevelEfforts = (json: string): Record<string, string> | undefined => {
+  const trimmed = (json || '').trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  const record = asRecord(parsed);
+  const entries = Object.entries(record)
+    .filter(([, value]) => typeof value === 'string' && value.trim() !== '')
+    .map(([key, value]) => [key, (value as string).trim()] as const);
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return Object.fromEntries(entries);
+};
+
 /** Build an OpenCodeProvider-ish view used by the shared connectivity test. */
 export const buildHermesConnectivityProvider = (
   provider: HermesRuntimeProviderView,

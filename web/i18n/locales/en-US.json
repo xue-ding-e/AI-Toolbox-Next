@@ -403,7 +403,7 @@
       "modelsHint": "Maintain the model list and capability tags for the current channel.",
       "actions": {
         "addChannel": "Add channel",
-        "addModel": "Add model"
+        "addModel": "Add Model"
       },
       "fields": {
         "name": "Name",
@@ -1119,6 +1119,7 @@
       "extensionNotFound": "All API Hub browser extension was not found. Please make sure Chrome or Edge is installed and the extension is enabled.",
       "importSelected": "Import Selected",
       "importSuccess": "Successfully imported {{count}} providers from All API Hub",
+      "importPartial": "All API Hub import finished: {{ok}} succeeded, {{fail}} failed",
       "importAllApiHubProtocolTitle": "Please Confirm Before Importing",
       "importAllApiHubProtocolDesc": "Some selected providers will be imported through the OpenAI Compatible layer. It usually works, but model capabilities, parameter support, and API behavior may not fully match the original service. Please open the editor after importing and manually review the Base URL, model list, and any extra parameters.",
       "importAllApiHubMissingApiKeyDesc": "Some selected providers do not have an API key yet. After importing, please open the editor and fill in the API key manually before using them.",
@@ -2913,6 +2914,12 @@
       "importFromAllApiHub": "Import from All API Hub",
       "importSuccess": "Successfully imported {{count}} provider(s) from OpenCode",
       "importAllApiHubSuccess": "Successfully imported {{count}} provider(s) from All API Hub",
+      "batchDelete": "Batch Delete Models",
+      "cancelBatchDelete": "Cancel Batch Delete",
+      "deleteSelected": "Delete Selected ({{count}})",
+      "batchDeleteConfirmTitle": "Batch Delete Models",
+      "batchDeleteConfirmContent": "Are you sure you want to delete the selected {{count}} model(s)?",
+      "batchDeleteSuccess": "Deleted {{count}} model(s)",
       "importNoConfig": "OpenCode configuration not found",
       "noAllApiHubProviders": "No importable All API Hub providers found",
       "importSelected": "Import Selected",
@@ -3797,7 +3804,7 @@
     },
     "model": {
       "title": "Models",
-      "addModel": "Add model",
+      "addModel": "Add Model",
       "editModel": "Edit model",
       "deleteModel": "Delete model",
       "confirmDelete": "Delete model \"{{name}}\"?",
@@ -4530,7 +4537,7 @@
     },
     "model": {
       "title": "Models",
-      "addModel": "Add model",
+      "addModel": "Add Model",
       "editModel": "Edit model",
       "deleteModel": "Delete model",
       "confirmDelete": "Delete model \"{{name}}\"?",
@@ -4855,6 +4862,7 @@
     "pageHint": "Hermes reads a single config.yaml; provider facts come from the runtime file. Built-in (read-only) providers are managed by the providers: dict.",
     "configPath": "Config path",
     "openFolder": "Open folder",
+    "viewDocs": "Documentation",
     "refreshConfig": "Refresh Config",
     "openWebUi": "Open Web UI",
     "openWebUiOffline": "Hermes Web UI is not running. Launch the dashboard service?",
@@ -4953,10 +4961,17 @@
     "model": {
       "idRequired": "Model ID is required.",
       "idExists": "Model ID already exists.",
-      "setAsDefaultSuccess": "Set as default."
+      "setAsDefaultSuccess": "Set as default.",
+      "batchDelete": "Batch Delete Models",
+      "cancelBatchDelete": "Cancel Batch Delete",
+      "deleteSelected": "Delete Selected ({{count}})",
+      "batchDeleteConfirmTitle": "Batch Delete Models",
+      "batchDeleteConfirmContent": "Are you sure you want to delete the selected {{count}} model(s)?",
+      "batchDeleteSuccess": "Deleted {{count}} model(s)",
+      "fetchModels": "Fetch Models"
     },
     "connectivity": {
-      "button": "Test"
+      "button": "Connectivity Test"
     },
     "invalidJson": "Invalid JSON."
   },

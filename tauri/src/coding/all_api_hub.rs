@@ -326,6 +326,138 @@ pub fn candidate_to_openclaw_provider(
     }
 }
 
+/// 把 All API Hub 候选转成 Claude Desktop 的 `settings_config`(`{ env: { ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN } }`)。
+/// 与 Claude Code 的 env 风格一致,由 `create_claude_desktop_provider` 接受。
+pub fn candidate_to_claude_desktop_settings(candidate: &AllApiHubProviderCandidate) -> Value {
+    let mut env = serde_json::Map::new();
+    if let Some(url) = candidate
+        .base_url
+        .as_deref()
+        .map(|url| normalize_provider_base_url(url, &candidate.npm))
+    {
+        env.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(url));
+    }
+    if let Some(key) = candidate.api_key.as_deref().filter(|k| !k.is_empty()) {
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(key.to_string()));
+    }
+    Value::Object(serde_json::Map::from_iter([("env".to_string(), Value::Object(env))]))
+}
+
+/// 把 All API Hub 候选转成 Hermes `custom_providers` 条目(provider dict)。
+/// 注意用 `api_mode`(Hermes 写入器会丢弃字面量 `api` 字段)。
+pub fn candidate_to_hermes_provider(candidate: &AllApiHubProviderCandidate) -> Value {
+    let mut config = serde_json::Map::new();
+    config.insert("api_mode".to_string(), Value::String(candidate.api_protocol.clone()));
+    if let Some(url) = candidate
+        .base_url
+        .as_deref()
+        .map(|url| normalize_provider_base_url(url, &candidate.npm))
+    {
+        config.insert("base_url".to_string(), Value::String(url));
+    }
+    if let Some(key) = candidate.api_key.as_deref().filter(|k| !k.is_empty()) {
+        config.insert("api_key".to_string(), Value::String(key.to_string()));
+    }
+    config.insert("models".to_string(), Value::Array(Vec::new()));
+    Value::Object(config)
+}
+
+/// 把 All API Hub 候选转成 DSH provider route 的基础字段。
+/// `api_key` 一并携带(resolve 后前端经 `save_dsh_credential` 落盘,再从 route 配置中剔除)。
+pub fn candidate_to_dsh_provider(candidate: &AllApiHubProviderCandidate) -> Value {
+    let mut config = serde_json::Map::new();
+    config.insert("api".to_string(), Value::String(candidate.api_protocol.clone()));
+    if let Some(url) = candidate
+        .base_url
+        .as_deref()
+        .map(|url| normalize_provider_base_url(url, &candidate.npm))
+    {
+        config.insert("baseURL".to_string(), Value::String(url));
+    }
+    if let Some(key) = candidate.api_key.as_deref().filter(|k| !k.is_empty()) {
+        config.insert("api_key".to_string(), Value::String(key.to_string()));
+    }
+    config.insert("models".to_string(), Value::Array(Vec::new()));
+    Value::Object(config)
+}
+
+/// 通用"已转换的 All API Hub 供应商标识 + 目标模块配置"。
+/// 各模块的 list/resolve 命令用它返回,`config` 字段由各模块 converter 产生。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllApiHubProviderItem {
+    pub provider_id: String,
+    pub name: String,
+    pub api_protocol: String,
+    pub base_url: Option<String>,
+    pub requires_browser_open: bool,
+    pub is_disabled: bool,
+    pub has_api_key: bool,
+    pub api_key_preview: Option<String>,
+    pub balance_usd: Option<f64>,
+    pub balance_cny: Option<f64>,
+    pub site_name: Option<String>,
+    pub site_type: Option<String>,
+    pub account_label: String,
+    pub source_profile_name: String,
+    pub source_extension_id: String,
+    pub config: Value,
+}
+
+/// 通用 All API Hub 发现结果(list 命令返回)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllApiHubProvidersResult {
+    pub found: bool,
+    pub profiles: Vec<AllApiHubProfileInfo>,
+    pub providers: Vec<AllApiHubProviderItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// 通用 resolve 请求(provider ids)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllApiHubResolveRequest {
+    pub provider_ids: Vec<String>,
+}
+
+/// 把候选列表经 `convert` 转成 `AllApiHubProviderItem` 列表(resolve 时候选已带密钥)。
+pub fn build_all_api_hub_items(
+    candidates: &[AllApiHubProviderCandidate],
+    convert: impl Fn(&AllApiHubProviderCandidate) -> Value,
+) -> Vec<AllApiHubProviderItem> {
+    candidates
+        .iter()
+        .map(|c| AllApiHubProviderItem {
+            provider_id: c.provider_id.clone(),
+            name: c.name.clone(),
+            api_protocol: c.api_protocol.clone(),
+            base_url: c.base_url.clone(),
+            requires_browser_open: c
+                .auth_type
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(false),
+            is_disabled: c.is_disabled,
+            has_api_key: c
+                .api_key
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
+            api_key_preview: c.api_key.as_ref().map(|v| mask_api_key_preview(v)),
+            balance_usd: c.balance_usd,
+            balance_cny: c.balance_cny,
+            site_name: c.site_name.clone(),
+            site_type: c.site_type.clone(),
+            account_label: c.account_label.clone(),
+            source_profile_name: c.source_profile_name.clone(),
+            source_extension_id: c.source_extension_id.clone(),
+            config: convert(c),
+        })
+        .collect()
+}
+
 pub fn mask_api_key_preview(api_key: &str) -> String {
     let trimmed = api_key.trim();
     let chars: Vec<char> = trimmed.chars().collect();
@@ -1562,5 +1694,60 @@ mod tests {
         assert_eq!(discovered[0].path, chrome_extension_dir);
         assert_eq!(discovered[1].path, edge_chrome_extension_dir);
         assert_eq!(discovered[2].path, edge_store_extension_dir);
+    }
+}
+
+#[cfg(test)]
+mod converter_tests {
+    use super::*;
+
+    fn candidate() -> AllApiHubProviderCandidate {
+        AllApiHubProviderCandidate {
+            provider_id: "ext:deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            base_url: Some("https://api.deepseek.com/v1/".to_string()),
+            api_key: Some("sk-test".to_string()),
+            is_disabled: false,
+            balance_usd: None,
+            balance_cny: None,
+            access_token: None,
+            user_id: None,
+            auth_type: None,
+            cookie_auth_session_cookie: None,
+            refresh_token: None,
+            token_expires_at: None,
+            npm: "deepseek".to_string(),
+            api_protocol: "anthropic-messages".to_string(),
+            site_name: Some("DeepSeek".to_string()),
+            site_type: None,
+            account_label: "acct".to_string(),
+            source_profile_name: "p".to_string(),
+            source_extension_id: "e".to_string(),
+        }
+    }
+
+    #[test]
+    fn claude_desktop_settings_has_base_url_and_token() {
+        let settings = candidate_to_claude_desktop_settings(&candidate());
+        let env = &settings["env"];
+        assert!(env.get("ANTHROPIC_BASE_URL").is_some());
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+    }
+
+    #[test]
+    fn hermes_provider_maps_fields() {
+        let provider = candidate_to_hermes_provider(&candidate());
+        assert_eq!(provider["api_mode"], "anthropic-messages");
+        assert!(provider["base_url"].as_str().unwrap().contains("api.deepseek.com"));
+        assert_eq!(provider["api_key"], "sk-test");
+        assert!(provider["models"].is_array());
+    }
+
+    #[test]
+    fn dsh_provider_carries_key_for_credential_write() {
+        let provider = candidate_to_dsh_provider(&candidate());
+        assert_eq!(provider["api"], "anthropic-messages");
+        assert_eq!(provider["api_key"], "sk-test");
+        assert!(provider["baseURL"].is_string());
     }
 }

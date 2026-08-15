@@ -1,4 +1,5 @@
 import React from 'react';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import {
   Button,
   Collapse,
@@ -15,7 +16,9 @@ import {
 } from 'antd';
 import {
   ApiOutlined,
+  CloudDownloadOutlined,
   DatabaseOutlined,
+  DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
@@ -23,6 +26,8 @@ import {
   FileTextOutlined,
   FolderOpenOutlined,
   GlobalOutlined,
+  ImportOutlined,
+  LinkOutlined,
   PlusOutlined,
   QuestionCircleOutlined,
   ReloadOutlined,
@@ -32,7 +37,7 @@ import {
   ThunderboltOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -56,18 +61,30 @@ import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import HermesMemoryPanel from '../components/HermesMemoryPanel';
-import { refreshTrayMenu } from '@/services/appApi';
+import { hasAllApiHubExtension, refreshTrayMenu } from '@/services/appApi';
 import {
   deleteHermesRuntimeProvider,
   getHermesSettingsConfig,
   launchHermesDashboard,
+  listHermesAllApiHubProviders,
   openHermesWebUi,
   readHermesRuntimeConfig,
+  resolveHermesAllApiHubProviders,
   saveHermesModelSettings,
   saveHermesModelsProvider,
   saveHermesOtherSettings,
   saveHermesSettingsConfig,
 } from '@/services/hermesApi';
+import {
+  hasCcSwitchDb,
+  type CcSwitchProviderCandidate,
+} from '@/services/ccSwitchApi';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import type { AllApiHubProviderItem } from '@/types/allApiHub';
+import { extractHermesProviderFromCcSwitch } from '../utils/importMapping';
+import { buildFetchedHermesModel } from '../utils/hermesFetchedModels';
+import { findPresetModelById } from '@/constants/presetModels';
 import { hermesPromptApi } from '@/services/hermesPromptApi';
 import type {
   HermesRuntimeConfig,
@@ -78,15 +95,20 @@ import { useSettingsStore } from '@/stores';
 import JsonEditor from '@/components/common/JsonEditor';
 import ModelFormModal from '@/components/common/ModelFormModal';
 import type { ModelFormValues } from '@/components/common/ModelFormModal';
+import FetchModelsModal from '@/components/common/FetchModelsModal';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import {
   asRecord,
   buildHermesConnectivityProvider,
   getNumberField,
+  hermesApiModeToSdkName,
   getProviderModelRecords,
   getStringField,
   isRecordEmpty,
   maskCredential,
   setOptionalStringField,
+  parseThinkingLevelEfforts,
+  stringifyReasoningEfforts,
 } from '../utils/hermesUtils';
 import styles from './HermesPage.module.less';
 
@@ -99,6 +121,8 @@ interface HermesProviderModalState {
 interface HermesModelModalState {
   provider: HermesRuntimeProviderView;
   modelId?: string;
+  /** 以某模型为模板新建(复制):打开新增弹窗并预填该模型内容。 */
+  copyFromId?: string;
 }
 
 /** Shape accepted by the shared root-directory hook (maps to Hermes `configDir`). */
@@ -134,6 +158,14 @@ const HermesPage: React.FC = () => {
   const [modelForm] = Form.useForm();
   const [providerModalForm] = Form.useForm();
   const [providerModal, setProviderModal] = React.useState<HermesProviderModalState | null>(null);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
+  const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
+  const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<Record<string, string[]>>({});
+  const [fetchModelsProviderKey, setFetchModelsProviderKey] = React.useState<string | null>(null);
+  const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [providerJson, setProviderJson] = React.useState<Record<string, unknown>>({});
   const [providerJsonValid, setProviderJsonValid] = React.useState(true);
   const [providerAdvancedExpanded, setProviderAdvancedExpanded] = React.useState(false);
@@ -485,6 +517,14 @@ const HermesPage: React.FC = () => {
     } else {
       delete nextModel.reasoning;
     }
+    const efforts = typeof values.thinkingLevelMap === 'string'
+      ? parseThinkingLevelEfforts(values.thinkingLevelMap)
+      : undefined;
+    if (efforts) {
+      nextModel.reasoningEfforts = efforts;
+    } else {
+      delete nextModel.reasoningEfforts;
+    }
 
     let modelWasReplaced = false;
     const nextModels = existingModels.map((entry) => {
@@ -578,6 +618,94 @@ const HermesPage: React.FC = () => {
       setSaving(false);
     }
   }, [connectivityProviderId, hermesProviders]);
+
+  const handleDeleteModel = React.useCallback(
+    async (providerKey: string, modelId: string) => {
+      const provider = hermesProviders.find((item) => item.providerKey === providerKey);
+      if (!provider || provider.isReadOnly) {
+        return;
+      }
+      const nextModels = getProviderModelRecords(provider.provider)
+        .filter((entry) => entry.id !== modelId)
+        .map((entry) => entry.model);
+      try {
+        const nextConfig = await saveHermesModelsProvider({
+          providerKey,
+          provider: { ...(provider.provider ?? {}), models: nextModels },
+        });
+        setRuntimeConfig(nextConfig);
+        setOtherSettings(nextConfig.otherSettings || {});
+        message.success(t('hermes.model.batchDeleteSuccess', { count: 1 }));
+      } catch (error) {
+        console.error('Failed to delete Hermes model:', error);
+        message.error(t('common.error'));
+      }
+    },
+    [hermesProviders, t],
+  );
+
+  const handleToggleBatchDeleteMode = (providerKey: string) => {
+    setBatchDeleteProviderId((prev) => {
+      const next = prev === providerKey ? null : providerKey;
+      if (next === null) {
+        setSelectedModelIdsByProvider((selected) => {
+          const copy = { ...selected };
+          delete copy[providerKey];
+          return copy;
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleToggleModelSelection = (providerKey: string, modelId: string, selected: boolean) => {
+    setSelectedModelIdsByProvider((prev) => {
+      const current = prev[providerKey] ?? [];
+      if (selected) {
+        return { ...prev, [providerKey]: current.includes(modelId) ? current : [...current, modelId] };
+      }
+      return { ...prev, [providerKey]: current.filter((id) => id !== modelId) };
+    });
+  };
+
+  const handleBatchDeleteModels = React.useCallback(
+    async (providerKey: string) => {
+      const provider = hermesProviders.find((item) => item.providerKey === providerKey);
+      if (!provider || provider.isReadOnly) {
+        setBatchDeleteProviderId(null);
+        return;
+      }
+      const selected = selectedModelIdsByProvider[providerKey] ?? [];
+      if (selected.length === 0) {
+        return;
+      }
+      const selectedSet = new Set(selected);
+      const nextModels = getProviderModelRecords(provider.provider)
+        .filter((entry) => !selectedSet.has(entry.id))
+        .map((entry) => entry.model);
+
+      try {
+        const nextConfig = await saveHermesModelsProvider({
+          providerKey,
+          provider: { ...(provider.provider ?? {}), models: nextModels },
+        });
+        setRuntimeConfig(nextConfig);
+        setOtherSettings(nextConfig.otherSettings || {});
+        message.success(t('hermes.model.batchDeleteSuccess', { count: selected.length }));
+      } catch (error) {
+        console.error('Failed to batch delete Hermes models:', error);
+        message.error(t('common.error'));
+      } finally {
+        setBatchDeleteProviderId(null);
+        setSelectedModelIdsByProvider((prev) => {
+          const copy = { ...prev };
+          delete copy[providerKey];
+          return copy;
+        });
+      }
+    },
+    [hermesProviders, selectedModelIdsByProvider, t],
+  );
 
   const handleBatchTestProviders = React.useCallback(async () => {
     const targets = hermesProviders.map((provider) => (
@@ -696,11 +824,100 @@ const HermesPage: React.FC = () => {
     }
   };
 
+  const handleImportFromAllApiHub = React.useCallback(
+    async (imported: AllApiHubProviderItem[]) => {
+      const existingKeys = new Set(hermesProviders.map((provider) => provider.providerKey));
+      const toImport = imported.filter((item) => !existingKeys.has(item.name));
+
+      let ok = 0;
+      let fail = 0;
+      for (const item of toImport) {
+        try {
+          await saveHermesModelsProvider({ providerKey: item.name, provider: item.config });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import All API Hub provider:', item.name, error);
+          fail += 1;
+        }
+      }
+
+      setAllApiHubImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        message.success(t('common.allApiHub.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        message.warning(t('common.allApiHub.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        message.error(t('common.error'));
+      }
+
+      void loadConfig(true);
+      void refreshTrayMenu();
+    },
+    [hermesProviders, loadConfig, t],
+  );
+
+  const handleImportFromCcSwitch = React.useCallback(
+    async (imported: CcSwitchProviderCandidate[]) => {
+      const existingKeys = new Set(hermesProviders.map((provider) => provider.providerKey));
+      let ok = 0;
+      let fail = 0;
+      for (const candidate of imported) {
+        if (existingKeys.has(candidate.name)) {
+          continue;
+        }
+        const provider = extractHermesProviderFromCcSwitch(candidate);
+        if (!provider) {
+          continue;
+        }
+        try {
+          await saveHermesModelsProvider({ providerKey: candidate.name, provider });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import CC Switch provider:', candidate.name, error);
+          fail += 1;
+        }
+      }
+
+      setCcSwitchImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        message.success(t('common.ccSwitch.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        message.warning(t('common.ccSwitch.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        message.error(t('common.error'));
+      }
+
+      void loadConfig(true);
+      void refreshTrayMenu();
+    },
+    [hermesProviders, loadConfig, t],
+  );
+
+  React.useEffect(() => {
+    const checkAllApiHub = async () => {
+      try {
+        setAllApiHubAvailable(await hasAllApiHubExtension());
+      } catch {
+        setAllApiHubAvailable(false);
+      }
+    };
+    void checkAllApiHub();
+    const checkCcSwitch = async () => {
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch {
+        setCcSwitchAvailable(false);
+      }
+    };
+    void checkCcSwitch();
+  }, []);
+
   // Derived values for the inlined shared ModelFormModal (mirrors the old HermesModelModal).
   const modelModalProvider = modelModal?.provider ?? hermesProviders[0];
-  const modelModalRecord = modelModal?.modelId
+  const modelModalTargetId = modelModal?.modelId ?? modelModal?.copyFromId;
+  const modelModalRecord = modelModalTargetId
     ? getProviderModelRecords(modelModalProvider?.provider).find(
-      (entry) => entry.id === modelModal.modelId,
+      (entry) => entry.id === modelModalTargetId,
     )?.model
     : undefined;
   const modelModalExistingIds = getProviderModelRecords(modelModalProvider?.provider).map((entry) => entry.id);
@@ -711,6 +928,68 @@ const HermesPage: React.FC = () => {
     reasoning: typeof modelModalRecordSafe.reasoning === 'boolean' ? modelModalRecordSafe.reasoning : undefined,
     contextLimit: getNumberField(modelModalRecordSafe, 'context_length'),
     outputLimit: getNumberField(modelModalRecordSafe, 'max_tokens'),
+    thinkingLevelMap: stringifyReasoningEfforts(modelModalRecordSafe.reasoningEfforts),
+  };
+
+  const fetchModelsProviderInfo = React.useMemo(() => {
+    if (!fetchModelsProviderKey) {
+      return null;
+    }
+    const provider = hermesProviders.find((item) => item.providerKey === fetchModelsProviderKey);
+    if (!provider) {
+      return null;
+    }
+    const view = buildHermesConnectivityProvider(provider);
+    return {
+      providerId: provider.providerKey,
+      providerName: provider.displayName,
+      baseUrl: view.options?.baseURL || '',
+      apiKey: view.options?.apiKey,
+      sdkType: view.npm,
+      existingModelIds: provider.modelIds ?? [],
+    };
+  }, [fetchModelsProviderKey, hermesProviders]);
+
+  const handleOpenFetchModels = (providerKey: string) => {
+    setFetchModelsProviderKey(providerKey);
+    setFetchModelsModalOpen(true);
+  };
+
+  const handleFetchModelsSuccess = async ({ selectedModels, removedModelIds }: FetchModelsApplyResult) => {
+    if (!fetchModelsProviderKey) {
+      return;
+    }
+    const provider = hermesProviders.find((item) => item.providerKey === fetchModelsProviderKey);
+    if (!provider || provider.isReadOnly) {
+      return;
+    }
+    const removedSet = new Set(removedModelIds);
+    const nextModels = getProviderModelRecords(provider.provider)
+      .filter((entry) => !removedSet.has(entry.id))
+      .map((entry) => entry.model);
+    const currentIds = new Set(nextModels.map((model) => getStringField(model, 'id')));
+    for (const model of selectedModels) {
+      if (currentIds.has(model.id)) {
+        continue;
+      }
+      const matchedPreset = findPresetModelById(model.id, fetchModelsProviderInfo?.sdkType);
+      nextModels.push(buildFetchedHermesModel(model, matchedPreset));
+    }
+
+    try {
+      const nextConfig = await saveHermesModelsProvider({
+        providerKey: provider.providerKey,
+        provider: { ...(provider.provider ?? {}), models: nextModels },
+      });
+      setRuntimeConfig(nextConfig);
+      setOtherSettings(nextConfig.otherSettings || {});
+      message.success(t('hermes.model.fetchModels', { defaultValue: 'Fetch Models' }));
+    } catch (error) {
+      console.error('Failed to apply fetched Hermes models:', error);
+      message.error(t('common.error'));
+    } finally {
+      setFetchModelsModalOpen(false);
+    }
   };
 
   const renderProvider = (provider: HermesRuntimeProviderView) => {
@@ -736,7 +1015,12 @@ const HermesPage: React.FC = () => {
       id: entry.id,
       name: getStringField(entry.model, 'name') || entry.id,
       isPrimary: provider.isDefault && runtimeConfig?.modelSettings.defaultModel === entry.id,
+      contextLimit: getNumberField(entry.model, 'context_length'),
+      outputLimit: getNumberField(entry.model, 'max_tokens'),
     }));
+    const isBatchDeleteMode = batchDeleteProviderId === provider.providerKey;
+    const selectedModelIds = selectedModelIdsByProvider[provider.providerKey] ?? [];
+    const selectedModelCount = selectedModelIds.length;
 
     return (
       <ProviderCard
@@ -749,24 +1033,77 @@ const HermesPage: React.FC = () => {
         deleteConfirm={false}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         extraActions={
-          <Tooltip title={connectivityTooltip}>
-            <span>
+          <>
+            {!isReadOnly && (
+              <>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ fontSize: 12 }}
+                  onClick={() => handleToggleBatchDeleteMode(provider.providerKey)}
+                >
+                  <DeleteOutlined style={{ marginRight: 4 }} />
+                  {isBatchDeleteMode
+                    ? t('hermes.model.cancelBatchDelete', { defaultValue: '退出批量删除' })
+                    : t('hermes.model.batchDelete', { defaultValue: '批量删除模型' })}
+                </Button>
+                {isBatchDeleteMode && (
+                  <Button
+                    size="small"
+                    danger
+                    style={{ fontSize: 12 }}
+                    disabled={selectedModelCount === 0}
+                    onClick={() => {
+                      Modal.confirm({
+                        title: t('hermes.model.batchDeleteConfirmTitle', { defaultValue: '批量删除模型' }),
+                        content: t('hermes.model.batchDeleteConfirmContent', { count: selectedModelCount }),
+                        okText: t('common.delete', { defaultValue: '删除' }),
+                        cancelText: t('common.cancel'),
+                        onOk: () => handleBatchDeleteModels(provider.providerKey),
+                      });
+                    }}
+                  >
+                    {t('hermes.model.deleteSelected', { count: selectedModelCount })}
+                  </Button>
+                )}
+              </>
+            )}
+            <Tooltip title={connectivityTooltip}>
+              <span>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ fontSize: 12 }}
+                  onClick={() => handleOpenConnectivityTest(provider.providerKey)}
+                  disabled={!baseUrl || !hasModelIds}
+                >
+                  <ApiOutlined style={{ marginRight: 4 }} />
+                  {t('hermes.connectivity.button', { defaultValue: 'Test' })}
+                </Button>
+              </span>
+            </Tooltip>
+            {!isReadOnly && (
               <Button
                 size="small"
                 type="text"
                 style={{ fontSize: 12 }}
-                onClick={() => handleOpenConnectivityTest(provider.providerKey)}
-                disabled={!baseUrl || !hasModelIds}
+                onClick={() => handleOpenFetchModels(provider.providerKey)}
+                disabled={!baseUrl}
               >
-                <ApiOutlined style={{ marginRight: 4 }} />
-                {t('hermes.connectivity.button', { defaultValue: 'Test' })}
+                <CloudDownloadOutlined style={{ marginRight: 4 }} />
+                {t('hermes.model.fetchModels', { defaultValue: 'Fetch Models' })}
               </Button>
-            </span>
-          </Tooltip>
+            )}
+          </>
         }
+        modelSelectionMode={isBatchDeleteMode}
+        selectedModelIds={selectedModelIds}
+        onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(provider.providerKey, modelId, selected)}
+        modelsDraggable={!isBatchDeleteMode}
         onAddModel={isReadOnly ? undefined : () => setModelModal({ provider })}
         onEditModel={isReadOnly ? undefined : (modelId) => setModelModal({ provider, modelId })}
-        onDeleteModel={undefined}
+        onCopyModel={isReadOnly ? undefined : (modelId) => setModelModal({ provider, copyFromId: modelId })}
+        onDeleteModel={isReadOnly ? undefined : (modelId) => handleDeleteModel(provider.providerKey, modelId)}
         onSetPrimaryModel={isReadOnly ? undefined : (modelId) => handleSetDefaultModel(provider, modelId)}
         i18nPrefix="pi"
       />
@@ -789,6 +1126,16 @@ const HermesPage: React.FC = () => {
                 <Title level={4} className={styles.pageTitle}>
                   {t('hermes.title', { defaultValue: 'Hermes' })}
                 </Title>
+                <Link
+                  type="secondary"
+                  className={styles.headerLink}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void openUrl('https://hermes-agent.nousresearch.com/docs/');
+                  }}
+                >
+                  <LinkOutlined /> {t('hermes.viewDocs', { defaultValue: '官方文档' })}
+                </Link>
                 <Link
                   type="secondary"
                   className={styles.headerLink}
@@ -933,13 +1280,39 @@ const HermesPage: React.FC = () => {
                       </Button>
                     </Space>
                   ),
-                  children: runtimeConfig?.providers.length
-                    ? (
-                        <div className={styles.providerList}>
-                          {runtimeConfig.providers.map(renderProvider)}
-                        </div>
-                      )
-                    : <Empty description={t('hermes.provider.emptyText', { defaultValue: 'No providers configured.' })} />,
+                  children: (
+                    <div>
+                      {runtimeConfig?.providers.length
+                        ? (
+                            <div className={styles.providerList}>
+                              {runtimeConfig.providers.map(renderProvider)}
+                            </div>
+                          )
+                        : <Empty description={t('hermes.provider.emptyText', { defaultValue: 'No providers configured.' })} />}
+                      <div style={{ marginTop: 12 }}>
+                        <Space wrap>
+                          {allApiHubAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<AllApiHubIcon />}
+                              onClick={() => setAllApiHubImportModalOpen(true)}
+                            >
+                              {t('common.allApiHub.importFromAllApiHub')}
+                            </Button>
+                          )}
+                          {ccSwitchAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<ImportOutlined />}
+                              onClick={() => setCcSwitchImportModalOpen(true)}
+                            >
+                              {t('common.ccSwitch.importFromCcSwitch')}
+                            </Button>
+                          )}
+                        </Space>
+                      </div>
+                    </div>
+                  ),
                 },
               ]}
             />
@@ -1136,12 +1509,13 @@ const HermesPage: React.FC = () => {
           showInputTypes={false}
           showApi={false}
           showReasoning
-          showThinkingLevelMap={false}
+          showThinkingLevelMap
           showOmpThinking={false}
           showCompat={false}
           showCost={false}
           limitRequired={false}
           nameRequired={false}
+          npmType={modelModalProvider?.apiMode ? hermesApiModeToSdkName(modelModalProvider.apiMode) : undefined}
           onCancel={() => setModelModal(null)}
           onSuccess={handleSaveModel}
           onDuplicateId={() => message.error(t('hermes.model.idExists', { defaultValue: 'Model ID already exists.' }))}
@@ -1155,6 +1529,41 @@ const HermesPage: React.FC = () => {
           onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
         />
+
+        {fetchModelsProviderInfo && (
+          <FetchModelsModal
+            open={fetchModelsModalOpen}
+            providerId={fetchModelsProviderInfo.providerId}
+            providerName={fetchModelsProviderInfo.providerName}
+            baseUrl={fetchModelsProviderInfo.baseUrl}
+            apiKey={fetchModelsProviderInfo.apiKey}
+            sdkType={fetchModelsProviderInfo.sdkType}
+            existingModelIds={fetchModelsProviderInfo.existingModelIds}
+            onCancel={() => setFetchModelsModalOpen(false)}
+            onSuccess={handleFetchModelsSuccess}
+          />
+        )}
+
+        {allApiHubAvailable && (
+          <ImportFromAllApiHubModalForTool
+            open={allApiHubImportModalOpen}
+            existingProviderIds={hermesProviders.map((provider) => provider.providerKey)}
+            onCancel={() => setAllApiHubImportModalOpen(false)}
+            onImport={handleImportFromAllApiHub}
+            listProviders={listHermesAllApiHubProviders}
+            resolveProviders={resolveHermesAllApiHubProviders}
+          />
+        )}
+
+        {ccSwitchAvailable && (
+          <ImportFromCcSwitchModal
+            open={ccSwitchImportModalOpen}
+            appType="claude"
+            existingProviderIds={hermesProviders.map((provider) => provider.providerKey)}
+            onClose={() => setCcSwitchImportModalOpen(false)}
+            onImport={handleImportFromCcSwitch}
+          />
+        )}
 
         <JsonPreviewModal
           open={previewModalOpen}

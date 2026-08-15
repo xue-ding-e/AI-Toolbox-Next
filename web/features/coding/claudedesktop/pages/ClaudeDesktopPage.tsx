@@ -1,4 +1,5 @@
 import React from 'react';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
 import {
   PlusOutlined,
@@ -45,6 +46,8 @@ import type {
 import {
   applyClaudeDesktopProvider,
   createClaudeDesktopProvider,
+  listClaudeDesktopAllApiHubProviders,
+  resolveClaudeDesktopAllApiHubProviders,
   deleteClaudeDesktopProvider,
   getClaudeDesktopPaths,
   getClaudeDesktopPreview,
@@ -64,7 +67,7 @@ import {
   restoreProxyGatewayCliDirect,
   type GatewayCliTakeoverStatus,
 } from '@/services';
-import { refreshTrayMenu } from '@/services/appApi';
+import { hasAllApiHubExtension, refreshTrayMenu } from '@/services/appApi';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import {
   firstGatewayApiFormat,
@@ -89,6 +92,8 @@ import ProviderConnectivityTestModal, {
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import type { AllApiHubProviderItem } from '@/types/allApiHub';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import {
   getClaudeConfiguredModelIds,
@@ -301,6 +306,8 @@ const ClaudeDesktopPage: React.FC = () => {
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
   const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
@@ -381,6 +388,15 @@ const ClaudeDesktopPage: React.FC = () => {
       }
     };
     void checkCcSwitch();
+
+    const checkAllApiHub = async () => {
+      try {
+        setAllApiHubAvailable(await hasAllApiHubExtension());
+      } catch {
+        setAllApiHubAvailable(false);
+      }
+    };
+    void checkAllApiHub();
 
     const handleTrayConfigRefresh = (event: Event) => {
       event.preventDefault();
@@ -645,6 +661,45 @@ const ClaudeDesktopPage: React.FC = () => {
     [providers, loadConfig, t],
   );
 
+  const handleImportFromAllApiHub = React.useCallback(
+    async (imported: AllApiHubProviderItem[]) => {
+      const existingSourceIds = new Set(
+        providers.map((provider) => provider.sourceProviderId).filter(Boolean),
+      );
+      const toImport = imported.filter((item) => !existingSourceIds.has(item.providerId));
+
+      let ok = 0;
+      let fail = 0;
+      for (const item of toImport) {
+        try {
+          await createClaudeDesktopProvider({
+            name: item.name,
+            category: 'custom',
+            settingsConfig: JSON.stringify(item.config),
+            sourceProviderId: item.providerId,
+          });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import All API Hub provider:', item.name, error);
+          fail += 1;
+        }
+      }
+
+      setAllApiHubImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        message.success(t('common.allApiHub.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        message.warning(t('common.allApiHub.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        message.error(t('common.error'));
+      }
+
+      await loadConfig();
+      await refreshTrayMenu();
+    },
+    [providers, loadConfig, t],
+  );
+
   return (
     <SectionSidebarLayout
       sidebarTitle="Claude Desktop"
@@ -873,6 +928,15 @@ const ClaudeDesktopPage: React.FC = () => {
                             {t('common.ccSwitch.importFromCcSwitch')}
                           </Button>
                         )}
+                        {allApiHubAvailable && (
+                          <Button
+                            type="dashed"
+                            icon={<AllApiHubIcon />}
+                            onClick={() => setAllApiHubImportModalOpen(true)}
+                          >
+                            {t('common.allApiHub.importFromAllApiHub')}
+                          </Button>
+                        )}
                       </Space>
                     </div>
                   </Spin>
@@ -939,6 +1003,19 @@ const ClaudeDesktopPage: React.FC = () => {
             .filter((id): id is string => Boolean(id))}
           onClose={() => setCcSwitchImportModalOpen(false)}
           onImport={handleImportFromCcSwitch}
+        />
+      )}
+
+      {allApiHubAvailable && (
+        <ImportFromAllApiHubModalForTool
+          open={allApiHubImportModalOpen}
+          existingProviderIds={providers
+            .map((provider) => provider.sourceProviderId)
+            .filter((id): id is string => Boolean(id))}
+          onCancel={() => setAllApiHubImportModalOpen(false)}
+          onImport={handleImportFromAllApiHub}
+          listProviders={listClaudeDesktopAllApiHubProviders}
+          resolveProviders={resolveClaudeDesktopAllApiHubProviders}
         />
       )}
 
