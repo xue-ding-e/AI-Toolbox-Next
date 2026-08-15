@@ -108,18 +108,41 @@ pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
     }
 
     let sqlite_state = app_handle.state::<crate::db::SqliteDbState>();
+    restore_sqlite_snapshot_and_migrate(&sqlite_state, &temp_path)?;
+    let _ = std::fs::remove_file(&temp_path);
+
+    Ok(true)
+}
+
+/// Restore a SQLite snapshot into the live database and bring its schema up to
+/// the current target before returning.
+///
+/// The snapshot may carry an older schema (e.g. created before v9 introduced
+/// `oh_my_pi_settings_config`). Running migrations on the restored contents so
+/// post-restore reads (`clear_restored_cli_custom_roots`, resync, ...) never
+/// hit a missing table/column on the fresh database.
+fn restore_sqlite_snapshot_and_migrate(
+    sqlite_state: &crate::db::SqliteDbState,
+    snapshot_path: &Path,
+) -> Result<(), String> {
     let restore_result = sqlite_state.with_conn_mut(|conn| {
         conn.restore(
             rusqlite::MAIN_DB,
-            &temp_path,
+            snapshot_path,
             None::<fn(rusqlite::backup::Progress)>,
         )
         .map_err(|error| format!("Failed to restore SQLite backup snapshot: {error}"))
     });
-    let _ = std::fs::remove_file(&temp_path);
     restore_result?;
 
-    Ok(true)
+    sqlite_state.with_conn_mut(|conn| {
+        crate::db::migrations::run_all(conn).map_err(|error| {
+            format!(
+                "Failed to migrate restored SQLite database to schema v{}: {error}",
+                crate::db::migrations::TARGET_SCHEMA_VERSION
+            )
+        })
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -4295,5 +4318,88 @@ mod tests {
             &rules,
             "external-configs/geminicli/settings.json"
         ));
+    }
+
+    #[test]
+    fn restore_old_schema_snapshot_migrates_missing_tables() -> Result<(), String> {
+        use crate::db::migrations::{self, TARGET_SCHEMA_VERSION};
+        use rusqlite::Connection;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        // Build a snapshot that mirrors an old database (schema v8, before Oh My
+        // Pi): initialize to the current schema, then drop every table introduced
+        // by v9..v12 and reset the schema version.
+        let snapshot_path = temp_dir.path().join("old-v8.db");
+        {
+            let mut snapshot =
+                Connection::open(&snapshot_path).map_err(|error| format!("open snapshot: {error}"))?;
+            crate::db::sqlite_state::initialize_connection(&mut snapshot)?;
+            for table in [
+                "oh_my_pi_settings_config",
+                "oh_my_pi_prompt_config",
+                "claude_desktop_provider",
+                "hermes_settings_config",
+                "hermes_prompt_config",
+                "claude_desktop_prompt_config",
+                "dsh_settings_config",
+                "dsh_prompt_config",
+            ] {
+                snapshot
+                    .execute_batch(&format!("DROP TABLE IF EXISTS {table};"))
+                    .map_err(|error| format!("drop {table}: {error}"))?;
+            }
+            migrations::set_user_version(&snapshot, 8)?;
+        }
+
+        // Sanity: the snapshot really lacks the OMP table.
+        {
+            let snapshot =
+                Connection::open(&snapshot_path).map_err(|error| format!("reopen snapshot: {error}"))?;
+            assert_eq!(migrations::get_user_version(&snapshot)?, 8);
+            let count: i64 = snapshot
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='oh_my_pi_settings_config'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| format!("query snapshot schema: {error}"))?;
+            assert_eq!(count, 0, "snapshot must lack the OMP table");
+        }
+
+        // The live database starts at the current schema; restoring the old
+        // snapshot then migrating brings it back to the target so post-restore
+        // reads never hit a missing table.
+        let target_path = temp_dir.path().join("target.db");
+        let sqlite_state = crate::db::SqliteDbState::open(target_path)?;
+        super::restore_sqlite_snapshot_and_migrate(&sqlite_state, &snapshot_path)?;
+
+        sqlite_state.with_conn(|connection| {
+            assert_eq!(
+                migrations::get_user_version(connection)?,
+                TARGET_SCHEMA_VERSION
+            );
+
+            let count: i64 = connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='oh_my_pi_settings_config'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| format!("query restored schema: {error}"))?;
+            assert_eq!(
+                count, 1,
+                "oh_my_pi_settings_config must be recreated after restore"
+            );
+
+            // Reading the OMP settings record must not fail anymore.
+            db_get(connection, DbTable::OhMyPiSettingsConfig, "common")?;
+            Ok(())
+        })?;
+
+        // The exact post-restore step that surfaced the bug stops failing.
+        clear_restored_cli_custom_roots(&sqlite_state)?;
+
+        Ok(())
     }
 }
