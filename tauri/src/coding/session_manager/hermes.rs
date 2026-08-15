@@ -223,9 +223,11 @@ fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     )
     .map_err(|error| format!("Failed to open Hermes database: {error}"))?;
 
-    // Tolerate a missing messages table and unknown column sets.
+    // Hermes persists message timestamps in the `timestamp` column as a
+    // second-precision floating-point value (e.g. 1786801520.21303). Read it as
+    // f64 and let parse_timestamp_to_ms normalise to millisecond epoch.
     let query =
-        "SELECT role, content, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC";
+        "SELECT role, content, timestamp FROM messages WHERE session_id = ?1 ORDER BY timestamp ASC";
     let mut stmt = match conn.prepare(query) {
         Ok(statement) => statement,
         Err(_) => return Ok(Vec::new()),
@@ -233,8 +235,8 @@ fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     let rows = match stmt.query_map([session_id.as_str()], |row| {
         let role: String = row.get(0)?;
         let content: String = row.get(1)?;
-        let ts: Option<i64> = row.get(2).ok();
-        Ok::<(String, String, Option<i64>), rusqlite::Error>((role, content, ts))
+        let ts: Option<f64> = row.get(2).ok();
+        Ok::<(String, String, Option<f64>), rusqlite::Error>((role, content, ts))
     }) {
         Ok(rows) => rows,
         Err(_) => return Ok(Vec::new()),
@@ -246,7 +248,11 @@ fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
         if content.trim().is_empty() {
             continue;
         }
-        let ts_ms = ts.and_then(|value| parse_timestamp_to_ms(&Value::Number(value.into())));
+        let ts_ms = ts.and_then(|value| {
+            serde_json::Number::from_f64(value)
+                .map(Value::Number)
+                .and_then(|number| parse_timestamp_to_ms(&number))
+        });
         messages.push(text_message(role, content, ts_ms));
     }
 
@@ -701,5 +707,50 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert!(messages[0].ts.is_some());
         assert!(messages[0].id.is_some());
+    }
+
+    #[test]
+    fn load_messages_sqlite_uses_hermes_timestamp_column() {
+        // Mirrors the real Hermes 0.20.1 `messages` schema: the time column is
+        // `timestamp` (REAL seconds), NOT `created_at`. Regression test for the
+        // schema-drift bug where the SQL prepared against `created_at` failed
+        // and the detail view silently came back empty.
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.db");
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, started_at REAL);
+             CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                timestamp REAL NOT NULL
+             );",
+        )
+        .expect("create tables");
+        conn.execute(
+            "INSERT INTO sessions (id, title, started_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["s1", "Test", 1786801520.0f64],
+        )
+        .expect("insert session");
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["s1", "user", "hello", 1786801520.21303f64],
+        )
+        .expect("insert message");
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["s1", "assistant", "hi there", 1786801524.63216f64],
+        )
+        .expect("insert message");
+
+        let source = format!("sqlite:{}#s1", db_path.display());
+        let messages = load_messages(&source).expect("load");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert!(messages[0].ts.is_some());
+        assert_eq!(messages[0].content, "hello");
     }
 }
