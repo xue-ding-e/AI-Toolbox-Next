@@ -1520,6 +1520,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // Hermes sync listener
+                let app_hermes = app_handle.clone();
+                let app_hermes_clone = app_hermes.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_hermes.listen("wsl-sync-request-hermes", move |_event| {
+                        let app = app_hermes_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("hermes".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // dsh sync listener
                 let app_dsh = app_handle.clone();
                 let app_dsh_clone = app_dsh.clone();
@@ -2112,6 +2137,10 @@ pub fn run() {
             coding::dsh::save_dsh_local_prompt_config,
             coding::dsh::list_dsh_all_api_hub_providers,
             coding::dsh::resolve_dsh_all_api_hub_providers,
+            coding::dsh::open_dsh_web_ui,
+            coding::dsh::launch_dsh_dashboard,
+            coding::dsh::check_dsh_agent_instructions,
+            coding::dsh::enable_dsh_agent_instructions,
             // Preset Models
             coding::preset_models::fetch_remote_preset_models,
             coding::preset_models::load_cached_preset_models,
@@ -2122,6 +2151,7 @@ pub fn run() {
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,
             coding::open_code::read_opencode_config,
+            coding::open_code::get_opencode_preview,
             coding::open_code::save_opencode_config,
             coding::open_code::list_opencode_markdown_agents,
             coding::open_code::save_opencode_markdown_agent,

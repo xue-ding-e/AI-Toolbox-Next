@@ -45,7 +45,7 @@ import { useTranslation } from 'react-i18next';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import JsonEditor from '@/components/common/JsonEditor';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import ProviderCard from '@/components/common/ProviderCard';
 import type {
   ModelDisplayData,
@@ -2282,17 +2282,6 @@ const PiPage: React.FC = () => {
                     }}
                   />
                 </div>
-                <div className={styles.advancedEditor}>
-                  <Text type="secondary">{t('pi.provider.configAdvancedJson')}</Text>
-                  <JsonEditor
-                    value={providerConfigJson}
-                    height={220}
-                    onChange={(value, isValid) => {
-                      setProviderConfigJson(asRecord(value));
-                      setProviderConfigJsonValid(isValid);
-                    }}
-                  />
-                </div>
               </div>
             )}
           </Form>
@@ -2441,11 +2430,16 @@ const PiPage: React.FC = () => {
           onCancel={() => setConnectivityModalOpen(false)}
         />
 
-        <JsonPreviewModal
+        <FileConfigPreviewModal
           open={previewModalOpen}
           onClose={() => setPreviewModalOpen(false)}
           title={t('pi.preview.title')}
-          data={runtimeConfig}
+          files={[
+            { key: 'settings', label: 'settings.json', content: runtimeConfig?.settingsContent ?? runtimeConfig?.settings, language: 'json' },
+            { key: 'auth', label: 'auth.json', content: runtimeConfig?.authContent ?? runtimeConfig?.auth, language: 'json' },
+            { key: 'models', label: 'models.json', content: runtimeConfig?.modelsContent ?? runtimeConfig?.models, language: 'json' },
+            { key: 'prompt', label: 'AGENTS.md', content: runtimeConfig?.promptContent, language: 'markdown' },
+          ]}
         />
 
         <SidebarSettingsModal

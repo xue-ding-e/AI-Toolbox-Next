@@ -378,3 +378,153 @@ pub fn process_codex_toml(content: &str, wrap: bool) -> Result<String, String> {
 
     Ok(doc.to_string())
 }
+
+// ============================================================================
+// Hermes YAML / dsh Cordis patch processing (WSL/SSH targets are Linux)
+// ============================================================================
+
+/// The npm package dsh's cordis plugin rows use for MCP servers. Kept in sync
+/// with `crate::coding::mcp::cordis_patch::DSH_MCP_PACKAGE`.
+const DSH_MCP_PACKAGE: &str = "@deepseek-ai/dsh-mcp-client";
+
+/// If `command` is a `cmd /c` wrapper (`cmd|cmd.exe` + first arg `/c`), return
+/// the unwrapped command and remaining args. Otherwise `None`.
+fn unwrap_wrapped_stdio(command: &str, args: &[Value]) -> Option<(String, Vec<Value>)> {
+    if !is_cmd_wrapped(command, args) || args.len() < 2 {
+        return None;
+    }
+    let new_command = args[1].as_str()?.to_string();
+    let new_args = args[2..].to_vec();
+    Some((new_command, new_args))
+}
+
+/// Strip `cmd /c` wrappers from a Hermes `config.yaml`'s `mcp_servers:`
+/// section (WSL/SSH sync copies the Windows-authored file to a Linux target,
+/// where `cmd` does not exist). Only the `mcp_servers:` section is rewritten;
+/// comments and unrelated top-level sections are preserved byte-for-byte.
+///
+/// Returns the input unchanged when there is nothing to strip or the file has
+/// no `mcp_servers:` section.
+pub fn process_hermes_yaml_mcp_servers(content: &str) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let value: serde_yaml::Value = serde_yaml::from_str(content)
+        .map_err(|e| format!("Failed to parse Hermes config.yaml: {}", e))?;
+    let root: Value = serde_json::to_value(&value)
+        .map_err(|e| format!("Failed to convert Hermes config.yaml: {}", e))?;
+
+    let Some(mcp_servers) = root.get("mcp_servers").and_then(|v| v.as_object()) else {
+        // No mcp_servers section — nothing to strip.
+        return Ok(content.to_string());
+    };
+
+    let mut new_servers = serde_json::Map::new();
+    let mut changed = false;
+    for (name, spec) in mcp_servers {
+        let Some(obj) = spec.as_object() else {
+            new_servers.insert(name.clone(), spec.clone());
+            continue;
+        };
+        let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let args = obj
+            .get("args")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        match unwrap_wrapped_stdio(command, &args) {
+            Some((new_command, new_args)) => {
+                let mut updated = obj.clone();
+                updated.insert("command".to_string(), json!(new_command));
+                updated.insert("args".to_string(), Value::Array(new_args));
+                new_servers.insert(name.clone(), Value::Object(updated));
+                changed = true;
+            }
+            None => {
+                new_servers.insert(name.clone(), spec.clone());
+            }
+        }
+    }
+
+    if !changed {
+        return Ok(content.to_string());
+    }
+
+    super::yaml_sync::replace_yaml_section(content, "mcp_servers", &Value::Object(new_servers))
+}
+
+/// Strip `cmd /c` wrappers from a dsh `cordis.patch.yml` (a YAML array of
+/// plugin ops; MCP servers are `insert` rows of `@deepseek-ai/dsh-mcp-client`).
+///
+/// Returns the input unchanged when there is nothing to strip.
+pub fn process_cordis_patch_yaml(content: &str) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let value: serde_yaml::Value = serde_yaml::from_str(content)
+        .map_err(|e| format!("Failed to parse cordis.patch.yml: {}", e))?;
+    let array = value
+        .as_sequence()
+        .ok_or_else(|| "cordis.patch.yml must be a YAML array".to_string())?;
+
+    let mut changed = false;
+    let mut new_array: Vec<Value> = Vec::with_capacity(array.len());
+    for op in array {
+        let json_op: Value = serde_json::to_value(op)
+            .map_err(|e| format!("Failed to convert cordis op: {}", e))?;
+        let Some(insert_list) = json_op.get("insert").and_then(|v| v.as_array()) else {
+            new_array.push(json_op);
+            continue;
+        };
+
+        let mut new_insert: Vec<Value> = Vec::with_capacity(insert_list.len());
+        for entry in insert_list {
+            let is_dsh_mcp = entry.get("name").and_then(|v| v.as_str()) == Some(DSH_MCP_PACKAGE);
+            let wrapped = is_dsh_mcp
+                .then(|| {
+                    entry.get("config").and_then(|c| c.as_object()).and_then(|config| {
+                        let command = config.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                        let args = config
+                            .get("args")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        unwrap_wrapped_stdio(command, &args).map(|(new_command, new_args)| {
+                            let mut new_config = config.clone();
+                            new_config.insert("command".to_string(), json!(new_command));
+                            new_config.insert("args".to_string(), Value::Array(new_args));
+                            let mut new_entry = entry.clone();
+                            if let Some(obj) = new_entry.as_object_mut() {
+                                obj.insert("config".to_string(), Value::Object(new_config));
+                            }
+                            new_entry
+                        })
+                    })
+                })
+                .flatten();
+
+            match wrapped {
+                Some(new_entry) => {
+                    new_insert.push(new_entry);
+                    changed = true;
+                }
+                None => new_insert.push(entry.clone()),
+            }
+        }
+
+        let mut new_op = json_op;
+        if let Some(obj) = new_op.as_object_mut() {
+            obj.insert("insert".to_string(), Value::Array(new_insert));
+        }
+        new_array.push(new_op);
+    }
+
+    if !changed {
+        return Ok(content.to_string());
+    }
+
+    serde_yaml::to_string(&new_array)
+        .map_err(|e| format!("Failed to serialize cordis.patch.yml: {e}"))
+}

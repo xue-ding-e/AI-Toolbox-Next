@@ -111,53 +111,48 @@ pub fn resolve_local_opencode_program() -> LocalCliProgram {
     resolve_local_cli_program("opencode", candidates)
 }
 
-pub fn resolve_local_pi_program() -> LocalCliProgram {
+/// Common candidate bin dirs shared by every npm-installed CLI: user `~/.local/bin`,
+/// Homebrew, `/usr/local/bin`, plus every Node version manager's global bin
+/// (nvm/volta/fnm/bun/mise/asdf). Lets `resolve_local_cli_by_name` find a CLI the
+/// GUI process PATH does not inherit (macOS Dock/Finder/Spotlight launch).
+fn default_npm_global_candidates(command_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(home_dir) = dirs::home_dir() {
-        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), "pi");
+        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), command_name);
     }
 
-    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "pi");
-    push_command_candidate(&mut candidates, "/usr/local/bin", "pi");
-    append_node_global_candidates(&mut candidates, "pi");
+    push_command_candidate(&mut candidates, "/opt/homebrew/bin", command_name);
+    push_command_candidate(&mut candidates, "/usr/local/bin", command_name);
+    append_node_global_candidates(&mut candidates, command_name);
 
-    resolve_local_cli_program("pi", candidates)
+    candidates
+}
+
+/// Generic CLI resolver: PATH (`where`/`which`) then the common candidate bin dirs
+/// above. Returns `None` when nothing resolves — `resolve_local_cli_program`'s bare
+/// command-name fallback is the "not found" signal. Prefer this over
+/// `cli_resolved_on_path` (PATH-only) so a CLI installed via a version manager is
+/// detected even when the GUI host lacks that PATH.
+pub fn resolve_local_cli_by_name(command_name: &str) -> Option<LocalCliProgram> {
+    let program = resolve_named_cli_program(command_name, default_npm_global_candidates(command_name));
+    (program.path.as_os_str() != OsStr::new(command_name)).then_some(program)
+}
+
+pub fn resolve_local_pi_program() -> LocalCliProgram {
+    resolve_named_cli_program("pi", default_npm_global_candidates("pi"))
 }
 
 pub fn resolve_local_omp_program() -> LocalCliProgram {
-    let mut candidates = Vec::new();
-
-    if let Some(home_dir) = dirs::home_dir() {
-        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), "omp");
-    }
-
-    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "omp");
-    push_command_candidate(&mut candidates, "/usr/local/bin", "omp");
-    append_node_global_candidates(&mut candidates, "omp");
-
-    resolve_local_cli_program("omp", candidates)
+    resolve_named_cli_program("omp", default_npm_global_candidates("omp"))
 }
 
 pub fn resolve_local_grok_program() -> LocalCliProgram {
-    let mut candidates = Vec::new();
-    if let Some(home_dir) = dirs::home_dir() {
-        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), "grok");
-    }
-    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "grok");
-    push_command_candidate(&mut candidates, "/usr/local/bin", "grok");
-    append_node_global_candidates(&mut candidates, "grok");
-    resolve_local_cli_program("grok", candidates)
+    resolve_named_cli_program("grok", default_npm_global_candidates("grok"))
 }
 
 pub fn resolve_local_npx_program() -> LocalCliProgram {
-    let mut candidates = Vec::new();
-
-    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "npx");
-    push_command_candidate(&mut candidates, "/usr/local/bin", "npx");
-    append_node_global_candidates(&mut candidates, "npx");
-
-    resolve_local_cli_program("npx", candidates)
+    resolve_named_cli_program("npx", default_npm_global_candidates("npx"))
 }
 
 pub fn build_local_std_command(program_path: &Path) -> Command {

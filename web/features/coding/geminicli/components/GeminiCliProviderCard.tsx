@@ -167,6 +167,10 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     !isOfficialProvider &&
     !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'gemini_native');
+  const restoreDirectUnavailableTitle = t(
+    'gateway.proxy.restoreDirectUnavailableHintProtocol',
+    { cli: t('settings.gateway.cli.gemini') },
+  );
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
@@ -730,7 +734,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
               </Tooltip>
             )}
             {canShowRestoreDirectUnavailable && (
-              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+              <Tooltip title={restoreDirectUnavailableTitle}>
                 <Button
                   type="link"
                   size="small"

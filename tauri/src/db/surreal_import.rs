@@ -151,6 +151,29 @@ fn is_ignorable_legacy_database_entry(path: &Path) -> bool {
 }
 
 pub fn cleanup_incomplete_sqlite_database(paths: &MigrationPaths) -> Result<(), String> {
+    // Safety net: before deleting the existing SQLite database to re-import the
+    // legacy SurrealDB data, keep a copy next to it. If the import fails, the
+    // current DB would otherwise be gone with no way back.
+    if paths.sqlite_database_file.exists() {
+        let backup_path = paths.app_data_dir.join("ai-toolbox.pre-import-backup.db");
+        let safety_backup = (|| -> Result<(), String> {
+            let conn = rusqlite::Connection::open(&paths.sqlite_database_file)
+                .map_err(|error| format!("Failed to open SQLite database for safety backup: {error}"))?;
+            super::backup::backup_to_path(&conn, &backup_path)
+        })();
+        match safety_backup {
+            Ok(()) => log::info!(
+                "Saved a safety backup of the current SQLite database to {} before legacy import",
+                backup_path.display()
+            ),
+            Err(error) => {
+                return Err(format!(
+                    "Refusing to delete the current SQLite database because the safety backup failed: {error}"
+                ));
+            }
+        }
+    }
+
     remove_file_if_exists(&paths.sqlite_database_file)?;
     remove_file_if_exists(&paths.sqlite_wal_file)?;
     remove_file_if_exists(&paths.sqlite_shm_file)?;

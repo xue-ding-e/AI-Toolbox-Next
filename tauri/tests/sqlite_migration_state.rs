@@ -125,7 +125,10 @@ fn cleanup_incomplete_sqlite_database_removes_db_wal_shm_and_flag() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let paths = paths(&temp_dir);
 
-    std::fs::write(&paths.sqlite_database_file, b"db").expect("db");
+    // Create a real SQLite database: cleanup takes a safety backup of the
+    // existing DB before deleting it, which fails on a fake byte file.
+    let conn = rusqlite::Connection::open(&paths.sqlite_database_file).expect("create sqlite");
+    drop(conn);
     std::fs::write(&paths.sqlite_wal_file, b"wal").expect("wal");
     std::fs::write(&paths.sqlite_shm_file, b"shm").expect("shm");
     mark_sqlite_import_complete(&paths).expect("flag");
@@ -136,6 +139,12 @@ fn cleanup_incomplete_sqlite_database_removes_db_wal_shm_and_flag() {
     assert!(!paths.sqlite_wal_file.exists());
     assert!(!paths.sqlite_shm_file.exists());
     assert!(!paths.complete_flag.exists());
+
+    // The safety backup of the pre-import DB is kept next to the removed one.
+    assert!(paths
+        .app_data_dir
+        .join("ai-toolbox.pre-import-backup.db")
+        .exists());
 }
 
 #[test]

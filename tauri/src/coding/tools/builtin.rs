@@ -268,26 +268,42 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
     },
     // Hermes - runtime config.yaml holds `mcp_servers`; path is platform-resolved
     // in detection.rs (Windows: %LOCALAPPDATA%/hermes, others ~/.hermes).
+    // Skills live at <hermes_root>/skills (SKILL.md compatible with agentskills.io).
+    // relative_skills_dir is a fallback; the actual path is resolved via
+    // resolve_special_skills_path in detection.rs to match the platform root.
     BuiltinTool {
         key: "hermes",
         display_name: "Hermes",
-        relative_skills_dir: None,
-        relative_detect_dir: None,
+        relative_skills_dir: Some("~/.hermes/skills"),
+        relative_detect_dir: Some("~/.hermes"),
         mcp_config_path: Some("~/.hermes/config.yaml"),
         mcp_config_format: Some("yaml"),
         mcp_field: Some("mcp_servers"),
     },
-    // dsh - DeepSeek Harness. The runtime config (`settings.yaml`) is a single
-    // namespaced doc; MCP is wired at the deployment layer (cordis.yml), so this
-    // module points detection at the settings file to register the tool. The
-    // `mcp_field` is intentionally None (no mcp_servers key managed here).
+    // dsh - DeepSeek Harness. MCP is configured via Cordis patch DSL in
+    // `cordis.patch.yml` (a YAML array of insert/override/delete ops, each MCP
+    // server is an insert row with name `@deepseek-ai/dsh-mcp-client`).
+    // The `mcp_field` is None (the key is `serverName` inside `config`, not a
+    // top-level field). Format `cordis` dispatches to `mcp::cordis_patch`.
     BuiltinTool {
         key: "dsh",
         display_name: "DeepSeek Harness",
         relative_skills_dir: None,
         relative_detect_dir: None,
-        mcp_config_path: Some("~/.dsh/settings.yaml"),
-        mcp_config_format: Some("yaml"),
+        mcp_config_path: Some("~/.dsh/cordis.patch.yml"),
+        mcp_config_format: Some("cordis"),
+        mcp_field: None,
+    },
+    // Shared Agents - agentskills.io public shared skills directory.
+    // Cross-tool directory scanned by dsh (rank 500) and other agentskills.io-
+    // compliant tools. Skills-only sync target; no MCP config.
+    BuiltinTool {
+        key: "shared_agents",
+        display_name: "Shared Agents",
+        relative_skills_dir: Some("~/.agents/skills"),
+        relative_detect_dir: Some("~/.agents"),
+        mcp_config_path: None,
+        mcp_config_format: None,
         mcp_field: None,
     },
 ];

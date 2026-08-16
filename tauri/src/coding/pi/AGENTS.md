@@ -14,6 +14,7 @@
 - `settings.json.packages` 属于 Pi 扩展/包管理链路，不属于 Other Configuration；Other Configuration 读取时隐藏它，保存时保留现有值。
 - Pi MCP 配置由 `pi-mcp-adapter` 扩展消费，文件位于当前 Pi runtime root 下的 `mcp.json`；MCP server 主数据仍属于全局 MCP 模块。
 - SQLite 只保存 Pi root 选择和 prompt presets；不要新增 `pi_provider`、`pi_extension` 或类似第二套主数据。
+- 文件式预览由 `read_pi_runtime_config` 返回原始文件内容（`settingsContent`/`authContent`/`modelsContent`/`promptContent`），前端按文件 Tab 展示，与 Codex 一致。
 
 ## 核心设计决策
 

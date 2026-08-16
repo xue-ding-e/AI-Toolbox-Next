@@ -175,6 +175,20 @@ pub struct DshRuntimeConfig {
     pub builtin_providers: Vec<DshBuiltinProvider>,
     /// Credential references present in `.credentials.yaml`.
     pub credentials: Vec<DshCredentialView>,
+    /// Raw `settings.yaml` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_content: Option<String>,
+    /// Raw `.credentials.yaml` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials_content: Option<String>,
+    /// Raw `AGENTS.md` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_content: Option<String>,
+    /// Home-level `cordis.patch.yml` path (AI Toolbox-managed MCP plugin layer).
+    pub cordis_patch_path: String,
+    /// Raw home-level `cordis.patch.yml` content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cordis_patch_content: Option<String>,
 }
 
 /// Top-level `agent-default-model` section, also used as the save input.
@@ -206,4 +220,10 @@ pub struct DshModelsProviderInput {
 pub struct DshCredentialInput {
     pub ref_name: String,
     pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInstructionsStatus {
+    pub enabled: bool,
 }

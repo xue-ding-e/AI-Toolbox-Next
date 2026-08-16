@@ -41,6 +41,9 @@ sequenceDiagram
 - 不要把工具配置文件当作 MCP 的 source of truth。真正要改的是中心存储，再同步下发。
 - 改同步逻辑时要同时考虑“启用工具集合变化”“opencode disabled sync 特例”“删除时清理工具配置”三类路径，不要只修新增路径。
 - WSL 自动同步依赖 `mcp-changed` 事件；如果只更新数据库、不发事件，WSL 侧不会跟进。
+- `mcp_import_from_tool` 导入后会改写工具配置，必须同样发 `config-changed` + `mcp-changed`（与 create/update/delete 同一契约），否则 WSL 自动同步与托盘都不感知导入结果。
+- `mcp_update_server` 只对 enabled_tools 做「增」同步会留下差集：从 enabled_tools 移除的工具、以及改名 server 的旧名字条目会残留在工具配置文件里继续被加载。更新时必须先按 previous name/enabled_tools 差集调用 `remove_server_from_tool_async` 并删除对应 sync_detail，再对新 enabled_tools 全量重同步。
+- `cmd /c` 后处理不只有 JSON/TOML：wsl/ssh 的 `strip_cmd_c_from_*_mcp_file` 对 `hermes` 走 `process_hermes_yaml_mcp_servers`（只重写 `mcp_servers:` 段，其余字节保留），对 `dsh` 走 `process_cordis_patch_yaml`（重写 `insert` 行里 `@deepseek-ai/dsh-mcp-client` 的 config）。新增 YAML 型 MCP 工具时必须在 command_normalize 提供对应整文件处理函数并在两处 strip 分支注册，否则远端会残留 Windows 的 `cmd /c`。
 - 不要把恢复专用 no-event 入口复用到普通 CRUD/手动同步路径；它只用于已有外层编排明确负责最终 WSL 投影的场景。
 - Windows 下给 `npx` / `npm` / `node` 等 stdio command 加 `cmd /c` 时，判断依据必须是目标配置文件的运行平台，不是 AI Toolbox 进程平台。普通 Windows 本机目标需要包装；WSL UNC / WSL Direct 目标不能包装，否则远端 Linux CLI 会读到无效的 `cmd`。
 - Grok 是明确例外：官方 Grok MCP schema 在 Windows 本机、WSL 和 SSH 都保持裸 `npx`，不写 `cmd /c`；同时使用 `headers` 而非 Codex 的 `http_headers`，不写 `type`，并保留 `cwd/enabled/startup_timeout_sec/tool_timeout_sec/tool_timeouts/bearer_token_env_var`。

@@ -232,6 +232,7 @@ const GrokPage: React.FC = () => {
     );
     return providerApiFormat === 'gemini_native';
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
+  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [refreshingOfficialTokenAccountId, setRefreshingOfficialTokenAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
@@ -1758,6 +1759,7 @@ const GrokPage: React.FC = () => {
                       cliKey="grok"
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>

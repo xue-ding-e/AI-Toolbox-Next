@@ -34,11 +34,6 @@ const JsonPreviewModal: React.FC<JsonPreviewModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={1000}
-      styles={{
-        body: {
-          padding: '16px 24px',
-        },
-      }}
     >
       <JsonEditor
         value={data}

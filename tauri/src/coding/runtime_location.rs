@@ -1413,6 +1413,9 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
         "oh_my_pi" => get_oh_my_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_omp_skills_path_from_location(&location)),
+        "gemini_cli" => get_gemini_cli_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_gemini_cli_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1506,6 +1509,10 @@ pub async fn get_tool_skills_path_async(
             .await
             .ok()
             .map(|location| get_omp_skills_path_from_location(&location)),
+        "gemini_cli" => get_gemini_cli_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_gemini_cli_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1548,6 +1555,22 @@ fn get_omp_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf 
             &wsl.distro,
             &format!("{}/skills", wsl.linux_path.trim_end_matches('/')),
         )
+    } else {
+        location.host_path.join("skills")
+    }
+}
+
+fn get_gemini_cli_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    // Gemini CLI is a root-dir module: skills live at <root>/skills
+    // (~/.gemini/skills by default, or under a custom/env/shell root).
+    if let Some(wsl) = &location.wsl {
+        let linux_skills_path = if location.source == "default" {
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.gemini/skills")
+        } else {
+            format!("{}/skills", wsl.linux_path.trim_end_matches('/'))
+        };
+
+        build_windows_unc_path(&wsl.distro, &linux_skills_path)
     } else {
         location.host_path.join("skills")
     }

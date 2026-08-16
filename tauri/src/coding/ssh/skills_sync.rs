@@ -10,8 +10,9 @@ use tauri::{AppHandle, Emitter};
 use super::commands::get_ssh_config_internal;
 use super::session::SshSession;
 use super::sync::{
-    check_remote_symlink_exists, create_remote_symlink, list_remote_dir, read_remote_file_raw,
-    remove_remote_path, sync_directory_with_progress, write_remote_file,
+    check_remote_symlink_exists, create_remote_symlink, inspect_remote_path_kind, list_remote_dir,
+    read_remote_file_raw, remove_remote_managed_symlink, remove_remote_path,
+    sync_directory_with_progress, write_remote_file, RemotePathKind,
 };
 use super::types::{default_directory_excludes, SyncProgress};
 use crate::coding::runtime_location;
@@ -43,7 +44,8 @@ async fn get_remote_tool_skills_dir_with_db(
     tool_key: &str,
 ) -> Option<String> {
     match tool_key {
-        "claude_code" | "codex" | "grok" | "opencode" | "openclaw" => {
+        "claude_code" | "codex" | "grok" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
+        | "gemini_cli" => {
             runtime_location::get_tool_skills_path_async(db, tool_key)
                 .await
                 .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
@@ -121,7 +123,9 @@ pub async fn sync_skills_to_ssh(
     // 2. Collect local skill names
     let local_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
 
-    // 3. Delete skills in remote that no longer exist locally
+    // 3. Delete skills in remote that no longer exist locally.
+    // Only app-managed symlinks into the central repo are removed; real
+    // directories or foreign symlinks at the same name are left untouched.
     for remote_skill in &existing_remote_skills {
         if !local_skill_names.contains(remote_skill) {
             log::trace!(
@@ -133,13 +137,24 @@ pub async fn sync_skills_to_ssh(
                     get_remote_tool_skills_dir_with_db(&db, tool_key).await
                 {
                     let link_path = format!("{}/{}", remote_skills_dir, remote_skill);
-                    if let Err(error) = remove_remote_path(session, &link_path).await {
+                    if let Err(error) =
+                        remove_remote_managed_symlink(session, &link_path, SSH_CENTRAL_DIR).await
+                    {
                         log::warn!(
                             "Skills SSH sync failed to remove orphan tool symlink: tool_key={}, skill_name={}, link_path={}, error={}",
                             tool_key,
                             remote_skill,
                             link_path,
                             error
+                        );
+                    } else if inspect_remote_path_kind(session, &link_path, SSH_CENTRAL_DIR).await
+                        == RemotePathKind::Foreign
+                    {
+                        log::warn!(
+                            "Skills SSH sync keeping non-app-managed path: tool_key={}, skill_name={}, link_path={}",
+                            tool_key,
+                            remote_skill,
+                            link_path
                         );
                     }
                 }
@@ -299,36 +314,57 @@ pub async fn sync_skills_to_ssh(
             );
         }
 
-        // Ensure symlinks for each enabled tool
+        // Ensure symlinks for each enabled tool. Only app-managed links are
+        // created or replaced; a real directory or foreign symlink at the same
+        // name is left untouched.
         for tool_key in &skill.enabled_tools {
             if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await
             {
                 let link_path = format!("{}/{}", remote_skills_dir, skill.name);
-                if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
-                    if let Err(error) =
-                        create_remote_symlink(session, &remote_target, &link_path).await
-                    {
+                match inspect_remote_path_kind(session, &link_path, SSH_CENTRAL_DIR).await {
+                    RemotePathKind::Missing => {
+                        if let Err(error) =
+                            create_remote_symlink(session, &remote_target, &link_path).await
+                        {
+                            log::warn!(
+                                "Skills SSH sync failed to create symlink: tool_key={}, skill_name={}, target={}, link_path={}, error={}",
+                                tool_key,
+                                skill.name,
+                                remote_target,
+                                link_path,
+                                error
+                            );
+                        }
+                    }
+                    RemotePathKind::Managed => {
+                        if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
+                            if let Err(error) =
+                                create_remote_symlink(session, &remote_target, &link_path).await
+                            {
+                                log::warn!(
+                                    "Skills SSH sync failed to refresh symlink: tool_key={}, skill_name={}, target={}, link_path={}, error={}",
+                                    tool_key,
+                                    skill.name,
+                                    remote_target,
+                                    link_path,
+                                    error
+                                );
+                            }
+                        }
+                    }
+                    RemotePathKind::Foreign => {
                         log::warn!(
-                            "Skills SSH sync failed to create symlink: tool_key={}, skill_name={}, target={}, link_path={}, error={}",
+                            "Skills SSH sync keeping non-app-managed path: tool_key={}, skill_name={}, link_path={}",
                             tool_key,
                             skill.name,
-                            remote_target,
-                            link_path,
-                            error
+                            link_path
                         );
                     }
-                } else {
-                    log::trace!(
-                        "Skills SSH sync symlink already correct: tool_key={}, skill_name={}, link_path={}",
-                        tool_key,
-                        skill.name,
-                        link_path
-                    );
                 }
             }
         }
 
-        // Remove symlinks for tools that are no longer enabled
+        // Remove symlinks for tools that are no longer enabled (managed links only)
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if !enabled_set.contains(tool_key) {
@@ -342,13 +378,24 @@ pub async fn sync_skills_to_ssh(
                         skill.name,
                         link_path
                     );
-                    if let Err(error) = remove_remote_path(session, &link_path).await {
+                    if let Err(error) =
+                        remove_remote_managed_symlink(session, &link_path, SSH_CENTRAL_DIR).await
+                    {
                         log::warn!(
                             "Skills SSH sync failed to remove disabled-tool symlink: tool_key={}, skill_name={}, link_path={}, error={}",
                             tool_key,
                             skill.name,
                             link_path,
                             error
+                        );
+                    } else if inspect_remote_path_kind(session, &link_path, SSH_CENTRAL_DIR).await
+                        == RemotePathKind::Foreign
+                    {
+                        log::warn!(
+                            "Skills SSH sync keeping non-app-managed path: tool_key={}, skill_name={}, link_path={}",
+                            tool_key,
+                            skill.name,
+                            link_path
                         );
                     }
                 }

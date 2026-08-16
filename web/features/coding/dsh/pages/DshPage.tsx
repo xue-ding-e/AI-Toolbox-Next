@@ -1,6 +1,7 @@
 import React from 'react';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import {
+  Alert,
   Button,
   Collapse,
   Empty,
@@ -26,6 +27,7 @@ import {
   EyeOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
+  GlobalOutlined,
   LinkOutlined,
   MessageOutlined,
   PlusOutlined,
@@ -41,7 +43,7 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 
 import JsonEditor from '@/components/common/JsonEditor';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import DshConfigPreviewModal from '@/components/common/DshConfigPreviewModal';
 import ProviderCard from '@/components/common/ProviderCard';
 import type {
   ModelDisplayData,
@@ -99,10 +101,14 @@ import {
   extractDshProviderFromCcSwitch,
 } from '../utils/importMapping';
 import {
+  checkDshAgentInstructions,
   deleteDshCredential,
   deleteDshRuntimeProvider,
+  enableDshAgentInstructions,
   getDshSettingsConfig,
+  launchDshDashboard,
   listDshAllApiHubProviders,
+  openDshWebUi,
   readDshRuntimeConfig,
   resolveDshAllApiHubProviders,
   saveDshCredential,
@@ -397,6 +403,11 @@ const DshPage: React.FC = () => {
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const [deleteScopeProvider, setDeleteScopeProvider] = React.useState<DshRuntimeProviderView | null>(null);
+  /** "打开 Web UI" 离线回退 Modal 的阶段:null=关闭,'initial'=启动 dsh web,'npx'=改用 npx。 */
+  const [launchModalStage, setLaunchModalStage] = React.useState<'initial' | 'npx' | null>(null);
+  const [launchingDashboard, setLaunchingDashboard] = React.useState(false);
+  const [agentInstructionsEnabled, setAgentInstructionsEnabled] = React.useState(true);
+  const [enablingAgentInstructions, setEnablingAgentInstructions] = React.useState(false);
   const modelSettingsSaveSeqRef = React.useRef(0);
   const sidebarHidden = sidebarHiddenByPage.dsh;
 
@@ -450,6 +461,33 @@ const DshPage: React.FC = () => {
       }
     }
   }, [modelForm, t]);
+
+  const checkAgentInstructions = React.useCallback(async () => {
+    try {
+      const status = await checkDshAgentInstructions();
+      setAgentInstructionsEnabled(status.enabled);
+    } catch (error) {
+      console.error('Failed to check dsh agent-instructions:', error);
+    }
+  }, []);
+
+  const handleEnableAgentInstructions = async () => {
+    setEnablingAgentInstructions(true);
+    try {
+      await enableDshAgentInstructions();
+      await checkAgentInstructions();
+      message.success(t('dsh.agentInstructions.enableSuccess'));
+    } catch (error) {
+      console.error('Failed to enable dsh agent-instructions:', error);
+      message.error(t('common.error'));
+    } finally {
+      setEnablingAgentInstructions(false);
+    }
+  };
+
+  React.useEffect(() => {
+    checkAgentInstructions();
+  }, [checkAgentInstructions]);
 
   React.useEffect(() => {
     loadConfig();
@@ -1249,7 +1287,60 @@ const DshPage: React.FC = () => {
     }
   };
 
-  const handleDeleteProvider = (provider: DshRuntimeProviderView, scope: DshDeleteScope) => {
+  const handleDeleteProvider = (
+    provider: DshRuntimeProviderView,
+    scope: DshDeleteScope,
+    skipConfirm = false,
+  ) => {
+    const performDelete = async () => {
+      setSaving(true);
+      try {
+        let nextConfig: DshRuntimeConfig;
+        const credentialRef = provider.apiKeyEnv || credentialRefFromProviderKey(provider.providerKey);
+        // Back up the provider into the favorite-provider history before deletion so it can be
+        // re-imported later from "导入我使用过的供应商". Only persist what's being deleted.
+        try {
+          const credentialForFavorite =
+            provider.credentialExists && provider.apiKey
+              ? { refName: credentialRef, value: provider.apiKey }
+              : undefined;
+          if ((scope === 'provider' || scope === 'both') && provider.provider) {
+            await upsertFavoriteProvider(
+              buildFavoriteProviderStorageKey('dsh', provider.providerKey),
+              buildDshFavoriteProviderConfig(provider.providerKey, provider.provider, credentialForFavorite),
+            );
+          }
+        } catch (error) {
+          console.error('Failed to preserve DSH favorite provider before deletion:', error);
+        }
+        if (scope === 'credential') {
+          nextConfig = await deleteDshCredential(credentialRef);
+        } else if (scope === 'provider') {
+          nextConfig = await deleteDshRuntimeProvider(provider.providerKey);
+        } else {
+          if (provider.credentialExists) {
+            nextConfig = await deleteDshCredential(credentialRef);
+          }
+          nextConfig = await deleteDshRuntimeProvider(provider.providerKey);
+        }
+        setRuntimeConfig(nextConfig);
+        setOtherSettings(nextConfig.otherSettings || {});
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+      } catch (error) {
+        console.error('Failed to delete dsh provider:', error);
+        message.error(t('common.error'));
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    // deleteScopeProvider 弹窗已二次确认过,直接执行;直接删除路径仍走 Modal.confirm。
+    if (skipConfirm) {
+      void performDelete();
+      return;
+    }
+
     Modal.confirm({
       title: t('dsh.provider.deleteConfirmTitle', { defaultValue: '删除供应商' }),
       content: t('dsh.provider.deleteConfirmContent', {
@@ -1258,48 +1349,7 @@ const DshPage: React.FC = () => {
         scope: t(`dsh.provider.deleteScope.${scope}`),
       }),
       okButtonProps: { danger: true },
-      onOk: async () => {
-        setSaving(true);
-        try {
-          let nextConfig: DshRuntimeConfig;
-          const credentialRef = provider.apiKeyEnv || credentialRefFromProviderKey(provider.providerKey);
-          // Back up the provider into the favorite-provider history before deletion so it can be
-          // re-imported later from "导入我使用过的供应商". Only persist what's being deleted.
-          try {
-            const credentialForFavorite =
-              provider.credentialExists && provider.apiKey
-                ? { refName: credentialRef, value: provider.apiKey }
-                : undefined;
-            if ((scope === 'provider' || scope === 'both') && provider.provider) {
-              await upsertFavoriteProvider(
-                buildFavoriteProviderStorageKey('dsh', provider.providerKey),
-                buildDshFavoriteProviderConfig(provider.providerKey, provider.provider, credentialForFavorite),
-              );
-            }
-          } catch (error) {
-            console.error('Failed to preserve DSH favorite provider before deletion:', error);
-          }
-          if (scope === 'credential') {
-            nextConfig = await deleteDshCredential(credentialRef);
-          } else if (scope === 'provider') {
-            nextConfig = await deleteDshRuntimeProvider(provider.providerKey);
-          } else {
-            if (provider.credentialExists) {
-              nextConfig = await deleteDshCredential(credentialRef);
-            }
-            nextConfig = await deleteDshRuntimeProvider(provider.providerKey);
-          }
-          setRuntimeConfig(nextConfig);
-          setOtherSettings(nextConfig.otherSettings || {});
-          await refreshTrayMenu();
-          message.success(t('common.success'));
-        } catch (error) {
-          console.error('Failed to delete dsh provider:', error);
-          message.error(t('common.error'));
-        } finally {
-          setSaving(false);
-        }
-      },
+      onOk: performDelete,
     });
   };
 
@@ -1318,7 +1368,7 @@ const DshPage: React.FC = () => {
     const provider = deleteScopeProvider;
     setDeleteScopeProvider(null);
     if (provider) {
-      handleDeleteProvider(provider, scope);
+      handleDeleteProvider(provider, scope, true);
     }
   };
 
@@ -1500,6 +1550,38 @@ const DshPage: React.FC = () => {
       message.error(t('common.error'));
     } finally {
       setRefreshingModels(false);
+    }
+  };
+
+  const handleOpenWebUi = async () => {
+    try {
+      await openDshWebUi();
+    } catch {
+      setLaunchModalStage('initial');
+    }
+  };
+
+  const handleLaunchDashboard = async () => {
+    const stage = launchModalStage;
+    const useNpx = stage === 'npx';
+    setLaunchingDashboard(true);
+    try {
+      await launchDshDashboard(useNpx);
+      message.success(useNpx
+        ? t('dsh.dashboardLaunchedNpx', { defaultValue: '已通过 npx 启动 DSh Web UI,稍后再次点击"打开 Web UI"' })
+        : t('dsh.dashboardLaunched', { defaultValue: 'DSh Web UI 已启动,稍后再次点击"打开 Web UI"' }));
+      setLaunchModalStage(null);
+    } catch (error) {
+      console.error('Failed to launch dsh dashboard:', error);
+      if (useNpx) {
+        message.error(t('common.error'));
+        setLaunchModalStage(null);
+      } else {
+        // 全局 dsh 缺失等失败:切到 npx 回退态,让用户确认改用 npx 启动。
+        setLaunchModalStage('npx');
+      }
+    } finally {
+      setLaunchingDashboard(false);
     }
   };
 
@@ -1732,6 +1814,15 @@ const DshPage: React.FC = () => {
                 >
                   {t('dsh.syncModels', { defaultValue: '同步模型' })}
                 </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<GlobalOutlined />}
+                  onClick={handleOpenWebUi}
+                  className={styles.textAction}
+                >
+                  {t('dsh.openWebUi', { defaultValue: '打开 Web UI' })}
+                </Button>
               </Space>
             </div>
             <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
@@ -1878,6 +1969,24 @@ const DshPage: React.FC = () => {
             data-dsh-sidebar-section="true"
             data-sidebar-title={t('dsh.prompt.title', { defaultValue: '全局提示词' })}
           >
+            {!agentInstructionsEnabled && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={t('dsh.agentInstructions.disabledWarning')}
+                action={
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={enablingAgentInstructions}
+                    onClick={handleEnableAgentInstructions}
+                  >
+                    {t('dsh.agentInstructions.enable')}
+                  </Button>
+                }
+              />
+            )}
             <GlobalPromptSettings
               translationKeyPrefix="dsh.prompt"
               service={dshPromptApi}
@@ -2033,24 +2142,13 @@ const DshPage: React.FC = () => {
                     }}
                   />
                 </div>
-                <div className={styles.advancedEditor}>
-                  <Text type="secondary">{t('dsh.provider.configAdvancedJson', { defaultValue: '供应商原始配置（models）' })}</Text>
-                  <JsonEditor
-                    value={providerConfigJson}
-                    height={220}
-                    onChange={(value, isValid) => {
-                      setProviderConfigJson(asRecord(value));
-                      setProviderConfigJsonValid(isValid);
-                    }}
-                  />
-                </div>
               </div>
             )}
           </Form>
         </Modal>
 
         <Modal
-          title={t('dsh.provider.deleteScopeModalTitle', { defaultValue: '选择删除范围' })}
+          title={t('dsh.provider.deleteScopeModalTitle', { defaultValue: '删除供应商' })}
           open={!!deleteScopeProvider}
           onCancel={() => setDeleteScopeProvider(null)}
           footer={deleteScopeProvider ? [
@@ -2058,33 +2156,19 @@ const DshPage: React.FC = () => {
               {t('common.cancel')}
             </Button>,
             <Button
-              key="provider"
-              danger
-              onClick={() => handleDeleteScopeSelect('provider')}
-            >
-              {t('dsh.provider.deleteProviderConfig', { defaultValue: '删除供应商配置' })}
-            </Button>,
-            <Button
-              key="credential"
-              danger
-              onClick={() => handleDeleteScopeSelect('credential')}
-            >
-              {t('dsh.provider.deleteCredential', { defaultValue: '删除凭证' })}
-            </Button>,
-            <Button
               key="both"
               danger
               type="primary"
               onClick={() => handleDeleteScopeSelect('both')}
             >
-              {t('dsh.provider.deleteBoth', { defaultValue: '全部删除' })}
+              {t('dsh.provider.confirmDelete', { defaultValue: '确认删除' })}
             </Button>,
           ] : null}
           destroyOnHidden
         >
           <Text>
             {t('dsh.provider.deleteScopeModalContent', {
-              defaultValue: '确定删除供应商 {{providerKey}} 吗？请选择需要删除的内容。',
+              defaultValue: '该供应商同时包含供应商配置与 API 凭证，删除后将一并清除且无法恢复。确定删除供应商 {{providerKey}} 吗？',
               providerKey: deleteScopeProvider?.providerKey,
             })}
           </Text>
@@ -2195,7 +2279,7 @@ const DshPage: React.FC = () => {
           />
         )}
 
-        <JsonPreviewModal
+        <DshConfigPreviewModal
           open={previewModalOpen}
           onClose={() => setPreviewModalOpen(false)}
           title={t('dsh.preview.title', { defaultValue: '配置预览' })}
@@ -2210,6 +2294,29 @@ const DshPage: React.FC = () => {
             await setSidebarHidden('dsh', !visible);
           }}
         />
+
+        <Modal
+          title={launchModalStage === 'npx'
+            ? t('dsh.openWebUi', { defaultValue: '打开 Web UI' })
+            : t('dsh.openWebUi', { defaultValue: '打开 Web UI' })}
+          open={launchModalStage !== null}
+          confirmLoading={launchingDashboard}
+          okText={launchModalStage === 'npx'
+            ? t('dsh.launchWithNpx', { defaultValue: '使用 npx 启动' })
+            : t('dsh.launchDashboard', { defaultValue: '启动 dsh web' })}
+          cancelText={t('common.cancel')}
+          onCancel={() => setLaunchModalStage(null)}
+          onOk={handleLaunchDashboard}
+          destroyOnHidden
+        >
+          {launchModalStage === 'npx'
+            ? t('dsh.useNpxConfirm', {
+                defaultValue: '未检测到 dsh CLI,是否使用 `npx @deepseek-ai/dsh` 启动?',
+              })
+            : t('dsh.openWebUiOffline', {
+                defaultValue: 'DSh Web UI 未运行。启动 dsh web 服务后,稍后再次点击"打开 Web UI"。',
+              })}
+        </Modal>
       </SectionSidebarLayout>
     </Spin>
   );

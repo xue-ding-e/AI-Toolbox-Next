@@ -59,6 +59,14 @@ export interface PiRuntimeConfig {
   modelSettings: PiDefaultSelection;
   providers: PiRuntimeProviderView[];
   builtinProviders: PiBuiltinProvider[];
+  /** Raw `settings.json` file content for file-based preview. */
+  settingsContent?: string | null;
+  /** Raw `auth.json` file content for file-based preview. */
+  authContent?: string | null;
+  /** Raw `models.json` file content for file-based preview. */
+  modelsContent?: string | null;
+  /** Raw prompt file content for file-based preview. */
+  promptContent?: string | null;
 }
 
 export interface PiModelSettingsInput {

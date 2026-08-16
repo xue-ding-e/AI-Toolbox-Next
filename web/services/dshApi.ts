@@ -78,3 +78,27 @@ export const resolveDshAllApiHubProviders = async (
     request: { providerIds },
   });
 };
+
+/** 探测并打开 DSh 本地 Web UI;服务离线时 reject。 */
+export const openDshWebUi = async (path?: string): Promise<void> => {
+  await invoke('open_dsh_web_ui', { path });
+};
+
+/** 在用户终端启动 `dsh web`(或经 useNpx 回退 `npx @deepseek-ai/dsh web`)。 */
+export const launchDshDashboard = async (useNpx = false): Promise<void> => {
+  await invoke('launch_dsh_dashboard', { useNpx });
+};
+
+export interface DshAgentInstructionsStatus {
+  enabled: boolean;
+}
+
+/** 检测 agent-instructions 插件是否启用。 */
+export const checkDshAgentInstructions = async (): Promise<DshAgentInstructionsStatus> => {
+  return await invoke<DshAgentInstructionsStatus>('check_dsh_agent_instructions');
+};
+
+/** 启用 agent-instructions 插件(往 home 级 cordis.patch.yml 写 disabled: false)。 */
+export const enableDshAgentInstructions = async (): Promise<void> => {
+  await invoke('enable_dsh_agent_instructions');
+};

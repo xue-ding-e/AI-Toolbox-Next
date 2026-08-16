@@ -51,6 +51,23 @@ export type ReadConfigResult =
   | { status: 'parseError'; path: string; error: string; contentPreview?: string }
   | { status: 'error'; error: string };
 
+/** Raw file contents for the OpenCode file-based preview modal. */
+export interface OpenCodePreviewData {
+  configPath: string;
+  /** Raw main OpenCode config file content (`opencode.json` / `opencode.jsonc`). */
+  configContent?: string | null;
+  authPath: string;
+  /** Raw `auth.json` file content. */
+  authContent?: string | null;
+}
+
+/**
+ * Read raw config + auth.json file contents for the file-based preview modal.
+ */
+export const getOpenCodePreview = async (): Promise<OpenCodePreviewData> => {
+  return await invoke<OpenCodePreviewData>('get_opencode_preview');
+};
+
 /**
  * Get OpenCode configuration file path
  */

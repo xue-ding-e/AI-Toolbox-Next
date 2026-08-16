@@ -86,6 +86,16 @@ export interface DshRuntimeConfig {
   providers: DshRuntimeProviderView[];
   builtinProviders: DshBuiltinProvider[];
   credentials: DshCredentialView[];
+  /** Raw `settings.yaml` file content for file-based preview. */
+  configContent?: string | null;
+  /** Raw `.credentials.yaml` file content for file-based preview. */
+  credentialsContent?: string | null;
+  /** Raw `AGENTS.md` file content for file-based preview. */
+  promptContent?: string | null;
+  /** Home-level `cordis.patch.yml` path (AI Toolbox-managed MCP plugin layer). */
+  cordisPatchPath: string;
+  /** Raw home-level `cordis.patch.yml` content for file-based preview. */
+  cordisPatchContent?: string | null;
 }
 
 export interface DshModelsProviderInput {

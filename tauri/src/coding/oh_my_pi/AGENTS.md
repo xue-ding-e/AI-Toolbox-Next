@@ -10,6 +10,7 @@
 - OMP 设置的事实源是当前运行时根目录的 `config.yml`(YAML,点分 camelCase 键)。
 - OMP MCP server 主数据仍属于全局 MCP 模块,派生文件是当前运行时根目录的 `mcp.json`。
 - 全局提示词预设存 `oh_my_pi_prompt_config` 表,写入运行时根目录的 `AGENTS.md`。
+- 文件式预览由 `read_omp_runtime_config` 返回原始文件内容（`configContent`/`modelsContent`/`mcpContent`/`promptContent`），前端按文件 Tab 展示，与 Codex 一致。
 
 ## 与 Pi 的差异
 

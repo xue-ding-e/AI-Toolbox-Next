@@ -45,7 +45,7 @@ import { useTranslation } from 'react-i18next';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import JsonEditor from '@/components/common/JsonEditor';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import ProviderCard from '@/components/common/ProviderCard';
 import type {
   ModelDisplayData,
@@ -2221,17 +2221,6 @@ const OhMyPiPage: React.FC = () => {
                     }}
                   />
                 </div>
-                <div className={styles.advancedEditor}>
-                  <Text type="secondary">{t('ohMyPi.provider.configAdvancedJson')}</Text>
-                  <JsonEditor
-                    value={providerConfigJson}
-                    height={220}
-                    onChange={(value, isValid) => {
-                      setProviderConfigJson(asRecord(value));
-                      setProviderConfigJsonValid(isValid);
-                    }}
-                  />
-                </div>
               </div>
             )}
           </Form>
@@ -2343,11 +2332,36 @@ const OhMyPiPage: React.FC = () => {
           onCancel={() => setConnectivityModalOpen(false)}
         />
 
-        <JsonPreviewModal
+        <FileConfigPreviewModal
           open={previewModalOpen}
           onClose={() => setPreviewModalOpen(false)}
           title={t('ohMyPi.preview.title')}
-          data={runtimeConfig}
+          files={[
+            {
+              key: 'config',
+              label: runtimeConfig?.configPath?.split(/[\\/]/).pop() || 'config.yml',
+              content: runtimeConfig?.configContent ?? runtimeConfig?.settings,
+              language: 'yaml',
+            },
+            {
+              key: 'models',
+              label: runtimeConfig?.modelsPath?.split(/[\\/]/).pop() || 'models.yml',
+              content: runtimeConfig?.modelsContent ?? runtimeConfig?.models,
+              language: 'yaml',
+            },
+            {
+              key: 'mcp',
+              label: runtimeConfig?.mcpPath?.split(/[\\/]/).pop() || 'mcp.json',
+              content: runtimeConfig?.mcpContent,
+              language: 'json',
+            },
+            {
+              key: 'prompt',
+              label: runtimeConfig?.promptPath?.split(/[\\/]/).pop() || 'AGENTS.md',
+              content: runtimeConfig?.promptContent,
+              language: 'markdown',
+            },
+          ]}
         />
 
         <SidebarSettingsModal

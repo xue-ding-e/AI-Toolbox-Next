@@ -8,7 +8,7 @@ use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
 use crate::coding::dsh::constants::{
-    DSH_CREDENTIALS_FILE, DSH_PROMPT_FILE, DSH_SETTINGS_FILE,
+    DSH_CREDENTIALS_FILE, DSH_MCP_FILE, DSH_PROMPT_FILE, DSH_SETTINGS_FILE,
 };
 use crate::coding::oh_my_pi::constants::{
     OMP_CONFIG_FILE, OMP_MCP_FILE, OMP_MODELS_FILE, OMP_PROMPT_FILE,
@@ -1101,7 +1101,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 13;
+    const CURRENT_DEFAULTS_VERSION: u64 = 14;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1112,6 +1112,7 @@ async fn backfill_default_file_mappings(
         &["hermes-config", "hermes-prompt", "claude-desktop-config"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
         &["dsh-config", "dsh-credentials", "dsh-prompt"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V14: &[&str] = &["dsh-mcp"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1157,6 +1158,11 @@ async fn backfill_default_file_mappings(
                 13,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V13,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                14,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V14,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1577,13 +1583,14 @@ pub async fn resolve_dynamic_paths_with_db(
                     mapping.remote_path = format!("~/.hermes/{file_name}");
                 }
             }
-            "dsh-config" | "dsh-credentials" | "dsh-prompt" => {
+            "dsh-config" | "dsh-credentials" | "dsh-prompt" | "dsh-mcp" => {
                 if let Ok((config_dir, _)) =
                     crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await
                 {
                     let file_name = match mapping.id.as_str() {
                         "dsh-credentials" => DSH_CREDENTIALS_FILE,
                         "dsh-prompt" => DSH_PROMPT_FILE,
+                        "dsh-mcp" => DSH_MCP_FILE,
                         _ => DSH_SETTINGS_FILE,
                     };
                     mapping.local_path = config_dir.join(file_name).to_string_lossy().to_string();
@@ -2186,6 +2193,18 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             module: "dsh".to_string(),
             local_path: "~/.dsh/AGENTS.md".to_string(),
             remote_path: "~/.dsh/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "dsh-mcp".to_string(),
+            name: "DeepSeek Harness MCP 配置".to_string(),
+            module: "dsh".to_string(),
+            local_path: "~/.dsh/cordis.patch.yml".to_string(),
+            remote_path: "~/.dsh/cordis.patch.yml".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

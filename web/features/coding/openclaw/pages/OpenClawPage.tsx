@@ -86,7 +86,7 @@ import type {
 import type { OpenCodeProvider } from '@/types/opencode';
 
 import JsonEditor from '@/components/common/JsonEditor';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
@@ -1809,11 +1809,17 @@ const OpenClawPage: React.FC = () => {
               onSuccess={handleConfigPathSuccess}
             />
 
-            <JsonPreviewModal
+            <FileConfigPreviewModal
               open={previewOpen}
               onClose={() => setPreviewOpen(false)}
               title={t('openclaw.previewConfig')}
-              data={config}
+              files={[
+                {
+                  key: 'config',
+                  label: configPathInfo?.path?.split(/[\\/]/).pop() || 'openclaw.json',
+                  content: config,
+                },
+              ]}
             />
 
             {/* Fetch Models Modal (reuse common component) */}

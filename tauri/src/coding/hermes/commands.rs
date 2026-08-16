@@ -422,9 +422,9 @@ fn object_mut(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
 }
 
 /// Serialize hermes `config.yaml` read-modify-write cycles so concurrent
-/// tray/UI saves can't lose updates to each other (TOCTOU guard, mirrors
-/// cc-switch `hermes_write_lock`).
-fn hermes_write_lock() -> &'static Mutex<()> {
+/// tray/UI/MCP saves can't lose updates to each other (TOCTOU guard, mirrors
+/// cc-switch `hermes_write_lock`). Shared with `mcp::hermes_mcp`.
+pub(crate) fn hermes_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -950,6 +950,10 @@ pub async fn save_hermes_settings_config(
     let data = adapter::settings_to_db_value(config_dir.as_deref());
     db.with_conn(|conn| db_put(conn, DbTable::HermesSettingsConfig, "common", &data))?;
     emit_config_changed(&app, "window");
+    // The hermes skills dir is derived from the config root (<root>/skills);
+    // changing the saved dir moves the runtime skills location, so ask the
+    // skills pipeline to re-resolve targets for the hermes tool.
+    let _ = app.emit("skills-changed", "window");
     Ok(())
 }
 
@@ -977,6 +981,8 @@ pub async fn read_hermes_runtime_config(
         other_settings: build_other_settings(&config),
         providers: build_provider_views(&config),
         builtin_providers: builtin_providers(),
+        config_content: fs::read_to_string(&config_path).ok(),
+        prompt_content: fs::read_to_string(&prompt_path).ok(),
         config,
     })
 }

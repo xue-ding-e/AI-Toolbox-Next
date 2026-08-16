@@ -259,6 +259,7 @@ const CodexPage: React.FC = () => {
     );
     return providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
+  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
   const [savingCodexUnifiedHistory, setSavingCodexUnifiedHistory] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
@@ -1705,6 +1706,7 @@ const CodexPage: React.FC = () => {
                       cliKey="codex"
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>

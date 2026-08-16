@@ -57,6 +57,14 @@ export interface OmpRuntimeConfig {
   modelSettings: OmpDefaultSelection;
   providers: OmpRuntimeProviderView[];
   builtinProviders: OmpBuiltinProvider[];
+  /** Raw `config.yml` / `config.yaml` file content for file-based preview. */
+  configContent?: string | null;
+  /** Raw `models.yml` file content for file-based preview. */
+  modelsContent?: string | null;
+  /** Raw `mcp.json` file content for file-based preview. */
+  mcpContent?: string | null;
+  /** Raw prompt file content for file-based preview. */
+  promptContent?: string | null;
 }
 
 export interface OmpModelSettingsInput {

@@ -43,7 +43,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, getOpenCodePreview, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig, type OpenCodePreviewData } from '@/services/opencodeApi';
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
@@ -85,7 +85,7 @@ import OpenCodeAgentSettings from '../components/OpenCodeAgentSettings';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { MagicContextSettings } from '@/features/coding/shared/magicContext';
 import JsonEditor from '@/components/common/JsonEditor';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
@@ -318,7 +318,7 @@ const OpenCodePage: React.FC = () => {
 
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
-  const [previewData, setPreviewDataLocal] = React.useState<unknown>(null);
+  const [previewData, setPreviewDataLocal] = React.useState<OpenCodePreviewData | null>(null);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.opencode;
 
@@ -1751,9 +1751,14 @@ const OpenCodePage: React.FC = () => {
   };
 
   const handlePreviewConfig = async () => {
-    if (!config) return;
-    setPreviewDataLocal(config);
-    setPreviewModalOpen(true);
+    try {
+      const preview = await getOpenCodePreview();
+      setPreviewDataLocal(preview);
+      setPreviewModalOpen(true);
+    } catch (error) {
+      console.error('Failed to preview OpenCode config:', error);
+      message.error(t('common.error'));
+    }
   };
 
   const presetModelsVersion = React.useSyncExternalStore(
@@ -2711,11 +2716,24 @@ const OpenCodePage: React.FC = () => {
             )}
 
             {/* Preview Modal */}
-            <JsonPreviewModal
+            <FileConfigPreviewModal
               open={previewModalOpen}
               onClose={() => setPreviewModalOpen(false)}
               title={t('opencode.preview.title')}
-              data={previewData}
+              files={[
+                {
+                  key: 'config',
+                  label: previewData?.configPath?.split(/[\\/]/).pop() || configPathInfo?.path?.split(/[\\/]/).pop() || 'opencode.json',
+                  content: previewData?.configContent ?? config,
+                  language: 'json',
+                },
+                {
+                  key: 'auth',
+                  label: 'auth.json',
+                  content: previewData?.authContent,
+                  language: 'json',
+                },
+              ]}
             />
 
             <SidebarSettingsModal

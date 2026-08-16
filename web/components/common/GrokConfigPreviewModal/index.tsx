@@ -82,11 +82,6 @@ const GrokConfigPreviewModal: FC<GrokConfigPreviewModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={1000}
-      styles={{
-        body: {
-          padding: '16px 24px',
-        },
-      }}
     >
       {!hasAny ? (
         <Empty description={t('common.noData')} />

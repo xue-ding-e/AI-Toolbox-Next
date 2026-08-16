@@ -39,7 +39,7 @@ import {
 } from '@ant-design/icons';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import ProviderCard from '@/components/common/ProviderCard';
 import type {
   ModelDisplayData,
@@ -1863,11 +1863,24 @@ const HermesPage: React.FC = () => {
           />
         )}
 
-        <JsonPreviewModal
+        <FileConfigPreviewModal
           open={previewModalOpen}
           onClose={() => setPreviewModalOpen(false)}
           title={t('hermes.preview.title', { defaultValue: 'Preview config' })}
-          data={runtimeConfig}
+          files={[
+            {
+              key: 'config',
+              label: runtimeConfig?.configPath?.split(/[\\/]/).pop() || 'config.yaml',
+              content: runtimeConfig?.configContent ?? runtimeConfig?.config,
+              language: 'yaml',
+            },
+            {
+              key: 'prompt',
+              label: runtimeConfig?.promptPath?.split(/[\\/]/).pop() || 'SOUL.md',
+              content: runtimeConfig?.promptContent,
+              language: 'markdown',
+            },
+          ]}
         />
 
         <SidebarSettingsModal

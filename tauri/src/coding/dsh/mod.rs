@@ -13,6 +13,7 @@ pub mod commands;
 pub mod constants;
 pub mod tray_support;
 pub mod types;
+pub mod web_ui;
 
 // NOTE: tray_support is intentionally NOT glob-reexported. Its
 // `apply_dsh_prompt_config` would collide with the same-name

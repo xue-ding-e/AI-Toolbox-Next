@@ -887,6 +887,21 @@ pub async fn get_dsh_prompt_path_from_db_async(
     Ok(path.exists().then_some(path))
 }
 
+/// Resolve the dsh MCP `cordis.patch.yml` path if it exists on disk.
+///
+/// The Cordis patch DSL file holds MCP servers as `insert` rows (managed by the
+/// `mcp::cordis_patch` adapter). It lives in the same config dir as the other
+/// dsh runtime files and is packaged alongside them so restore brings back the
+/// user's hand-written non-MCP plugin rows together with the snapshot state,
+/// before `mcp_sync_all` upserts the dsh-mcp rows against the central store.
+pub async fn get_dsh_mcp_path_from_db_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let (config_dir, _) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await?;
+    let path = config_dir.join(crate::coding::dsh::constants::DSH_MCP_FILE);
+    Ok(path.exists().then_some(path))
+}
+
 /// Resolve the Claude Desktop on-disk settings paths for the current platform.
 /// Returns `(normal_config_path, config_library_path)` on supported platforms.
 pub fn get_claude_desktop_settings_paths() -> Option<(PathBuf, PathBuf)> {
@@ -1097,6 +1112,14 @@ pub async fn list_backup_file_filter_path_options(
     if get_dsh_prompt_path_from_db_async(db).await?.is_some() {
         push_backup_filter_option(&mut options, &mut seen, "dsh", "AGENTS.md");
     }
+    if get_dsh_mcp_path_from_db_async(db).await?.is_some() {
+        push_backup_filter_option(
+            &mut options,
+            &mut seen,
+            "dsh",
+            crate::coding::dsh::constants::DSH_MCP_FILE,
+        );
+    }
 
     if let Some((normal_config_path, config_library_path)) = get_claude_desktop_settings_paths() {
         if normal_config_path.exists() {
@@ -1286,6 +1309,13 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         "geminicli" => Some("geminicli"),
         "pi" => Some("pi"),
         "oh_my_pi" => Some("oh_my_pi"),
+        // hermes/dsh have WSL file mappings and must be included in the
+        // post-restore resync payload, otherwise the final WSL sync skips them
+        // and restored files never reach WSL. claude_desktop also has a (best
+        // effort, disabled by default) WSL mapping so it is propagated too.
+        "hermes" => Some("hermes"),
+        "dsh" => Some("dsh"),
+        "claude_desktop" => Some("claude_desktop"),
         _ => None,
     }
 }
@@ -1316,13 +1346,15 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
     use crate::db::schema::DbTable;
 
     const PATH_KEYS: &[&str] = &["root_dir", "config_path", "rootDir", "configPath"];
+    // hermes/dsh store their custom config directory as `config_dir`.
+    const CONFIG_DIR_KEYS: &[&str] = &["config_dir"];
 
-    let clear_table = |conn: &rusqlite::Connection, table: DbTable| -> Result<(), String> {
+    let clear_table = |conn: &rusqlite::Connection, table: DbTable, keys: &[&str]| -> Result<(), String> {
         let Some(mut record) = db_get(conn, table, "common")? else {
             return Ok(());
         };
         let mut changed = false;
-        for key in PATH_KEYS {
+        for key in keys {
             if record
                 .get(*key)
                 .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
@@ -1338,14 +1370,19 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
     };
 
     db.with_conn(|conn| {
-        clear_table(conn, DbTable::CodexCommonConfig)?;
-        clear_table(conn, DbTable::ClaudeCommonConfig)?;
-        clear_table(conn, DbTable::GrokCommonConfig)?;
-        clear_table(conn, DbTable::GeminiCliCommonConfig)?;
-        clear_table(conn, DbTable::PiSettingsConfig)?;
-        clear_table(conn, DbTable::OhMyPiSettingsConfig)?;
-        clear_table(conn, DbTable::OpenCodeCommonConfig)?;
-        clear_table(conn, DbTable::OpenClawCommonConfig)?;
+        clear_table(conn, DbTable::CodexCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::ClaudeCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::GrokCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::GeminiCliCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::PiSettingsConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::OhMyPiSettingsConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::OpenCodeCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::OpenClawCommonConfig, PATH_KEYS)?;
+        // hermes/dsh resolve their config dir via DB `config_dir` (custom root)
+        // before env/shell/platform defaults; clear it too so the restored
+        // default-dir files are actually picked up after restore.
+        clear_table(conn, DbTable::HermesSettingsConfig, CONFIG_DIR_KEYS)?;
+        clear_table(conn, DbTable::DshSettingsConfig, CONFIG_DIR_KEYS)?;
         Ok(())
     })
 }
@@ -2394,6 +2431,13 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
         "geminicli" => &["~/.gemini/"],
         "pi" => &["~/.pi/agent/"],
         "oh_my_pi" => &["~/.omp/agent/"],
+        "hermes" => &[
+            "~/.hermes/",
+            "%LOCALAPPDATA%/hermes/",
+            "%localappdata%/hermes/",
+        ],
+        "dsh" => &["~/.dsh/"],
+        "claude_desktop" => &["%APPDATA%/Claude/", "%appdata%/Claude/"],
         _ => &[],
     };
 
@@ -3006,7 +3050,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
             added_zip_directories,
             &path,
             "hermes",
-            "AGENTS.md",
+            crate::coding::hermes::constants::HERMES_PROMPT_FILE,
             filter_rules,
             options,
         )?;
@@ -3016,9 +3060,11 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
     let dsh_config_path = get_dsh_config_path_from_db_async(db).await?;
     let dsh_credentials_path = get_dsh_credentials_path_from_db_async(db).await?;
     let dsh_prompt_path = get_dsh_prompt_path_from_db_async(db).await?;
+    let dsh_mcp_path = get_dsh_mcp_path_from_db_async(db).await?;
     if dsh_config_path.is_some()
         || dsh_credentials_path.is_some()
         || dsh_prompt_path.is_some()
+        || dsh_mcp_path.is_some()
     {
         add_directory_to_zip_once(
             zip,
@@ -3065,6 +3111,17 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
             &path,
             "dsh",
             "AGENTS.md",
+            filter_rules,
+            options,
+        )?;
+    }
+    if let Some(path) = dsh_mcp_path {
+        add_external_config_file_to_zip(
+            zip,
+            added_zip_directories,
+            &path,
+            "dsh",
+            crate::coding::dsh::constants::DSH_MCP_FILE,
             filter_rules,
             options,
         )?;
@@ -3428,6 +3485,14 @@ mod tests {
         assert!(!should_skip_external_config_on_restore(
             false,
             "external-configs/pi/settings.json"
+        ));
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "external-configs/hermes/config.yaml"
+        ));
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "external-configs/dsh/cordis.patch.yml"
         ));
         assert!(should_skip_external_config_on_restore(
             false,

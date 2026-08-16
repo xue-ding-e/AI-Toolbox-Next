@@ -18,7 +18,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import {
   DndContext,
@@ -325,6 +325,7 @@ const ClaudeDesktopPage: React.FC = () => {
     );
     return providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
+  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
 
   // Modal states
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -945,6 +946,7 @@ const ClaudeDesktopPage: React.FC = () => {
                       cliKey="claude_desktop"
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>
@@ -1162,11 +1164,32 @@ const ClaudeDesktopPage: React.FC = () => {
         }}
       />
 
-      <JsonPreviewModal
+      <FileConfigPreviewModal
         open={previewModalOpen}
         onClose={() => setPreviewModalOpen(false)}
         title="Claude Desktop 配置预览"
-        data={previewData}
+        files={[
+          {
+            key: 'normalConfig',
+            label: 'claude_desktop_config.json (normal)',
+            content: (previewData as Record<string, unknown> | null)?.normalConfig,
+          },
+          {
+            key: 'threepConfig',
+            label: 'claude_desktop_config.json (3P)',
+            content: (previewData as Record<string, unknown> | null)?.threepConfig,
+          },
+          {
+            key: 'profile',
+            label: 'profile.json',
+            content: (previewData as Record<string, unknown> | null)?.profile,
+          },
+          {
+            key: 'meta',
+            label: '_meta.json',
+            content: (previewData as Record<string, unknown> | null)?.meta,
+          },
+        ]}
       />
 
       <SidebarSettingsModal

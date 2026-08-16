@@ -174,6 +174,12 @@ pub async fn mcp_update_server<R: Runtime>(
         .await?
         .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
 
+    // Snapshot the previous name/enabled tools before applying updates so we
+    // can clean up tool config files that are no longer selected (or were
+    // written under the previous name).
+    let previous_name = server.name.clone();
+    let previous_enabled_tools = server.enabled_tools.clone();
+
     // Apply updates
     if let Some(name) = input.name {
         server.name = name;
@@ -203,6 +209,44 @@ pub async fn mcp_update_server<R: Runtime>(
         .await
         .unwrap_or_default();
     let db = state.db();
+
+    // Clean up config files for tools that were removed from enabled_tools,
+    // and for the previous name when the server was renamed: without this the
+    // old entry stays in the tool config file and keeps loading at runtime.
+    let removed_tools: Vec<&String> = previous_enabled_tools
+        .iter()
+        .filter(|tool| !server.enabled_tools.contains(tool))
+        .collect();
+    let name_changed = previous_name != server.name;
+    for tool_key in removed_tools {
+        if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+            if let Err(e) = remove_server_from_tool_async(&db, &previous_name, &tool).await {
+                log::warn!(
+                    "Failed to remove MCP server '{}' from removed tool '{}' during update: {}",
+                    previous_name,
+                    tool_key,
+                    e
+                );
+            }
+            // Drop the stale sync detail so the UI no longer shows it.
+            let _ = mcp_store::delete_sync_detail(&state, &serverId, tool_key).await;
+        }
+    }
+    if name_changed {
+        for tool_key in &server.enabled_tools {
+            if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+                if let Err(e) = remove_server_from_tool_async(&db, &previous_name, &tool).await {
+                    log::warn!(
+                        "Failed to remove renamed MCP server '{}' from tool '{}': {}",
+                        previous_name,
+                        tool_key,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     for tool_key in &server.enabled_tools {
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
             if is_tool_installed_with_db_async(&db, &tool).await {
@@ -533,7 +577,8 @@ async fn mcp_sync_all_internal<R: Runtime>(
 /// If a server with the same name exists but has different config, create with suffix
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn mcp_import_from_tool(
+pub async fn mcp_import_from_tool<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, SqliteDbState>,
     toolKey: String,
     enabledTools: Option<Vec<String>>,
@@ -697,6 +742,11 @@ pub async fn mcp_import_from_tool(
             }
         }
     }
+
+    // Emit events so the tray refreshes and WSL auto-sync picks up the
+    // imported servers (same contract as create/update/delete).
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
 
     Ok(McpImportResultDto {
         servers_imported,

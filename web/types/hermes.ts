@@ -88,6 +88,10 @@ export interface HermesRuntimeConfig {
   otherSettings: Record<string, unknown>;
   providers: HermesRuntimeProviderView[];
   builtinProviders: HermesBuiltinProvider[];
+  /** Raw `config.yaml` file content for file-based preview. */
+  configContent?: string | null;
+  /** Raw prompt file content for file-based preview. */
+  promptContent?: string | null;
 }
 
 /** Which Hermes memory blob to edit: agent `MEMORY.md` or user `USER.md`. */

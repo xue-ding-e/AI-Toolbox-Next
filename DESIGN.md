@@ -153,6 +153,8 @@ AI Toolbox 的核心页面应当像工作台，而不是内容网站。
 
 默认使用 Ant Design Modal 原生 chrome。不要重度覆盖 `.ant-modal-content`、`.ant-modal-header`、`.ant-modal-footer` 或 `.ant-modal-close`。
 
+antd Modal 内容区本身已自带内边距（非 wireframe 模式下由 `.ant-modal-content` 的 `contentPadding` 承担，`.ant-modal-body` 默认无额外 padding）。不要在 `styles.body` / `.ant-modal-body` 上再叠加一层 padding，也不要给弹窗内容外层容器重复加 padding——否则会形成双重内边距，让预览编辑器、表格等内容间距过大。同理，自身已带 padding 的容器（如 Card、编辑器、section card）内部不要再套一层带 padding 的包装。需要微调内容间距时，优先使用内容自身或子元素的 margin。
+
 普通弹窗只做必要 body padding 调整。高弹窗依赖 `web/App.css` 中的全局 viewport-safe modal 规则，不要重新添加一次性的 `top` 偏移或 max-height hack。
 
 弹窗内普通分区使用 section card：

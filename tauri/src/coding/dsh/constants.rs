@@ -8,6 +8,9 @@ pub const DSH_SETTINGS_FILE: &str = "settings.yaml";
 pub const DSH_CREDENTIALS_FILE: &str = ".credentials.yaml";
 /// Global prompt file authored into the config directory.
 pub const DSH_PROMPT_FILE: &str = "AGENTS.md";
+/// The Cordis patch DSL file the `mcp::cordis_patch` adapter writes MCP servers into.
+/// Each MCP server is one `insert` row in a top-level YAML array within this file.
+pub const DSH_MCP_FILE: &str = "cordis.patch.yml";
 
 /// The settings.yaml section under which llm-pi-ai plugin providers are stored
 /// as a dictionary keyed by route id (`settings["llm-pi-ai"]["providers"][route]`).

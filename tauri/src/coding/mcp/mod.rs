@@ -7,12 +7,15 @@ pub mod adapter;
 pub mod command_normalize;
 pub mod commands;
 pub mod config_sync;
+pub mod cordis_patch;
 pub mod format_configs;
+pub mod hermes_mcp;
 pub mod mcp_store;
 pub mod opencode_path;
 pub mod package_version;
 pub mod tray_support;
 pub mod types;
+pub mod yaml_sync;
 
 pub use commands::*;
 

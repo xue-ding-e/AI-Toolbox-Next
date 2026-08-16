@@ -243,6 +243,7 @@ cd tauri && cargo test test_name
   - 失败是否为本轮新增
   - 失败定位到的文件或测试名
 - 如果本轮只改一个非常局部的点，但用户明确要求“全量测试”或“完整验证”，仍然按上面的全量集合执行，而不是自行降级为 smoke test。
+- Windows 本地 `cargo test` 的 doctest 段偶发 `error[E0460]: found possibly newer version of crate 'windows'`（可伴随 `memory allocation of ... failed`、`failed to mmap ... os error 1455` / `页面文件太小`）：rustdoc 加载到损坏/半写状态的 rlib 元数据所致，常见诱因是 ① 并发构建写同一 target（其它 `cargo run`/`cargo build` 与测试共用 `tauri/target`）；② 本机或沙箱存在进程级 commit 配额时，默认高并行度的全量 `cargo test` 会让 rustdoc mmap 整个依赖图超限（物理内存再空闲也会报 1455）。自愈顺序：先 `cargo clean -p windows && cargo test --doc`（只重编 windows 相关产物，约 1-2 分钟）；若全量仍在 doctest 段复现 mmap/E0460，改用 `cargo test --jobs 2`（限并行后已验证稳定通过）或错开其它 cargo 构建进程。另一个 Windows 特有失败是 `failed to remove file target\debug\ai-toolbox.exe`：exe 被正在运行的进程锁定（如其它 `cargo run` 启动的应用），等该进程退出后重试即可。若全量 `cargo test` 仅 doctest 段失败而其余套件全过，应先按上述自愈流程处理，不要误判为本轮代码回归。
 - 新增或修复高价值回归时，应优先补**最贴近用户路径**的自动化用例；不要只补实现细节测试而漏掉“表单提交 -> 持久化 -> 再读取”这类关键往返语义。
 
 ## Code Style Guidelines
@@ -1018,3 +1019,25 @@ let proxy_url = http_client::get_proxy_from_settings(&state).await?;
 - `tauri/src/coding/open_code/models_api.rs` - Provider model fetching
 - `tauri/src/skills/installer.rs` - Git operations proxy
 - `tauri/src/skills/commands.rs` - Git operations proxy
+
+## Tab / Page-Key Allowlist Rules
+
+Several places hardcode a list of tab or page/module keys. Adding a new tab without updating every such list causes the new tab's feature to **silently fail** (no error, no log): the stored value is dropped on read, or the new module is force-pushed into a skip set. This has recurred twice and is a cross-module rule.
+
+- Recurrence 1 (sidebar show/hide): `tauri/src/settings/adapter.rs` `get_sidebar_hidden_by_page` used a 7-key allowlist; new tabs (claudedesktop/hermes/dsh/oh_my_pi) were dropped on every `get_settings`, so the "hide sidebar" toggle reset after restart. Fix: read every boolean key in the stored map instead of an allowlist.
+- Recurrence 2 (WSL/SSH file sync): `web/features/settings/hooks/useWSLSync.ts` / `useSSHSync.ts` `TAB_TO_MODULE` only had 7 entries; new tabs mapped to `undefined`, were dropped by `.filter(Boolean)`, and were force-pushed into `skipModules` — their config files were silently never synced to the remote. Fix: map every coding tab in `TAB_TO_MODULE` and keep `ALL_CODING_MODULES`/`ALL_MODULE_KEYS` complete.
+
+### Authority Sources
+
+Two distinct key sets — do not conflate:
+
+- Sidebar-only (11 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, openclaw, pi, oh_my_pi, hermes, dsh.
+- visible_tabs full set (includes non-coding tools like gateway/image/ssh/wsl): `CURRENT_DEFAULT_VISIBLE_TABS` + `CURRENT_DEFAULT_TAB_SET` in `tauri/src/settings/adapter.rs`, mirrored by `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and by `defaultSettings.visible_tabs` in `web/services/settingsApi.ts`.
+
+### When Adding or Changing a Tab
+
+- Update the relevant authority source **and every downstream list**. Lists to re-check (grep the tab key string repo-wide, this list is not exhaustive): `tauri/src/settings/types.rs` `AppSettings::default()` (visible_tabs + default_sidebar_hidden_by_page), `tauri/src/coding/runtime_location.rs` `MODULE_KEYS`, `tauri/src/coding/reapply_applied_runtime.rs` `ALL_WSL_FILE_MODULES`, `tauri/src/settings/backup/utils.rs` `ALWAYS_BACKUP_CLI_TOOLS`/`OPTIONAL_BACKUP_CLI_TOOLS`, `tauri/src/tray.rs` section builders, frontend `useWSLSync.ts`/`useSSHSync.ts`/`*SyncModal.tsx` `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_*`, and `FileMappingModal`/`SSHFileMappingModal` module dropdowns.
+- A new default-visible tab must update **both** `CURRENT_DEFAULT_VISIBLE_TABS` (full-replace migration baseline) and `CURRENT_DEFAULT_TAB_SET` (additive insert set for custom-order users), plus the `visible_tabs_*` migration test expectations.
+- Regression tests for this class of bug must assert that a newly added key round-trips its stored value through the full read path, not just that the default is present.
+- Do not silently truncate coverage. If a list intentionally excludes some keys (e.g. a historical `PRE_*` migration baseline snapshot, or a tool that has no MCP config), leave a comment saying so.
+- Whether an unregistered `runtime_location` module is a bug depends on intent: hermes/dsh document "not yet registered, path resolution is self-contained in commands.rs, known future work" in their AGENTS.md — that is by-design, not an allowlist miss. A tab whose config dir is user-customizable to a WSL UNC path needs runtime_location; a fixed-path GUI-config tool (e.g. claudedesktop) may not.

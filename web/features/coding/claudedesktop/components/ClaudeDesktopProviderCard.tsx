@@ -30,9 +30,12 @@ import ProviderNameLink from '@/components/common/ProviderNameLink';
 import {
   canApplyProviderWithGatewayProxy,
   firstGatewayApiFormat,
+  gatewayProxyReason,
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
+  hasNonClaudeModelIds,
   providerNeedsGatewayProxy,
+  restoreDirectUnavailableHintKey,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import {
@@ -42,9 +45,6 @@ import {
 
 const { Text } = Typography;
 
-const CLAUDE_ROUTE_PREFIX = 'claude-';
-const ANTHROPIC_CLAUDE_ROUTE_PREFIX = 'anthropic/claude-';
-const ONE_M_CONTEXT_MARKER = '[1m]';
 /** claude-safe route_id per role, mirroring cc-switch CLAUDE_DESKTOP_ROLE_ROUTE_IDS. */
 const CLAUDE_DESKTOP_ROLE_ROUTE_IDS: Record<string, string> = {
   sonnet: 'claude-sonnet-5',
@@ -58,31 +58,6 @@ const CLAUDE_DESKTOP_ROLE_ROUTE_ORDER: Array<'sonnet' | 'opus' | 'fable' | 'haik
   'fable',
   'haiku',
 ];
-
-/** Mirror of the backend `is_claude_safe_model_id` (config_writer.rs): Claude
- * Desktop's 3P profile only accepts `claude-<role>-<id>` (optionally prefixed
- * with `anthropic/`) and rejects `[1m]` markers or degraded ids like
- * `claude-sonnet-`. */
-function isClaudeSafeModelId(model: string): boolean {
-  const normalized = model.trim().toLowerCase();
-  if (normalized.includes(ONE_M_CONTEXT_MARKER)) {
-    return false;
-  }
-  const routeTail = normalized.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)
-    ? normalized.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length)
-    : normalized.startsWith(CLAUDE_ROUTE_PREFIX)
-      ? normalized.slice(CLAUDE_ROUTE_PREFIX.length)
-      : '';
-  return ['sonnet-', 'opus-', 'haiku-', 'fable-'].some((prefix) =>
-    routeTail.startsWith(prefix) && routeTail.length > prefix.length,
-  );
-}
-
-/** True when any configured model name is not a claude-* id Claude Desktop
- * accepts directly; such a provider needs local gateway routing. */
-function hasNonClaudeModelIds(modelIds: string[]): boolean {
-  return modelIds.some((modelId) => !isClaudeSafeModelId(modelId));
-}
 
 interface ClaudeDesktopProviderCardProps {
   provider: ClaudeDesktopProvider;
@@ -216,6 +191,12 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
     !isOfficialProvider &&
     (providerNeedsGatewayProxy(providerApiFormat, 'anthropic') ||
       hasNonClaudeModelIds(configuredModelIds));
+  const restoreDirectUnavailableTitle = t(
+    restoreDirectUnavailableHintKey(
+      gatewayProxyReason(providerApiFormat, 'anthropic', configuredModelIds),
+    ),
+    { cli: t('settings.gateway.cli.claude_desktop') },
+  );
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -599,7 +580,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
               </Tooltip>
             )}
             {canShowRestoreDirectUnavailable && (
-              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+              <Tooltip title={restoreDirectUnavailableTitle}>
                 <Button
                   type="link"
                   size="small"

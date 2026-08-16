@@ -703,6 +703,21 @@ pub async fn read_opencode_config(
     }
 }
 
+/// Read raw config + auth.json file contents for the file-based preview modal.
+#[tauri::command]
+pub async fn get_opencode_preview(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<OpenCodePreviewData, String> {
+    let config_path_str = get_opencode_config_path(state).await?;
+    let auth_path_str = super::free_models::get_opencode_auth_config_path()?;
+    Ok(OpenCodePreviewData {
+        config_path: config_path_str.clone(),
+        config_content: fs::read_to_string(&config_path_str).ok(),
+        auth_path: auth_path_str.clone(),
+        auth_content: fs::read_to_string(&auth_path_str).ok(),
+    })
+}
+
 /// Backup OpenCode configuration file by renaming it with .bak.{timestamp} suffix
 #[tauri::command]
 pub async fn backup_opencode_config(

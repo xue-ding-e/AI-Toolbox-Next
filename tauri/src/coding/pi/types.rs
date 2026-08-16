@@ -171,6 +171,18 @@ pub struct PiRuntimeConfig {
     pub model_settings: PiDefaultSelection,
     pub providers: Vec<PiRuntimeProviderView>,
     pub builtin_providers: Vec<PiBuiltinProvider>,
+    /// Raw `settings.json` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings_content: Option<String>,
+    /// Raw `auth.json` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_content: Option<String>,
+    /// Raw `models.json` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models_content: Option<String>,
+    /// Raw prompt file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

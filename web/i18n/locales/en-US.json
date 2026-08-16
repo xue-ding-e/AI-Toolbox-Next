@@ -243,7 +243,9 @@
       "statisticsTooltip": "View usage statistics",
       "restoreDirectButton": "Restore Direct",
       "restoreDirectHint": "Restore direct mode, bypass the gateway proxy",
-      "restoreDirectUnavailableHint": "This channel protocol requires gateway conversion and cannot be used after restoring direct mode",
+      "restoreDirectUnavailableHintProtocol": "This provider's API protocol differs from {{cli}}'s native protocol; direct mode would fail, so the gateway must stay for protocol conversion.",
+      "restoreDirectUnavailableHintModel": "This provider's model names (with [1m] markers or non claude-* form) aren't recognized by {{cli}}'s model menu; direct mode would break, so the gateway must stay for model-name conversion.",
+      "restoreDirectUnavailableHintBoth": "Both the API protocol and model names of this provider need gateway conversion; direct mode is unavailable.",
       "applyLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before switching channels.",
       "editLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before editing channels.",
       "commonConfigSaveLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before saving common config.",
@@ -259,8 +261,7 @@
       "switchPrimaryButton": "Switch proxy",
       "switchPrimaryP0Button": "Set P0",
       "switchPrimaryHint": "Restore direct mode, apply this provider, then re-enable Gateway proxy.",
-      "switchPrimaryFailoverHint": "Restore direct mode, apply this provider, then re-enable Gateway proxy and failover.",
-      "restoreDirectProtocolConversionUnavailableHint": "This provider requires Gateway protocol conversion and cannot be restored to direct mode."
+      "switchPrimaryFailoverHint": "Restore direct mode, apply this provider, then re-enable Gateway proxy and failover."
     },
     "failover": {
       "button": "Enable failover",
@@ -4425,7 +4426,7 @@
     "refreshConfig": "Refresh config",
     "syncModels": "Sync preset models",
     "modelsRefreshSuccess": "Preset models synced",
-    "pageHint": "Oh My Pi runtime files remain the source of truth. This page is a visual editor and writes changes directly to config.yml, models.yml, models.yml, and AGENTS.md.",
+    "pageHint": "Oh My Pi runtime files remain the source of truth. This page is a visual editor and writes changes directly to config.yml and models.yml.",
     "invalidJson": "Invalid JSON",
     "preview": {
       "title": "Preview Oh My Pi config"
@@ -4698,9 +4699,20 @@
     "refreshConfig": "Refresh Config",
     "syncModels": "Sync Models",
     "modelsRefreshSuccess": "Preset models refreshed",
+    "openWebUi": "Open Web UI",
+    "openWebUiOffline": "DSh Web UI is not running. After starting the dsh web service, retry \"Open Web UI\" shortly.",
+    "launchDashboard": "Launch dsh web",
+    "dashboardLaunched": "DSh Web UI launched — retry \"Open Web UI\" shortly.",
+    "useNpxConfirm": "`dsh` CLI not found. Start with `npx @deepseek-ai/dsh` instead?",
+    "launchWithNpx": "Launch with npx",
+    "dashboardLaunchedNpx": "DSh Web UI launched via npx — retry \"Open Web UI\" shortly.",
     "invalidJson": "Invalid JSON format",
     "preview": {
-      "title": "Configuration Preview"
+      "title": "Configuration Preview",
+      "settingsYamlTitle": "settings.yaml",
+      "credentialsYamlTitle": ".credentials.yaml",
+      "agentsMdTitle": "AGENTS.md",
+      "cordisPatchTitle": "cordis.patch.yml"
     },
     "modelSettings": {
       "title": "Default Model",
@@ -4741,15 +4753,12 @@
         "provider": "provider config",
         "both": "both"
       },
-      "deleteScopeModalTitle": "Choose Delete Scope",
-      "deleteScopeModalContent": "Are you sure you want to delete provider {{providerKey}}? Choose what to delete.",
-      "deleteProviderConfig": "Delete Provider Config",
-      "deleteCredential": "Delete Credential",
-      "deleteBoth": "Delete Both",
+      "deleteScopeModalTitle": "Delete Provider",
+      "deleteScopeModalContent": "This provider has both provider config and API credentials. Deleting will remove both and cannot be undone. Delete provider {{providerKey}}?",
+      "confirmDelete": "Confirm Delete",
       "enabled": "Enabled",
       "disabled": "Disabled",
-      "deleteProvider": "Delete Provider",
-      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?"
+      "deleteProvider": "Delete Provider"
     },
     "model": {
       "title": "Models",
@@ -4877,6 +4886,11 @@
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
       "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    },
+    "agentInstructions": {
+      "disabledWarning": "The agent-instructions plugin is disabled. Global prompt will not take effect.",
+      "enable": "Enable",
+      "enableSuccess": "Enabled. Restart your dsh session for it to take effect."
     }
   },
   "hermes": {

@@ -29,12 +29,11 @@ import {
 } from '@dnd-kit/core';
 import {
   SortableContext,
-  horizontalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { restrictToHorizontalAxis } from '@dnd-kit/modifiers';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore';
 import { languages, type Language } from '@/i18n';
@@ -876,10 +875,9 @@ const GeneralSettingsPage: React.FC = () => {
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
-                  modifiers={[restrictToHorizontalAxis]}
                   onDragEnd={handleDragEnd}
                 >
-                  <SortableContext items={codingTabOrder} strategy={horizontalListSortingStrategy}>
+                  <SortableContext items={codingTabOrder} strategy={rectSortingStrategy}>
                     <div className={styles.sortableChipList}>
                       {codingTabOrder.map((key) => (
                         <SortableCodingChip

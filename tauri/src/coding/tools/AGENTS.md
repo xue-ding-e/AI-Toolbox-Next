@@ -36,6 +36,10 @@ sequenceDiagram
 - 不要把“自定义工具”当成一定已安装的真实运行时。当前检测层对 custom tool 默认视为可用，业务层要理解这是产品约束，不是系统级验证。
 - 保存自定义工具时，Skills 字段和 MCP 字段必须互相保留；只更新一侧时不要把另一侧清空。
 - OpenCode、Claude Code、Codex、OpenClaw、Pi、Oh My Pi 的 Skills/MCP 路径在 WSL Direct 场景下必须用 `*_with_db` 版本解析，不能退回静态默认路径。
+- Hermes MCP 同步走 `mcp::hermes_mcp`（serde_yaml round-trip），不是 `hermes::commands` 的段落级 section splice。merge-on-write 保留 Hermes 专有字段（`enabled`/`timeout`/`connect_timeout`/`tools`/`sampling`/`roots`/`auth`），import 时剥离。Hermes 无 `type` 字段，靠 `command`/`url` 推断 stdio/http。
+- dsh MCP 同步走 `mcp::cordis_patch`（Cordis patch DSL），不是 yaml 段。每个 server 是一行 `insert`，包名固定 `@deepseek-ai/dsh-mcp-client`，`config.serverName` 作 key。dsh 是 developer preview，cordis 格式可能迭代；adapter 隔离在 `cordis_patch.rs` 便于更新。
+- Hermes Skills 路径必须走 `resolve_special_skills_path`（复用 config.yaml 同一平台根目录），不能直接用静态 `~/.hermes/skills`——Windows 上 hermes 根目录是 `%LOCALAPPDATA%\hermes`，而 `~/.hermes/skills` 会误解析到 `%USERPROFILE%\.hermes`。
+- Shared Agents 工具指向 `~/.agents/skills`（agentskills.io 公共目录），与 central_repo 默认路径重叠。`skills::commands::sync_skill_to_tool_record` 有 canonicalize 守卫：当 source 和 target 解析到同一物理路径时跳过同步（返回 mode="skip"），避免 `ensure_source_target_not_overlapping` bail。
 
 ## 跨模块依赖
 

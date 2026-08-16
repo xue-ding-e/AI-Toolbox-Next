@@ -137,6 +137,12 @@ pub struct HermesRuntimeConfig {
     pub other_settings: Value,
     pub providers: Vec<HermesRuntimeProviderView>,
     pub builtin_providers: Vec<HermesBuiltinProvider>,
+    /// Raw `config.yaml` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_content: Option<String>,
+    /// Raw prompt file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_content: Option<String>,
 }
 
 /// Top-level `model:` section, also used as the save input.

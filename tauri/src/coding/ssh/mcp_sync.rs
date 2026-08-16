@@ -340,6 +340,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "pi-mcp"
             | "omp-mcp"
             | "hermes-config"
+            | "dsh-mcp"
             | "claude-desktop-config"
     )
 }
@@ -367,7 +368,11 @@ async fn strip_cmd_c_from_remote_mcp_file(
         "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
             command_normalize::process_claude_json(&content, false)?
         }
-        // Hermes config.yaml is YAML; no cmd /c normalization is applied.
+        // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
+        // (also YAML). Both carry `cmd /c` on Windows and need it stripped
+        // for the Linux SSH target.
+        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content)?,
+        "dsh" => command_normalize::process_cordis_patch_yaml(&content)?,
         _ => return Ok(()),
     };
 

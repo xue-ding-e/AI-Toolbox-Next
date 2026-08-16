@@ -182,6 +182,7 @@ const GeminiCliPage: React.FC = () => {
     );
     return providerNeedsGatewayProxy(providerApiFormat, 'gemini_native');
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
+  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -807,6 +808,7 @@ const GeminiCliPage: React.FC = () => {
                       cliKey="gemini"
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>

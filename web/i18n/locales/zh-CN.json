@@ -243,7 +243,9 @@
       "statisticsTooltip": "查看使用统计",
       "restoreDirectButton": "恢复直连",
       "restoreDirectHint": "恢复为直连模式，不再经过网关代理",
-      "restoreDirectUnavailableHint": "此渠道协议需要网关转换，恢复直连后将无法使用",
+      "restoreDirectUnavailableHintProtocol": "此渠道的 API 协议与 {{cli}} 原生协议不同，直连后请求会失败，需保留网关做协议转换",
+      "restoreDirectUnavailableHintModel": "此渠道的模型名含 [1m] 标记或非 claude-* 格式，{{cli}} 模型菜单无法识别，直连后会无法使用，需保留网关做模型名转换",
+      "restoreDirectUnavailableHintBoth": "此渠道的 API 协议与模型名均需网关转换，直连后将无法使用",
       "applyLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再切换渠道",
       "editLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再编辑渠道",
       "commonConfigSaveLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再保存通用配置",
@@ -259,8 +261,7 @@
       "switchPrimaryButton": "切换代理",
       "switchPrimaryP0Button": "设为 P0",
       "switchPrimaryHint": "将先恢复直连，应用此渠道，然后重新开启网关代理",
-      "switchPrimaryFailoverHint": "将先恢复直连，应用此渠道，然后重新开启网关代理和故障转移",
-      "restoreDirectProtocolConversionUnavailableHint": "该渠道依赖网关协议转换，不能恢复直连"
+      "switchPrimaryFailoverHint": "将先恢复直连，应用此渠道，然后重新开启网关代理和故障转移"
     },
     "failover": {
       "button": "开启故障转移",
@@ -4422,7 +4423,7 @@
     "refreshConfig": "刷新配置",
     "syncModels": "同步预设模型",
     "modelsRefreshSuccess": "预设模型已同步",
-    "pageHint": "Oh My Pi 的配置始终以本地运行时文件为准，本页面仅做可视化编辑，所有更改直接读写 config.yml、models.yml 和 AGENTS.md。",
+    "pageHint": "Oh My Pi 的配置始终以本地运行时文件为准，本页面仅做可视化编辑，所有更改直接读写 config.yml 和 models.yml。",
     "invalidJson": "JSON 格式无效",
     "preview": {
       "title": "预览 Oh My Pi 配置"
@@ -4695,9 +4696,20 @@
     "refreshConfig": "刷新配置",
     "syncModels": "同步模型",
     "modelsRefreshSuccess": "预设模型已刷新",
+    "openWebUi": "打开 Web UI",
+    "openWebUiOffline": "DSh Web UI 未运行。启动 dsh web 服务后，稍候再次点击“打开 Web UI”。",
+    "launchDashboard": "启动 dsh web",
+    "dashboardLaunched": "DSh Web UI 已启动，稍候再次点击“打开 Web UI”。",
+    "useNpxConfirm": "未检测到 dsh CLI，是否使用 `npx @deepseek-ai/dsh` 启动？",
+    "launchWithNpx": "使用 npx 启动",
+    "dashboardLaunchedNpx": "已通过 npx 启动 DSh Web UI，稍候再次点击“打开 Web UI”。",
     "invalidJson": "JSON 格式不正确",
     "preview": {
-      "title": "配置预览"
+      "title": "配置预览",
+      "settingsYamlTitle": "settings.yaml",
+      "credentialsYamlTitle": ".credentials.yaml",
+      "agentsMdTitle": "AGENTS.md",
+      "cordisPatchTitle": "cordis.patch.yml"
     },
     "modelSettings": {
       "title": "默认模型",
@@ -4738,15 +4750,12 @@
         "provider": "供应商配置",
         "both": "全部"
       },
-      "deleteScopeModalTitle": "选择删除范围",
-      "deleteScopeModalContent": "确定删除供应商 {{providerKey}} 吗？请选择需要删除的内容。",
-      "deleteProviderConfig": "删除供应商配置",
-      "deleteCredential": "删除凭证",
-      "deleteBoth": "全部删除",
+      "deleteScopeModalTitle": "删除供应商",
+      "deleteScopeModalContent": "该供应商同时包含供应商配置与 API 凭证，删除后将一并清除且无法恢复。确定删除供应商 {{providerKey}} 吗？",
+      "confirmDelete": "确认删除",
       "enabled": "已启用",
       "disabled": "已禁用",
-      "deleteProvider": "删除供应商",
-      "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？"
+      "deleteProvider": "删除供应商"
     },
     "model": {
       "title": "模型",
@@ -4874,6 +4883,11 @@
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
       "confirmDelete": "确定要删除配置「{{name}}」吗？"
+    },
+    "agentInstructions": {
+      "disabledWarning": "agent-instructions 插件未启用，全局提示词不会生效",
+      "enable": "启用",
+      "enableSuccess": "已启用，请重启 dsh 会话以生效"
     }
   },
   "hermes": {

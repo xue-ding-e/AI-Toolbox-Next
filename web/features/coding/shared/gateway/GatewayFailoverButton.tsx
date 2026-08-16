@@ -11,6 +11,7 @@ import {
   type GatewayCliTakeoverStatus,
 } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
+import { restoreDirectUnavailableHintKey, type GatewayProxyReason } from './providerProtocol';
 import styles from './GatewayFailoverButton.module.less';
 
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'gemini' | 'claude_desktop'>;
@@ -21,6 +22,7 @@ interface GatewayFailoverButtonProps {
   cliKey: SupportedGatewayCliKey;
   status?: GatewayCliTakeoverStatus | null;
   primaryProviderNeedsGatewayProxy?: boolean;
+  primaryProviderNeedsProxyReason?: GatewayProxyReason;
   onStatusChange?: (status: GatewayCliTakeoverStatus) => void;
 }
 
@@ -42,6 +44,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   cliKey,
   status: externalStatus,
   primaryProviderNeedsGatewayProxy = false,
+  primaryProviderNeedsProxyReason = null,
   onStatusChange,
 }) => {
   const { t } = useTranslation();
@@ -117,6 +120,10 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   const visible = isGatewayProxyActive(status);
   const failoverActive = status?.mode === 'failover';
   const canRestoreDirect = Boolean(status?.can_restore_direct);
+  const restoreDirectUnavailableTitle = t(
+    restoreDirectUnavailableHintKey(primaryProviderNeedsProxyReason),
+    { cli: t(`settings.gateway.cli.${cliKey}`) },
+  );
   const dot = failoverActive ? (status?.dot ?? 'gray') : 'gray';
   const statusMessage = status?.message ?? t('gateway.takeover.buttonTooltip');
   const actionLabel = failoverActive
@@ -175,7 +182,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
     if (primaryProviderNeedsGatewayProxy) {
       setNotice({
         kind: 'info',
-        text: t('gateway.proxy.restoreDirectProtocolConversionUnavailableHint'),
+        text: restoreDirectUnavailableTitle,
       });
       return;
     }
@@ -309,7 +316,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
                 </div>
               ) : canRestoreDirect && primaryProviderNeedsGatewayProxy ? (
                 <div className={joinClassNames(styles.notice, styles.notice_info)} role="status">
-                  {t('gateway.proxy.restoreDirectProtocolConversionUnavailableHint')}
+                  {restoreDirectUnavailableTitle}
                 </div>
               ) : null}
             </div>
@@ -325,7 +332,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
                   disabled={busyAction !== null || primaryProviderNeedsGatewayProxy}
                   title={
                     primaryProviderNeedsGatewayProxy
-                      ? t('gateway.proxy.restoreDirectProtocolConversionUnavailableHint')
+                      ? restoreDirectUnavailableTitle
                       : t('gateway.proxy.restoreDirectHint')
                   }
                   onClick={handleRestoreDirect}

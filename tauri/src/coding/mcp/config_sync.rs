@@ -84,6 +84,22 @@ pub async fn remove_server_from_tool_async(
     remove_server_from_path(tool, &config_path, server_name)
 }
 
+/// Clone the server and apply `cmd /c` wrapping to its `server_config` when
+/// `should_wrap` is true and the server is stdio. Non-stdio servers are returned
+/// unchanged. Used by the yaml/cordis arms which don't thread `should_wrap_cmd`
+/// through their adapter signatures.
+fn wrap_server_for_target(server: &McpServer, should_wrap: bool) -> McpServer {
+    if !should_wrap || server.server_type != "stdio" {
+        return server.clone();
+    }
+    let mut wrapped = server.clone();
+    wrapped.server_config = command_normalize::wrap_cmd_c_for_target(
+        &wrapped.server_config,
+        true,
+    );
+    wrapped
+}
+
 fn sync_server_to_path(
     tool: &RuntimeTool,
     config_path: &PathBuf,
@@ -114,6 +130,26 @@ fn sync_server_to_path(
             &tool.key,
             should_wrap_cmd,
         ),
+        "yaml" => match tool.key.as_str() {
+            "hermes" => {
+                let wrapped = wrap_server_for_target(server, should_wrap_cmd);
+                super::hermes_mcp::sync_server_to_hermes(config_path, &wrapped, enabled)
+            }
+            _ => Err(format!(
+                "yaml format only supported for hermes, got tool {}",
+                tool.key
+            )),
+        },
+        "cordis" => match tool.key.as_str() {
+            "dsh" => {
+                let wrapped = wrap_server_for_target(server, should_wrap_cmd);
+                super::cordis_patch::sync_server_to_cordis(config_path, &wrapped)
+            }
+            _ => Err(format!(
+                "cordis format only supported for dsh, got tool {}",
+                tool.key
+            )),
+        },
         _ => Err(format!("Unsupported config format: {}", format)),
     }
     .map(|_| McpSyncDetail {
@@ -148,6 +184,14 @@ fn remove_server_from_path(
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
         "json" | "jsonc" => remove_server_from_json(config_path, server_name, field),
         "toml" => remove_server_from_toml(config_path, server_name, field),
+        "yaml" => match tool.key.as_str() {
+            "hermes" => super::hermes_mcp::remove_server_from_hermes(config_path, server_name),
+            _ => Ok(()),
+        },
+        "cordis" => match tool.key.as_str() {
+            "dsh" => super::cordis_patch::remove_server_from_cordis(config_path, server_name),
+            _ => Ok(()),
+        },
         _ => Err(format!("Unsupported config format: {}", format)),
     }
 }
@@ -936,6 +980,14 @@ pub(crate) fn import_servers_from_path(
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
         "json" | "jsonc" => import_servers_from_json(config_path, field, format_config),
         "toml" => import_servers_from_toml(config_path, field, &tool.key),
+        "yaml" => match tool.key.as_str() {
+            "hermes" => super::hermes_mcp::import_servers_from_hermes(config_path),
+            _ => Ok(vec![]),
+        },
+        "cordis" => match tool.key.as_str() {
+            "dsh" => super::cordis_patch::import_servers_from_cordis(config_path),
+            _ => Ok(vec![]),
+        },
         _ => Err(format!("Unsupported config format: {}", format)),
     }
 }

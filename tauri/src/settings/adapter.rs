@@ -235,7 +235,6 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
-    const CURRENT_DEFAULT_TAB_SET: &[&str] = &["claudedesktop", "hermes", "dsh"];
 
     if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
@@ -250,33 +249,12 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
             .collect();
     }
 
-    // Additive migration for the new Claude Desktop / Hermes / DSH tabs: keep any custom
-    // order the user already has, but insert the missing default tabs at their
-    // default position so existing users still see them.
-    let mut result = tabs.clone();
-    for missing in CURRENT_DEFAULT_TAB_SET.iter() {
-        if result.iter().any(|tab| tab.as_str() == *missing) {
-            continue;
-        }
-        let default_idx = CURRENT_DEFAULT_VISIBLE_TABS
-            .iter()
-            .position(|def| *def == *missing)
-            .unwrap_or(CURRENT_DEFAULT_VISIBLE_TABS.len());
-        let mut insert_at = result.len();
-        for (i, tab) in result.iter().enumerate() {
-            if let Some(pos) = CURRENT_DEFAULT_VISIBLE_TABS
-                .iter()
-                .position(|def| *def == tab.as_str())
-            {
-                if pos > default_idx {
-                    insert_at = i;
-                    break;
-                }
-            }
-        }
-        result.insert(insert_at, (*missing).to_string());
-    }
-    result
+    // Custom order (does not match any historical baseline): respect the user's
+    // tabs as-is, including any tabs they chose to hide. We intentionally do NOT
+    // force-insert newly added default tabs here — that would re-add tabs the
+    // user explicitly turned off in settings on every reload. Newly added tabs
+    // surface via full-replace above only for users still on a historical default.
+    tabs
 }
 
 fn string_vec_matches(values: &[String], expected: &[&str]) -> bool {
@@ -575,7 +553,10 @@ mod tests {
     }
 
     #[test]
-    fn visible_tabs_custom_order_inserts_new_default_tabs() {
+    fn visible_tabs_custom_order_is_preserved() {
+        // A custom order that does not match any historical baseline must be
+        // returned as-is. We must not force-insert newly added default tabs,
+        // because that would re-add tabs the user explicitly hid on reload.
         let settings = from_db_value(json!({
             "visible_tabs": [
                 "codex",
@@ -590,14 +571,11 @@ mod tests {
         assert_eq!(
             settings.visible_tabs,
             vec![
-                "claudedesktop",
                 "codex",
                 "opencode",
                 "geminicli",
                 "claudecode",
                 "openclaw",
-                "hermes",
-                "dsh",
                 "image",
             ]
         );

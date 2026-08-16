@@ -11,8 +11,9 @@ use tokio::sync::Mutex;
 
 use super::adapter;
 use super::sync::{
-    check_wsl_symlink_exists, create_wsl_symlink, list_wsl_dir, read_wsl_file_raw, remove_wsl_path,
-    sync_directory, write_wsl_file,
+    check_wsl_symlink_exists, create_wsl_symlink, inspect_wsl_path_kind, list_wsl_dir,
+    read_wsl_file_raw, remove_wsl_managed_symlink, remove_wsl_path, sync_directory,
+    write_wsl_file, WslPathKind,
 };
 use super::types::{SyncProgress, WSLSyncConfig};
 use crate::coding::runtime_location;
@@ -57,7 +58,8 @@ async fn get_wsl_tool_skills_dir_with_db(
     tool_key: &str,
 ) -> Option<String> {
     match tool_key {
-        "claude_code" | "codex" | "grok" | "opencode" | "openclaw" => {
+        "claude_code" | "codex" | "grok" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
+        | "gemini_cli" => {
             runtime_location::get_tool_skills_path_async(db, tool_key)
                 .await
                 .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
@@ -114,6 +116,9 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
             "grok" => Some("grok".to_string()),
             "opencode" => Some("opencode".to_string()),
             "openclaw" => Some("openclaw".to_string()),
+            "geminicli" => Some("gemini_cli".to_string()),
+            "pi" => Some("pi".to_string()),
+            "oh_my_pi" => Some("oh_my_pi".to_string()),
             _ => None,
         })
         .collect();
@@ -151,7 +156,9 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
     // 2. Collect Windows skill names
     let windows_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
 
-    // 3. Delete skills in WSL that no longer exist in Windows
+    // 3. Delete skills in WSL that no longer exist in Windows.
+    // Only app-managed symlinks into the central repo are removed; real
+    // directories or foreign symlinks at the same name are left untouched.
     for wsl_skill in &existing_wsl_skills {
         if !windows_skill_names.contains(wsl_skill) {
             // Remove symlinks from all tool directories first
@@ -161,7 +168,23 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
                 }
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, wsl_skill);
-                    let _ = remove_wsl_path(&distro, &link_path);
+                    if let Err(error) =
+                        remove_wsl_managed_symlink(&distro, &link_path, WSL_CENTRAL_DIR)
+                    {
+                        log::warn!(
+                            "Skills WSL sync: failed to remove stale tool symlink '{}': {}",
+                            link_path,
+                            error
+                        );
+                    } else if inspect_wsl_path_kind(&distro, &link_path, WSL_CENTRAL_DIR)
+                        == WslPathKind::Foreign
+                    {
+                        log::warn!(
+                            "Skills WSL sync: keeping non-app-managed path '{}' (not a symlink into {})",
+                            link_path,
+                            WSL_CENTRAL_DIR
+                        );
+                    }
                 }
             }
             // Remove from central repo
@@ -279,14 +302,42 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
             }
             if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                 let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
-                if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
-                    if let Err(error) = create_wsl_symlink(&distro, &wsl_target, &link_path) {
+                match inspect_wsl_path_kind(&distro, &link_path, WSL_CENTRAL_DIR) {
+                    // Nothing there: create the managed link.
+                    WslPathKind::Missing => {
+                        if let Err(error) = create_wsl_symlink(&distro, &wsl_target, &link_path) {
+                            log::warn!(
+                                "Skills WSL sync: failed to create symlink for skill '{}' tool '{}' at '{}': {}",
+                                skill.name,
+                                tool_key,
+                                link_path,
+                                error
+                            );
+                        }
+                    }
+                    // Already an app-managed link: rebuild only when stale.
+                    WslPathKind::Managed => {
+                        if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
+                            if let Err(error) =
+                                create_wsl_symlink(&distro, &wsl_target, &link_path)
+                            {
+                                log::warn!(
+                                    "Skills WSL sync: failed to refresh symlink for skill '{}' tool '{}' at '{}': {}",
+                                    skill.name,
+                                    tool_key,
+                                    link_path,
+                                    error
+                                );
+                            }
+                        }
+                    }
+                    // Real directory or foreign symlink: never touch user data.
+                    WslPathKind::Foreign => {
                         log::warn!(
-                            "Skills WSL sync: failed to create symlink for skill '{}' tool '{}' at '{}': {}",
-                            skill.name,
-                            tool_key,
+                            "Skills WSL sync: keeping non-app-managed path '{}' while syncing skill '{}' to tool '{}'",
                             link_path,
-                            error
+                            skill.name,
+                            tool_key
                         );
                     }
                 }
@@ -299,7 +350,7 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
             }
         }
 
-        // Remove symlinks for tools that are no longer enabled
+        // Remove symlinks for tools that are no longer enabled (managed links only)
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if skipped_tool_keys.contains(tool_key) {
@@ -308,13 +359,24 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
             if !enabled_set.contains(tool_key) {
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
-                    if let Err(error) = remove_wsl_path(&distro, &link_path) {
+                    if let Err(error) =
+                        remove_wsl_managed_symlink(&distro, &link_path, WSL_CENTRAL_DIR)
+                    {
                         log::warn!(
                             "Skills WSL sync: failed to remove stale symlink for skill '{}' tool '{}' at '{}': {}",
                             skill.name,
                             tool_key,
                             link_path,
                             error
+                        );
+                    } else if inspect_wsl_path_kind(&distro, &link_path, WSL_CENTRAL_DIR)
+                        == WslPathKind::Foreign
+                    {
+                        log::warn!(
+                            "Skills WSL sync: keeping non-app-managed path '{}' while unsyncing skill '{}' from tool '{}'",
+                            link_path,
+                            skill.name,
+                            tool_key
                         );
                     }
                 }

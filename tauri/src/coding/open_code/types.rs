@@ -80,6 +80,20 @@ pub enum ReadConfigResult {
     Error { error: String },
 }
 
+/// Raw file contents for the OpenCode file-based preview modal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodePreviewData {
+    pub config_path: String,
+    /// Raw main OpenCode config file content (`opencode.json` / `opencode.jsonc`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_content: Option<String>,
+    pub auth_path: String,
+    /// Raw `auth.json` file content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_content: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModelLimit {
     #[serde(skip_serializing_if = "Option::is_none")]

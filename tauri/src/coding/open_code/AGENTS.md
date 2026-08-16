@@ -21,6 +21,7 @@
 - `apply_config_internal` 负责统一写文件、发 `config-changed`、触发 WSL 同步事件，避免主窗口和托盘入口各自分叉。
 - tray 的模型切换直接复用统一模型列表，并把选择结果按完整 `provider_id/model_id` 写回配置，避免托盘和主页面对模型 ID 语义不一致。
 - prompt 配置既有数据库记录，也有当前生效的本地 `AGENTS.md` 文件；真正会影响运行时的是落到本地文件的内容。
+- 文件式预览由 `get_opencode_preview` 返回原始 `opencode.json`/`opencode.jsonc` 与 `auth.json` 内容，前端按文件 Tab 展示。
 
 ## 关键流程
 

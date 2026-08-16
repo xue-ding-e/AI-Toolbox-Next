@@ -556,6 +556,7 @@ pub async fn read_omp_runtime_config(
     let root_dir = PathBuf::from(&root_path_info.path);
     let config_path = get_omp_config_path_from_root(&root_dir);
     let models_path = get_omp_models_path_from_root(&root_dir);
+    let mcp_path = get_omp_mcp_path_from_root(&root_dir);
     let prompt_path = get_omp_prompt_path_from_root(&root_dir);
 
     let settings = read_yaml_object_or_empty(&config_path)?;
@@ -565,14 +566,16 @@ pub async fn read_omp_runtime_config(
         root_path_info,
         config_path: config_path.to_string_lossy().to_string(),
         models_path: models_path.to_string_lossy().to_string(),
-        mcp_path: get_omp_mcp_path_from_root(&root_dir)
-            .to_string_lossy()
-            .to_string(),
+        mcp_path: mcp_path.to_string_lossy().to_string(),
         prompt_path: prompt_path.to_string_lossy().to_string(),
         other_settings: build_other_settings(&settings),
         model_settings: default_selection_from_settings(&settings),
         providers: build_provider_views(&settings, &models),
         builtin_providers: builtin_providers(),
+        config_content: fs::read_to_string(&config_path).ok(),
+        models_content: fs::read_to_string(&models_path).ok(),
+        mcp_content: fs::read_to_string(&mcp_path).ok(),
+        prompt_content: fs::read_to_string(&prompt_path).ok(),
         settings,
         models,
     })

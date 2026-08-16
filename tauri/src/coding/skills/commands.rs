@@ -1613,6 +1613,20 @@ async fn resolve_skill_source_path<R: Runtime>(
     ))
 }
 
+/// Check whether source and target resolve to the same physical path (e.g.
+/// when the user configured the central repo to `~/.agents/skills`, which is
+/// also the shared_agents tool's skills dir). Returns `true` when the sync
+/// should be skipped (no-op).
+fn source_target_overlap(source: &Path, target: &Path) -> bool {
+    if let (Ok(source_canon), Ok(target_canon)) =
+        (std::fs::canonicalize(source), std::fs::canonicalize(target))
+    {
+        source_canon == target_canon
+    } else {
+        false
+    }
+}
+
 async fn sync_skill_to_tool_record(
     state: &SqliteDbState,
     skill: &Skill,
@@ -1646,6 +1660,26 @@ async fn sync_skill_to_tool_record(
         .map_err(|e| format_error(e))?;
     let target = tool_root.join(&skill.name);
     let previous_target = skill_store::get_skill_target(state, &skill.id, tool).await?;
+
+    // When the tool's skills dir is the same physical directory as the central
+    // repo (e.g. shared_agents targets ~/.agents/skills which is also the
+    // central repo path when the user configured it so), syncing would be a
+    // no-op. Skip gracefully instead of triggering ensure_source_target_not_overlapping's bail.
+    if source_target_overlap(source_path, &target) {
+        let record = SkillTarget {
+            tool: tool.to_string(),
+            target_path: target.to_string_lossy().to_string(),
+            mode: "skip".to_string(),
+            status: "ok".to_string(),
+            error_message: None,
+            synced_at: Some(now_ms()),
+        };
+        skill_store::upsert_skill_target(state, &skill.id, &record).await?;
+        return Ok(SyncResultDto {
+            mode_used: "skip".to_string(),
+            target_path: target.to_string_lossy().to_string(),
+        });
+    }
 
     let result = sync_skill_to_target(
         tool,
@@ -3009,6 +3043,23 @@ pub async fn resync_all_skills_internal<R: Runtime>(
                 .await
                 .ok()
                 .flatten();
+
+            // When source (central repo) and target resolve to the same path
+            // (e.g. shared_agents == central repo), skip gracefully — same guard
+            // as sync_skill_to_tool_record.
+            if source_target_overlap(&central_path, &target) {
+                let record = SkillTarget {
+                    tool: tool_key.clone(),
+                    target_path: target.to_string_lossy().to_string(),
+                    mode: "skip".to_string(),
+                    status: "ok".to_string(),
+                    error_message: None,
+                    synced_at: Some(now_ms()),
+                };
+                let _ = skill_store::upsert_skill_target(&state, &skill.id, &record).await;
+                synced.push(format!("{}:{}", skill.name, tool_key));
+                continue;
+            }
 
             // Sync with overwrite
             if let Ok(result) = sync_skill_to_target(

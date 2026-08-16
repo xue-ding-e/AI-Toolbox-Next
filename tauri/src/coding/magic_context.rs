@@ -122,6 +122,7 @@ fn local_user_config_path() -> Result<PathBuf, String> {
 
 fn local_user_config_path_from_home(
     home_dir: PathBuf,
+    #[cfg_attr(not(unix), allow(unused_variables))]
     xdg_config_home: Option<PathBuf>,
 ) -> PathBuf {
     #[cfg(unix)]

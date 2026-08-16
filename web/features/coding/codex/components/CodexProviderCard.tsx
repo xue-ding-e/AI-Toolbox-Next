@@ -183,6 +183,10 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     !isOfficialProvider &&
     !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
+  const restoreDirectUnavailableTitle = t(
+    'gateway.proxy.restoreDirectUnavailableHintProtocol',
+    { cli: t('settings.gateway.cli.codex') },
+  );
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -808,7 +812,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               </Tooltip>
             )}
             {canShowRestoreDirectUnavailable && (
-              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+              <Tooltip title={restoreDirectUnavailableTitle}>
                 <Button
                   type="link"
                   size="small"

@@ -146,6 +146,18 @@ pub struct OmpRuntimeConfig {
     pub model_settings: OmpDefaultSelection,
     pub providers: Vec<OmpRuntimeProviderView>,
     pub builtin_providers: Vec<OmpBuiltinProvider>,
+    /// Raw `config.yml` / `config.yaml` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_content: Option<String>,
+    /// Raw `models.yml` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models_content: Option<String>,
+    /// Raw `mcp.json` file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_content: Option<String>,
+    /// Raw prompt file content for file-based preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

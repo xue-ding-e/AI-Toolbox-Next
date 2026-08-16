@@ -35,7 +35,21 @@ pub(crate) fn provider_needs_gateway_proxy(
     let Some(native_protocol) = native_cli_protocol(cli_key) else {
         return false;
     };
-    provider_target_protocol(cli_key, meta, settings_config) != native_protocol
+    if provider_target_protocol(cli_key, meta, settings_config) != native_protocol {
+        return true;
+    }
+    // Claude Desktop's model menu only accepts claude-safe route ids. When a
+    // provider's upstream model names carry [1m] markers or are non-claude ids
+    // needing route mapping, Direct mode cannot be written and the local
+    // gateway must perform the upstream mapping. Mirrors the frontend
+    // hasNonClaudeModelIds check on the provider card.
+    if cli_key == GatewayCliKey::ClaudeDesktop {
+        let settings_value = serde_json::from_str::<Value>(settings_config).unwrap_or(Value::Null);
+        if crate::coding::claude_desktop::config_writer::has_routing_models(meta, Some(&settings_value)) {
+            return true;
+        }
+    }
+    false
 }
 
 fn provider_target_protocol(
@@ -419,6 +433,48 @@ base_url = "https://api.deepseek.com/v1"
             "official",
             Some(&json!({ "apiFormat": "anthropic_messages" })),
             "{}",
+        ));
+    }
+
+    #[test]
+    fn claude_desktop_anthropic_with_1m_marker_needs_gateway_proxy() {
+        let settings = json!({
+            "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5[1M]" }
+        })
+        .to_string();
+        assert!(provider_needs_gateway_proxy(
+            GatewayCliKey::ClaudeDesktop,
+            "custom",
+            None,
+            &settings,
+        ));
+    }
+
+    #[test]
+    fn claude_desktop_anthropic_with_non_claude_model_needs_gateway_proxy() {
+        let settings = json!({
+            "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4" }
+        })
+        .to_string();
+        assert!(provider_needs_gateway_proxy(
+            GatewayCliKey::ClaudeDesktop,
+            "custom",
+            None,
+            &settings,
+        ));
+    }
+
+    #[test]
+    fn claude_desktop_anthropic_with_safe_model_does_not_need_gateway_proxy() {
+        let settings = json!({
+            "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5" }
+        })
+        .to_string();
+        assert!(!provider_needs_gateway_proxy(
+            GatewayCliKey::ClaudeDesktop,
+            "custom",
+            None,
+            &settings,
         ));
     }
 }

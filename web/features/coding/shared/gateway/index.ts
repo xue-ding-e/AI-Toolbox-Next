@@ -2,14 +2,19 @@ export { default as GatewayFailoverButton } from './GatewayFailoverButton';
 export {
   canApplyProviderWithGatewayProxy,
   codexWireApiFormatFromConfig,
+  gatewayProxyReason,
   grokProviderNeedsGatewayProxy,
   grokWireApiFormatFromConfig,
+  hasNonClaudeModelIds,
   firstGatewayApiFormat,
+  isClaudeSafeModelId,
   isGatewayConfigFlagEnabled,
   normalizeGatewayApiFormat,
   openAiApiFormatFromBaseUrl,
   providerNeedsGatewayProxy,
+  restoreDirectUnavailableHintKey,
   type GatewayApiFormat,
+  type GatewayProxyReason,
 } from './providerProtocol';
 export {
   getGatewayProviderApiFormatFromMeta,

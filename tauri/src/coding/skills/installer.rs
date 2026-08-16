@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use uuid::Uuid;
 
 use super::cache_cleanup::get_git_cache_ttl_secs;
@@ -670,6 +671,34 @@ pub async fn update_managed_skill_from_source(
         anyhow::bail!("unsupported source_type for update: {}", record.source_type);
     }
 
+    // Skip the swap when the staged content is identical to what is already in
+    // the central repo: an update pass must not rewrite the directory (and
+    // clobber mtimes / tool copy targets) for no change, and a scheduled
+    // auto-update must not churn every skill on every tick.
+    let staged_hash = compute_content_hash(&staging_dir);
+    let current_hash = compute_content_hash(&central_path);
+    if staged_hash.is_some() && staged_hash == current_hash {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        log::debug!(
+            "[update] content unchanged, skipping swap for '{}'",
+            record.name
+        );
+        return Ok(UpdateResult {
+            skill_id: record.id.clone(),
+            name: record.name.clone(),
+            central_path: central_path.clone(),
+            content_hash: current_hash,
+            source_revision: new_revision.clone().or_else(|| record.source_revision.clone()),
+            updated_targets: Vec::new(),
+        });
+    }
+
+    // Keep a recoverable copy of the previous central content before replacing
+    // it: the central dir may contain direct user edits (or edits made through
+    // a symlinked tool directory) that an update would otherwise lose. Copies
+    // are pruned to the newest 5 per skill.
+    backup_central_before_replace(app, &record, &central_path)?;
+
     // Swap: remove old dir and rename staging into place
     std::fs::remove_dir_all(&central_path)
         .with_context(|| format!("failed to remove old central dir {:?}", central_path))?;
@@ -807,6 +836,65 @@ pub async fn update_managed_skill_from_source(
         source_revision: new_revision,
         updated_targets,
     })
+}
+
+/// Copy the current central content to `{app_data}/skills-backup/{id}-{ts}`
+/// before an update replaces it, so direct user edits (or edits made through a
+/// symlinked tool directory) can be recovered. Keeps the newest 5 copies per
+/// skill; failures here are logged, not fatal — the swap still proceeds.
+fn backup_central_before_replace(
+    app: &tauri::AppHandle,
+    record: &Skill,
+    central_path: &Path,
+) -> Result<(), anyhow::Error> {
+    let backups_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| anyhow::anyhow!("failed to resolve app data dir: {error}"))?
+        .join("skills-backup");
+    if !backups_root.exists() {
+        std::fs::create_dir_all(&backups_root)
+            .with_context(|| format!("create backup root {:?}", backups_root))?;
+    }
+
+    // The skill id is filesystem-safe where the display name may not be.
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let backup_dir = backups_root.join(format!("{}-{}", record.id, stamp));
+    if let Err(error) = copy_dir_recursive(central_path, &backup_dir) {
+        log::warn!(
+            "Failed to back up central skill '{}' before update: {}",
+            record.name,
+            error
+        );
+        return Ok(());
+    }
+
+    // Prune old backups of the same skill, keeping the newest 5.
+    let prefix = format!("{}-", record.id);
+    let mut entries: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(&backups_root) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with(&prefix))
+                .unwrap_or(false)
+            {
+                let modified = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                entries.push((modified, path));
+            }
+        }
+    }
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, old_path) in entries.into_iter().skip(5) {
+        let _ = std::fs::remove_dir_all(&old_path);
+    }
+
+    Ok(())
 }
 
 // --- Git URL parsing ---

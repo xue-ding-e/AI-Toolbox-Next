@@ -150,6 +150,10 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     !isOfficialProvider &&
     !isLocalProvider &&
     providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
+  const restoreDirectUnavailableTitle = t(
+    'gateway.proxy.restoreDirectUnavailableHintProtocol',
+    { cli: t('settings.gateway.cli.claude') },
+  );
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -641,7 +645,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             </Tooltip>
           )}
           {canShowRestoreDirectUnavailable && (
-            <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+            <Tooltip title={restoreDirectUnavailableTitle}>
               <Button
                 type="link"
                 size="small"

@@ -597,6 +597,7 @@ pub async fn read_dsh_runtime_config(
 
     let config = read_yaml_object_or_empty(&config_path)?;
     let credentials = read_credentials_map(&credentials_path)?;
+    let cordis_patch_path = get_dsh_cordis_patch_path(&db).await?;
 
     Ok(DshRuntimeConfig {
         root_path_info,
@@ -608,6 +609,11 @@ pub async fn read_dsh_runtime_config(
         providers: build_provider_views(&config, &credentials),
         builtin_providers: builtin_providers(),
         credentials: read_credentials_views(&credentials_path),
+        config_content: fs::read_to_string(&config_path).ok(),
+        credentials_content: fs::read_to_string(&credentials_path).ok(),
+        prompt_content: fs::read_to_string(&prompt_path).ok(),
+        cordis_patch_path: cordis_patch_path.to_string_lossy().to_string(),
+        cordis_patch_content: fs::read_to_string(&cordis_patch_path).ok(),
         config,
     })
 }
@@ -1158,6 +1164,31 @@ pub async fn save_dsh_local_prompt_config(
     Ok(get_dsh_prompt_from_sqlite(state.db(), &created.id)?.unwrap_or(created))
 }
 
+// ============================================================================
+// DSh Web UI
+// ============================================================================
+
+/// 打开 DSh Web UI:探测本地服务在线后,用系统浏览器打开。
+/// 服务离线返回 `Err`,前端据此引导用户启动 `dsh web`。
+#[tauri::command]
+pub async fn open_dsh_web_ui(path: Option<String>) -> Result<(), String> {
+    use super::web_ui;
+
+    let port = web_ui::resolve_web_port();
+    if !web_ui::probe_web_up(port).await {
+        return Err("DSh Web UI 未运行,请先启动 dsh web".to_string());
+    }
+    web_ui::open_web_ui_browser(port, path.as_deref())
+}
+
+/// 在用户终端里非阻塞启动 `dsh web`(或经 `use_npx` 回退 `npx @deepseek-ai/dsh web`)。
+#[tauri::command]
+pub async fn launch_dsh_dashboard(use_npx: Option<bool>) -> Result<(), String> {
+    use super::web_ui;
+
+    web_ui::launch_dsh_web_in_terminal(use_npx.unwrap_or(false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1393,4 +1424,73 @@ pub async fn resolve_dsh_all_api_hub_providers(
         &providers,
         crate::coding::all_api_hub::candidate_to_dsh_provider,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Agent Instructions plugin check / enable
+// ---------------------------------------------------------------------------
+
+/// The plugin id for the dsh workspace-instruction loader.
+const AGENT_INSTRUCTIONS_PLUGIN_ID: &str = "agent-instructions";
+
+/// `config.maxBytes` written when enabling the plugin: 256 KiB, so the
+/// workspace-instruction baseline budget can fit both `~/.dsh/AGENTS.md` and
+/// a sizeable project `AGENTS.md`, instead of the bundle default 65536 bytes.
+const AGENT_INSTRUCTIONS_MAX_BYTES: u64 = 256 * 1024;
+
+/// Resolve the home-level `cordis.patch.yml` path via DB-priority config dir.
+async fn get_dsh_cordis_patch_path(db: &SqliteDbState) -> Result<PathBuf, String> {
+    let root = get_dsh_root_dir_from_db_async(db).await?;
+    Ok(root.join("cordis.patch.yml"))
+}
+
+/// Check whether the `agent-instructions` plugin is enabled.
+///
+/// The dsh-web-app bundle disables it by default. Users enable it by adding
+/// `- id: agent-instructions, disabled: false` to the home-level
+/// `cordis.patch.yml`. When the home patch has no override for this plugin,
+/// the bundle default (disabled) applies.
+#[tauri::command]
+pub async fn check_dsh_agent_instructions(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<AgentInstructionsStatus, String> {
+    let db = state.db();
+    let cordis_path = get_dsh_cordis_patch_path(&db).await?;
+
+    // When the home patch explicitly sets disabled: false, the plugin is enabled.
+    // When the home patch sets disabled: true or has no override (the web-app
+    // bundle default is disabled), the plugin is not effectively enabled.
+    let enabled = match crate::coding::mcp::cordis_patch::get_plugin_disabled_state(
+        &cordis_path,
+        AGENT_INSTRUCTIONS_PLUGIN_ID,
+    )? {
+        Some(false) => true,
+        _ => false,
+    };
+
+    Ok(AgentInstructionsStatus { enabled })
+}
+
+/// Enable the `agent-instructions` plugin by writing `disabled: false` and
+/// `config.maxBytes: 262144` (256 KiB) to the home-level `cordis.patch.yml`.
+#[tauri::command]
+pub async fn enable_dsh_agent_instructions(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<(), String> {
+    let db = state.db();
+    let cordis_path = get_dsh_cordis_patch_path(&db).await?;
+
+    crate::coding::mcp::cordis_patch::set_plugin_disabled(
+        &cordis_path,
+        AGENT_INSTRUCTIONS_PLUGIN_ID,
+        false,
+    )?;
+    crate::coding::mcp::cordis_patch::set_plugin_config_field(
+        &cordis_path,
+        AGENT_INSTRUCTIONS_PLUGIN_ID,
+        "maxBytes",
+        json!(AGENT_INSTRUCTIONS_MAX_BYTES),
+    )?;
+
+    Ok(())
 }

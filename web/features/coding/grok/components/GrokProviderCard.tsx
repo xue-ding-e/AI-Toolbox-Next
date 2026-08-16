@@ -270,6 +270,10 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
     !isOfficialProvider &&
     !isLocalProvider &&
     grokProviderNeedsGatewayProxy(providerApiFormat);
+  const restoreDirectUnavailableTitle = t(
+    'gateway.proxy.restoreDirectUnavailableHintProtocol',
+    { cli: t('settings.gateway.cli.grok') },
+  );
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -893,7 +897,7 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
               </Tooltip>
             )}
             {canShowRestoreDirectUnavailable && (
-              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+              <Tooltip title={restoreDirectUnavailableTitle}>
                 <Button
                   type="link"
                   size="small"

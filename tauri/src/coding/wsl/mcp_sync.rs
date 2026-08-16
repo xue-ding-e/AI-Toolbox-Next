@@ -90,6 +90,9 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
     let skip_hermes = direct_statuses
         .iter()
         .any(|status| status.module == "hermes" && status.is_wsl_direct);
+    let skip_dsh = direct_statuses
+        .iter()
+        .any(|status| status.module == "dsh" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -158,6 +161,7 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                         skip_omp,
                         skip_claude_desktop,
                         skip_hermes,
+                        skip_dsh,
                     )
                 })
                 .collect();
@@ -347,6 +351,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "pi-mcp"
             | "omp-mcp"
             | "hermes-config"
+            | "dsh-mcp"
             | "claude-desktop-config"
     )
 }
@@ -361,6 +366,7 @@ fn should_skip_mapped_mcp_config_file_for_wsl_direct(
     skip_omp: bool,
     skip_claude_desktop: bool,
     skip_hermes: bool,
+    skip_dsh: bool,
 ) -> bool {
     (module == "opencode" && skip_opencode)
         || (module == "codex" && skip_codex)
@@ -370,6 +376,7 @@ fn should_skip_mapped_mcp_config_file_for_wsl_direct(
         || (module == "oh_my_pi" && skip_omp)
         || (module == "claude_desktop" && skip_claude_desktop)
         || (module == "hermes" && skip_hermes)
+        || (module == "dsh" && skip_dsh)
 }
 
 /// Strip cmd /c from WSL MCP config file after sync.
@@ -395,7 +402,11 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
         "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
             command_normalize::process_claude_json(&content, false)?
         }
-        // Hermes config.yaml is YAML; no cmd /c normalization is applied.
+        // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
+        // (also YAML). Both carry `cmd /c` on Windows and need it stripped
+        // for the Linux-side WSL target.
+        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content)?,
+        "dsh" => command_normalize::process_cordis_patch_yaml(&content)?,
         _ => return Ok(()),
     };
 
@@ -439,26 +450,26 @@ mod tests {
     #[test]
     fn skips_pi_mcp_file_mapping_when_pi_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, true, false, false, false,
+            "pi", false, false, false, false, true, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, false, false, false, false,
+            "pi", false, false, false, false, false, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "codex", false, false, false, false, true, false, false, false,
+            "codex", false, false, false, false, true, false, false, false, false,
         ));
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "oh_my_pi", false, false, false, false, false, true, false, false,
+            "oh_my_pi", false, false, false, false, false, true, false, false, false,
         ));
     }
 
     #[test]
     fn skips_grok_mcp_file_mapping_when_grok_is_wsl_direct() {
         assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, true, false, false, false, false, false,
+            "grok", false, false, true, false, false, false, false, false, false,
         ));
         assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, false, false, false, false, false, false,
+            "grok", false, false, false, false, false, false, false, false, false,
         ));
         assert!(is_mapped_mcp_config_file("grok-config"));
     }

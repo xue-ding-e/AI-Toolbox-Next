@@ -59,22 +59,17 @@ fn resolve_special_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
     }
 }
 
-/// Resolve the dsh `settings.yaml` for the current platform.
-/// Windows: `%USERPROFILE%\.dsh\settings.yaml`; other platforms: `~/.dsh/settings.yaml`.
+/// Resolve the dsh `cordis.patch.yml` platform default.
+/// This is a fallback; `resolve_mcp_config_path_with_db` uses the DB-priority
+/// resolver from `dsh::commands` when available.
 fn resolve_dsh_mcp_config_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        dirs::home_dir().map(|home| home.join(".dsh").join("settings.yaml"))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        dirs::home_dir().map(|home| home.join(".dsh").join("settings.yaml"))
-    }
+    dirs::home_dir().map(|home| home.join(".dsh").join("cordis.patch.yml"))
 }
 
-/// Resolve the Hermes `config.yaml` (holds `mcp_servers`) for the current platform.
-/// Windows: `%LOCALAPPDATA%\hermes\config.yaml`; other platforms: `~/.hermes/config.yaml`.
+/// Resolve the Hermes `config.yaml` (holds `mcp_servers`) platform default.
+/// Windows: `%LOCALAPPDATA%\hermes\config.yaml`; others: `~/.hermes/config.yaml`.
+/// This is a fallback; `resolve_mcp_config_path_with_db` uses the DB-priority
+/// resolver from `hermes::commands` when available.
 fn resolve_hermes_mcp_config_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -122,8 +117,31 @@ pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
     false
 }
 
+/// Resolve OS-specific skills paths that cannot be represented by a single
+/// static storage string. Mirrors `resolve_special_mcp_config_path`.
+fn resolve_special_skills_path(tool: &RuntimeTool) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        // Hermes skills live at <hermes_root>/skills. On Windows the hermes root
+        // is %LOCALAPPDATA%\hermes (not %USERPROFILE%\.hermes), so the static
+        // `~/.hermes/skills` would resolve to the wrong place. Reuse the same
+        // platform root as config.yaml and append "skills".
+        "hermes" => resolve_hermes_skills_path(),
+        _ => None,
+    }
+}
+
+/// Resolve the Hermes skills directory for the current platform.
+/// Windows: `%LOCALAPPDATA%\hermes\skills`; others: `~/.hermes/skills`.
+fn resolve_hermes_skills_path() -> Option<PathBuf> {
+    resolve_hermes_mcp_config_path()
+        .and_then(|config_path| config_path.parent().map(|root| root.join("skills")))
+}
+
 /// Resolve the skills path for a tool
 pub fn resolve_skills_path(tool: &RuntimeTool) -> Option<PathBuf> {
+    if let Some(path) = resolve_special_skills_path(tool) {
+        return Some(path);
+    }
     tool.relative_skills_dir.as_ref().and_then(|dir| {
         // Use path_utils to resolve (handles ~/ and %APPDATA%/ paths)
         resolve_storage_path(dir)
@@ -157,6 +175,17 @@ pub fn resolve_mcp_config_path_with_db(
             crate::coding::runtime_location::get_tool_mcp_config_path_sync(db, &tool.key)
                 .or_else(|| resolve_mcp_config_path(tool))
         }
+        // Hermes/dsh are not registered in runtime_location; their config dir is
+        // resolved via their own DB-priority logic (custom > env > shell > default).
+        // Without this branch, MCP sync would ignore a user-customized config dir.
+        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("config.yaml"))
+            .or_else(|| resolve_mcp_config_path(tool)),
+        "dsh" => crate::coding::dsh::commands::get_dsh_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("cordis.patch.yml"))
+            .or_else(|| resolve_mcp_config_path(tool)),
         _ => resolve_mcp_config_path(tool),
     }
 }
@@ -177,6 +206,14 @@ pub async fn resolve_mcp_config_path_with_db_async(
                 .await
                 .or_else(|| resolve_mcp_config_path(tool))
         }
+        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("config.yaml"))
+            .or_else(|| resolve_mcp_config_path(tool)),
+        "dsh" => crate::coding::dsh::commands::get_dsh_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("cordis.patch.yml"))
+            .or_else(|| resolve_mcp_config_path(tool)),
         _ => resolve_mcp_config_path(tool),
     }
 }
@@ -196,6 +233,11 @@ pub fn resolve_skills_path_with_db(
             crate::coding::runtime_location::get_tool_skills_path_sync(db, &tool.key)
                 .or_else(|| resolve_skills_path(tool))
         }
+        // Hermes skills dir = <hermes_root>/skills, resolved via DB-priority logic.
+        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("skills"))
+            .or_else(|| resolve_skills_path(tool)),
         _ => resolve_skills_path(tool),
     }
 }
@@ -216,6 +258,10 @@ pub async fn resolve_skills_path_with_db_async(
                 .await
                 .or_else(|| resolve_skills_path(tool))
         }
+        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
+            .ok()
+            .map(|info| PathBuf::from(info.path).join("skills"))
+            .or_else(|| resolve_skills_path(tool)),
         _ => resolve_skills_path(tool),
     }
 }

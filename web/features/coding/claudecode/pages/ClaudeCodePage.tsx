@@ -244,6 +244,7 @@ const ClaudeCodePage: React.FC = () => {
     );
     return providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
   }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
+  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
 
   // 模态框状态
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -1251,6 +1252,7 @@ const ClaudeCodePage: React.FC = () => {
                       cliKey="claude"
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>

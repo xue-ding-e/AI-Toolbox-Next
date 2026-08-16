@@ -175,3 +175,68 @@ export const openAiApiFormatFromBaseUrl = (baseUrl?: string | null) => {
     ? 'openai_chat'
     : null;
 };
+
+// ---- Claude-safe model id checks (mirror of backend config_writer.rs) ----
+
+const CLAUDE_ROUTE_PREFIX = 'claude-';
+const ANTHROPIC_CLAUDE_ROUTE_PREFIX = 'anthropic/claude-';
+const ONE_M_CONTEXT_MARKER = '[1m]';
+
+/** Mirror of the backend `is_claude_safe_model_id` (config_writer.rs): Claude
+ * Desktop's 3P profile only accepts `claude-<role>-<id>` (optionally prefixed
+ * with `anthropic/`) and rejects `[1m]` markers or degraded ids like
+ * `claude-sonnet-`. */
+export const isClaudeSafeModelId = (model: string): boolean => {
+  const normalized = model.trim().toLowerCase();
+  if (normalized.includes(ONE_M_CONTEXT_MARKER)) {
+    return false;
+  }
+  const routeTail = normalized.startsWith(ANTHROPIC_CLAUDE_ROUTE_PREFIX)
+    ? normalized.slice(ANTHROPIC_CLAUDE_ROUTE_PREFIX.length)
+    : normalized.startsWith(CLAUDE_ROUTE_PREFIX)
+      ? normalized.slice(CLAUDE_ROUTE_PREFIX.length)
+      : '';
+  return ['sonnet-', 'opus-', 'haiku-', 'fable-'].some((prefix) =>
+    routeTail.startsWith(prefix) && routeTail.length > prefix.length,
+  );
+};
+
+/** True when any configured model name is not a claude-* id Claude Desktop
+ * accepts directly; such a provider needs local gateway routing. */
+export const hasNonClaudeModelIds = (modelIds: string[]): boolean =>
+  modelIds.some((modelId) => !isClaudeSafeModelId(modelId));
+
+export type GatewayProxyReason = 'protocol' | 'model' | 'both' | null;
+
+/** Classify why a provider needs the local gateway: a protocol mismatch, an
+ * un-safe model id (Claude Desktop only), or both. Returns null when the
+ * provider can run in direct mode. */
+export const gatewayProxyReason = (
+  targetFormat: string | null | undefined,
+  nativeFormat: string,
+  modelIds?: string[],
+): GatewayProxyReason => {
+  const protocolMismatch = providerNeedsGatewayProxy(targetFormat, nativeFormat);
+  const modelMismatch = modelIds ? hasNonClaudeModelIds(modelIds) : false;
+  if (!protocolMismatch && !modelMismatch) {
+    return null;
+  }
+  if (protocolMismatch && modelMismatch) {
+    return 'both';
+  }
+  return protocolMismatch ? 'protocol' : 'model';
+};
+
+/** i18n key for the "restore direct unavailable" tooltip/hint, chosen by the
+ * underlying reason. Falls back to the protocol hint when reason is null. */
+export const restoreDirectUnavailableHintKey = (
+  reason: GatewayProxyReason,
+): string => {
+  if (reason === 'both') {
+    return 'gateway.proxy.restoreDirectUnavailableHintBoth';
+  }
+  if (reason === 'model') {
+    return 'gateway.proxy.restoreDirectUnavailableHintModel';
+  }
+  return 'gateway.proxy.restoreDirectUnavailableHintProtocol';
+};

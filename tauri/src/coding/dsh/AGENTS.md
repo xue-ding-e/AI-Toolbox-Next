@@ -22,6 +22,7 @@
 - Other Settings 编辑器隐藏并保留托管键：`llm-pi-ai`、`agent-default-model`。
 - 凭据写盘使用 0600 权限（参照 pi 的 `set_credentials_file_permissions`）。`save_dsh_credential` 传空 value 相当于删除该 ref。
 - WSL/SSH 侧把 dsh 视为「配置文件路径模块」：`dsh-config`（settings.yaml）、`dsh-credentials`（.credentials.yaml）、`dsh-prompt`（AGENTS.md）三个默认文件映射，模块名 `dsh`。
+- 文件式预览由 `read_dsh_runtime_config` 返回三个原始文件内容（`configContent` / `credentialsContent` / `promptContent`），前端按文件 Tab 展示，与 Codex 预览一致。
 
 ## Gotchas
 
@@ -30,7 +31,9 @@
 - `settings.yaml` 允许未知 top-level 与 provider 未知字段；读写必须 preserve unknown fields。
 - 保存 Other Settings 时不要把托管键（`llm-pi-ai`、`agent-default-model`）带回文件。
 - 内置 provider 即使没有写进 `llm-pi-ai.providers`（凭 env/默认可用）也不应显示为 missing；凭据缺失显示为未配置而非 missing。
-- dsh MCP 在部署层 cordis.yml，本模块首版把工具检测路径指向 `~/.dsh/settings.yaml`（`mcp_field = None`），不作为 MCP 配置主数据管理。
+- dsh MCP 由 `mcp::cordis_patch` 适配器管理 `~/.dsh/cordis.patch.yml`（Cordis patch DSL，format `cordis`）。每个 MCP server 是一行 `insert`，包名固定 `@deepseek-ai/dsh-mcp-client`，`config.serverName` 作 key。本模块（dsh）仍管 `settings.yaml`/`.credentials.yaml`/`AGENTS.md`，不直接写 MCP 配置。dsh 是 developer preview，cordis patch 格式可能迭代；adapter 隔离在 `cordis_patch.rs` 便于后续更新。
+- `read_dsh_runtime_config` 返回的 `credentialsContent` 是 `.credentials.yaml` 原始内容，包含真实密钥；前端仅用于只读文件预览，不得把该字段当作可编辑数据回写。
+- 启用 agent-instructions（`enable_dsh_agent_instructions`）会同时往 home 级 `cordis.patch.yml` 写 `disabled: false` 和 `config.maxBytes: 262144`（256 KiB），覆盖 bundle 默认 64 KiB 预算，避免项目根 `AGENTS.md` 一超 64 KiB 就把 `~/.dsh/AGENTS.md` 整文件挤出 baseline。`check_dsh_agent_instructions` 仍只按 `disabled` 判定启用；重复启用会幂等覆盖 maxBytes。cordis patch 写字段走 `mcp::cordis_patch::set_plugin_config_field`（合并 config、保留其它字段与行）。
 
 ## 最小验证
 
