@@ -1,9 +1,10 @@
 import type { OpenCodeDiagnosticsConfig, OpenCodeFavoriteProvider } from '@/services/opencodeApi';
 import type { ClaudeSettingsMergeStrategy } from '@/types/claudecode';
+import type { ClaudeDesktopMeta } from '@/types/claudedesktop';
 import type { OpenCodeProvider } from '@/types/opencode';
 import { isJsonObject } from '../../../utils/json.ts';
 
-export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp';
+export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp' | 'dsh' | 'hermes' | 'claudedesktop';
 
 export interface ClaudeFavoriteProviderPayload {
   name: string;
@@ -36,6 +37,45 @@ export interface PiFavoriteProviderPayload {
   modelsProvider: Record<string, unknown>;
 }
 
+/**
+ * DSH stores provider routes and credentials separately: the route definition
+ * lives in `models.yaml` (`llm-pi-ai.providers.<route>`), while the API key lives
+ * in `.credentials.yaml` keyed by `credentialRef` (= provider's `apiKeyEnv`).
+ * The payload mirrors that split so import can replay both writes.
+ */
+export interface DshFavoriteProviderPayload {
+  providerKey: string;
+  credential?: { refName: string; value: string };
+  modelsProvider: Record<string, unknown>;
+}
+
+/**
+ * Hermes stores providers inline in a single `config.yaml` with the API key
+ * embedded on the provider object itself, so no separate credential payload.
+ */
+export interface HermesFavoriteProviderPayload {
+  providerKey: string;
+  modelsProvider: Record<string, unknown>;
+}
+
+/**
+ * Claude Desktop providers are service-created records persisted to SQLite.
+ * The payload mirrors `ClaudeDesktopProviderInput` so import can replay via
+ * `createClaudeDesktopProvider`.
+ */
+export interface ClaudeDesktopFavoriteProviderPayload {
+  name: string;
+  category: string;
+  settingsConfig: string;
+  sourceProviderId?: string;
+  websiteUrl?: string;
+  notes?: string;
+  icon?: string;
+  iconColor?: string;
+  sortIndex?: number;
+  meta?: ClaudeDesktopMeta;
+}
+
 const SOURCE_PREFIX_SEPARATOR = ':';
 const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   opencode: 'opencode',
@@ -45,6 +85,9 @@ const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   openclaw: 'openclaw',
   pi: 'pi',
   omp: 'omp',
+  dsh: 'dsh',
+  hermes: 'hermes',
+  claudedesktop: 'claudedesktop',
 };
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
 const OPENCODE_STORAGE_PREFIX = `${STORAGE_KEY_PREFIX.opencode}${SOURCE_PREFIX_SEPARATOR}`;

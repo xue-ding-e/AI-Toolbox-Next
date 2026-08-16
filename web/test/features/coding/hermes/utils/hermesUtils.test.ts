@@ -4,34 +4,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseThinkingLevelEfforts,
-  stringifyReasoningEfforts,
+  parseReasoningEffort,
+  HERMES_REASONING_LEVELS,
 } from '../../../../../features/coding/hermes/utils/hermesUtils.ts';
 
-test('parseThinkingLevelEfforts keeps mapped levels and drops null/empty', () => {
-  const result = parseThinkingLevelEfforts(
-    JSON.stringify({ minimal: null, low: '', medium: 'medium', high: 'high', off: 'off' })
-  );
-  assert.deepEqual(result, { medium: 'medium', high: 'high', off: 'off' });
+test('HERMES_REASONING_LEVELS matches the official 8 levels', () => {
+  assert.deepEqual([...HERMES_REASONING_LEVELS], [
+    'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
+  ]);
 });
 
-test('parseThinkingLevelEfforts returns undefined for empty object / blank', () => {
-  assert.equal(parseThinkingLevelEfforts('{}'), undefined);
-  assert.equal(parseThinkingLevelEfforts('   '), undefined);
-  assert.equal(parseThinkingLevelEfforts(''), undefined);
+test('parseReasoningEffort normalizes a valid level', () => {
+  assert.equal(parseReasoningEffort(' high '), 'high');
+  assert.equal(parseReasoningEffort('medium'), 'medium');
+  assert.equal(parseReasoningEffort('xhigh'), 'xhigh');
 });
 
-test('parseThinkingLevelEfforts returns undefined for invalid JSON', () => {
-  assert.equal(parseThinkingLevelEfforts('{ nope !!'), undefined);
-});
-
-test('stringifyReasoningEfforts pretty-prints a non-empty mapping', () => {
-  const out = stringifyReasoningEfforts({ high: 'high', max: 'max' });
-  assert.equal(out, '{\n  "high": "high",\n  "max": "max"\n}');
-});
-
-test('stringifyReasoningEfforts returns undefined for empty / non-object', () => {
-  assert.equal(stringifyReasoningEfforts({}), undefined);
-  assert.equal(stringifyReasoningEfforts(undefined), undefined);
-  assert.equal(stringifyReasoningEfforts('oops'), undefined);
+test('parseReasoningEffort returns undefined for blank/invalid/non-string', () => {
+  assert.equal(parseReasoningEffort(''), undefined);
+  assert.equal(parseReasoningEffort('  '), undefined);
+  assert.equal(parseReasoningEffort('insane'), undefined);
+  assert.equal(parseReasoningEffort(undefined), undefined);
+  assert.equal(parseReasoningEffort(42), undefined);
 });

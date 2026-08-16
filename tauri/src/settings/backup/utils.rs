@@ -108,8 +108,11 @@ pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
     }
 
     let sqlite_state = app_handle.state::<crate::db::SqliteDbState>();
-    restore_sqlite_snapshot_and_migrate(&sqlite_state, &temp_path)?;
+    let result = restore_sqlite_snapshot_and_migrate(&sqlite_state, &temp_path);
+    // Always clean up the extracted snapshot, even when restore/migrate failed
+    // (the `?` below would otherwise skip cleanup and leak a full-size temp DB).
     let _ = std::fs::remove_file(&temp_path);
+    result?;
 
     Ok(true)
 }
@@ -121,28 +124,67 @@ pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
 /// `oh_my_pi_settings_config`). Running migrations on the restored contents so
 /// post-restore reads (`clear_restored_cli_custom_roots`, resync, ...) never
 /// hit a missing table/column on the fresh database.
+///
+/// Safety net: before overwriting the live DB we take a safety backup of its
+/// current contents into a temp file. If the restore or the subsequent migrate
+/// fails, we roll the live DB back from that safety copy so the app never ends
+/// up with a half-migrated, unusable database instead of its prior working state.
 fn restore_sqlite_snapshot_and_migrate(
     sqlite_state: &crate::db::SqliteDbState,
     snapshot_path: &Path,
 ) -> Result<(), String> {
-    let restore_result = sqlite_state.with_conn_mut(|conn| {
-        conn.restore(
-            rusqlite::MAIN_DB,
-            snapshot_path,
-            None::<fn(rusqlite::backup::Progress)>,
-        )
-        .map_err(|error| format!("Failed to restore SQLite backup snapshot: {error}"))
-    });
-    restore_result?;
+    let safety_path = std::env::temp_dir().join(format!(
+        "ai-toolbox-sqlite-restore-safety-{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
 
-    sqlite_state.with_conn_mut(|conn| {
-        crate::db::migrations::run_all(conn).map_err(|error| {
-            format!(
-                "Failed to migrate restored SQLite database to schema v{}: {error}",
-                crate::db::migrations::TARGET_SCHEMA_VERSION
-            )
+    // Run the risky restore + migrate, rolling back from the safety copy on any
+    // failure. The safety copy is always removed afterwards (success or failure).
+    let result = (|| {
+        sqlite_state
+            .with_conn(|conn| crate::db::backup::backup_to_path(conn, &safety_path))?;
+
+        let restore_and_migrate = || {
+            sqlite_state.with_conn_mut(|conn| {
+                conn.restore(
+                    rusqlite::MAIN_DB,
+                    snapshot_path,
+                    None::<fn(rusqlite::backup::Progress)>,
+                )
+                .map_err(|error| format!("Failed to restore SQLite backup snapshot: {error}"))
+            })?;
+            sqlite_state.with_conn_mut(|conn| {
+                crate::db::migrations::run_all(conn).map_err(|error| {
+                    format!(
+                        "Failed to migrate restored SQLite database to schema v{}: {error}",
+                        crate::db::migrations::TARGET_SCHEMA_VERSION
+                    )
+                })
+            })
+        };
+
+        restore_and_migrate().map_err(|error| {
+            // Restore or migrate failed — the live DB may now be inconsistent.
+            // Roll it back to the pre-restore safety copy so the prior state is
+            // preserved. If the rollback itself fails, surface both errors.
+            if let Err(rollback_error) = sqlite_state.with_conn_mut(|conn| {
+                conn.restore(
+                    rusqlite::MAIN_DB,
+                    &safety_path,
+                    None::<fn(rusqlite::backup::Progress)>,
+                )
+                .map_err(|e| format!("Rollback restore failed: {e}"))
+            }) {
+                return format!(
+                    "{error} (and rolling back to the pre-restore database failed: {rollback_error})"
+                );
+            }
+            error
         })
-    })
+    })();
+
+    let _ = std::fs::remove_file(&safety_path);
+    result
 }
 
 #[cfg(not(target_os = "windows"))]

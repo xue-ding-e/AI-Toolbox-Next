@@ -19,9 +19,17 @@ test('applyOpenClawUserAgent(true) overwrites existing headers', () => {
   assert.deepEqual(result.headers, { 'User-Agent': OPENCLAW_DEFAULT_USER_AGENT });
 });
 
-test('applyOpenClawUserAgent(false) removes the whole headers key', () => {
+test('applyOpenClawUserAgent(false) removes the whole headers key when only UA was set', () => {
   const result = applyOpenClawUserAgent({ models: [], headers: { 'User-Agent': 'x' } }, false);
   assert.equal('headers' in result, false);
+});
+
+test('applyOpenClawUserAgent(false) keeps non-User-Agent headers', () => {
+  const result = applyOpenClawUserAgent(
+    { models: [], headers: { 'User-Agent': 'x', Authorization: 'Bearer y' } },
+    false
+  );
+  assert.deepEqual(result.headers, { Authorization: 'Bearer y' });
 });
 
 test('applyOpenClawUserAgent(false) is a no-op when no headers exist', () => {

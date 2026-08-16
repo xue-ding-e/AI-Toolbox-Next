@@ -91,8 +91,19 @@ import SectionSidebarLayout, {
 import ProviderConnectivityTestModal, {
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  extractFavoriteProviderRawId,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  type ClaudeDesktopFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
+import { upsertFavoriteProvider, type OpenCodeFavoriteProvider } from '@/services/opencodeApi';
+import type { OpenCodeProvider } from '@/types/opencode';
 import type { AllApiHubProviderItem } from '@/types/allApiHub';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import {
@@ -260,6 +271,25 @@ function buildDesktopProviderConnectivityInfo(provider: ClaudeDesktopProvider): 
   };
 }
 
+/** Build the OpenCode-provider envelope that wraps a Claude Desktop favorite, embedding a
+ *  `ClaudeDesktopFavoriteProviderPayload` so the row can be fully replayed on re-import. */
+function buildDesktopFavoriteProviderConfig(provider: ClaudeDesktopProvider): OpenCodeProvider {
+  const { providerConfig } = buildDesktopProviderConnectivityInfo(provider);
+  const payload: ClaudeDesktopFavoriteProviderPayload = {
+    name: provider.name,
+    category: provider.category,
+    settingsConfig: provider.settingsConfig,
+    ...(provider.sourceProviderId ? { sourceProviderId: provider.sourceProviderId } : {}),
+    ...(provider.websiteUrl ? { websiteUrl: provider.websiteUrl } : {}),
+    ...(provider.notes ? { notes: provider.notes } : {}),
+    ...(provider.icon ? { icon: provider.icon } : {}),
+    ...(provider.iconColor ? { iconColor: provider.iconColor } : {}),
+    ...(provider.sortIndex != null ? { sortIndex: provider.sortIndex } : {}),
+    ...(provider.meta ? { meta: provider.meta } : {}),
+  };
+  return buildFavoriteProviderOptions(providerConfig, payload);
+}
+
 const ClaudeDesktopPage: React.FC = () => {
   const { t } = useTranslation();
   const { claudeProviderRefreshKey } = useRefreshStore();
@@ -300,6 +330,7 @@ const ClaudeDesktopPage: React.FC = () => {
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<ClaudeDesktopProvider | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
@@ -373,6 +404,22 @@ const ClaudeDesktopPage: React.FC = () => {
 
   const loadConfigRef = React.useRef(loadConfig);
   loadConfigRef.current = loadConfig;
+
+  const existingFavoriteProviderIds = React.useMemo(
+    () => providers.map((provider) => buildFavoriteProviderStorageKey('claudedesktop', provider.id)),
+    [providers],
+  );
+
+  /** Persist a Claude Desktop provider into the shared favorite-provider history. Errors are
+   *  swallowed so a favorite write failure never blocks the primary save/import flow. */
+  const upsertDesktopFavoriteProvider = React.useCallback((provider: ClaudeDesktopProvider) => {
+    return upsertFavoriteProvider(
+      buildFavoriteProviderStorageKey('claudedesktop', provider.id),
+      buildDesktopFavoriteProviderConfig(provider),
+    ).catch((error) => {
+      console.error('Failed to save Claude Desktop favorite provider:', error);
+    });
+  }, []);
 
   React.useEffect(() => {
     void claudeProviderRefreshKey;
@@ -530,6 +577,16 @@ const ClaudeDesktopPage: React.FC = () => {
       icon: <ExclamationCircleOutlined />,
       onOk: async () => {
         try {
+          // Back up the provider into the favorite-provider history before deletion
+          // so it can still be re-imported later from "导入我使用过的供应商".
+          try {
+            await upsertFavoriteProvider(
+              buildFavoriteProviderStorageKey('claudedesktop', provider.id),
+              buildDesktopFavoriteProviderConfig(provider),
+            );
+          } catch (error) {
+            console.error('Failed to preserve Claude Desktop favorite provider before deletion:', error);
+          }
           await deleteClaudeDesktopProvider(provider.id);
           await loadConfig();
           await refreshTrayMenu();
@@ -544,7 +601,7 @@ const ClaudeDesktopPage: React.FC = () => {
 
   const handleProviderSubmit = async (values: ClaudeDesktopFormValues) => {
     try {
-      let savedProviderId = '';
+      let savedProvider: ClaudeDesktopProvider | null = null;
       const gatewayModeBeforeSave = gatewayCliStatus?.mode;
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && editingProvider.isApplied) &&
@@ -553,7 +610,7 @@ const ClaudeDesktopPage: React.FC = () => {
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('claude_desktop'),
-        engageSingle: () => engageProxyGatewaySingle('claude_desktop', savedProviderId),
+        engageSingle: () => engageProxyGatewaySingle('claude_desktop', savedProvider?.id || ''),
         engageFailover: () => engageProxyGatewayFailover('claude_desktop'),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
@@ -566,8 +623,7 @@ const ClaudeDesktopPage: React.FC = () => {
               meta: buildProviderMeta(values, editingProvider?.meta),
               notes: values.notes || undefined,
             };
-            const created = await createClaudeDesktopProvider(providerInput);
-            savedProviderId = created.id;
+            savedProvider = await createClaudeDesktopProvider(providerInput);
           } else if (editingProvider) {
             const payload: ClaudeDesktopProvider = {
               ...editingProvider,
@@ -577,8 +633,7 @@ const ClaudeDesktopPage: React.FC = () => {
               meta: buildProviderMeta(values, editingProvider.meta),
               notes: values.notes,
             };
-            await updateClaudeDesktopProvider(payload);
-            savedProviderId = editingProvider.id;
+            savedProvider = await updateClaudeDesktopProvider(payload);
           }
         },
       });
@@ -587,6 +642,9 @@ const ClaudeDesktopPage: React.FC = () => {
       setProviderModalOpen(false);
       setEditingProvider(null);
       setIsCopyMode(false);
+      if (savedProvider) {
+        void upsertDesktopFavoriteProvider(savedProvider);
+      }
       await loadConfig();
       await refreshTrayMenu();
     } catch (error) {
@@ -598,6 +656,7 @@ const ClaudeDesktopPage: React.FC = () => {
 
   const handleImportFromClaude = async () => {
     try {
+      const beforeIds = new Set(providers.map((provider) => provider.id));
       const count = await importClaudeDesktopProvidersFromClaude();
       if (count > 0) {
         message.success(`已从 Claude Code 导入 ${count} 个供应商`);
@@ -606,6 +665,18 @@ const ClaudeDesktopPage: React.FC = () => {
       }
       await loadConfig();
       await refreshTrayMenu();
+      // The backend batch-creates providers directly and returns only a count, so re-fetch the
+      // list and backfill the favorite history for any newly created rows.
+      if (count > 0) {
+        try {
+          const afterProviders = await listClaudeDesktopProviders();
+          for (const provider of afterProviders.filter((p) => !beforeIds.has(p.id))) {
+            void upsertDesktopFavoriteProvider(provider);
+          }
+        } catch (error) {
+          console.error('Failed to backfill Claude Desktop favorites after Claude import:', error);
+        }
+      }
     } catch (error) {
       console.error('Failed to import Claude Desktop providers from Claude:', error);
       message.error(t('common.error'));
@@ -629,7 +700,7 @@ const ClaudeDesktopPage: React.FC = () => {
             typeof candidate.settingsConfig === 'string'
               ? candidate.settingsConfig
               : JSON.stringify(candidate.settingsConfig);
-          await createClaudeDesktopProvider({
+          const created = await createClaudeDesktopProvider({
             name: candidate.name,
             category: candidate.normalizedCategory || 'custom',
             settingsConfig,
@@ -639,6 +710,7 @@ const ClaudeDesktopPage: React.FC = () => {
             icon: candidate.icon,
             iconColor: candidate.iconColor,
           });
+          void upsertDesktopFavoriteProvider(created);
           ok += 1;
         } catch (error) {
           console.error('Failed to import Claude Desktop provider from CC Switch:', candidate.name, error);
@@ -672,12 +744,13 @@ const ClaudeDesktopPage: React.FC = () => {
       let fail = 0;
       for (const item of toImport) {
         try {
-          await createClaudeDesktopProvider({
+          const created = await createClaudeDesktopProvider({
             name: item.name,
             category: 'custom',
             settingsConfig: JSON.stringify(item.config),
             sourceProviderId: item.providerId,
           });
+          void upsertDesktopFavoriteProvider(created);
           ok += 1;
         } catch (error) {
           console.error('Failed to import All API Hub provider:', item.name, error);
@@ -696,6 +769,50 @@ const ClaudeDesktopPage: React.FC = () => {
 
       await loadConfig();
       await refreshTrayMenu();
+    },
+    [providers, loadConfig, t],
+  );
+
+  const handleImportFavoriteProviders = React.useCallback(
+    async (providersToImport: OpenCodeFavoriteProvider[]) => {
+      const existingIds = new Set(providers.map((provider) => provider.id));
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const payload = getFavoriteProviderPayload<ClaudeDesktopFavoriteProviderPayload>(favoriteProvider);
+        if (!payload) {
+          continue;
+        }
+        // Avoid colliding with an existing provider; favorite rows share the same id space.
+        const sourceFavoriteId = extractFavoriteProviderRawId('claudedesktop', favoriteProvider.providerId);
+        if (existingIds.has(sourceFavoriteId)) {
+          continue;
+        }
+        try {
+          const created = await createClaudeDesktopProvider({
+            name: payload.name,
+            category: payload.category,
+            settingsConfig: payload.settingsConfig,
+            ...(payload.sourceProviderId ? { sourceProviderId: payload.sourceProviderId } : {}),
+            ...(payload.websiteUrl ? { websiteUrl: payload.websiteUrl } : {}),
+            ...(payload.notes ? { notes: payload.notes } : {}),
+            ...(payload.icon ? { icon: payload.icon } : {}),
+            ...(payload.iconColor ? { iconColor: payload.iconColor } : {}),
+            ...(payload.sortIndex != null ? { sortIndex: payload.sortIndex } : {}),
+            ...(payload.meta ? { meta: payload.meta } : {}),
+          });
+          existingIds.add(created.id);
+          importedCount += 1;
+        } catch (error) {
+          console.error('Failed to import Claude Desktop favorite provider:', payload.name, error);
+        }
+      }
+
+      if (importedCount > 0) {
+        setImportModalOpen(false);
+        message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+        await loadConfig();
+        await refreshTrayMenu();
+      }
     },
     [providers, loadConfig, t],
   );
@@ -915,19 +1032,10 @@ const ClaudeDesktopPage: React.FC = () => {
                         <Button
                           type="dashed"
                           icon={<ImportOutlined />}
-                          onClick={handleImportFromClaude}
+                          onClick={() => setImportModalOpen(true)}
                         >
-                          从 Claude Code 导入
+                          {t('opencode.provider.importFavorite')}
                         </Button>
-                        {ccSwitchAvailable && (
-                          <Button
-                            type="dashed"
-                            icon={<ImportOutlined />}
-                            onClick={() => setCcSwitchImportModalOpen(true)}
-                          >
-                            {t('common.ccSwitch.importFromCcSwitch')}
-                          </Button>
-                        )}
                         {allApiHubAvailable && (
                           <Button
                             type="dashed"
@@ -937,6 +1045,22 @@ const ClaudeDesktopPage: React.FC = () => {
                             {t('common.allApiHub.importFromAllApiHub')}
                           </Button>
                         )}
+                        {ccSwitchAvailable && (
+                          <Button
+                            type="dashed"
+                            icon={<ImportOutlined />}
+                            onClick={() => setCcSwitchImportModalOpen(true)}
+                          >
+                            {t('common.ccSwitch.importFromCcSwitch')}
+                          </Button>
+                        )}
+                        <Button
+                          type="dashed"
+                          icon={<ImportOutlined />}
+                          onClick={handleImportFromClaude}
+                        >
+                          从 Claude Code 导入
+                        </Button>
                       </Space>
                     </div>
                   </Spin>
@@ -1006,6 +1130,14 @@ const ClaudeDesktopPage: React.FC = () => {
         />
       )}
 
+      <ImportProviderModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={handleImportFavoriteProviders}
+        existingProviderIds={existingFavoriteProviderIds}
+        providerFilter={(provider) => isFavoriteProviderForSource('claudedesktop', provider)}
+      />
+
       {allApiHubAvailable && (
         <ImportFromAllApiHubModalForTool
           open={allApiHubImportModalOpen}
@@ -1016,6 +1148,7 @@ const ClaudeDesktopPage: React.FC = () => {
           onImport={handleImportFromAllApiHub}
           listProviders={listClaudeDesktopAllApiHubProviders}
           resolveProviders={resolveClaudeDesktopAllApiHubProviders}
+          warnOnNonAnthropicProtocol
         />
       )}
 

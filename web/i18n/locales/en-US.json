@@ -1377,6 +1377,7 @@
       "idPlaceholder": "Unique identifier, e.g., my-provider",
       "idExists": "This provider ID already exists",
       "completeUrlAndKey": "Please fill in Base URL and API Key first",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "name": "Display Name",
       "namePlaceholder": "Provider display name",
       "npm": "NPM Package",
@@ -1484,6 +1485,11 @@
       "inputTypesHint": "Select the input types supported by this model.",
       "thinkingLevelMap": "Thinking Level Map",
       "thinkingLevelMapHint": "This is not the default thinking level. It is a model-level support/mapping table.",
+      "thinkingLevel": "Thinking Level",
+      "thinkingLevelHint": "Overrides the default thinking level; empty inherits the global default.",
+      "thinkingLevelPlaceholder": "Empty inherits the global default",
+      "extraParams": "Extra Params",
+      "extraParamsHint": "Other fields for the model entry, passed through to the model config verbatim; empty writes nothing.",
       "cost": "Cost",
       "costHint": "Cost per million tokens.",
       "costInput": "Input",
@@ -2914,7 +2920,7 @@
       "importFromAllApiHub": "Import from All API Hub",
       "importSuccess": "Successfully imported {{count}} provider(s) from OpenCode",
       "importAllApiHubSuccess": "Successfully imported {{count}} provider(s) from All API Hub",
-      "batchDelete": "Batch Delete Models",
+      "batchDelete": "Batch Delete",
       "cancelBatchDelete": "Cancel Batch Delete",
       "deleteSelected": "Delete Selected ({{count}})",
       "batchDeleteConfirmTitle": "Batch Delete Models",
@@ -2948,6 +2954,7 @@
       "siteType": "Site type",
       "fetchModels": "Fetch Models",
       "completeUrlAndKey": "Please complete Base URL and API Key first",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "fetchModelsApplySuccess": "Model list updated: added {{addCount}}, removed {{removeCount}}",
       "extraParams": "Extra Params",
       "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file.",
@@ -2987,6 +2994,9 @@
       "noModels": "No models available, please add providers first",
       "fallbacks": "Fallback Models",
       "fallbacksPlaceholder": "Select fallback models",
+      "thinkingDefault": "Default Thinking Level",
+      "thinkingDefaultHint": "Written to agents.defaults.thinkingDefault; empty lets the runtime auto-detect per model (usually medium or adaptive).",
+      "thinkingDefaultPlaceholder": "Default thinking level",
       "moreParams": "More Parameters",
       "moreParamsTitle": "Agent Parameters",
       "legacyTimeoutHint": "`timeout` is deprecated; it will be migrated to `timeoutSeconds` on save."
@@ -3705,6 +3715,7 @@
       "deleteProviderConfig": "Delete provider config",
       "deleteConfirmTitle": "Delete provider entry",
       "deleteConfirmContent": "Delete {{scope}} for {{providerKey}}?",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "deleteScope": {
         "credential": "credential",
         "provider_config": "provider config",
@@ -3842,6 +3853,11 @@
       "capabilities": "Capabilities",
       "capabilitiesHint": "Enable when this model supports Pi extended thinking.",
       "reasoning": "Supports Thinking",
+      "thinkingLevel": "Thinking Level",
+      "thinkingLevelHint": "Overrides the default thinking level (written to agent.reasoning_overrides); empty inherits the global default.",
+      "thinkingLevelPlaceholder": "Empty inherits the global default",
+      "extraParams": "Extra Params",
+      "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file.",
       "thinkingLevelMap": "Thinking Level Map",
       "thinkingLevelMapHint": "This is not the default thinking level. It is a model-level support/mapping table: keys are off/minimal/low/medium/high/xhigh/max, strings are sent upstream, and null hides unsupported levels; xhigh/max require explicit mappings.",
       "invalidThinkingLevelMap": "Thinking level map JSON is invalid",
@@ -3856,7 +3872,8 @@
       "apiHint": "Set only when this model needs to override the provider API type.",
       "compat": "Compatibility compat",
       "compatHint": "Model-level compatibility overrides merged with provider compat. Leave empty to remove model compat.",
-      "invalidCompat": "Compatibility compat JSON is invalid"
+      "invalidCompat": "Compatibility compat JSON is invalid",
+      "invalidExtraParams": "Extra params JSON is invalid"
     },
     "connectivity": {
       "button": "Model test"
@@ -4439,6 +4456,7 @@
       "deleteProviderConfig": "Delete provider config",
       "deleteConfirmTitle": "Delete provider entry",
       "deleteConfirmContent": "Delete {{scope}} for {{providerKey}}?",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "deleteScope": {
         "credential": "credential",
         "provider_config": "provider config",
@@ -4717,6 +4735,7 @@
       "selectAtLeastOneSection": "Please fill in at least one configuration section",
       "deleteConfirmTitle": "Delete Provider",
       "deleteConfirmContent": "Are you sure you want to delete provider {{providerKey}} ({{scope}})?",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "deleteScope": {
         "credential": "credential",
         "provider": "provider config",
@@ -4756,7 +4775,7 @@
       "contextLimitPlaceholder": "e.g., 128000 (optional)",
       "outputLimit": "Output Limit",
       "outputLimitPlaceholder": "e.g., 8000 (optional)",
-      "batchDelete": "Batch Delete Models",
+      "batchDelete": "Batch Delete",
       "cancelBatchDelete": "Exit Batch Delete",
       "deleteSelected": "Delete Selected ({{count}})",
       "batchDeleteConfirmTitle": "Confirm Batch Delete",
@@ -4776,6 +4795,9 @@
       "compat": "Compatibility compat",
       "compatHint": "Model-level compatibility overrides merged with provider compat. Leave empty to remove model compat.",
       "invalidCompat": "Invalid compat JSON format",
+      "extraParams": "Extra Params",
+      "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file.",
+      "invalidExtraParams": "Extra params JSON is invalid",
       "api": "API type",
       "apiPlaceholder": "Leave empty to inherit provider",
       "apiHint": "Set only when this model needs to override the provider API type.",
@@ -4905,8 +4927,11 @@
       "addSupplier": "Add provider",
       "addTitle": "Add Provider",
       "editTitle": "Edit Provider",
+      "addSupplierTitle": "Add provider",
+      "editSupplierTitle": "Edit provider {{name}}",
       "deleteConfirmTitle": "Delete provider?",
       "deleteConfirmContent": "Remove \"{{name}}\" from custom_providers in config.yaml?",
+      "deleteDisabledDefault": "This is the default provider and cannot be deleted",
       "readOnly": "read-only",
       "readOnlyRemains": "{{name}} is a read-only Hermes built-in provider (providers: dict) and cannot be removed here. To remove it, edit config.yaml's providers: section or use the Hermes UI.",
       "advancedHint": "Full provider config that is written to config.yaml (name is set from the provider name).",
@@ -4914,18 +4939,22 @@
       "apiKey": "API key",
       "apiMode": "API mode",
       "apiModePlaceholder": "anthropic / openai / ...",
-      "providerKey": "Provider name",
-      "providerKeyPlaceholder": "e.g. anthropic",
-      "providerKeyRequired": "Provider name is required.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "e.g., anthropic",
+      "providerKeyRequired": "Please enter a provider key",
       "configJson": "Provider config (JSON)",
-      "basicSection": "Basic"
+      "basicSection": "Basic",
+      "displayName": "Display name",
+      "displayNamePlaceholder": "Leave empty to use the provider key"
     },
     "modelSettings": {
       "title": "Model Settings",
       "defaultProvider": "Default provider",
       "defaultProviderPlaceholder": "Select a provider",
       "defaultModel": "Default model",
-      "defaultModelPlaceholder": "Select a model"
+      "defaultModelPlaceholder": "Select a model",
+      "reasoningEffort": "Default reasoning level",
+      "reasoningEffortPlaceholder": "Default: medium (unset)"
     },
     "otherConfig": {
       "title": "Other Configuration",
@@ -4962,7 +4991,7 @@
       "idRequired": "Model ID is required.",
       "idExists": "Model ID already exists.",
       "setAsDefaultSuccess": "Set as default.",
-      "batchDelete": "Batch Delete Models",
+      "batchDelete": "Batch Delete",
       "cancelBatchDelete": "Cancel Batch Delete",
       "deleteSelected": "Delete Selected ({{count}})",
       "batchDeleteConfirmTitle": "Batch Delete Models",
@@ -4998,6 +5027,9 @@
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
       "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    },
+    "providers": {
+      "importAllApiHubNonAnthropicProtocolDesc": "The selected provider is not an Anthropic-native endpoint but will still be imported in Anthropic Messages protocol format. Requesting Google / Gemini or OpenAI endpoints with the Anthropic format will generally fail. Prefer Anthropic-compatible endpoints, or review the protocol in the edit page after import."
     }
   }
 }

@@ -817,10 +817,20 @@ fn build_provider_views(config: &Value) -> Vec<HermesRuntimeProviderView> {
             denormalize_provider_models_for_read(value);
         }
 
+        // Display name: prefer an explicit `display_name` field, then the
+        // identity `name` (canonical for read-only `providers:` dict entries),
+        // then the built-in table, then the provider key. This decouples the
+        // friendly label from the list identity key (`name`), which custom
+        // providers always store verbatim.
         let display_name = raw
             .as_ref()
-            .and_then(|value| value.get("name").and_then(Value::as_str))
+            .and_then(|value| value.get("display_name").and_then(Value::as_str))
             .map(str::to_string)
+            .or_else(|| {
+                raw.as_ref()
+                    .and_then(|value| value.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+            })
             .or_else(|| builtin_provider_name(&provider_key).map(str::to_string))
             .unwrap_or_else(|| provider_key.clone());
 
@@ -1877,6 +1887,37 @@ model:
             "providers": { "deepseek": { "name": "deepseek" } }
         });
         assert!(!is_dict_only_provider(config.as_object().unwrap(), "deepseek"));
+    }
+
+    #[test]
+    fn build_provider_views_prefers_display_name_over_key() {
+        let config = json!({
+            "custom_providers": [
+                { "name": "deepseek-acct", "display_name": "DeepSeek", "base_url": "https://api.deepseek.com" }
+            ]
+        });
+        let views = build_provider_views(&config);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].provider_key, "deepseek-acct");
+        assert_eq!(views[0].display_name, "DeepSeek");
+    }
+
+    #[test]
+    fn build_provider_views_falls_back_to_name_then_builtin_then_key() {
+        // No display_name: falls back to the identity `name` field.
+        let config = json!({
+            "custom_providers": [ { "name": "my-provider", "base_url": "https://example.com" } ]
+        });
+        let views = build_provider_views(&config);
+        assert_eq!(views[0].display_name, "my-provider");
+
+        // No display_name and no custom name: builtin table wins for "anthropic".
+        let builtin_config = json!({
+            "providers": { "anthropic": { "base_url": "https://api.anthropic.com" } }
+        });
+        let builtin_views = build_provider_views(&builtin_config);
+        let anthropic = builtin_views.iter().find(|v| v.provider_key == "anthropic").unwrap();
+        assert_eq!(anthropic.display_name, "Anthropic");
     }
 
     #[test]

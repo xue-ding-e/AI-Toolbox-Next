@@ -182,6 +182,7 @@ impl Default for AppSettings {
                 "pi".to_string(),
                 "oh_my_pi".to_string(),
                 "hermes".to_string(),
+                "dsh".to_string(),
                 "gateway".to_string(),
                 "image".to_string(),
                 "ssh".to_string(),
@@ -200,15 +201,23 @@ impl Default for AppSettings {
 }
 
 pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
+    // Keep this key set in sync with the frontend SIDEBAR_PAGE_KEYS list in
+    // web/services/settingsApi.ts. A missing key here means a brand-new
+    // database (no sidebar_hidden_by_page field yet) would not surface that
+    // page's default visible state. The reader in adapter.rs no longer drops
+    // keys outside this set, but the defaults still need to be complete.
     HashMap::from([
         ("opencode".to_string(), false),
         ("claudecode".to_string(), false),
+        ("claudedesktop".to_string(), false),
         ("codex".to_string(), false),
         ("grok".to_string(), false),
-        ("openclaw".to_string(), false),
         ("geminicli".to_string(), false),
+        ("openclaw".to_string(), false),
         ("pi".to_string(), false),
         ("oh_my_pi".to_string(), false),
+        ("hermes".to_string(), false),
+        ("dsh".to_string(), false),
     ])
 }
 

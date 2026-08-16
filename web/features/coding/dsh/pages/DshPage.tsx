@@ -81,8 +81,18 @@ import {
   hasCcSwitchDb,
   type CcSwitchProviderCandidate,
 } from '@/services/ccSwitchApi';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  extractFavoriteProviderRawId,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  type DshFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
+import { upsertFavoriteProvider, type OpenCodeFavoriteProvider } from '@/services/opencodeApi';
 import type { AllApiHubProviderItem } from '@/types/allApiHub';
 import {
   buildDshProviderFromAllApiHub,
@@ -226,6 +236,23 @@ const setOptionalStringField = (
 
 const isRecordEmpty = (value: Record<string, unknown>): boolean => Object.keys(value).length === 0;
 
+/** 模型字段中由弹窗专用控件管理的键；其余字段视为额外参数原样保留。 */
+const DSH_KNOWN_MODEL_FIELDS = new Set([
+  'id', 'name', 'contextWindow', 'maxTokens', 'reasoning', 'cost', 'reasoningEfforts',
+]);
+
+/** 提取模型已知字段之外的额外参数（与 OpenClaw extraParams 一致）。 */
+const extractDshExtraParams = (model: unknown): Record<string, unknown> | undefined => {
+  const record = asRecord(model);
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!DSH_KNOWN_MODEL_FIELDS.has(key) && value !== undefined) {
+      extra[key] = value;
+    }
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+};
+
 const createDefaultProviderConfig = (): Record<string, unknown> => ({
   api: 'openai-completions',
   baseURL: '',
@@ -292,6 +319,50 @@ const buildDshOpenCodeProvider = (
   };
 };
 
+/** Build the OpenCode-provider envelope that wraps a DSH provider favorite. The credential
+ *  (API key) is kept alongside the route definition so a re-import can replay both writes. */
+const buildDshFavoriteProviderConfig = (
+  providerKey: string,
+  modelsProvider: Record<string, unknown>,
+  credential?: { refName: string; value: string },
+): OpenCodeProvider => {
+  const headers = asStringRecord(modelsProvider.headers);
+  const records = getProviderModelRecords(modelsProvider);
+  const apiKey = credential?.value;
+  const payload: DshFavoriteProviderPayload = {
+    providerKey,
+    ...(credential && credential.value ? { credential } : {}),
+    modelsProvider,
+  };
+  return buildFavoriteProviderOptions(
+    {
+      npm: dshApiToSdkName(getStringField(modelsProvider, 'api')),
+      name: getStringField(modelsProvider, 'displayName') || providerKey,
+      options: {
+        baseURL: getStringField(modelsProvider, 'baseURL'),
+        ...(apiKey ? { apiKey } : {}),
+        ...(isRecordEmpty(headers) ? {} : { headers }),
+      },
+      models: Object.fromEntries(records.map((entry) => [entry.id, {}])),
+    },
+    payload,
+  );
+};
+
+/** Resolve the favorite payload back into a DSH-language provider import record. */
+const resolveDshFavoriteProviderPayload = (
+  favoriteProvider: OpenCodeFavoriteProvider,
+): DshFavoriteProviderPayload => {
+  const payload = getFavoriteProviderPayload<DshFavoriteProviderPayload>(favoriteProvider);
+  if (payload?.providerKey && payload.modelsProvider) {
+    return payload;
+  }
+  return {
+    providerKey: extractFavoriteProviderRawId('dsh', favoriteProvider.providerId),
+    modelsProvider: payload?.modelsProvider ?? favoriteProvider.providerConfig,
+  };
+};
+
 const DshPage: React.FC = () => {
   const { t } = useTranslation();
   const { sidebarHiddenByPage, setSidebarHidden } = useSettingsStore();
@@ -303,6 +374,7 @@ const DshPage: React.FC = () => {
   const [providerModal, setProviderModal] = React.useState<ProviderJsonModalState | null>(null);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
   const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [providerModalForm] = Form.useForm();
@@ -448,6 +520,25 @@ const DshPage: React.FC = () => {
   const dshProviders = React.useMemo(
     () => runtimeConfig?.providers ?? [],
     [runtimeConfig?.providers],
+  );
+
+  const existingFavoriteProviderIds = React.useMemo(
+    () => dshProviders.map((provider) => buildFavoriteProviderStorageKey('dsh', provider.providerKey)),
+    [dshProviders],
+  );
+
+  /** Persist a DSH provider route-plus-credential pair into the shared favorite-provider
+   *  history. Errors are swallowed so a favorite failure never blocks the primary flow. */
+  const upsertDshFavoriteProvider = React.useCallback(
+    (providerKey: string, modelsProvider: Record<string, unknown>, credential?: { refName: string; value: string }) => {
+      return upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('dsh', providerKey),
+        buildDshFavoriteProviderConfig(providerKey, modelsProvider, credential),
+      ).catch((error) => {
+        console.error('Failed to save DSH favorite provider:', error);
+      });
+    },
+    [],
   );
 
   // Reasoning-effort options follow the selected default model's
@@ -668,6 +759,11 @@ const DshPage: React.FC = () => {
       setRuntimeConfig(nextConfig);
       setOtherSettings(nextConfig.otherSettings || {});
       setProviderModal(null);
+      void upsertDshFavoriteProvider(
+        providerKey,
+        nextProviderConfigJson,
+        shouldSaveCredential ? { refName: credentialRef, value: nextApiKey } : undefined,
+      );
       await refreshTrayMenu();
       message.success(t('common.success'));
     } catch (error) {
@@ -774,6 +870,16 @@ const DshPage: React.FC = () => {
       }
     } else {
       delete nextModel.reasoningEfforts;
+    }
+
+    // 额外参数：以编辑器内容为准，移除旧的未知字段后再合并（与 OpenClaw 一致）。
+    for (const key of Object.keys(nextModel)) {
+      if (!DSH_KNOWN_MODEL_FIELDS.has(key)) {
+        delete nextModel[key];
+      }
+    }
+    if (values.extraParams && typeof values.extraParams === 'object') {
+      Object.assign(nextModel, values.extraParams);
     }
 
     let modelWasReplaced = false;
@@ -1157,6 +1263,22 @@ const DshPage: React.FC = () => {
         try {
           let nextConfig: DshRuntimeConfig;
           const credentialRef = provider.apiKeyEnv || credentialRefFromProviderKey(provider.providerKey);
+          // Back up the provider into the favorite-provider history before deletion so it can be
+          // re-imported later from "导入我使用过的供应商". Only persist what's being deleted.
+          try {
+            const credentialForFavorite =
+              provider.credentialExists && provider.apiKey
+                ? { refName: credentialRef, value: provider.apiKey }
+                : undefined;
+            if ((scope === 'provider' || scope === 'both') && provider.provider) {
+              await upsertFavoriteProvider(
+                buildFavoriteProviderStorageKey('dsh', provider.providerKey),
+                buildDshFavoriteProviderConfig(provider.providerKey, provider.provider, credentialForFavorite),
+              );
+            }
+          } catch (error) {
+            console.error('Failed to preserve DSH favorite provider before deletion:', error);
+          }
           if (scope === 'credential') {
             nextConfig = await deleteDshCredential(credentialRef);
           } else if (scope === 'provider') {
@@ -1240,10 +1362,13 @@ const DshPage: React.FC = () => {
         }
         const { providerKey, provider, apiKey, credentialRef } = buildDshProviderFromAllApiHub(item);
         try {
+          // 先保存 provider route,再保存凭据:若 provider 落盘失败,凭据尚未写入,
+          // 不会留下无人引用的孤立 credential(凭据在 UI 上无法单独清理)。
+          await saveDshModelsProvider({ providerKey, provider });
           if (apiKey) {
             await saveDshCredential({ refName: credentialRef, value: apiKey });
           }
-          await saveDshModelsProvider({ providerKey, provider });
+          void upsertDshFavoriteProvider(providerKey, provider, apiKey ? { refName: credentialRef, value: apiKey } : undefined);
           ok += 1;
         } catch (error) {
           console.error('Failed to import All API Hub provider:', item.name, error);
@@ -1271,7 +1396,7 @@ const DshPage: React.FC = () => {
     let ok = 0;
     let fail = 0;
     for (const candidate of imported) {
-      if (existingKeys.has(candidate.name)) {
+      if (existingKeys.has(candidate.providerId)) {
         continue;
       }
       const mapped = extractDshProviderFromCcSwitch(candidate);
@@ -1279,13 +1404,20 @@ const DshPage: React.FC = () => {
         continue;
       }
       try {
+        // 先保存 provider route,再保存凭据:若 provider 落盘失败,凭据尚未写入,
+        // 不会留下无人引用的孤立 credential。
+        await saveDshModelsProvider({ providerKey: candidate.providerId, provider: mapped.provider });
         if (mapped.apiKey) {
           await saveDshCredential({ refName: mapped.credentialRef, value: mapped.apiKey });
         }
-        await saveDshModelsProvider({ providerKey: candidate.name, provider: mapped.provider });
+        void upsertDshFavoriteProvider(
+          candidate.providerId,
+          mapped.provider,
+          mapped.apiKey ? { refName: mapped.credentialRef, value: mapped.apiKey } : undefined,
+        );
         ok += 1;
       } catch (error) {
-        console.error('Failed to import CC Switch provider:', candidate.name, error);
+        console.error('Failed to import CC Switch provider:', candidate.providerId, error);
         fail += 1;
       }
     }
@@ -1302,6 +1434,37 @@ const DshPage: React.FC = () => {
     await loadConfig(true);
     void refreshTrayMenu();
   };
+
+  const handleImportFavoriteProviders = React.useCallback(
+    async (providersToImport: OpenCodeFavoriteProvider[]) => {
+      const existingKeys = new Set(dshProviders.map((provider) => provider.providerKey));
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const { providerKey, credential, modelsProvider } = resolveDshFavoriteProviderPayload(favoriteProvider);
+        if (!providerKey || existingKeys.has(providerKey)) {
+          continue;
+        }
+        try {
+          if (credential?.value) {
+            await saveDshCredential({ refName: credential.refName, value: credential.value });
+          }
+          await saveDshModelsProvider({ providerKey, provider: modelsProvider });
+          existingKeys.add(providerKey);
+          importedCount += 1;
+        } catch (error) {
+          console.error('Failed to import DSH favorite provider:', providerKey, error);
+        }
+      }
+
+      if (importedCount > 0) {
+        setImportModalOpen(false);
+        message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+        await loadConfig(true);
+        void refreshTrayMenu();
+      }
+    },
+    [dshProviders, loadConfig, t],
+  );
 
   React.useEffect(() => {
     const checkAllApiHub = async () => {
@@ -1367,6 +1530,9 @@ const DshPage: React.FC = () => {
     // from the catalog). `modelSource === 'builtin'` covers a route named after
     // the adapter default even when its key is not in the known built-in list.
     const isBuiltInChannel = provider.isBuiltin || provider.modelSource === 'builtin';
+    const deleteDisabledReason = !isBuiltInChannel && (hasCredential || hasProviderConfig) && provider.isDefault
+      ? t('dsh.provider.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+      : undefined;
     const modelSourceTag = provider.modelSource === 'builtin'
       ? t('dsh.model.modelSourceBuiltin', { defaultValue: '内置 · 适配器默认模型' })
       : undefined;
@@ -1399,6 +1565,7 @@ const DshPage: React.FC = () => {
           ? () => handleDeleteSupplier(provider)
           : undefined}
         deleteConfirm={false}
+        deleteDisabledReason={deleteDisabledReason}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         modelSourceTag={modelSourceTag}
         extraActions={
@@ -1412,7 +1579,7 @@ const DshPage: React.FC = () => {
             >
               {isBatchDeleteMode
                 ? t('dsh.model.cancelBatchDelete', { defaultValue: '退出批量删除' })
-                : t('dsh.model.batchDelete', { defaultValue: '批量删除模型' })}
+                : t('dsh.model.batchDelete', { defaultValue: '批量删除' })}
             </Button>
             {isBatchDeleteMode && (
               <Button
@@ -1671,6 +1838,13 @@ const DshPage: React.FC = () => {
                       )}
                       <div style={{ marginTop: 12 }}>
                         <Space wrap>
+                          <Button
+                            type="dashed"
+                            icon={<ImportOutlined />}
+                            onClick={() => setImportModalOpen(true)}
+                          >
+                            {t('opencode.provider.importFavorite')}
+                          </Button>
                           {allApiHubAvailable && (
                             <Button
                               type="dashed"
@@ -1793,7 +1967,6 @@ const DshPage: React.FC = () => {
         >
           <Form form={providerModalForm} layout="vertical" className={styles.providerForm}>
             <div className={styles.modalSection}>
-              <Text strong>{t('dsh.provider.basicSection', { defaultValue: '基本信息' })}</Text>
               <div className={styles.modalGrid}>
                 <Form.Item
                   label={t('dsh.provider.providerKey', { defaultValue: '供应商 Key' })}
@@ -1937,6 +2110,7 @@ const DshPage: React.FC = () => {
             costOutput: getNumberField(asRecord(dshModelModal.model?.cost), 'output'),
             costCacheRead: getNumberField(asRecord(dshModelModal.model?.cost), 'cacheRead'),
             costCacheWrite: getNumberField(asRecord(dshModelModal.model?.cost), 'cacheWrite'),
+            extraParams: extractDshExtraParams(dshModelModal.model),
             thinkingLevelMap: dshModelModal.model?.reasoningEfforts && typeof dshModelModal.model.reasoningEfforts === 'object'
               ? JSON.stringify(
                   Object.fromEntries(
@@ -1960,6 +2134,7 @@ const DshPage: React.FC = () => {
           showReasoning={false}
           showCost={false}
           showThinkingLevelMap={true}
+          showExtraParams
           limitRequired={false}
           nameRequired={false}
           onCancel={() => setDshModelModal(null)}
@@ -1989,6 +2164,14 @@ const DshPage: React.FC = () => {
           removableModelIds={connectivityInfo?.modelIds}
           onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
+        />
+
+        <ImportProviderModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onImport={handleImportFavoriteProviders}
+          existingProviderIds={existingFavoriteProviderIds}
+          providerFilter={(provider) => isFavoriteProviderForSource('dsh', provider)}
         />
 
         {allApiHubAvailable && (

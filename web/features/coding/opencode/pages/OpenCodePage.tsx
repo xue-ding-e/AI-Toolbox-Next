@@ -2318,6 +2318,11 @@ const OpenCodePage: React.FC = () => {
                                   ...toModelDisplayData(modelId, model),
                                   isPrimary: buildUnifiedModelId(providerId, modelId) === config?.model,
                                 })) : [];
+                                // 该渠道承载着全局默认模型(config.model 形如 providerId/modelId)时，禁止删除整条渠道，但保留按钮并置灰提示。
+                                const isDefaultProviderChannel = !!config?.model && config.model.split('/')[0] === providerId;
+                                const deleteDisabledReason = isDefaultProviderChannel
+                                  ? t('opencode.provider.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+                                  : undefined;
                                 return (
                                   <ProviderCard
                                     key={providerId}
@@ -2336,6 +2341,7 @@ const OpenCodePage: React.FC = () => {
                                     onEdit={() => handleEditProvider(providerId)}
                                     onCopy={() => handleCopyProvider(providerId)}
                                     onDelete={() => handleDeleteProvider(providerId)}
+                                    deleteDisabledReason={deleteDisabledReason}
                                     isDisabled={disabledProviderIds.has(providerId)}
                                     onToggleDisabled={() => handleToggleProviderDisabled(providerId)}
                                     connectivityStatus={connectivityStatuses[providerId]}

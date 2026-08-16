@@ -118,6 +118,9 @@ import type {
 import type { OpenCodeModel, OpenCodeProvider } from '@/types/opencode';
 
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import { extractOmpProviderFromCcSwitch } from '../utils/importMapping';
 import OmpExtensionsSection from '../components/OmpExtensionsSection';
 import styles from './OhMyPiPage.module.less';
 
@@ -550,6 +553,8 @@ const OhMyPiPage: React.FC = () => {
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [connectivityProviderId, setConnectivityProviderId] = React.useState<string | null>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
@@ -633,6 +638,17 @@ const OhMyPiPage: React.FC = () => {
     };
 
     checkAllApiHubAvailability();
+
+    const checkCcSwitchAvailability = async () => {
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch (error) {
+        console.error('Failed to check CC Switch availability:', error);
+        setCcSwitchAvailable(false);
+      }
+    };
+
+    checkCcSwitchAvailability();
   }, []);
 
   React.useEffect(() => {
@@ -1416,6 +1432,17 @@ const OhMyPiPage: React.FC = () => {
     }
   };
 
+  const handleImportFromCcSwitch = async (imported: CcSwitchProviderCandidate[]) => {
+    const importedCount = await saveImportedOmpProviders(
+      imported
+        .map((candidate) => extractOmpProviderFromCcSwitch(candidate))
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+    );
+    if (importedCount > 0) {
+      setCcSwitchImportModalOpen(false);
+    }
+  };
+
   const handleOpenConnectivityTest = (providerKey: string) => {
     setConnectivityProviderId(providerKey);
     setConnectivityModalOpen(true);
@@ -1645,6 +1672,10 @@ const OhMyPiPage: React.FC = () => {
     const hasCredential = Object.prototype.hasOwnProperty.call(providerConfig, 'apiKey')
       && !isRecordEmpty({ apiKey: providerConfig.apiKey });
     const hasProviderConfig = provider.sources.includes('models_yml');
+    const canDeleteProvider = hasCredential || hasProviderConfig;
+    const deleteDisabledReason = canDeleteProvider && provider.isDefault
+      ? t('ohMyPi.provider.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+      : undefined;
     const isBatchDeleteMode = batchDeleteProviderId === provider.providerKey;
     const selectedModelIds = selectedModelIdsByProvider[provider.providerKey] ?? [];
     const selectedModelCount = selectedModelIds.length;
@@ -1677,8 +1708,9 @@ const OhMyPiPage: React.FC = () => {
         models={modelDisplayList}
         onEdit={() => openProviderModal(provider)}
         onCopy={() => openProviderModal(provider, { copy: true })}
-        onDelete={(hasCredential || hasProviderConfig) ? () => handleDeleteSupplier(provider) : undefined}
+        onDelete={canDeleteProvider ? () => handleDeleteSupplier(provider) : undefined}
         deleteConfirm={false}
+        deleteDisabledReason={deleteDisabledReason}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         extraActions={
           <Space size={0}>
@@ -1965,6 +1997,15 @@ const OhMyPiPage: React.FC = () => {
                               {t('ohMyPi.provider.importAllApiHub')}
                             </Button>
                           )}
+                          {ccSwitchAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<ImportOutlined />}
+                              onClick={() => setCcSwitchImportModalOpen(true)}
+                            >
+                              {t('common.ccSwitch.importFromCcSwitch')}
+                            </Button>
+                          )}
                         </Space>
                       </div>
                     </div>
@@ -2078,7 +2119,6 @@ const OhMyPiPage: React.FC = () => {
         >
           <Form form={providerModalForm} layout="vertical" className={styles.providerForm}>
             <div className={styles.modalSection}>
-              <Text strong>{t('ohMyPi.provider.basicSection')}</Text>
               <div className={styles.modalGrid}>
                 <Form.Item
                   label={t('ohMyPi.provider.providerKey')}
@@ -2282,6 +2322,16 @@ const OhMyPiPage: React.FC = () => {
             onClose={() => setAllApiHubImportModalOpen(false)}
             onImport={handleImportAllApiHubProviders}
             existingProviderIds={existingProviderIds}
+          />
+        )}
+
+        {ccSwitchAvailable && (
+          <ImportFromCcSwitchModal
+            open={ccSwitchImportModalOpen}
+            appType="claude"
+            existingProviderIds={existingProviderIds}
+            onClose={() => setCcSwitchImportModalOpen(false)}
+            onImport={handleImportFromCcSwitch}
           />
         )}
 

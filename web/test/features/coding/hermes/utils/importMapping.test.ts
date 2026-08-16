@@ -36,6 +36,7 @@ test('extractHermesProviderFromCcSwitch maps env to provider fields', () => {
     base_url: 'https://api.deepseek.com',
     api_key: 'sk-test',
     models: [],
+    display_name: 'DeepSeek',
   });
 });
 

@@ -68,6 +68,10 @@ export interface ModelFormValues {
   inputTypes?: string;
   reasoning?: boolean;
   thinkingLevelMap?: string;
+  /** Single-value per-model thinking level (Hermes agent.reasoning_overrides). */
+  thinkingLevel?: string;
+  /** Unknown top-level model fields preserved verbatim (OpenClaw-style extra params). */
+  extraParams?: Record<string, unknown>;
   /** OMP model `thinking` structure (efforts / defaultLevel) as JSON string */
   thinking?: string;
   compat?: string;
@@ -107,12 +111,18 @@ interface ModelFormModalProps {
   showReasoning?: boolean;
   /** Whether to show Pi thinking level map JSON */
   showThinkingLevelMap?: boolean;
+  /** Whether to show a single-value per-model thinking level Select (Hermes). */
+  showThinkingLevel?: boolean;
+  /** Options for the single-value thinking level Select. */
+  thinkingLevelOptions?: Array<{ value: string; label: string }>;
   /** Whether to show the OMP model `thinking` structure JSON (efforts/defaultLevel) */
   showOmpThinking?: boolean;
   /** Whether to show Pi model compatibility JSON */
   showCompat?: boolean;
   /** Whether to show model cost fields */
   showCost?: boolean;
+  /** Whether to show the extra-params JSON editor (OpenClaw-style). */
+  showExtraParams?: boolean;
   /** Whether limit fields are required (settings page: true, OpenCode: false) */
   limitRequired?: boolean;
   /** Whether context and output limits must both be filled or both be empty */
@@ -151,9 +161,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   apiOptions = [],
   showReasoning = false,
   showThinkingLevelMap = false,
+  showThinkingLevel = false,
+  thinkingLevelOptions = [],
   showOmpThinking = false,
   showCompat = false,
   showCost = false,
+  showExtraParams = false,
   limitRequired = true,
   requireCompleteLimitPair = false,
   nameRequired = true,
@@ -178,6 +191,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [ompThinkingValid, setOmpThinkingValid] = React.useState(true);
   const [jsonCompat, setJsonCompat] = React.useState<unknown>({});
   const [compatValid, setCompatValid] = React.useState(true);
+  const [extraParamsValue, setExtraParamsValue] = React.useState<unknown>(undefined);
+  const [extraParamsValid, setExtraParamsValid] = React.useState(true);
   const [inputModalities, setInputModalities] = React.useState<string[]>([]);
   const [outputModalities, setOutputModalities] = React.useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
@@ -309,6 +324,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     const hasCompat = showCompat &&
       typeof jsonCompat === 'object' && jsonCompat !== null &&
       Object.keys(jsonCompat as object).length > 0;
+    const hasExtraParams = showExtraParams &&
+      typeof extraParamsValue === 'object' && extraParamsValue !== null &&
+      Object.keys(extraParamsValue as object).length > 0;
     const hasApi = showApi && typeof apiValue === 'string' && apiValue.trim() !== '';
     const hasCost = showCost && [
       costInputValue,
@@ -316,13 +334,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       costCacheReadValue,
       costCacheWriteValue,
     ].some((value) => typeof value === 'number');
-    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasOmpThinking || hasCompat || hasApi || hasCost;
+    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasOmpThinking || hasCompat || hasExtraParams || hasApi || hasCost;
   }, [
     jsonOptions,
     jsonVariants,
     jsonThinkingLevelMap,
     jsonOmpThinking,
     jsonCompat,
+    extraParamsValue,
     apiValue,
     costInputValue,
     costOutputValue,
@@ -347,6 +366,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           api: initialValues.api,
           contextLimit: initialValues.contextLimit,
           outputLimit: initialValues.outputLimit,
+          thinkingLevel: initialValues.thinkingLevel,
           costInput: initialValues.costInput,
           costOutput: initialValues.costOutput,
           costCacheRead: initialValues.costCacheRead,
@@ -355,6 +375,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         
         let shouldExpand = false;
         if (typeof initialValues.api === 'string' && initialValues.api.trim() !== '') {
+          shouldExpand = true;
+        }
+        if (typeof initialValues.thinkingLevel === 'string' && initialValues.thinkingLevel.trim() !== '') {
           shouldExpand = true;
         }
         if ([
@@ -457,7 +480,20 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           setJsonCompat({});
           setCompatValid(true);
         }
-        
+
+        // Extra params (object, not a JSON string — OpenClaw-style unknown-field passthrough)
+        if (showExtraParams) {
+          const extra = initialValues.extraParams;
+          if (extra && typeof extra === 'object' && Object.keys(extra).length > 0) {
+            setExtraParamsValue(extra);
+            setExtraParamsValid(true);
+            shouldExpand = true;
+          } else {
+            setExtraParamsValue(undefined);
+            setExtraParamsValid(true);
+          }
+        }
+
         // Parse modalities JSON
         if (initialValues.modalities) {
           try {
@@ -513,6 +549,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setThinkingLevelMapValid(true);
         setJsonCompat({});
         setCompatValid(true);
+        setExtraParamsValue(undefined);
+        setExtraParamsValid(true);
         setInputModalities([]);
         setOutputModalities([]);
         setAdvancedExpanded(true);
@@ -529,6 +567,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       setJsonOptions(value);
     }
     setJsonValid(isValid);
+  };
+
+  const handleExtraParamsChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setExtraParamsValue(value);
+    }
+    setExtraParamsValid(isValid);
   };
 
   const handleVariantsChange = (value: unknown, isValid: boolean) => {
@@ -589,7 +634,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         message.error(t(getKey('invalidCompat')));
         return;
       }
-      
+
+      if (showExtraParams && !extraParamsValid) {
+        message.error(t(getKey('invalidExtraParams')));
+        return;
+      }
+
       // Validate modalities: either both selected or both empty
       if (showModalities) {
         const hasInput = inputModalities.length > 0;
@@ -638,12 +688,22 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         result.thinkingLevelMap = JSON.stringify(jsonThinkingLevelMap);
       }
 
+      if (showThinkingLevel) {
+        result.thinkingLevel = values.thinkingLevel;
+      }
+
       if (showOmpThinking) {
         result.thinking = JSON.stringify(jsonOmpThinking);
       }
 
       if (showCompat) {
         result.compat = JSON.stringify(jsonCompat);
+      }
+
+      if (showExtraParams && extraParamsValid
+        && typeof extraParamsValue === 'object' && extraParamsValue !== null
+        && Object.keys(extraParamsValue as object).length > 0) {
+        result.extraParams = extraParamsValue as Record<string, unknown>;
       }
 
       if (showModalities && inputModalities.length > 0 && outputModalities.length > 0) {
@@ -906,7 +966,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           </Form.Item>
         )}
 
-        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showOmpThinking || showCompat || showApi || showCost) && (
+        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showThinkingLevel || showOmpThinking || showCompat || showExtraParams || showApi || showCost) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -995,6 +1055,22 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                   </Form.Item>
                 )}
 
+                {showThinkingLevel && (
+                  <Form.Item
+                    label={t(getKey('thinkingLevel'))}
+                    name="thinkingLevel"
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('thinkingLevelHint'))}</Text>}
+                  >
+                    <Select
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder={t(getKey('thinkingLevelPlaceholder'))}
+                      options={thinkingLevelOptions}
+                    />
+                  </Form.Item>
+                )}
+
                 {showThinkingLevelMap && (
                   <Form.Item
                     label={t(getKey('thinkingLevelMap'))}
@@ -1051,6 +1127,27 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                       placeholder={`{
     "supportsDeveloperRole": false,
     "supportsReasoningEffort": false
+}`}
+                    />
+                  </Form.Item>
+                )}
+
+                {showExtraParams && (
+                  <Form.Item
+                    label={t(getKey('extraParams'))}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('extraParamsHint'))}</Text>}
+                  >
+                    <JsonEditor
+                      value={typeof extraParamsValue === 'object' && extraParamsValue !== null && Object.keys(extraParamsValue as object).length === 0 ? undefined : extraParamsValue}
+                      onChange={handleExtraParamsChange}
+                      mode="text"
+                      height={150}
+                      minHeight={100}
+                      maxHeight={300}
+                      resizable
+                      placeholder={`{
+    "input": ["text", "image"],
+    "compat": { "streaming": true }
 }`}
                     />
                   </Form.Item>

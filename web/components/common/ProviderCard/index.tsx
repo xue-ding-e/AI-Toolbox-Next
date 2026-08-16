@@ -49,6 +49,8 @@ interface ProviderCardProps {
   onDelete?: () => void;
   /** Whether the built-in delete Popconfirm should wrap the delete button. */
   deleteConfirm?: boolean;
+  /** When set, the delete button stays rendered but disabled, with this tooltip on hover (e.g. it is the default provider). */
+  deleteDisabledReason?: string;
   /** Extra action buttons (e.g., "Save to Settings" button for OpenCode) */
   extraActions?: React.ReactNode;
 
@@ -97,6 +99,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onCopy,
   onDelete,
   deleteConfirm = true,
+  deleteDisabledReason,
   extraActions,
   onAddModel,
   onEditModel,
@@ -410,7 +413,13 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                     onClick={onCopy}
                   />
                 )}
-                {onDelete && (deleteConfirm ? (
+                {onDelete && deleteDisabledReason ? (
+                  <Tooltip title={deleteDisabledReason}>
+                    <span>
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled />
+                    </span>
+                  </Tooltip>
+                ) : onDelete && (deleteConfirm ? (
                   <Popconfirm
                     title={t(`${i18nPrefix}.provider.deleteProvider`)}
                     description={t(`${i18nPrefix}.provider.confirmDelete`, { name: provider.name })}

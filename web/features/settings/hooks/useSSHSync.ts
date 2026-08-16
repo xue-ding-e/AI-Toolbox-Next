@@ -16,17 +16,24 @@ import {
 } from '@/services/sshSyncApi';
 import { useSettingsStore } from '@/stores';
 
-// Map visibleTabs keys to sync module keys
+// Map visibleTabs keys to sync module keys. Every coding tab must be mapped
+// here, otherwise an unmapped tab's module is dropped by the .filter(Boolean)
+// below and gets force-pushed into skipModules, silently skipping its files
+// during SSH sync. Keep in sync with useWSLSync.ts / *SyncModal.tsx.
 const TAB_TO_MODULE: Record<string, string> = {
   opencode: 'opencode',
   claudecode: 'claude',
+  claudedesktop: 'claude_desktop',
   codex: 'codex',
   grok: 'grok',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
+  oh_my_pi: 'oh_my_pi',
+  hermes: 'hermes',
+  dsh: 'dsh',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 export function useSSHSync() {
   const [config, setConfig] = useState<SSHSyncConfig | null>(null);

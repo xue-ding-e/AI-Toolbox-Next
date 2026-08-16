@@ -1374,6 +1374,7 @@
       "idPlaceholder": "唯一标识符，如 my-provider",
       "idExists": "该供应商 ID 已存在",
       "completeUrlAndKey": "请先完善 Base URL 和 API Key",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "name": "显示名称",
       "namePlaceholder": "供应商显示名称",
       "npm": "NPM 包",
@@ -1481,6 +1482,11 @@
       "inputTypesHint": "选择模型支持的输入类型。",
       "thinkingLevelMap": "思考等级映射",
       "thinkingLevelMapHint": "不是默认思考等级；这是模型级支持/映射表。",
+      "thinkingLevel": "思考等级",
+      "thinkingLevelHint": "覆盖默认思考等级；留空则继承全局默认设置。",
+      "thinkingLevelPlaceholder": "留空则继承全局默认",
+      "extraParams": "额外参数",
+      "extraParamsHint": "模型条目的其它字段，原样透传写入模型配置；留空则不写入。",
       "cost": "成本",
       "costHint": "单位为每百万 token 的费用。",
       "costInput": "输入",
@@ -2911,7 +2917,7 @@
       "importFromAllApiHub": "从 All API Hub 导入",
       "importSuccess": "成功从 OpenCode 导入 {{count}} 个供应商",
       "importAllApiHubSuccess": "成功从 All API Hub 导入 {{count}} 个供应商",
-      "batchDelete": "批量删除模型",
+      "batchDelete": "批量删除",
       "cancelBatchDelete": "取消批量删除",
       "deleteSelected": "删除所选 {{count}}",
       "batchDeleteConfirmTitle": "批量删除模型",
@@ -2945,6 +2951,7 @@
       "siteType": "站点类型",
       "fetchModels": "获取模型",
       "completeUrlAndKey": "请先填写 Base URL 和 API Key",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "fetchModelsApplySuccess": "模型列表已更新：新增 {{addCount}} 个，清理 {{removeCount}} 个",
       "extraParams": "额外参数",
       "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。",
@@ -2984,6 +2991,9 @@
       "noModels": "暂无可用模型，请先添加供应商",
       "fallbacks": "回退模型",
       "fallbacksPlaceholder": "选择回退模型",
+      "thinkingDefault": "默认思考等级",
+      "thinkingDefaultHint": "写入 agents.defaults.thinkingDefault；留空则由运行时按模型自动判定（通常为 medium 或 adaptive）。",
+      "thinkingDefaultPlaceholder": "默认思考等级",
       "moreParams": "更多参数",
       "moreParamsTitle": "Agent 参数",
       "legacyTimeoutHint": "`timeout` 已废弃，保存时将自动迁移为 `timeoutSeconds`。"
@@ -3702,6 +3712,7 @@
       "deleteProviderConfig": "删除渠道配置",
       "deleteConfirmTitle": "删除渠道条目",
       "deleteConfirmContent": "确定要删除 {{providerKey}} 的{{scope}}吗？",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "deleteScope": {
         "credential": "认证",
         "provider_config": "渠道配置",
@@ -3839,6 +3850,11 @@
       "capabilities": "模型能力",
       "capabilitiesHint": "开启后表示该模型支持 Pi 的 extended thinking。",
       "reasoning": "支持思考",
+      "thinkingLevel": "思考等级",
+      "thinkingLevelHint": "覆盖默认思考等级（写入 agent.reasoning_overrides）；留空则继承全局默认设置。",
+      "thinkingLevelPlaceholder": "留空则继承全局默认",
+      "extraParams": "额外参数",
+      "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。",
       "thinkingLevelMap": "思考等级映射",
       "thinkingLevelMapHint": "不是默认思考等级；这是模型级支持/映射表。key 为 off/minimal/low/medium/high/xhigh/max，字符串会发送给上游，null 表示该等级不支持并隐藏；xhigh/max 必须显式映射才算支持。",
       "invalidThinkingLevelMap": "思考等级映射 JSON 格式不正确",
@@ -3853,7 +3869,8 @@
       "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
       "compat": "兼容性 compat",
       "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
-      "invalidCompat": "兼容性 compat JSON 格式不正确"
+      "invalidCompat": "兼容性 compat JSON 格式不正确",
+      "invalidExtraParams": "额外参数 JSON 格式不正确"
     },
     "connectivity": {
       "button": "模型测试"
@@ -4436,6 +4453,7 @@
       "deleteProviderConfig": "删除渠道配置",
       "deleteConfirmTitle": "删除渠道条目",
       "deleteConfirmContent": "确定要删除 {{providerKey}} 的{{scope}}吗？",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "deleteScope": {
         "credential": "认证",
         "provider_config": "渠道配置",
@@ -4714,6 +4732,7 @@
       "selectAtLeastOneSection": "请至少填写一个配置区块",
       "deleteConfirmTitle": "删除供应商",
       "deleteConfirmContent": "确定删除供应商 {{providerKey}}（{{scope}}）吗？",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "deleteScope": {
         "credential": "凭证",
         "provider": "供应商配置",
@@ -4753,7 +4772,7 @@
       "contextLimitPlaceholder": "如 128000（可选）",
       "outputLimit": "输出限制",
       "outputLimitPlaceholder": "如 8000（可选）",
-      "batchDelete": "批量删除模型",
+      "batchDelete": "批量删除",
       "cancelBatchDelete": "退出批量删除",
       "deleteSelected": "删除所选 {{count}}",
       "batchDeleteConfirmTitle": "确认批量删除模型",
@@ -4773,6 +4792,9 @@
       "compat": "兼容性 compat",
       "compatHint": "模型级兼容性覆盖，会与供应商 compat 合并。留空则删除模型级 compat。",
       "invalidCompat": "兼容性配置 JSON 格式不正确",
+      "extraParams": "额外参数",
+      "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。",
+      "invalidExtraParams": "额外参数 JSON 格式不正确",
       "api": "API 类型",
       "apiPlaceholder": "留空则继承供应商",
       "apiHint": "仅在该模型需要覆盖供应商 API 类型时填写。",
@@ -4902,8 +4924,11 @@
       "addSupplier": "添加渠道",
       "addTitle": "添加渠道",
       "editTitle": "编辑渠道",
+      "addSupplierTitle": "添加供应商",
+      "editSupplierTitle": "编辑供应商 {{name}}",
       "deleteConfirmTitle": "删除渠道？",
       "deleteConfirmContent": "从 config.yaml 的 custom_providers 中移除 \"{{name}}\"？",
+      "deleteDisabledDefault": "该渠道已设为默认，不可删除",
       "readOnly": "只读",
       "readOnlyRemains": "{{name}} 是 Hermes 内置的只读渠道（providers: 字典），无法在此删除。如需移除，请编辑 config.yaml 的 providers: 段或使用 Hermes UI。",
       "advancedHint": "完整的渠道配置，将写入 config.yaml（名称取自渠道名）。",
@@ -4911,9 +4936,11 @@
       "apiKey": "API 密钥",
       "apiMode": "API 模式",
       "apiModePlaceholder": "anthropic / openai / ...",
-      "providerKey": "渠道名称",
-      "providerKeyPlaceholder": "例如 anthropic",
-      "providerKeyRequired": "渠道名称必填。",
+      "providerKey": "供应商 Key",
+      "providerKeyPlaceholder": "如 anthropic",
+      "providerKeyRequired": "请输入供应商 Key",
+      "displayName": "显示名称",
+      "displayNamePlaceholder": "留空则使用渠道名",
       "configJson": "渠道配置（JSON）",
       "basicSection": "基础"
     },
@@ -4922,7 +4949,9 @@
       "defaultProvider": "默认渠道",
       "defaultProviderPlaceholder": "选择渠道",
       "defaultModel": "默认模型",
-      "defaultModelPlaceholder": "选择模型"
+      "defaultModelPlaceholder": "选择模型",
+      "reasoningEffort": "默认思考等级",
+      "reasoningEffortPlaceholder": "默认 medium（未设置）"
     },
     "otherConfig": {
       "title": "其他配置",
@@ -4959,7 +4988,7 @@
       "idRequired": "模型 ID 必填。",
       "idExists": "模型 ID 已存在。",
       "setAsDefaultSuccess": "已设为默认。",
-      "batchDelete": "批量删除模型",
+      "batchDelete": "批量删除",
       "cancelBatchDelete": "退出批量删除",
       "deleteSelected": "删除所选 {{count}}",
       "batchDeleteConfirmTitle": "批量删除模型",
@@ -4995,6 +5024,9 @@
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
       "confirmDelete": "确定要删除配置「{{name}}」吗？"
+    },
+    "providers": {
+      "importAllApiHubNonAnthropicProtocolDesc": "检测到所选供应商不是 Anthropic 官方端点，仍会以 Anthropic Messages 协议格式导入。Google / Gemini、OpenAI 等端点用 Anthropic 格式请求通常无法成功。建议仅导入 Anthropic 兼容端点，或导入后立即进入编辑页核对协议。"
     }
   }
 }

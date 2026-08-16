@@ -66,11 +66,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
             "opencode_use_legacy_oh_my_config",
             false,
         ),
-        opencode_omo_upgrade_confirmed: get_bool(
-            &value,
-            "opencode_omo_upgrade_confirmed",
-            false,
-        ),
+        opencode_omo_upgrade_confirmed: get_bool(&value, "opencode_omo_upgrade_confirmed", false),
         codex_preserve_official_auth_on_switch: get_bool(
             &value,
             "codex_preserve_official_auth_on_switch",
@@ -233,12 +229,13 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "pi",
         "oh_my_pi",
         "hermes",
+        "dsh",
         "gateway",
         "image",
         "ssh",
         "wsl",
     ];
-    const CURRENT_DEFAULT_TAB_SET: &[&str] = &["claudedesktop", "hermes"];
+    const CURRENT_DEFAULT_TAB_SET: &[&str] = &["claudedesktop", "hermes", "dsh"];
 
     if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
@@ -253,7 +250,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
             .collect();
     }
 
-    // Additive migration for the new Claude Desktop / Hermes tabs: keep any custom
+    // Additive migration for the new Claude Desktop / Hermes / DSH tabs: keep any custom
     // order the user already has, but insert the missing default tabs at their
     // default position so existing users still see them.
     let mut result = tabs.clone();
@@ -348,29 +345,30 @@ fn get_s3(value: &Value) -> S3Config {
 }
 
 fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String, bool> {
+    // Start from the default map so every known page key is present, then overlay
+    // whatever the DB actually stored. We intentionally do NOT filter by a
+    // hardcoded page-key allowlist: doing so silently dropped newer pages
+    // (claudedesktop/hermes/dsh/oh_my_pi) on every read, which made the
+    // "hide sidebar" toggle reset after restart. Any boolean value stored in
+    // the map is authoritative regardless of whether the key is in the
+    // default set, so future pages persist without backend edits.
     let mut sidebar_hidden = default_sidebar_hidden_by_page();
 
     if let Some(sidebar_value) = value
         .get("sidebar_hidden_by_page")
         .and_then(|v| v.as_object())
     {
-        for page_key in [
-            "opencode",
-            "claudecode",
-            "codex",
-            "grok",
-            "openclaw",
-            "geminicli",
-            "pi",
-        ] {
-            let Some(page_value) = sidebar_value.get(page_key).and_then(|v| v.as_bool()) else {
-                continue;
-            };
-            sidebar_hidden.insert(page_key.to_string(), page_value);
+        for (page_key, page_value) in sidebar_value {
+            if let Some(hidden) = page_value.as_bool() {
+                sidebar_hidden.insert(page_key.clone(), hidden);
+            }
         }
         return sidebar_hidden;
     }
 
+    // Legacy shape: sidebar_visibility_by_page accepted either a bare boolean
+    // or `{ "hidden": bool }`. Preserve that compatibility while still
+    // iterating every key instead of an allowlist.
     let Some(legacy_sidebar_value) = value
         .get("sidebar_visibility_by_page")
         .and_then(|v| v.as_object())
@@ -378,19 +376,7 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
         return sidebar_hidden;
     };
 
-    for page_key in [
-        "opencode",
-        "claudecode",
-        "codex",
-        "grok",
-        "openclaw",
-        "geminicli",
-        "pi",
-    ] {
-        let Some(page_value) = legacy_sidebar_value.get(page_key) else {
-            continue;
-        };
-
+    for (page_key, page_value) in legacy_sidebar_value {
         let hidden = if let Some(boolean_value) = page_value.as_bool() {
             boolean_value
         } else {
@@ -400,7 +386,7 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
                 .unwrap_or(false)
         };
 
-        sidebar_hidden.insert(page_key.to_string(), hidden);
+        sidebar_hidden.insert(page_key.clone(), hidden);
     }
 
     sidebar_hidden
@@ -505,6 +491,7 @@ mod tests {
                 "pi",
                 "oh_my_pi",
                 "hermes",
+                "dsh",
                 "gateway",
                 "image",
                 "ssh",
@@ -541,6 +528,7 @@ mod tests {
                 "pi",
                 "oh_my_pi",
                 "hermes",
+                "dsh",
                 "gateway",
                 "image",
                 "ssh",
@@ -577,6 +565,7 @@ mod tests {
                 "pi",
                 "oh_my_pi",
                 "hermes",
+                "dsh",
                 "gateway",
                 "image",
                 "ssh",
@@ -608,6 +597,7 @@ mod tests {
                 "claudecode",
                 "openclaw",
                 "hermes",
+                "dsh",
                 "image",
             ]
         );
@@ -643,6 +633,7 @@ mod tests {
                 "pi",
                 "oh_my_pi",
                 "hermes",
+                "dsh",
                 "gateway",
                 "image",
                 "ssh",
@@ -682,6 +673,7 @@ mod tests {
                 "pi",
                 "oh_my_pi",
                 "hermes",
+                "dsh",
                 "gateway",
                 "image",
                 "ssh",
@@ -834,5 +826,106 @@ mod tests {
             settings.backup_file_filter_rules[0].file_path,
             "~/.local/share/opencode/auth.json"
         );
+    }
+
+    #[test]
+    fn sidebar_hidden_by_page_preserves_all_known_pages() {
+        // Regression: the reader used to only honor a 7-key allowlist, so
+        // claudedesktop/hermes/dsh were dropped and oh_my_pi was pinned to its
+        // default on every read. That made the "hide sidebar" toggle reset
+        // after restart. Every known page must round-trip its stored value.
+        let settings = from_db_value(json!({
+            "sidebar_hidden_by_page": {
+                "opencode": true,
+                "claudecode": false,
+                "claudedesktop": true,
+                "codex": false,
+                "grok": true,
+                "geminicli": false,
+                "openclaw": true,
+                "pi": false,
+                "oh_my_pi": true,
+                "hermes": true,
+                "dsh": true
+            }
+        }));
+
+        assert!(settings.sidebar_hidden_by_page.get("opencode").copied() == Some(true));
+        assert!(settings.sidebar_hidden_by_page.get("claudecode").copied() == Some(false));
+        assert!(
+            settings
+                .sidebar_hidden_by_page
+                .get("claudedesktop")
+                .copied()
+                == Some(true)
+        );
+        assert!(settings.sidebar_hidden_by_page.get("codex").copied() == Some(false));
+        assert!(settings.sidebar_hidden_by_page.get("grok").copied() == Some(true));
+        assert!(settings.sidebar_hidden_by_page.get("geminicli").copied() == Some(false));
+        assert!(settings.sidebar_hidden_by_page.get("openclaw").copied() == Some(true));
+        assert!(settings.sidebar_hidden_by_page.get("pi").copied() == Some(false));
+        assert!(settings.sidebar_hidden_by_page.get("oh_my_pi").copied() == Some(true));
+        assert!(settings.sidebar_hidden_by_page.get("hermes").copied() == Some(true));
+        assert!(settings.sidebar_hidden_by_page.get("dsh").copied() == Some(true));
+    }
+
+    #[test]
+    fn sidebar_hidden_by_page_unknown_key_is_preserved() {
+        // A page key the backend default does not know about must still
+        // survive the read, so forward-compatibility (a frontend adding a new
+        // tab before the backend default list catches up) holds.
+        let settings = from_db_value(json!({
+            "sidebar_hidden_by_page": {
+                "future_tool": true
+            }
+        }));
+
+        assert!(settings.sidebar_hidden_by_page.get("future_tool").copied() == Some(true));
+    }
+
+    #[test]
+    fn sidebar_hidden_by_page_legacy_visibility_shape_is_migrated() {
+        // Legacy sidebar_visibility_by_page values may be bare booleans or
+        // { "hidden": bool } objects. Both must still be honored for every
+        // key present, not just an allowlist subset.
+        let settings = from_db_value(json!({
+            "sidebar_visibility_by_page": {
+                "claudedesktop": { "hidden": true },
+                "dsh": true
+            }
+        }));
+
+        assert!(
+            settings
+                .sidebar_hidden_by_page
+                .get("claudedesktop")
+                .copied()
+                == Some(true)
+        );
+        assert!(settings.sidebar_hidden_by_page.get("dsh").copied() == Some(true));
+    }
+
+    #[test]
+    fn sidebar_hidden_by_page_defaults_to_all_visible() {
+        let settings = from_db_value(json!({}));
+
+        for page_key in [
+            "opencode",
+            "claudecode",
+            "claudedesktop",
+            "codex",
+            "grok",
+            "geminicli",
+            "openclaw",
+            "pi",
+            "oh_my_pi",
+            "hermes",
+            "dsh",
+        ] {
+            assert!(
+                settings.sidebar_hidden_by_page.get(page_key).copied() == Some(false),
+                "page {page_key} should default to visible",
+            );
+        }
     }
 }

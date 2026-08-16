@@ -5,9 +5,11 @@ import type { PresetModel } from '@/constants/presetModels';
  * Build a Hermes model record from a fetched upstream model.
  *
  * 拉取到的模型只有 id/name;若能在预设模型库匹配到(大小写不敏感),则用预设参数
- * 补齐 `context_length` / `max_tokens` / `reasoning`,以及由 preset `variants`
- * 推导的思考等级 `reasoningEfforts`(与 DSH 一致:剔除 null/空层级)。
+ * 补齐 `context_length` / `max_tokens` / `reasoning`。
  * 与 OpenClaw 一致:只补参数,**不改写**上游模型 id 的大小写。
+ *
+ * 注:Hermes 的 per-model 思考等级在顶层 `agent.reasoning_overrides`,不在模型条目
+ * 内(拉取阶段无 provider 前缀也无从计算),因此这里不写任何 thinking 字段。
  */
 export const buildFetchedHermesModel = (
   fetchedModel: FetchedModel,
@@ -26,19 +28,6 @@ export const buildFetchedHermesModel = (
     }
     if (matchedPresetModel.reasoning === true) {
       record.reasoning = true;
-    }
-    // Preset thinking levels (variants -> reasoningEfforts). Only levels that
-    // carry a real `thinkingLevel` string are persisted (equivalent to DSH's
-    // drop-null behavior). Kept dependency-free so it runs under node:test.
-    const reasoningEfforts: Record<string, string> = {};
-    for (const [level, variant] of Object.entries(matchedPresetModel.variants ?? {})) {
-      const value = typeof variant?.thinkingLevel === 'string' ? variant.thinkingLevel : undefined;
-      if (value) {
-        reasoningEfforts[level] = value;
-      }
-    }
-    if (Object.keys(reasoningEfforts).length > 0) {
-      record.reasoningEfforts = reasoningEfforts;
     }
   }
   return record;

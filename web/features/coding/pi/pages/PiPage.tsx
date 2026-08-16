@@ -120,6 +120,9 @@ import type {
 import type { OpenCodeModel, OpenCodeProvider } from '@/types/opencode';
 
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import { extractPiProviderFromCcSwitch } from '../utils/importMapping';
 import PiExtensionsSection from '../components/PiExtensionsSection';
 import styles from './PiPage.module.less';
 
@@ -564,6 +567,8 @@ const PiPage: React.FC = () => {
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [connectivityProviderId, setConnectivityProviderId] = React.useState<string | null>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
@@ -648,6 +653,17 @@ const PiPage: React.FC = () => {
     };
 
     checkAllApiHubAvailability();
+
+    const checkCcSwitchAvailability = async () => {
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch (error) {
+        console.error('Failed to check CC Switch availability:', error);
+        setCcSwitchAvailable(false);
+      }
+    };
+
+    checkCcSwitchAvailability();
   }, []);
 
   React.useEffect(() => {
@@ -1449,6 +1465,17 @@ const PiPage: React.FC = () => {
     }
   };
 
+  const handleImportFromCcSwitch = async (imported: CcSwitchProviderCandidate[]) => {
+    const importedCount = await saveImportedPiProviders(
+      imported
+        .map((candidate) => extractPiProviderFromCcSwitch(candidate))
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+    );
+    if (importedCount > 0) {
+      setCcSwitchImportModalOpen(false);
+    }
+  };
+
   const handleOpenConnectivityTest = (providerKey: string) => {
     setConnectivityProviderId(providerKey);
     setConnectivityModalOpen(true);
@@ -1692,6 +1719,10 @@ const PiPage: React.FC = () => {
     const hasCredential = provider.sources.includes('auth_json');
     const hasProviderConfig = provider.sources.includes('models_json');
     const providerConfig = provider.modelsProvider ?? {};
+    const canDeleteProvider = hasCredential || hasProviderConfig;
+    const deleteDisabledReason = canDeleteProvider && provider.isDefault
+      ? t('pi.provider.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+      : undefined;
     const isBatchDeleteMode = batchDeleteProviderId === provider.providerKey;
     const selectedModelIds = selectedModelIdsByProvider[provider.providerKey] ?? [];
     const selectedModelCount = selectedModelIds.length;
@@ -1725,8 +1756,9 @@ const PiPage: React.FC = () => {
         models={modelDisplayList}
         onEdit={() => openProviderModal(provider)}
         onCopy={() => openProviderModal(provider, { copy: true })}
-        onDelete={(hasCredential || hasProviderConfig) ? () => handleDeleteSupplier(provider) : undefined}
+        onDelete={canDeleteProvider ? () => handleDeleteSupplier(provider) : undefined}
         deleteConfirm={false}
+        deleteDisabledReason={deleteDisabledReason}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         extraActions={
           <Space size={0}>
@@ -2013,6 +2045,15 @@ const PiPage: React.FC = () => {
                               {t('pi.provider.importAllApiHub')}
                             </Button>
                           )}
+                          {ccSwitchAvailable && (
+                            <Button
+                              type="dashed"
+                              icon={<ImportOutlined />}
+                              onClick={() => setCcSwitchImportModalOpen(true)}
+                            >
+                              {t('common.ccSwitch.importFromCcSwitch')}
+                            </Button>
+                          )}
                         </Space>
                       </div>
                     </div>
@@ -2126,7 +2167,6 @@ const PiPage: React.FC = () => {
         >
           <Form form={providerModalForm} layout="vertical" className={styles.providerForm}>
             <div className={styles.modalSection}>
-              <Text strong>{t('pi.provider.basicSection')}</Text>
               <div className={styles.modalGrid}>
                 <Form.Item
                   label={t('pi.provider.providerKey')}
@@ -2380,6 +2420,16 @@ const PiPage: React.FC = () => {
             onClose={() => setAllApiHubImportModalOpen(false)}
             onImport={handleImportAllApiHubProviders}
             existingProviderIds={existingProviderIds}
+          />
+        )}
+
+        {ccSwitchAvailable && (
+          <ImportFromCcSwitchModal
+            open={ccSwitchImportModalOpen}
+            appType="claude"
+            existingProviderIds={existingProviderIds}
+            onClose={() => setCcSwitchImportModalOpen(false)}
+            onImport={handleImportFromCcSwitch}
           />
         )}
 

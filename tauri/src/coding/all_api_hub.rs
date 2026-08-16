@@ -343,11 +343,26 @@ pub fn candidate_to_claude_desktop_settings(candidate: &AllApiHubProviderCandida
     Value::Object(serde_json::Map::from_iter([("env".to_string(), Value::Object(env))]))
 }
 
+/// 把 OpenClaw 协议值(如 `anthropic-messages`)映射为 Hermes `api_mode` 枚举值。
+/// 两个枚举空间不同:OpenClaw 用 `@ai-sdk/*` 的完整协议名,Hermes 用简短模式名。
+fn hermes_api_mode_from_protocol(api_protocol: &str) -> String {
+    match api_protocol {
+        "anthropic-messages" => "anthropic",
+        "google-generative-ai" => "google",
+        "openai-completions" => "openai-completions",
+        other => other,
+    }
+    .to_string()
+}
+
 /// 把 All API Hub 候选转成 Hermes `custom_providers` 条目(provider dict)。
 /// 注意用 `api_mode`(Hermes 写入器会丢弃字面量 `api` 字段)。
 pub fn candidate_to_hermes_provider(candidate: &AllApiHubProviderCandidate) -> Value {
     let mut config = serde_json::Map::new();
-    config.insert("api_mode".to_string(), Value::String(candidate.api_protocol.clone()));
+    config.insert(
+        "api_mode".to_string(),
+        Value::String(hermes_api_mode_from_protocol(&candidate.api_protocol)),
+    );
     if let Some(url) = candidate
         .base_url
         .as_deref()
@@ -359,6 +374,10 @@ pub fn candidate_to_hermes_provider(candidate: &AllApiHubProviderCandidate) -> V
         config.insert("api_key".to_string(), Value::String(key.to_string()));
     }
     config.insert("models".to_string(), Value::Array(Vec::new()));
+    // Friendly display name decoupled from the list identity key (`name`, which
+    // the Hermes writer forces to the provider key). Falls back to site name /
+    // host so cards show "DeepSeek" instead of a slug like "deepseek-acct".
+    config.insert("display_name".to_string(), Value::String(imported_provider_name(candidate)));
     Value::Object(config)
 }
 
@@ -1737,10 +1756,19 @@ mod converter_tests {
     #[test]
     fn hermes_provider_maps_fields() {
         let provider = candidate_to_hermes_provider(&candidate());
-        assert_eq!(provider["api_mode"], "anthropic-messages");
+        // OpenClaw `anthropic-messages` 必须映射为 Hermes `api_mode = "anthropic"`。
+        assert_eq!(provider["api_mode"], "anthropic");
         assert!(provider["base_url"].as_str().unwrap().contains("api.deepseek.com"));
         assert_eq!(provider["api_key"], "sk-test");
         assert!(provider["models"].is_array());
+    }
+
+    #[test]
+    fn hermes_provider_maps_google_protocol() {
+        let mut google_candidate = candidate();
+        google_candidate.api_protocol = "google-generative-ai".to_string();
+        let provider = candidate_to_hermes_provider(&google_candidate);
+        assert_eq!(provider["api_mode"], "google");
     }
 
     #[test]

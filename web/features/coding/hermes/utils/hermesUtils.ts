@@ -91,38 +91,29 @@ export const hermesApiModeToSdkName = (apiMode?: string): string => {
   return '@ai-sdk/openai-compatible';
 };
 
-/** 把模型的 `reasoningEfforts`(思考等级映射)转成 JsonEditor 可编辑的 JSON 字符串。 */
-export const stringifyReasoningEfforts = (value: unknown): string | undefined => {
-  const record = asRecord(value);
-  if (Object.keys(record).length === 0) {
-    return undefined;
-  }
-  return JSON.stringify(record, null, 2);
-};
+/** Hermes 官方思考等级取值(agent.reasoning_effort / reasoning_overrides)。 */
+export const HERMES_REASONING_LEVELS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+] as const;
 
-/**
- * 解析思考等级的 JsonEditor 值。仅保留"有非空字符串值"的条目(丢弃 null / 空值 /
- * 数字等),空映射或非法 JSON 返回 undefined(表示不写入字段)。
- */
-export const parseThinkingLevelEfforts = (json: string): Record<string, string> | undefined => {
-  const trimmed = (json || '').trim();
-  if (!trimmed) {
+export type HermesReasoningLevel = (typeof HERMES_REASONING_LEVELS)[number];
+
+/** 规范化思考等级输入;非字符串 / 空白 / 不在枚举内返回 undefined。 */
+export const parseReasoningEffort = (value: unknown): HermesReasoningLevel | undefined => {
+  if (typeof value !== 'string') {
     return undefined;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-  const record = asRecord(parsed);
-  const entries = Object.entries(record)
-    .filter(([, value]) => typeof value === 'string' && value.trim() !== '')
-    .map(([key, value]) => [key, (value as string).trim()] as const);
-  if (entries.length === 0) {
-    return undefined;
-  }
-  return Object.fromEntries(entries);
+  const trimmed = value.trim();
+  return (HERMES_REASONING_LEVELS as readonly string[]).includes(trimmed)
+    ? (trimmed as HermesReasoningLevel)
+    : undefined;
 };
 
 /** Build an OpenCodeProvider-ish view used by the shared connectivity test. */

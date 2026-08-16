@@ -49,17 +49,24 @@ let statusLoadPromise: Promise<void> | null = null;
 let configRequestSeq = 0;
 let statusRequestSeq = 0;
 
-// Map visibleTabs keys to sync module keys
+// Map visibleTabs keys to sync module keys. Every coding tab must be mapped
+// here, otherwise an unmapped tab's module is dropped by the .filter(Boolean)
+// below and gets force-pushed into skipModules, silently skipping its files
+// during WSL sync. Keep in sync with useSSHSync.ts / *SyncModal.tsx.
 const TAB_TO_MODULE: Record<string, string> = {
   opencode: 'opencode',
   claudecode: 'claude',
+  claudedesktop: 'claude_desktop',
   codex: 'codex',
   grok: 'grok',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
+  oh_my_pi: 'oh_my_pi',
+  hermes: 'hermes',
+  dsh: 'dsh',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 const notify = <T,>(listeners: Set<(value: T) => void>, value: T) => {
   listeners.forEach((listener) => listener(value));

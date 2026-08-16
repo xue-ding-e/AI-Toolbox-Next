@@ -15,6 +15,13 @@ interface Props {
   onImport: (providers: AllApiHubProviderItem[]) => void;
   listProviders: () => Promise<AllApiHubProvidersResult>;
   resolveProviders: (providerIds: string[]) => Promise<AllApiHubProviderItem[]>;
+  /**
+   * 当目标工具会强行把所有协议转成 Anthropic Messages 格式(如 Claude Desktop)时启用。
+   * 此模式下对一切非 `anthropic-messages` 协议的供应商都弹警告(Google/Gemini、OpenAI 等用
+   * Anthropic 格式请求通常失败),而不仅是 `openai-completions`。默认 false 仅警告
+   * `openai-completions`(供 Hermes/DSH 这类按原协议正常导入的工具复用)。
+   */
+  warnOnNonAnthropicProtocol?: boolean;
 }
 
 /**
@@ -29,6 +36,7 @@ const ImportFromAllApiHubModalForTool: React.FC<Props> = ({
   onImport,
   listProviders,
   resolveProviders,
+  warnOnNonAnthropicProtocol = false,
 }) => {
   const { t } = useTranslation();
 
@@ -94,14 +102,28 @@ const ImportFromAllApiHubModalForTool: React.FC<Props> = ({
   const getConfirmSections = React.useCallback(
     (providers: AllApiHubProviderItem[]) => {
       const sections: { description: string; providerNames: string[] }[] = [];
-      const openaiProtocol = providers.filter(
-        (provider) => provider.apiProtocol === 'openai-completions'
-      );
-      if (openaiProtocol.length > 0) {
-        sections.push({
-          description: t('openclaw.providers.importAllApiHubProtocolDesc'),
-          providerNames: openaiProtocol.map((provider) => provider.name),
-        });
+      if (warnOnNonAnthropicProtocol) {
+        // Claude Desktop 等会把所有协议强转成 Anthropic Messages 格式:凡非
+        // `anthropic-messages` 的端点用 Anthropic 格式请求通常失败,需明确警告。
+        const nonAnthropic = providers.filter(
+          (provider) => provider.apiProtocol !== 'anthropic-messages'
+        );
+        if (nonAnthropic.length > 0) {
+          sections.push({
+            description: t('claudedesktop.providers.importAllApiHubNonAnthropicProtocolDesc'),
+            providerNames: nonAnthropic.map((provider) => provider.name),
+          });
+        }
+      } else {
+        const openaiProtocol = providers.filter(
+          (provider) => provider.apiProtocol === 'openai-completions'
+        );
+        if (openaiProtocol.length > 0) {
+          sections.push({
+            description: t('openclaw.providers.importAllApiHubProtocolDesc'),
+            providerNames: openaiProtocol.map((provider) => provider.name),
+          });
+        }
       }
       const noKey = providers.filter((provider) => !provider.hasApiKey);
       if (noKey.length > 0) {
@@ -112,7 +134,7 @@ const ImportFromAllApiHubModalForTool: React.FC<Props> = ({
       }
       return sections;
     },
-    [t]
+    [t, warnOnNonAnthropicProtocol]
   );
 
   return (

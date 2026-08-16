@@ -38,5 +38,8 @@ export const extractHermesProviderFromCcSwitch = (
   };
   if (baseUrl) provider.base_url = baseUrl;
   if (apiKey) provider.api_key = apiKey;
+  // 友好显示名(与身份 key 解耦):后端对 custom providers 仍把 `name` 写为 key,
+  // 这里另写 `display_name`,卡片/下拉/收藏列表据此显示渠道名而非 slug。
+  if (candidate.name) provider.display_name = candidate.name;
   return provider;
 };

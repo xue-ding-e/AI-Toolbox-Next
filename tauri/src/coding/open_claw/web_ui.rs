@@ -51,7 +51,14 @@ pub fn open_browser(port: u16, path: Option<&str>) -> Result<(), String> {
 }
 
 /// 在用户终端里非阻塞启动 `openclaw gateway`(OpenClaw 常驻服务)。
+///
+/// 启动前先用 `where`/`which` 验证 `openclaw` CLI 可解析;否则 `cmd /C start` 这类
+/// 分层派生无论子进程是否真正起来都会返回 Ok,前端会误显示"启动成功"toast。
 pub fn launch_gateway_in_terminal() -> Result<(), String> {
+    if !crate::coding::cli_resolver::cli_resolved_on_path("openclaw") {
+        return Err(crate::coding::cli_resolver::local_cli_missing_hint("openclaw"));
+    }
+
     #[cfg(target_os = "windows")]
     {
         launch_windows_gateway()

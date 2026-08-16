@@ -44,18 +44,22 @@ const MODULE_NAMES: Record<string, string> = {
   pi: 'Pi',
   oh_my_pi: 'omp',
   hermes: 'Hermes',
+  dsh: 'dsh',
 };
 
 // Module tag colors
 const MODULE_COLORS: Record<string, string> = {
   opencode: 'blue',
   claude: 'purple',
+  claude_desktop: 'geekblue',
   codex: 'orange',
   grok: 'gold',
   openclaw: 'green',
   geminicli: 'cyan',
   pi: 'magenta',
   oh_my_pi: 'magenta',
+  hermes: 'volcano',
+  dsh: 'red',
 };
 
 const AUTH_METHOD_TAG_COLORS: Record<SSHConnection['authMethod'], string> = {
@@ -75,19 +79,25 @@ const truncateTailPath = (path: string, maxLength = CURRENT_FILE_TAIL_MAX_LENGTH
   return `...${path.slice(-tailLength)}`;
 };
 
-// Map sync module keys to visibleTabs keys
+// Map sync module keys to visibleTabs keys. Every coding module must be mapped,
+// otherwise the visibleModuleKeys filter below hides that module's tab from the
+// modal (and an unmapped tab is force-skipped during sync). Keep in sync with
+// useSSHSync.ts / useWSLSync.ts / WSLSyncModal.tsx.
 const MODULE_TO_TAB: Record<string, string> = {
   opencode: 'opencode',
   claude: 'claudecode',
+  claude_desktop: 'claudedesktop',
   codex: 'codex',
   grok: 'grok',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
+  hermes: 'hermes',
+  dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 interface SSHSyncModalProps {
   open: boolean;

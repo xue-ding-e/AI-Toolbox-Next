@@ -35,6 +35,21 @@ pub fn apply_create_no_window_tokio(command: &mut TokioCommand) {
     }
 }
 
+/// Whether a CLI command can be resolved on the current PATH (via `where`/`which`).
+///
+/// Used before spawning a terminal that runs a long-lived CLI such as
+/// `hermes dashboard` / `openclaw gateway`: those launches use `cmd /C start`
+/// which always returns Ok even when the inner CLI is missing, so without this
+/// check the UI would show a success toast for a service that never started.
+pub fn cli_resolved_on_path(command_name: &str) -> bool {
+    resolve_cli_from_path(command_name).is_some()
+}
+
+/// Resolve a local CLI program by name, checking PATH first then extra candidate dirs.
+pub fn resolve_named_cli_program(command_name: &str, candidate_paths: Vec<PathBuf>) -> LocalCliProgram {
+    resolve_local_cli_program(command_name, candidate_paths)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalCliProgram {
     pub path: PathBuf,

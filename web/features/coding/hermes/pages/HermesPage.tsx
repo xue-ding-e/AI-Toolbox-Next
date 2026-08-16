@@ -79,8 +79,19 @@ import {
   hasCcSwitchDb,
   type CcSwitchProviderCandidate,
 } from '@/services/ccSwitchApi';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  extractFavoriteProviderRawId,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  type HermesFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
+import { upsertFavoriteProvider, type OpenCodeFavoriteProvider } from '@/services/opencodeApi';
+import type { OpenCodeProvider } from '@/types/opencode';
 import type { AllApiHubProviderItem } from '@/types/allApiHub';
 import { extractHermesProviderFromCcSwitch } from '../utils/importMapping';
 import { buildFetchedHermesModel } from '../utils/hermesFetchedModels';
@@ -107,8 +118,8 @@ import {
   isRecordEmpty,
   maskCredential,
   setOptionalStringField,
-  parseThinkingLevelEfforts,
-  stringifyReasoningEfforts,
+  HERMES_REASONING_LEVELS,
+  parseReasoningEffort,
 } from '../utils/hermesUtils';
 import styles from './HermesPage.module.less';
 
@@ -149,6 +160,49 @@ const HERMES_API_MODE_OPTIONS = [
   'custom',
 ].map((value) => ({ value, label: value }));
 
+/** Build the OpenCode-provider envelope that wraps a Hermes provider favorite. */
+const buildHermesFavoriteProviderConfig = (
+  providerKey: string,
+  modelsProvider: Record<string, unknown>,
+): OpenCodeProvider => {
+  const displayName = getStringField(modelsProvider, 'display_name')
+    || getStringField(modelsProvider, 'name')
+    || providerKey;
+  const apiKey = getStringField(modelsProvider, 'api_key');
+  const baseUrl = getStringField(modelsProvider, 'base_url');
+  const models = getProviderModelRecords(modelsProvider);
+  const payload: HermesFavoriteProviderPayload = {
+    providerKey,
+    modelsProvider,
+  };
+  return buildFavoriteProviderOptions(
+    {
+      npm: hermesApiModeToSdkName(getStringField(modelsProvider, 'api_mode')),
+      name: displayName,
+      options: {
+        ...(baseUrl ? { baseURL: baseUrl } : {}),
+        ...(apiKey ? { apiKey } : {}),
+      },
+      models: Object.fromEntries(models.map((model) => [model.id, {}])),
+    },
+    payload,
+  );
+};
+
+/** Resolve the favorite payload back into a Hermes-language provider import record. */
+const resolveHermesFavoriteProviderPayload = (
+  favoriteProvider: OpenCodeFavoriteProvider,
+): HermesFavoriteProviderPayload => {
+  const payload = getFavoriteProviderPayload<HermesFavoriteProviderPayload>(favoriteProvider);
+  if (payload?.providerKey && payload.modelsProvider) {
+    return payload;
+  }
+  return {
+    providerKey: extractFavoriteProviderRawId('hermes', favoriteProvider.providerId),
+    modelsProvider: payload?.modelsProvider ?? favoriteProvider.providerConfig,
+  };
+};
+
 const HermesPage: React.FC = () => {
   const { t } = useTranslation();
   const { sidebarHiddenByPage, setSidebarHidden } = useSettingsStore();
@@ -160,6 +214,7 @@ const HermesPage: React.FC = () => {
   const [providerModal, setProviderModal] = React.useState<HermesProviderModalState | null>(null);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
   const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
@@ -222,9 +277,11 @@ const HermesPage: React.FC = () => {
       const config = await readHermesRuntimeConfig();
       setRuntimeConfig(config);
       setOtherSettings(config.otherSettings || {});
+      const agent = asRecord(config.otherSettings?.agent);
       modelForm.setFieldsValue({
         defaultProvider: config.modelSettings.defaultProvider || undefined,
         defaultModel: config.modelSettings.defaultModel || undefined,
+        reasoningEffort: parseReasoningEffort(agent.reasoning_effort) as string | undefined,
       });
     } catch (error) {
       console.error('Failed to load Hermes runtime config:', error);
@@ -316,6 +373,25 @@ const HermesPage: React.FC = () => {
     [runtimeConfig?.providers],
   );
 
+  const existingFavoriteProviderIds = React.useMemo(
+    () => hermesProviders.map((provider) => buildFavoriteProviderStorageKey('hermes', provider.providerKey)),
+    [hermesProviders],
+  );
+
+  /** Persist a Hermes provider into the shared favorite-provider history. Errors are swallowed
+   *  so a favorite write failure never blocks the primary save/import flow. */
+  const upsertHermesFavoriteProvider = React.useCallback(
+    (providerKey: string, modelsProvider: Record<string, unknown>) => {
+      return upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('hermes', providerKey),
+        buildHermesFavoriteProviderConfig(providerKey, modelsProvider),
+      ).catch((error) => {
+        console.error('Failed to save Hermes favorite provider:', error);
+      });
+    },
+    [],
+  );
+
   const connectivityInfo = React.useMemo(() => {
     if (!connectivityProviderId) {
       return null;
@@ -336,10 +412,44 @@ const HermesPage: React.FC = () => {
     changedValues: Record<string, unknown>,
     allValues: Record<string, unknown>,
   ) => {
-    if (!('defaultProvider' in changedValues) && !('defaultModel' in changedValues)) {
+    const reasoningChanged = 'reasoningEffort' in changedValues;
+    const modelChanged = ('defaultProvider' in changedValues) || ('defaultModel' in changedValues);
+    if (!runtimeConfig) {
       return;
     }
-    if (!runtimeConfig) {
+
+    if (reasoningChanged) {
+      const currentAgent = asRecord(runtimeConfig.otherSettings.agent);
+      const nextLevel = parseReasoningEffort(allValues.reasoningEffort);
+      // 未变化不写
+      if ((currentAgent.reasoning_effort ?? '') === (nextLevel ?? '')) {
+        return;
+      }
+      const nextAgent = { ...currentAgent };
+      if (nextLevel) {
+        nextAgent.reasoning_effort = nextLevel;
+      } else {
+        delete nextAgent.reasoning_effort;
+      }
+      setSaving(true);
+      try {
+        const nextConfig = await saveHermesOtherSettings({
+          ...runtimeConfig.otherSettings,
+          agent: nextAgent,
+        });
+        setRuntimeConfig(nextConfig);
+        setOtherSettings(nextConfig.otherSettings || {});
+        await refreshTrayMenu();
+      } catch (error) {
+        console.error('Failed to save Hermes reasoning effort:', error);
+        message.error(t('common.error'));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    if (!modelChanged) {
       return;
     }
 
@@ -396,6 +506,7 @@ const HermesPage: React.FC = () => {
         || getStringField(nextProviderJson, 'baseUrl'),
       providerApiKey: getStringField(nextProviderJson, 'api_key')
         || getStringField(nextProviderJson, 'apiKey'),
+      providerDisplayName: getStringField(nextProviderJson, 'display_name'),
     });
   }, [providerModal, providerModalForm]);
 
@@ -407,7 +518,7 @@ const HermesPage: React.FC = () => {
     const values = await providerModalForm.validateFields();
     const providerKey = values.providerKey?.trim();
     if (!providerKey) {
-      message.error(t('hermes.provider.providerKeyRequired', { defaultValue: 'Provider name is required.' }));
+      message.error(t('hermes.provider.providerKeyRequired', { defaultValue: '请输入供应商 Key' }));
       return;
     }
 
@@ -415,10 +526,14 @@ const HermesPage: React.FC = () => {
     setOptionalStringField(nextProviderJson, 'api_mode', values.apiMode);
     setOptionalStringField(nextProviderJson, 'base_url', values.baseUrl);
     setOptionalStringField(nextProviderJson, 'api_key', values.providerApiKey);
+    setOptionalStringField(nextProviderJson, 'display_name', values.providerDisplayName);
     await handleSaveProvider({ providerKey, provider: nextProviderJson });
   };
 
-  const handleSaveProvider = async (value: { providerKey: string; provider: Record<string, unknown> }) => {
+  const handleSaveProvider = async (value: {
+    providerKey: string;
+    provider: Record<string, unknown>;
+  }) => {
     setSaving(true);
     try {
       const nextConfig = await saveHermesModelsProvider({
@@ -428,6 +543,7 @@ const HermesPage: React.FC = () => {
       setRuntimeConfig(nextConfig);
       setOtherSettings(nextConfig.otherSettings || {});
       setProviderModal(null);
+      void upsertHermesFavoriteProvider(value.providerKey, value.provider);
       await refreshTrayMenu();
       message.success(t('common.success'));
     } catch (error) {
@@ -449,6 +565,18 @@ const HermesPage: React.FC = () => {
       onOk: async () => {
         setSaving(true);
         try {
+          // Back up the provider into the favorite-provider history before deletion
+          // so it can still be re-imported later from "导入我使用过的供应商".
+          if (provider.provider) {
+            try {
+              await upsertFavoriteProvider(
+                buildFavoriteProviderStorageKey('hermes', provider.providerKey),
+                buildHermesFavoriteProviderConfig(provider.providerKey, provider.provider),
+              );
+            } catch (error) {
+              console.error('Failed to preserve Hermes favorite provider before deletion:', error);
+            }
+          }
           const nextConfig = await deleteHermesRuntimeProvider(provider.providerKey);
           setRuntimeConfig(nextConfig);
           setOtherSettings(nextConfig.otherSettings || {});
@@ -517,13 +645,15 @@ const HermesPage: React.FC = () => {
     } else {
       delete nextModel.reasoning;
     }
-    const efforts = typeof values.thinkingLevelMap === 'string'
-      ? parseThinkingLevelEfforts(values.thinkingLevelMap)
-      : undefined;
-    if (efforts) {
-      nextModel.reasoningEfforts = efforts;
-    } else {
-      delete nextModel.reasoningEfforts;
+
+    // 额外参数：以编辑器内容为准，移除旧的未知字段后再合并（与 OpenClaw 一致）。
+    for (const key of Object.keys(nextModel)) {
+      if (!HERMES_KNOWN_MODEL_FIELDS.has(key)) {
+        delete nextModel[key];
+      }
+    }
+    if (values.extraParams && typeof values.extraParams === 'object') {
+      Object.assign(nextModel, values.extraParams);
     }
 
     let modelWasReplaced = false;
@@ -548,8 +678,42 @@ const HermesPage: React.FC = () => {
         providerKey: currentProvider.providerKey,
         provider: nextProviderConfig,
       });
-      setRuntimeConfig(nextConfig);
-      setOtherSettings(nextConfig.otherSettings || {});
+
+      // per-model 思考等级覆盖写入 agent.reasoning_overrides["providerKey/modelId"]
+      const oldOverrideKey = modelModal.modelId
+        ? `${currentProvider.providerKey}/${modelModal.modelId}`
+        : null;
+      const newOverrideKey = `${currentProvider.providerKey}/${modelId}`;
+      const desiredLevel = parseReasoningEffort(values.thinkingLevel);
+      const freshAgent = asRecord(nextConfig.otherSettings?.agent);
+      const currentOverrides = asRecord(freshAgent.reasoning_overrides);
+      const nextOverrides = { ...currentOverrides };
+      // 重命名模型时清理旧的覆盖键
+      if (oldOverrideKey && oldOverrideKey !== newOverrideKey) {
+        delete nextOverrides[oldOverrideKey];
+      }
+      if (desiredLevel) {
+        nextOverrides[newOverrideKey] = desiredLevel;
+      } else {
+        delete nextOverrides[newOverrideKey];
+      }
+
+      const overridesChanged = JSON.stringify(nextOverrides) !== JSON.stringify(currentOverrides);
+      let finalConfig = nextConfig;
+      if (overridesChanged) {
+        const nextAgent = { ...freshAgent };
+        if (Object.keys(nextOverrides).length > 0) {
+          nextAgent.reasoning_overrides = nextOverrides;
+        } else {
+          delete nextAgent.reasoning_overrides;
+        }
+        finalConfig = await saveHermesOtherSettings({
+          ...nextConfig.otherSettings,
+          agent: nextAgent,
+        });
+      }
+      setRuntimeConfig(finalConfig);
+      setOtherSettings(finalConfig.otherSettings || {});
       setModelModal(null);
       await refreshTrayMenu();
       message.success(t('common.success'));
@@ -619,6 +783,43 @@ const HermesPage: React.FC = () => {
     }
   }, [connectivityProviderId, hermesProviders]);
 
+  /**
+   * 从 agent.reasoning_overrides 中移除指定 model override 键并保存 otherSettings。
+   * 删除模型时调用,避免遗留 override 在新模型复用同 id 时被静默应用。
+   * 无 override 变更时直接返回原 config(不发起额外保存)。
+   */
+  const removeReasoningOverrides = async (
+    config: HermesRuntimeConfig,
+    overrideKeys: string[]
+  ): Promise<HermesRuntimeConfig> => {
+    if (overrideKeys.length === 0) {
+      return config;
+    }
+    const freshAgent = asRecord(config.otherSettings?.agent);
+    const currentOverrides = asRecord(freshAgent.reasoning_overrides);
+    const nextOverrides = { ...currentOverrides };
+    let changed = false;
+    for (const key of overrideKeys) {
+      if (nextOverrides[key] !== undefined) {
+        delete nextOverrides[key];
+        changed = true;
+      }
+    }
+    if (!changed) {
+      return config;
+    }
+    const nextAgent = { ...freshAgent };
+    if (Object.keys(nextOverrides).length > 0) {
+      nextAgent.reasoning_overrides = nextOverrides;
+    } else {
+      delete nextAgent.reasoning_overrides;
+    }
+    return saveHermesOtherSettings({
+      ...config.otherSettings,
+      agent: nextAgent,
+    });
+  };
+
   const handleDeleteModel = React.useCallback(
     async (providerKey: string, modelId: string) => {
       const provider = hermesProviders.find((item) => item.providerKey === providerKey);
@@ -633,8 +834,9 @@ const HermesPage: React.FC = () => {
           providerKey,
           provider: { ...(provider.provider ?? {}), models: nextModels },
         });
-        setRuntimeConfig(nextConfig);
-        setOtherSettings(nextConfig.otherSettings || {});
+        const finalConfig = await removeReasoningOverrides(nextConfig, [`${providerKey}/${modelId}`]);
+        setRuntimeConfig(finalConfig);
+        setOtherSettings(finalConfig.otherSettings || {});
         message.success(t('hermes.model.batchDeleteSuccess', { count: 1 }));
       } catch (error) {
         console.error('Failed to delete Hermes model:', error);
@@ -647,10 +849,13 @@ const HermesPage: React.FC = () => {
   const handleToggleBatchDeleteMode = (providerKey: string) => {
     setBatchDeleteProviderId((prev) => {
       const next = prev === providerKey ? null : providerKey;
-      if (next === null) {
+      // 清理涉及到的 provider 的勾选:关闭时清当前,切换到另一个 provider 时清前一个,
+      // 否则旧 provider 的勾选会残留,重入时被静默预选导致误删本次会话从未选中的模型。
+      const keysToClean = next === null ? [providerKey] : prev && prev !== providerKey ? [prev] : [];
+      if (keysToClean.length > 0) {
         setSelectedModelIdsByProvider((selected) => {
           const copy = { ...selected };
-          delete copy[providerKey];
+          keysToClean.forEach((k) => delete copy[k]);
           return copy;
         });
       }
@@ -689,8 +894,10 @@ const HermesPage: React.FC = () => {
           providerKey,
           provider: { ...(provider.provider ?? {}), models: nextModels },
         });
-        setRuntimeConfig(nextConfig);
-        setOtherSettings(nextConfig.otherSettings || {});
+        const overrideKeys = selected.map((modelId) => `${providerKey}/${modelId}`);
+        const finalConfig = await removeReasoningOverrides(nextConfig, overrideKeys);
+        setRuntimeConfig(finalConfig);
+        setOtherSettings(finalConfig.otherSettings || {});
         message.success(t('hermes.model.batchDeleteSuccess', { count: selected.length }));
       } catch (error) {
         console.error('Failed to batch delete Hermes models:', error);
@@ -827,16 +1034,17 @@ const HermesPage: React.FC = () => {
   const handleImportFromAllApiHub = React.useCallback(
     async (imported: AllApiHubProviderItem[]) => {
       const existingKeys = new Set(hermesProviders.map((provider) => provider.providerKey));
-      const toImport = imported.filter((item) => !existingKeys.has(item.name));
+      const toImport = imported.filter((item) => !existingKeys.has(item.providerId));
 
       let ok = 0;
       let fail = 0;
       for (const item of toImport) {
         try {
-          await saveHermesModelsProvider({ providerKey: item.name, provider: item.config });
+          await saveHermesModelsProvider({ providerKey: item.providerId, provider: item.config });
+          void upsertHermesFavoriteProvider(item.providerId, item.config);
           ok += 1;
         } catch (error) {
-          console.error('Failed to import All API Hub provider:', item.name, error);
+          console.error('Failed to import All API Hub provider:', item.providerId, error);
           fail += 1;
         }
       }
@@ -862,7 +1070,7 @@ const HermesPage: React.FC = () => {
       let ok = 0;
       let fail = 0;
       for (const candidate of imported) {
-        if (existingKeys.has(candidate.name)) {
+        if (existingKeys.has(candidate.providerId)) {
           continue;
         }
         const provider = extractHermesProviderFromCcSwitch(candidate);
@@ -870,10 +1078,11 @@ const HermesPage: React.FC = () => {
           continue;
         }
         try {
-          await saveHermesModelsProvider({ providerKey: candidate.name, provider });
+          await saveHermesModelsProvider({ providerKey: candidate.providerId, provider });
+          void upsertHermesFavoriteProvider(candidate.providerId, provider);
           ok += 1;
         } catch (error) {
-          console.error('Failed to import CC Switch provider:', candidate.name, error);
+          console.error('Failed to import CC Switch provider:', candidate.providerId, error);
           fail += 1;
         }
       }
@@ -889,6 +1098,34 @@ const HermesPage: React.FC = () => {
 
       void loadConfig(true);
       void refreshTrayMenu();
+    },
+    [hermesProviders, loadConfig, t],
+  );
+
+  const handleImportFavoriteProviders = React.useCallback(
+    async (providersToImport: OpenCodeFavoriteProvider[]) => {
+      const existingKeys = new Set(hermesProviders.map((provider) => provider.providerKey));
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const { providerKey, modelsProvider } = resolveHermesFavoriteProviderPayload(favoriteProvider);
+        if (!providerKey || existingKeys.has(providerKey)) {
+          continue;
+        }
+        try {
+          await saveHermesModelsProvider({ providerKey, provider: modelsProvider });
+          existingKeys.add(providerKey);
+          importedCount += 1;
+        } catch (error) {
+          console.error('Failed to import Hermes favorite provider:', providerKey, error);
+        }
+      }
+
+      if (importedCount > 0) {
+        setImportModalOpen(false);
+        message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+        void loadConfig(true);
+        void refreshTrayMenu();
+      }
     },
     [hermesProviders, loadConfig, t],
   );
@@ -922,13 +1159,37 @@ const HermesPage: React.FC = () => {
     : undefined;
   const modelModalExistingIds = getProviderModelRecords(modelModalProvider?.provider).map((entry) => entry.id);
   const modelModalRecordSafe = asRecord(modelModalRecord);
+  // 提取已知字段之外的额外参数，原样保留在配置文件中（与 OpenClaw extraParams 一致）。
+  const HERMES_KNOWN_MODEL_FIELDS = new Set(['id', 'name', 'context_length', 'max_tokens', 'reasoning']);
+  const modelModalExtraParams = (() => {
+    const extra: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(modelModalRecordSafe)) {
+      if (!HERMES_KNOWN_MODEL_FIELDS.has(key) && value !== undefined) {
+        extra[key] = value;
+      }
+    }
+    return Object.keys(extra).length > 0 ? extra : undefined;
+  })();
+  // per-model 思考等级覆盖键 agent.reasoning_overrides["providerKey/modelId"]
+  const modelModalOverrideKey = modelModalProvider?.providerKey && modelModalTargetId
+    ? `${modelModalProvider.providerKey}/${modelModalTargetId}`
+    : null;
+  const modelModalThinkingLevel = (() => {
+    if (!modelModalOverrideKey) {
+      return undefined;
+    }
+    const agent = asRecord(otherSettings.agent);
+    const overrides = asRecord(agent.reasoning_overrides);
+    return parseReasoningEffort(overrides[modelModalOverrideKey]) as string | undefined;
+  })();
   const modelModalInitialValues = {
     id: modelModal?.modelId ?? getStringField(modelModalRecordSafe, 'id'),
     name: getStringField(modelModalRecordSafe, 'name'),
     reasoning: typeof modelModalRecordSafe.reasoning === 'boolean' ? modelModalRecordSafe.reasoning : undefined,
     contextLimit: getNumberField(modelModalRecordSafe, 'context_length'),
     outputLimit: getNumberField(modelModalRecordSafe, 'max_tokens'),
-    thinkingLevelMap: stringifyReasoningEfforts(modelModalRecordSafe.reasoningEfforts),
+    thinkingLevel: modelModalThinkingLevel,
+    extraParams: modelModalExtraParams,
   };
 
   const fetchModelsProviderInfo = React.useMemo(() => {
@@ -1005,6 +1266,10 @@ const HermesPage: React.FC = () => {
         : '';
     const isReadOnly = provider.isReadOnly;
 
+    const deleteDisabledReason = !isReadOnly && provider.isDefault
+      ? t('hermes.provider.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+      : undefined;
+
     const providerDisplay: ProviderDisplayData = {
       id: provider.providerKey,
       name: provider.displayName,
@@ -1031,6 +1296,7 @@ const HermesPage: React.FC = () => {
         onCopy={isReadOnly ? undefined : () => setProviderModal({ provider: undefined })}
         onDelete={isReadOnly ? undefined : () => handleDeleteProvider(provider)}
         deleteConfirm={false}
+        deleteDisabledReason={deleteDisabledReason}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         extraActions={
           <>
@@ -1045,7 +1311,7 @@ const HermesPage: React.FC = () => {
                   <DeleteOutlined style={{ marginRight: 4 }} />
                   {isBatchDeleteMode
                     ? t('hermes.model.cancelBatchDelete', { defaultValue: '退出批量删除' })
-                    : t('hermes.model.batchDelete', { defaultValue: '批量删除模型' })}
+                    : t('hermes.model.batchDelete', { defaultValue: '批量删除' })}
                 </Button>
                 {isBatchDeleteMode && (
                   <Button
@@ -1236,6 +1502,13 @@ const HermesPage: React.FC = () => {
                         placeholder={t('hermes.modelSettings.defaultModelPlaceholder', { defaultValue: 'Select a model' })}
                       />
                     </Form.Item>
+                    <Form.Item label={t('hermes.modelSettings.reasoningEffort', { defaultValue: 'Default reasoning level' })} name="reasoningEffort">
+                      <Select
+                        allowClear
+                        options={HERMES_REASONING_LEVELS.map((level) => ({ value: level, label: level }))}
+                        placeholder={t('hermes.modelSettings.reasoningEffortPlaceholder', { defaultValue: 'Default: medium' })}
+                      />
+                    </Form.Item>
                   </div>
                 </Form>
               </div>
@@ -1291,6 +1564,13 @@ const HermesPage: React.FC = () => {
                         : <Empty description={t('hermes.provider.emptyText', { defaultValue: 'No providers configured.' })} />}
                       <div style={{ marginTop: 12 }}>
                         <Space wrap>
+                          <Button
+                            type="dashed"
+                            icon={<ImportOutlined />}
+                            onClick={() => setImportModalOpen(true)}
+                          >
+                            {t('opencode.provider.importFavorite')}
+                          </Button>
                           {allApiHubAvailable && (
                             <Button
                               type="dashed"
@@ -1417,8 +1697,8 @@ const HermesPage: React.FC = () => {
 
         <Modal
           title={providerModal?.provider
-            ? `${t('hermes.provider.editTitle', { defaultValue: 'Edit Provider' })}: ${providerModal.provider.displayName}`
-            : t('hermes.provider.addTitle', { defaultValue: 'Add Provider' })}
+            ? t('hermes.provider.editSupplierTitle', { defaultValue: '编辑供应商', name: providerModal.provider.displayName })
+            : t('hermes.provider.addSupplierTitle', { defaultValue: '添加供应商' })}
           open={!!providerModal}
           width={720}
           confirmLoading={saving}
@@ -1428,16 +1708,23 @@ const HermesPage: React.FC = () => {
         >
           <Form form={providerModalForm} layout="vertical" className={styles.providerForm}>
             <div className={styles.modalSection}>
-              <Text strong>{t('hermes.provider.basicSection', { defaultValue: 'Basic' })}</Text>
               <div className={styles.modalGrid}>
                 <Form.Item
-                  label={t('hermes.provider.providerKey', { defaultValue: 'Provider name' })}
+                  label={t('hermes.provider.providerKey', { defaultValue: '供应商 Key' })}
                   name="providerKey"
-                  rules={[{ required: true, message: t('hermes.provider.providerKeyRequired', { defaultValue: 'Provider name is required.' }) }]}
+                  rules={[{ required: true, message: t('hermes.provider.providerKeyRequired', { defaultValue: '请输入供应商 Key' }) }]}
                 >
                   <Input
                     disabled={!!providerModal?.provider}
-                    placeholder={t('hermes.provider.providerKeyPlaceholder', { defaultValue: 'e.g. anthropic' })}
+                    placeholder={t('hermes.provider.providerKeyPlaceholder', { defaultValue: '如 anthropic' })}
+                  />
+                </Form.Item>
+                <Form.Item
+                  label={t('hermes.provider.displayName', { defaultValue: '显示名称' })}
+                  name="providerDisplayName"
+                >
+                  <Input
+                    placeholder={t('hermes.provider.displayNamePlaceholder', { defaultValue: '供应商显示名称' })}
                   />
                 </Form.Item>
                 <Form.Item label={t('hermes.provider.apiMode', { defaultValue: 'API mode' })} name="apiMode">
@@ -1509,10 +1796,13 @@ const HermesPage: React.FC = () => {
           showInputTypes={false}
           showApi={false}
           showReasoning
-          showThinkingLevelMap
+          showThinkingLevelMap={false}
+          showThinkingLevel
+          thinkingLevelOptions={HERMES_REASONING_LEVELS.map((level) => ({ value: level, label: level }))}
           showOmpThinking={false}
           showCompat={false}
           showCost={false}
+          showExtraParams
           limitRequired={false}
           nameRequired={false}
           npmType={modelModalProvider?.apiMode ? hermesApiModeToSdkName(modelModalProvider.apiMode) : undefined}
@@ -1543,6 +1833,14 @@ const HermesPage: React.FC = () => {
             onSuccess={handleFetchModelsSuccess}
           />
         )}
+
+        <ImportProviderModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onImport={handleImportFavoriteProviders}
+          existingProviderIds={existingFavoriteProviderIds}
+          providerFilter={(provider) => isFavoriteProviderForSource('hermes', provider)}
+        />
 
         {allApiHubAvailable && (
           <ImportFromAllApiHubModalForTool

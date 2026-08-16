@@ -31,6 +31,8 @@ interface Props {
   onConnectivityTest: () => void;
   onFetchModels: () => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
+  /** 当该渠道承载主模型(agents.defaults.model.primary)时，删除按钮置灰并显示此提示 */
+  deleteDisabledReason?: string;
 }
 
 const toProviderDisplayData = (id: string, config: OpenClawProviderConfig): ProviderDisplayData => ({
@@ -67,6 +69,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
   onToggleModelSelection,
   onToggleBatchDeleteMode,
   onBatchDeleteModels,
+  deleteDisabledReason,
 }) => {
   const { t } = useTranslation();
 
@@ -97,6 +100,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
       onReorderModels={onReorderModels}
       onEdit={onEdit}
       onDelete={onDelete}
+      deleteDisabledReason={deleteDisabledReason}
       onAddModel={onAddModel}
       onEditModel={(modelId) => {
         const model = modelMap.get(modelId);

@@ -49,7 +49,14 @@ pub fn open_web_ui_browser(port: u16, path: Option<&str>) -> Result<(), String> 
 }
 
 /// 在用户终端里非阻塞启动 `hermes dashboard`(Hermes 的 web dashboard 进程)。
+///
+/// 启动前先用 `where`/`which` 验证 `hermes` CLI 可解析;否则 `cmd /C start` 这类
+/// 分层派生无论子进程是否真正起来都会返回 Ok,前端会误显示"启动成功"toast。
 pub fn launch_dashboard_in_terminal() -> Result<(), String> {
+    if !crate::coding::cli_resolver::cli_resolved_on_path("hermes") {
+        return Err(crate::coding::cli_resolver::local_cli_missing_hint("hermes"));
+    }
+
     #[cfg(target_os = "windows")]
     {
         launch_windows_dashboard()

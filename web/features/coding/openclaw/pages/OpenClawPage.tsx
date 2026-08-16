@@ -131,6 +131,9 @@ import {
   type OpenClawFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import { extractOpenClawProviderFromCcSwitch } from '../utils/importMapping';
 
 import styles from './OpenClawPage.module.less';
 
@@ -265,6 +268,8 @@ const OpenClawPage: React.FC = () => {
   const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
   const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<Record<string, string[]>>({});
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
@@ -380,6 +385,17 @@ const OpenClawPage: React.FC = () => {
     };
 
     checkAllApiHubAvailability();
+
+    const checkCcSwitchAvailability = async () => {
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch (error) {
+        console.error('Failed to check CC Switch availability for OpenClaw:', error);
+        setCcSwitchAvailable(false);
+      }
+    };
+
+    checkCcSwitchAvailability();
   }, [openClawConfigRefreshKey]);
 
   // Listen for config-changed events (from tray)
@@ -493,6 +509,75 @@ const OpenClawPage: React.FC = () => {
       refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from All API Hub:', error);
+      message.error(t('common.error'));
+    }
+  };
+
+  const handleImportFromCcSwitch = async (imported: CcSwitchProviderCandidate[]) => {
+    try {
+      const currentConfig = config || { models: { providers: {} } };
+      const providers = { ...(currentConfig.models?.providers || {}) };
+
+      const toImport = imported.filter((candidate) =>
+        !Object.prototype.hasOwnProperty.call(providers, candidate.providerId)
+          && extractOpenClawProviderFromCcSwitch(candidate),
+      );
+
+      let ok = 0;
+      let fail = 0;
+      for (const candidate of toImport) {
+        const providerConfig = extractOpenClawProviderFromCcSwitch(candidate);
+        if (!providerConfig) {
+          continue;
+        }
+        try {
+          providers[candidate.providerId] = providerConfig;
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to map CC Switch provider for OpenClaw:', candidate.name, error);
+          fail += 1;
+        }
+      }
+
+      if (ok > 0) {
+        const newConfig: OpenClawConfig = {
+          ...currentConfig,
+          models: {
+            ...(currentConfig.models || {}),
+            providers,
+          },
+        };
+        await saveOpenClawConfig(newConfig);
+        for (const candidate of toImport) {
+          const providerConfig = extractOpenClawProviderFromCcSwitch(candidate);
+          if (providerConfig) {
+            try {
+              await upsertFavoriteProvider(
+                buildFavoriteProviderStorageKey('openclaw', candidate.providerId),
+                buildOpenClawFavoriteProviderConfig(candidate.providerId, providerConfig),
+              );
+            } catch (favoriteError) {
+              console.error('Failed to save OpenClaw favorite provider from CC Switch import:', favoriteError);
+            }
+          }
+        }
+      }
+
+      setCcSwitchImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        message.success(t('common.ccSwitch.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        message.warning(t('common.ccSwitch.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        message.error(t('common.error'));
+      }
+
+      loadConfig();
+      loadSectionData();
+      loadFavoriteProviders();
+      refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to import from CC Switch:', error);
       message.error(t('common.error'));
     }
   };
@@ -706,10 +791,13 @@ const OpenClawPage: React.FC = () => {
   const handleToggleBatchDeleteMode = (providerId: string) => {
     setBatchDeleteProviderId((prev) => {
       const next = prev === providerId ? null : providerId;
-      if (next === null) {
+      // 清理涉及到的 provider 的勾选:关闭时清当前,切换到另一个 provider 时清前一个,
+      // 否则旧 provider 的勾选会残留,重入时被静默预选导致误删本次会话从未选中的模型。
+      const keysToClean = next === null ? [providerId] : prev && prev !== providerId ? [prev] : [];
+      if (keysToClean.length > 0) {
         setSelectedModelIdsByProvider((selected) => {
           const copy = { ...selected };
-          delete copy[providerId];
+          keysToClean.forEach((k) => delete copy[k]);
           return copy;
         });
       }
@@ -1486,6 +1574,11 @@ const OpenClawPage: React.FC = () => {
                                   onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
                                   onEdit={() => handleEditProvider(providerId, providerConfig)}
                                   onDelete={() => handleDeleteProvider(providerId)}
+                                  deleteDisabledReason={
+                                    agentsDefaults?.model?.primary?.split('/')[0] === providerId
+                                      ? t('openclaw.providers.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
+                                      : undefined
+                                  }
                                   onAddModel={() => handleAddModel(providerId)}
                                   onEditModel={(model) => handleEditModel(providerId, model)}
                                   onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
@@ -1518,6 +1611,15 @@ const OpenClawPage: React.FC = () => {
                                 onClick={() => setAllApiHubImportModalOpen(true)}
                               >
                                 {t('openclaw.providers.importFromAllApiHub')}
+                              </Button>
+                            )}
+                            {ccSwitchAvailable && (
+                              <Button
+                                type="dashed"
+                                icon={<ImportOutlined />}
+                                onClick={() => setCcSwitchImportModalOpen(true)}
+                              >
+                                {t('common.ccSwitch.importFromCcSwitch')}
                               </Button>
                             )}
                           </Space>
@@ -1666,6 +1768,26 @@ const OpenClawPage: React.FC = () => {
                 existingProviderIds={providerEntries.map(([id]) => id)}
                 onCancel={() => setAllApiHubImportModalOpen(false)}
                 onImport={handleImportFromAllApiHub}
+              />
+            )}
+
+            {ccSwitchAvailable && (
+              <ImportFromCcSwitchModal
+                open={ccSwitchImportModalOpen}
+                appType="claude"
+                existingProviderIds={providerEntries.map(([id]) => id)}
+                onClose={() => setCcSwitchImportModalOpen(false)}
+                onImport={handleImportFromCcSwitch}
+              />
+            )}
+
+            {ccSwitchAvailable && (
+              <ImportFromCcSwitchModal
+                open={ccSwitchImportModalOpen}
+                appType="claude"
+                existingProviderIds={providerEntries.map(([id]) => id)}
+                onClose={() => setCcSwitchImportModalOpen(false)}
+                onImport={handleImportFromCcSwitch}
               />
             )}
 

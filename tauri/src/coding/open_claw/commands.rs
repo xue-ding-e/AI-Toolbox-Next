@@ -489,15 +489,20 @@ async fn read_openclaw_gateway_port(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Option<u16>, String> {
     let config_path_str = get_openclaw_config_path(state).await?;
-    let config_path = Path::new(&config_path_str);
 
-    if !config_path.exists() {
-        return Ok(None);
-    }
-    let content = match fs::read_to_string(config_path) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
-    };
+    // 该路径可解析为 WSL Direct 的 UNC,不可达时会长时间阻塞 async 运行时;
+    // 走 `file_io` 的 spawn_blocking + 超时读取(见 coding/AGENTS.md)。
+    // 保持原容错契约:任何读取/解析失败(含超时)都视为无端口可解析。
+    let content =
+        match crate::coding::file_io::read_optional_text_file_with_timeout(
+            std::path::PathBuf::from(&config_path_str),
+            "openclaw gateway port",
+        )
+        .await
+        {
+            Ok(Some(c)) => c,
+            Ok(None) | Err(_) => return Ok(None),
+        };
     let Ok(value) = json5::from_str::<serde_json::Value>(&content) else {
         return Ok(None);
     };
