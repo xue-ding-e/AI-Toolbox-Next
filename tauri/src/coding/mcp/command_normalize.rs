@@ -410,7 +410,11 @@ pub fn process_hermes_yaml_mcp_servers(content: &str) -> Result<String, String> 
         return Ok(content.to_string());
     }
 
-    let value: serde_yaml::Value = serde_yaml::from_str(content)
+    // Old section-append tooling can leave duplicate top-level YAML sections,
+    // which serde_yaml rejects. Heal before parsing so WSL/SSH post-processing
+    // works on the same configs that the Hermes editor already accepts.
+    let healed = super::yaml_sync::deduplicate_top_level_keys(content);
+    let value: serde_yaml::Value = serde_yaml::from_str(&healed)
         .map_err(|e| format!("Failed to parse Hermes config.yaml: {}", e))?;
     let root: Value = serde_json::to_value(&value)
         .map_err(|e| format!("Failed to convert Hermes config.yaml: {}", e))?;
@@ -451,7 +455,7 @@ pub fn process_hermes_yaml_mcp_servers(content: &str) -> Result<String, String> 
         return Ok(content.to_string());
     }
 
-    super::yaml_sync::replace_yaml_section(content, "mcp_servers", &Value::Object(new_servers))
+    super::yaml_sync::replace_yaml_section(&healed, "mcp_servers", &Value::Object(new_servers))
 }
 
 /// Strip `cmd /c` wrappers from a dsh `cordis.patch.yml` (a YAML array of
@@ -527,4 +531,29 @@ pub fn process_cordis_patch_yaml(content: &str) -> Result<String, String> {
 
     serde_yaml::to_string(&new_array)
         .map_err(|e| format!("Failed to serialize cordis.patch.yml: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_hermes_yaml_mcp_servers_heals_duplicate_top_level_sections() {
+        let raw = r#"model:
+  default: test
+mcp_servers:
+  fs:
+    command: cmd
+    args: ["/c", "npx", "-y", "@mcp/test"]
+mcp_servers:
+  fs:
+    command: cmd
+    args: ["/c", "npx", "-y", "@mcp/test"]
+"#;
+        let processed = process_hermes_yaml_mcp_servers(raw).expect("should heal duplicates");
+        // Only one mcp_servers section should remain in the output.
+        assert_eq!(processed.matches("mcp_servers:").count(), 1);
+        assert!(processed.contains("command: npx"));
+        assert!(!processed.contains("command: cmd"));
+    }
 }

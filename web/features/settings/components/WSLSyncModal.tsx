@@ -26,7 +26,6 @@ const { Text } = Typography;
 const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
   claude: 'Claude Code',
-  claude_desktop: 'Claude Desktop',
   codex: 'Codex',
   grok: 'Grok',
   openclaw: 'OpenClaw',
@@ -41,7 +40,6 @@ const MODULE_NAMES: Record<string, string> = {
 const MODULE_COLORS: Record<string, string> = {
   opencode: 'blue',
   claude: 'purple',
-  claude_desktop: 'geekblue',
   codex: 'orange',
   grok: 'gold',
   openclaw: 'green',
@@ -59,7 +57,6 @@ const MODULE_COLORS: Record<string, string> = {
 const MODULE_TO_TAB: Record<string, string> = {
   opencode: 'opencode',
   claude: 'claudecode',
-  claude_desktop: 'claudedesktop',
   codex: 'codex',
   grok: 'grok',
   openclaw: 'openclaw',
@@ -70,7 +67,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 interface WSLSyncModalProps {
   open: boolean;

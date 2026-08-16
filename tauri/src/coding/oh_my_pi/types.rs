@@ -169,6 +169,11 @@ pub struct OmpModelSettingsInput {
     pub default_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_thinking_level: Option<String>,
+    /// Explicitly remove `defaultThinkingLevel` from `config.yml`.
+    /// This is separate from `default_thinking_level: ""` because an empty
+    /// value on a form submit may simply mean "not touched".
+    #[serde(default)]
+    pub clear_thinking_level: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -24,6 +24,7 @@
 - `models.yml` 允许 override-only provider 和未知字段。按 provider key 写入时必须保留其他 provider 及未知字段。
 - 写入 `modelRoles.default` 时必须是 `provider/modelId`(OMP `parseModelString` 按首个 `/` 拆分),裸 provider 无效。
 - 不要接管 `config.yml` 全部字段;其他设置编辑器隐藏并保留 `modelRoles`/`defaultThinkingLevel`/`extensions`/`enabledModels` 等受管键。
+- `defaultThinkingLevel` 的“清除”由 `OmpModelSettingsInput.clear_thinking_level` 显式驱动；前端空字符串不代表清除，避免用户在切换 provider/model 时误删全局思考级别。
 - WSL 场景下选中 `~/.omp` 目录且其 `agent` 子目录为有效运行时布局时,归一化为 `~/.omp/agent`。
 
 ## 最小验证

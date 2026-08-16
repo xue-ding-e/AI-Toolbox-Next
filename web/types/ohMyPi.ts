@@ -71,6 +71,8 @@ export interface OmpModelSettingsInput {
   defaultProvider?: string | null;
   defaultModel?: string | null;
   defaultThinkingLevel?: string | null;
+  /** Explicitly remove defaultThinkingLevel; distinguishes "cleared" from "not touched". */
+  clearThinkingLevel?: boolean;
 }
 
 export interface OmpModelsProviderInput {

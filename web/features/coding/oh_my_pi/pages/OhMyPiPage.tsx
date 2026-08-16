@@ -833,13 +833,25 @@ const OhMyPiPage: React.FC = () => {
         (entry) => entry.id === nextValues.defaultModel,
       )?.model
       : undefined;
-    if (
+    const unsupportedThinkingCleared = Boolean(
       nextValues.defaultThinkingLevel
-      && !isOmpThinkingLevelSupported(nextValues.defaultThinkingLevel, nextModel)
-    ) {
+      && !isOmpThinkingLevelSupported(nextValues.defaultThinkingLevel, nextModel),
+    );
+    if (unsupportedThinkingCleared) {
       nextValues.defaultThinkingLevel = undefined;
       modelForm.setFieldValue('defaultThinkingLevel', undefined);
     }
+
+    // Only treat this as an explicit clear when the thinking-level control was
+    // part of this change and ended up empty/undefined, or when the previous
+    // value is unsupported for the newly selected model. Changing provider or
+    // model alone must not wipe the global defaultThinkingLevel.
+    const clearThinkingLevel = unsupportedThinkingCleared || (
+      Object.prototype.hasOwnProperty.call(
+        changedValues,
+        'defaultThinkingLevel',
+      ) && !nextValues.defaultThinkingLevel
+    );
 
     const currentSettings = runtimeConfig.modelSettings;
     const nextDefaultProvider = nextValues.defaultProvider ?? '';
@@ -861,6 +873,7 @@ const OhMyPiPage: React.FC = () => {
         defaultProvider: nextDefaultProvider,
         defaultModel: nextDefaultModel,
         defaultThinkingLevel: nextDefaultThinkingLevel,
+        clearThinkingLevel,
       });
       if (modelSettingsSaveSeqRef.current === saveSeq) {
         setRuntimeConfig(nextConfig);

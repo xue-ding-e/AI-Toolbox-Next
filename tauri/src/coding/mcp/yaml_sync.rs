@@ -36,7 +36,7 @@ fn is_top_level_key_line(line: &str) -> bool {
 /// each key. Older section-append tooling could leave several copies of a
 /// top-level key behind, which serde_yaml rejects outright. Keep-last matches
 /// PyYAML's last-wins semantics. No-op when there are no duplicates.
-fn deduplicate_top_level_keys(raw: &str) -> String {
+pub(crate) fn deduplicate_top_level_keys(raw: &str) -> String {
     use std::collections::HashMap;
 
     // Pass 1: locate every top-level key line as (key, byte offset).

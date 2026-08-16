@@ -56,7 +56,6 @@ let statusRequestSeq = 0;
 const TAB_TO_MODULE: Record<string, string> = {
   opencode: 'opencode',
   claudecode: 'claude',
-  claudedesktop: 'claude_desktop',
   codex: 'codex',
   grok: 'grok',
   openclaw: 'openclaw',
@@ -66,7 +65,7 @@ const TAB_TO_MODULE: Record<string, string> = {
   hermes: 'hermes',
   dsh: 'dsh',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 const notify = <T,>(listeners: Set<(value: T) => void>, value: T) => {
   listeners.forEach((listener) => listener(value));

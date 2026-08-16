@@ -454,7 +454,11 @@ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> R
 
     let paths = config_writer::current_platform_paths()?;
 
-    if provider.id == OFFICIAL_PROVIDER_ID || provider.category == "official" {
+    // Official restore must be driven by the stable provider id only.
+    // A user/imported provider whose category happens to be "official" is not
+    // necessarily the built-in official Claude Desktop entry; treating it as
+    // such would delete the 3P profile and switch the app back to 1P.
+    if provider.id == OFFICIAL_PROVIDER_ID {
         return config_writer::restore_official(&paths);
     }
 

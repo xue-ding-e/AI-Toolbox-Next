@@ -652,24 +652,29 @@ pub async fn save_omp_model_settings(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .or_else(|| current.model_id.clone());
-    let thinking_level = input
-        .default_thinking_level
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| current.thinking_level.clone());
+    let thinking_level = if input.clear_thinking_level {
+        None
+    } else {
+        input
+            .default_thinking_level
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| current.thinking_level.clone())
+    };
 
     // defaultThinkingLevel 是全局设置(不是 per-model),它的取值合法性只由
     // OMP 的思考级别词表决定,与"当前选中的模型支持哪些 effort"无关。上游
     // 对单个模型不支持的 effort 是 clamp 而不是删除全局键。因此这里只在
     // level 完全不是合法词表值(off/auto/minimal..max 之外)时清理,否则
     // 保留用户显式选择,交由 OMP 运行时钳制。
-    let should_remove_thinking_level = if let Some(level) = thinking_level.as_deref() {
-        !is_valid_global_thinking_level(level)
-    } else {
-        false
-    };
+    // `clear_thinking_level` 表示用户显式清空该字段,此时无论旧值是什么都删除。
+    let should_remove_thinking_level = input.clear_thinking_level
+        || match thinking_level.as_deref() {
+            Some(level) => !is_valid_global_thinking_level(level),
+            None => false,
+        };
 
     update_default_selection(
         &db,

@@ -941,7 +941,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 14;
+    const CURRENT_DEFAULTS_VERSION: u64 = 15;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -949,7 +949,7 @@ async fn backfill_default_mappings(
     const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
         &["omp-config", "omp-models", "omp-mcp", "omp-agents", "omp-rules"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V12: &[&str] =
-        &["hermes-config", "hermes-prompt", "claude-desktop-config"];
+        &["hermes-config", "hermes-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
         &["dsh-config", "dsh-credentials", "dsh-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V14: &[&str] = &["dsh-mcp"];
@@ -1053,6 +1053,19 @@ async fn backfill_default_mappings(
                     );
                 }
             }
+        }
+    }
+
+    // v15: drop the Claude Desktop default mapping. Claude Desktop is a Windows
+    // GUI app that cannot run inside WSL, so syncing its config there was
+    // meaningless (the mapping was disabled-by-default anyway). Remove any
+    // persisted row so the generic sync_mappings loop stops touching it, even
+    // if a user had manually enabled it.
+    if stored_version < 15 {
+        if let Err(e) =
+            db.with_conn(|conn| db_delete(conn, DbTable::WslFileMapping, "claude-desktop-config"))
+        {
+            log::warn!("Failed to drop legacy claude-desktop-config mapping: {}", e);
         }
     }
 
@@ -1455,16 +1468,6 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .to_string_lossy()
                         .to_string();
                     mapping.wsl_path = format!("~/.dsh/{file_name}");
-                }
-            }
-            "claude-desktop-config" => {
-                if let Ok(paths) =
-                    crate::coding::claude_desktop::config_writer::current_platform_paths()
-                {
-                    mapping.windows_path =
-                        paths.normal_config_path.to_string_lossy().to_string();
-                    mapping.wsl_path =
-                        "~/.claude/desktop/claude_desktop_config.json".to_string();
                 }
             }
             _ => {}
@@ -2068,20 +2071,6 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             windows_path: "~/.dsh/cordis.patch.yml".to_string(),
             wsl_path: "~/.dsh/cordis.patch.yml".to_string(),
             enabled: true,
-            is_pattern: false,
-            is_directory: false,
-            directory_excludes: vec![],
-            cleanup_paths: vec![],
-        },
-        // Claude Desktop - config-file module. WSL/GUI target is not the normal
-        // Claude Code layout, so sync is best-effort and disabled by default.
-        FileMapping {
-            id: "claude-desktop-config".to_string(),
-            name: "Claude Desktop 配置".to_string(),
-            module: "claude_desktop".to_string(),
-            windows_path: "%APPDATA%/Claude/claude_desktop_config.json".to_string(),
-            wsl_path: "~/.claude/desktop/claude_desktop_config.json".to_string(),
-            enabled: false,
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
