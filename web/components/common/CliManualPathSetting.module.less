@@ -1,0 +1,102 @@
+.cliManualPath {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-border);
+
+  &:last-child {
+    padding-bottom: 4px;
+    border-bottom: none;
+  }
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.titleVersion {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+
+  :global(.ant-btn) {
+    padding: 0;
+    font-size: 12px;
+    line-height: 20px;
+  }
+}
+
+.displayRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.displayText {
+  display: block;
+  min-width: 0;
+  flex: 1;
+}
+
+.pathText {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: break-all;
+}
+
+.notSetText {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.errorText {
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

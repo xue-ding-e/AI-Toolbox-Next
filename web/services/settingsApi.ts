@@ -125,6 +125,7 @@ export interface AppSettings {
   codex_preserve_official_auth_on_switch: boolean;
   codex_unified_session_history_enabled: boolean;
   claude_cli_launch_full_access: boolean;
+  cli_manual_paths: Record<string, string>;
 }
 
 // Default settings
@@ -175,6 +176,7 @@ export const defaultSettings: AppSettings = {
   codex_preserve_official_auth_on_switch: false,
   codex_unified_session_history_enabled: false,
   claude_cli_launch_full_access: false,
+  cli_manual_paths: {},
 };
 
 /**
@@ -195,6 +197,7 @@ export const getSettings = async (): Promise<AppSettings> => {
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
         settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
       ),
+      cli_manual_paths: settings.cli_manual_paths ?? {},
     };
   } catch (error) {
     console.error('Failed to get settings:', error);
@@ -221,6 +224,32 @@ export const normalizeBackupCustomEntryPath = async (path: string): Promise<stri
  */
 export const listBackupFileFilterPathOptions = async (): Promise<BackupFileFilterPathOption[]> => {
   return invoke<BackupFileFilterPathOption[]>('list_backup_file_filter_path_options');
+};
+
+/**
+ * Probe a manual CLI path's version (live), without saving.
+ */
+export const probeManualCliVersion = async (path: string): Promise<string> => {
+  return invoke<string>('probe_manual_cli_version', { path });
+};
+
+/**
+ * Validate + persist a manual CLI path for a given command name.
+ * Returns the probed version. Passing an empty path clears the saved override.
+ */
+export const saveManualCliPath = async (
+  commandName: string,
+  path: string
+): Promise<string> => {
+  return invoke<string>('set_manual_cli_path', { commandName, path });
+};
+
+/**
+ * Auto-detect the current local CLI path for a command name (for pre-filling
+ * the manual CLI path input).
+ */
+export const detectManualCliPath = async (commandName: string): Promise<string> => {
+  return invoke<string>('detect_manual_cli_path', { commandName });
 };
 
 /**

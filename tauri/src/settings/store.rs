@@ -58,7 +58,11 @@ pub fn update_last_auto_backup_time_in_sqlite_state(
 
 pub fn load_settings_from_sqlite_conn(conn: &rusqlite::Connection) -> Result<AppSettings, String> {
     let record = db_get(conn, DbTable::Settings, SETTINGS_ID)?;
-    Ok(record.map(adapter::from_db_value).unwrap_or_default())
+    let settings = record
+        .map(adapter::from_db_value)
+        .unwrap_or_default();
+    sync_manual_cli_overrides(&settings);
+    Ok(settings)
 }
 
 pub fn save_settings_to_sqlite_conn(
@@ -66,7 +70,15 @@ pub fn save_settings_to_sqlite_conn(
     settings: &AppSettings,
 ) -> Result<(), String> {
     let json = adapter::to_db_value(settings);
-    db_put(conn, DbTable::Settings, SETTINGS_ID, &json)
+    db_put(conn, DbTable::Settings, SETTINGS_ID, &json)?;
+    sync_manual_cli_overrides(settings);
+    Ok(())
+}
+
+/// Keep the in-process manual CLI override registry in `cli_resolver` aligned
+/// with persisted settings so CLI calls prefer user-specified paths.
+fn sync_manual_cli_overrides(settings: &AppSettings) {
+    crate::coding::cli_resolver::set_manual_cli_overrides(settings.cli_manual_paths.clone());
 }
 
 #[cfg(test)]

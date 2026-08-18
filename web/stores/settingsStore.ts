@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   getSettings,
   saveSettings,
+  saveManualCliPath,
   setAutoLaunch,
   type AppSettings,
   type ProxyMode,
@@ -90,6 +91,9 @@ interface SettingsState {
   // Claude Code options
   claudeCliLaunchFullAccess: boolean;
 
+  // Manual CLI paths by command name (e.g. opencode, claude, grok, pi, omp, hermes, dsh, openclaw)
+  cliManualPaths: Record<string, string>;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -123,6 +127,7 @@ interface SettingsState {
   setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
   setCodexUnifiedSessionHistoryEnabled: (enabled: boolean) => void;
   setClaudeCliLaunchFullAccess: (enabled: boolean) => Promise<void>;
+  setManualCliPath: (commandName: string, path: string) => Promise<string>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -214,6 +219,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   codexPreserveOfficialAuthOnSwitch: false,
   codexUnifiedSessionHistoryEnabled: false,
   claudeCliLaunchFullAccess: false,
+  cliManualPaths: {},
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -249,6 +255,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
         codexUnifiedSessionHistoryEnabled: settings.codex_unified_session_history_enabled ?? false,
         claudeCliLaunchFullAccess: settings.claude_cli_launch_full_access ?? false,
+        cliManualPaths: settings.cli_manual_paths ?? {},
         isInitialized: true,
       });
     } catch (error) {
@@ -515,5 +522,24 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       claude_cli_launch_full_access: enabled,
     };
     await saveSettings(newSettings);
+  },
+
+  setManualCliPath: async (commandName, path) => {
+    const version = await saveManualCliPath(commandName, path);
+
+    const currentSettings = await getSettings();
+    const cliManualPaths = { ...(currentSettings.cli_manual_paths ?? {}) };
+    if (path.trim()) {
+      cliManualPaths[commandName] = path.trim();
+    } else {
+      delete cliManualPaths[commandName];
+    }
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      cli_manual_paths: cliManualPaths,
+    };
+    await saveSettings(newSettings);
+    set({ cliManualPaths });
+    return version;
   },
 }));

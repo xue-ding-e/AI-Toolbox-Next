@@ -144,6 +144,10 @@ pub struct AppSettings {
     pub claude_cli_launch_full_access: bool,
     /// File filter rules for backup/restore
     pub backup_file_filter_rules: Vec<BackupFileFilterRule>,
+    /// User-specified manual CLI paths by command name (e.g. `claude`, `opencode`,
+    /// `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`). When present and the
+    /// file exists, CLI execution prefers these paths over auto-discovery.
+    pub cli_manual_paths: HashMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -196,6 +200,7 @@ impl Default for AppSettings {
             codex_unified_session_history_enabled: false,
             claude_cli_launch_full_access: false,
             backup_file_filter_rules: default_backup_file_filter_rules(),
+            cli_manual_paths: HashMap::new(),
         }
     }
 }

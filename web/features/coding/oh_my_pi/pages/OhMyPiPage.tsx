@@ -60,6 +60,7 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
@@ -2384,7 +2385,9 @@ const OhMyPiPage: React.FC = () => {
           onSidebarVisibleChange={async (visible) => {
             await setSidebarHidden('oh_my_pi', !visible);
           }}
-        />
+        >
+          <CliManualPathSetting commandName="omp" labelKey="subModules.ohMyPi" toolNameKey="subModules.ohMyPiFull" />
+        </SidebarSettingsModal>
       </SectionSidebarLayout>
     </Spin>
   );

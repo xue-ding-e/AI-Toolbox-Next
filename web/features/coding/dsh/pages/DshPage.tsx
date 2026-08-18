@@ -58,6 +58,7 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
@@ -2293,7 +2294,9 @@ const DshPage: React.FC = () => {
           onSidebarVisibleChange={async (visible) => {
             await setSidebarHidden('dsh', !visible);
           }}
-        />
+        >
+          <CliManualPathSetting commandName="dsh" labelKey="subModules.dsh" toolNameKey="subModules.dshFull" />
+        </SidebarSettingsModal>
 
         <Modal
           title={launchModalStage === 'npx'

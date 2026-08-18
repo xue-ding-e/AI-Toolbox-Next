@@ -34,6 +34,54 @@ pub fn normalize_backup_custom_entry_path(path: String) -> String {
     crate::settings::backup::utils::normalize_backup_storage_path(&path)
 }
 
+/// Probe a manual CLI path's version (live) without persisting anything.
+/// Used by the "More Options" modal to display the version of a saved path and
+/// to validate a newly entered path before saving.
+#[tauri::command]
+pub fn probe_manual_cli_version(path: String) -> Result<String, String> {
+    crate::coding::cli_resolver::probe_cli_version(&path)
+}
+
+/// Auto-detect the current local CLI path for a command name and return it so
+/// the "More Options" input can be pre-filled. Does not persist anything.
+#[tauri::command]
+pub fn detect_manual_cli_path(command_name: String) -> Result<String, String> {
+    let program = crate::coding::cli_resolver::resolve_local_cli_by_command_name(&command_name)
+        .ok_or_else(|| format!(
+            "未检测到 `{command_name}` CLI，请确认已安装或手动选择路径。"
+        ))?;
+    Ok(program.path.to_string_lossy().to_string())
+}
+
+/// Persist a manual CLI path for a given command name (e.g. `opencode`, `pi`,
+/// `claude`, `grok`). Validates the path by probing `--version` first; only a
+/// usable CLI is saved. Returns the probed version.
+#[tauri::command]
+pub async fn set_manual_cli_path(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    command_name: String,
+    path: String,
+) -> Result<String, String> {
+    let trimmed = path.trim().to_string();
+    let version = if trimmed.is_empty() {
+        String::new()
+    } else {
+        crate::coding::cli_resolver::validate_manual_cli_path(&trimmed)?
+    };
+
+    let mut settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
+    if trimmed.is_empty() {
+        settings.cli_manual_paths.remove(&command_name);
+    } else {
+        settings
+            .cli_manual_paths
+            .insert(command_name, trimmed);
+    }
+    store::save_settings_to_sqlite_state(&sqlite_state, &settings)?;
+
+    Ok(version)
+}
+
 /// List backup file paths that can currently be excluded by tool.
 #[tauri::command]
 pub async fn list_backup_file_filter_path_options(

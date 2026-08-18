@@ -115,6 +115,7 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import {
   buildProviderConnectivityBatchTarget,
   runProviderConnectivityBatch,
@@ -1857,7 +1858,9 @@ const OpenClawPage: React.FC = () => {
               onClose={() => setSettingsModalOpen(false)}
               sidebarVisible={!sidebarHidden}
               onSidebarVisibleChange={(visible) => setSidebarHidden('openclaw', !visible)}
-            />
+            >
+          <CliManualPathSetting commandName="openclaw" labelKey="subModules.openclaw" />
+        </SidebarSettingsModal>
           </>
         )}
       </div>

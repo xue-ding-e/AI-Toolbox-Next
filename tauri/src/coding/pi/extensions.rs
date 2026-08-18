@@ -172,15 +172,21 @@ fn annotate_pi_command_error(message: String, local_program_label: Option<&str>)
 
 fn build_pi_spawn_error(error: &std::io::Error, local_program_label: Option<&str>) -> String {
     let base_message = format!("Failed to run Pi extension command: {error}");
+    let manual_hint = crate::coding::cli_resolver::manual_cli_config_hint("pi");
     let with_hint = if error.kind() == std::io::ErrorKind::NotFound {
-        if let Some(label) = local_program_label {
+        let message = if let Some(label) = local_program_label {
             format!(
                 "{base_message}. attempted_program={label}. {}",
                 local_cli_missing_hint("pi")
             )
         } else {
             format!("{base_message}. {}", local_cli_missing_hint("pi"))
+        };
+        if manual_hint.is_empty() { message } else {
+            format!("{message} {manual_hint}")
         }
+    } else if !manual_hint.is_empty() {
+        format!("{base_message} {manual_hint}")
     } else {
         base_message
     };

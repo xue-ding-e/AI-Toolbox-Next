@@ -57,21 +57,27 @@ pub fn open_web_ui_browser(port: u16, path: Option<&str>) -> Result<(), String> 
 /// 都会返回 Ok,前端会误显示"启动成功"toast。
 pub fn launch_dsh_web_in_terminal(use_npx: bool) -> Result<(), String> {
     let cli_name = if use_npx { "npx" } else { "dsh" };
-    if crate::coding::cli_resolver::resolve_local_cli_by_name(cli_name).is_none() {
-        return Err(crate::coding::cli_resolver::local_cli_missing_hint(cli_name));
-    }
+    let program = crate::coding::cli_resolver::resolve_local_cli_by_name(cli_name)
+        .ok_or_else(|| crate::coding::cli_resolver::local_cli_missing_hint(cli_name))?;
+    // Manual overrides apply to the dsh binary itself; for `npx` we keep the
+    // bare npx command because there is no per-tab npx override.
+    let resolved_path = if use_npx {
+        None
+    } else {
+        Some(program.path.as_path())
+    };
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_dashboard(use_npx)
+        launch_windows_dashboard(use_npx, resolved_path)
     }
     #[cfg(target_os = "macos")]
     {
-        launch_macos_dashboard(use_npx)
+        launch_macos_dashboard(use_npx, resolved_path)
     }
     #[cfg(target_os = "linux")]
     {
-        launch_linux_dashboard(use_npx)
+        launch_linux_dashboard(use_npx, resolved_path)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
@@ -80,21 +86,28 @@ pub fn launch_dsh_web_in_terminal(use_npx: bool) -> Result<(), String> {
 }
 
 /// 启动命令串:`dsh web` 或 `npx @deepseek-ai/dsh web`。
-fn dashboard_command(use_npx: bool) -> &'static str {
+///
+/// `resolved_path` is the concrete CLI path resolved by `cli_resolver` (it
+/// already honors user manual overrides). It is quoted because a path may
+/// contain spaces.
+fn dashboard_command(use_npx: bool, resolved_path: Option<&std::path::Path>) -> String {
     if use_npx {
-        "npx @deepseek-ai/dsh web"
+        "npx @deepseek-ai/dsh web".to_string()
+    } else if let Some(path) = resolved_path {
+        format!("\"{}\" web", path.display())
     } else {
-        "dsh web"
+        "dsh web".to_string()
     }
 }
 
 #[cfg(target_os = "windows")]
-fn launch_windows_dashboard(use_npx: bool) -> Result<(), String> {
+fn launch_windows_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let command = dashboard_command(use_npx, resolved_path);
     // `start` 第一个 `""` 是窗口标题;后续 `cmd /K "<cmd>"` 在新终端窗口内运行。
     Command::new("cmd")
-        .args(["/C", "start", "", "cmd", "/K", dashboard_command(use_npx)])
+        .args(["/C", "start", "", "cmd", "/K", &command])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map(|_| ())
@@ -102,8 +115,10 @@ fn launch_windows_dashboard(use_npx: bool) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_macos_dashboard(use_npx: bool) -> Result<(), String> {
-    let command = dashboard_command(use_npx);
+fn launch_macos_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
+    let command = dashboard_command(use_npx, resolved_path)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     let applescript = format!(
         r#"tell application "Terminal"
     activate
@@ -119,8 +134,12 @@ end tell"#
 }
 
 #[cfg(target_os = "linux")]
-fn launch_linux_dashboard(use_npx: bool) -> Result<(), String> {
-    let command = dashboard_command(use_npx);
+fn launch_linux_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
+    let command = dashboard_command(use_npx, resolved_path)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
     let terminals = [
         ("gnome-terminal", vec!["--".to_string()]),
         ("konsole", vec!["-e".to_string()]),
@@ -134,7 +153,7 @@ fn launch_linux_dashboard(use_npx: bool) -> Result<(), String> {
     for (terminal, args) in terminals {
         let mut cmd = Command::new(terminal);
         cmd.args(&args);
-        cmd.arg("sh").arg("-c").arg(command);
+        cmd.arg("sh").arg("-c").arg(&command);
         match cmd.spawn() {
             Ok(_) => return Ok(()),
             Err(e) => last_error = format!("打开 {terminal} 失败: {e}"),

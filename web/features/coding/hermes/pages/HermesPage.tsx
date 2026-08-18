@@ -51,6 +51,7 @@ import SectionSidebarLayout, {
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import ProviderConnectivityTestModal from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import {
@@ -1890,7 +1891,9 @@ const HermesPage: React.FC = () => {
           onSidebarVisibleChange={async (visible) => {
             await setSidebarHidden('hermes', !visible);
           }}
-        />
+        >
+          <CliManualPathSetting commandName="hermes" labelKey="subModules.hermes" />
+        </SidebarSettingsModal>
       </SectionSidebarLayout>
     </Spin>
   );

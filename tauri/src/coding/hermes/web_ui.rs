@@ -53,21 +53,21 @@ pub fn open_web_ui_browser(port: u16, path: Option<&str>) -> Result<(), String> 
 /// 启动前先用 `where`/`which` 验证 `hermes` CLI 可解析;否则 `cmd /C start` 这类
 /// 分层派生无论子进程是否真正起来都会返回 Ok,前端会误显示"启动成功"toast。
 pub fn launch_dashboard_in_terminal() -> Result<(), String> {
-    if crate::coding::cli_resolver::resolve_local_cli_by_name("hermes").is_none() {
-        return Err(crate::coding::cli_resolver::local_cli_missing_hint("hermes"));
-    }
+    let program = crate::coding::cli_resolver::resolve_local_cli_by_name("hermes")
+        .ok_or_else(|| crate::coding::cli_resolver::local_cli_missing_hint("hermes"))?;
+    let resolved_path = program.path.as_path();
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_dashboard()
+        launch_windows_dashboard(resolved_path)
     }
     #[cfg(target_os = "macos")]
     {
-        launch_macos_dashboard()
+        launch_macos_dashboard(resolved_path)
     }
     #[cfg(target_os = "linux")]
     {
-        launch_linux_dashboard()
+        launch_linux_dashboard(resolved_path)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
@@ -76,12 +76,13 @@ pub fn launch_dashboard_in_terminal() -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn launch_windows_dashboard() -> Result<(), String> {
+fn launch_windows_dashboard(resolved_path: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    // `start` 第一个 `""` 是窗口标题;后续 `cmd /K "hermes dashboard"` 在新终端窗口内运行。
+    let command = format!("\"{}\" dashboard", resolved_path.display());
+    // `start` 第一个 `""` 是窗口标题;后续 `cmd /K "<cmd>"` 在新终端窗口内运行。
     Command::new("cmd")
-        .args(["/C", "start", "", "cmd", "/K", "hermes dashboard"])
+        .args(["/C", "start", "", "cmd", "/K", &command])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map(|_| ())
@@ -89,11 +90,16 @@ fn launch_windows_dashboard() -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_macos_dashboard() -> Result<(), String> {
-    let applescript = r#"tell application "Terminal"
+fn launch_macos_dashboard(resolved_path: &std::path::Path) -> Result<(), String> {
+    let command = format!("\"{}\" dashboard", resolved_path.display())
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let applescript = format!(
+        r#"tell application "Terminal"
     activate
-    do script "hermes dashboard"
-end tell"#;
+    do script "{command}"
+end tell"#
+    );
     Command::new("osascript")
         .arg("-e")
         .arg(applescript)
@@ -103,7 +109,12 @@ end tell"#;
 }
 
 #[cfg(target_os = "linux")]
-fn launch_linux_dashboard() -> Result<(), String> {
+fn launch_linux_dashboard(resolved_path: &std::path::Path) -> Result<(), String> {
+    let command = format!("\"{}\" dashboard", resolved_path.display())
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
     let terminals = [
         ("gnome-terminal", vec!["--".to_string()]),
         ("konsole", vec!["-e".to_string()]),
@@ -117,7 +128,7 @@ fn launch_linux_dashboard() -> Result<(), String> {
     for (terminal, args) in terminals {
         let mut command = Command::new(terminal);
         command.args(&args);
-        command.arg("sh").arg("-c").arg("hermes dashboard");
+        command.arg("sh").arg("-c").arg(&command);
         match command.spawn() {
             Ok(_) => return Ok(()),
             Err(e) => last_error = format!("打开 {terminal} 失败: {e}"),

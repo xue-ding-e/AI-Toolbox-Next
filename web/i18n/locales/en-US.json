@@ -20,7 +20,9 @@
     "oh_my_pi": "omp",
     "claudedesktop": "Claude Desktop",
     "hermes": "Hermes",
-    "dsh": "dsh"
+    "dsh": "dsh",
+    "ohMyPiFull": "Oh My Pi",
+    "dshFull": "DeepSeek Harness"
   },
   "providerBilling": {
     "title": "Billing Config",
@@ -1184,7 +1186,20 @@
       "category_official": "Official",
       "category_third_party": "Third-party",
       "category_custom": "Custom"
-    }
+    },
+    "moreOptionsSelectCliFile": "Select CLI executable file",
+    "moreOptionsCliPathPlaceholder": "Enter or select CLI path (executable)",
+    "moreOptionsCliPathSaved": "CLI path saved",
+    "moreOptionsCliPathCleared": "CLI path cleared",
+    "moreOptionsCliPathInvalid": "CLI path is invalid or unusable. Check the path in \"More Options\" and retry.",
+    "moreOptionsCliProbing": "Probing version...",
+    "moreOptionsCliVersion": "Version",
+    "moreOptionsCliVersionFailed": "Version probe failed",
+    "moreOptionsCliPathTitle": "{{tool}} CLI path",
+    "moreOptionsCliDetect": "Auto detect",
+    "moreOptionsCliDetectSuccess": "CLI path auto-detected",
+    "moreOptionsCliDetectFailed": "Auto detect failed, please choose manually",
+    "moreOptionsCliNotSet": "No manual CLI path set yet. Click Edit to auto-detect or pick a local CLI path."
   },
   "sessionManager": {
     "title": "Session Manager",

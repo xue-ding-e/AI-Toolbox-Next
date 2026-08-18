@@ -20,7 +20,9 @@
     "oh_my_pi": "omp",
     "claudedesktop": "Claude Desktop",
     "hermes": "Hermes",
-    "dsh": "dsh"
+    "dsh": "dsh",
+    "ohMyPiFull": "Oh My Pi",
+    "dshFull": "DeepSeek Harness"
   },
   "providerBilling": {
     "title": "计费配置",
@@ -1184,7 +1186,20 @@
       "category_official": "官方",
       "category_third_party": "第三方",
       "category_custom": "自定义"
-    }
+    },
+    "moreOptionsSelectCliFile": "选择 CLI 可执行文件",
+    "moreOptionsCliPathPlaceholder": "输入或选择 CLI 路径（可执行文件）",
+    "moreOptionsCliPathSaved": "CLI 路径已保存",
+    "moreOptionsCliPathCleared": "CLI 路径已清除",
+    "moreOptionsCliPathInvalid": "CLI 路径无效或不可用，请检查后重试（可在\"更多选项\"中确认路径）",
+    "moreOptionsCliProbing": "正在检测版本...",
+    "moreOptionsCliVersion": "版本",
+    "moreOptionsCliVersionFailed": "版本检测失败",
+    "moreOptionsCliPathTitle": "{{tool}} CLI 路径",
+    "moreOptionsCliDetect": "自动检测",
+    "moreOptionsCliDetectSuccess": "已自动检测到 CLI 路径",
+    "moreOptionsCliDetectFailed": "自动检测失败，请手动选择",
+    "moreOptionsCliNotSet": "尚未手动指定 CLI 路径，点击编辑可自动检测或手动选择本机 CLI 路径"
   },
   "sessionManager": {
     "title": "会话管理",

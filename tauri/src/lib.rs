@@ -1968,6 +1968,9 @@ pub fn run() {
             // Settings
             settings::get_settings,
             settings::save_settings,
+            settings::probe_manual_cli_version,
+            settings::set_manual_cli_path,
+            settings::detect_manual_cli_path,
             settings::normalize_backup_custom_entry_path,
             settings::list_backup_file_filter_path_options,
             settings::set_auto_launch,

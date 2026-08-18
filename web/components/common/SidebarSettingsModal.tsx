@@ -52,7 +52,7 @@ const SidebarSettingsModal: React.FC<SidebarSettingsModalProps> = ({
   onClose,
   sidebarVisible,
   onSidebarVisibleChange,
-  width = 480,
+  width = 600,
   children,
 }) => {
   const { t } = useTranslation();

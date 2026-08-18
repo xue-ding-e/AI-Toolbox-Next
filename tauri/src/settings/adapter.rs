@@ -2,6 +2,7 @@ use super::types::{
     default_backup_file_filter_rules, default_sidebar_hidden_by_page, AppSettings,
     BackupCustomEntry, BackupFileFilterRule, S3Config, WebDAVConfig,
 };
+use std::collections::HashMap;
 /**
  * Settings Adapter Layer
  *
@@ -79,6 +80,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         ),
         claude_cli_launch_full_access: get_bool(&value, "claude_cli_launch_full_access", false),
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
+        cli_manual_paths: get_string_map(&value, "cli_manual_paths"),
     }
 }
 
@@ -144,6 +146,19 @@ fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> 
                 .collect()
         })
         .unwrap_or_else(|| defaults.iter().map(|s| s.to_string()).collect())
+}
+
+fn get_string_map(value: &Value, key: &str) -> HashMap<String, String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_object())
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {

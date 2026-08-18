@@ -616,6 +616,7 @@ features/
   - 纯文件读写可以继续直接访问 `\\\\wsl.localhost\\...` UNC 路径；但“文件 I/O 可用”不代表“CLI 也可以直接吃 UNC 路径”。
   - 新增 CLI 能力时，要同时检查这 4 个 tab 是否存在同类调用点，避免只在当前模块修补。
   - 对 Claude Code、Codex、OpenCode、OpenClaw 这类用户自行安装的 CLI，不要在 GUI 进程里直接依赖 `PATH` 做 `Command::new("<tool>")`。macOS 从 Dock/Finder/Spotlight 启动时常拿不到 shell PATH；新增 CLI 调用时，必须优先解析已知安装路径或显式配置路径，再回退到 PATH。
+  - 有 CLI 的 tab（opencode/claudecode/grok/pi/oh_my_pi/hermes/dsh/openclaw）的“更多选项”支持用户手动指定本机 CLI 路径；保存前会执行 `--version`/`-v`/`version` 校验，打开“更多选项”时每次重新探测并显示版本。本机 CLI 解析统一经 `tauri/src/coding/cli_resolver.rs` 的手动覆盖注册表优先使用该路径（文件不存在时回退自动发现）。改动 CLI 调用时不要绕过该注册表直接 `Command::new("<tool>")`。
 
 ## Data Storage Architecture
 

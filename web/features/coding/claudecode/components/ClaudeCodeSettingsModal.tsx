@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import SidebarSettingsModal, {
   SettingsToggleRow,
 } from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import {
   getClaudePluginStatus,
   applyClaudePluginConfig,
@@ -110,6 +111,10 @@ export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = (
       sidebarVisible={sidebarVisible}
       onSidebarVisibleChange={onSidebarVisibleChange}
     >
+      <CliManualPathSetting
+        commandName="claude"
+        labelKey="subModules.claudecode"
+      />
       <SettingsToggleRow
         title={t('claudecode.settings.vscode')}
         hint={t('claudecode.settings.vscodeHint')}

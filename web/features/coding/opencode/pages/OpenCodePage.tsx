@@ -97,6 +97,7 @@ import SectionSidebarLayout, {
 import SidebarSettingsModal, {
   SettingsToggleRow,
 } from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import {
   buildProviderConnectivityBatchTarget,
   runProviderConnectivityBatch,
@@ -2742,6 +2743,10 @@ const OpenCodePage: React.FC = () => {
               sidebarVisible={!sidebarHidden}
               onSidebarVisibleChange={(visible) => setSidebarHidden('opencode', !visible)}
             >
+              <CliManualPathSetting
+                commandName="opencode"
+                labelKey="subModules.opencode"
+              />
               <SettingsToggleRow
                 title={t('opencode.ohMyOpenCode.clearAppliedEnable')}
                 hint={t('opencode.ohMyOpenCode.clearAppliedEnableHint')}

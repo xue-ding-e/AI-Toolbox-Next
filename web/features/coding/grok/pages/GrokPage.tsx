@@ -85,6 +85,7 @@ import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModa
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import GrokConfigPreviewModal from '@/components/common/GrokConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
@@ -2140,7 +2141,9 @@ const GrokPage: React.FC = () => {
           onClose={() => setSettingsModalOpen(false)}
           sidebarVisible={!sidebarHidden}
           onSidebarVisibleChange={(visible) => setSidebarHidden('grok', !visible)}
-        />
+        >
+          <CliManualPathSetting commandName="grok" labelKey="subModules.grok" />
+        </SidebarSettingsModal>
         <Modal
           open={Boolean(officialAccountDetails)}
           title={t('grok.provider.officialAccountDetailsTitle')}

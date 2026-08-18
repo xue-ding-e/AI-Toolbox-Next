@@ -128,7 +128,16 @@ async fn run(db: &SqliteDbState, args: &[&str]) -> Result<String, String> {
     let output = build_command(&location, args)?
         .output()
         .await
-        .map_err(|error| format!("Failed to run Grok plugin command: {error}"))?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "Failed to run Grok plugin command: {error}. {}",
+                    crate::coding::cli_resolver::local_cli_missing_hint("grok")
+                )
+            } else {
+                format!("Failed to run Grok plugin command: {error}")
+            }
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if output.status.success() {
         return Ok(stdout);

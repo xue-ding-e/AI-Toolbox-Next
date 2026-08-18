@@ -1,10 +1,87 @@
+use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use tokio::process::Command as TokioCommand;
+
+/// In-memory registry of user-specified manual CLI paths, keyed by command name
+/// (e.g. `claude`, `opencode`, `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`).
+///
+/// When set, these paths take priority over PATH / candidate-dir resolution in
+/// `resolve_local_cli_program`. The map is refreshed whenever application
+/// settings are loaded or saved (see `crate::settings::store`). If a configured
+/// path no longer exists on disk, resolution silently falls back to the normal
+/// discovery logic.
+fn manual_cli_override_registry() -> &'static Mutex<HashMap<String, String>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Replace the manual CLI override registry with the given map (command name -> path).
+pub fn set_manual_cli_overrides(overrides: HashMap<String, String>) {
+    let mut registry = manual_cli_override_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Drop empty / whitespace-only entries.
+    *registry = overrides
+        .into_iter()
+        .filter(|(_, path)| !path.trim().is_empty())
+        .collect();
+}
+
+/// Look up a user-specified explicit path for a command name. Returns the path
+/// only when it still exists on disk (mirrors the "file not found → fallback"
+/// requirement).
+fn manual_cli_override_path(command_name: &str) -> Option<PathBuf> {
+    let registry = manual_cli_override_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let path = registry.get(command_name)?;
+    let path_buf = PathBuf::from(path);
+    if is_existing_command_path(&path_buf) {
+        Some(path_buf)
+    } else {
+        None
+    }
+}
+
+/// Whether a user has explicitly registered a manual CLI path for `command_name`.
+pub fn has_manual_cli_override(command_name: &str) -> bool {
+    manual_cli_override_path(command_name).is_some()
+}
+
+/// Whether a manual CLI path is configured for `command_name`, regardless of
+/// whether the file currently exists on disk. Used to tell users their saved
+/// override is present but currently unusable.
+pub fn manual_cli_path_configured(command_name: &str) -> bool {
+    let registry = manual_cli_override_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    registry
+        .get(command_name)
+        .is_some_and(|path| !path.trim().is_empty())
+}
+
+/// Human-readable note to append when a configured manual CLI path exists but
+/// cannot be used, guiding the user back to the tab's "More Options".
+pub fn manual_cli_config_hint(command_name: &str) -> String {
+    if manual_cli_path_configured(command_name) && manual_cli_override_path(command_name).is_none() {
+        format!(
+            "检测到你已在“更多选项”中手动指定了 `{command_name}` 的 CLI 路径，但该路径当前不存在或不可用；请到对应 tab 的“更多选项”中确认路径是否正确。"
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// Private alias so `local_cli_missing_hint` can reuse the same copy.
+fn manual_cli_override_hint(command_name: &str) -> String {
+    manual_cli_config_hint(command_name)
+}
 
 /// Windows CREATE_NO_WINDOW: hide console for short-lived CLI spawns from a GUI process.
 /// Prefer this over DETACHED_PROCESS when capturing stdout/stderr via `.output()`.
@@ -139,6 +216,22 @@ pub fn resolve_local_cli_by_name(command_name: &str) -> Option<LocalCliProgram> 
     (program.path.as_os_str() != OsStr::new(command_name)).then_some(program)
 }
 
+/// Resolve a CLI program by the command name used across the app (e.g. `claude`,
+/// `opencode`, `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`). Uses each
+/// tool's dedicated resolver when one exists so tool-specific install locations
+/// are also honored.
+pub fn resolve_local_cli_by_command_name(command_name: &str) -> Option<LocalCliProgram> {
+    let program = match command_name {
+        "claude" => Some(resolve_local_claude_program()),
+        "opencode" => Some(resolve_local_opencode_program()),
+        "grok" => Some(resolve_local_grok_program()),
+        "pi" => Some(resolve_local_pi_program()),
+        "omp" => Some(resolve_local_omp_program()),
+        _ => resolve_local_cli_by_name(command_name),
+    }?;
+    (program.path.as_os_str() != OsStr::new(command_name)).then_some(program)
+}
+
 pub fn resolve_local_pi_program() -> LocalCliProgram {
     resolve_named_cli_program("pi", default_npm_global_candidates("pi"))
 }
@@ -164,12 +257,80 @@ pub fn build_local_tokio_command(program_path: &Path) -> TokioCommand {
 }
 
 pub fn local_cli_missing_hint(command_name: &str) -> String {
-    format!(
+    let manual_hint = manual_cli_override_hint(command_name);
+    let mut message = format!(
         "未找到 `{command_name}` CLI。AI Toolbox 已检查当前 PATH、常见安装路径，以及 nvm、volta、fnm、nvm-windows、bun、mise、asdf 管理的全局 bin；macOS 从 Dock/Finder/Spotlight 启动时不会继承终端 shell PATH。请确认 CLI 已安装。"
-    )
+    );
+    if !manual_hint.is_empty() {
+        message.push(' ');
+        message.push_str(&manual_hint);
+    }
+    message
+}
+
+/// Probe a CLI's version by trying `--version`, `-v`, then `version`, and
+/// returning the first non-empty line of the matched output.
+///
+/// Used to validate a manually-configured CLI path before saving, and to show
+/// the installed version next to a saved path in the "More Options" modal.
+pub fn probe_cli_version(readable_path: &str) -> Result<String, String> {
+    let path = PathBuf::from(readable_path.trim());
+    if path.as_os_str().is_empty() {
+        return Err("CLI 路径不能为空".to_string());
+    }
+    if !is_existing_command_path(&path) {
+        return Err(format!("未找到 CLI 文件: {}", path.display()));
+    }
+
+    let mut failure_reason = String::new();
+    for flag in ["--version", "-v", "version"] {
+        let mut command = build_local_std_command(&path);
+        command.arg(flag);
+        let output = match command.output() {
+            Ok(output) => output,
+            Err(error) => {
+                failure_reason = format!("{flag}: {error}");
+                continue;
+            }
+        };
+        if !output.status.success() {
+            failure_reason = format!(
+                "{flag}: 退出码 {:?}",
+                output.status.code()
+            );
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+        let first_line = combined
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default()
+            .to_string();
+        if !first_line.is_empty() {
+            return Ok(first_line);
+        }
+        failure_reason = format!("{flag}: CLI 未输出版本信息");
+    }
+
+    Err(format!(
+        "无法通过 `--version` / `-v` / `version` 探测 CLI 版本: {failure_reason}"
+    ))
+}
+
+/// Validate that a manual CLI path is usable: must exist and produce a version.
+pub fn validate_manual_cli_path(readable_path: &str) -> Result<String, String> {
+    probe_cli_version(readable_path)
 }
 
 fn resolve_local_cli_program(command_name: &str, candidate_paths: Vec<PathBuf>) -> LocalCliProgram {
+    // User-specified manual path takes priority (only when it still exists).
+    if let Some(path) = manual_cli_override_path(command_name) {
+        return LocalCliProgram { path };
+    }
+
     if let Some(path) = resolve_cli_from_path(command_name) {
         return LocalCliProgram { path };
     }
@@ -1346,6 +1507,45 @@ mod tests {
         );
         assert!(dirs.contains(&shims));
         assert!(dirs.contains(&local_bin));
+    }
+
+    #[test]
+    fn manual_cli_override_prefers_existing_path_over_auto_resolution() {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let test_dir = TestDir::new("manual-cli-pi");
+        #[cfg(target_os = "windows")]
+        let fake_pi = test_dir.path().join("pi.cmd");
+        #[cfg(not(target_os = "windows"))]
+        let fake_pi = test_dir.path().join("pi");
+        fs::write(&fake_pi, "").expect("write fake pi");
+        let mut map = std::collections::HashMap::new();
+        map.insert("pi".to_string(), fake_pi.to_string_lossy().to_string());
+        super::set_manual_cli_overrides(map);
+
+        let resolved = super::resolve_local_pi_program();
+        assert_eq!(resolved.path, fake_pi);
+
+        super::set_manual_cli_overrides(std::collections::HashMap::new());
+    }
+
+    #[test]
+    fn manual_cli_override_falls_back_when_file_missing_and_hint_reported() {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let test_dir = TestDir::new("manual-cli-missing");
+        let missing = test_dir.path().join("pi-does-not-exist");
+        let mut map = std::collections::HashMap::new();
+        map.insert("pi".to_string(), missing.to_string_lossy().to_string());
+        super::set_manual_cli_overrides(map);
+
+        assert!(super::manual_cli_path_configured("pi"));
+        assert!(!super::has_manual_cli_override("pi"));
+
+        let hint = super::local_cli_missing_hint("pi");
+        assert!(hint.contains("更多选项"));
+
+        super::set_manual_cli_overrides(std::collections::HashMap::new());
     }
 
     #[cfg(target_os = "windows")]

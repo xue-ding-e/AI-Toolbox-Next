@@ -257,7 +257,16 @@ pub fn export_markdown(
         .args(["export", session_id])
         .arg(command_output_path)
         .output()
-        .map_err(|error| format!("Failed to start Grok Markdown export: {error}"))?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "Failed to start Grok Markdown export: {error}. {}",
+                    crate::coding::cli_resolver::local_cli_missing_hint("grok")
+                )
+            } else {
+                format!("Failed to start Grok Markdown export: {error}")
+            }
+        })?;
     if output.status.success() {
         return Ok(());
     }
