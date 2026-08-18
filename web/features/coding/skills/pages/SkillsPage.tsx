@@ -283,33 +283,38 @@ const SkillsPage: React.FC = () => {
       content: t('skills.updateAll.confirmContent'),
       okText: t('skills.updateAll.run'),
       cancelText: t('common.cancel'),
-      onOk: async () => {
+      // Fire-and-forget: return nothing (not a Promise) so the confirm dialog
+      // closes immediately and yields to the progress modal. Awaiting here would
+      // keep the confirm open (with a loading button) on top of the progress modal.
+      onOk: () => {
         setUpdatingAll(true);
         setUpdateAllProgress(null);
         let unlisten: UnlistenFn | null = null;
-        try {
-          unlisten = await listen<SkillsUpdateProgress>('skills-update-progress', (event) => {
-            setUpdateAllProgress(event.payload);
-          });
-          const result = await api.updateAllSkills();
-          await refresh();
-          if (result.errors.length === 0) {
-            message.success(t('skills.updateAll.success', { count: result.updated.length }));
-          } else {
-            message.warning(
-              t('skills.updateAll.partial', {
-                updated: result.updated.length,
-                failed: result.errors.length,
-              }),
-            );
+        (async () => {
+          try {
+            unlisten = await listen<SkillsUpdateProgress>('skills-update-progress', (event) => {
+              setUpdateAllProgress(event.payload);
+            });
+            const result = await api.updateAllSkills();
+            await refresh();
+            if (result.errors.length === 0) {
+              message.success(t('skills.updateAll.success', { count: result.updated.length }));
+            } else {
+              message.warning(
+                t('skills.updateAll.partial', {
+                  updated: result.updated.length,
+                  failed: result.errors.length,
+                }),
+              );
+            }
+          } catch (error) {
+            message.error(String(error));
+          } finally {
+            unlisten?.();
+            setUpdatingAll(false);
+            setUpdateAllProgress(null);
           }
-        } catch (error) {
-          message.error(String(error));
-        } finally {
-          unlisten?.();
-          setUpdatingAll(false);
-          setUpdateAllProgress(null);
-        }
+        })();
       },
     });
   }, [t, refresh]);
