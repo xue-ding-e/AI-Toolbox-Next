@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 12;
+pub const TARGET_SCHEMA_VERSION: i32 = 13;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -43,6 +43,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 12 {
         run_migration_step(conn, 12, migrate_v12)?;
+    }
+    if current_version < 13 {
+        run_migration_step(conn, 13, migrate_v13)?;
     }
 
     Ok(())
@@ -275,6 +278,12 @@ fn migrate_v12(conn: &Connection) -> Result<(), String> {
     )
 }
 
+fn migrate_v13(conn: &Connection) -> Result<(), String> {
+    // Surface the upstream's original HTTP status alongside the gateway's synthetic
+    // code (e.g. a 200 SSE stream carrying an error envelope is rewritten to 502).
+    add_column_if_missing(conn, "proxy_request_logs", "upstream_status_code", "INTEGER")
+}
+
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
@@ -389,7 +398,8 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             detail_offset INTEGER,
             route_name TEXT,
             method TEXT,
-            path TEXT
+            path TEXT,
+            upstream_status_code INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_request_logs_provider

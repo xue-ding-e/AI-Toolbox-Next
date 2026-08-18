@@ -573,6 +573,7 @@ mod tests {
             upstream_model_id: Some("claude".to_string()),
             upstream_url: Some("https://api.example.com/v1/messages".to_string()),
             status_code: Some(200),
+            upstream_status_code: None,
             success: true,
             error_category: None,
             error_message: None,

@@ -1717,6 +1717,7 @@ async fn build_gateway_response(
             upstream_response_body: Some(upstream_response_body),
             upstream_response_body_bytes,
             upstream_response_body_stream_snapshot: None,
+            upstream_status_code: None,
             provider_type: provider.meta.provider_type.clone(),
             cost_multiplier: Some(provider.meta.cost_multiplier.clone()),
             pricing_model_source: Some(provider.meta.pricing_model_source.clone()),
@@ -1809,6 +1810,7 @@ async fn build_gateway_response(
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
             upstream_response_body_stream_snapshot,
+            upstream_status_code: None,
             provider_type: provider.meta.provider_type.clone(),
             cost_multiplier: Some(provider.meta.cost_multiplier.clone()),
             pricing_model_source: Some(provider.meta.pricing_model_source.clone()),
@@ -1958,6 +1960,7 @@ async fn build_gateway_response(
         upstream_response_body: stored_upstream_response_body,
         upstream_response_body_bytes: stored_upstream_response_body_bytes,
         upstream_response_body_stream_snapshot: None,
+        upstream_status_code: None,
         provider_type: provider.meta.provider_type.clone(),
         cost_multiplier: Some(provider.meta.cost_multiplier.clone()),
         pricing_model_source: Some(provider.meta.pricing_model_source.clone()),
@@ -3786,6 +3789,102 @@ fn sse_data_json(value: &Value) -> Vec<u8> {
     format!("data: {}\n\n", value).into_bytes()
 }
 
+/// Best-effort extraction of the upstream failure envelope's `(type, message)`
+/// from a captured response-body snapshot.
+///
+/// The snapshot may be a plain JSON envelope (`{"error":{"message":"...","type":"..."}}`)
+/// or an SSE stream carrying such an envelope on a `data:` line (possibly with an
+/// `event: error` line). Many upstreams wrap the human-readable message as a
+/// stringified JSON value inside `error.message` (e.g.
+/// `data: {"error":{"message":"{\"message\":\"Too many requests...\"}","type":"invalidrequesterror"}}`),
+/// so the inner `message` is unwrapped when it parses.
+///
+/// When the snapshot is an SSE stream, every block's payload is scanned (mirroring
+/// `gateway_body_reports_error`) so a late error envelope is still surfaced even
+/// when earlier blocks carried normal content.
+///
+/// Returns `None` only when no envelope is found; never panicks on malformed input.
+fn extract_upstream_error_detail(body: &[u8]) -> Option<(String, String)> {
+    // Plain JSON envelope (non-SSE 2xx body or a single self-contained chunk).
+    if let Ok(value) = serde_json::from_slice::<Value>(body) {
+        if let Some(detail) = extract_error_detail_from_value(&value) {
+            return Some(detail);
+        }
+    }
+    let text = String::from_utf8_lossy(body);
+    // Walk every SSE block and surface the first payload that carries an `error`.
+    let mut rest = text.as_ref();
+    while let Some((index, delimiter_len)) = find_sse_block_delimiter(rest.as_bytes()) {
+        let block = &rest[..index + delimiter_len];
+        if let Some(detail) = sse_block_error_detail(block) {
+            return Some(detail);
+        }
+        rest = &rest[index + delimiter_len..];
+    }
+    if !rest.trim().is_empty() {
+        if let Some(detail) = sse_block_error_detail(rest) {
+            return Some(detail);
+        }
+    }
+    // Fall back to scanning line-by-line for a `data:` line that parses as JSON,
+    // covering delimiterless single-block snapshots.
+    for line in text.lines() {
+        let payload = line
+            .trim()
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or_else(|| line.trim());
+        if let Ok(value) = serde_json::from_str::<Value>(payload) {
+            if let Some(detail) = extract_error_detail_from_value(&value) {
+                return Some(detail);
+            }
+        }
+    }
+    None
+}
+
+/// Extract `(type, message)` from a single SSE block's `data:` payload.
+fn sse_block_error_detail(block: &str) -> Option<(String, String)> {
+    let payload = sse_data_payload(block)?;
+    let value = serde_json::from_str::<Value>(payload.trim()).ok()?;
+    extract_error_detail_from_value(&value)
+}
+
+/// Pull `(type, message)` out of a parsed envelope value, unwrapping a
+/// stringified-JSON `error.message` when present.
+fn extract_error_detail_from_value(value: &Value) -> Option<(String, String)> {
+    let error = value.get("error").filter(|error| !error.is_null())?;
+    let raw_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let raw_message = error
+        .get("message")
+        .and_then(|message| message.as_str())
+        .unwrap_or("");
+    // Some upstreams wrap the human-readable text as a stringified JSON object
+    // inside `error.message` (e.g. `"{\"message\":\"Too many requests...\"}"`).
+    // Unwrap it when it parses so the surfaced text is the real reason.
+    if let Ok(inner) = serde_json::from_str::<Value>(raw_message) {
+        let inner_type = inner
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or(&raw_type)
+            .to_string();
+        let inner_message = inner
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(raw_message);
+        if !inner_message.is_empty() {
+            return Some((inner_type, inner_message.to_string()));
+        }
+    }
+    let message = raw_message.trim();
+    (!message.is_empty()).then(|| (raw_type, message.to_string()))
+}
+
 fn extract_bailian_text_delta(delta: &mut serde_json::Map<String, Value>) -> String {
     let mut text = String::new();
     if let Some(content) = delta.remove("content") {
@@ -3890,6 +3989,7 @@ fn buffered_gateway_response(
         upstream_response_body,
         upstream_response_body_bytes,
         upstream_response_body_stream_snapshot: None,
+        upstream_status_code: None,
         upstream_url: Some(upstream_url),
         error_category: None,
         attempt_count: 1,
@@ -3915,12 +4015,32 @@ fn streaming_first_chunk_failure_response(
     provider_attempt_count: u32,
     failover: bool,
 ) -> DebugHttpResponse {
+    // Prefer the probe-captured envelope, then any snapshot already on the response.
+    let captured_upstream_body = error
+        .upstream_response_body
+        .clone()
+        .or_else(|| response.upstream_response_body_snapshot().map(|(body, _)| body));
+    // Surface the upstream's own failure reason (error.message / error.type) when the
+    // snapshot carries an envelope; otherwise keep the generic probe message. This does
+    // not affect probing, retry, or failover — those are driven by `GatewayFailureKind`.
+    let surfaced_message = captured_upstream_body
+        .as_deref()
+        .and_then(extract_upstream_error_detail)
+        .map(|(error_type, error_message)| {
+            if error_type.is_empty() {
+                format!("Upstream streaming error: {error_message}")
+            } else {
+                format!("Upstream streaming error ({error_type}): {error_message}")
+            }
+        })
+        .unwrap_or_else(|| error.message.clone());
+
     let mut failure_response = json_response(
         502,
         "Bad Gateway",
         json!({
             "error": "upstream_stream_first_chunk_failed",
-            "message": error.message,
+            "message": surfaced_message,
         }),
         route.route_name,
         response.upstream_url.clone(),
@@ -3938,7 +4058,9 @@ fn streaming_first_chunk_failure_response(
         .upstream_request_body
         .take()
         .or(error.upstream_request_body);
-    // Prefer the probe-captured envelope, then any snapshot already on the response.
+    // The gateway rewrites the upstream's real status into a synthetic 502; record
+    // the original code so request detail can still surface it.
+    failure_response.upstream_status_code = Some(response.status_code);
     if let Some(body) = error.upstream_response_body {
         let body_bytes = if error.upstream_response_body_bytes > 0 {
             error.upstream_response_body_bytes
@@ -3988,6 +4110,9 @@ fn empty_success_failure_response(
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
     failure_response.upstream_request_body = response.upstream_request_body.take();
+    // The gateway rewrites the upstream's real status into a synthetic 502; record
+    // the original code so request detail can still surface it.
+    failure_response.upstream_status_code = Some(response.status_code);
     if let Some((body, body_bytes)) = response.upstream_response_body_snapshot() {
         failure_response.upstream_response_body = Some(body);
         failure_response.upstream_response_body_bytes = body_bytes;
@@ -11994,6 +12119,7 @@ data: {data}\r\n\r\n"
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
             upstream_response_body_stream_snapshot: None,
+            upstream_status_code: None,
             upstream_url: None,
             error_category: None,
             attempt_count: 1,
@@ -12109,6 +12235,83 @@ data: {data}\r\n\r\n"
             "data: \"error\":{\"message\":\"boom\"}}}"
         );
         assert!(gateway_body_reports_error(body.as_bytes()));
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_unwraps_stringified_json_message() {
+        // Real-world shape: the SSE `data:` payload carries an envelope whose
+        // `error.message` is itself a stringified JSON object with the real reason.
+        let body = concat!(
+            "event: error\n",
+            "data: {\"error\":{\"message\":\"{\\\"message\\\":\\\"Too many requests, please wait before trying again. You have sent too many requests. Wait before trying again.\\\"}\",\"type\":\"invalidrequesterror\"},\"type\":\"error\"}"
+        );
+        let (error_type, message) =
+            extract_upstream_error_detail(body.as_bytes()).expect("envelope should be parsed");
+        assert_eq!(error_type, "invalidrequesterror");
+        assert!(
+            message.contains("Too many requests"),
+            "should surface the inner reason, got: {message}"
+        );
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_plain_json_envelope() {
+        let body = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
+        let (error_type, message) =
+            extract_upstream_error_detail(body).expect("envelope should be parsed");
+        assert_eq!(error_type, "rate_limit_error");
+        assert_eq!(message, "rate limit exceeded");
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_multiline_sse_payload() {
+        let body = b"event: error\ndata: {\"error\":{\"message\":\"boom\",\"type\":\"bad\"}}\n\n";
+        let (error_type, message) =
+            extract_upstream_error_detail(body).expect("envelope should be parsed");
+        assert_eq!(error_type, "bad");
+        assert_eq!(message, "boom");
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_envelope_without_type() {
+        let body = br#"{"error":{"message":"something broke"}}"#;
+        let (error_type, message) =
+            extract_upstream_error_detail(body).expect("envelope should be parsed");
+        assert!(error_type.is_empty(), "type should default to empty");
+        assert_eq!(message, "something broke");
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_returns_none_when_no_envelope() {
+        let body = br#"{"choices":[{"message":{"content":"hello"}}]}"#;
+        assert_eq!(extract_upstream_error_detail(body), None);
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_returns_none_for_empty_body() {
+        assert_eq!(extract_upstream_error_detail(b""), None);
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_surfaces_late_envelope_after_normal_chunk() {
+        // The probe may accumulate more than one SSE block before deciding; a normal
+        // chunk preceding the error block must not mask the failure envelope.
+        let body = concat!(
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}\n\n",
+            "event: error\n",
+            "data: {\"error\":{\"message\":\"rate limited\",\"type\":\"rate_limit_error\"}}\n\n"
+        );
+        let (error_type, message) =
+            extract_upstream_error_detail(body.as_bytes()).expect("late envelope should be found");
+        assert_eq!(error_type, "rate_limit_error");
+        assert_eq!(message, "rate limited");
+    }
+
+    #[test]
+    fn extract_upstream_error_detail_returns_none_when_only_normal_content() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
+        assert_eq!(extract_upstream_error_detail(body.as_bytes()), None);
     }
 
     #[test]
@@ -13858,6 +14061,7 @@ data: {data}\r\n\r\n"
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
             upstream_response_body_stream_snapshot: None,
+            upstream_status_code: None,
             upstream_url: None,
             error_category: None,
             attempt_count: 1,
@@ -13915,6 +14119,7 @@ data: {data}\r\n\r\n"
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
             upstream_response_body_stream_snapshot: None,
+            upstream_status_code: None,
             upstream_url: None,
             error_category: None,
             attempt_count: 1,

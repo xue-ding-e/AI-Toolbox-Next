@@ -281,6 +281,7 @@ export interface GatewayRequestLogSummary {
   upstream_model_id: string | null;
   upstream_url: string | null;
   status_code: number | null;
+  upstream_status_code: number | null;
   success: boolean;
   error_category: string | null;
   error_message: string | null;

@@ -167,6 +167,7 @@
           "provider": "Provider",
           "model": "Model",
           "status": "Status",
+          "upstreamStatus": "Upstream status",
           "duration": "Duration",
           "firstToken": "First token",
           "streaming": "Streaming",

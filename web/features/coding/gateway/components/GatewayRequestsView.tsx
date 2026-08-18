@@ -461,6 +461,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <strong>{requestDisplay.modelApplicable ? requestDisplay.modelText : t('gateway.page.requests.notApplicable')}</strong>
           <span>{t('gateway.page.requests.fields.status')}</span>
           <strong>{detail.status_code ?? '-'}</strong>
+          {detail.upstream_status_code != null && (
+            <>
+              <span>{t('gateway.page.requests.fields.upstreamStatus')}</span>
+              <strong>{detail.upstream_status_code}</strong>
+            </>
+          )}
           <span>{t('gateway.page.requests.fields.duration')}</span>
           <strong>{formatDuration(detail.duration_ms)}</strong>
           <span>{t('gateway.page.requests.fields.firstToken')}</span>

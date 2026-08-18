@@ -454,7 +454,7 @@ skills-git-cache/
 - 复用同一个 `update_all_skills_internal`；**定时场景只 `log::debug`，静默失败，不弹 UI 打扰用户**。非法 schedule 仅 debug 跳过（保存命令已用 `parse_cron` 校验，属兜底）。配置变更在下一 tick（≤60s）生效，无需重启。
 - **Gotcha：** `skills_set_auto_update` 保存前必须校验 cron 可解析，避免 enabled 状态下持久化坏表达式；`skills_preview_auto_update_schedule` 的 count 钳制 1..=100（默认 10）。
 
-**更新替换前保护（installer::update_managed_skill_from_source）：** staging 构建完成后先与现有 central 目录做内容哈希比对，哈希一致直接跳过 swap（不落盘、不重同步工具，`updated_targets` 为空），避免定时任务每次 tick 无谓重写目录、也避免"源内容未变"仍覆盖 mtime。哈希不一致需要替换时，先把旧 central 内容复制到 `{app_data}/skills-backup/{skill_id}-{ts}`（每 skill 保留最新 5 份）再删除重建；用户经 symlink 工具目录直接改写的 central 内容因此可恢复，备份失败只 warn 不阻断更新。
+**更新替换前保护（installer::update_managed_skill_from_source）：** staging 构建完成后先与现有 central 目录做内容哈希比对，哈希一致直接跳过 swap：不重写目录、不重同步工具（`updated_targets` 为空），但仍然 `upsert_skill` 刷新 DB 行的 `updated_at`、把新拉的 git `source_revision` 落库、并归一 `status="ok"`，使该路径与其余三个刷新入口统一为「成功即改时间、失败不写库」；`central_path` 顺手 `to_relative_central_path` 归一。避免定时任务每次 tick 无谓重写目录、也避免"源内容未变"仍覆盖 mtime。哈希不一致需要替换时，先把旧 central 内容复制到 `{app_data}/skills-backup/{skill_id}-{ts}`（每 skill 保留最新 5 份）再删除重建；用户经 symlink 工具目录直接改写的 central 内容因此可恢复，备份失败只 warn 不阻断更新。
 
 ### 4.7 工具同步流程
 

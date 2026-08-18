@@ -329,14 +329,14 @@ pub fn record_request_summary(
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
                 cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
-                detail_offset, route_name, method, path
+                detail_offset, route_name, method, path, upstream_status_code
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?22,
-                ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30
+                ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30, ?31
             )"
         );
         let affected_rows = conn
@@ -373,6 +373,7 @@ pub fn record_request_summary(
                     route_name,
                     method,
                     path,
+                    summary.upstream_status_code.map(|value| i64::from(value)),
                 ],
             )
             .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -2116,7 +2117,7 @@ pub fn request_log_detail_from_summary(
                     latency_ms, first_token_ms, duration_ms, status_code, error_message,
                     created_at, is_streaming, total_cost_usd, provider_type,
                     cost_multiplier, pricing_model_source, detail_file, detail_offset,
-                    route_name, method, path
+                    route_name, method, path, upstream_status_code
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -2164,6 +2165,9 @@ pub fn request_log_detail_from_summary(
                         upstream_model_id: Some(row.get(3)?),
                         upstream_url: None,
                         status_code: Some(status_code),
+                        upstream_status_code: row
+                            .get::<_, Option<i64>>(25)?
+                            .map(|value| value.max(0) as u16),
                         success,
                         error_category: (!success).then(|| "upstream_error".to_string()),
                         error_message: row.get(13)?,
@@ -2405,6 +2409,7 @@ mod tests {
                 upstream_model_id: Some("anthropic/claude-sonnet-4-5".to_string()),
                 upstream_url: Some("https://example.test/v1/messages".to_string()),
                 status_code: Some(status_code),
+                upstream_status_code: None,
                 success: (200..400).contains(&status_code),
                 error_category: None,
                 error_message: None,

@@ -78,6 +78,7 @@ pub(super) fn record_gateway_observability(
                 upstream_model_id: response.upstream_model_id.clone(),
                 upstream_url: response.upstream_url.clone(),
                 status_code: Some(response.status_code),
+                upstream_status_code: response.upstream_status_code,
                 success: is_success_status(response.status_code),
                 error_category: response.error_category.clone(),
                 error_message: (!is_success_status(response.status_code))

@@ -167,6 +167,7 @@
           "provider": "供应商",
           "model": "模型",
           "status": "状态码",
+          "upstreamStatus": "上游状态码",
           "duration": "耗时",
           "firstToken": "首包延迟",
           "streaming": "流式响应",

@@ -97,6 +97,11 @@ pub(super) struct DebugHttpResponse {
     pub(super) upstream_response_body: Option<Vec<u8>>,
     pub(super) upstream_response_body_bytes: u64,
     pub(super) upstream_response_body_stream_snapshot: Option<SharedBodySnapshot>,
+    /// Original HTTP status code the upstream returned for this response, before
+    /// the gateway rewrites a failure into its own 502 envelope. Populated when the
+    /// gateway substitutes a synthetic status (e.g. a 200 SSE stream that carried an
+    /// error envelope becomes 502) so request detail can still surface the real code.
+    pub(super) upstream_status_code: Option<u16>,
     pub(super) upstream_url: Option<String>,
     pub(super) error_category: Option<String>,
     pub(super) attempt_count: u32,
@@ -279,6 +284,7 @@ pub(super) fn json_response(
         upstream_response_body: None,
         upstream_response_body_bytes: 0,
         upstream_response_body_stream_snapshot: None,
+        upstream_status_code: None,
         upstream_url,
         error_category: None,
         attempt_count: 0,
@@ -318,6 +324,7 @@ pub(super) fn empty_response(
         upstream_response_body: None,
         upstream_response_body_bytes: 0,
         upstream_response_body_stream_snapshot: None,
+        upstream_status_code: None,
         upstream_url: None,
         error_category: None,
         attempt_count: 0,

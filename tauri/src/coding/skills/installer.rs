@@ -674,7 +674,9 @@ pub async fn update_managed_skill_from_source(
     // Skip the swap when the staged content is identical to what is already in
     // the central repo: an update pass must not rewrite the directory (and
     // clobber mtimes / tool copy targets) for no change, and a scheduled
-    // auto-update must not churn every skill on every tick.
+    // auto-update must not churn every skill on every tick. The DB row is still
+    // refreshed (updated_at / git revision / status="ok") so this path matches the
+    // other refresh entries: "success writes the timestamp; failure writes nothing".
     let staged_hash = compute_content_hash(&staging_dir);
     let current_hash = compute_content_hash(&central_path);
     if staged_hash.is_some() && staged_hash == current_hash {
@@ -683,6 +685,36 @@ pub async fn update_managed_skill_from_source(
             "[update] content unchanged, skipping swap for '{}'",
             record.name
         );
+        // The directory did not change, but this update pass still succeeded: refresh
+        // updated_at, normalize the git revision onto the row, and assert status="ok".
+        // This aligns the hash-identical path with the other three refresh entries
+        // ("success writes the timestamp; failure writes nothing"). The filesystem
+        // swap and tool re-sync stay skipped — only the DB row is touched.
+        let relative_central_path = to_relative_central_path(&central_path, &central_dir);
+        let updated = Skill {
+            id: record.id.clone(),
+            name: record.name.clone(),
+            source_type: record.source_type.clone(),
+            source_ref: record.source_ref.clone(),
+            source_revision: new_revision.clone().or(record.source_revision.clone()),
+            central_path: relative_central_path,
+            content_hash: current_hash.clone(),
+            created_at: record.created_at,
+            updated_at: now,
+            last_sync_at: record.last_sync_at,
+            status: "ok".to_string(),
+            sort_index: record.sort_index,
+            user_group: record.user_group.clone(),
+            group_id: record.group_id.clone(),
+            user_note: record.user_note.clone(),
+            management_enabled: record.management_enabled,
+            disabled_previous_tools: record.disabled_previous_tools.clone(),
+            enabled_tools: record.enabled_tools.clone(),
+            sync_details: record.sync_details.clone(),
+        };
+        skill_store::upsert_skill(state, &updated)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
         return Ok(UpdateResult {
             skill_id: record.id.clone(),
             name: record.name.clone(),

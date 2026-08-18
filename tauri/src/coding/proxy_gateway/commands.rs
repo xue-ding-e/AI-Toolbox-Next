@@ -824,6 +824,7 @@ mod tests {
                         .to_string(),
                 ),
                 status_code: Some(200),
+                upstream_status_code: None,
                 success: true,
                 error_category: None,
                 error_message: None,

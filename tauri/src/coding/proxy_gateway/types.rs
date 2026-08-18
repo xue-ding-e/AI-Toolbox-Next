@@ -637,6 +637,12 @@ pub struct GatewayRequestLogSummary {
     pub upstream_model_id: Option<String>,
     pub upstream_url: Option<String>,
     pub status_code: Option<u16>,
+    /// Original HTTP status the upstream returned before the gateway rewrote a
+    /// failure into its own synthetic code (e.g. a 200 SSE stream carrying an
+    /// error envelope becomes 502). `None` when the gateway did not substitute
+    /// the upstream status.
+    #[serde(default)]
+    pub upstream_status_code: Option<u16>,
     pub success: bool,
     pub error_category: Option<String>,
     pub error_message: Option<String>,
