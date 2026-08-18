@@ -25,6 +25,15 @@ const OMO_UNIFIED_SCHEMA_URL: &str =
 /// startup migration does not re-import a stale legacy file over our values.
 const OMO_UNIFIED_MIGRATION_ID: &str = "2026-07-opencode-config-unification";
 
+/// Keys that are NOT part of the upstream `[opencode]` plugin schema
+/// (`OhMyOpenCodeConfigSchema` has no catchall → any unknown key triggers a
+/// doctor "Unknown config key" diagnostic). These can leak into the `[opencode]`
+/// block through `other_fields` flattening or legacy file migration, so we strip
+/// them in unified mode before writing. `lsp` is a known schema-eviction (still
+/// legal in legacy mode, written there); `google_auth` is a stray key some legacy
+/// configs carried. Add future evictions here.
+const OMO_UNIFIED_UNKNOWN_KEYS: &[&str] = &["google_auth", "lsp"];
+
 fn default_global_config() -> OhMyOpenAgentGlobalConfig {
     OhMyOpenAgentGlobalConfig {
         id: "global".to_string(),
@@ -264,6 +273,25 @@ fn flatten_omo_config(json: &Value) -> Value {
         }
     }
     Value::Object(flattened)
+}
+
+/// Strip keys that are not part of the upstream `[opencode]` plugin schema from a
+/// merged plugin config before writing it into the unified `omo.jsonc`. These keys
+/// leak in via `other_fields` flattening or legacy file migration and would trigger
+/// upstream doctor "Unknown config key" diagnostics. No-op when the value is not an
+/// object. See [`OMO_UNIFIED_UNKNOWN_KEYS`].
+fn strip_unified_unknown_keys(plugin_config: &mut Value) {
+    let Some(obj) = plugin_config.as_object_mut() else {
+        return;
+    };
+    for key in OMO_UNIFIED_UNKNOWN_KEYS {
+        if obj.remove(*key).is_some() {
+            log::warn!(
+                "[OhMyOpenAgent] Stripped unknown `[opencode]` key '{}' (not in upstream plugin schema)",
+                key
+            );
+        }
+    }
 }
 
 fn get_default_oh_my_openagent_dir() -> Result<std::path::PathBuf, String> {
@@ -822,6 +850,13 @@ pub async fn apply_config_to_file_public(
     }
 
     let mut plugin_config = Value::Object(plugin_config);
+
+    // Unified 模式下剔除 [opencode] 块的非 schema 键（如 google_auth、lsp）。
+    // 这些键会通过 other_fields 平铺或 legacy 迁移泄漏进来，触发上游 doctor
+    // "Unknown config key" 诊断。legacy 模式下 lsp 仍是合法顶层键，故不过滤。
+    if !legacy_mode {
+        strip_unified_unknown_keys(&mut plugin_config);
+    }
 
     // 清理空值：删除空对象和空数组
     adapter::clean_empty_values(&mut plugin_config);
@@ -1963,5 +1998,42 @@ mod tests {
         assert!(content.contains("// keep codegraph"));
         assert!(content.contains("\"codegraph\""));
         assert!(!content.contains("[opencode]"));
+    }
+
+    #[test]
+    fn strip_unified_unknown_keys_removes_google_auth_and_lsp() {
+        let mut config = json!({
+            "agents": { "sisyphus": { "model": "a/b" } },
+            "google_auth": false,
+            "lsp": { "gopls": { "command": ["gopls"] } },
+            "background_task": { "defaultConcurrency": 4 }
+        });
+        strip_unified_unknown_keys(&mut config);
+        let obj = config.as_object().unwrap();
+        // unknown keys stripped
+        assert!(!obj.contains_key("google_auth"));
+        assert!(!obj.contains_key("lsp"));
+        // legit plugin keys preserved
+        assert!(obj.contains_key("agents"));
+        assert!(obj.contains_key("background_task"));
+    }
+
+    #[test]
+    fn strip_unified_unknown_keys_leaves_non_object_unchanged() {
+        let mut config = json!([1, 2, 3]);
+        strip_unified_unknown_keys(&mut config);
+        assert_eq!(config, json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn strip_unified_unknown_keys_preserves_keys_not_in_blocklist() {
+        let mut config = json!({
+            "claude_code": { "agents": false },
+            "codegraph": { "daemon": true }
+        });
+        strip_unified_unknown_keys(&mut config);
+        let obj = config.as_object().unwrap();
+        assert!(obj.contains_key("claude_code"));
+        assert!(obj.contains_key("codegraph"));
     }
 }

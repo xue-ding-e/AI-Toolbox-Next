@@ -70,6 +70,7 @@ sequenceDiagram
 - unified 模式下全局配置弹窗的 **LSP 区块隐藏**（`OhMyOpenAgentGlobalConfigModal` 的 `showLsp={useLegacyConfig}`）；`OhMyOpenAgentSettings.handleSaveGlobalConfig` 在 unified 模式提交前把 `lsp` 还原为既有 DB 值（`globalConfig?.lsp ?? null`），**不能因表单隐藏而清空 DB 的 lsp**。lsp 只写 legacy 文件。
 - OMO **首次应用**前有一次「OMO 是否已升级到最新版本？」二次确认，由共享 hook `useOmoUpgradeGate` 实现，两个 apply 入口（`OhMyOpenAgentSettings.handleApplyConfig` 和 `OhMyOpenAgentConfigSelector.handleChange`）都要用 `guardedApply` 包裹并把 `upgradeConfirmModal` 渲染进 JSX。选「已升级」→ 确保关闭 legacy 开关（走 unified）并应用；选「未升级」→ 自动开 `setOpencodeUseLegacyOhMyConfig(true)` 再应用；选「取消」→ 中止且不持久化。确认标志 `opencodeOmoUpgradeConfirmed` 持久化后不再弹。
 - **局限（产品已接受）**：该确认门只罩上述两个显式 apply 入口；后端 re-apply（编辑已应用配置、保存全局配置、toggle disabled、托盘、备份恢复/启动）不经确认直接写运行时文件。UI 只能保证从这两个入口触发的路径受控。
+- OMO 的 `OhMyOpenAgentConfigModal` 写入 agent/category 的推理字段必须用上游 `2026-08-reasoning-unification` 产物形状：`reasoning`（不是 `variant`）；有主模型+回退时合并为有序 `models` 数组（首项主模型，其余回退），不再写 `model`+`fallback_models`；仅主模型无回退时保留 `model` 单字符串。`ultrawork`/`compaction` 子对象内 `variant` 同样改 `reasoning`。读侧（初始化回填 + JSON 导入）兼容老 `variant`/`fallback_models`/`models`：`models` 数组首项→主模型字段、其余→回退字段；`reasoning` 优先、回退读 `variant`。表单字段后缀是 `_reasoning`/`_models`/`_ultrawork_reasoning`。OpenCode Core 的 `agent.<name>.variant` 是另一回事，不要在此混淆。issue #286。
 
 ## 跨模块依赖
 

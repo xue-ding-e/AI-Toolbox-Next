@@ -25,11 +25,51 @@ type ModelOption = { label: string; value: string; disabled?: boolean };
 type ModelOptionGroup = { label: string; options: ModelOption[] };
 type GroupedModelOptions = Array<ModelOption | ModelOptionGroup>;
 
-const getOpenAgentBatchReplaceVariantFieldName = (modelFieldName: string) =>
-  `${modelFieldName}_variant`;
+const getOpenAgentBatchReplaceReasoningFieldName = (modelFieldName: string) =>
+  `${modelFieldName}_reasoning`;
 
-const getOpenAgentBatchReplaceFallbackFieldName = (modelFieldName: string) =>
-  `${modelFieldName}_fallback_models`;
+const getOpenAgentBatchReplaceModelsFieldName = (modelFieldName: string) =>
+  `${modelFieldName}_models`;
+
+/** A model chain entry — either a bare model id string or a per-entry override
+ *  object (`{ model, reasoning, ... }`). Upstream `2026-08-reasoning-unification`
+ *  emits the primary entry as an object carrying `reasoning`; older/manual
+ *  configs may use plain strings. */
+type ModelChainEntry = string | Record<string, unknown>;
+
+/** Coerce a single `models` chain entry into its model id string. Returns
+ *  undefined for non-string / malformed entries so callers can drop them. */
+function modelChainEntryToId(entry: ModelChainEntry | undefined): string | undefined {
+  if (typeof entry === 'string') return entry;
+  if (entry && typeof entry === 'object') {
+    const model = (entry as Record<string, unknown>).model;
+    if (typeof model === 'string') return model;
+  }
+  return undefined;
+}
+
+/** Split a unified `models` chain (primary at index 0, rest are fallbacks) into
+ *  the pieces the form fields expect. The primary entry may carry its own
+ *  `reasoning` (canonical upstream shape); per-fallback overrides are dropped
+ *  since the form only edits model ids. */
+function splitModelChain(rawModels: unknown): {
+  primaryModel?: string;
+  primaryReasoning?: string;
+  restModels: string[];
+} {
+  if (!Array.isArray(rawModels) || rawModels.length === 0) return { restModels: [] };
+  const primary = rawModels[0] as ModelChainEntry;
+  const primaryModel = modelChainEntryToId(primary);
+  let primaryReasoning: string | undefined;
+  if (primary && typeof primary === 'object') {
+    const reasoning = (primary as Record<string, unknown>).reasoning;
+    if (typeof reasoning === 'string' && reasoning) primaryReasoning = reasoning;
+  }
+  const restModels = (rawModels.slice(1) as ModelChainEntry[])
+    .map(modelChainEntryToId)
+    .filter((m): m is string => typeof m === 'string');
+  return { primaryModel, primaryReasoning, restModels };
+}
 
 // Map agent keys to lowercase for backward compatibility with old configs
 function normalizeAgentKey(key: string): string {
@@ -141,8 +181,8 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
     return collectBatchReplaceSourceUsage({
       values: watchedFormValues ?? {},
       modelFieldNames: batchReplaceModelFieldNames,
-      getVariantFieldName: getOpenAgentBatchReplaceVariantFieldName,
-      getFallbackFieldName: getOpenAgentBatchReplaceFallbackFieldName,
+      getVariantFieldName: getOpenAgentBatchReplaceReasoningFieldName,
+      getFallbackFieldName: getOpenAgentBatchReplaceModelsFieldName,
     });
   }, [batchReplaceModelFieldNames, watchedFormValues]);
   const batchReplaceFromModelOptions = React.useMemo<GroupedModelOptions>(() => {
@@ -231,21 +271,46 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           // Normalize agent key to lowercase for backward compatibility
           const normalizedAgentType = normalizeAgentKey(agentType);
 
-          // Extract model
-          if (typeof agent.model === 'string' && agent.model) {
+          // Extract model. Prefer the unified `models` chain (primary at index 0,
+          // rest become fallbacks); fall back to a plain `model` string + legacy
+          // `fallback_models` so older configs round-trip correctly.
+          const rawModels = (agent as Record<string, unknown>).models;
+          if (Array.isArray(rawModels) && rawModels.length > 0) {
+            const chain = splitModelChain(rawModels);
+            if (chain.primaryModel) {
+              agentFields[`agent_${normalizedAgentType}`] = chain.primaryModel;
+            }
+            if (chain.restModels.length > 0) {
+              agentFields[`agent_${normalizedAgentType}_models`] = chain.restModels as unknown as string;
+            }
+            // Reasoning nested on the primary entry (canonical upstream shape) wins
+            // over a stray top-level reasoning/variant below.
+            if (chain.primaryReasoning) {
+              agentFields[`agent_${normalizedAgentType}_reasoning`] = chain.primaryReasoning;
+            }
+          } else if (typeof agent.model === 'string' && agent.model) {
             agentFields[`agent_${normalizedAgentType}`] = agent.model;
           }
 
-          // Extract variant
-          if (typeof agent.variant === 'string' && agent.variant) {
-            agentFields[`agent_${normalizedAgentType}_variant`] = agent.variant;
+          // Extract reasoning (canonical) or legacy variant — only fill when the
+          // `models` primary didn't already carry one.
+          if (!agentFields[`agent_${normalizedAgentType}_reasoning`]) {
+            const reasoningValue = (agent as Record<string, unknown>).reasoning;
+            if (typeof reasoningValue === 'string' && reasoningValue) {
+              agentFields[`agent_${normalizedAgentType}_reasoning`] = reasoningValue;
+            } else if (typeof agent.variant === 'string' && agent.variant) {
+              agentFields[`agent_${normalizedAgentType}_reasoning`] = agent.variant;
+            }
           }
 
-          // Extract fallback_models (normalize string to string[])
-          const rawFallback = (agent as Record<string, unknown>).fallback_models;
-          if (rawFallback) {
-            const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
-            agentFields[`agent_${normalizedAgentType}_fallback_models`] = fallbackArr as unknown as string;
+          // Extract fallback_models (normalize string to string[]) — only when a
+          // `models` chain wasn't already consumed above.
+          if (!Array.isArray(rawModels)) {
+            const rawFallback = (agent as Record<string, unknown>).fallback_models;
+            if (rawFallback) {
+              const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
+              agentFields[`agent_${normalizedAgentType}_models`] = fallbackArr as unknown as string;
+            }
           }
 
           // Extract ultrawork
@@ -255,15 +320,18 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
             if (typeof uw.model === 'string' && uw.model) {
               agentFields[`agent_${normalizedAgentType}_ultrawork_model`] = uw.model;
             }
-            if (typeof uw.variant === 'string' && uw.variant) {
-              agentFields[`agent_${normalizedAgentType}_ultrawork_variant`] = uw.variant;
+            const uwReasoning = uw.reasoning;
+            if (typeof uwReasoning === 'string' && uwReasoning) {
+              agentFields[`agent_${normalizedAgentType}_ultrawork_reasoning`] = uwReasoning;
+            } else if (typeof uw.variant === 'string' && uw.variant) {
+              agentFields[`agent_${normalizedAgentType}_ultrawork_reasoning`] = uw.variant;
             }
           }
 
-          // Extract advanced fields (everything except model/fallback_models/ultrawork) and store in ref
+          // Extract advanced fields (everything except model/fallback_models/models/ultrawork) and store in ref
           // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
-          const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
+          const agentExcludeKeys = new Set(['model', 'fallback_models', 'models', 'ultrawork', 'reasoning', 'variant']);
           Object.keys(agent).forEach((key) => {
             if (!agentExcludeKeys.has(key) && agent[key as keyof OhMyOpenAgentAgentConfig] !== undefined) {
               advancedConfig[key] = agent[key as keyof OhMyOpenAgentAgentConfig];
@@ -289,27 +357,49 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         Object.entries(initialValues.categories).forEach(([categoryKey, category]) => {
           if (!category) return;
 
-          // Extract model
-          if (typeof category.model === 'string' && category.model) {
+          // Extract model. Prefer unified `models` chain (primary at index 0,
+          // rest become fallbacks); fall back to plain `model` + legacy `fallback_models`.
+          const rawCatModels = (category as Record<string, unknown>).models;
+          if (Array.isArray(rawCatModels) && rawCatModels.length > 0) {
+            const chain = splitModelChain(rawCatModels);
+            if (chain.primaryModel) {
+              categoryFields[`category_${categoryKey}`] = chain.primaryModel;
+            }
+            if (chain.restModels.length > 0) {
+              categoryFields[`category_${categoryKey}_models`] = chain.restModels as unknown as string;
+            }
+            if (chain.primaryReasoning) {
+              categoryFields[`category_${categoryKey}_reasoning`] = chain.primaryReasoning;
+            }
+          } else if (typeof category.model === 'string' && category.model) {
             categoryFields[`category_${categoryKey}`] = category.model;
           }
 
-          // Extract variant
-          if (typeof category.variant === 'string' && category.variant) {
-            categoryFields[`category_${categoryKey}_variant`] = category.variant;
+          // Extract reasoning (canonical) or legacy variant — only fill when the
+          // `models` primary didn't already carry one.
+          if (!categoryFields[`category_${categoryKey}_reasoning`]) {
+            const catReasoning = (category as Record<string, unknown>).reasoning;
+            if (typeof catReasoning === 'string' && catReasoning) {
+              categoryFields[`category_${categoryKey}_reasoning`] = catReasoning;
+            } else if (typeof category.variant === 'string' && category.variant) {
+              categoryFields[`category_${categoryKey}_reasoning`] = category.variant;
+            }
           }
 
-          // Extract fallback_models (normalize string to string[])
-          const rawCatFallback = (category as Record<string, unknown>).fallback_models;
-          if (rawCatFallback) {
-            const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
-            categoryFields[`category_${categoryKey}_fallback_models`] = fallbackArr as unknown as string;
+          // Extract fallback_models (normalize string to string[]) — only when a
+          // `models` chain wasn't already consumed above.
+          if (!Array.isArray(rawCatModels)) {
+            const rawCatFallback = (category as Record<string, unknown>).fallback_models;
+            if (rawCatFallback) {
+              const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
+              categoryFields[`category_${categoryKey}_models`] = fallbackArr as unknown as string;
+            }
           }
 
-          // Extract advanced fields (everything except model/fallback_models) and store in ref
+          // Extract advanced fields (everything except model/fallback_models/models) and store in ref
           // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
-          const catExcludeKeys = new Set(['model', 'fallback_models']);
+          const catExcludeKeys = new Set(['model', 'fallback_models', 'models', 'reasoning', 'variant']);
           Object.keys(category).forEach((key) => {
             if (!catExcludeKeys.has(key) && category[key as keyof OhMyOpenAgentAgentConfig] !== undefined) {
               advancedConfig[key] = category[key as keyof OhMyOpenAgentAgentConfig];
@@ -444,10 +534,10 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         if (agentType.startsWith('__') && agentType.endsWith('__')) return;
 
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
-        const variantFieldName = `agent_${agentType}_variant` as keyof typeof values;
-        const fallbackFieldName = `agent_${agentType}_fallback_models` as keyof typeof values;
+        const variantFieldName = `agent_${agentType}_reasoning` as keyof typeof values;
+        const fallbackFieldName = `agent_${agentType}_models` as keyof typeof values;
         const ultraworkModelFieldName = `agent_${agentType}_ultrawork_model` as keyof typeof values;
-        const ultraworkVariantFieldName = `agent_${agentType}_ultrawork_variant` as keyof typeof values;
+        const ultraworkVariantFieldName = `agent_${agentType}_ultrawork_reasoning` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
         const variantValue = values[variantFieldName];
@@ -456,31 +546,53 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         const ultraworkVariantValue = values[ultraworkVariantFieldName] as string | undefined;
         const advancedValue = parsedAdvancedSettings[agentType];
 
-        // Remove variant/fallback_models/ultrawork from advancedValue since they're managed by form fields
-        const { variant: _av, fallback_models: _afb, ultrawork: _auw, ...advancedWithoutManaged } = (advancedValue || {}) as Record<string, unknown>;
+        // Remove reasoning/variant/fallback_models/models/ultrawork from advancedValue
+        // since they're managed by dedicated form fields. `variant`/`fallback_models`
+        // are legacy spellings kept here so an advanced editor carrying old keys does
+        // not double-write them alongside the canonical fields below.
+        const {
+          reasoning: _ar,
+          variant: _av,
+          fallback_models: _afb,
+          models: _am,
+          ultrawork: _auw,
+          ...advancedWithoutManaged
+        } = (advancedValue || {}) as Record<string, unknown>;
 
-        // Build fallback_models: single → string, multiple → string[], empty → omit
-        let fallbackModelsField: Record<string, unknown> = {};
-        if (fallbackValue && fallbackValue.length > 0) {
-          fallbackModelsField = { fallback_models: fallbackValue };
+        // Build the model field. Upstream `2026-08-reasoning-unification` collapses
+        // `model` + `fallback_models` into an ordered `models` chain (primary first),
+        // so we emit that shape when fallbacks exist; a lone primary stays a plain
+        // `model` string to avoid needless structural churn. A fallback chain with
+        // no primary is preserved as a `models` array rather than dropped.
+        let modelField: Record<string, unknown> = {};
+        let reasoningField: Record<string, unknown> = {};
+        const hasFallback = !!fallbackValue && fallbackValue.length > 0;
+        if (modelValue && hasFallback) {
+          modelField = { models: [modelValue, ...fallbackValue] };
+        } else if (modelValue) {
+          modelField = { model: modelValue };
+        } else if (hasFallback) {
+          modelField = { models: [...fallbackValue] };
+        }
+        if (variantValue) {
+          reasoningField = { reasoning: variantValue };
         }
 
-        // Build ultrawork object if either model or variant is set
+        // Build ultrawork object if either model or reasoning is set
         let ultraworkField: Record<string, unknown> = {};
         if (ultraworkModelValue || ultraworkVariantValue) {
           const uw: Record<string, string> = {};
           if (ultraworkModelValue) uw.model = ultraworkModelValue;
-          if (ultraworkVariantValue) uw.variant = ultraworkVariantValue;
+          if (ultraworkVariantValue) uw.reasoning = ultraworkVariantValue;
           ultraworkField = { ultrawork: uw };
         }
 
-        // Only create agent config if model is set OR variant is set OR advanced settings exist OR new fields exist
+        // Only create agent config if model is set OR reasoning is set OR advanced settings exist OR new fields exist
         if (modelValue || variantValue || (advancedWithoutManaged && Object.keys(advancedWithoutManaged).length > 0) || fallbackValue?.length || ultraworkModelValue || ultraworkVariantValue) {
           agents[agentType] = {
             ...advancedWithoutManaged,
-            ...(modelValue ? { model: modelValue } : {}),
-            ...(variantValue ? { variant: variantValue } : {}),
-            ...fallbackModelsField,
+            ...reasoningField,
+            ...modelField,
             ...ultraworkField,
           } as OhMyOpenAgentAgentConfig;
         } else {
@@ -492,30 +604,49 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
       const categories: Record<string, OhMyOpenAgentAgentConfig | undefined> = {};
       allCategoryKeysWithCustom.forEach((categoryKey) => {
         const modelFieldName = `category_${categoryKey}` as keyof typeof values;
-        const variantFieldName = `category_${categoryKey}_variant` as keyof typeof values;
-        const fallbackFieldName = `category_${categoryKey}_fallback_models` as keyof typeof values;
+        const variantFieldName = `category_${categoryKey}_reasoning` as keyof typeof values;
+        const fallbackFieldName = `category_${categoryKey}_models` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
         const variantValue = values[variantFieldName];
         const fallbackValue = values[fallbackFieldName] as unknown as string[] | undefined;
         const advancedValue = parsedCategorySettings[categoryKey];
 
-        // Remove variant/fallback_models from advancedValue since they're managed by form fields
-        const { variant: _cv, fallback_models: _cfb, ...advancedWithoutManaged } = (advancedValue || {}) as Record<string, unknown>;
+        // Remove reasoning/variant/fallback_models/models from advancedValue since
+        // they're managed by dedicated form fields. `variant`/`fallback_models` are
+        // legacy spellings kept here for the same reason as the agent branch above.
+        const {
+          reasoning: _cr,
+          variant: _cv,
+          fallback_models: _cfb,
+          models: _cm,
+          ...advancedWithoutManaged
+        } = (advancedValue || {}) as Record<string, unknown>;
 
-        // Build fallback_models: single → string, multiple → string[], empty → omit
-        let fallbackModelsField: Record<string, unknown> = {};
-        if (fallbackValue && fallbackValue.length > 0) {
-          fallbackModelsField = { fallback_models: fallbackValue };
+        // Emit preferred `models` chain when fallbacks exist (mirrors upstream
+        // reasoning-unification output); otherwise keep a plain `model` string.
+        // A fallback chain with no primary is preserved as a `models` array
+        // rather than dropped.
+        let modelField: Record<string, unknown> = {};
+        let reasoningField: Record<string, unknown> = {};
+        const hasFallback = !!fallbackValue && fallbackValue.length > 0;
+        if (modelValue && hasFallback) {
+          modelField = { models: [modelValue, ...fallbackValue] };
+        } else if (modelValue) {
+          modelField = { model: modelValue };
+        } else if (hasFallback) {
+          modelField = { models: [...fallbackValue] };
+        }
+        if (variantValue) {
+          reasoningField = { reasoning: variantValue };
         }
 
-        // Only create category config if model is set OR variant is set OR advanced settings exist OR fallback exists
+        // Only create category config if model is set OR reasoning is set OR advanced settings exist OR fallback exists
         if (modelValue || variantValue || (advancedWithoutManaged && Object.keys(advancedWithoutManaged).length > 0) || fallbackValue?.length) {
           categories[categoryKey] = {
             ...advancedWithoutManaged,
-            ...(modelValue ? { model: modelValue } : {}),
-            ...(variantValue ? { variant: variantValue } : {}),
-            ...fallbackModelsField,
+            ...reasoningField,
+            ...modelField,
           } as OhMyOpenAgentAgentConfig;
         } else {
           categories[categoryKey] = undefined;
@@ -654,8 +785,8 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
       fromVariant: batchReplaceFromVariant,
       toVariant: batchReplaceToVariant,
       targetVariants,
-      getVariantFieldName: getOpenAgentBatchReplaceVariantFieldName,
-      getFallbackFieldName: getOpenAgentBatchReplaceFallbackFieldName,
+      getVariantFieldName: getOpenAgentBatchReplaceReasoningFieldName,
+      getFallbackFieldName: getOpenAgentBatchReplaceModelsFieldName,
     });
 
     if (replacedCount === 0) {
@@ -696,21 +827,43 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           newCustomAgents.push(agentType);
         }
 
-        // Set model field
-        if (typeof normalizedAgentConfig.model === 'string' && normalizedAgentConfig.model) {
+        // Set model field. Prefer unified `models` chain (primary at index 0,
+        // rest become fallbacks); fall back to plain `model` + legacy `fallback_models`.
+        const rawAgentModels = normalizedAgentConfig.models;
+        if (Array.isArray(rawAgentModels) && rawAgentModels.length > 0) {
+          const chain = splitModelChain(rawAgentModels);
+          if (chain.primaryModel) {
+            updateValues[`agent_${agentType}`] = chain.primaryModel;
+          }
+          if (chain.restModels.length > 0) {
+            updateValues[`agent_${agentType}_models`] = chain.restModels as unknown as string;
+          }
+          if (chain.primaryReasoning) {
+            updateValues[`agent_${agentType}_reasoning`] = chain.primaryReasoning;
+          }
+        } else if (typeof normalizedAgentConfig.model === 'string' && normalizedAgentConfig.model) {
           updateValues[`agent_${agentType}`] = normalizedAgentConfig.model;
         }
 
-        // Set variant field
-        if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
-          updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
+        // Set reasoning field (canonical) or legacy variant — only fill when the
+        // `models` primary didn't already carry one.
+        if (!updateValues[`agent_${agentType}_reasoning`]) {
+          const agentReasoning = normalizedAgentConfig.reasoning;
+          if (typeof agentReasoning === 'string' && agentReasoning) {
+            updateValues[`agent_${agentType}_reasoning`] = agentReasoning;
+          } else if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
+            updateValues[`agent_${agentType}_reasoning`] = normalizedAgentConfig.variant;
+          }
         }
 
-        // Set fallback_models field (normalize string to string[])
-        const rawFallback = normalizedAgentConfig.fallback_models;
-        if (rawFallback) {
-          const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
-          updateValues[`agent_${agentType}_fallback_models`] = fallbackArr as unknown as string;
+        // Set fallback_models field (normalize string to string[]) — only when a
+        // `models` chain wasn't already consumed above.
+        if (!Array.isArray(rawAgentModels)) {
+          const rawFallback = normalizedAgentConfig.fallback_models;
+          if (rawFallback) {
+            const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
+            updateValues[`agent_${agentType}_models`] = fallbackArr as unknown as string;
+          }
         }
 
         // Set ultrawork fields
@@ -720,13 +873,16 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           if (typeof uw.model === 'string' && uw.model) {
             updateValues[`agent_${agentType}_ultrawork_model`] = uw.model;
           }
-          if (typeof uw.variant === 'string' && uw.variant) {
-            updateValues[`agent_${agentType}_ultrawork_variant`] = uw.variant;
+          const uwReasoning = uw.reasoning;
+          if (typeof uwReasoning === 'string' && uwReasoning) {
+            updateValues[`agent_${agentType}_ultrawork_reasoning`] = uwReasoning;
+          } else if (typeof uw.variant === 'string' && uw.variant) {
+            updateValues[`agent_${agentType}_ultrawork_reasoning`] = uw.variant;
           }
         }
 
-        // Store advanced settings (everything except model/fallback_models/ultrawork)
-        const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
+        // Store advanced settings (everything except model/fallback_models/models/ultrawork)
+        const agentExcludeKeys = new Set(['model', 'fallback_models', 'models', 'ultrawork']);
         const advancedConfig: Record<string, unknown> = {};
         Object.keys(normalizedAgentConfig).forEach((key) => {
           if (!agentExcludeKeys.has(key)) {
@@ -753,25 +909,47 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           newCustomCategories.push(categoryKey);
         }
 
-        // Set model field
-        if (typeof normalizedCategoryConfig.model === 'string' && normalizedCategoryConfig.model) {
+        // Set model field. Prefer unified `models` chain (primary at index 0,
+        // rest become fallbacks); fall back to plain `model` + legacy `fallback_models`.
+        const rawCatModels = normalizedCategoryConfig.models;
+        if (Array.isArray(rawCatModels) && rawCatModels.length > 0) {
+          const chain = splitModelChain(rawCatModels);
+          if (chain.primaryModel) {
+            updateValues[`category_${categoryKey}`] = chain.primaryModel;
+          }
+          if (chain.restModels.length > 0) {
+            updateValues[`category_${categoryKey}_models`] = chain.restModels as unknown as string;
+          }
+          if (chain.primaryReasoning) {
+            updateValues[`category_${categoryKey}_reasoning`] = chain.primaryReasoning;
+          }
+        } else if (typeof normalizedCategoryConfig.model === 'string' && normalizedCategoryConfig.model) {
           updateValues[`category_${categoryKey}`] = normalizedCategoryConfig.model;
         }
 
-        // Set variant field
-        if (typeof normalizedCategoryConfig.variant === 'string' && normalizedCategoryConfig.variant) {
-          updateValues[`category_${categoryKey}_variant`] = normalizedCategoryConfig.variant;
+        // Set reasoning field (canonical) or legacy variant — only fill when the
+        // `models` primary didn't already carry one.
+        if (!updateValues[`category_${categoryKey}_reasoning`]) {
+          const catReasoning = normalizedCategoryConfig.reasoning;
+          if (typeof catReasoning === 'string' && catReasoning) {
+            updateValues[`category_${categoryKey}_reasoning`] = catReasoning;
+          } else if (typeof normalizedCategoryConfig.variant === 'string' && normalizedCategoryConfig.variant) {
+            updateValues[`category_${categoryKey}_reasoning`] = normalizedCategoryConfig.variant;
+          }
         }
 
-        // Set fallback_models field (normalize string to string[])
-        const rawCatFallback = normalizedCategoryConfig.fallback_models;
-        if (rawCatFallback) {
-          const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
-          updateValues[`category_${categoryKey}_fallback_models`] = fallbackArr as unknown as string;
+        // Set fallback_models field (normalize string to string[]) — only when a
+        // `models` chain wasn't already consumed above.
+        if (!Array.isArray(rawCatModels)) {
+          const rawCatFallback = normalizedCategoryConfig.fallback_models;
+          if (rawCatFallback) {
+            const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
+            updateValues[`category_${categoryKey}_models`] = fallbackArr as unknown as string;
+          }
         }
 
-        // Store advanced settings (everything except model/fallback_models)
-        const catExcludeKeys = new Set(['model', 'fallback_models']);
+        // Store advanced settings (everything except model/fallback_models/models)
+        const catExcludeKeys = new Set(['model', 'fallback_models', 'models']);
         const advancedConfig: Record<string, unknown> = {};
         Object.keys(normalizedCategoryConfig).forEach((key) => {
           if (!catExcludeKeys.has(key)) {
@@ -852,12 +1030,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
             noStyle
             shouldUpdate={(prevValues, currentValues) =>
               prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`] ||
-              prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
+              prevValues[`agent_${agentType}_reasoning`] !== currentValues[`agent_${agentType}_reasoning`]
             }
           >
             {({ getFieldValue }) => {
               const selectedModel = getFieldValue(`agent_${agentType}`);
-              const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+              const currentVariant = getFieldValue(`agent_${agentType}_reasoning`);
               const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
               const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
               const variantOptions = [...mapVariants];
@@ -874,22 +1052,22 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                       allowClear
                       showSearch
                       optionFilterProp="label"
-                      style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                      style={{ width: hasVariants ? 'calc(100% - 32px - 120px)' : 'calc(100% - 32px)' }}
                       onChange={(newModel) => {
                         const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                         if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                          form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                          form.setFieldValue(`agent_${agentType}_reasoning`, undefined);
                         }
                       }}
                     />
                   </Form.Item>
                   {hasVariants && (
-                    <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                    <Form.Item name={`agent_${agentType}_reasoning`} noStyle>
                       <Select
-                        placeholder="variant"
+                        placeholder="reasoning"
                         options={variantOptions.map((v) => ({ label: v, value: v }))}
                         allowClear
-                        style={{ width: 100 }}
+                        style={{ width: 120 }}
                       />
                     </Form.Item>
                   )}
@@ -924,7 +1102,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                 <div className={styles.subFieldsPanel}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                     <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
-                    <Form.Item name={`agent_${agentType}_fallback_models`} noStyle>
+                    <Form.Item name={`agent_${agentType}_models`} noStyle>
                       <Select
                         mode="tags"
                         variant="filled"
@@ -941,12 +1119,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                     noStyle
                     shouldUpdate={(prev, cur) =>
                       prev[`agent_${agentType}_ultrawork_model`] !== cur[`agent_${agentType}_ultrawork_model`] ||
-                      prev[`agent_${agentType}_ultrawork_variant`] !== cur[`agent_${agentType}_ultrawork_variant`]
+                      prev[`agent_${agentType}_ultrawork_reasoning`] !== cur[`agent_${agentType}_ultrawork_reasoning`]
                     }
                   >
                     {({ getFieldValue: getUwFieldValue }) => {
                       const uwModel = getUwFieldValue(`agent_${agentType}_ultrawork_model`);
-                      const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_variant`);
+                      const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_reasoning`);
                       const uwMapVariants = uwModel ? modelVariantsMap[uwModel] ?? [] : [];
                       const uwHasVariants = uwMapVariants.length > 0 || (typeof uwVariant === 'string' && uwVariant);
                       const uwVariantOptions = [...uwMapVariants];
@@ -966,23 +1144,23 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                                 allowClear
                                 showSearch
                                 optionFilterProp="label"
-                                style={{ width: uwHasVariants ? 'calc(100% - 100px)' : '100%' }}
+                                style={{ width: uwHasVariants ? 'calc(100% - 120px)' : '100%' }}
                                 onChange={(newModel) => {
                                   const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                                   if (newVariants.length === 0 || (uwVariant && !newVariants.includes(uwVariant))) {
-                                    form.setFieldValue(`agent_${agentType}_ultrawork_variant`, undefined);
+                                    form.setFieldValue(`agent_${agentType}_ultrawork_reasoning`, undefined);
                                   }
                                 }}
                               />
                             </Form.Item>
                             {uwHasVariants && (
-                              <Form.Item name={`agent_${agentType}_ultrawork_variant`} noStyle>
+                              <Form.Item name={`agent_${agentType}_ultrawork_reasoning`} noStyle>
                                 <Select
                                   variant="filled"
-                                  placeholder="variant"
+                                  placeholder="reasoning"
                                   options={uwVariantOptions.map((v) => ({ label: v, value: v }))}
                                   allowClear
-                                  style={{ width: 100 }}
+                                  style={{ width: 120 }}
                                 />
                               </Form.Item>
                             )}
@@ -1042,12 +1220,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           noStyle
           shouldUpdate={(prevValues, currentValues) =>
             prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`] ||
-            prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
+            prevValues[`agent_${agentType}_reasoning`] !== currentValues[`agent_${agentType}_reasoning`]
           }
         >
           {({ getFieldValue }) => {
             const selectedModel = getFieldValue(`agent_${agentType}`);
-            const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+            const currentVariant = getFieldValue(`agent_${agentType}_reasoning`);
             const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
             const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
             const variantOptions = [...mapVariants];
@@ -1064,22 +1242,22 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                     allowClear
                     showSearch
                     optionFilterProp="label"
-                    style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                    style={{ width: hasVariants ? 'calc(100% - 64px - 120px)' : 'calc(100% - 64px)' }}
                     onChange={(newModel) => {
                       const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                       if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                        form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                        form.setFieldValue(`agent_${agentType}_reasoning`, undefined);
                       }
                     }}
                   />
                 </Form.Item>
                 {hasVariants && (
-                  <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                  <Form.Item name={`agent_${agentType}_reasoning`} noStyle>
                     <Select
-                      placeholder="variant"
+                      placeholder="reasoning"
                       options={variantOptions.map((v) => ({ label: v, value: v }))}
                       allowClear
-                      style={{ width: 100 }}
+                      style={{ width: 120 }}
                     />
                   </Form.Item>
                 )}
@@ -1120,7 +1298,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
               <div className={styles.subFieldsPanel}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
-                  <Form.Item name={`agent_${agentType}_fallback_models`} noStyle>
+                  <Form.Item name={`agent_${agentType}_models`} noStyle>
                     <Select
                       mode="tags"
                       variant="filled"
@@ -1137,12 +1315,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                   noStyle
                   shouldUpdate={(prev, cur) =>
                     prev[`agent_${agentType}_ultrawork_model`] !== cur[`agent_${agentType}_ultrawork_model`] ||
-                    prev[`agent_${agentType}_ultrawork_variant`] !== cur[`agent_${agentType}_ultrawork_variant`]
+                    prev[`agent_${agentType}_ultrawork_reasoning`] !== cur[`agent_${agentType}_ultrawork_reasoning`]
                   }
                 >
                   {({ getFieldValue: getUwFieldValue }) => {
                     const uwModel = getUwFieldValue(`agent_${agentType}_ultrawork_model`);
-                    const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_variant`);
+                    const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_reasoning`);
                     const uwMapVariants = uwModel ? modelVariantsMap[uwModel] ?? [] : [];
                     const uwHasVariants = uwMapVariants.length > 0 || (typeof uwVariant === 'string' && uwVariant);
                     const uwVariantOptions = [...uwMapVariants];
@@ -1162,23 +1340,23 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                               allowClear
                               showSearch
                               optionFilterProp="label"
-                              style={{ width: uwHasVariants ? 'calc(100% - 100px)' : '100%' }}
+                              style={{ width: uwHasVariants ? 'calc(100% - 120px)' : '100%' }}
                               onChange={(newModel) => {
                                 const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                                 if (newVariants.length === 0 || (uwVariant && !newVariants.includes(uwVariant))) {
-                                  form.setFieldValue(`agent_${agentType}_ultrawork_variant`, undefined);
+                                  form.setFieldValue(`agent_${agentType}_ultrawork_reasoning`, undefined);
                                 }
                               }}
                             />
                           </Form.Item>
                           {uwHasVariants && (
-                            <Form.Item name={`agent_${agentType}_ultrawork_variant`} noStyle>
+                            <Form.Item name={`agent_${agentType}_ultrawork_reasoning`} noStyle>
                               <Select
                                 variant="filled"
-                                placeholder="variant"
+                                placeholder="reasoning"
                                 options={uwVariantOptions.map((v) => ({ label: v, value: v }))}
                                 allowClear
-                                style={{ width: 100 }}
+                                style={{ width: 120 }}
                               />
                             </Form.Item>
                           )}
@@ -1240,12 +1418,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
             noStyle
             shouldUpdate={(prevValues, currentValues) =>
               prevValues[`category_${category.key}`] !== currentValues[`category_${category.key}`] ||
-              prevValues[`category_${category.key}_variant`] !== currentValues[`category_${category.key}_variant`]
+              prevValues[`category_${category.key}_reasoning`] !== currentValues[`category_${category.key}_reasoning`]
             }
           >
             {({ getFieldValue }) => {
               const selectedModel = getFieldValue(`category_${category.key}`);
-              const currentVariant = getFieldValue(`category_${category.key}_variant`);
+              const currentVariant = getFieldValue(`category_${category.key}_reasoning`);
               const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
               const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
               const variantOptions = [...mapVariants];
@@ -1262,22 +1440,22 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                       allowClear
                       showSearch
                       optionFilterProp="label"
-                      style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                      style={{ width: hasVariants ? 'calc(100% - 32px - 120px)' : 'calc(100% - 32px)' }}
                       onChange={(newModel) => {
                         const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                         if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                          form.setFieldValue(`category_${category.key}_variant`, undefined);
+                          form.setFieldValue(`category_${category.key}_reasoning`, undefined);
                         }
                       }}
                     />
                   </Form.Item>
                   {hasVariants && (
-                    <Form.Item name={`category_${category.key}_variant`} noStyle>
+                    <Form.Item name={`category_${category.key}_reasoning`} noStyle>
                       <Select
-                        placeholder="variant"
+                        placeholder="reasoning"
                         options={variantOptions.map((v) => ({ label: v, value: v }))}
                         allowClear
-                        style={{ width: 100 }}
+                        style={{ width: 120 }}
                       />
                     </Form.Item>
                   )}
@@ -1311,7 +1489,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
               >
                 <div className={styles.subFieldsPanel} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
-                  <Form.Item name={`category_${category.key}_fallback_models`} noStyle>
+                  <Form.Item name={`category_${category.key}_models`} noStyle>
                     <Select
                       mode="tags"
                       variant="filled"
@@ -1374,12 +1552,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           noStyle
           shouldUpdate={(prevValues, currentValues) =>
             prevValues[`category_${categoryKey}`] !== currentValues[`category_${categoryKey}`] ||
-            prevValues[`category_${categoryKey}_variant`] !== currentValues[`category_${categoryKey}_variant`]
+            prevValues[`category_${categoryKey}_reasoning`] !== currentValues[`category_${categoryKey}_reasoning`]
           }
         >
           {({ getFieldValue }) => {
             const selectedModel = getFieldValue(`category_${categoryKey}`);
-            const currentVariant = getFieldValue(`category_${categoryKey}_variant`);
+            const currentVariant = getFieldValue(`category_${categoryKey}_reasoning`);
             const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
             const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
             const variantOptions = [...mapVariants];
@@ -1396,22 +1574,22 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                     allowClear
                     showSearch
                     optionFilterProp="label"
-                    style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                    style={{ width: hasVariants ? 'calc(100% - 64px - 120px)' : 'calc(100% - 64px)' }}
                     onChange={(newModel) => {
                       const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                       if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                        form.setFieldValue(`category_${categoryKey}_variant`, undefined);
+                        form.setFieldValue(`category_${categoryKey}_reasoning`, undefined);
                       }
                     }}
                   />
                 </Form.Item>
                 {hasVariants && (
-                  <Form.Item name={`category_${categoryKey}_variant`} noStyle>
+                  <Form.Item name={`category_${categoryKey}_reasoning`} noStyle>
                     <Select
-                      placeholder="variant"
+                      placeholder="reasoning"
                       options={variantOptions.map((v) => ({ label: v, value: v }))}
                       allowClear
-                      style={{ width: 100 }}
+                      style={{ width: 120 }}
                     />
                   </Form.Item>
                 )}
@@ -1451,7 +1629,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
             >
               <div className={styles.subFieldsPanel} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
-                <Form.Item name={`category_${categoryKey}_fallback_models`} noStyle>
+                <Form.Item name={`category_${categoryKey}_models`} noStyle>
                   <Select
                     mode="tags"
                     variant="filled"

@@ -53,6 +53,8 @@ sequenceDiagram
 - unified 写入必须**保留**既有共享键（codegraph/models/task/teams/profiles 等），只替换 `[opencode]` 块；并写 `_migrations` 标记 `2026-07-opencode-config-unification` 阻止插件启动迁移重复导入残留 legacy 文件。
 - unified 模式下 legacy upgrade 按钮如果检测到默认旧扁平文件（`~/.config/opencode/oh-my-openagent.*` / `oh-my-opencode.*`），必须把其插件配置迁移到 `~/.omo/omo.jsonc` 的 `[opencode]` 块并移除旧文件；否则 banner 会因为同一旧文件存在而反复出现。迁移时仍要保留 unified 文件里的共享键。
 - unified 模式写出的 `[opencode]` 块**不写 `lsp`**（lsp 已不是插件合法 schema 键，写了报 Unknown key）;DB 与 UI 仍保留 lsp，legacy 模式照旧写。
+- unified 模式 `apply_config_to_file_public` 在合并完 `plugin_config` 后、写文件前，用 `strip_unified_unknown_keys` 按 `OMO_UNIFIED_UNKNOWN_KEYS` 黑名单（`google_auth`、`lsp`）剔除顶层非法键——它们会从 `other_fields` 平铺或 legacy 迁移泄漏进 `[opencode]` 块，触发上游 doctor "Unknown config key"。黑名单只增不减，新增上游 schema 驱逐的键时追加到这里，不要改成白名单（会漏放行未来上游新增合法键）。
+- `[opencode]` 块内 agent/category 的模型/推理字段必须对齐上游 `2026-08-reasoning-unification` 产物：写 `reasoning`（不是 `variant`）；有主模型+回退时合并成有序 `models` 数组（首项为主模型），不再写顶层 `model`+`fallback_models`；只有主模型无回退时保留 `model` 单字符串。读侧（前端 `OhMyOpenAgentConfigModal` 初始化/导入）兼容老 `variant`/`fallback_models`/`models` 回填，写入只产出新字段。`ultrawork`/`compaction` 子对象内同理 `variant`→`reasoning`。issue #286。
 - 改应用逻辑时要记住它属于 OpenCode 运行时的一部分，所以 WSL 同步事件也复用 `wsl-sync-request-opencode`。
 - “清除已应用配置”只删除当前决议到的运行时配置并取消 `is_applied`，不删除数据库里的 profile，也不是任意路径/文件名映射能力。`__local__` 不应开放该危险操作。
 - unified 模式下清除已应用**只移除 `[opencode]` 块**（共享文件不能整个删）；仅剩 `$schema`/`_migrations` 等控制键时才删除文件。legacy 模式仍是删除整个文件。
