@@ -73,6 +73,35 @@
       "attachment": false
     },
     {
+      "id": "glm-5.3",
+      "name": "GLM 5.3",
+      "contextLimit": 1000000,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
+    },
+    {
       "id": "glm-5.2",
       "name": "GLM 5.2",
       "contextLimit": 1000000,
@@ -644,6 +673,48 @@
     }
   ],
   "@ai-sdk/google": [
+    {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "contextLimit": 1048576,
+      "outputLimit": 65536,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "pdf",
+          "video",
+          "audio"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "low": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "low"
+          }
+        },
+        "medium": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "medium"
+          }
+        },
+        "high": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "high"
+          }
+        }
+      }
+    },
     {
       "id": "gemini-3.5-flash",
       "name": "Gemini 3.5 Flash",
