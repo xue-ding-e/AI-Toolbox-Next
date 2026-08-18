@@ -3422,7 +3422,10 @@
       "confirmContent": "将从各自的来源遍历更新所有已管理的技能（包括 Git、本地和中央仓库），单个失败不会中断其余。是否继续？",
       "run": "更新",
       "success": "已更新 {{count}} 个技能",
-      "partial": "更新完成：{{updated}} 个成功，{{failed}} 个失败"
+      "partial": "更新完成：{{updated}} 个成功，{{failed}} 个失败",
+      "progressTitle": "正在更新技能",
+      "updating": "正在更新：{{name}} ({{current}}/{{total}})",
+      "pending": "准备中... (0/{{total}})"
     },
     "autoUpdate": {
       "enabled": "自动更新",

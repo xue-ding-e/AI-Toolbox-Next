@@ -95,7 +95,8 @@ fn run_update_pass(app: &AppHandle, kind: &'static str) {
         let Some(db) = app.try_state::<SqliteDbState>() else {
             return;
         };
-        match update_all_skills_internal(&app, &db).await {
+        // Scheduled pass stays silent: do not emit progress / bother the UI.
+        match update_all_skills_internal(&app, &db, false).await {
             Ok(result) => {
                 log::debug!(
                     "skills auto-update {kind} pass done: {}/{} updated, {} errors",

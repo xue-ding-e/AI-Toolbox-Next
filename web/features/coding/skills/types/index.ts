@@ -102,6 +102,15 @@ export interface UpdateAllResult {
   errors: UpdateAllError[];
 }
 
+/** Progress event payload emitted on the `skills-update-progress` channel. */
+export interface SkillsUpdateProgress {
+  current: number;
+  total: number;
+  skill_id: string;
+  name: string;
+  message: string;
+}
+
 export interface AutoUpdateConfig {
   enabled: boolean;
   schedule: string;

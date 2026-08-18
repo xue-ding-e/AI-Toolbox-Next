@@ -45,6 +45,7 @@ use super::types::{
     SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
     SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
     ToolStatusDto, UpdateAllErrorDto, UpdateAllResultDto, UpdateResultDto,
+    SkillsUpdateProgress,
 };
 use crate::coding::runtime_location;
 use crate::http_client;
@@ -1939,13 +1940,40 @@ pub async fn skills_update_managed(
 pub(crate) async fn update_all_skills_internal(
     app: &tauri::AppHandle,
     state: &State<'_, SqliteDbState>,
+    emit_progress: bool,
 ) -> Result<UpdateAllResultDto, String> {
     let skills = skill_store::get_managed_skills(state).await?;
     let total = skills.len();
     let mut updated = Vec::new();
     let mut errors = Vec::new();
 
-    for skill in skills {
+    if emit_progress {
+        let _ = app.emit(
+            "skills-update-progress",
+            SkillsUpdateProgress {
+                current: 0,
+                total,
+                skill_id: String::new(),
+                name: String::new(),
+                message: format!("0/{}", total),
+            },
+        );
+    }
+
+    for (index, skill) in skills.into_iter().enumerate() {
+        if emit_progress {
+            let current = index + 1;
+            let _ = app.emit(
+                "skills-update-progress",
+                SkillsUpdateProgress {
+                    current,
+                    total,
+                    skill_id: skill.id.clone(),
+                    name: skill.name.clone(),
+                    message: format!("{}/{}", current, total),
+                },
+            );
+        }
         match update_managed_skill_internal(app, state, &skill.id).await {
             Ok(result) => updated.push(result),
             Err(error) => errors.push(UpdateAllErrorDto {
@@ -1971,7 +1999,8 @@ pub async fn skills_update_all(
     app: tauri::AppHandle,
     state: State<'_, SqliteDbState>,
 ) -> Result<UpdateAllResultDto, String> {
-    update_all_skills_internal(&app, &state).await
+    // Manual trigger: emit progress so the UI can show the pass advancing.
+    update_all_skills_internal(&app, &state, true).await
 }
 
 #[tauri::command]

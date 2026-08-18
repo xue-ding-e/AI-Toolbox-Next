@@ -411,6 +411,25 @@ pub struct UpdateAllResultDto {
     pub errors: Vec<UpdateAllErrorDto>,
 }
 
+/// Progress event for the manual "Update All" pass.
+///
+/// Emitted via `skills-update-progress` while `update_all_skills_internal`
+/// iterates. Not emitted from the scheduled auto-update pass (it passes
+/// `emit_progress = false`) to stay silent per the auto-update contract.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillsUpdateProgress {
+    /// 1-based index of the skill currently being updated (0 before the first).
+    pub current: usize,
+    /// Total managed skills in this pass.
+    pub total: usize,
+    /// Id of the skill currently being updated.
+    pub skill_id: String,
+    /// Display name of the skill currently being updated.
+    pub name: String,
+    /// Human-readable status line, e.g. "正在更新: xxx (3/10)".
+    pub message: String,
+}
+
 /// DTO for scheduled auto-update configuration
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

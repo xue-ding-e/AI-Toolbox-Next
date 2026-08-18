@@ -439,19 +439,20 @@ skills-git-cache/
 
 为了复用单 skill 更新链路，`skills_update_managed` 的函数体被抽成内部函数 `update_managed_skill_internal(app, state, skill_id)`（含 `source_type=="central"` 分支），命令本身只做薄包装 + emit `skills-changed`。
 
-**一键更新全部：** `skills_update_all` / 内部共享 `update_all_skills_internal(app, state)`。
+**一键更新全部：** `skills_update_all` / 内部共享 `update_all_skills_internal(app, state, emit_progress)`。
 
 - 遍历 `skill_store::get_managed_skills` 全部记录（含 `management_enabled=false`；禁用项 enabled_tools 为空，更新只刷新中央仓库内容、不重同步工具，安全）。
 - 逐个调用 `update_managed_skill_internal`，**顺序串行**执行（复用 git_fetcher 全局锁的串行语义，避免并发拉取同一 repo 缓存）。
 - 单个 skill 失败仅记入 `errors`，不中断其余；结束后 emit 一次 `skills-changed` 供 WSL/SSH 后续链路消费。
 - 返回 `UpdateAllResultDto { total, updated, errors }`。
+- **进度事件：** 手动触发（`skills_update_all` 命令）传 `emit_progress=true`，循环开始前及每个 skill 更新前 emit `skills-update-progress`（payload `SkillsUpdateProgress { current, total, skill_id, name, message }`），前端监听该事件在独立进度弹窗里展示「正在更新：xxx (3/10)」+ 进度条。定时任务传 `false`，不 emit，保持静默。
 
 **定时自动更新（cron）：** 新模块 `auto_update.rs`，`auto_update::start(app)` 在 lib.rs setup 中与 `auth_refresh::start` 一同启动，用 `AtomicBool` 保证单进程只启动一次。
 
 - 配置存于 `skill_preferences`：`auto_update_enabled` / `auto_update_schedule`（5 字段 cron `分 时 日 月 周`，默认 `"0 3 * * *"`）。`auto_update::start` 每 tick 读 `skill_store::get_skill_preferences` 判断。
 - **Source of Truth：** 统一以 cron 表达式作为唯一调度事实。前端"每天定点 HH:MM"只是把时间转成 `"mm hh * * *"` 的便捷入口，不是第二套存储；预览与执行共用 `cron_utils::parse_cron` / `next_n_occurrences`（`croner`，`find_next_occurrence(&Local::now(), false)` 本地时区计算）。
 - 调度：启动约 60s 后若 enabled 先跑一次 startup pass（`last_run = now`）；之后每 60s tick 一次，`cron.find_next_occurrence(&last_run, false) <= now` 时执行 `update_all_skills_internal` 并更新 `last_run = now`。
-- 复用同一个 `update_all_skills_internal`；**定时场景只 `log::debug`，静默失败，不弹 UI 打扰用户**。非法 schedule 仅 debug 跳过（保存命令已用 `parse_cron` 校验，属兜底）。配置变更在下一 tick（≤60s）生效，无需重启。
+- 复用同一个 `update_all_skills_internal`（定时调用传 `emit_progress=false`，不发进度事件）；**定时场景只 `log::debug`，静默失败，不弹 UI 打扰用户**。非法 schedule 仅 debug 跳过（保存命令已用 `parse_cron` 校验，属兜底）。配置变更在下一 tick（≤60s）生效，无需重启。
 - **Gotcha：** `skills_set_auto_update` 保存前必须校验 cron 可解析，避免 enabled 状态下持久化坏表达式；`skills_preview_auto_update_schedule` 的 count 钳制 1..=100（默认 10）。
 
 **更新替换前保护（installer::update_managed_skill_from_source）：** staging 构建完成后先与现有 central 目录做内容哈希比对，哈希一致直接跳过 swap：不重写目录、不重同步工具（`updated_targets` 为空），但仍然 `upsert_skill` 刷新 DB 行的 `updated_at`、把新拉的 git `source_revision` 落库、并归一 `status="ok"`，使该路径与其余三个刷新入口统一为「成功即改时间、失败不写库」；`central_path` 顺手 `to_relative_central_path` 归一。避免定时任务每次 tick 无谓重写目录、也避免"源内容未变"仍覆盖 mtime。哈希不一致需要替换时，先把旧 central 内容复制到 `{app_data}/skills-backup/{skill_id}-{ts}`（每 skill 保留最新 5 份）再删除重建；用户经 symlink 工具目录直接改写的 central 内容因此可恢复，备份失败只 warn 不阻断更新。

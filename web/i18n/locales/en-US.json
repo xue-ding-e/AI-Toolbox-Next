@@ -3425,7 +3425,10 @@
       "confirmContent": "This will update all managed skills from their sources (Git, local, and central). A single failure won't stop the rest. Continue?",
       "run": "Update",
       "success": "Updated {{count}} skills",
-      "partial": "Update finished: {{updated}} succeeded, {{failed}} failed"
+      "partial": "Update finished: {{updated}} succeeded, {{failed}} failed",
+      "progressTitle": "Updating skills",
+      "updating": "Updating: {{name}} ({{current}}/{{total}})",
+      "pending": "Preparing... (0/{{total}})"
     },
     "autoUpdate": {
       "enabled": "Auto-update",

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Modal,
   message,
+  Progress,
 } from 'antd';
 import {
   ChevronsDown,
@@ -26,6 +27,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import {
   ManagementButton,
@@ -65,7 +67,7 @@ import {
   type SkillGroupingMode,
 } from '../utils/skillGrouping';
 import { GROUP_TOOL_BATCH_OPTIONS } from '../utils/batchToolOptions';
-import type { ManagedSkill, SkillEnabledFilter, SkillGroup, SkillViewMode } from '../types';
+import type { ManagedSkill, SkillEnabledFilter, SkillsUpdateProgress, SkillGroup, SkillViewMode } from '../types';
 import styles from './SkillsPage.module.less';
 
 const AUTO_EXPAND_SKILL_THRESHOLD = 20;
@@ -241,6 +243,7 @@ const SkillsPage: React.FC = () => {
   const [enabledFilter, setEnabledFilter] = React.useState<SkillEnabledFilter>('all');
   const [groupToolMode, setGroupToolMode] = React.useState(false);
   const [updatingAll, setUpdatingAll] = React.useState(false);
+  const [updateAllProgress, setUpdateAllProgress] = React.useState<SkillsUpdateProgress | null>(null);
   const [gridColumnSetting, setGridColumnSetting] = React.useState<ManagementGridColumnSetting>('auto');
   const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<SkillViewMode>('flat');
@@ -282,7 +285,12 @@ const SkillsPage: React.FC = () => {
       cancelText: t('common.cancel'),
       onOk: async () => {
         setUpdatingAll(true);
+        setUpdateAllProgress(null);
+        let unlisten: UnlistenFn | null = null;
         try {
+          unlisten = await listen<SkillsUpdateProgress>('skills-update-progress', (event) => {
+            setUpdateAllProgress(event.payload);
+          });
           const result = await api.updateAllSkills();
           await refresh();
           if (result.errors.length === 0) {
@@ -298,7 +306,9 @@ const SkillsPage: React.FC = () => {
         } catch (error) {
           message.error(String(error));
         } finally {
+          unlisten?.();
           setUpdatingAll(false);
+          setUpdateAllProgress(null);
         }
       },
     });
@@ -1233,6 +1243,32 @@ const SkillsPage: React.FC = () => {
       <NewToolsModal
         open={isNewToolsModalOpen}
       />
+
+      <Modal
+        open={updatingAll}
+        title={t('skills.updateAll.progressTitle')}
+        closable={false}
+        footer={null}
+        width={420}
+      >
+        <Progress
+          percent={
+            updateAllProgress && updateAllProgress.total > 0
+              ? Math.min(100, Math.round((updateAllProgress.current / updateAllProgress.total) * 100))
+              : 0
+          }
+          status="active"
+        />
+        <div style={{ marginTop: 12 }}>
+          {updateAllProgress && updateAllProgress.current > 0
+            ? t('skills.updateAll.updating', {
+                name: updateAllProgress.name,
+                current: updateAllProgress.current,
+                total: updateAllProgress.total,
+              })
+            : t('skills.updateAll.pending', { total: updateAllProgress?.total ?? 0 })}
+        </div>
+      </Modal>
     </div>
   );
 };
