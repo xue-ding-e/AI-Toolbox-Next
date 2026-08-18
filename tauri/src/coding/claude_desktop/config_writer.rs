@@ -12,10 +12,15 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 use super::constants::{
-    ANTHROPIC_CLAUDE_ROUTE_PREFIX, CLAUDE_ROUTE_PREFIX, CONFIG_FILE, CONFIG_LIBRARY_DIR,
-    DIRECT_AUTH_TOKEN_ENV_KEY, DIRECT_BASE_URL_ENV_KEY, MANAGED_ENTERPRISE_CONFIG_KEYS,
-    ONE_M_CONTEXT_MARKER, PROFILE_ID, PROFILE_NAME,
+    ANTHROPIC_CLAUDE_ROUTE_PREFIX, CLAUDE_ROUTE_PREFIX, DIRECT_AUTH_TOKEN_ENV_KEY,
+    DIRECT_BASE_URL_ENV_KEY, MANAGED_ENTERPRISE_CONFIG_KEYS, ONE_M_CONTEXT_MARKER, PROFILE_ID,
+    PROFILE_NAME,
 };
+// `CONFIG_FILE` / `CONFIG_LIBRARY_DIR` are only read inside `paths_from_dirs`,
+// which is macOS/Windows/test-gated; gate the imports to match so non-target
+// lib builds don't warn about unused imports.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+use super::constants::{CONFIG_FILE, CONFIG_LIBRARY_DIR};
 use super::types::{ClaudeDesktopMode, ClaudeDesktopPathInfo};
 
 /// Resolved on-disk paths for Claude Desktop 3P files.
@@ -123,6 +128,11 @@ fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBu
     candidates.into_iter().next()
 }
 
+// Compiled on macOS/Windows (production use) and under `cfg(test)` (cross-platform
+// unit tests in `mod tests` build `ClaudeDesktopPaths` via this helper). Without
+// `test` in the gate, Linux lib builds report it as dead code (phase 1 only
+// supports macOS and Windows).
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPaths {
     let config_library_path = threep_dir.join(CONFIG_LIBRARY_DIR);
     let profile_path = config_library_path.join(format!("{PROFILE_ID}.json"));

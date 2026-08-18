@@ -126,10 +126,13 @@ fn launch_linux_dashboard(resolved_path: &std::path::Path) -> Result<(), String>
 
     let mut last_error = String::from("No usable terminal found");
     for (terminal, args) in terminals {
-        let mut command = Command::new(terminal);
-        command.args(&args);
-        command.arg("sh").arg("-c").arg(&command);
-        match command.spawn() {
+        // Use `child` (not `command`) so the inner `Command` does not shadow
+        // the outer `command: String` we pass to `sh -c` below — shadowing made
+        // `arg(&command)` resolve to `&Command`, which does not impl `AsRef<OsStr>`.
+        let mut child = Command::new(terminal);
+        child.args(&args);
+        child.arg("sh").arg("-c").arg(&command);
+        match child.spawn() {
             Ok(_) => return Ok(()),
             Err(e) => last_error = format!("打开 {terminal} 失败: {e}"),
         }

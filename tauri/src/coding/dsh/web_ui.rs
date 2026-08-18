@@ -225,7 +225,13 @@ mod tests {
 
     #[test]
     fn dashboard_command_switches_with_use_npx() {
-        assert_eq!(dashboard_command(false), "dsh web");
-        assert_eq!(dashboard_command(true), "npx @deepseek-ai/dsh web");
+        assert_eq!(dashboard_command(false, None), "dsh web");
+        assert_eq!(dashboard_command(true, None), "npx @deepseek-ai/dsh web");
+        // 手动覆盖的具体 CLI 路径用引号包裹,避免含空格的路径被 shell 拆分。
+        let resolved = std::path::Path::new("/usr/local/bin/dsh");
+        assert_eq!(
+            dashboard_command(false, Some(resolved)),
+            "\"/usr/local/bin/dsh\" web"
+        );
     }
 }

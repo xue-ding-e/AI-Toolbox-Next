@@ -7,7 +7,10 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+
+#[cfg(target_os = "windows")]
+use std::process::Stdio;
 
 use serde_json::{json, Map, Value};
 
@@ -84,6 +87,7 @@ fn unix_trap_cleanup_line(paths: &[String]) -> String {
     format!("trap {} EXIT", shell_single_quote(&unix_rm_command(paths)))
 }
 
+#[cfg(target_os = "windows")]
 fn escape_windows_batch_value(value: &str) -> String {
     value
         .replace('^', "^^")
@@ -108,6 +112,7 @@ fn build_claude_cli_args(settings_path: Option<&str>, full_access: bool) -> Vec<
     args
 }
 
+#[cfg(target_os = "windows")]
 fn quote_for_batch(value: &str) -> String {
     if value.is_empty() {
         return "\"\"".to_string();
@@ -212,6 +217,10 @@ fn unix_export_claude_config_dir_line(claude_config_dir: &str) -> String {
     )
 }
 
+// Compiled on Windows (production use) and under `cfg(test)` (cross-platform
+// unit test `detects_windows_batch_cli_shims` exercises the .cmd/.bat check).
+// Without `test` in the gate, non-Windows lib builds report it as dead code.
+#[cfg(any(target_os = "windows", test))]
 fn is_windows_batch_script_path(value: &str) -> bool {
     let normalized = value.trim().trim_matches('"').to_ascii_lowercase();
     normalized.ends_with(".cmd") || normalized.ends_with(".bat")
@@ -330,9 +339,7 @@ fn launch_local_session(
     include_settings: bool,
     full_access: bool,
 ) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
     let safe_id = sanitize_provider_id_for_filename(provider_id);
-    let pid = std::process::id();
 
     let settings_file = if include_settings {
         Some(write_local_temp_settings_file(&safe_id, temp_settings)?)
@@ -347,6 +354,11 @@ fn launch_local_session(
 
     #[cfg(target_os = "windows")]
     {
+        // `temp_dir` and `pid` are only consumed by the Windows terminal launcher
+        // (named temp `.bat` files are PID-suffixed to avoid collisions). Keep them
+        // Windows-gated so non-Windows builds don't warn about unused bindings.
+        let temp_dir = std::env::temp_dir();
+        let pid = std::process::id();
         launch_windows_terminal(
             &temp_dir,
             claude_config_dir,
@@ -393,7 +405,6 @@ fn launch_local_session(
             claude_config_dir,
             full_access,
             safe_id,
-            pid,
         );
         Err("Unsupported operating system for Claude CLI launch".to_string())
     }
