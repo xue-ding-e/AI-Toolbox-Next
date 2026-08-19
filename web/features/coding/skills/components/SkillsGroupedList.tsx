@@ -25,7 +25,7 @@ interface SkillsGroupedListProps {
   selectedIds: Set<string>;
   onSelectChange: (skillId: string, checked: boolean) => void;
   onSelectAllGroup: (group: SkillGroup, checked: boolean) => void;
-  getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
+  getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
@@ -49,7 +49,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   selectedIds,
   onSelectChange,
   onSelectAllGroup,
-  getGithubInfo,
+  getRepoInfo,
   formatRelative,
   onUpdate,
   onDelete,
@@ -187,7 +187,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                       selected={selectedIds.has(skill.id)}
                       toolsReadOnly={groupToolsEnabled}
                       onSelectChange={onSelectChange}
-                      getGithubInfo={getGithubInfo}
+                      getRepoInfo={getRepoInfo}
                       formatRelative={formatRelative}
                       onUpdate={onUpdate}
                       onDelete={onDelete}

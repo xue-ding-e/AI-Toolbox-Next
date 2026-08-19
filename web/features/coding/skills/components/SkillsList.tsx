@@ -27,7 +27,7 @@ interface SkillsListProps {
   updatingSkillIds: string[];
   columns?: number;
   dragDisabled?: boolean;
-  getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
+  getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
@@ -44,7 +44,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   updatingSkillIds,
   columns,
   dragDisabled,
-  getGithubInfo,
+  getRepoInfo,
   formatRelative,
   onUpdate,
   onDelete,
@@ -93,7 +93,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           loading={loading}
           isUpdating={updatingSkillIds.includes(skill.id)}
           dragDisabled={dragDisabled}
-          getGithubInfo={getGithubInfo}
+          getRepoInfo={getRepoInfo}
           formatRelative={formatRelative}
           onUpdate={onUpdate}
           onDelete={onDelete}
@@ -122,7 +122,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
             loading={loading}
             isUpdating={updatingSkillIds.includes(skill.id)}
             dragDisabled
-            getGithubInfo={getGithubInfo}
+            getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={onUpdate}
             onDelete={onDelete}

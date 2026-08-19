@@ -224,7 +224,7 @@ const SkillsPage: React.FC = () => {
     skills,
     getAllTools,
     formatRelative,
-    getGithubInfo,
+    getRepoInfo,
     refresh,
   } = useSkills();
 
@@ -623,10 +623,10 @@ const SkillsPage: React.FC = () => {
         groupUngrouped: t('skills.groupUngrouped'),
         groupCentral: t('skills.groupCentral'),
       },
-      getGithubInfo,
+      getRepoInfo,
       groups,
     );
-  }, [filteredSkills, viewMode, groupMode, getGithubInfo, groups, t]);
+  }, [filteredSkills, viewMode, groupMode, getRepoInfo, groups, t]);
 
   const groupToolTargetGroups = React.useMemo(
     () => groupedSkills.filter((group) => !isSkillUngroupedCustomGroup(group)),
@@ -1104,7 +1104,7 @@ const SkillsPage: React.FC = () => {
             updatingSkillIds={updatingSkillIds}
             columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
-            getGithubInfo={getGithubInfo}
+            getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
@@ -1126,7 +1126,7 @@ const SkillsPage: React.FC = () => {
             selectedIds={selectedIds}
             onSelectChange={handleSelectChange}
             onSelectAllGroup={handleSelectAllGroup}
-            getGithubInfo={getGithubInfo}
+            getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={handleUpdate}
             onDelete={handleDelete}

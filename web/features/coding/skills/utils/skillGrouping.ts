@@ -11,7 +11,7 @@ export interface SkillGroupLabels {
   groupCentral?: string;
 }
 
-export type GithubInfoResolver = (
+export type GitRepoInfoResolver = (
   url: string | null | undefined,
 ) => { label: string; href: string } | null;
 
@@ -60,7 +60,7 @@ export function buildSkillGroups(
   skills: ManagedSkill[],
   mode: SkillGroupingMode,
   labels: SkillGroupLabels,
-  getGithubInfo: GithubInfoResolver,
+  getRepoInfo: GitRepoInfoResolver,
   registryGroups: SkillGroupRecord[] = [],
 ): SkillGroup[] {
   const groupMap = new Map<string, SkillGroup>();
@@ -82,7 +82,7 @@ export function buildSkillGroups(
   for (const skill of skills) {
     const group = mode === 'custom'
       ? buildCustomGroup(skill, labels, registryGroups)
-      : buildSourceGroup(skill, labels, getGithubInfo);
+      : buildSourceGroup(skill, labels, getRepoInfo);
 
     const existing = groupMap.get(group.key);
     if (existing) {
@@ -139,15 +139,15 @@ function buildCustomGroup(
 function buildSourceGroup(
   skill: ManagedSkill,
   labels: SkillGroupLabels,
-  getGithubInfo: GithubInfoResolver,
+  getRepoInfo: GitRepoInfoResolver,
 ): Omit<SkillGroup, 'skills'> {
   if (skill.source_type === 'git' && skill.source_ref) {
-    const github = getGithubInfo(skill.source_ref);
-    if (github) {
+    const repo = getRepoInfo(skill.source_ref);
+    if (repo) {
       return {
-        key: `git:${github.href}`,
+        key: `git:${repo.href}`,
         id: null,
-        label: github.label,
+        label: repo.label,
         sourceType: 'git',
       };
     }

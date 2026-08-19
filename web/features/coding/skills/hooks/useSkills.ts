@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
 import * as api from '../services/skillsApi';
+import { normalizeGitUrlToHttps, parseGitRepo } from '../utils/gitUrl';
 import type { ManagedSkill } from '../types';
 
 export function useSkills() {
@@ -45,25 +46,22 @@ export function useSkills() {
     return `${days}d ago`;
   }, []);
 
-  // Get GitHub info from URL
-  const getGithubInfo = React.useCallback((url: string | null | undefined) => {
-    if (!url) return null;
+  // Resolve a Git remote URL into a display label and HTTPS web URL.
+  // Works for GitHub and any self-hosted / custom Git host (HTTPS, SSH, SCP).
+  const getRepoInfo = React.useCallback((url: string | null | undefined) => {
+    const parsed = parseGitRepo(url);
+    if (!parsed) return null;
 
-    const match = url.match(/github\.com[\/:]([^\/]+)\/([^\/\.]+)/);
-    if (match) {
-      const [, owner, repo] = match;
-      return {
-        label: `${owner}/${repo}`,
-        href: `https://github.com/${owner}/${repo}`,
-      };
-    }
-    return null;
+    return {
+      label: `${parsed.owner}/${parsed.repo}`,
+      href: normalizeGitUrlToHttps(url) as string,
+    };
   }, []);
 
   // Get skill source label
   const getSkillSourceLabel = React.useCallback((skill: ManagedSkill) => {
     if (skill.source_type === 'git') {
-      const info = getGithubInfo(skill.source_ref);
+      const info = getRepoInfo(skill.source_ref);
       return info ? info.label : skill.source_ref || 'Git';
     }
     if (skill.source_type === 'local') {
@@ -76,7 +74,7 @@ export function useSkills() {
       return t('skills.sourceCentral');
     }
     return skill.source_type;
-  }, [getGithubInfo, t]);
+  }, [getRepoInfo, t]);
 
   // Update skill
   const updateSkill = React.useCallback(
@@ -109,7 +107,7 @@ export function useSkills() {
   return {
     ...store,
     formatRelative,
-    getGithubInfo,
+    getRepoInfo,
     getSkillSourceLabel,
     updateSkill,
     deleteSkill,

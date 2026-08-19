@@ -67,7 +67,7 @@ interface SkillCardProps {
   selected?: boolean;
   toolsReadOnly?: boolean;
   onSelectChange?: (skillId: string, checked: boolean) => void;
-  getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
+  getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
   onDelete: (skillId: string) => void;
@@ -92,7 +92,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
   selected,
   toolsReadOnly,
   onSelectChange,
-  getGithubInfo,
+  getRepoInfo,
   formatRelative,
   onUpdate,
   onDelete,
@@ -122,14 +122,21 @@ const SkillCardContent = React.memo(function SkillCardContent({
 
   // These values are derived from stable inputs and are recalculated for every card.
   // Memoizing them keeps scroll and hover interactions cheaper when many cards are on screen.
-  const github = React.useMemo(
-    () => getGithubInfo(skill.source_ref),
-    [getGithubInfo, skill.source_ref],
+  const repoInfo = React.useMemo(
+    () => getRepoInfo(skill.source_ref),
+    [getRepoInfo, skill.source_ref],
+  );
+
+  // HTTPS web URL for opening the Git source in a browser. `href` is normalized
+  // by the resolver, so SCP/SSH refs from custom Git hosts work too.
+  const repoUrl = React.useMemo(
+    () => repoInfo?.href ?? '',
+    [repoInfo],
   );
 
   const copyValue = React.useMemo(
-    () => (github?.href ?? skill.source_ref ?? '').trim(),
-    [github, skill.source_ref],
+    () => repoInfo?.href || skill.source_ref || '',
+    [repoInfo, skill.source_ref],
   );
 
   const handleCopy = async () => {
@@ -165,13 +172,18 @@ const SkillCardContent = React.memo(function SkillCardContent({
 
   const handleIconClick = async () => {
     if (typeKey.includes('git')) {
-      const repoUrl = github?.href ?? skill.source_ref?.trim();
-      if (!repoUrl) return;
+      if (!repoUrl) {
+        // No usable web URL (e.g. malformed ref); fall back to the managed folder.
+        await handleOpenCentralPath();
+        return;
+      }
 
       try {
         await openUrl(repoUrl);
       } catch {
-        message.error(t('skills.openFolderFailed'));
+        // Opening the remote URL failed (the host may be unreachable or the
+        // opener rejected it). Fall back to revealing the local managed copy.
+        await handleOpenCentralPath();
       }
       return;
     }
@@ -220,14 +232,14 @@ const SkillCardContent = React.memo(function SkillCardContent({
   }, [isUpdating, loading, onSetManagementEnabled, skill]);
 
   const iconTooltip = React.useMemo(() => {
-    if (typeKey.includes('git') && (github?.href || skill.source_ref?.trim())) {
+    if (typeKey.includes('git') && (repoUrl || skill.source_ref?.trim())) {
       return t('skills.openRepo');
     }
     if (skill.source_type === 'local' && skill.source_ref?.trim()) {
       return t('skills.openFolder');
     }
     return undefined;
-  }, [github, skill.source_ref, skill.source_type, t, typeKey]);
+  }, [repoUrl, skill.source_ref, skill.source_type, t, typeKey]);
 
   const iconClickable = !!iconTooltip;
 
