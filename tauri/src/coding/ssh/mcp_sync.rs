@@ -356,23 +356,27 @@ async fn strip_cmd_c_from_remote_mcp_file(
         return Ok(());
     }
 
+    // SSH target is an independent Linux box (no /mnt, no Windows exes), so
+    // commands are left unchanged — only the cmd /c wrapper is stripped.
+    let identity = |s: &str| s.to_string();
+
     let processed = match module {
-        "opencode" => command_normalize::process_opencode_json(&content, false)?,
+        "opencode" => command_normalize::process_opencode_json(&content, false, &identity)?,
         "codex" => {
             if remote_path.ends_with(".toml") {
-                command_normalize::process_codex_toml(&content, false)?
+                command_normalize::process_codex_toml(&content, false, &identity)?
             } else {
                 return Ok(());
             }
         }
         "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
-            command_normalize::process_claude_json(&content, false)?
+            command_normalize::process_claude_json(&content, false, &identity)?
         }
         // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
         // (also YAML). Both carry `cmd /c` on Windows and need it stripped
         // for the Linux SSH target.
-        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content)?,
-        "dsh" => command_normalize::process_cordis_patch_yaml(&content)?,
+        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content, &identity)?,
+        "dsh" => command_normalize::process_cordis_patch_yaml(&content, &identity)?,
         _ => return Ok(()),
     };
 

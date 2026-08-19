@@ -4,6 +4,11 @@ use ai_toolbox_lib::coding::mcp::command_normalize::{
 };
 use serde_json::{json, Value};
 
+/// Identity path transform — leaves commands unchanged (matches pre-closure behavior).
+fn identity(s: &str) -> String {
+    s.to_string()
+}
+
 #[test]
 fn test_unwrap_cmd_c_wrapped() {
     let input = json!({
@@ -124,7 +129,7 @@ fn test_process_claude_json_unwrap() {
                 }
             }
         }"#;
-    let result = process_claude_json(content, false).unwrap();
+    let result = process_claude_json(content, false, &identity).unwrap();
     let parsed: Value = serde_json::from_str(&result).unwrap();
     assert_eq!(parsed["mcpServers"]["test"]["command"], "npx");
     assert_eq!(
@@ -143,7 +148,7 @@ fn test_process_opencode_json_unwrap() {
                 }
             }
         }"#;
-    let result = process_opencode_json(content, false).unwrap();
+    let result = process_opencode_json(content, false, &identity).unwrap();
     let parsed: Value = serde_json::from_str(&result).unwrap();
     assert_eq!(
         parsed["mcp"]["test"]["command"],
@@ -159,7 +164,7 @@ type = "stdio"
 command = "cmd"
 args = ["/c", "npx", "-y", "@foo/bar"]
 "#;
-    let result = process_codex_toml(content, false).unwrap();
+    let result = process_codex_toml(content, false, &identity).unwrap();
     assert!(result.contains(r#"command = "npx""#));
     assert!(result.contains(r#"args = ["-y", "@foo/bar"]"#));
 }

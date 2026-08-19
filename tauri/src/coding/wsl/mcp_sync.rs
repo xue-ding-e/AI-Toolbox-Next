@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::adapter;
 use super::commands::resolve_dynamic_paths_with_db;
-use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
+use super::sync::{read_wsl_file, sync_mappings, windows_to_wsl_path, write_wsl_file};
 use super::types::{FileMapping, SyncProgress, WSLSyncConfig};
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
@@ -275,11 +275,16 @@ async fn sync_mcp_to_wsl_claude(
 fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -> Value {
     match server.server_type.as_str() {
         "stdio" => {
-            let command = server
+            let command_raw = server
                 .server_config
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            // WSL can run Windows exes via /mnt; convert a Windows full path (or
+            // ~/%APPDATA% form, expanded on the host first) to /mnt/c/... so the
+            // WSL-side CLI can spawn it. Bare command names (npx, node) and already
+            // Linux paths are returned unchanged by windows_to_wsl_path.
+            let command = windows_to_wsl_path(command_raw).unwrap_or_else(|_| command_raw.to_string());
             let args: Vec<Value> = server
                 .server_config
                 .get("args")
@@ -380,25 +385,30 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
         return Ok(());
     }
 
+    // Convert Windows full-path (or ~/%APPDATA%, expanded on host) stdio
+    // commands to /mnt/c/... so WSL can spawn the Windows exe. Bare command
+    // names and Linux paths pass through unchanged.
+    let to_wsl = |s: &str| windows_to_wsl_path(s).unwrap_or_else(|_| s.to_string());
+
     let processed = match module {
-        "opencode" => command_normalize::process_opencode_json(&content, false)?,
+        "opencode" => command_normalize::process_opencode_json(&content, false, &to_wsl)?,
         "codex" => {
             // Determine parser by file extension: only .toml files use TOML parser
             if wsl_path.ends_with(".toml") {
-                command_normalize::process_codex_toml(&content, false)?
+                command_normalize::process_codex_toml(&content, false, &to_wsl)?
             } else {
                 // JSON files in codex module (e.g. auth.json) should not be processed
                 return Ok(());
             }
         }
         "geminicli" | "pi" | "oh_my_pi" => {
-            command_normalize::process_claude_json(&content, false)?
+            command_normalize::process_claude_json(&content, false, &to_wsl)?
         }
         // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
         // (also YAML). Both carry `cmd /c` on Windows and need it stripped
         // for the Linux-side WSL target.
-        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content)?,
-        "dsh" => command_normalize::process_cordis_patch_yaml(&content)?,
+        "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content, &to_wsl)?,
+        "dsh" => command_normalize::process_cordis_patch_yaml(&content, &to_wsl)?,
         _ => return Ok(()),
     };
 
