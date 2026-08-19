@@ -640,6 +640,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
               label={t('mcp.command')}
               name="command"
               rules={[{ required: true, message: t('mcp.commandRequired') }]}
+              extra={t('mcp.commandPathHint')}
             >
               <Input placeholder="npx" />
             </Form.Item>

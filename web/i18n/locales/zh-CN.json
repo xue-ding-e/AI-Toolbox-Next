@@ -3560,6 +3560,7 @@
     "type": "服务器类型",
     "command": "命令",
     "commandRequired": "请输入命令",
+    "commandPathHint": "支持 ~/、%APPDATA% 或完整路径，写入配置时自动展开为绝对路径",
     "args": "参数",
     "arg": "参数",
     "addArg": "添加参数",

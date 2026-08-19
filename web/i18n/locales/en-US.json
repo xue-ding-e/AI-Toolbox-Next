@@ -3563,6 +3563,7 @@
     "type": "Server Type",
     "command": "Command",
     "commandRequired": "Please enter command",
+    "commandPathHint": "Supports ~/, %APPDATA%, or full paths; auto-expanded to absolute on write",
     "args": "Arguments",
     "arg": "Argument",
     "addArg": "Add Argument",

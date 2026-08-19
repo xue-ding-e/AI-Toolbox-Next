@@ -12,7 +12,7 @@ use super::command_normalize;
 use super::format_configs::get_format_config;
 use super::types::{now_ms, McpServer, McpSyncDetail};
 use crate::coding::{
-    runtime_location,
+    expand_local_path, runtime_location,
     tools::{
         resolve_mcp_config_path_with_db, resolve_mcp_config_path_with_db_async, McpFormatConfig,
         RuntimeTool,
@@ -100,6 +100,47 @@ fn wrap_server_for_target(server: &McpServer, should_wrap: bool) -> McpServer {
     wrapped
 }
 
+/// Clone the server and expand `~/`, `$HOME`, `%APPDATA%`, etc. in its stdio
+/// `command` and each `args` entry to absolute host paths via `expand_local_path`.
+///
+/// Non-stdio servers are returned unchanged. Pure-flag args (e.g. `-y`, `npx`)
+/// are untouched — `expand_local_path` only substitutes when the value starts
+/// with `~/` or contains a known env-var pattern.
+fn expand_stdio_paths(server: &McpServer) -> McpServer {
+    if server.server_type != "stdio" {
+        return server.clone();
+    }
+
+    let mut expanded = server.clone();
+    let Some(config) = expanded.server_config.as_object_mut() else {
+        return expanded;
+    };
+
+    if let Some(cmd) = config.get("command").and_then(Value::as_str) {
+        if let Ok(resolved) = expand_local_path(cmd) {
+            config.insert(
+                "command".to_string(),
+                Value::String(resolved),
+            );
+        }
+    }
+
+    if let Some(args) = config.get("args").and_then(Value::as_array) {
+        let new_args: Vec<Value> = args
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .and_then(|s| expand_local_path(s).ok())
+                    .map(Value::String)
+                    .unwrap_or_else(|| v.clone())
+            })
+            .collect();
+        config.insert("args".to_string(), Value::Array(new_args));
+    }
+
+    expanded
+}
+
 fn sync_server_to_path(
     tool: &RuntimeTool,
     config_path: &PathBuf,
@@ -110,6 +151,14 @@ fn sync_server_to_path(
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
     let format_config = get_format_config(&tool.key);
     let should_wrap_cmd = should_wrap_cmd_for_config_path(config_path);
+
+    // Expand `~/`, `$HOME`, `%APPDATA%`, etc. in stdio command/args to absolute
+    // paths before writing to the local tool config file. CLI runners (Claude Code,
+    // Codex, ...) generally do not expand these themselves, so we resolve them on
+    // the host at write time. DB keeps the raw portable form. WSL sync is handled
+    // separately and does not go through this path.
+    let expanded = expand_stdio_paths(server);
+    let server = &expanded;
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
@@ -2020,5 +2069,103 @@ X-Test = "yes"
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].server_type, "sse");
         assert_eq!(servers[0].server_config["url"], "https://example.com/sse");
+    }
+
+    /// Build a stdio McpServer with the given command and args (helper for
+    /// path-expansion tests).
+    fn build_stdio_server_with(command: &str, args: &[&str]) -> McpServer {
+        McpServer {
+            id: String::new(),
+            name: "pathy".to_string(),
+            server_type: "stdio".to_string(),
+            server_config: json!({
+                "command": command,
+                "args": args,
+            }),
+            enabled_tools: vec![],
+            sync_details: None,
+            description: None,
+            user_group: None,
+            user_note: None,
+            tags: vec![],
+            timeout: None,
+            sort_index: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn expand_stdio_paths_expands_tilde_command_and_arg() {
+        let server = build_stdio_server_with(
+            "~/.fastctx/bin/fastctx.exe",
+            &["-c", "~/config/mcp.json"],
+        );
+
+        let expanded = expand_stdio_paths(&server);
+
+        let expected_cmd = expand_local_path("~/.fastctx/bin/fastctx.exe").unwrap();
+        assert_eq!(expanded.server_config["command"], json!(expected_cmd));
+        assert_eq!(
+            expanded.server_config["args"][0],
+            json!("-c"),
+            "pure flag args must not be touched"
+        );
+        let expected_arg = expand_local_path("~/config/mcp.json").unwrap();
+        assert_eq!(expanded.server_config["args"][1], json!(expected_arg));
+    }
+
+    #[test]
+    fn expand_stdio_paths_expands_appdata_placeholder() {
+        // %APPDATA% only exists on Windows; on other platforms the literal is
+        // preserved (env var unset), so assert conditionally.
+        let server = build_stdio_server_with("%APPDATA%/mcp/server.exe", &[]);
+        let expanded = expand_stdio_paths(&server);
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            assert_eq!(
+                expanded.server_config["command"],
+                json!(format!("{appdata}/mcp/server.exe"))
+            );
+        } else {
+            assert_eq!(
+                expanded.server_config["command"],
+                json!("%APPDATA%/mcp/server.exe")
+            );
+        }
+    }
+
+    #[test]
+    fn expand_stdio_paths_leaves_absolute_command_unchanged() {
+        let abs = if cfg!(windows) {
+            r"C:\Users\someone\fastctx.exe"
+        } else {
+            "/usr/local/bin/fastctx"
+        };
+        let server = build_stdio_server_with(abs, &["-y"]);
+        let expanded = expand_stdio_paths(&server);
+        assert_eq!(expanded.server_config["command"], json!(abs));
+        assert_eq!(expanded.server_config["args"], json!(["-y"]));
+    }
+
+    #[test]
+    fn expand_stdio_paths_skips_non_stdio() {
+        let server = build_http_server();
+        let expanded = expand_stdio_paths(&server);
+        assert_eq!(expanded.server_type, "http");
+        assert_eq!(
+            expanded.server_config["url"],
+            "https://example.com/mcp"
+        );
+    }
+
+    #[test]
+    fn expand_stdio_paths_leaves_pure_flags_untouched() {
+        let server = build_stdio_server_with("npx", &["-y", "--prefer-online", "@sammysnake/fast-context-mcp"]);
+        let expanded = expand_stdio_paths(&server);
+        assert_eq!(expanded.server_config["command"], json!("npx"));
+        assert_eq!(
+            expanded.server_config["args"],
+            json!(["-y", "--prefer-online", "@sammysnake/fast-context-mcp"])
+        );
     }
 }
