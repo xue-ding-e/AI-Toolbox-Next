@@ -7,6 +7,7 @@ import {
   buildOmpThinkingFromPreset,
   getOmpModelDefaultThinkingLevel,
   getOmpModelThinkingLevels,
+  inferOmpThinkingMode,
   normalizeOmpThinkingLevelKey,
 } from '../../utils/ompModelMetadata.ts';
 
@@ -61,12 +62,38 @@ test('getOmpModelDefaultThinkingLevel reads thinking.defaultLevel', () => {
   assert.equal(getOmpModelDefaultThinkingLevel({ reasoning: true }), undefined);
 });
 
-test('buildOmpThinkingFromPreset derives efforts and defaultLevel from variants', () => {
+test('buildOmpThinkingFromPreset derives efforts, defaultLevel, and mode from variants', () => {
   const thinking = buildOmpThinkingFromPreset({
     none: { reasoningEffort: 'none' },
     medium: { thinkingConfig: { thinkingLevel: 'medium' } },
     high: { disabled: true },
   });
   // none is not an OMP effort; high is disabled; only medium survives.
-  assert.deepEqual(thinking, { efforts: ['medium'] });
+  assert.deepEqual(thinking, { mode: 'effort', efforts: ['medium'] });
+});
+
+test('buildOmpThinkingFromPreset infers mode from provider api', () => {
+  const google = buildOmpThinkingFromPreset(
+    { low: { reasoningEffort: 'low' } },
+    'google-generative-ai',
+  );
+  assert.deepEqual(google?.mode, 'google-level');
+
+  const anthropic = buildOmpThinkingFromPreset(
+    { low: { reasoningEffort: 'low' } },
+    'anthropic-messages',
+  );
+  assert.deepEqual(anthropic?.mode, 'anthropic-adaptive');
+});
+
+test('inferOmpThinkingMode maps apis to mode defaults', () => {
+  assert.equal(inferOmpThinkingMode('openai-responses'), 'effort');
+  assert.equal(inferOmpThinkingMode('openai-completions'), 'effort');
+  assert.equal(inferOmpThinkingMode('openrouter'), 'effort');
+  assert.equal(inferOmpThinkingMode('google-generative-ai'), 'google-level');
+  assert.equal(inferOmpThinkingMode('google-vertex'), 'google-level');
+  assert.equal(inferOmpThinkingMode('anthropic-messages'), 'anthropic-adaptive');
+  assert.equal(inferOmpThinkingMode('bedrock-converse-stream'), 'anthropic-adaptive');
+  assert.equal(inferOmpThinkingMode(undefined), 'effort');
+  assert.equal(inferOmpThinkingMode('some-unknown-api'), 'effort');
 });

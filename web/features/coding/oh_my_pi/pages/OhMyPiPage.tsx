@@ -336,9 +336,10 @@ const sdkNameToOmpApi = (sdkName?: string): string => {
 const buildOmpModelFromOpenCodeModel = (
   modelId: string,
   model: OpenCodeModel,
+  api?: string,
 ): Record<string, unknown> => {
   const inputTypes = (model.modalities?.input ?? []).filter((inputType) => PI_INPUT_TYPES.has(inputType));
-  const thinking = buildOmpThinkingFromPreset(model.variants);
+  const thinking = buildOmpThinkingFromPreset(model.variants, api);
 
   return {
     id: model.id || modelId,
@@ -356,13 +357,14 @@ const buildOmpModelsProviderFromOpenCodeProvider = (
 ): Record<string, unknown> => {
   const options = provider.options ?? {};
   const headers = asStringRecord(options.headers);
+  const api = sdkNameToOmpApi(provider.npm);
   const models = Object.entries(provider.models || {}).map(([modelId, model]) =>
-    buildOmpModelFromOpenCodeModel(modelId, model),
+    buildOmpModelFromOpenCodeModel(modelId, model, api),
   );
 
   return {
     ...(provider.name ? { name: provider.name } : {}),
-    api: sdkNameToOmpApi(provider.npm),
+    api,
     ...(options.baseURL ? { baseUrl: options.baseURL } : {}),
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
     ...(!isRecordEmpty(headers) ? { headers } : {}),
@@ -1338,7 +1340,7 @@ const OhMyPiPage: React.FC = () => {
     selectedModels.forEach((model) => {
       if (!currentModelIds.has(model.id)) {
         const matchedPresetModel = findPresetModelById(model.id, ompApiToSdkName(providerApi));
-        currentModels.push(buildFetchedOmpModel(model, matchedPresetModel));
+        currentModels.push(buildFetchedOmpModel(model, matchedPresetModel, providerApi));
       }
     });
 

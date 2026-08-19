@@ -1106,6 +1106,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                       height={180}
                       resizable
                       placeholder={`{
+    "mode": "effort",
     "efforts": ["low", "medium", "high"],
     "defaultLevel": "high"
 }`}

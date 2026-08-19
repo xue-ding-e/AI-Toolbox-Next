@@ -56,12 +56,33 @@ test('buildFetchedOmpModel fills thinking from preset variants, not thinkingLeve
   const model = buildFetchedOmpModel(
     { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
     thinkingPreset,
+    'openai-responses',
   );
 
   assert.equal(model.id, 'deepseek-reasoner');
   assert.equal(model.name, 'DeepSeek Reasoner');
-  assert.deepEqual(model.thinking, { efforts: ['low', 'high', 'max'], defaultLevel: 'high' });
+  assert.deepEqual(model.thinking, { mode: 'effort', efforts: ['low', 'high', 'max'], defaultLevel: 'high' });
   assert.equal('thinkingLevelMap' in model, false);
+});
+
+test('buildFetchedOmpModel infers thinking mode from provider api', () => {
+  const anthropic = buildFetchedOmpModel(
+    { id: 'deepseek-reasoner' },
+    thinkingPreset,
+    'anthropic-messages',
+  );
+  assert.deepEqual(anthropic.thinking, {
+    mode: 'anthropic-adaptive',
+    efforts: ['low', 'high', 'max'],
+    defaultLevel: 'high',
+  });
+
+  const google = buildFetchedOmpModel(
+    { id: 'deepseek-reasoner' },
+    thinkingPreset,
+    'google-generative-ai',
+  );
+  assert.deepEqual((google.thinking as Record<string, unknown>)?.mode, 'google-level');
 });
 
 test('buildFetchedOmpModel omits thinking when preset has no variants', () => {

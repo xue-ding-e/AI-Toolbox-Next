@@ -27,6 +27,31 @@ const asStringArray = (value: unknown): string[] => (
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 );
 
+/** OMP `thinking.mode` 上游枚举(与 OMP ThinkingControlModeSchema 一致)。 */
+export const OMP_THINKING_MODE_KEYS = ['effort', 'budget', 'google-level', 'anthropic-adaptive', 'anthropic-budget-effort'] as const;
+export type OmpThinkingMode = (typeof OMP_THINKING_MODE_KEYS)[number];
+
+/**
+ * 按 OMP provider `api` 推断 `thinking.mode` 的合理默认值,镜像上游
+ * `inferThinkingControlMode`:google 系→google-level、anthropic-messages/
+ * bedrock-converse-stream→anthropic-adaptive、其余→effort。api 缺失或未知
+ * 时回退 effort。OMP 对 mode 校验严格(必填),生成的 thinking 必须带 mode,
+ * 否则整个 models.yml 校验失败、所有自定义 provider 被禁用。
+ */
+export const inferOmpThinkingMode = (api?: string): OmpThinkingMode => {
+  switch (api) {
+    case 'google-generative-ai':
+    case 'google-gemini-cli':
+    case 'google-vertex':
+      return 'google-level';
+    case 'anthropic-messages':
+    case 'bedrock-converse-stream':
+      return 'anthropic-adaptive';
+    default:
+      return 'effort';
+  }
+};
+
 /** 从 OMP 模型 `thinking` 结构推导可选思考级别列表(不含 off;off 表示关闭
  *  思考,由调用方作为独立选项处理,OMP 的 EffortSchema 词表为 minimal..max)。 */
 export const getOmpModelThinkingLevels = (
@@ -131,9 +156,13 @@ export const getPresetThinkingLevelValue = (
   return undefined;
 };
 
-/** 从 OpenCode preset variants 推导 OMP 的 `thinking` 结构(按 effort 聚合)。 */
+/** 从 OpenCode preset variants 推导 OMP 的 `thinking` 结构(按 effort 聚合)。
+ *  `mode` 由 OMP provider 的 `api` 推断(见 {@link inferOmpThinkingMode});api
+ *  未知时回退 effort。OMP 的 thinking schema 将 mode 视为必填,缺失会导致整个
+ *  models.yml 校验失败。 */
 export const buildOmpThinkingFromPreset = (
   variants: Record<string, OpenCodeModelVariant> | undefined,
+  api?: string,
 ): Record<string, unknown> | undefined => {
   if (!variants || Object.keys(variants).length === 0) {
     return undefined;
@@ -167,7 +196,7 @@ export const buildOmpThinkingFromPreset = (
     (left, right) =>
       OMP_THINKING_EFFORT_KEYS.indexOf(left as never) - OMP_THINKING_EFFORT_KEYS.indexOf(right as never),
   );
-  const thinking: Record<string, unknown> = { efforts };
+  const thinking: Record<string, unknown> = { mode: inferOmpThinkingMode(api), efforts };
   if (defaultLevel) {
     thinking.defaultLevel = defaultLevel;
   }

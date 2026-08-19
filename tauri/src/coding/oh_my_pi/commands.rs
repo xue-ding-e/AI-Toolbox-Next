@@ -244,6 +244,10 @@ fn normalize_omp_provider_for_omptype(provider: &mut Value) {
     let Some(provider_obj) = provider.as_object_mut() else {
         return;
     };
+    let provider_api = provider_obj
+        .get("api")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let Some(models) = provider_obj.get_mut("models").and_then(Value::as_array_mut) else {
         return;
     };
@@ -260,7 +264,39 @@ fn normalize_omp_provider_for_omptype(provider: &mut Value) {
             }
         }
         model_obj.remove("thinkingLevelMap");
+        // OMP 的 thinking schema 将 `mode` 视为必填,缺失时整个 models.yml
+        // 校验失败、所有自定义 provider 被禁用。这里按 provider api 兜底补上
+        // mode(前端已保证生成,兜底覆盖手动/旧数据),校验才可通过。
+        add_omp_thinking_mode(model_obj, provider_api.as_deref());
     }
+}
+
+/// OMP ThinkingControlModeSchema 允许的取值。
+const OMP_THINKING_MODES: [&str; 5] =
+    ["effort", "budget", "google-level", "anthropic-adaptive", "anthropic-budget-effort"];
+
+/// OMP `thinking` schema 里 mode 是必填字段。若模型带 `thinking` 块但缺
+/// `mode`(旧数据或用户手写 JSON),按 provider `api` 推断一个合理值(镜像上游
+/// `inferThinkingControlMode`);api 缺失/未知时回退 effort。
+fn add_omp_thinking_mode(model_obj: &mut Map<String, Value>, provider_api: Option<&str>) {
+    let Some(thinking) = model_obj
+        .get_mut("thinking")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if thinking.contains_key("mode") {
+        let mode = thinking["mode"].as_str().unwrap_or_default();
+        if OMP_THINKING_MODES.contains(&mode) {
+            return;
+        }
+    }
+    let mode = match provider_api {
+        Some("google-generative-ai" | "google-gemini-cli" | "google-vertex") => "google-level",
+        Some("anthropic-messages" | "bedrock-converse-stream") => "anthropic-adaptive",
+        _ => "effort",
+    };
+    thinking.insert("mode".to_string(), Value::String(mode.to_string()));
 }
 
 /// 从 config.yml 解析默认模型选择。
@@ -1101,6 +1137,81 @@ mod tests {
                 "cost": { "input": 0.1, "output": 0.3, "cacheRead": 0.1, "cacheWrite": 0.2 }
             })
         );
+    }
+
+    #[test]
+    fn normalize_omptype_backfills_missing_thinking_mode_from_api() {
+        let mut provider = json!({
+            "api": "openai-responses",
+            "models": [
+                { "id": "a", "reasoning": true, "thinking": { "efforts": ["low", "high"] } }
+            ]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(
+            provider["models"][0]["thinking"]["mode"],
+            json!("effort")
+        );
+
+        // openai-responses thinking may carry an explicit mode; must be preserved.
+        let mut provider = json!({
+            "api": "openai-responses",
+            "models": [
+                { "id": "a", "thinking": { "mode": "budget", "efforts": ["low", "high"] } }
+            ]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(
+            provider["models"][0]["thinking"]["mode"],
+            json!("budget")
+        );
+
+        // google api defaults to google-level.
+        let mut provider = json!({
+            "api": "google-generative-ai",
+            "models": [
+                { "id": "a", "reasoning": true, "thinking": { "efforts": ["low", "high"] } }
+            ]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(
+            provider["models"][0]["thinking"]["mode"],
+            json!("google-level")
+        );
+
+        // anthropic-messages defaults to anthropic-adaptive.
+        let mut provider = json!({
+            "api": "anthropic-messages",
+            "models": [
+                { "id": "a", "reasoning": true, "thinking": { "efforts": ["low", "high"] } }
+            ]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(
+            provider["models"][0]["thinking"]["mode"],
+            json!("anthropic-adaptive")
+        );
+
+        // Invalid mode value is replaced by the api-derived default.
+        let mut provider = json!({
+            "api": "openai-responses",
+            "models": [
+                { "id": "a", "thinking": { "mode": "bogus", "efforts": ["low"] } }
+            ]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(
+            provider["models"][0]["thinking"]["mode"],
+            json!("effort")
+        );
+
+        // No thinking block -> nothing added.
+        let mut provider = json!({
+            "api": "openai-responses",
+            "models": [{ "id": "a", "reasoning": true }]
+        });
+        normalize_omp_provider_for_omptype(&mut provider);
+        assert_eq!(provider["models"][0].get("thinking"), None);
     }
 
     #[test]

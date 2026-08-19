@@ -25,6 +25,7 @@
 - 写入 `modelRoles.default` 时必须是 `provider/modelId`(OMP `parseModelString` 按首个 `/` 拆分),裸 provider 无效。
 - 不要接管 `config.yml` 全部字段;其他设置编辑器隐藏并保留 `modelRoles`/`defaultThinkingLevel`/`extensions`/`enabledModels` 等受管键。
 - `defaultThinkingLevel` 的“清除”由 `OmpModelSettingsInput.clear_thinking_level` 显式驱动；前端空字符串不代表清除，避免用户在切换 provider/model 时误删全局思考级别。
+- OMP 的 `thinking.mode` 是其 schema 的必填字段(`ThinkingControlModeSchema`:effort/budget/google-level/anthropic-adaptive/anthropic-budget-effort)。生成带 `thinking` 块的模型时若缺 mode,整个 models.yml 校验失败、所有自定义 provider 被禁用。前端 `buildOmpThinkingFromPreset(variants, api)` 按 api 推断 mode(google 系→google-level、anthropic-messages/bedrock→anthropic-adaptive、其余→effort);后端 `normalize_omp_provider_for_omptype` 对旧数据/手写 JSON 缺 mode 时同样兜底补上。
 - WSL 场景下选中 `~/.omp` 目录且其 `agent` 子目录为有效运行时布局时,归一化为 `~/.omp/agent`。
 
 ## 最小验证

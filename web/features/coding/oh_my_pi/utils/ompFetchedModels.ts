@@ -2,7 +2,6 @@ import type { FetchedModel } from '../../../../components/common/FetchModelsModa
 import type { PresetModel } from '../../../../constants/presetModels.ts';
 import { PI_INPUT_TYPES } from '../../../../utils/piModelMetadata.ts';
 import { buildOmpThinkingFromPreset } from '../../../../utils/ompModelMetadata.ts';
-
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -28,6 +27,7 @@ export const buildOmpModelFromPreset = (
   preset: PresetModel,
   modelId: string,
   fallbackName: string,
+  api?: string,
 ): Record<string, unknown> => {
   const inputTypes = (preset.modalities?.input ?? []).filter((inputType) => PI_INPUT_TYPES.has(inputType));
   const cost = asRecord(preset.cost);
@@ -48,7 +48,7 @@ export const buildOmpModelFromPreset = (
   if (cacheWriteCost !== undefined) {
     piCost.cacheWrite = cacheWriteCost;
   }
-  const ompThinking = buildOmpThinkingFromPreset(preset.variants);
+  const ompThinking = buildOmpThinkingFromPreset(preset.variants, api);
 
   return {
     id: modelId,
@@ -69,12 +69,14 @@ export const buildOmpModelFromPreset = (
 export const buildFetchedOmpModel = (
   fetchedModel: FetchedModel,
   matchedPresetModel?: PresetModel | null,
+  api?: string,
 ): Record<string, unknown> => {
   if (matchedPresetModel) {
     return buildOmpModelFromPreset(
       matchedPresetModel,
       fetchedModel.id,
       fetchedModel.name || fetchedModel.id,
+      api,
     );
   }
   return {
