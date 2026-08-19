@@ -78,6 +78,14 @@ pub fn save_settings_to_sqlite_conn(
 /// Keep the in-process manual CLI override registry in `cli_resolver` aligned
 /// with persisted settings so CLI calls prefer user-specified paths.
 fn sync_manual_cli_overrides(settings: &AppSettings) {
+    // Under `cargo test` every settings load/save funnels through here and would
+    // otherwise wipe the shared registry mid-test for `cli_resolver`'s manual-cli
+    // tests (which set an override then immediately resolve it). Hold the shared
+    // `test_env` lock so those writers are serialized with the reader tests there.
+    // No-op overhead in production builds: this branch never compiles in.
+    #[cfg(test)]
+    let _guard = crate::coding::test_env::lock();
+
     crate::coding::cli_resolver::set_manual_cli_overrides(settings.cli_manual_paths.clone());
 }
 

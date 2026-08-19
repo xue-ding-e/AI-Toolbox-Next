@@ -40,7 +40,12 @@ pub(crate) mod test_env {
     static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        TEST_ENV_LOCK.lock().expect("test env lock poisoned")
+        // Recover from a poisoned lock instead of propagating the panic: other
+        // tests still need to take this lock even after one holder panicked
+        // (e.g. an optional CLI helper that only exists on some dev machines).
+        TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

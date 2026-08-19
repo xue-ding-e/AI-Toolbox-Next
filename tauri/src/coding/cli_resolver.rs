@@ -1511,8 +1511,12 @@ mod tests {
 
     #[test]
     fn manual_cli_override_prefers_existing_path_over_auto_resolution() {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // This test mutates and reads the process-wide manual CLI override registry
+        // (see `manual_cli_override_registry`). `settings::store` round-trip tests call
+        // load/save, which re-sync the registry with (empty) default settings and can
+        // wipe our override mid-test under parallel executors. Grab the shared
+        // `test_env` lock so every reader/writer of the registry is serialized.
+        let _guard = crate::coding::test_env::lock();
         let test_dir = TestDir::new("manual-cli-pi");
         #[cfg(target_os = "windows")]
         let fake_pi = test_dir.path().join("pi.cmd");
@@ -1531,8 +1535,8 @@ mod tests {
 
     #[test]
     fn manual_cli_override_falls_back_when_file_missing_and_hint_reported() {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Same registry-serialization rationale as the override-priority test above.
+        let _guard = crate::coding::test_env::lock();
         let test_dir = TestDir::new("manual-cli-missing");
         let missing = test_dir.path().join("pi-does-not-exist");
         let mut map = std::collections::HashMap::new();
