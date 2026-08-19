@@ -1007,6 +1007,13 @@ inferred provider：
 - Gemini source 转非 Gemini target 时过滤 `alt=sse` 和 `key=...`。
 - target Gemini + streaming 自动补 `alt=sse`。
 - provider full URL：`is_full_url=true` 或 base URL suffix `##` 时只 merge query，不追加默认 path。
+- provider 级自定义 User-Agent（issue #294，对齐 cc-switch `customUserAgent`）：
+  - provider `data.meta.customUserAgent`（snake/camel 双兼容）非空时，`build_upstream_headers` 在 inject 链最末尾（`inject_copilot_headers` 之后）用 `append_preserved_header` 覆盖转发自客户端的 `User-Agent`；未设置时保留客户端原 UA。
+  - 校验用 `parse_custom_user_agent`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法值运行时静默忽略不阻断请求；前端 `isValidUserAgentHeader` 与该字节规则对齐并给非阻断红字提示。
+  - Copilot provider 避让：`ProviderBodyCompat::Copilot` 判定命中时跳过注入，指纹 UA（`GitHubCopilotChat/0.38.2`）由 `inject_copilot_headers` 独占管理，不可被自定义 UA 覆盖。
+  - preserved vec 在覆盖场景会出现两条 user-agent（客户端原 UA + custom UA）；header-preserving 写出按顺序后者胜，与 `headers.insert` 语义一致。
+  - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom UA，可在表单内预验上游 UA 白名单。
+  - 切换网关 profile 时 `customUserAgent` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key），与 billing 字段同等待遇。
 
 特殊 path：
 

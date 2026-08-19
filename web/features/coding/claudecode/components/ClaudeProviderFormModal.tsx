@@ -25,6 +25,11 @@ import {
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
 import {
+  getCustomUserAgentFromMeta,
+  mergeCustomUserAgentIntoMeta,
+} from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
+import CustomUserAgentCollapse from '@/features/coding/shared/providerUserAgent/CustomUserAgentCollapse';
+import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
   findGatewayProviderEndpoint,
@@ -185,6 +190,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [extraSettingsError, setExtraSettingsError] = React.useState<string>();
   const [advancedSettingsExpanded, setAdvancedSettingsExpanded] = React.useState(false);
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const [customUserAgent, setCustomUserAgent] = React.useState(() => getCustomUserAgentFromMeta(provider?.meta));
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
     getGatewayProviderProfilesVersion,
@@ -418,6 +424,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       setProviderCategory(nextProviderCategory);
       setCurrentBaseUrl(selectedBaseUrl);
       setBillingConfig(getBillingConfigFromMeta(provider.meta));
+      setCustomUserAgent(getCustomUserAgentFromMeta(provider.meta));
       const nextExtraSettingsRaw = nextProviderCategory === 'official'
         ? ''
         : provider.extraSettingsConfig || '';
@@ -464,6 +471,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       setProviderCategory('custom');
       setCurrentBaseUrl('');
       setBillingConfig(getBillingConfigFromMeta(undefined));
+      setCustomUserAgent(getCustomUserAgentFromMeta(undefined));
       setExtraSettingsValue(null);
       setExtraSettingsError(undefined);
       setAdvancedSettingsExpanded(false);
@@ -488,6 +496,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       setProviderCategory('custom');
       setCurrentBaseUrl('');
       setBillingConfig(getBillingConfigFromMeta(undefined));
+      setCustomUserAgent(getCustomUserAgentFromMeta(undefined));
       setExtraSettingsValue(null);
       setExtraSettingsError(undefined);
       setAdvancedSettingsExpanded(false);
@@ -741,15 +750,20 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           ? undefined
           : (submittedValues.extraSettingsMergeStrategy || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY),
         apiFormat: selectedApiFormat,
-        meta: mergeBillingConfigIntoMeta(
-          mergeGatewayMetaIntoProviderMeta(
-            provider?.meta,
-            gatewayProfile,
-            gatewayProfile ? undefined : selectedApiFormat,
+        meta: mergeCustomUserAgentIntoMeta(
+          mergeBillingConfigIntoMeta(
+            mergeGatewayMetaIntoProviderMeta(
+              provider?.meta,
+              gatewayProfile,
+              gatewayProfile ? undefined : selectedApiFormat,
+            ),
+            selectedCategory === 'official'
+              ? { enabled: false, pricingModelSource: 'inherit' }
+              : billingConfig,
           ),
           selectedCategory === 'official'
-            ? { enabled: false, pricingModelSource: 'inherit' }
-            : billingConfig,
+            ? { enabled: false, value: '' }
+            : customUserAgent,
         ),
         notes: submittedValues.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -1034,6 +1048,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       setCurrentBaseUrl('');
       setFetchedModels([]);
       setBillingConfig(getBillingConfigFromMeta(undefined));
+      setCustomUserAgent(getCustomUserAgentFromMeta(undefined));
       setExtraSettingsValue(null);
       setExtraSettingsError(undefined);
       setAdvancedSettingsExpanded(false);
@@ -1234,6 +1249,15 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           <BillingConfigCollapse
             value={billingConfig}
             onChange={setBillingConfig}
+          />
+        </Form.Item>
+      )}
+
+      {!isOfficialMode && (
+        <Form.Item wrapperCol={sectionWrapperCol}>
+          <CustomUserAgentCollapse
+            value={customUserAgent}
+            onChange={setCustomUserAgent}
           />
         </Form.Item>
       )}

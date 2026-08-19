@@ -6,11 +6,16 @@ import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import CustomUserAgentCollapse from '@/features/coding/shared/providerUserAgent/CustomUserAgentCollapse';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
+import {
+  getCustomUserAgentFromMeta,
+  mergeCustomUserAgentIntoMeta,
+} from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
 import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -333,6 +338,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const [customUserAgent, setCustomUserAgent] = React.useState(() => getCustomUserAgentFromMeta(provider?.meta));
   const selectedChannel = Form.useWatch('channel', form) as string | undefined;
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
@@ -481,6 +487,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
 
     setSelectedProviderCategory(initialCategory);
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
+    setCustomUserAgent(getCustomUserAgentFromMeta(provider?.meta));
     setSettingsConfigValue(initialConfig);
     setSettingsConfigValid(true);
     setFetchedModels([]);
@@ -763,15 +770,20 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         category: selectedCategory,
         settingsConfig,
         apiFormat: selectedApiFormat,
-        meta: mergeBillingConfigIntoMeta(
-          mergeGatewayMetaIntoProviderMeta(
-            provider?.meta,
-            gatewayProfile,
-            gatewayProfile ? undefined : selectedApiFormat,
+        meta: mergeCustomUserAgentIntoMeta(
+          mergeBillingConfigIntoMeta(
+            mergeGatewayMetaIntoProviderMeta(
+              provider?.meta,
+              gatewayProfile,
+              gatewayProfile ? undefined : selectedApiFormat,
+            ),
+            selectedCategory === 'official'
+              ? { enabled: false, pricingModelSource: 'inherit' }
+              : billingConfig,
           ),
           selectedCategory === 'official'
-            ? { enabled: false, pricingModelSource: 'inherit' }
-            : billingConfig,
+            ? { enabled: false, value: '' }
+            : customUserAgent,
         ),
         notes: values.notes,
       });
@@ -927,6 +939,15 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
               <BillingConfigCollapse
                 value={billingConfig}
                 onChange={setBillingConfig}
+              />
+            </Form.Item>
+          )}
+
+          {!isOfficialMode && (
+            <Form.Item wrapperCol={sectionWrapperCol}>
+              <CustomUserAgentCollapse
+                value={customUserAgent}
+                onChange={setCustomUserAgent}
               />
             </Form.Item>
           )}

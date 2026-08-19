@@ -689,6 +689,7 @@ fn provider_meta_from_record(
         )
         .map(|value| normalize_pricing_model_source(&value))
         .unwrap_or_else(|| default_pricing_model_source.clone()),
+        custom_user_agent: json_string_compat(meta_value, "custom_user_agent", "customUserAgent"),
     };
     apply_gateway_profile_reference(cli_key, &mut meta);
     if meta.provider_type.is_none() {

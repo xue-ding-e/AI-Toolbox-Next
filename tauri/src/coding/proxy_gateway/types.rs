@@ -79,6 +79,8 @@ pub struct ProviderGatewayMeta {
     pub allow_text_only_model_heuristic: bool,
     pub cost_multiplier: String,
     pub pricing_model_source: String,
+    #[serde(default, rename = "customUserAgent", alias = "custom_user_agent")]
+    pub custom_user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +127,7 @@ impl Default for ProviderGatewayMeta {
             allow_text_only_model_heuristic: false,
             cost_multiplier: "1.0".to_string(),
             pricing_model_source: "upstream".to_string(),
+            custom_user_agent: None,
         }
     }
 }

@@ -17,11 +17,16 @@ import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import CustomUserAgentCollapse from '@/features/coding/shared/providerUserAgent/CustomUserAgentCollapse';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
+import {
+  getCustomUserAgentFromMeta,
+  mergeCustomUserAgentIntoMeta,
+} from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
 import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -299,6 +304,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const [customUserAgent, setCustomUserAgent] = React.useState(() => getCustomUserAgentFromMeta(provider?.meta));
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
     getGatewayProviderProfilesVersion,
@@ -421,6 +427,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       handleProviderCategoryChange(lockedProviderCategory);
     }
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
+    setCustomUserAgent(getCustomUserAgentFromMeta(provider?.meta));
 
     if (provider) {
       let settingsConfig: CodexSettingsConfig = {};
@@ -784,15 +791,20 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         providerEndpointId: selectedEndpoint?.id,
         settingsConfig: finalSettingsConfig,
         apiFormat: selectedApiFormat,
-        meta: mergeBillingConfigIntoMeta(
-          mergeGatewayMetaIntoProviderMeta(
-            provider?.meta,
-            gatewayProfile,
-            gatewayProfile ? undefined : selectedApiFormat,
+        meta: mergeCustomUserAgentIntoMeta(
+          mergeBillingConfigIntoMeta(
+            mergeGatewayMetaIntoProviderMeta(
+              provider?.meta,
+              gatewayProfile,
+              gatewayProfile ? undefined : selectedApiFormat,
+            ),
+            selectedCategory === 'official'
+              ? { enabled: false, pricingModelSource: 'inherit' }
+              : billingConfig,
           ),
           selectedCategory === 'official'
-            ? { enabled: false, pricingModelSource: 'inherit' }
-            : billingConfig,
+            ? { enabled: false, value: '' }
+            : customUserAgent,
         ),
         notes: submittedValues.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -1249,12 +1261,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       </Form.Item>
 
       <Form.Item
-        name="configToml" 
+        name="configToml"
         label="config.toml"
         extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.configTomlHelp')}</Text>}
         rules={[validateTomlRule(t('codex.provider.configTomlInvalid'))]}
       >
-        <TomlEditorFormItem 
+        <TomlEditorFormItem
           placeholder={t('codex.provider.configTomlPlaceholder')}
         />
       </Form.Item>
@@ -1264,6 +1276,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           <BillingConfigCollapse
             value={billingConfig}
             onChange={setBillingConfig}
+          />
+        </Form.Item>
+      )}
+
+      {!isOfficialMode && (
+        <Form.Item wrapperCol={sectionWrapperCol}>
+          <CustomUserAgentCollapse
+            value={customUserAgent}
+            onChange={setCustomUserAgent}
           />
         </Form.Item>
       )}
@@ -1366,16 +1387,25 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           </>
         )}
 
-        <Form.Item 
-          name="configToml" 
+        <Form.Item
+          name="configToml"
           label="config.toml"
           extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.configTomlHelp')}</Text>}
           rules={[validateTomlRule(t('codex.provider.configTomlInvalid'))]}
         >
-          <TomlEditorFormItem 
+          <TomlEditorFormItem
             placeholder={t('codex.provider.configTomlPlaceholder')}
           />
         </Form.Item>
+
+        {!isOfficialMode && (
+          <Form.Item wrapperCol={sectionWrapperCol}>
+            <CustomUserAgentCollapse
+              value={customUserAgent}
+              onChange={setCustomUserAgent}
+            />
+          </Form.Item>
+        )}
 
         <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
           <ProviderNotesCollapse

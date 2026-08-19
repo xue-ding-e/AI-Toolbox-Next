@@ -29,6 +29,7 @@
 - `gateway_provider_profiles.json` 的 `compat` 字段只是 catalog 描述，不是生产执行开关。`provider_profiles.rs` 的 `CompatRuleRegistration` 必须把每个 tag 静态绑定到 runtime owner 和精确测试，注册表测试还要确认名称唯一且源码符号存在。新增 compat 名称时必须同时补 runtime body/stream/header adapter、回归测试、注册和文档；不要只在 JSON 里声明能力，也不要让 runtime 动态解释 tag。
 - 上游 provider `base_url` 以 `##` 结尾表示 AxonHub 风格 RawURL：runtime 读取 provider 时必须剥离 `##` 并把 provider 标记为 full URL，转发时只合并 query，不再追加 `/v1/chat/completions`、`/v1/messages`、`/v1/responses` 或 Gemini 默认路径。显式 `data.meta.is_full_url` / `isFullUrl` 仍然保留为等价配置。
 - 每 CLI 的默认计费配置存放在 `ProxyGatewaySettings.app_configs` 中，只在 provider 记录没有显式 `data.meta.cost_multiplier` / `data.meta.pricing_model_source` 时作为缺省值；不要把默认配置误实现成覆盖所有 provider 的强制全局倍率。
+- provider 级自定义 User-Agent 存放在 `data.meta.customUserAgent`（snake/camel 双兼容，`parse_custom_user_agent` 校验，非法值静默忽略）。`build_upstream_headers` 在 inject 链最末尾注入并覆盖客户端转发的 User-Agent；Copilot provider 避让（指纹 UA 由 `inject_copilot_headers` 独占，不可覆盖）；连通性测试走同一注入路径自动继承。细节见 `docs/gateway-provider-compatibility.md` 第 7 章。
 - `model_pricing` 是独立 SQLite 物理表，不是 JSONB helper 表。模型定价 CRUD 必须直接查询/写入这张表，并继续使用字符串形式保存每百万 token 成本。官方默认价来自 bundled/cache/remote `model_pricing.json`，只允许 `INSERT OR IGNORE` 增量补齐，不能覆盖已有行。
 - `ProxyGatewaySettings.enabled_on_startup` 表示上次应用退出前的网关运行态，不是用户可见的独立开关。启动成功后置 `true`，用户手动停止成功前置 `false`，应用启动时按它自动恢复网关。
 - 网关“重启”是独立于“停止”的热重启命令：不做 CLI 接管 preflight、不改 manifest、尽量保持当前 host/port，并重建 runtime（清空 provider cache / side stores，重置模型健康冷却并写回 `model-health.json`）。请求历史与统计不删。

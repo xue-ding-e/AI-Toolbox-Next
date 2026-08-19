@@ -8711,6 +8711,7 @@ pub(super) fn build_upstream_headers(
         &mut headers,
         &mut preserved,
     )?;
+    inject_custom_user_agent(provider, &mut headers, &mut preserved)?;
     Ok(UpstreamHeaders {
         map: headers,
         preserved,
@@ -8948,6 +8949,47 @@ fn inject_copilot_headers(
         }
     }
 
+    Ok(())
+}
+
+/// Parse a provider-level custom User-Agent string.
+///
+/// Mirrors cc-switch `parse_custom_user_agent`: an empty/whitespace value means
+/// "unset" (`Ok(None)`); a non-empty value is validated with `HeaderValue::from_str`,
+/// whose byte rule (visible ASCII / non-ASCII / tab legal; other control chars illegal)
+/// is mirrored on the frontend by `isValidUserAgentHeader`.
+fn parse_custom_user_agent(raw: Option<&str>) -> Result<Option<HeaderValue>, reqwest::header::InvalidHeaderValue> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(user_agent) => HeaderValue::from_str(user_agent).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Inject the provider-level custom User-Agent, overriding any User-Agent forwarded
+/// from the client request. Copilot providers are skipped because their fingerprint
+/// User-Agent is managed exclusively by `inject_copilot_headers` and must not be
+/// overridden (would break Copilot upstream auth). Invalid values are silently
+/// ignored to match the frontend's non-blocking validation hint.
+fn inject_custom_user_agent(
+    provider: &UpstreamProvider,
+    headers: &mut HeaderMap,
+    preserved: &mut Vec<PreservedHeader>,
+) -> Result<(), String> {
+    let is_copilot = ProviderBodyCompat::from_provider_type(
+        provider.meta.provider_type.as_deref(),
+        provider.target_protocol,
+    ) == Some(ProviderBodyCompat::Copilot);
+    if is_copilot {
+        return Ok(());
+    }
+    // Invalid UA is silently ignored (frontend gives a non-blocking hint).
+    let Some(user_agent) = parse_custom_user_agent(provider.meta.custom_user_agent.as_deref())
+        .ok()
+        .flatten()
+    else {
+        return Ok(());
+    };
+    append_preserved_header(headers, preserved, "User-Agent", user_agent)?;
     Ok(())
 }
 
@@ -13906,6 +13948,164 @@ data: {data}\r\n\r\n"
             .filter(|header| header.name.eq_ignore_ascii_case("user-agent"))
             .count();
         assert_eq!(preserved_user_agents, 1);
+    }
+
+    #[test]
+    fn custom_user_agent_overrides_forwarded_user_agent() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_user_agent: Some("claude-cli/2.1.161 (external, cli)".to_string()),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(
+            body,
+            vec![("User-Agent", "old-agent")],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        assert_eq!(
+            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            Some("claude-cli/2.1.161 (external, cli)")
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_appended_when_request_has_none() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_user_agent: Some("claude-code/1.0.0".to_string()),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request(body);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        assert_eq!(
+            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            Some("claude-code/1.0.0")
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_empty_preserves_client_user_agent() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_user_agent: None,
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(
+            body,
+            vec![("User-Agent", "client-agent")],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        assert_eq!(
+            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            Some("client-agent")
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_skipped_for_copilot_provider() {
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::OpenAiChat,
+            meta: ProviderGatewayMeta {
+                provider_type: Some("github_copilot".to_string()),
+                custom_user_agent: Some("claude-cli/2.1.161".to_string()),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::OpenCode)
+        };
+        let body = br#"{"model":"gpt-5","messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(
+            body,
+            vec![("User-Agent", "old-agent")],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Copilot fingerprint UA must not be overridden by custom UA.
+        assert_eq!(
+            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            Some("GitHubCopilotChat/0.38.2")
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_invalid_value_silently_ignored() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                // Newline is an illegal control char for HeaderValue.
+                custom_user_agent: Some("bad\nvalue".to_string()),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(
+            body,
+            vec![("User-Agent", "client-agent")],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Invalid custom UA is silently ignored; client UA is preserved.
+        assert_eq!(
+            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            Some("client-agent")
+        );
+    }
+
+    #[test]
+    fn custom_user_agent_preserved_has_two_entries_after_override() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_user_agent: Some("claude-cli/2.1.161".to_string()),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(
+            body,
+            vec![("User-Agent", "old-agent")],
+        );
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // The forwarded client UA plus the injected custom UA yield two preserved
+        // user-agent entries; the header-preserving writer emits them in order so
+        // the last (custom) wins, matching `headers.insert` override semantics.
+        let preserved_user_agents = headers
+            .preserved
+            .iter()
+            .filter(|header| header.name.eq_ignore_ascii_case("user-agent"))
+            .collect::<Vec<_>>();
+        assert_eq!(preserved_user_agents.len(), 2);
+        assert_eq!(preserved_user_agents[1].value.to_str().unwrap(), "claude-cli/2.1.161");
+    }
+
+    #[test]
+    fn parse_custom_user_agent_validates_header_value() {
+        // Empty / whitespace -> unset.
+        assert!(parse_custom_user_agent(None).unwrap().is_none());
+        assert!(parse_custom_user_agent(Some("")).unwrap().is_none());
+        assert!(parse_custom_user_agent(Some("   ")).unwrap().is_none());
+        // Valid value -> Some.
+        let value = parse_custom_user_agent(Some("claude-cli/2.1.161")).unwrap();
+        assert_eq!(value.unwrap().to_str().unwrap(), "claude-cli/2.1.161");
+        // Trim is applied.
+        let value = parse_custom_user_agent(Some("  claude-cli/1.0  ")).unwrap();
+        assert_eq!(value.unwrap().to_str().unwrap(), "claude-cli/1.0");
+        // Control char (newline) -> Err.
+        assert!(parse_custom_user_agent(Some("bad\nvalue")).is_err());
+        // Tab is legal (HeaderValue byte rule).
+        assert!(parse_custom_user_agent(Some("claude\tcli")).is_ok());
     }
 
     #[test]

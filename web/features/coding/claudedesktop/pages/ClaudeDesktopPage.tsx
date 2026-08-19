@@ -94,6 +94,7 @@ import ProviderConnectivityTestModal, {
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
+import { mergeCustomUserAgentIntoMeta } from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
 import {
   buildFavoriteProviderOptions,
   buildFavoriteProviderStorageKey,
@@ -206,6 +207,7 @@ function buildProviderMeta(
     delete meta.claudeDesktopModelRoutes;
     delete meta.apiFormat;
     delete meta.gatewayProfile;
+    delete meta.customUserAgent;
     return meta;
   }
 
@@ -237,7 +239,7 @@ function buildProviderMeta(
     delete meta.apiFormat;
   }
 
-  return meta;
+  return mergeCustomUserAgentIntoMeta(meta, values.customUserAgent ?? { enabled: false, value: '' });
 }
 
 function buildDesktopProviderConnectivityInfo(provider: ClaudeDesktopProvider): ProviderConnectivityInfo {

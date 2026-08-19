@@ -35,6 +35,8 @@ export interface GatewayProviderMeta {
   allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
+  /** Provider-level custom User-Agent injected by the gateway on upstream requests. */
+  customUserAgent?: string;
 }
 
 /**
