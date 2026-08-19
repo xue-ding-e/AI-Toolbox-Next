@@ -627,7 +627,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       width: 110,
       align: 'right',
       render: (value: string, record) =>
-        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 6) : '-',
+        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 2) : '-',
     },
     {
       title: t('gateway.page.requests.columns.duration'),

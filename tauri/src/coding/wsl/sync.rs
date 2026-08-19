@@ -403,8 +403,8 @@ pub fn sync_directory(
     sync_directory_with_excludes(windows_path, wsl_path, distro, &[])
 }
 
-/// Sync a directory (recursive copy), skipping any top-level entry whose name is
-/// in `directory_excludes`.
+/// Sync a directory recursively, skipping entries whose path segment name matches
+/// `directory_excludes` at any nesting depth.
 pub fn sync_directory_with_excludes(
     windows_path: &str,
     wsl_path: &str,

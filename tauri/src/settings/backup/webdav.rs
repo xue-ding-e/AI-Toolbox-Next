@@ -1148,7 +1148,11 @@ pub async fn restore_from_webdav(
                     })?;
                 }
 
-                let outpath = hermes_restore_dir.join(relative_path);
+                let Some(outpath) =
+                    resolve_external_config_restore_output_path(&hermes_restore_dir, relative_path)?
+                else {
+                    continue;
+                };
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -1180,7 +1184,11 @@ pub async fn restore_from_webdav(
                     })?;
                 }
 
-                let outpath = dsh_restore_dir.join(relative_path);
+                let Some(outpath) =
+                    resolve_external_config_restore_output_path(&dsh_restore_dir, relative_path)?
+                else {
+                    continue;
+                };
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {
@@ -1219,9 +1227,24 @@ pub async fn restore_from_webdav(
                     continue;
                 };
                 let outpath = if relative_path == "claude_desktop_config.json" {
-                    normal_config_path
+                    let parent = normal_config_path.parent().ok_or_else(|| {
+                        "Failed to resolve Claude Desktop config directory".to_string()
+                    })?;
+                    let Some(outpath) =
+                        resolve_external_config_restore_output_path(parent, relative_path)?
+                    else {
+                        continue;
+                    };
+                    outpath
                 } else if let Some(rest) = relative_path.strip_prefix("configLibrary/") {
-                    config_library_path.join(rest)
+                    let Some(outpath) = resolve_external_config_restore_output_path(
+                        &config_library_path,
+                        rest,
+                    )?
+                    else {
+                        continue;
+                    };
+                    outpath
                 } else {
                     continue;
                 };
@@ -1232,10 +1255,6 @@ pub async fn restore_from_webdav(
                         })?;
                     }
                 }
-                record_restored_external_config_wsl_module(
-                    &mut restored_wsl_modules,
-                    "claude_desktop",
-                );
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

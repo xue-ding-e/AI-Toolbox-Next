@@ -54,7 +54,7 @@ sequenceDiagram
 - 恢复启动编排中 `.reapply_applied_required` 优先并执行已含 OMO/OMOS 的全量 re-apply；只有 `.resync_required` 时仅串行重建 OMO/OMOS，随后继续 Skills、MCP 和单次 WSL sync，不能借普通恢复重写其它 CLI。
 - 恢复专用 apply/MCP 入口不得发中间 `wsl-sync-request-*`、`mcp-changed` 等自动同步事件。最终 WSL 同步只传播本轮实际改写的 CLI 模块，同时同步 MCP/Skills 一次，不能顺手覆盖受保护的 OpenClaw/OpenCode/Pi 本机运行时文件。
 - 普通 `timeout(work())` 无法可靠抢占卡在同步文件 I/O 的 future。re-apply 要在独立 task 中运行，超时后 abort 并继续下一个 CLI；写入前再用 `spawn_blocking` 做短时无写入路径探测，降低不可达 UNC 路径拖死恢复链路的概率。
-- 新增外部配置文件进入备份时，要同时检查本地备份、WebDAV 备份和 restore 路径，不要只改一个入口。
+- 新增外部配置文件进入备份时，要同时检查本地备份、WebDAV 备份和 restore 路径，不要只改一个入口。所有从 zip entry 派生的 restore 输出路径都必须经过 `resolve_external_config_restore_output_path`（或等价共享安全 helper），不能直接 `restore_dir.join(entry_path)`；本地与 WebDAV 分支必须保持一致，防止 `..` 或目标目录内 symlink 把文件写出 restore root。
 - 新增 app data 缓存文件进入备份时，也要同时检查本地备份、WebDAV 备份和 restore 路径；这些文件通常位于 zip 根目录，和 `preset_models.json` 的处理方式保持一致。
 - SQLite-only 用户迁移完成后通常没有 `{app_data}/database` legacy 目录；本地/WebDAV 自动备份不能因为这个目录缺失而失败，必须继续写入 `sqlite/ai-toolbox.db` 和 manifest。
 - Codex 全局 prompt 备份要同时保留两个已存在的已知文件：`AGENTS.md` 与 `AGENTS.override.md`。即使 override 当前生效，基础 `AGENTS.md` 仍是未来清空/删除 override 后的回退数据，不能只备份 active 文件。
@@ -75,7 +75,7 @@ sequenceDiagram
 - SQLite 快照恢复是**原地覆盖 live DB 再跑迁移**（`conn.restore` 原地覆盖 → 同连接 `run_all` 迁移）。这个顺序有一个致命的数据安全要求：恢复前**必须**先对当前 live DB 取一份安全备份（temp 文件），迁移或 restore 任一步失败时**必须**用该安全备份回滚 live DB，否则 app 会卡在「被旧 schema 覆盖、迁移又失败、原数据已不可恢复」的降级态且无法回到恢复前状态。回滚本身若也失败，要把「恢复失败 + 回滚失败」一起上报。同样，解压出的快照临时 DB 文件清理不能放在恢复 `?` 之后——恢复失败会提前返回跳过清理，泄漏完整大小的大文件；应先取 `result` 再无条件 `remove_file`，最后 `result?`。
 - `db::backup::backup_to_path` 是「先 checkpoint 再 backup」的安全拷贝入口，新增任何「在恢复前保留一份可回滚的旧态」场景都复用它；不要在 backup utils 里另写 `conn.backup` 直调。
 - 旧 SurrealDB-only 备份（zip 有 `db/` 但无 `sqlite/ai-toolbox.db`）恢复到已迁移到 SQLite 的应用是**静默无效**的（启动时旧目录只会被归档删除、不会导入），local/webdav restore 必须显式报错拦截；未迁移机器仍允许解压走一次性导入。`cleanup_incomplete_sqlite_database` 在删除现有 SQLite 前必须先经 `backup_to_path` 存一份 `{app_data}/ai-toolbox.pre-import-backup.db`，备份失败则拒绝删除（否则导入失败时原库已无回退点）。
-- 备份/恢复元数据要点：hermes 备份 zip entry 必须用真实 prompt 文件名（`SOUL.md`，走 `hermes::constants::HERMES_PROMPT_FILE`），不要写成仓库内 agent 文档的 `AGENTS.md`；hermes/dsh 都有 WSL 文件映射，`wsl_module_for_external_config_tool` / 恢复 resync payload 必须包含它们（含 claude_desktop）；`clear_restored_cli_custom_roots` 除 `root_dir/config_path` 外还要清 hermes/dsh 的 `config_dir`，否则恢复后的默认目录文件不会被读到；过滤规则路径归一化 `tool_prefixes` 必须覆盖 hermes（`~/.hermes/` 与 `%LOCALAPPDATA%/hermes`）、dsh（`~/.dsh/`）、claude_desktop（`%APPDATA%/Claude`）。新工具接入备份按本文件「新增 CLI / coding 工具接入备份时（必做清单）」逐项走。
+- 备份/恢复元数据要点：hermes 备份 zip entry 必须用真实 prompt 文件名（`SOUL.md`，走 `hermes::constants::HERMES_PROMPT_FILE`），不要写成仓库内 agent 文档的 `AGENTS.md`；hermes/dsh 都有 WSL 文件映射，`wsl_module_for_external_config_tool` / 恢复 resync payload 必须包含它们；Claude Desktop 是 Windows/macOS 桌面应用，没有 WSL 文件映射，不应加入 resync payload。`clear_restored_cli_custom_roots` 除 `root_dir/config_path` 外还要清 hermes/dsh 的 `config_dir`，否则恢复后的默认目录文件不会被读到；过滤规则路径归一化 `tool_prefixes` 必须覆盖 hermes（`~/.hermes/` 与 `%LOCALAPPDATA%/hermes`）、dsh（`~/.dsh/`）、claude_desktop（`%LOCALAPPDATA%/Claude` 与 `%LOCALAPPDATA%/Claude-3p`）。新工具接入备份按本文件「新增 CLI / coding 工具接入备份时（必做清单）」逐项走。
 
 ## 跨模块依赖
 

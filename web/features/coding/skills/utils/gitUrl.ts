@@ -21,32 +21,47 @@ export interface ParsedGitRepo {
  * Parse a Git remote URL (HTTPS, SSH, or SCP style) into its host / owner / repo.
  * Returns null when the URL does not look like a Git remote pointing at a repo.
  */
+const parseRepositoryPath = (host: string, rawPath: string): ParsedGitRepo | null => {
+  const pathSegments = rawPath
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (pathSegments.length < 2) return null;
+
+  const gitSuffixIndex = pathSegments.findIndex((segment) => segment.toLowerCase().endsWith('.git'));
+  const repoIndex = gitSuffixIndex >= 0 ? gitSuffixIndex : pathSegments.length - 1;
+  if (repoIndex < 1) return null;
+
+  const repo = pathSegments[repoIndex].replace(/\.git$/i, '');
+  const owner = pathSegments.slice(0, repoIndex).join('/');
+  if (!host || !owner || !repo) return null;
+  return { host, owner, repo };
+};
+
 export function parseGitRepo(url: string | null | undefined): ParsedGitRepo | null {
   const trimmed = (url ?? '').trim();
   if (!trimmed) return null;
 
-  // ssh://git@host[:port]/owner/repo[.git]
-  const sshSchemeMatch = trimmed.match(/^ssh:\/\/(?:[^@]+@)?([^:/]+)(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+  // ssh://git@host[:port]/group[/subgroup]/repo[.git]
+  const sshSchemeMatch = trimmed.match(/^ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/);
   if (sshSchemeMatch) {
-    const [, host, owner, repo] = sshSchemeMatch;
-    return { host, owner, repo };
+    return parseRepositoryPath(sshSchemeMatch[1], sshSchemeMatch[2]);
   }
 
-  // git@host:owner/repo[.git]  (SCP style, no scheme)
-  // Skip Windows drive paths like C:/... where the "host" would be a single letter.
-  const scpMatch = trimmed.match(/^(?:[^@]+@)?([^:/]+):([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
-  if (scpMatch) {
-    const [, host, owner, repo] = scpMatch;
-    if (host.length > 1) {
-      return { host, owner, repo };
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsedUrl = new URL(trimmed);
+      return parseRepositoryPath(parsedUrl.hostname, parsedUrl.pathname);
+    } catch {
+      return null;
     }
   }
 
-  // https://host[:port]/owner/repo[.git]
-  const httpsMatch = trimmed.match(/^https?:\/\/([^:/]+)(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
-  if (httpsMatch) {
-    const [, host, owner, repo] = httpsMatch;
-    return { host, owner, repo };
+  // git@host:group[/subgroup]/repo[.git] (SCP style, no scheme).
+  // Skip Windows drive paths like C:/... where the host would be one letter.
+  const scpMatch = trimmed.match(/^(?:[^@/:]+@)?([^/:]+):(.+)$/);
+  if (scpMatch && scpMatch[1].length > 1) {
+    return parseRepositoryPath(scpMatch[1], scpMatch[2]);
   }
 
   return null;

@@ -11,10 +11,11 @@ use walkdir::WalkDir;
 use crate::coding::runtime_location;
 use crate::db::SqliteDbState;
 
-// OpenCode's canonical Markdown Agent directory is the plural `agents/`; the
-// singular `agent/` is only a legacy alias and is no longer handled by this
-// module (see opencode.ai/docs/agents).
-const AGENT_DIRECTORY_NAMES: [&str; 1] = ["agents"];
+// New OpenCode Markdown Agents use the canonical plural `agents/` directory.
+// Keep reading and editing the legacy singular `agent/` directory so existing
+// user files do not disappear after upgrade. Scan the legacy directory first so
+// a same-name canonical agent remains the effective source in the UI.
+const AGENT_DIRECTORY_NAMES: [&str; 2] = ["agent", "agents"];
 const BUILT_IN_AGENT_NAMES: [&str; 8] = [
     "build",
     "plan",
@@ -397,6 +398,7 @@ pub async fn delete_opencode_markdown_agent<R: tauri::Runtime>(
 mod tests {
     use super::{
         agent_name, ensure_safe_agent_path, global_config_dir_from_runtime, parse_markdown_agent,
+        AGENT_DIRECTORY_NAMES,
     };
     use crate::coding::runtime_location::{
         RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
@@ -435,15 +437,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_singular_agent_directory() {
-        // The singular `agent/` is only a legacy OpenCode alias; this module now
-        // accepts only the canonical plural `agents/` directory.
-        let roots = vec![Path::new("/home/test/.config/opencode").to_path_buf()];
-        assert!(ensure_safe_agent_path(
-            Path::new("/home/test/.config/opencode/agent/review.md"),
-            &roots,
-        )
-        .is_err());
+    fn canonical_plural_directory_has_higher_precedence() {
+        assert_eq!(AGENT_DIRECTORY_NAMES, ["agent", "agents"]);
+    }
+
+    #[test]
+    fn accepts_legacy_singular_agent_directory() {
+        let root = Path::new("/home/test/.config/opencode");
+        let roots = vec![root.to_path_buf()];
+        let legacy_file = root.join("agent/review.md");
+
+        assert!(ensure_safe_agent_path(&legacy_file, &roots).is_ok());
+        assert_eq!(agent_name(root, &legacy_file).as_deref(), Some("review"));
     }
 
     #[test]

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   deriveGatewayRequestDisplay,
   formatModelRoute,
+  formatUsd,
   gatewayRequestDisplayKind,
   isGatewayRequestUsageApplicable,
   normalizeAttemptCounts,
@@ -11,6 +12,11 @@ import {
   requestLineText,
   shouldShowBodyComparison,
 } from '../../../../../features/coding/gateway/utils/gatewayFormatters.ts';
+
+test('formatUsd uses two decimals by default and allows precise small values', () => {
+  assert.equal(formatUsd('0.000001'), '$0.00');
+  assert.equal(formatUsd('0.000001', 6), '$0.000001');
+});
 
 test('normalizeAttemptCounts falls back total attempts for legacy request logs', () => {
   assert.deepEqual(normalizeAttemptCounts({ attempt_count: 2, total_attempt_count: 0 }), {

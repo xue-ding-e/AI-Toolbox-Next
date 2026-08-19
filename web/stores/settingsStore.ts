@@ -534,11 +534,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     } else {
       delete cliManualPaths[commandName];
     }
-    const newSettings: AppSettings = {
-      ...currentSettings,
-      cli_manual_paths: cliManualPaths,
-    };
-    await saveSettings(newSettings);
     set({ cliManualPaths });
     return version;
   },

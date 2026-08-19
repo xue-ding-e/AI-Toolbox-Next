@@ -8989,6 +8989,7 @@ fn inject_custom_user_agent(
     else {
         return Ok(());
     };
+    remove_header_ci(headers, preserved, "user-agent");
     append_preserved_header(headers, preserved, "User-Agent", user_agent)?;
     Ok(())
 }
@@ -14063,7 +14064,7 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_preserved_has_two_entries_after_override() {
+    fn custom_user_agent_replaces_preserved_forwarded_entry() {
         let provider = UpstreamProvider {
             meta: ProviderGatewayMeta {
                 custom_user_agent: Some("claude-cli/2.1.161".to_string()),
@@ -14078,16 +14079,13 @@ data: {data}\r\n\r\n"
         );
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
-        // The forwarded client UA plus the injected custom UA yield two preserved
-        // user-agent entries; the header-preserving writer emits them in order so
-        // the last (custom) wins, matching `headers.insert` override semantics.
         let preserved_user_agents = headers
             .preserved
             .iter()
             .filter(|header| header.name.eq_ignore_ascii_case("user-agent"))
             .collect::<Vec<_>>();
-        assert_eq!(preserved_user_agents.len(), 2);
-        assert_eq!(preserved_user_agents[1].value.to_str().unwrap(), "claude-cli/2.1.161");
+        assert_eq!(preserved_user_agents.len(), 1);
+        assert_eq!(preserved_user_agents[0].value.to_str().unwrap(), "claude-cli/2.1.161");
     }
 
     #[test]

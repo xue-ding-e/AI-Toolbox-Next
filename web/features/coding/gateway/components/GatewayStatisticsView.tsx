@@ -300,7 +300,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'total_cost_usd',
       width: 120,
       align: 'right',
-      render: (value: string) => formatUsd(value, 2),
+      render: (value: string) => formatUsd(value, 6),
     },
     {
       title: t('gateway.page.statistics.columns.successRate'),
@@ -350,7 +350,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'total_cost_usd',
       width: 120,
       align: 'right',
-      render: (value: string) => formatUsd(value, 2),
+      render: (value: string) => formatUsd(value, 6),
     },
     {
       title: t('gateway.page.statistics.columns.latency'),

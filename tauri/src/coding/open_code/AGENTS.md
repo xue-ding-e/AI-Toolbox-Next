@@ -11,7 +11,7 @@
 - OpenCode prompt 文件不是独立根目录配置，而是基于当前生效配置文件所在目录派生出的 `AGENTS.md`。
 - OpenCode 主模型和小模型的运行时值都使用 `provider_id/model_id` 格式；不要把它降成裸 `model_id`。
 - OpenCode Core 的 Agent 配置位于顶层单数 `agent`，Agent 独立模型同样使用完整 `provider_id/model_id`；插件 OMO/OMOS 使用的复数 `agents` 是另一份配置，不能混用。`small_model` 当前仍用于标题生成等轻量内部任务，并未被 `agent` 取代。
-- OpenCode Core 还会从全局配置目录下的 `agent/**/*.md` 和 `agents/**/*.md` 读取 Markdown Agent。应用内自定义 `OPENCODE_CONFIG` 文件只改变主 JSON 文件，不改变默认全局 Agent 目录；不能从自定义 JSON 的父目录猜测 Markdown Agent 目录。WSL Direct 时该目录必须从统一 runtime location 的 Linux 用户根解析。
+- OpenCode Core 还会从全局配置目录下的 `agent/**/*.md` 和 `agents/**/*.md` 读取 Markdown Agent。规范的新目录是复数 `agents/`，新建与默认 WSL/SSH 映射只使用复数目录；为避免老用户文件升级后消失，读取、编辑和删除仍兼容旧单数 `agent/`，并写回原始来源路径。应用内自定义 `OPENCODE_CONFIG` 文件只改变主 JSON 文件，不改变默认全局 Agent 目录；不能从自定义 JSON 的父目录猜测 Markdown Agent 目录。WSL Direct 时该目录必须从统一 runtime location 的 Linux 用户根解析。
 - models.dev 的 `experimental.modes.*` 在 OpenCode 语义中会展开成虚拟模型，ID 形如 `${base_model_id}-${mode}`，例如 `gpt-5.5-fast`；后端统一模型列表需要透出 `base_model_id` / `experimental_mode`，供前端继承 base variants。
 - `favorite provider` / `我使用过的供应商` 库不是当前配置镜像，而是独立的历史库和诊断缓存；真正的 OpenCode 运行时配置仍以当前配置文件内容为准。
 

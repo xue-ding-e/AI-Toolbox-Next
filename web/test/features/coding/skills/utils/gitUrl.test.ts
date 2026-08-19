@@ -45,8 +45,19 @@ test('parseGitRepo parses ssh:// scheme URLs with optional port', () => {
   });
 });
 
-test('parseGitRepo strips trailing path segments after the repo', () => {
-  assert.deepEqual(parseGitRepo('git@gitlab.com:team/skills/sub/dir'), {
+test('parseGitRepo preserves GitLab subgroup paths for every remote shape', () => {
+  const expected = {
+    host: 'gitlab.com',
+    owner: 'group/subgroup',
+    repo: 'skills',
+  };
+  assert.deepEqual(parseGitRepo('https://gitlab.com/group/subgroup/skills.git'), expected);
+  assert.deepEqual(parseGitRepo('ssh://git@gitlab.com:2222/group/subgroup/skills.git'), expected);
+  assert.deepEqual(parseGitRepo('git@gitlab.com:group/subgroup/skills.git'), expected);
+});
+
+test('parseGitRepo ignores paths after an explicit .git repository segment', () => {
+  assert.deepEqual(parseGitRepo('git@gitlab.com:team/skills.git/sub/dir'), {
     host: 'gitlab.com',
     owner: 'team',
     repo: 'skills',
@@ -67,6 +78,7 @@ test('normalizeGitUrlToHttps converts all URL shapes to HTTPS web URLs', () => {
   assert.equal(normalizeGitUrlToHttps('ssh://git@github.com/anthropics/skills.git'), 'https://github.com/anthropics/skills');
   assert.equal(normalizeGitUrlToHttps('ssh://git@gitlab.com:2222/team/skills.git'), 'https://gitlab.com/team/skills');
   assert.equal(normalizeGitUrlToHttps('https://github.com/anthropics/skills.git'), 'https://github.com/anthropics/skills');
+  assert.equal(normalizeGitUrlToHttps('https://gitlab.com/group/subgroup/skills.git'), 'https://gitlab.com/group/subgroup/skills');
 });
 
 test('normalizeGitUrlToHttps returns null for non-git inputs', () => {

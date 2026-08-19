@@ -299,6 +299,38 @@ fn non_windows_target_sanitizer_removes_powershell_env_only() {
 }
 
 #[test]
+fn clearing_common_env_preserves_user_written_env_keys() {
+    let current_disk_settings = json!({
+        "env": {
+            "COMMON_MANAGED_ENV": "old-common-value",
+            "USER_WRITTEN_ENV": "keep-user-value"
+        }
+    });
+    let previous_common_config = json!({
+        "env": {
+            "COMMON_MANAGED_ENV": "old-common-value"
+        }
+    });
+
+    let merged_settings = merge_claude_settings_for_provider(
+        Some(&current_disk_settings),
+        Some(&previous_common_config),
+        &json!({}),
+        None,
+        None,
+        &json!({}),
+        &KNOWN_ENV_FIELDS,
+    )
+    .expect("merge should succeed");
+
+    assert!(merged_settings.pointer("/env/COMMON_MANAGED_ENV").is_none());
+    assert_eq!(
+        merged_settings.pointer("/env/USER_WRITTEN_ENV"),
+        Some(&json!("keep-user-value"))
+    );
+}
+
+#[test]
 fn merge_removes_deleted_top_level_status_line_key() {
     let current_disk_settings = json!({
         "statusLine": {

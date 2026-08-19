@@ -1451,9 +1451,9 @@ fn apply_gateway_config(
             let Some(primary_provider) = primary_provider else {
                 return Err("Claude Desktop Gateway proxy requires a primary provider".to_string());
             };
-            log::warn!("[desktop-gateway] apply_gateway_config entry");
+            log::debug!("[desktop-gateway] apply_gateway_config entry");
             let model_specs = desktop_gateway_model_specs(db, &primary_provider.id)?;
-            log::warn!(
+            log::debug!(
                 "[desktop-gateway] model_specs count = {}",
                 model_specs.len()
             );
@@ -1462,7 +1462,10 @@ fn apply_gateway_config(
                 &cli_gateway_endpoint(cli_key, base_origin),
                 model_specs,
             );
-            log::warn!("[desktop-gateway] apply_desktop_gateway_config result = {:?}", result.is_ok());
+            log::debug!(
+                "[desktop-gateway] apply_desktop_gateway_config result = {:?}",
+                result.is_ok()
+            );
             result
         }
         GatewayCliKey::Codex => {
@@ -1681,14 +1684,15 @@ fn desktop_gateway_model_specs(
 ) -> Result<Vec<claude_desktop_config_writer::GatewayModelSpec>, String> {
     let raw = db.with_conn(|conn| db_get(conn, DbTable::ClaudeDesktopProvider, provider_id))?;
     let Some(raw) = raw else {
-        log::warn!("[desktop-gateway] no provider row found for id {provider_id}");
+        log::debug!("[desktop-gateway] no provider row found for id {provider_id}");
         return Ok(Vec::new());
     };
     let provider = crate::coding::claude_desktop::adapter::from_db_value_provider(raw);
-    log::warn!(
-        "[desktop-gateway] provider '{}' meta={:?}",
+    log::debug!(
+        "[desktop-gateway] reading model specs for provider '{}' (category={}, applied={})",
         provider.name,
-        provider.meta
+        provider.category,
+        provider.is_applied
     );
     let settings_config = serde_json::from_str::<Value>(&provider.settings_config).ok();
     Ok(claude_desktop_config_writer::desktop_proxy_model_specs(
@@ -1706,7 +1710,7 @@ fn apply_desktop_gateway_config(
     gateway_endpoint: &str,
     model_specs: Vec<claude_desktop_config_writer::GatewayModelSpec>,
 ) -> Result<(), String> {
-    log::warn!(
+    log::debug!(
         "[desktop-gateway] writing gateway profile with {} model specs",
         model_specs.len()
     );

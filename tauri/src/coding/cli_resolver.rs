@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use tokio::process::Command as TokioCommand;
 
@@ -273,7 +274,16 @@ pub fn local_cli_missing_hint(command_name: &str) -> String {
 ///
 /// Used to validate a manually-configured CLI path before saving, and to show
 /// the installed version next to a saved path in the "More Options" modal.
-pub fn probe_cli_version(readable_path: &str) -> Result<String, String> {
+const CLI_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+
+pub async fn probe_cli_version(readable_path: &str) -> Result<String, String> {
+    probe_cli_version_with_timeout(readable_path, CLI_VERSION_PROBE_TIMEOUT).await
+}
+
+async fn probe_cli_version_with_timeout(
+    readable_path: &str,
+    probe_timeout: Duration,
+) -> Result<String, String> {
     let path = PathBuf::from(readable_path.trim());
     if path.as_os_str().is_empty() {
         return Err("CLI 路径不能为空".to_string());
@@ -284,20 +294,21 @@ pub fn probe_cli_version(readable_path: &str) -> Result<String, String> {
 
     let mut failure_reason = String::new();
     for flag in ["--version", "-v", "version"] {
-        let mut command = build_local_std_command(&path);
-        command.arg(flag);
-        let output = match command.output() {
-            Ok(output) => output,
-            Err(error) => {
+        let mut command = build_local_tokio_command(&path);
+        command.arg(flag).kill_on_drop(true);
+        let output = match tokio::time::timeout(probe_timeout, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
                 failure_reason = format!("{flag}: {error}");
+                continue;
+            }
+            Err(_) => {
+                failure_reason = format!("{flag}: 版本探测超时");
                 continue;
             }
         };
         if !output.status.success() {
-            failure_reason = format!(
-                "{flag}: 退出码 {:?}",
-                output.status.code()
-            );
+            failure_reason = format!("{flag}: 退出码 {:?}", output.status.code());
             continue;
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -321,8 +332,8 @@ pub fn probe_cli_version(readable_path: &str) -> Result<String, String> {
 }
 
 /// Validate that a manual CLI path is usable: must exist and produce a version.
-pub fn validate_manual_cli_path(readable_path: &str) -> Result<String, String> {
-    probe_cli_version(readable_path)
+pub async fn validate_manual_cli_path(readable_path: &str) -> Result<String, String> {
+    probe_cli_version(readable_path).await
 }
 
 fn resolve_local_cli_program(command_name: &str, candidate_paths: Vec<PathBuf>) -> LocalCliProgram {
@@ -1145,13 +1156,14 @@ fn command_extension(program_path: &Path) -> Option<String> {
 mod tests {
     use super::{
         collect_bun_candidates, collect_fnm_candidates, collect_nvm_candidates,
-        normalize_node_version_dir,
+        normalize_node_version_dir, probe_cli_version_with_timeout,
     };
 
     use std::env;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     struct TestDir {
         path: PathBuf,
@@ -1176,6 +1188,41 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[tokio::test]
+    async fn cli_version_probe_times_out_for_hanging_process() {
+        let test_dir = TestDir::new("probe-timeout");
+        #[cfg(target_os = "windows")]
+        let script_path = test_dir.path().join("hanging.ps1");
+        #[cfg(target_os = "windows")]
+        fs::write(&script_path, "Start-Sleep -Seconds 5\nWrite-Output 'too late'\n")
+            .expect("write hanging PowerShell script");
+
+        #[cfg(not(target_os = "windows"))]
+        let script_path = test_dir.path().join("hanging.sh");
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&script_path, "#!/bin/sh\nsleep 5\necho 'too late'\n")
+                .expect("write hanging shell script");
+            let mut permissions = fs::metadata(&script_path)
+                .expect("read script metadata")
+                .permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&script_path, permissions).expect("make script executable");
+        }
+
+        let started = std::time::Instant::now();
+        let error = probe_cli_version_with_timeout(
+            &script_path.to_string_lossy(),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("hanging CLI should time out");
+
+        assert!(error.contains("版本探测超时"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

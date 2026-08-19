@@ -42,10 +42,59 @@ pub fn expand_local_path(path: &str) -> Result<String, String> {
         if let Ok(val) = value {
             // Windows style: %VAR%
             result = result.replace(&format!("%{}%", var), &val);
-            // Unix style: $VAR
-            result = result.replace(&format!("${}", var), &val);
+            result = replace_unix_env_reference(&result, var, &val);
         }
     }
 
     Ok(result)
+}
+
+fn replace_unix_env_reference(input: &str, variable_name: &str, value: &str) -> String {
+    let braced_reference = format!("${{{variable_name}}}");
+    let input = input.replace(&braced_reference, value);
+    let plain_reference = format!("${variable_name}");
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input.as_str();
+
+    while let Some(index) = remaining.find(&plain_reference) {
+        output.push_str(&remaining[..index]);
+        let after_reference = &remaining[index + plain_reference.len()..];
+        let continues_identifier = after_reference
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
+        if continues_identifier {
+            output.push_str(&plain_reference);
+        } else {
+            output.push_str(value);
+        }
+        remaining = after_reference;
+    }
+    output.push_str(remaining);
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_unix_env_reference;
+
+    #[test]
+    fn unix_env_expansion_matches_complete_variable_tokens_only() {
+        assert_eq!(
+            replace_unix_env_reference("$HOME/bin", "HOME", "/home/tester"),
+            "/home/tester/bin"
+        );
+        assert_eq!(
+            replace_unix_env_reference("${HOME}/bin", "HOME", "/home/tester"),
+            "/home/tester/bin"
+        );
+        assert_eq!(
+            replace_unix_env_reference("$HOMEBREW_PREFIX/bin", "HOME", "/home/tester"),
+            "$HOMEBREW_PREFIX/bin"
+        );
+        assert_eq!(
+            replace_unix_env_reference("$HOME_SUFFIX/bin", "HOME", "/home/tester"),
+            "$HOME_SUFFIX/bin"
+        );
+    }
 }

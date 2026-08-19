@@ -1130,7 +1130,30 @@ pub async fn list_backup_file_filter_path_options(
                 "claude_desktop_config.json",
             );
         }
-        let _ = config_library_path;
+        if config_library_path.exists() {
+            for entry in WalkDir::new(&config_library_path) {
+                let entry = entry
+                    .map_err(|e| format!("Failed to read Claude Desktop config library: {}", e))?;
+                let path = entry.path();
+                if !path.is_file() || should_skip_system_file(path) {
+                    continue;
+                }
+
+                let relative_path = path
+                    .strip_prefix(&config_library_path)
+                    .map_err(|e| {
+                        format!("Failed to get Claude Desktop config library relative path: {}", e)
+                    })?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                push_backup_filter_option(
+                    &mut options,
+                    &mut seen,
+                    "claude_desktop",
+                    &format!("configLibrary/{relative_path}"),
+                );
+            }
+        }
     }
 
     options.sort_by(|a, b| a.tool.cmp(&b.tool).then(a.file_path.cmp(&b.file_path)));
@@ -1309,13 +1332,11 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         "geminicli" => Some("geminicli"),
         "pi" => Some("pi"),
         "oh_my_pi" => Some("oh_my_pi"),
-        // hermes/dsh have WSL file mappings and must be included in the
+        // Hermes and dsh have WSL file mappings and must be included in the
         // post-restore resync payload, otherwise the final WSL sync skips them
-        // and restored files never reach WSL. claude_desktop also has a (best
-        // effort, disabled by default) WSL mapping so it is propagated too.
+        // and restored files never reach WSL.
         "hermes" => Some("hermes"),
         "dsh" => Some("dsh"),
-        "claude_desktop" => Some("claude_desktop"),
         _ => None,
     }
 }
@@ -2437,7 +2458,12 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
             "%localappdata%/hermes/",
         ],
         "dsh" => &["~/.dsh/"],
-        "claude_desktop" => &["%APPDATA%/Claude/", "%appdata%/Claude/"],
+        "claude_desktop" => &[
+            "%LOCALAPPDATA%/Claude/",
+            "%localappdata%/Claude/",
+            "%LOCALAPPDATA%/Claude-3p/",
+            "%localappdata%/Claude-3p/",
+        ],
         _ => &[],
     };
 
@@ -3318,8 +3344,9 @@ mod tests {
     use super::{
         add_custom_backup_entries_to_zip, add_directory_to_zip_once,
         add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
-        add_legacy_database_snapshot_to_zip, add_text_to_zip, build_backup_meta, build_db_manifest,
-        clear_restored_cli_custom_roots, external_config_tool_from_zip_entry,
+        add_legacy_database_snapshot_to_zip, add_text_to_zip, backup_filter_option_path,
+        build_backup_meta, build_db_manifest, clear_restored_cli_custom_roots,
+        external_config_tool_from_zip_entry,
         get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
         get_gemini_cli_prompt_backup_zip_path, is_always_backup_cli_tool, is_filesystem_root_directory,
         is_optional_backup_cli_tool, normalize_backup_storage_path, normalize_restore_entry_name,
@@ -3538,11 +3565,19 @@ mod tests {
         record_restored_external_config_wsl_module(&mut restored_wsl_modules, "codex");
         record_restored_external_config_wsl_module(&mut restored_wsl_modules, "codex");
         record_restored_external_config_wsl_module(&mut restored_wsl_modules, "geminicli");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "hermes");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "dsh");
+        record_restored_external_config_wsl_module(&mut restored_wsl_modules, "claude_desktop");
         record_restored_external_config_wsl_module(&mut restored_wsl_modules, "unknown");
 
         assert_eq!(
             restored_wsl_modules,
-            vec!["codex".to_string(), "geminicli".to_string()]
+            vec![
+                "codex".to_string(),
+                "geminicli".to_string(),
+                "hermes".to_string(),
+                "dsh".to_string(),
+            ]
         );
     }
 
@@ -3713,6 +3748,16 @@ mod tests {
         assert!(resolve_external_config_restore_output_path(root, "../settings.json").is_err());
         assert!(resolve_external_config_restore_output_path(root, "tmp/../settings.json").is_err());
         assert!(resolve_external_config_restore_output_path(root, "C:/settings.json").is_err());
+    }
+
+    #[test]
+    fn claude_desktop_config_library_restore_path_rejects_traversal() {
+        let root = Path::new("claude-desktop-config-library");
+        let safe_path = resolve_external_config_restore_output_path(root, "profiles/default.json")
+            .expect("resolve safe path")
+            .expect("path should exist");
+        assert_eq!(safe_path, root.join("profiles").join("default.json"));
+        assert!(resolve_external_config_restore_output_path(root, "../../escape.json").is_err());
     }
 
     #[test]
@@ -3934,6 +3979,51 @@ mod tests {
 
         assert!(should_exclude_from_backup(&rules, "codex", "auth.json"));
         assert!(!should_exclude_from_backup(&rules, "opencode", "auth.json"));
+    }
+
+    #[test]
+    fn should_exclude_matches_claude_desktop_local_app_data_paths() {
+        let generated_normal_config_path = backup_filter_option_path(
+            "claude_desktop",
+            "claude_desktop_config.json",
+        )
+        .expect("normal config filter path");
+        let generated_config_library_path = backup_filter_option_path(
+            "claude_desktop",
+            "configLibrary/profiles/default.json",
+        )
+        .expect("config library filter path");
+        let cases = [
+            (
+                generated_normal_config_path,
+                "claude_desktop_config.json",
+            ),
+            (
+                "%localappdata%/Claude/claude_desktop_config.json".to_string(),
+                "claude_desktop_config.json",
+            ),
+            (
+                generated_config_library_path,
+                "configLibrary/profiles/default.json",
+            ),
+            (
+                "%localappdata%/Claude-3p/configLibrary/profiles/lowercase.json"
+                    .to_string(),
+                "configLibrary/profiles/lowercase.json",
+            ),
+        ];
+
+        for (rule_path, backup_relative_path) in cases {
+            let rules = vec![BackupFileFilterRule {
+                tool: "claude_desktop".to_string(),
+                file_path: rule_path,
+            }];
+            assert!(should_exclude_from_backup(
+                &rules,
+                "claude_desktop",
+                backup_relative_path
+            ));
+        }
     }
 
     #[test]

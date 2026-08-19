@@ -38,19 +38,23 @@ pub fn normalize_backup_custom_entry_path(path: String) -> String {
 /// Used by the "More Options" modal to display the version of a saved path and
 /// to validate a newly entered path before saving.
 #[tauri::command]
-pub fn probe_manual_cli_version(path: String) -> Result<String, String> {
-    crate::coding::cli_resolver::probe_cli_version(&path)
+pub async fn probe_manual_cli_version(path: String) -> Result<String, String> {
+    crate::coding::cli_resolver::probe_cli_version(&path).await
 }
 
 /// Auto-detect the current local CLI path for a command name and return it so
 /// the "More Options" input can be pre-filled. Does not persist anything.
 #[tauri::command]
-pub fn detect_manual_cli_path(command_name: String) -> Result<String, String> {
-    let program = crate::coding::cli_resolver::resolve_local_cli_by_command_name(&command_name)
-        .ok_or_else(|| format!(
-            "未检测到 `{command_name}` CLI，请确认已安装或手动选择路径。"
-        ))?;
-    Ok(program.path.to_string_lossy().to_string())
+pub async fn detect_manual_cli_path(command_name: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let program = crate::coding::cli_resolver::resolve_local_cli_by_command_name(&command_name)
+            .ok_or_else(|| {
+                format!("未检测到 `{command_name}` CLI，请确认已安装或手动选择路径。")
+            })?;
+        Ok(program.path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("CLI 路径探测任务失败: {error}"))?
 }
 
 /// Persist a manual CLI path for a given command name (e.g. `opencode`, `pi`,
@@ -66,7 +70,7 @@ pub async fn set_manual_cli_path(
     let version = if trimmed.is_empty() {
         String::new()
     } else {
-        crate::coding::cli_resolver::validate_manual_cli_path(&trimmed)?
+        crate::coding::cli_resolver::validate_manual_cli_path(&trimmed).await?
     };
 
     let mut settings = store::load_settings_from_sqlite_state(&sqlite_state)?;

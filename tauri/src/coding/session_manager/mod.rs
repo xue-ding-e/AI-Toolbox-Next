@@ -2808,8 +2808,14 @@ mod tests {
     }
 
     fn assert_project_dir_eq(actual: Option<&str>, expected: &Path) {
-        let actual = actual.map(normalize_test_path);
-        let expected = normalize_test_path(&expected.to_string_lossy());
+        let actual = actual.map(|value| {
+            let path = Path::new(value);
+            let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            normalize_test_path(&canonical.to_string_lossy())
+        });
+        let canonical_expected =
+            fs::canonicalize(expected).unwrap_or_else(|_| expected.to_path_buf());
+        let expected = normalize_test_path(&canonical_expected.to_string_lossy());
         assert_eq!(actual.as_deref(), Some(expected.as_str()));
     }
 

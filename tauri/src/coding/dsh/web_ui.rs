@@ -133,13 +133,18 @@ end tell"#
         .map_err(|e| format!("打开 DSh dashboard 失败: {e}"))
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn escape_linux_double_quoted_shell_command(command: &str) -> String {
+    command
+        .replace('\\', "\\\\")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
+}
+
 #[cfg(target_os = "linux")]
 fn launch_linux_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
-    let command = dashboard_command(use_npx, resolved_path)
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('$', "\\$")
-        .replace('`', "\\`");
+    let raw_command = dashboard_command(use_npx, resolved_path);
+    let command = escape_linux_double_quoted_shell_command(&raw_command);
     let terminals = [
         ("gnome-terminal", vec!["--".to_string()]),
         ("konsole", vec!["-e".to_string()]),
@@ -172,6 +177,18 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|err| err.into_inner())
+    }
+
+    #[test]
+    fn linux_dashboard_command_keeps_executable_quotes() {
+        let raw_command = dashboard_command(
+            false,
+            Some(std::path::Path::new("/opt/DeepSeek Harness/bin/dsh")),
+        );
+        assert_eq!(
+            escape_linux_double_quoted_shell_command(&raw_command),
+            "\"/opt/DeepSeek Harness/bin/dsh\" web"
+        );
     }
 
     #[test]

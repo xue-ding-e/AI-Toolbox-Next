@@ -559,6 +559,9 @@ pub fn merge_claude_settings_for_provider_with_strategy(
     let previous_merge_strategy = previous_merge_strategy.unwrap_or_default();
 
     for field_key in previous_common_config_object.keys() {
+        if field_key == "env" {
+            continue;
+        }
         if !next_common_config_object.contains_key(field_key) {
             merged_settings.remove(field_key);
         }
