@@ -1218,6 +1218,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                   </div>
                 )}
                 <div className={styles.extraSettingsHint}>
+                  {t('claudecode.provider.mergeStrategyOverviewHint')}
+                </div>
+                <div className={styles.extraSettingsHint}>
                   {t(extraSettingsHintKey)}
                 </div>
               </div>
