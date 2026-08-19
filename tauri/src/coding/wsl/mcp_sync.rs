@@ -275,16 +275,11 @@ async fn sync_mcp_to_wsl_claude(
 fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -> Value {
     match server.server_type.as_str() {
         "stdio" => {
-            let command_raw = server
+            let command = server
                 .server_config
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // WSL can run Windows exes via /mnt; convert a Windows full path (or
-            // ~/%APPDATA% form, expanded on the host first) to /mnt/c/... so the
-            // WSL-side CLI can spawn it. Bare command names (npx, node) and already
-            // Linux paths are returned unchanged by windows_to_wsl_path.
-            let command = windows_to_wsl_path(command_raw).unwrap_or_else(|_| command_raw.to_string());
             let args: Vec<Value> = server
                 .server_config
                 .get("args")
@@ -306,8 +301,25 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
                 }
             }
 
-            // Safeguard: ensure no cmd /c for WSL (database should already be normalized)
-            command_normalize::unwrap_cmd_c(&result)
+            // 1. Safeguard: ensure no cmd /c for WSL (database should already be
+            //    normalized). This may unwrap `cmd /c <exe>` into `<exe>`.
+            let mut result = command_normalize::unwrap_cmd_c(&result);
+
+            // 2. WSL can run Windows exes via /mnt; convert the (now real) command's
+            //    Windows full path (or ~/%APPDATA%, expanded on the host first) to
+            //    /mnt/c/... so the WSL-side CLI can spawn it. Must run AFTER the
+            //    cmd /c unwrap, otherwise the real exe buried in args is missed.
+            //    Bare command names (npx, node) and already-Linux paths pass through.
+            if let Some(cmd) = result.get("command").and_then(|v| v.as_str()) {
+                let mapped = windows_to_wsl_path(cmd).unwrap_or_else(|_| cmd.to_string());
+                if mapped != cmd {
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("command".to_string(), Value::String(mapped));
+                    }
+                }
+            }
+
+            result
         }
         "http" | "sse" => {
             let url = server
@@ -401,6 +413,11 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
                 return Ok(());
             }
         }
+        // Grok carries MCP servers in config.toml with the same mcp_servers /
+        // stdio structure as Codex, but never wraps cmd /c. Reuse the Codex TOML
+        // parser: the cmd /c strip is a no-op for Grok, and the path transform
+        // converts any Windows full-path command to /mnt for the WSL target.
+        "grok" => command_normalize::process_codex_toml(&content, false, &to_wsl)?,
         "geminicli" | "pi" | "oh_my_pi" => {
             command_normalize::process_claude_json(&content, false, &to_wsl)?
         }
@@ -423,7 +440,10 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_mapped_mcp_config_file, should_skip_mapped_mcp_config_file_for_wsl_direct};
+    use super::{
+        build_standard_server_config, is_mapped_mcp_config_file,
+        should_skip_mapped_mcp_config_file_for_wsl_direct,
+    };
 
     #[test]
     fn recognizes_gemini_cli_settings_as_mcp_config_file() {
@@ -474,5 +494,58 @@ mod tests {
             "grok", false, false, false, false, false, false, false, false,
         ));
         assert!(is_mapped_mcp_config_file("grok-config"));
+    }
+
+    fn make_stdio_mcp_server(command: &str, args: &[&str]) -> crate::coding::mcp::types::McpServer {
+        crate::coding::mcp::types::McpServer {
+            id: String::new(),
+            name: "fs".to_string(),
+            server_type: "stdio".to_string(),
+            server_config: serde_json::json!({
+                "command": command,
+                "args": args,
+            }),
+            enabled_tools: vec![],
+            sync_details: None,
+            description: None,
+            user_group: None,
+            user_note: None,
+            tags: vec![],
+            timeout: None,
+            sort_index: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn build_standard_server_config_converts_full_path_command_to_mnt() {
+        let server = make_stdio_mcp_server("C:\\Users\\x\\.fastctx\\bin\\fastctx.exe", &["-y"]);
+        let config = build_standard_server_config(&server);
+        assert_eq!(
+            config["command"],
+            "/mnt/c/Users/x/.fastctx/bin/fastctx.exe"
+        );
+        // args untouched
+        assert_eq!(config["args"], serde_json::json!(["-y"]));
+    }
+
+    #[test]
+    fn build_standard_server_config_unwraps_cmd_c_then_converts() {
+        // cmd /c wrapping a full path: the real exe must be unwrapped FIRST and
+        // then converted to /mnt. Regression test for the ordering bug where the
+        // transform ran before the unwrap and missed the exe buried in args.
+        let server = make_stdio_mcp_server("cmd", &["/c", "C:\\x.exe"]);
+        let config = build_standard_server_config(&server);
+        assert_eq!(config["command"], "/mnt/c/x.exe");
+        assert!(config["args"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn build_standard_server_config_leaves_bare_command_unchanged() {
+        let server = make_stdio_mcp_server("npx", &["-y", "pkg"]);
+        let config = build_standard_server_config(&server);
+        assert_eq!(config["command"], "npx");
+        assert_eq!(config["args"], serde_json::json!(["-y", "pkg"]));
     }
 }

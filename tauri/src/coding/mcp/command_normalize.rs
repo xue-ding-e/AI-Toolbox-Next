@@ -809,4 +809,39 @@ args = ["-y", "pkg"]
         let v: Value = serde_json::from_str(&processed).unwrap();
         assert_eq!(v["mcpServers"]["fs"]["command"], "npx");
     }
+
+    #[test]
+    fn process_codex_toml_preserves_format_when_no_change() {
+        // Grok config.toml: bare npx command (no cmd /c), identity transform.
+        // Verifies toml_edit does not rearrange the file when nothing changes,
+        // so the strip/convert step won't silently rewrite Grok configs.
+        let raw = r#"# Grok config
+[mcp_servers.fs]
+type = "stdio"
+command = "npx"
+args = ["-y", "pkg"]
+"#;
+        let processed = process_codex_toml(raw, false, &identity).unwrap();
+        assert_eq!(
+            processed, raw,
+            "process_codex_toml must not rewrite the file when nothing changes"
+        );
+    }
+
+    #[test]
+    fn process_codex_toml_wsl_transforms_grok_full_path_command() {
+        // Grok config uses the same TOML mcp_servers structure as Codex but
+        // without cmd /c wrapping. A full-path command is transformed to /mnt.
+        let raw = r#"[mcp_servers.fs]
+type = "stdio"
+command = "C:\\Users\\x\\.fastctx\\bin\\fastctx.exe"
+args = ["-y", "pkg"]
+"#;
+        let processed = process_codex_toml(raw, false, &wsl_transform).unwrap();
+        let doc: toml_edit::DocumentMut = processed.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["fs"]["command"].as_str(),
+            Some("/mnt/c/Users/x/.fastctx/bin/fastctx.exe")
+        );
+    }
 }
