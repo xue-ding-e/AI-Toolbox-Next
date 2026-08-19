@@ -81,7 +81,6 @@ const CustomUserAgentCollapse: React.FC<CustomUserAgentCollapseProps> = ({
         </div>
       }
     >
-      <p className={styles.description}>{t('providerUserAgent.description')}</p>
       <div className={styles.fields}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>{t('providerUserAgent.userAgent')}</span>
@@ -105,6 +104,7 @@ const CustomUserAgentCollapse: React.FC<CustomUserAgentCollapseProps> = ({
               </button>
             </Dropdown>
           </div>
+          <p className={styles.description}>{t('providerUserAgent.description')}</p>
           {valid ? (
             <span className={styles.fieldHint}>{t('providerUserAgent.hint')}</span>
           ) : (

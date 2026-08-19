@@ -54,21 +54,47 @@
 
 .field {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
 .fieldLabel {
+  flex-shrink: 0;
+  width: 92px;
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 500;
 }
 
 .inputRow {
+  flex: 1;
   display: flex;
   gap: 8px;
   align-items: stretch;
+  min-width: 0;
+}
+
+.description {
+  flex-basis: 100%;
+}
+
+@media (max-width: 720px) {
+  .field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .fieldLabel {
+    width: auto;
+  }
+
+  .description {
+    flex-basis: auto;
+  }
 }
 
 .control {
