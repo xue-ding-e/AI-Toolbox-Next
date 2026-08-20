@@ -18,6 +18,23 @@ test('getCustomHeadersFromMeta reports enabled when a non-empty array is present
     },
   );
 });
+test('getCustomHeadersFromMeta surfaces legacy customUserAgent as a set row', () => {
+  assert.deepEqual(
+    getCustomHeadersFromMeta({ customUserAgent: 'claude-cli/2.1.161' }),
+    {
+      enabled: true,
+      headers: [{ op: 'set', name: 'User-Agent', value: 'claude-cli/2.1.161', from: '', to: '' }],
+    },
+  );
+});
+
+test('getCustomHeadersFromMeta surfaces legacy snake custom_user_agent', () => {
+  const state = getCustomHeadersFromMeta({ custom_user_agent: 'Kilo-Code/1.0' } as never);
+  assert.equal(state.enabled, true);
+  assert.deepEqual(state.headers, [
+    { op: 'set', name: 'User-Agent', value: 'Kilo-Code/1.0', from: '', to: '' },
+  ]);
+});
 
 test('getCustomHeadersFromMeta reports disabled and seeds a blank row when unset', () => {
   const fromUndefined = getCustomHeadersFromMeta(undefined);
@@ -44,6 +61,36 @@ test('mergeCustomHeadersIntoMeta writes trimmed set rows when enabled', () => {
       headers: [{ op: 'set', name: '  User-Agent  ', value: '  claude-cli/1.0  ', from: '', to: '' }],
     }),
     { customHeaders: [{ op: 'set', name: 'User-Agent', value: 'claude-cli/1.0', from: '', to: '' }] },
+  );
+});
+
+test('mergeCustomHeadersIntoMeta removes legacy customUserAgent', () => {
+  assert.deepEqual(
+    mergeCustomHeadersIntoMeta(
+      { providerType: 'anthropic', customUserAgent: 'claude-cli/2.1.161' } as never,
+      { enabled: false, headers: [] },
+    ),
+    { providerType: 'anthropic' },
+  );
+});
+
+test('mergeCustomHeadersIntoMeta removes legacy snake custom_user_agent', () => {
+  assert.equal(
+    mergeCustomHeadersIntoMeta(
+      { custom_user_agent: 'Kilo-Code/1.0' } as never,
+      { enabled: false, headers: [] },
+    ),
+    undefined,
+  );
+});
+
+test('mergeCustomHeadersIntoMeta replaces legacy customUserAgent with customHeaders when enabled', () => {
+  assert.deepEqual(
+    mergeCustomHeadersIntoMeta(
+      { providerType: 'anthropic', customUserAgent: 'claude-cli/2.1.161' } as never,
+      { enabled: true, headers: [{ op: 'set', name: 'User-Agent', value: 'Kilo-Code/1.0', from: '', to: '' }] },
+    ),
+    { providerType: 'anthropic', customHeaders: [{ op: 'set', name: 'User-Agent', value: 'Kilo-Code/1.0', from: '', to: '' }] },
   );
 });
 

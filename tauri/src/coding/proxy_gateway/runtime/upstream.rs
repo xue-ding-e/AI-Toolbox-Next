@@ -8986,6 +8986,19 @@ fn nonempty_trim(value: &str) -> Option<&str> {
     }
 }
 
+/// Parse a header override name: empty/whitespace means "unset" (`Ok(None)`);
+/// non-empty names must also be valid HTTP header names, otherwise the
+/// operation is skipped silently to match the frontend's non-blocking hint.
+fn parse_header_override_name(raw: &str) -> Option<&str> {
+    let Some(name) = nonempty_trim(raw) else {
+        return None;
+    };
+    if HeaderName::from_bytes(name.as_bytes()).is_err() {
+        return None;
+    }
+    Some(name)
+}
+
 /// Apply the provider-level custom header overrides. Runs last in
 /// `build_upstream_headers`, so overrides win over every preceding injector.
 ///
@@ -9013,7 +9026,7 @@ fn inject_custom_headers(
         let op = entry.op.trim().to_ascii_lowercase();
         match op.as_str() {
             "set" => {
-                let Some(name) = nonempty_trim(&entry.name) else {
+                let Some(name) = parse_header_override_name(&entry.name) else {
                     continue;
                 };
                 if !custom_header_override_allowed(is_copilot, name) {
@@ -9027,7 +9040,7 @@ fn inject_custom_headers(
                 append_preserved_header(headers, preserved, name, value)?;
             }
             "delete" => {
-                let Some(name) = nonempty_trim(&entry.name) else {
+                let Some(name) = parse_header_override_name(&entry.name) else {
                     continue;
                 };
                 if !custom_header_override_allowed(is_copilot, name) {
@@ -9036,8 +9049,10 @@ fn inject_custom_headers(
                 remove_header_ci(headers, preserved, name);
             }
             "rename" | "copy" => {
-                let (Some(from), Some(to)) = (nonempty_trim(&entry.from), nonempty_trim(&entry.to))
-                else {
+                let (Some(from), Some(to)) = (
+                    parse_header_override_name(&entry.from),
+                    parse_header_override_name(&entry.to),
+                ) else {
                     continue;
                 };
                 if !custom_header_override_allowed(is_copilot, from)
@@ -14268,6 +14283,56 @@ data: {data}\r\n\r\n"
         assert_eq!(
             headers.get("x-foo").and_then(|value| value.to_str().ok()),
             Some("client")
+        );
+    }
+
+    #[test]
+    fn custom_header_set_invalid_name_silently_ignored() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "set".to_string(),
+                    name: "bad name".to_string(),
+                    value: "should-not-write".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Custom", "client")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Invalid name is ignored; existing headers are preserved.
+        assert_eq!(
+            headers.get("x-custom").and_then(|value| value.to_str().ok()),
+            Some("client")
+        );
+    }
+
+    #[test]
+    fn custom_header_rename_invalid_to_silently_ignored() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "rename".to_string(),
+                    from: "X-Old".to_string(),
+                    to: "bad name".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Old", "v1")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Invalid destination causes the whole op to be skipped; source survives.
+        assert_eq!(
+            headers.get("x-old").and_then(|value| value.to_str().ok()),
+            Some("v1")
         );
     }
 

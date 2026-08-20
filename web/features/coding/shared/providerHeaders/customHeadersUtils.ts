@@ -35,6 +35,10 @@ export interface CustomHeadersState {
 
 export interface GatewayProviderHeadersMeta {
   customHeaders?: CustomHeaderEntry[];
+  /** Legacy provider-level custom User-Agent, read only for migration. */
+  customUserAgent?: string;
+  /** Legacy snake_case variant, kept for parity with the Rust adapter. */
+  custom_user_agent?: string;
 }
 
 /** A fresh blank row defaulting to `set` (the most common op). */
@@ -42,18 +46,31 @@ export function emptyHeaderEntry(): CustomHeaderEntry {
   return { op: 'set', name: '', value: '', from: '', to: '' };
 }
 
+function legacyUserAgentRows(meta?: GatewayProviderHeadersMeta | null): CustomHeaderEntry[] {
+  const legacy = meta?.customUserAgent ?? meta?.custom_user_agent;
+  if (typeof legacy !== 'string' || legacy.trim() === '') {
+    return [];
+  }
+  return [{ op: 'set', name: 'User-Agent', value: legacy, from: '', to: '' }];
+}
+
 /**
  * Read the custom header overrides from provider meta into an editable state.
  * The state is `enabled` when any persisted row exists; an empty meta yields a
  * single blank row so the editor is immediately usable when toggled on.
+ *
+ * For pre-upgrade records, the legacy `customUserAgent`/`custom_user_agent`
+ * string is surfaced as a single `set User-Agent` row so users can see, edit,
+ * and clear it in the new editor.
  */
 export function getCustomHeadersFromMeta(
   meta?: GatewayProviderHeadersMeta | null,
 ): CustomHeadersState {
-  const headers = meta?.customHeaders ?? [];
+  const rawHeaders = Array.isArray(meta?.customHeaders) ? meta.customHeaders : [];
+  const headers = rawHeaders.length > 0 ? rawHeaders.map(normalizeEntry) : legacyUserAgentRows(meta);
   return {
     enabled: headers.length > 0,
-    headers: headers.length > 0 ? headers.map(normalizeEntry) : [emptyHeaderEntry()],
+    headers: headers.length > 0 ? headers : [emptyHeaderEntry()],
   };
 }
 
@@ -63,14 +80,18 @@ export function mergeCustomHeadersIntoMeta<T extends GatewayProviderHeadersMeta>
   state: CustomHeadersState,
 ): T | undefined {
   const nextMeta = { ...(meta || {}) } as T;
-  delete (nextMeta as Record<string, unknown>).customHeaders;
+  const record = nextMeta as unknown as Record<string, unknown>;
+  delete record.customHeaders;
+  delete record.custom_headers;
+  delete record.customUserAgent;
+  delete record.custom_user_agent;
 
   if (state.enabled) {
     const meaningful = state.headers
       .map(trimEntry)
       .filter(isMeaningfulEntry);
     if (meaningful.length > 0) {
-      (nextMeta as unknown as GatewayProviderHeadersMeta).customHeaders = meaningful;
+      record.customHeaders = meaningful;
     }
   }
 
@@ -117,7 +138,9 @@ function isCustomHeaderOp(value: unknown): value is CustomHeaderOp {
 }
 
 function hasMeaningfulMeta(meta: GatewayProviderHeadersMeta): boolean {
-  return Object.values(meta).some(
-    (value) => value !== undefined && value !== null && value !== '',
-  );
+  return Object.values(meta).some((value) => {
+    if (value === undefined || value === null || value === '') return false;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  });
 }

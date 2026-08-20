@@ -1019,7 +1019,7 @@ inferred provider：
   - `HeaderMap` 与 preserved vec 必须同时移除旧值，保证 header-preserving 裸客户端只写出预期条数；rename/copy 的多值用 `append_preserved_header_value`（append 语义）追加，避免 `insert` 丢值。
   - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom headers，可在表单内预验上游请求头白名单。
   - 切换网关 profile 时 `customHeaders` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key），与 billing 字段同等待遇。
-  - 旧 `data.meta.customUserAgent`（字符串）已下线；读取侧在 `provider_meta_from_record` 做只读回退——若 `customHeaders` 缺失而 `customUserAgent` 存在，合成一行 `set User-Agent`。写入侧只写 `customHeaders`，故保存后旧 key 不再落盘。
+  - 旧 `data.meta.customUserAgent`（字符串）已下线；读取侧在 `provider_meta_from_record` 做只读回退——若 `customHeaders` 缺失而 `customUserAgent` 存在，合成一行 `set User-Agent`。前端 `getCustomHeadersFromMeta` 同样回退旧字段以便用户查看/清理。写入侧只写 `customHeaders`，且 `mergeCustomHeadersIntoMeta` 同时删除旧 `customUserAgent`/`custom_user_agent` 与 `custom_headers`，故保存后旧 key 不再落盘。
 
 特殊 path：
 

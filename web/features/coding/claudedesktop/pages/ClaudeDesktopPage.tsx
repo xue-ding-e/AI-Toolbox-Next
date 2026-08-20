@@ -208,6 +208,9 @@ function buildProviderMeta(
     delete meta.apiFormat;
     delete meta.gatewayProfile;
     delete meta.customHeaders;
+    delete meta.custom_headers;
+    delete meta.customUserAgent;
+    delete meta.custom_user_agent;
     return meta;
   }
 
