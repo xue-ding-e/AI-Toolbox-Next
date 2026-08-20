@@ -1007,13 +1007,19 @@ inferred provider：
 - Gemini source 转非 Gemini target 时过滤 `alt=sse` 和 `key=...`。
 - target Gemini + streaming 自动补 `alt=sse`。
 - provider full URL：`is_full_url=true` 或 base URL suffix `##` 时只 merge query，不追加默认 path。
-- provider 级自定义 User-Agent（issue #294，对齐 cc-switch `customUserAgent`）：
-  - provider `data.meta.customUserAgent`（snake/camel 双兼容）非空时，`build_upstream_headers` 在 inject 链最末尾（`inject_copilot_headers` 之后）先大小写不敏感地删除转发自客户端的全部 `User-Agent`，再用 `append_preserved_header` 注入唯一的自定义值；未设置时保留客户端原 UA。
-  - 校验用 `parse_custom_user_agent`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法值运行时静默忽略不阻断请求；前端 `isValidUserAgentHeader` 与该字节规则对齐并给非阻断红字提示。
-  - Copilot provider 避让：`ProviderBodyCompat::Copilot` 判定命中时跳过注入，指纹 UA（`GitHubCopilotChat/0.38.2`）由 `inject_copilot_headers` 独占管理，不可被自定义 UA 覆盖。
-  - `HeaderMap` 与 preserved vec 必须同时移除旧 UA，保证 header-preserving 裸客户端只写出一条 `User-Agent`；不能依赖重复 UA 的接收端顺序规则。
-  - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom UA，可在表单内预验上游 UA 白名单。
-  - 切换网关 profile 时 `customUserAgent` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key），与 billing 字段同等待遇。
+- provider 级自定义请求头覆盖（升级自 issue #294 的自定义 User-Agent，对齐 axonhub 的 header override operations）：
+  - provider `data.meta.customHeaders`（snake/camel 双兼容）是一个 `CustomHeaderOverride` 数组，每项 `{ op, name, value, from, to }`，`op` 取 `set / delete / rename / copy` 四种之一（其余 op 静默跳过）：
+    - `set`：大小写不敏感删除转发自客户端的 `name`，再注入唯一的 `value`（即原自定义 UA 的语义，UA 预设现在以 `set User-Agent` 行插入）。
+    - `delete`：大小写不敏感删除 `name`。
+    - `rename`：取 `from` 的全部值，删除 `from`，再逐个追加到 `to`。
+    - `copy`：取 `from` 的全部值，逐个追加到 `to`（保留 `from`）。
+  - `build_upstream_headers` 在 inject 链最末尾（`inject_copilot_headers` 之后）调用 `inject_custom_headers` 逐项应用，故覆盖优先级最高；未配置时保留客户端原请求头。
+  - 校验用 `parse_header_override_value`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法 name/value 运行时静默跳过不阻断请求；前端 `headerValidation`（`isValidHeaderName` RFC 7230 token 规则 + `isValidHeaderValue` 字节规则）与之对齐并给非阻断红字提示。
+  - Copilot provider 避让：`ProviderBodyCompat::Copilot` 判定命中时，凡 `name`/`from`/`to` 落入 `COPILOT_MANAGED_HEADERS`（含 `user-agent` 等指纹头）的操作整条跳过，指纹 UA（`GitHubCopilotChat/0.38.2`）由 `inject_copilot_headers` 独占管理，不可被覆盖。
+  - `HeaderMap` 与 preserved vec 必须同时移除旧值，保证 header-preserving 裸客户端只写出预期条数；rename/copy 的多值用 `append_preserved_header_value`（append 语义）追加，避免 `insert` 丢值。
+  - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom headers，可在表单内预验上游请求头白名单。
+  - 切换网关 profile 时 `customHeaders` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key），与 billing 字段同等待遇。
+  - 旧 `data.meta.customUserAgent`（字符串）已下线；读取侧在 `provider_meta_from_record` 做只读回退——若 `customHeaders` 缺失而 `customUserAgent` 存在，合成一行 `set User-Agent`。写入侧只写 `customHeaders`，故保存后旧 key 不再落盘。
 
 特殊 path：
 

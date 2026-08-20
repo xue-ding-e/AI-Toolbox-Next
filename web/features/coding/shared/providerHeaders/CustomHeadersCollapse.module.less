@@ -46,60 +46,61 @@
   line-height: 1.5;
 }
 
-.fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-}
-
-.field {
+.toolbar {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.fieldLabel {
-  flex-shrink: 0;
-  width: 92px;
+.toolbarLabel {
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 500;
 }
 
-.inputRow {
-  flex: 1;
+.rows {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: stretch;
-  min-width: 0;
 }
 
-.description {
-  flex-basis: 100%;
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-@media (max-width: 720px) {
-  .field {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
+.opSelect {
+  flex-shrink: 0;
+  min-width: 96px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+
+  &:focus {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-elevated);
   }
 
-  .fieldLabel {
-    width: auto;
-  }
-
-  .description {
-    flex-basis: auto;
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 }
 
-.control {
+.fieldInput {
   flex: 1;
-  min-width: 0;
+  min-width: 120px;
   min-height: 32px;
   padding: 4px 11px;
   border: 1px solid var(--color-border);
@@ -122,21 +123,35 @@
   }
 }
 
-.presetButton {
+.fieldInputInvalid {
+  border-color: var(--color-status-error);
+}
+
+.arrow {
   flex-shrink: 0;
-  min-height: 32px;
-  padding: 4px 12px;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--color-bg-container);
   color: var(--color-text-secondary);
-  font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
 
   &:hover:not(:disabled) {
     border-color: var(--color-border-secondary);
     background: var(--color-bg-elevated);
+    color: var(--color-text-primary);
   }
 
   &:disabled {
@@ -145,13 +160,31 @@
   }
 }
 
-.fieldHint {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
+.addButton {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
 }
 
-.fieldInvalid {
+.rowHint {
+  flex-basis: 100%;
   color: var(--color-status-error);
   font-size: 11px;
   line-height: 1.5;

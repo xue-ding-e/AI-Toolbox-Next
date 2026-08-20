@@ -1,5 +1,6 @@
 /**
- * Custom User-Agent presets.
+ * User-Agent presets, surfaced as quick-insert `set` rows in the header
+ * override editor.
  *
  * Sourced from cc-switch's `USER_AGENT_PRESETS` (PR #3671), which curl-tested
  * the Kimi Coding Plan (`api.kimi.com/coding`) UA allowlist: `claude-cli/*`,
@@ -17,10 +18,17 @@
  * disguise forwarded requests as an allowlisted client. Use is the user's
  * explicit choice.
  */
-export const USER_AGENT_PRESETS: readonly string[] = [
+import type { CustomHeaderEntry } from './customHeadersUtils';
+
+export const HEADER_USER_AGENT_PRESETS: readonly string[] = [
   'claude-cli/2.1.161 (external, cli)',
   'claude-cli/2.1.161',
   'claude-code/1.0.0',
   'claude-code/0.1.0',
   'Kilo-Code/1.0',
 ];
+
+/** Build a `set` row that overrides User-Agent with the given preset value. */
+export function userAgentPresetToHeaderEntry(preset: string): CustomHeaderEntry {
+  return { op: 'set', name: 'User-Agent', value: preset, from: '', to: '' };
+}

@@ -11,8 +11,8 @@ use super::content_encoding::{
     strip_decoded_entity_headers, MAX_DECOMPRESSED_BODY_BYTES,
 };
 use super::header_preserving_client::{
-    append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
-    PreservedHeader,
+    append_preserved_header, append_preserved_header_value, send_header_preserving_request,
+    HeaderPreservingResponse, PreservedHeader,
 };
 use super::http_io::{
     empty_response, json_response, DebugBodyStream, DebugHttpRequest, DebugHttpResponse,
@@ -8711,7 +8711,7 @@ pub(super) fn build_upstream_headers(
         &mut headers,
         &mut preserved,
     )?;
-    inject_custom_user_agent(provider, &mut headers, &mut preserved)?;
+    inject_custom_headers(provider, &mut headers, &mut preserved)?;
     Ok(UpstreamHeaders {
         map: headers,
         preserved,
@@ -8952,25 +8952,52 @@ fn inject_copilot_headers(
     Ok(())
 }
 
-/// Parse a provider-level custom User-Agent string.
-///
-/// Mirrors cc-switch `parse_custom_user_agent`: an empty/whitespace value means
-/// "unset" (`Ok(None)`); a non-empty value is validated with `HeaderValue::from_str`,
-/// whose byte rule (visible ASCII / non-ASCII / tab legal; other control chars illegal)
-/// is mirrored on the frontend by `isValidUserAgentHeader`.
-fn parse_custom_user_agent(raw: Option<&str>) -> Result<Option<HeaderValue>, reqwest::header::InvalidHeaderValue> {
-    match raw.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(user_agent) => HeaderValue::from_str(user_agent).map(Some),
+/// Parse a header override name/value: empty/whitespace means "unset"
+/// (`Ok(None)`); a non-empty value is validated with `HeaderValue::from_str`,
+/// whose byte rule (visible ASCII / non-ASCII / tab legal; other control chars
+/// illegal) is mirrored on the frontend by `isValidHeaderValue`.
+fn parse_header_override_value(
+    raw: &str,
+) -> Result<Option<HeaderValue>, reqwest::header::InvalidHeaderValue> {
+    match nonempty_trim(raw) {
+        Some(value) => HeaderValue::from_str(value).map(Some),
         None => Ok(None),
     }
 }
 
-/// Inject the provider-level custom User-Agent, overriding any User-Agent forwarded
-/// from the client request. Copilot providers are skipped because their fingerprint
-/// User-Agent is managed exclusively by `inject_copilot_headers` and must not be
-/// overridden (would break Copilot upstream auth). Invalid values are silently
-/// ignored to match the frontend's non-blocking validation hint.
-fn inject_custom_user_agent(
+/// Whether a header name may be overridden for this provider. Copilot
+/// providers must keep `COPILOT_MANAGED_HEADERS` untouched — their
+/// fingerprint headers are managed exclusively by `inject_copilot_headers`
+/// and overriding them would break Copilot upstream auth.
+fn custom_header_override_allowed(is_copilot: bool, name: &str) -> bool {
+    !is_copilot
+        || !COPILOT_MANAGED_HEADERS
+            .iter()
+            .any(|managed| managed.eq_ignore_ascii_case(name))
+}
+
+/// Trimmed non-empty view of a string; returns `None` for empty/whitespace.
+fn nonempty_trim(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Apply the provider-level custom header overrides. Runs last in
+/// `build_upstream_headers`, so overrides win over every preceding injector.
+///
+/// - `set`: replace `name` with `value` (replacing any client-forwarded value)
+/// - `delete`: drop `name`
+/// - `rename`: move all `from` values to `to`
+/// - `copy`: duplicate all `from` values into `to`
+///
+/// Invalid names/values and unknown ops are silently ignored to match the
+/// frontend's non-blocking validation hint. For Copilot providers, operations
+/// touching `COPILOT_MANAGED_HEADERS` names are skipped entirely.
+fn inject_custom_headers(
     provider: &UpstreamProvider,
     headers: &mut HeaderMap,
     preserved: &mut Vec<PreservedHeader>,
@@ -8979,18 +9006,65 @@ fn inject_custom_user_agent(
         provider.meta.provider_type.as_deref(),
         provider.target_protocol,
     ) == Some(ProviderBodyCompat::Copilot);
-    if is_copilot {
-        return Ok(());
-    }
-    // Invalid UA is silently ignored (frontend gives a non-blocking hint).
-    let Some(user_agent) = parse_custom_user_agent(provider.meta.custom_user_agent.as_deref())
-        .ok()
-        .flatten()
-    else {
+    let Some(overrides) = provider.meta.custom_headers.as_ref() else {
         return Ok(());
     };
-    remove_header_ci(headers, preserved, "user-agent");
-    append_preserved_header(headers, preserved, "User-Agent", user_agent)?;
+    for entry in overrides {
+        let op = entry.op.trim().to_ascii_lowercase();
+        match op.as_str() {
+            "set" => {
+                let Some(name) = nonempty_trim(&entry.name) else {
+                    continue;
+                };
+                if !custom_header_override_allowed(is_copilot, name) {
+                    continue;
+                }
+                // Invalid value is silently ignored (frontend hints non-blocking).
+                let Some(value) = parse_header_override_value(&entry.value).ok().flatten() else {
+                    continue;
+                };
+                remove_header_ci(headers, preserved, name);
+                append_preserved_header(headers, preserved, name, value)?;
+            }
+            "delete" => {
+                let Some(name) = nonempty_trim(&entry.name) else {
+                    continue;
+                };
+                if !custom_header_override_allowed(is_copilot, name) {
+                    continue;
+                }
+                remove_header_ci(headers, preserved, name);
+            }
+            "rename" | "copy" => {
+                let (Some(from), Some(to)) = (nonempty_trim(&entry.from), nonempty_trim(&entry.to))
+                else {
+                    continue;
+                };
+                if !custom_header_override_allowed(is_copilot, from)
+                    || !custom_header_override_allowed(is_copilot, to)
+                {
+                    continue;
+                }
+                let moved: Vec<HeaderValue> = preserved
+                    .iter()
+                    .filter(|header| header.name.eq_ignore_ascii_case(from))
+                    .map(|header| header.value.clone())
+                    .collect();
+                if moved.is_empty() {
+                    continue;
+                }
+                if op == "rename" {
+                    remove_header_ci(headers, preserved, from);
+                }
+                for value in moved {
+                    append_preserved_header_value(headers, preserved, to, value)?;
+                }
+            }
+            _ => {
+                // Unknown op: silently skipped.
+            }
+        }
+    }
     Ok(())
 }
 
@@ -9932,7 +10006,7 @@ fn save_health_registry_if_needed(context: &GatewayRuntimeContext, changed: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::proxy_gateway::types::ProxyGatewaySettings;
+    use crate::coding::proxy_gateway::types::{CustomHeaderOverride, ProxyGatewaySettings};
 
     fn debug_request(body: &[u8]) -> DebugHttpRequest {
         DebugHttpRequest {
@@ -13951,11 +14025,20 @@ data: {data}\r\n\r\n"
         assert_eq!(preserved_user_agents, 1);
     }
 
+    fn ua_set(value: &str) -> CustomHeaderOverride {
+        CustomHeaderOverride {
+            op: "set".to_string(),
+            name: "User-Agent".to_string(),
+            value: value.to_string(),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn custom_user_agent_overrides_forwarded_user_agent() {
+    fn custom_header_set_overrides_forwarded_user_agent() {
         let provider = UpstreamProvider {
             meta: ProviderGatewayMeta {
-                custom_user_agent: Some("claude-cli/2.1.161 (external, cli)".to_string()),
+                custom_headers: Some(vec![ua_set("claude-cli/2.1.161 (external, cli)")]),
                 ..ProviderGatewayMeta::default()
             },
             ..provider_for_cli(GatewayCliKey::Claude)
@@ -13974,10 +14057,10 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_appended_when_request_has_none() {
+    fn custom_header_set_appended_when_request_has_none() {
         let provider = UpstreamProvider {
             meta: ProviderGatewayMeta {
-                custom_user_agent: Some("claude-code/1.0.0".to_string()),
+                custom_headers: Some(vec![ua_set("claude-code/1.0.0")]),
                 ..ProviderGatewayMeta::default()
             },
             ..provider_for_cli(GatewayCliKey::Claude)
@@ -13993,12 +14076,9 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_empty_preserves_client_user_agent() {
+    fn custom_header_absent_preserves_client_user_agent() {
         let provider = UpstreamProvider {
-            meta: ProviderGatewayMeta {
-                custom_user_agent: None,
-                ..ProviderGatewayMeta::default()
-            },
+            meta: ProviderGatewayMeta::default(),
             ..provider_for_cli(GatewayCliKey::Claude)
         };
         let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
@@ -14015,12 +14095,12 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_skipped_for_copilot_provider() {
+    fn custom_header_set_skipped_for_copilot_provider() {
         let provider = UpstreamProvider {
             target_protocol: AiProtocol::OpenAiChat,
             meta: ProviderGatewayMeta {
                 provider_type: Some("github_copilot".to_string()),
-                custom_user_agent: Some("claude-cli/2.1.161".to_string()),
+                custom_headers: Some(vec![ua_set("claude-cli/2.1.161")]),
                 ..ProviderGatewayMeta::default()
             },
             ..provider_for_cli(GatewayCliKey::OpenCode)
@@ -14032,7 +14112,7 @@ data: {data}\r\n\r\n"
         );
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
-        // Copilot fingerprint UA must not be overridden by custom UA.
+        // Copilot fingerprint UA must not be overridden by a custom header op.
         assert_eq!(
             headers.get("user-agent").and_then(|value| value.to_str().ok()),
             Some("GitHubCopilotChat/0.38.2")
@@ -14040,11 +14120,11 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_invalid_value_silently_ignored() {
+    fn custom_header_set_invalid_value_silently_ignored() {
         let provider = UpstreamProvider {
             meta: ProviderGatewayMeta {
                 // Newline is an illegal control char for HeaderValue.
-                custom_user_agent: Some("bad\nvalue".to_string()),
+                custom_headers: Some(vec![ua_set("bad\nvalue")]),
                 ..ProviderGatewayMeta::default()
             },
             ..provider_for_cli(GatewayCliKey::Claude)
@@ -14056,7 +14136,7 @@ data: {data}\r\n\r\n"
         );
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
-        // Invalid custom UA is silently ignored; client UA is preserved.
+        // Invalid custom value is silently ignored; client UA is preserved.
         assert_eq!(
             headers.get("user-agent").and_then(|value| value.to_str().ok()),
             Some("client-agent")
@@ -14064,10 +14144,10 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn custom_user_agent_replaces_preserved_forwarded_entry() {
+    fn custom_header_set_replaces_preserved_forwarded_entry() {
         let provider = UpstreamProvider {
             meta: ProviderGatewayMeta {
-                custom_user_agent: Some("claude-cli/2.1.161".to_string()),
+                custom_headers: Some(vec![ua_set("claude-cli/2.1.161")]),
                 ..ProviderGatewayMeta::default()
             },
             ..provider_for_cli(GatewayCliKey::Claude)
@@ -14089,21 +14169,123 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn parse_custom_user_agent_validates_header_value() {
+    fn custom_header_delete_drops_forwarded_header() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "delete".to_string(),
+                    name: "X-Custom".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Custom", "drop-me")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        assert!(headers.get("x-custom").is_none());
+        assert!(headers
+            .preserved
+            .iter()
+            .all(|header| !header.name.eq_ignore_ascii_case("x-custom")));
+    }
+
+    #[test]
+    fn custom_header_rename_moves_values() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "rename".to_string(),
+                    from: "X-Old".to_string(),
+                    to: "X-New".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Old", "v1")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        assert!(headers.get("x-old").is_none());
+        assert_eq!(
+            headers.get("x-new").and_then(|value| value.to_str().ok()),
+            Some("v1")
+        );
+    }
+
+    #[test]
+    fn custom_header_copy_duplicates_values() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "copy".to_string(),
+                    from: "X-Src".to_string(),
+                    to: "X-Dst".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Src", "v1")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Source survives; destination gains a copy.
+        assert_eq!(
+            headers.get("x-src").and_then(|value| value.to_str().ok()),
+            Some("v1")
+        );
+        assert_eq!(
+            headers.get("x-dst").and_then(|value| value.to_str().ok()),
+            Some("v1")
+        );
+    }
+
+    #[test]
+    fn custom_header_unknown_op_silently_skipped() {
+        let provider = UpstreamProvider {
+            meta: ProviderGatewayMeta {
+                custom_headers: Some(vec![CustomHeaderOverride {
+                    op: "bogus".to_string(),
+                    name: "X-Foo".to_string(),
+                    value: "bar".to_string(),
+                    ..Default::default()
+                }]),
+                ..ProviderGatewayMeta::default()
+            },
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let request = debug_request_with_headers(body, vec![("X-Foo", "client")]);
+        let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
+
+        // Unknown op is ignored; the forwarded header is preserved.
+        assert_eq!(
+            headers.get("x-foo").and_then(|value| value.to_str().ok()),
+            Some("client")
+        );
+    }
+
+    #[test]
+    fn parse_header_override_value_validates() {
         // Empty / whitespace -> unset.
-        assert!(parse_custom_user_agent(None).unwrap().is_none());
-        assert!(parse_custom_user_agent(Some("")).unwrap().is_none());
-        assert!(parse_custom_user_agent(Some("   ")).unwrap().is_none());
+        assert!(parse_header_override_value("").unwrap().is_none());
+        assert!(parse_header_override_value("   ").unwrap().is_none());
         // Valid value -> Some.
-        let value = parse_custom_user_agent(Some("claude-cli/2.1.161")).unwrap();
+        let value = parse_header_override_value("claude-cli/2.1.161").unwrap();
         assert_eq!(value.unwrap().to_str().unwrap(), "claude-cli/2.1.161");
         // Trim is applied.
-        let value = parse_custom_user_agent(Some("  claude-cli/1.0  ")).unwrap();
+        let value = parse_header_override_value("  claude-cli/1.0  ").unwrap();
         assert_eq!(value.unwrap().to_str().unwrap(), "claude-cli/1.0");
         // Control char (newline) -> Err.
-        assert!(parse_custom_user_agent(Some("bad\nvalue")).is_err());
+        assert!(parse_header_override_value("bad\nvalue").is_err());
         // Tab is legal (HeaderValue byte rule).
-        assert!(parse_custom_user_agent(Some("claude\tcli")).is_ok());
+        assert!(parse_header_override_value("claude\tcli").is_ok());
     }
 
     #[test]

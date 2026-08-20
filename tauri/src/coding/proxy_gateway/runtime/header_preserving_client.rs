@@ -130,6 +130,24 @@ pub(super) fn append_preserved_header(
     Ok(())
 }
 
+/// Like `append_preserved_header` but appends instead of replacing, so multiple
+/// values for the same header survive (used by header `rename`/`copy` ops).
+pub(super) fn append_preserved_header_value(
+    headers: &mut HeaderMap,
+    preserved_headers: &mut Vec<PreservedHeader>,
+    name: &str,
+    value: HeaderValue,
+) -> Result<(), String> {
+    let header_name = HeaderName::from_bytes(name.as_bytes())
+        .map_err(|error| format!("Invalid request header name '{name}': {error}"))?;
+    headers.append(header_name, value.clone());
+    preserved_headers.push(PreservedHeader {
+        name: name.to_string(),
+        value,
+    });
+    Ok(())
+}
+
 #[derive(Debug)]
 pub(super) enum HeaderPreservingError {
     /// Connection/handshake failed before any request bytes were written.

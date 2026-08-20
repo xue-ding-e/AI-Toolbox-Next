@@ -79,8 +79,38 @@ pub struct ProviderGatewayMeta {
     pub allow_text_only_model_heuristic: bool,
     pub cost_multiplier: String,
     pub pricing_model_source: String,
-    #[serde(default, rename = "customUserAgent", alias = "custom_user_agent")]
-    pub custom_user_agent: Option<String>,
+    /// Provider-level custom request-header overrides applied to upstream
+    /// requests. Each entry is one operation (`set`/`delete`/`rename`/`copy`).
+    /// Applied last in `build_upstream_headers`, so overrides win over every
+    /// preceding injector. Copilot providers skip operations whose affected
+    /// header names fall inside `COPILOT_MANAGED_HEADERS` to preserve the
+    /// fingerprint managed by `inject_copilot_headers`.
+    #[serde(default, rename = "customHeaders", alias = "custom_headers")]
+    pub custom_headers: Option<Vec<CustomHeaderOverride>>,
+}
+
+/// One request-header override operation, mirroring axonhub's flat
+/// `OverrideOperation` shape (header subset only).
+///
+/// - `set`: replace `name` with `value`
+/// - `delete`: drop `name`
+/// - `rename`: move `from` values to `to`
+/// - `copy`: duplicate `from` values into `to`
+///
+/// Only `set`/`delete`/`rename`/`copy` are honored at runtime; unknown ops
+/// are silently skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "snake_case")]
+pub struct CustomHeaderOverride {
+    pub op: String,
+    /// Target header for `set`/`delete`.
+    pub name: String,
+    /// Replacement value for `set`.
+    pub value: String,
+    /// Source header for `rename`/`copy`.
+    pub from: String,
+    /// Destination header for `rename`/`copy`.
+    pub to: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +157,7 @@ impl Default for ProviderGatewayMeta {
             allow_text_only_model_heuristic: false,
             cost_multiplier: "1.0".to_string(),
             pricing_model_source: "upstream".to_string(),
-            custom_user_agent: None,
+            custom_headers: None,
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::coding::proxy_gateway::types::{
-    normalize_pricing_model_source, CodexChatReasoningMeta, GatewayCliKey,
+    normalize_pricing_model_source, CodexChatReasoningMeta, CustomHeaderOverride, GatewayCliKey,
     GatewayProviderProfileReference, GatewayProxyMode, ProviderGatewayMeta, ProviderPriorityEntry,
     ProxyGatewaySettings,
 };
@@ -689,7 +689,7 @@ fn provider_meta_from_record(
         )
         .map(|value| normalize_pricing_model_source(&value))
         .unwrap_or_else(|| default_pricing_model_source.clone()),
-        custom_user_agent: json_string_compat(meta_value, "custom_user_agent", "customUserAgent"),
+        custom_headers: custom_headers_from_meta(meta_value),
     };
     apply_gateway_profile_reference(cli_key, &mut meta);
     if meta.provider_type.is_none() {
@@ -930,6 +930,41 @@ fn codex_chat_reasoning_from_profile_value(value: &Value) -> Option<CodexChatRea
         .get("codex_chat_reasoning")
         .or_else(|| value.get("codexChatReasoning"))
         .and_then(|value| serde_json::from_value(value.clone()).ok())
+}
+
+/// Resolve provider-level custom header overrides from persisted meta.
+///
+/// Reads `customHeaders` (or snake `custom_headers`) as an array of
+/// `CustomHeaderOverride`. For pre-upgrade configs the legacy
+/// `customUserAgent`/`custom_user_agent` string is folded into a single
+/// `set` row on `User-Agent` — this is a read-only migration; the write
+/// path only ever persists `customHeaders`, so a saved record stops
+/// carrying the legacy key after its next edit.
+fn custom_headers_from_meta(meta_value: &Value) -> Option<Vec<CustomHeaderOverride>> {
+    let from_array = meta_value
+        .get("custom_headers")
+        .or_else(|| meta_value.get("customHeaders"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<CustomHeaderOverride>(item.clone()).ok())
+                .collect::<Vec<_>>()
+        });
+    if let Some(headers) = from_array {
+        if !headers.is_empty() {
+            return Some(headers);
+        }
+    }
+    // Read-only legacy fallback: synthesize a `set` row from customUserAgent.
+    json_string_compat(meta_value, "custom_user_agent", "customUserAgent").map(|user_agent| {
+        vec![CustomHeaderOverride {
+            op: "set".to_string(),
+            name: "User-Agent".to_string(),
+            value: user_agent,
+            ..Default::default()
+        }]
+    })
 }
 
 fn json_string_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<String> {

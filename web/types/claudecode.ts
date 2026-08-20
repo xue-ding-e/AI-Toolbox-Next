@@ -4,6 +4,8 @@
  * Type definitions for Claude Code configuration management.
  */
 
+import type { CustomHeaderEntry } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+
 export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
 export type ClaudeApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses' | 'gemini_native';
 export type ClaudeSettingsMergeStrategy =
@@ -35,8 +37,8 @@ export interface GatewayProviderMeta {
   allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
-  /** Provider-level custom User-Agent injected by the gateway on upstream requests. */
-  customUserAgent?: string;
+  /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
+  customHeaders?: CustomHeaderEntry[];
 }
 
 /**

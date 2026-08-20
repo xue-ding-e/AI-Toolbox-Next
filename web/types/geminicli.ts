@@ -1,3 +1,5 @@
+import type { CustomHeaderEntry } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+
 export type GeminiCliProviderCategory = 'official' | 'custom' | 'third_party' | string;
 export type GeminiCliApiFormat = 'gemini_native' | 'openai_chat' | 'openai_responses' | 'anthropic';
 
@@ -20,8 +22,8 @@ export interface GatewayProviderMeta {
   allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
-  /** Provider-level custom User-Agent injected by the gateway on upstream requests. */
-  customUserAgent?: string;
+  /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
+  customHeaders?: CustomHeaderEntry[];
 }
 
 export interface GeminiCliSettingsConfig {

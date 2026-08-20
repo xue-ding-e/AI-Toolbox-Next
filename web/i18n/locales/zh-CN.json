@@ -37,15 +37,22 @@
     "pricingModelSourceUpstream": "返回模型",
     "pricingModelSourceHint": "选择按请求模型还是上游返回模型进行定价匹配"
   },
-  "providerUserAgent": {
-    "title": "自定义 User-Agent",
-    "useCustom": "使用自定义",
-    "description": "为此供应商配置自定义 User-Agent，转发到上游时会替换请求中的 User-Agent。用于绕过部分供应商对客户端的 UA 限制。",
-    "userAgent": "User-Agent",
-    "placeholder": "claude-cli/2.1.161 (external, cli)",
-    "presets": "预设",
-    "hint": "仅在网关代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
-    "invalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。"
+  "providerHeaders": {
+    "title": "自定义请求头",
+    "useCustom": "启用覆盖",
+    "description": "为此供应商配置自定义请求头覆盖，转发到上游时会按顺序应用这些操作。用于绕过部分供应商对客户端的 UA 或请求头限制。",
+    "add": "添加请求头",
+    "remove": "删除",
+    "presets": "User-Agent 预设",
+    "opSet": "设置",
+    "opDelete": "删除",
+    "opRename": "重命名",
+    "opCopy": "复制",
+    "namePlaceholder": "请求头名称（如 User-Agent）",
+    "valuePlaceholder": "请求头值（如 claude-cli/2.1.161）",
+    "fromPlaceholder": "源请求头名称",
+    "toPlaceholder": "目标请求头名称",
+    "invalid": "请求头名称或值包含非法字符（如控制字符），该行将被忽略。"
   },
   "gateway": {
     "navLabel": "网关",

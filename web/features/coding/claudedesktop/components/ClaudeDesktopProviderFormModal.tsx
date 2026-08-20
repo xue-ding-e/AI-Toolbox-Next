@@ -10,11 +10,11 @@ import {
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
-import CustomUserAgentCollapse from '@/features/coding/shared/providerUserAgent/CustomUserAgentCollapse';
+import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import {
-  getCustomUserAgentFromMeta,
-  type CustomUserAgentState,
-} from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
+  getCustomHeadersFromMeta,
+  type CustomHeadersState,
+} from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 import { useAppStore } from '@/stores';
 import type {
   ClaudeDesktopFormValues,
@@ -107,8 +107,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
   const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
-  const [customUserAgent, setCustomUserAgent] = React.useState<CustomUserAgentState>(() =>
-    getCustomUserAgentFromMeta(provider?.meta),
+  const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
+    getCustomHeadersFromMeta(provider?.meta),
   );
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
@@ -239,7 +239,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         ? normalizeApiFormat(providerEndpoint.apiFormat)
         : normalizeApiFormat(provider.meta?.apiFormat);
       setProviderCategory(nextProviderCategory);
-      setCustomUserAgent(getCustomUserAgentFromMeta(provider.meta));
+      setCustomHeaders(getCustomHeadersFromMeta(provider.meta));
 
       form.setFieldsValue({
         name: provider.name,
@@ -268,7 +268,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
     } else {
       form.resetFields();
       setProviderCategory('custom');
-      setCustomUserAgent(getCustomUserAgentFromMeta(undefined));
+      setCustomHeaders(getCustomHeadersFromMeta(undefined));
       form.setFieldsValue({
         providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
@@ -282,7 +282,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
     if (selectionKey === OFFICIAL_PROVIDER_ENDPOINT_KEY) {
       setProviderCategory('official');
       setFetchedModels([]);
-      setCustomUserAgent(getCustomUserAgentFromMeta(undefined));
+      setCustomHeaders(getCustomHeadersFromMeta(undefined));
       form.setFieldsValue({
         baseUrl: undefined,
         apiKey: undefined,
@@ -480,9 +480,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         fableModel: values.fableModel,
         fableModelName: values.fableModelName,
         notes: values.notes,
-        customUserAgent: providerCategory === 'official'
-          ? { enabled: false, value: '' }
-          : customUserAgent,
+        customHeaders: providerCategory === 'official'
+          ? { enabled: false, headers: [] }
+          : customHeaders,
       });
       form.resetFields();
       setFetchedModels([]);
@@ -759,9 +759,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
 
         {!isOfficialMode && (
           <Form.Item wrapperCol={sectionWrapperCol}>
-            <CustomUserAgentCollapse
-              value={customUserAgent}
-              onChange={setCustomUserAgent}
+            <CustomHeadersCollapse
+              value={customHeaders}
+              onChange={setCustomHeaders}
             />
           </Form.Item>
         )}

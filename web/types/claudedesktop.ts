@@ -7,7 +7,10 @@
  */
 
 import type { GatewayProviderProfileReference } from '@/features/coding/shared/gateway/providerProfiles';
-import type { CustomUserAgentState } from '@/features/coding/shared/providerUserAgent/customUserAgentUtils';
+import type {
+  CustomHeaderEntry,
+  CustomHeadersState,
+} from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 
 /** How a Claude Desktop provider is applied to the on-disk 3P gateway profile. */
 export type ClaudeDesktopMode = 'direct' | 'proxy';
@@ -35,8 +38,8 @@ export interface ClaudeDesktopMeta {
   apiFormat?: string;
   /** Upstream provider type hint (e.g. `deepseek`, `openrouter`). */
   providerType?: string;
-  /** Provider-level custom User-Agent injected by the gateway on upstream requests. */
-  customUserAgent?: string;
+  /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
+  customHeaders?: CustomHeaderEntry[];
   [key: string]: unknown;
 }
 
@@ -145,6 +148,6 @@ export interface ClaudeDesktopFormValues {
   fableModel?: string;
   fableModelName?: string;
   notes?: string;
-  /** Provider-level custom User-Agent state (gateway-injected). */
-  customUserAgent?: CustomUserAgentState;
+  /** Provider-level custom request-header override state (gateway-injected). */
+  customHeaders?: CustomHeadersState;
 }

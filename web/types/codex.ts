@@ -4,6 +4,8 @@
  * Type definitions for Codex configuration management.
  */
 
+import type { CustomHeaderEntry } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+
 export type CodexProviderCategory = 'official' | 'third_party' | 'custom';
 export type CodexApiFormat =
   | 'openai_responses'
@@ -33,8 +35,8 @@ export interface GatewayProviderMeta {
   allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
-  /** Provider-level custom User-Agent injected by the gateway on upstream requests. */
-  customUserAgent?: string;
+  /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
+  customHeaders?: CustomHeaderEntry[];
 }
 
 export interface CodexAuthConfig extends Record<string, unknown> {

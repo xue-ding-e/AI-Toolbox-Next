@@ -37,15 +37,22 @@
     "pricingModelSourceUpstream": "Response model",
     "pricingModelSourceHint": "Choose whether pricing matches the requested model or the upstream response model"
   },
-  "providerUserAgent": {
-    "title": "Custom User-Agent",
-    "useCustom": "Use custom",
-    "description": "Configure a custom User-Agent for this provider. It replaces the User-Agent on requests forwarded upstream. Use this to bypass provider client UA restrictions.",
-    "userAgent": "User-Agent",
-    "placeholder": "claude-cli/2.1.161 (external, cli)",
-    "presets": "Presets",
-    "hint": "Only takes effect under gateway proxy takeover; replaces the User-Agent sent to the provider API.",
-    "invalid": "User-Agent must not contain control characters (e.g. newline), otherwise it will be ignored."
+  "providerHeaders": {
+    "title": "Custom request headers",
+    "useCustom": "Override",
+    "description": "Configure custom request-header overrides for this provider. They are applied in order to requests forwarded upstream. Use this to bypass provider client UA or header restrictions.",
+    "add": "Add header",
+    "remove": "Remove",
+    "presets": "User-Agent presets",
+    "opSet": "Set",
+    "opDelete": "Delete",
+    "opRename": "Rename",
+    "opCopy": "Copy",
+    "namePlaceholder": "Header name (e.g. User-Agent)",
+    "valuePlaceholder": "Header value (e.g. claude-cli/2.1.161)",
+    "fromPlaceholder": "Source header name",
+    "toPlaceholder": "Destination header name",
+    "invalid": "Header name or value contains illegal characters (e.g. control chars); this row will be ignored."
   },
   "gateway": {
     "navLabel": "Gateway",
