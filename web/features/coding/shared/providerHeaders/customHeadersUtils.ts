@@ -35,6 +35,8 @@ export interface CustomHeadersState {
 
 export interface GatewayProviderHeadersMeta {
   customHeaders?: CustomHeaderEntry[];
+  /** Legacy snake_case variant, kept for parity with the Rust adapter. */
+  custom_headers?: CustomHeaderEntry[];
   /** Legacy provider-level custom User-Agent, read only for migration. */
   customUserAgent?: string;
   /** Legacy snake_case variant, kept for parity with the Rust adapter. */
@@ -47,11 +49,12 @@ export function emptyHeaderEntry(): CustomHeaderEntry {
 }
 
 function legacyUserAgentRows(meta?: GatewayProviderHeadersMeta | null): CustomHeaderEntry[] {
-  const legacy = meta?.customUserAgent ?? meta?.custom_user_agent;
-  if (typeof legacy !== 'string' || legacy.trim() === '') {
-    return [];
-  }
-  return [{ op: 'set', name: 'User-Agent', value: legacy, from: '', to: '' }];
+  const legacy =
+    (typeof meta?.customUserAgent === 'string' && meta.customUserAgent.trim()) ||
+    (typeof meta?.custom_user_agent === 'string' && meta.custom_user_agent.trim());
+  return legacy
+    ? [{ op: 'set', name: 'User-Agent', value: legacy, from: '', to: '' }]
+    : [];
 }
 
 /**
@@ -66,7 +69,11 @@ function legacyUserAgentRows(meta?: GatewayProviderHeadersMeta | null): CustomHe
 export function getCustomHeadersFromMeta(
   meta?: GatewayProviderHeadersMeta | null,
 ): CustomHeadersState {
-  const rawHeaders = Array.isArray(meta?.customHeaders) ? meta.customHeaders : [];
+  const rawHeaders = Array.isArray(meta?.customHeaders)
+    ? meta.customHeaders
+    : Array.isArray(meta?.custom_headers)
+      ? meta.custom_headers
+      : [];
   const headers = rawHeaders.length > 0 ? rawHeaders.map(normalizeEntry) : legacyUserAgentRows(meta);
   return {
     enabled: headers.length > 0,

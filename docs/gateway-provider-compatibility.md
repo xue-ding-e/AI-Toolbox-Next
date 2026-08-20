@@ -1014,7 +1014,7 @@ inferred provider：
     - `rename`：取 `from` 的全部值，删除 `from`，再逐个追加到 `to`。
     - `copy`：取 `from` 的全部值，逐个追加到 `to`（保留 `from`）。
   - `build_upstream_headers` 在 inject 链最末尾（`inject_copilot_headers` 之后）调用 `inject_custom_headers` 逐项应用，故覆盖优先级最高；未配置时保留客户端原请求头。
-  - 校验用 `parse_header_override_value`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法 name/value 运行时静默跳过不阻断请求；前端 `headerValidation`（`isValidHeaderName` RFC 7230 token 规则 + `isValidHeaderValue` 字节规则）与之对齐并给非阻断红字提示。
+  - 校验用 `parse_header_override_name`（`HeaderName::from_bytes`）与 `parse_header_override_value`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法 name/value 运行时静默跳过不阻断请求；前端 `headerValidation`（`isValidHeaderName` RFC 7230 token 规则 + `isValidHeaderValue` 字节规则）与之对齐并给非阻断红字提示。
   - Copilot provider 避让：`ProviderBodyCompat::Copilot` 判定命中时，凡 `name`/`from`/`to` 落入 `COPILOT_MANAGED_HEADERS`（含 `user-agent` 等指纹头）的操作整条跳过，指纹 UA（`GitHubCopilotChat/0.38.2`）由 `inject_copilot_headers` 独占管理，不可被覆盖。
   - `HeaderMap` 与 preserved vec 必须同时移除旧值，保证 header-preserving 裸客户端只写出预期条数；rename/copy 的多值用 `append_preserved_header_value`（append 语义）追加，避免 `insert` 丢值。
   - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom headers，可在表单内预验上游请求头白名单。

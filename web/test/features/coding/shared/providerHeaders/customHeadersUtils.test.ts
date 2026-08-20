@@ -36,6 +36,16 @@ test('getCustomHeadersFromMeta surfaces legacy snake custom_user_agent', () => {
   ]);
 });
 
+test('getCustomHeadersFromMeta reads snake custom_headers array', () => {
+  const state = getCustomHeadersFromMeta({
+    custom_headers: [{ op: 'set', name: 'User-Agent', value: 'Kilo-Code/1.0', from: '', to: '' }],
+  } as never);
+  assert.equal(state.enabled, true);
+  assert.deepEqual(state.headers, [
+    { op: 'set', name: 'User-Agent', value: 'Kilo-Code/1.0', from: '', to: '' },
+  ]);
+});
+
 test('getCustomHeadersFromMeta reports disabled and seeds a blank row when unset', () => {
   const fromUndefined = getCustomHeadersFromMeta(undefined);
   assert.equal(fromUndefined.enabled, false);
