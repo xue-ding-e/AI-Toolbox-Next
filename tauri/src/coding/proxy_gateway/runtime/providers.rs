@@ -246,8 +246,7 @@ pub(crate) async fn load_gateway_provider_selection_async(
                 manifest_path.display(),
                 error
             )
-        })?
-    {
+        })? {
         None
     } else {
         let content = tokio::fs::read_to_string(&manifest_path)
@@ -445,12 +444,13 @@ fn provider_from_record(
                 meta,
                 model_mapping: UpstreamModelMapping {
                     default_model: codex_model_from_config(config_toml),
-                    auto_review_model: codex_auto_review_model_from_settings(&settings)
-                        .or_else(|| {
+                    auto_review_model: codex_auto_review_model_from_settings(&settings).or_else(
+                        || {
                             settings
                                 .get("modelCatalog")
                                 .and_then(codex_auto_review_model_from_catalog)
-                        }),
+                        },
+                    ),
                     ..UpstreamModelMapping::default()
                 },
             }))
@@ -948,7 +948,9 @@ fn custom_headers_from_meta(meta_value: &Value) -> Option<Vec<CustomHeaderOverri
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| serde_json::from_value::<CustomHeaderOverride>(item.clone()).ok())
+                .filter_map(|item| {
+                    serde_json::from_value::<CustomHeaderOverride>(item.clone()).ok()
+                })
                 .collect::<Vec<_>>()
         });
     if let Some(headers) = from_array {
@@ -1416,17 +1418,13 @@ fn claude_model_mapping_from_settings(settings: &Value) -> UpstreamModelMapping 
 /// drives the 3P profile's `inferenceModels`. The 3P app only ever sends the
 /// claude-safe route IDs (`claude-sonnet-5` …), so the gateway rewrites them to
 /// the real upstream models via this mapping.
-fn claude_desktop_model_mapping(
-    meta: &Option<Value>,
-    settings: &Value,
-) -> UpstreamModelMapping {
+fn claude_desktop_model_mapping(meta: &Option<Value>, settings: &Value) -> UpstreamModelMapping {
     let mut mapping = claude_model_mapping_from_settings(settings);
     let Some(routes) = meta
         .as_ref()
         .and_then(|m| {
-            m.get("claudeDesktopModelRoutes").or_else(|| {
-                m.get("claude_desktop_model_routes")
-            })
+            m.get("claudeDesktopModelRoutes")
+                .or_else(|| m.get("claude_desktop_model_routes"))
         })
         .and_then(Value::as_object)
     else {
@@ -1497,9 +1495,7 @@ fn codex_auto_review_model_from_settings(settings: &Value) -> Option<String> {
 // Match the Codex module's legacy modelCatalog row-level override.
 // This covers short-lived drafts and older provider records.
 fn codex_auto_review_model_from_catalog(catalog: &Value) -> Option<String> {
-    let models = catalog
-        .get("models")
-        .and_then(|m| m.as_array())?;
+    let models = catalog.get("models").and_then(|m| m.as_array())?;
     for item in models {
         if let Some(legacy) = item
             .get("autoReviewModelOverride")

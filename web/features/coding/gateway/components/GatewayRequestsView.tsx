@@ -81,6 +81,28 @@ const writeExcludeModelListPreference = (checked: boolean) => {
   }
 };
 
+const ONLY_FAILED_STORAGE_KEY = 'gateway.requests.onlyFailed';
+
+const readOnlyFailedPreference = (): boolean => {
+  try {
+    return window.localStorage.getItem(ONLY_FAILED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const writeOnlyFailedPreference = (checked: boolean) => {
+  try {
+    if (checked) {
+      window.localStorage.setItem(ONLY_FAILED_STORAGE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(ONLY_FAILED_STORAGE_KEY);
+    }
+  } catch {
+    // ignore quota / private-mode failures
+  }
+};
+
 interface GatewayRequestsViewProps {
   refreshKey?: number;
 }
@@ -262,6 +284,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const [draft, setDraft] = React.useState<RequestFilterDraft>(defaultDraft);
   const [filters, setFilters] = React.useState<GatewayRequestLogFilters>(() => ({
     exclude_model_list: readExcludeModelListPreference() ? true : null,
+    only_failed: readOnlyFailedPreference() ? true : null,
   }));
   const [page, setPage] = React.useState(1);
   const [logs, setLogs] = React.useState<GatewayRequestLogItem[]>([]);
@@ -342,8 +365,9 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const applyFilters = () => {
     setFilters((current) => ({
       ...buildFilters(draft),
-      // Title-bar switch is independent from the search form.
+      // Title-bar switches are independent from the search form.
       exclude_model_list: current.exclude_model_list,
+      only_failed: current.only_failed,
     }));
     setPage(1);
   };
@@ -352,6 +376,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setDraft(defaultDraft);
     setFilters((current) => ({
       exclude_model_list: current.exclude_model_list,
+      only_failed: current.only_failed,
     }));
     setPage(1);
   };
@@ -361,6 +386,15 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setFilters((current) => ({
       ...current,
       exclude_model_list: checked ? true : null,
+    }));
+    setPage(1);
+  };
+
+  const handleOnlyFailedChange = (checked: boolean) => {
+    writeOnlyFailedPreference(checked);
+    setFilters((current) => ({
+      ...current,
+      only_failed: checked ? true : null,
     }));
     setPage(1);
   };
@@ -607,8 +641,8 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'status_code',
       width: 90,
       align: 'right',
-      render: (value: number) => (
-        <span className={value >= 200 && value < 400 ? styles.statusCodeSuccess : styles.statusCodeError}>
+      render: (value: number, record) => (
+        <span className={record.success ? styles.statusCodeSuccess : styles.statusCodeError}>
           {value}
         </span>
       ),
@@ -783,6 +817,13 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               onChange={(event) => handleExcludeModelListChange(event.target.checked)}
             >
               {t('gateway.page.requests.filters.excludeModelList')}
+            </Checkbox>
+            <span className={styles.panelHeaderDivider} aria-hidden="true" />
+            <Checkbox
+              checked={Boolean(filters.only_failed)}
+              onChange={(event) => handleOnlyFailedChange(event.target.checked)}
+            >
+              {t('gateway.page.requests.filters.onlyFailed')}
             </Checkbox>
             <span className={styles.panelHeaderDivider} aria-hidden="true" />
             <span className={styles.panelCount}>

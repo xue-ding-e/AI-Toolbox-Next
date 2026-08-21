@@ -24,41 +24,41 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                 forwarded_path,
                 query,
             }),
-        None => match strip_cli_prefix(&path, "/openai") {
-            Some(forwarded_path)
-                if forwarded_path == "/v1" || forwarded_path.starts_with("/v1/") =>
-            {
-                Some(GatewayRoute {
-                    cli_key: GatewayCliKey::Codex,
-                    route_name: "openai-compatible",
-                    forwarded_path,
-                    query,
-                })
-            }
-            _ => match strip_cli_prefix(&path, "/grok") {
+            None => match strip_cli_prefix(&path, "/openai") {
                 Some(forwarded_path)
-                    if matches!(forwarded_path.as_str(), "/v1" | "/v1/responses") =>
+                    if forwarded_path == "/v1" || forwarded_path.starts_with("/v1/") =>
                 {
                     Some(GatewayRoute {
-                        cli_key: GatewayCliKey::Grok,
-                        route_name: "grok",
+                        cli_key: GatewayCliKey::Codex,
+                        route_name: "openai-compatible",
                         forwarded_path,
                         query,
                     })
                 }
-                _ => match strip_cli_prefix(&path, "/gemini") {
-                    Some(forwarded_path) if is_gemini_versioned_path(&forwarded_path) => {
+                _ => match strip_cli_prefix(&path, "/grok") {
+                    Some(forwarded_path)
+                        if matches!(forwarded_path.as_str(), "/v1" | "/v1/responses") =>
+                    {
                         Some(GatewayRoute {
-                            cli_key: GatewayCliKey::Gemini,
-                            route_name: "gemini",
+                            cli_key: GatewayCliKey::Grok,
+                            route_name: "grok",
                             forwarded_path,
                             query,
                         })
                     }
-                    _ => None,
+                    _ => match strip_cli_prefix(&path, "/gemini") {
+                        Some(forwarded_path) if is_gemini_versioned_path(&forwarded_path) => {
+                            Some(GatewayRoute {
+                                cli_key: GatewayCliKey::Gemini,
+                                route_name: "gemini",
+                                forwarded_path,
+                                query,
+                            })
+                        }
+                        _ => None,
+                    },
                 },
             },
-        },
         },
     }
 }

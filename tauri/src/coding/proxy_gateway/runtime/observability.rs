@@ -1,11 +1,11 @@
 use super::http_io::{DebugHttpRequest, DebugHttpResponse};
 use super::routes::split_request_target;
 use super::GatewayRuntimeContext;
-use crate::coding::proxy_gateway::request_log;
 use crate::coding::proxy_gateway::paths::ProxyGatewayPaths;
+use crate::coding::proxy_gateway::request_log;
 use crate::coding::proxy_gateway::types::{
-    GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayUsageRecordedEvent,
-    ProxyGatewaySettings,
+    GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayStreamOutcome,
+    GatewayUsageRecordedEvent, ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::usage_parser::stable_usage_request_id;
 use crate::coding::proxy_gateway::usage_stats::{self, RecordRequestSummaryOutcome};
@@ -58,6 +58,14 @@ pub(super) fn record_gateway_observability(
 
     let should_record_summary = settings.request_log_enabled || settings.metrics_enabled;
     if should_record_summary {
+        // Derive success from the stream verdict, not the HTTP status code.
+        // Once `write_streaming_body` has written `HTTP/1.1 200`, a later
+        // mid-stream failure can no longer change that code; the outcome
+        // enum records what actually reached the client.
+        let success = match response.stream_outcome {
+            GatewayStreamOutcome::NotStreaming => is_success_status(response.status_code),
+            _ => response.stream_outcome.is_success(),
+        };
         // Build compact fields first (no body/header yet) so usage-key resolution can
         // decide skip/collision before we write expensive JSONL detail.
         let mut detail = GatewayRequestLogDetail {
@@ -79,10 +87,11 @@ pub(super) fn record_gateway_observability(
                 upstream_url: response.upstream_url.clone(),
                 status_code: Some(response.status_code),
                 upstream_status_code: response.upstream_status_code,
-                success: is_success_status(response.status_code),
+                success,
                 error_category: response.error_category.clone(),
-                error_message: (!is_success_status(response.status_code))
-                    .then(|| response.note.clone()),
+                error_message: (!success).then(|| response.note.clone()),
+                stream_outcome: (response.stream_outcome != GatewayStreamOutcome::NotStreaming)
+                    .then_some(response.stream_outcome),
                 duration_ms,
                 attempt_count: response.provider_attempt_count.max(1),
                 total_attempt_count: response.attempt_count.max(1),
@@ -166,7 +175,6 @@ pub(super) fn record_gateway_observability(
         }
     }
 }
-
 
 fn maybe_write_request_detail(
     context: &GatewayRuntimeContext,

@@ -577,6 +577,7 @@ mod tests {
             success: true,
             error_category: None,
             error_message: None,
+            stream_outcome: None,
             duration_ms: 42,
             attempt_count: 1,
             total_attempt_count: 1,
@@ -660,8 +661,14 @@ mod tests {
         // retention_days=7 keeps anything within the last 7 days, drops 2020.
         prune_by_retention(&paths, 7).unwrap();
 
-        assert!(!paths.request_log_root().join(format!("{old_date}.jsonl")).exists());
-        assert!(paths.request_log_root().join(format!("{recent}.jsonl")).exists());
+        assert!(!paths
+            .request_log_root()
+            .join(format!("{old_date}.jsonl"))
+            .exists());
+        assert!(paths
+            .request_log_root()
+            .join(format!("{recent}.jsonl"))
+            .exists());
     }
 
     #[test]

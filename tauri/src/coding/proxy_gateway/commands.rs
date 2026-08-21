@@ -828,6 +828,7 @@ mod tests {
                 success: true,
                 error_category: None,
                 error_message: None,
+                stream_outcome: None,
                 duration_ms: 1,
                 attempt_count: 1,
                 total_attempt_count: 1,

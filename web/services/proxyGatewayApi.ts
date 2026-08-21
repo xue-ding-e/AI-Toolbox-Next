@@ -184,6 +184,13 @@ export interface GatewayRequestLogFilters {
   end_date?: number | null;
   /** When true, backend excludes GET/HEAD model-list requests from the result set. */
   exclude_model_list?: boolean | null;
+  /**
+   * When true, surface only failed requests. A request counts as failed when
+   * its HTTP status is non-2xx/3xx, or its recorded stream outcome is
+   * incomplete/failed/canceled — so a 200 whose stream never delivered a
+   * terminal event to the client is no longer hidden as a clean success.
+   */
+  only_failed?: boolean | null;
 }
 
 export interface GatewayPaginatedRequestLogs {

@@ -48,7 +48,8 @@ impl HeaderPreservingResponse {
                 match body.frame().await {
                     Some(Ok(frame)) => {
                         if let Ok(data) = frame.into_data() {
-                            if out.len().saturating_add(data.len()) > MAX_HEADER_PRESERVING_BODY_BYTES
+                            if out.len().saturating_add(data.len())
+                                > MAX_HEADER_PRESERVING_BODY_BYTES
                             {
                                 return Err(format!(
                                     "Upstream response body exceeded {} bytes",
@@ -181,14 +182,14 @@ pub(super) async fn send_header_preserving_request(
 ) -> Result<HeaderPreservingResponse, HeaderPreservingError> {
     let started = std::time::Instant::now();
     let future = send_raw_request(upstream_url, method, preserved_headers, &body, proxy_url);
-    let mut response = tokio::time::timeout(timeout, future)
-        .await
-        .map_err(|_| HeaderPreservingError::PreWrite {
+    let mut response = tokio::time::timeout(timeout, future).await.map_err(|_| {
+        HeaderPreservingError::PreWrite {
             message: format!(
                 "Timed out sending upstream request after {} seconds",
                 timeout.as_secs()
             ),
-        })??;
+        }
+    })??;
     let elapsed = started.elapsed();
     response.body_timeout = timeout.saturating_sub(elapsed);
     if response.body_timeout.is_zero() {
@@ -237,27 +238,27 @@ async fn send_raw_request(
         body,
     );
 
-    let stream = if let Some(proxy_url) = proxy_url {
-        connect_via_proxy(proxy_url, host, port)
-            .await
-            .map_err(|message| HeaderPreservingError::PreWrite { message })?
-    } else {
-        ProxyStream::Tcp(
-            tokio::net::TcpStream::connect((host, port))
+    let stream =
+        if let Some(proxy_url) = proxy_url {
+            connect_via_proxy(proxy_url, host, port)
                 .await
-                .map_err(|error| HeaderPreservingError::PreWrite {
+                .map_err(|message| HeaderPreservingError::PreWrite { message })?
+        } else {
+            ProxyStream::Tcp(tokio::net::TcpStream::connect((host, port)).await.map_err(
+                |error| HeaderPreservingError::PreWrite {
                     message: format!("TCP connect failed: {error}"),
-                })?,
-        )
-    };
+                },
+            )?)
+        };
 
     if scheme == "https" {
         let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(
-            |error| HeaderPreservingError::PreWrite {
-                message: format!("Invalid upstream server name: {error}"),
-            },
-        )?;
+        let server_name =
+            rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|error| {
+                HeaderPreservingError::PreWrite {
+                    message: format!("Invalid upstream server name: {error}"),
+                }
+            })?;
         let mut tls_stream = tls_connector
             .connect(server_name, stream)
             .await
@@ -265,12 +266,11 @@ async fn send_raw_request(
                 message: format!("TLS handshake failed: {error}"),
             })?;
         // From here on, request bytes may reach the upstream.
-        tls_stream
-            .write_all(&raw_request)
-            .await
-            .map_err(|error| HeaderPreservingError::PostWrite {
+        tls_stream.write_all(&raw_request).await.map_err(|error| {
+            HeaderPreservingError::PostWrite {
                 message: format!("Write failed: {error}"),
-            })?;
+            }
+        })?;
         tls_stream
             .flush()
             .await

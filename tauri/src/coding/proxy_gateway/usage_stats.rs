@@ -2,7 +2,7 @@ use super::request_log;
 use super::types::{
     normalize_pricing_model_source, GatewayCliKey, GatewayModelStats, GatewayPaginatedRequestLogs,
     GatewayProviderStats, GatewayRequestLogDetail, GatewayRequestLogFilters, GatewayRequestLogItem,
-    GatewayRequestLogSummary, GatewayUsageSummary, GatewayUsageSummaryByCli,
+    GatewayRequestLogSummary, GatewayStreamOutcome, GatewayUsageSummary, GatewayUsageSummaryByCli,
     GatewayUsageTrendPoint, ProxyGatewaySettings,
 };
 use crate::db::SqliteDbState;
@@ -263,6 +263,11 @@ pub fn record_request_summary(
             cache_read_tokens,
             cache_creation_tokens,
             status_code,
+            stream_outcome: summary
+                .stream_outcome
+                .filter(|outcome| *outcome != GatewayStreamOutcome::NotStreaming)
+                .map(|outcome| outcome.as_str().to_string()),
+            error_category: summary.error_category.clone(),
         };
         let plan = resolve_usage_request_id(conn, &summary.trace_id, &semantic)?;
         let (request_id, replace_session_log, collision, preserve_existing_detail) = match plan {
@@ -321,6 +326,10 @@ pub fn record_request_summary(
             // land on a collision fallback key instead of overwriting.
             "INSERT OR IGNORE"
         };
+        let stream_outcome_value = summary
+            .stream_outcome
+            .filter(|outcome| *outcome != GatewayStreamOutcome::NotStreaming)
+            .map(|outcome| outcome.as_str());
         let sql = format!(
             "{insert_verb} INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model,
@@ -329,14 +338,16 @@ pub fn record_request_summary(
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
                 cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
-                detail_offset, route_name, method, path, upstream_status_code
+                detail_offset, route_name, method, path, upstream_status_code,
+                stream_outcome, error_category, attempt_count, total_attempt_count
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?22,
-                ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30, ?31
+                ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30, ?31,
+                ?32, ?33, ?34, ?35
             )"
         );
         let affected_rows = conn
@@ -374,6 +385,10 @@ pub fn record_request_summary(
                     method,
                     path,
                     summary.upstream_status_code.map(|value| i64::from(value)),
+                    stream_outcome_value,
+                    summary.error_category,
+                    i64::from(summary.attempt_count.max(1)),
+                    i64::from(summary.total_attempt_count.max(1)),
                 ],
             )
             .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -432,12 +447,21 @@ struct UsageSemantic {
     cache_read_tokens: i64,
     cache_creation_tokens: i64,
     status_code: i64,
+    /// `GatewayStreamOutcome::as_str()` for streaming rows; `None` for
+    /// non-streaming / `NotStreaming` / session-imported rows. Included so two
+    /// rows with the same envelope id and tokens but different stream outcomes
+    /// (one `completed`, one `failed`) are not treated as a same-semantic replay
+    /// and deduplicated away.
+    stream_outcome: Option<String>,
+    /// Persisted error category; included for the same reason as
+    /// `stream_outcome`.
+    error_category: Option<String>,
 }
 
 impl UsageSemantic {
     fn sha256_hex(&self) -> String {
         let encoded = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.app_type,
             self.provider_id,
             self.model,
@@ -445,7 +469,9 @@ impl UsageSemantic {
             self.output_tokens,
             self.cache_read_tokens,
             self.cache_creation_tokens,
-            self.status_code
+            self.status_code,
+            self.stream_outcome.as_deref().unwrap_or(""),
+            self.error_category.as_deref().unwrap_or("")
         );
         Sha256::digest(encoded.as_bytes())
             .iter()
@@ -541,7 +567,8 @@ fn load_existing_usage_semantic(
     conn.query_row(
         "SELECT data_source, app_type, provider_id, model,
                 input_tokens, output_tokens, cache_read_tokens,
-                cache_creation_tokens, status_code
+                cache_creation_tokens, status_code,
+                stream_outcome, error_category
          FROM proxy_request_logs WHERE request_id = ?1",
         [request_id],
         |row| {
@@ -556,6 +583,8 @@ fn load_existing_usage_semantic(
                     cache_read_tokens: row.get(6)?,
                     cache_creation_tokens: row.get(7)?,
                     status_code: row.get(8)?,
+                    stream_outcome: row.get(9)?,
+                    error_category: row.get(10)?,
                 },
             ))
         },
@@ -633,7 +662,7 @@ pub fn request_logs(
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     total_cost_usd, latency_ms, first_token_ms, duration_ms,
                     status_code, error_message, created_at, is_streaming,
-                    route_name, method, path
+                    route_name, method, path, stream_outcome
              FROM proxy_request_logs l
              {where_clause}
              ORDER BY created_at DESC
@@ -664,7 +693,18 @@ pub fn request_logs(
                     upstream_model_id: row.get(3)?,
                     requested_model: row.get(4)?,
                     status_code: row.get::<_, i64>(13)?.max(0) as u16,
-                    success: is_success_status(row.get::<_, i64>(13)?.max(0) as u16),
+                    success: {
+                        let stream_outcome = row
+                            .get::<_, Option<String>>(20)?
+                            .filter(|value| !value.trim().is_empty());
+                        match stream_outcome
+                            .as_deref()
+                            .and_then(GatewayStreamOutcome::from_str)
+                        {
+                            Some(outcome) => outcome.is_success(),
+                            None => is_success_status(row.get::<_, i64>(13)?.max(0) as u16),
+                        }
+                    },
                     error_message: row.get(14)?,
                     created_at: timestamp_to_utc(row.get(15)?),
                     duration_ms: row.get::<_, i64>(12)?.max(0) as u64,
@@ -728,7 +768,7 @@ pub fn usage_summary(
                             COALESCE(SUM(output_tokens), 0),
                             COALESCE(SUM(cache_read_tokens), 0),
                             COALESCE(SUM(cache_creation_tokens), 0),
-                            COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0)
+                            COALESCE(SUM(CASE WHEN (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400)) THEN 1 ELSE 0 END), 0)
                      FROM proxy_request_logs l {detail_where}"
                 ),
                 refs.as_slice(),
@@ -850,7 +890,7 @@ pub fn provider_stats(
                         COUNT(*),
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
-                        COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400)) THEN 1 ELSE 0 END), 0),
                         COALESCE(AVG(latency_ms), 0)
                  FROM proxy_request_logs l
                  {where_clause}
@@ -1286,7 +1326,7 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
                    l.provider_id,
                    {rollup_model_expr} AS rollup_model,
                    COUNT(*) AS request_count,
-                   SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 400 THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400)) THEN 1 ELSE 0 END) AS success_count,
                    COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
                    COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
                    COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens,
@@ -1427,6 +1467,22 @@ fn build_detail_where(
     }
     if filters.exclude_model_list.unwrap_or(false) {
         conditions.push(format!("NOT {}", model_list_request_sql_condition("l")));
+    }
+    if filters.only_failed.unwrap_or(false) {
+        // Surface only failed requests. A request counts as failed when its
+        // HTTP status is non-2xx/3xx, OR its recorded stream outcome is one of
+        // the non-success terminal verdicts (incomplete/failed/canceled). This
+        // catches mid-stream failures on an already-written 200 that the old
+        // status-code-only filter missed.
+        let param_index = params.len() + 1;
+        params.push(Box::new("incomplete".to_string()));
+        params.push(Box::new("failed".to_string()));
+        params.push(Box::new("canceled".to_string()));
+        conditions.push(format!(
+            "(l.status_code < 200 OR l.status_code >= 400 OR l.stream_outcome IN (?{param_index}, ?{}, ?{}))",
+            param_index + 1,
+            param_index + 2,
+        ));
     }
 
     if conditions.is_empty() {
@@ -2117,7 +2173,8 @@ pub fn request_log_detail_from_summary(
                     latency_ms, first_token_ms, duration_ms, status_code, error_message,
                     created_at, is_streaming, total_cost_usd, provider_type,
                     cost_multiplier, pricing_model_source, detail_file, detail_offset,
-                    route_name, method, path, upstream_status_code
+                    route_name, method, path, upstream_status_code,
+                    stream_outcome, error_category, attempt_count, total_attempt_count
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -2133,7 +2190,14 @@ pub fn request_log_detail_from_summary(
                 let ended_at = timestamp_to_utc(row.get(14)?);
                 let started_at = ended_at - Duration::milliseconds(duration_ms as i64);
                 let status_code = row.get::<_, i64>(12)?.max(0) as u16;
-                let success = is_success_status(status_code);
+                let stream_outcome = row
+                    .get::<_, Option<String>>(26)?
+                    .filter(|value| !value.trim().is_empty())
+                    .and_then(|value| GatewayStreamOutcome::from_str(&value));
+                let success = match stream_outcome {
+                    Some(outcome) => outcome.is_success(),
+                    None => is_success_status(status_code),
+                };
                 let total_tokens = input_tokens
                     .saturating_add(output_tokens)
                     .saturating_add(cache_read_tokens)
@@ -2169,11 +2233,18 @@ pub fn request_log_detail_from_summary(
                             .get::<_, Option<i64>>(25)?
                             .map(|value| value.max(0) as u16),
                         success,
-                        error_category: (!success).then(|| "upstream_error".to_string()),
+                        error_category: row.get::<_, Option<String>>(27)?,
                         error_message: row.get(13)?,
+                        stream_outcome,
                         duration_ms,
-                        attempt_count: 1,
-                        total_attempt_count: 1,
+                        attempt_count: row
+                            .get::<_, Option<i64>>(28)?
+                            .map(|value| value.max(0) as u32)
+                            .unwrap_or(1),
+                        total_attempt_count: row
+                            .get::<_, Option<i64>>(29)?
+                            .map(|value| value.max(0) as u32)
+                            .unwrap_or(1),
                         failover: false,
                         input_tokens: Some(input_tokens),
                         output_tokens: Some(output_tokens),
@@ -2267,12 +2338,7 @@ mod tests {
         insert_provider_for_cli(db, GatewayCliKey::Claude, id, name);
     }
 
-    fn insert_provider_for_cli(
-        db: &SqliteDbState,
-        cli_key: GatewayCliKey,
-        id: &str,
-        name: &str,
-    ) {
+    fn insert_provider_for_cli(db: &SqliteDbState, cli_key: GatewayCliKey, id: &str, name: &str) {
         let table = match cli_key {
             GatewayCliKey::Claude => DbTable::ClaudeProvider,
             GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
@@ -2413,6 +2479,7 @@ mod tests {
                 success: (200..400).contains(&status_code),
                 error_category: None,
                 error_message: None,
+                stream_outcome: None,
                 duration_ms: 1200,
                 attempt_count: 2,
                 total_attempt_count: 3,
@@ -2495,8 +2562,6 @@ mod tests {
             "response_headers",
             "upstream_response_body",
             "response_body",
-            "attempt_count",
-            "total_attempt_count",
             "request_body_bytes",
             "response_body_bytes",
         ] {
@@ -3012,11 +3077,23 @@ mod tests {
     #[test]
     fn load_provider_names_resolves_grok_provider_display_name() {
         let db = test_db();
-        insert_provider_for_cli(&db, GatewayCliKey::Grok, "provider-grok", "Grok Display Name");
+        insert_provider_for_cli(
+            &db,
+            GatewayCliKey::Grok,
+            "provider-grok",
+            "Grok Display Name",
+        );
         record_request_summary(
             &db,
             &ProxyGatewaySettings::default(),
-            &make_detail_for_cli(GatewayCliKey::Grok, "trace-grok", "provider-grok", 200, 9, 4),
+            &make_detail_for_cli(
+                GatewayCliKey::Grok,
+                "trace-grok",
+                "provider-grok",
+                200,
+                9,
+                4,
+            ),
         )
         .expect("record grok summary");
 
@@ -3592,5 +3669,237 @@ mod tests {
         assert_eq!(trend_rows[0].date, "2026-05-18");
         assert_eq!(trend_rows[0].request_count, 4);
         assert_eq!(trend_rows[0].total_tokens, 59);
+    }
+
+    #[test]
+    fn record_request_summary_persists_stream_outcome_and_category() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        let mut detail = make_detail("trace-stream-failed", "provider-alpha", 200, 10, 20);
+        detail.summary.success = false;
+        detail.summary.stream_outcome = Some(GatewayStreamOutcome::Incomplete);
+        detail.summary.error_category = Some("stream_incomplete".to_string());
+        detail.summary.error_message = Some("stream ended without a terminal event".to_string());
+        detail.summary.attempt_count = 2;
+        detail.summary.total_attempt_count = 3;
+
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record summary");
+
+        let loaded = request_log_detail_from_summary(&db, "trace-stream-failed")
+            .expect("load detail")
+            .expect("row exists");
+        let summary = loaded.summary;
+        assert!(
+            !summary.success,
+            "a 200 with an incomplete stream is not success"
+        );
+        assert_eq!(
+            summary.stream_outcome,
+            Some(GatewayStreamOutcome::Incomplete)
+        );
+        assert_eq!(summary.error_category.as_deref(), Some("stream_incomplete"));
+        assert_eq!(summary.attempt_count, 2);
+        assert_eq!(summary.total_attempt_count, 3);
+    }
+
+    #[test]
+    fn request_logs_only_failed_surfaces_mid_stream_failures_on_200() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings::default();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+
+        // Clean 200 success.
+        let success = make_detail("trace-success", "provider-alpha", 200, 10, 20);
+        record_request_summary(&db, &settings, &success).expect("record success");
+
+        // 200 whose stream never delivered a terminal event (the bug class).
+        let mut incomplete = make_detail("trace-incomplete", "provider-alpha", 200, 10, 20);
+        incomplete.summary.stream_outcome = Some(GatewayStreamOutcome::Incomplete);
+        incomplete.summary.success = false;
+        record_request_summary(&db, &settings, &incomplete).expect("record incomplete");
+
+        // A genuine 500 failure.
+        let mut failed = make_detail("trace-failed", "provider-alpha", 500, 10, 20);
+        failed.summary.success = false;
+        record_request_summary(&db, &settings, &failed).expect("record failed");
+
+        let logs = request_logs(
+            &db,
+            &GatewayRequestLogFilters {
+                only_failed: Some(true),
+                ..GatewayRequestLogFilters::default()
+            },
+            0,
+            10,
+        )
+        .expect("request logs");
+
+        let trace_ids: Vec<&str> = logs
+            .data
+            .iter()
+            .map(|item| item.trace_id.as_str())
+            .collect();
+        assert!(trace_ids.contains(&"trace-incomplete"));
+        assert!(trace_ids.contains(&"trace-failed"));
+        assert!(!trace_ids.contains(&"trace-success"));
+        assert_eq!(logs.total, 2);
+        // The mid-stream failure must read as success=false despite status 200.
+        let incomplete_item = logs
+            .data
+            .iter()
+            .find(|item| item.trace_id == "trace-incomplete")
+            .expect("incomplete row present");
+        assert!(!incomplete_item.success);
+        assert_eq!(incomplete_item.status_code, 200);
+    }
+
+    #[test]
+    fn request_logs_only_failed_falls_back_to_status_for_legacy_rows() {
+        // Rows written before the stream_outcome column (NULL) must still surface
+        // in the failed filter when their HTTP status is a failure.
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        let mut legacy = make_detail("trace-legacy-429", "provider-alpha", 429, 10, 20);
+        legacy.summary.success = false;
+        legacy.summary.stream_outcome = None;
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &legacy)
+            .expect("record legacy");
+
+        let logs = request_logs(
+            &db,
+            &GatewayRequestLogFilters {
+                only_failed: Some(true),
+                ..GatewayRequestLogFilters::default()
+            },
+            0,
+            10,
+        )
+        .expect("request logs");
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data[0].trace_id, "trace-legacy-429");
+    }
+
+    #[test]
+    fn record_request_summary_marks_error_terminal_event_as_failed() {
+        // A 200 stream that delivered an `error` / `response.failed` envelope
+        // ends properly (terminal event delivered) but is a failure, not a
+        // success — the original bug class recorded these as clean successes.
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        let mut detail = make_detail("trace-error-envelope", "provider-alpha", 200, 10, 20);
+        detail.summary.stream_outcome = Some(GatewayStreamOutcome::Failed);
+        detail.summary.success = false;
+        detail.summary.error_category = Some("upstream_stream_error".to_string());
+        detail.summary.error_message =
+            Some("upstream stream delivered a non-success terminal event".to_string());
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record error envelope");
+
+        let loaded = request_log_detail_from_summary(&db, "trace-error-envelope")
+            .expect("load detail")
+            .expect("row exists");
+        assert_eq!(
+            loaded.summary.stream_outcome,
+            Some(GatewayStreamOutcome::Failed)
+        );
+        assert!(!loaded.summary.success);
+        assert_eq!(
+            loaded.summary.error_category.as_deref(),
+            Some("upstream_stream_error")
+        );
+
+        // And the only-failed filter surfaces it despite the 200 status.
+        let logs = request_logs(
+            &db,
+            &GatewayRequestLogFilters {
+                only_failed: Some(true),
+                ..GatewayRequestLogFilters::default()
+            },
+            0,
+            10,
+        )
+        .expect("request logs");
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data[0].trace_id, "trace-error-envelope");
+        assert_eq!(logs.data[0].status_code, 200);
+        assert!(!logs.data[0].success);
+    }
+
+    #[test]
+    fn usage_summary_success_rate_counts_stream_failures_on_200() {
+        // The core bug: a 200 whose stream never delivered a terminal event
+        // (Incomplete) must lower the stats-page success rate, not read as 100%.
+        let db = test_db();
+        let settings = ProxyGatewaySettings::default();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+
+        // Clean 200 success.
+        let ok = make_detail("trace-ok", "provider-alpha", 200, 10, 20);
+        record_request_summary(&db, &settings, &ok).expect("record ok");
+
+        // 200 + Incomplete stream: must NOT count as success in stats.
+        let mut incomplete = make_detail("trace-incomplete", "provider-alpha", 200, 10, 20);
+        incomplete.summary.stream_outcome = Some(GatewayStreamOutcome::Incomplete);
+        incomplete.summary.success = false;
+        record_request_summary(&db, &settings, &incomplete).expect("record incomplete");
+
+        let summary = usage_summary(&db, None, None, Some(GatewayCliKey::Claude)).expect("summary");
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.success_rate, 50.0);
+
+        // Provider stats must agree.
+        let provider_rows =
+            provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("provider stats");
+        assert_eq!(provider_rows[0].request_count, 2);
+        assert_eq!(provider_rows[0].success_rate, 50.0);
+    }
+
+    #[test]
+    fn usage_summary_success_rate_counts_failed_terminal_on_200() {
+        // A 200 that delivered an `error`/`response.failed` envelope (Failed)
+        // must also lower the success rate.
+        let db = test_db();
+        let settings = ProxyGatewaySettings::default();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+
+        let ok = make_detail("trace-ok", "provider-alpha", 200, 10, 20);
+        record_request_summary(&db, &settings, &ok).expect("record ok");
+
+        let mut failed = make_detail("trace-failed", "provider-alpha", 200, 10, 20);
+        failed.summary.stream_outcome = Some(GatewayStreamOutcome::Failed);
+        failed.summary.success = false;
+        record_request_summary(&db, &settings, &failed).expect("record failed");
+
+        let summary = usage_summary(&db, None, None, Some(GatewayCliKey::Claude)).expect("summary");
+        assert_eq!(summary.success_rate, 50.0);
+    }
+
+    #[test]
+    fn usage_semantic_distinguishes_completed_from_failed_on_same_envelope() {
+        // Same envelope id + tokens + 200, but one Completed and one Failed:
+        // the second must NOT be deduplicated as a same-semantic replay.
+        let db = test_db();
+        let settings = ProxyGatewaySettings::default();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+
+        let mut completed = make_detail("trace-shared", "provider-alpha", 200, 10, 20);
+        completed.summary.stream_outcome = Some(GatewayStreamOutcome::Completed);
+        completed.summary.success = true;
+        record_request_summary(&db, &settings, &completed).expect("record completed");
+
+        let mut failed = make_detail("trace-shared", "provider-alpha", 200, 10, 20);
+        failed.summary.stream_outcome = Some(GatewayStreamOutcome::Failed);
+        failed.summary.success = false;
+        failed.summary.error_category = Some("upstream_stream_error".to_string());
+        // Different trace_id so the collision-fallback path is exercised by
+        // the stream_outcome difference, not the trace id.
+        let _ = failed;
+        record_request_summary(&db, &settings, &failed).expect("record failed");
+
+        let logs =
+            request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10).expect("request logs");
+        // Both rows survive (the replay idempotency did not swallow the failed one).
+        assert_eq!(logs.total, 2);
     }
 }

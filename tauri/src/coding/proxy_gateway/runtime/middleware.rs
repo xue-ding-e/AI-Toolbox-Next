@@ -92,11 +92,7 @@ impl Middleware for BillingHeaderCchMiddleware {
         self.restore_billing_cch_if_anthropic(body, ctx)
     }
 
-    fn on_outbound_response(
-        &self,
-        body: &mut Value,
-        ctx: &PipelineContext,
-    ) -> Result<(), String> {
+    fn on_outbound_response(&self, body: &mut Value, ctx: &PipelineContext) -> Result<(), String> {
         // Client-facing reverse: same restore when response still carries billing header text.
         // Non-Anthropic targets keep stripped text so dynamic cch never leaks back.
         self.restore_billing_cch_if_anthropic(body, ctx)

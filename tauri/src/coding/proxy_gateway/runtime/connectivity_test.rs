@@ -364,8 +364,8 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::remaining_total_timeout;
     use super::super::upstream::gateway_body_reports_error;
+    use super::remaining_total_timeout;
     use std::time::Duration;
 
     #[test]

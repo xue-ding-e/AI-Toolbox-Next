@@ -1039,10 +1039,7 @@ mod tests {
         apply_xai_responses_passthrough(&mut body).unwrap();
 
         let tools = body["tools"].as_array().unwrap();
-        let types: Vec<&str> = tools
-            .iter()
-            .map(|t| t["type"].as_str().unwrap())
-            .collect();
+        let types: Vec<&str> = tools.iter().map(|t| t["type"].as_str().unwrap()).collect();
         assert_eq!(types, vec!["function", "function"]);
         assert!(body.get("prompt_cache_retention").is_none());
         assert!(tools.iter().any(|t| t["name"] == "mcp__files____read"));

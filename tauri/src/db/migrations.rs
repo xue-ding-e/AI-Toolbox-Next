@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 13;
+pub const TARGET_SCHEMA_VERSION: i32 = 14;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -46,6 +46,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 13 {
         run_migration_step(conn, 13, migrate_v13)?;
+    }
+    if current_version < 14 {
+        run_migration_step(conn, 14, migrate_v14)?;
     }
 
     Ok(())
@@ -281,7 +284,41 @@ fn migrate_v12(conn: &Connection) -> Result<(), String> {
 fn migrate_v13(conn: &Connection) -> Result<(), String> {
     // Surface the upstream's original HTTP status alongside the gateway's synthetic
     // code (e.g. a 200 SSE stream carrying an error envelope is rewritten to 502).
-    add_column_if_missing(conn, "proxy_request_logs", "upstream_status_code", "INTEGER")
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "upstream_status_code",
+        "INTEGER",
+    )
+}
+
+fn migrate_v14(conn: &Connection) -> Result<(), String> {
+    // Record how the streaming response actually ended for the client, independent
+    // of the (already-sent) 200 status. Mid-stream failures on a written 200 are
+    // no longer recorded as successes. `stream_outcome` is NULL for non-streaming
+    // and legacy rows, which fall back to status-code-based success derivation.
+    add_column_if_missing(conn, "proxy_request_logs", "stream_outcome", "TEXT")?;
+    // Persist the real error category instead of fabricating "upstream_error" on
+    // read-back; NULL for legacy rows.
+    add_column_if_missing(conn, "proxy_request_logs", "error_category", "TEXT")?;
+    // Persist attempt counts instead of hardcoding 1 on read-back.
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "attempt_count",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "total_attempt_count",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_request_logs_stream_outcome
+            ON proxy_request_logs(stream_outcome);",
+    )
+    .map_err(|error| format!("Failed to create proxy gateway stream outcome index: {error}"))
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

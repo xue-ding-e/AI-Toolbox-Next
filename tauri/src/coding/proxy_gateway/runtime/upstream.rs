@@ -38,7 +38,7 @@ use crate::coding::proxy_gateway::transformer::{
 };
 use crate::coding::proxy_gateway::types::{
     CodexChatReasoningMeta, GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt,
-    GatewayProxyMode, ProviderGatewayMeta, ProviderModelHealthKey,
+    GatewayProxyMode, GatewayStreamOutcome, ProviderGatewayMeta, ProviderModelHealthKey,
 };
 use crate::coding::proxy_gateway::usage_parser::{
     from_response_body_with_provider_type, TokenUsage,
@@ -191,9 +191,8 @@ impl UpstreamResponse {
             Self::Reqwest(response) => {
                 let future = response.bytes();
                 let result = if let Some(timeout) = timeout {
-                    tokio::time::timeout(timeout, future)
-                        .await
-                        .map_err(|_| GatewayForwardError {
+                    tokio::time::timeout(timeout, future).await.map_err(|_| {
+                        GatewayForwardError {
                             message: format!(
                                 "Timed out reading upstream response body after {} seconds",
                                 timeout.as_secs()
@@ -202,26 +201,26 @@ impl UpstreamResponse {
                             upstream_request_body: None,
                             upstream_response_body: None,
                             upstream_response_body_bytes: 0,
-                        })?
+                        }
+                    })?
                 } else {
                     future.await
                 };
-                result.map(|bytes| bytes.to_vec()).map_err(|error| {
-                    GatewayForwardError {
+                result
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(|error| GatewayForwardError {
                         message: format!("Failed to read upstream response body: {error}"),
                         kind: classify_reqwest_error(&error),
                         upstream_request_body: None,
                         upstream_response_body: None,
                         upstream_response_body_bytes: 0,
-                    }
-                })
+                    })
             }
             Self::HeaderPreserving(response) => {
                 // Header-preserving path already applies body_timeout inside bytes().
-                response
-                    .bytes()
-                    .await
-                    .map_err(|error| GatewayForwardError::new(error, GatewayFailureKind::Connection))
+                response.bytes().await.map_err(|error| {
+                    GatewayForwardError::new(error, GatewayFailureKind::Connection)
+                })
             }
         }
     }
@@ -1618,6 +1617,9 @@ async fn build_gateway_response(
     let status = response.status();
     let mut response_headers = filtered_response_headers(response.headers());
     append_lossy_warning_header(&mut response_headers, &lossy_warnings);
+    // Client-facing protocol of this route, used to render a protocol-dialect
+    // error event when a stream ends abnormally after headers were written.
+    let source_protocol = source_protocol_from_route(route);
     let provider_kind =
         ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol);
     let should_stream = should_stream_response(request, route, response.headers(), status.as_u16())
@@ -1636,17 +1638,16 @@ async fn build_gateway_response(
         response.headers(),
         status.as_u16(),
     ) {
-        let (upstream_response_body, mut body) =
-            aggregate_sse_stream_for_non_streaming_client(
-                aggregate_kind,
-                response.bytes_stream(),
-                upstream_response_snapshot_limit,
-            )
-                .await
-                .map_err(|mut error| {
-                    error.upstream_request_body = Some(upstream_body_snapshot.clone());
-                    error
-                })?;
+        let (upstream_response_body, mut body) = aggregate_sse_stream_for_non_streaming_client(
+            aggregate_kind,
+            response.bytes_stream(),
+            upstream_response_snapshot_limit,
+        )
+        .await
+        .map_err(|mut error| {
+            error.upstream_request_body = Some(upstream_body_snapshot.clone());
+            error
+        })?;
         let upstream_response_body_bytes = upstream_response_body.len() as u64;
         let target_response_body = body.clone();
         if compact_compat.is_compact() {
@@ -1727,6 +1728,8 @@ async fn build_gateway_response(
             provider_attempt_count: 1,
             provider_attempts: Vec::new(),
             failover: false,
+            source_protocol: None,
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: format!(
                 "aggregated {} streaming response from provider id={} name={}",
                 aggregate_kind.label(),
@@ -1820,6 +1823,8 @@ async fn build_gateway_response(
             provider_attempt_count: 1,
             provider_attempts: Vec::new(),
             failover: false,
+            source_protocol,
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: format!(
                 "streaming forwarded to provider id={} name={}",
                 provider.id, provider.name
@@ -1970,6 +1975,8 @@ async fn build_gateway_response(
         provider_attempt_count: 1,
         provider_attempts: Vec::new(),
         failover: false,
+        source_protocol: source_protocol_from_route(route),
+        stream_outcome: GatewayStreamOutcome::NotStreaming,
         note: format!(
             "forwarded to provider id={} name={}",
             provider.id, provider.name
@@ -2058,9 +2065,7 @@ async fn aggregate_sse_stream_for_non_streaming_client(
         SseAggregateKind::AnthropicMessages => {
             aggregate_anthropic_sse_stream(stream, raw_body_limit).await
         }
-        SseAggregateKind::GeminiNative => {
-            aggregate_gemini_sse_stream(stream, raw_body_limit).await
-        }
+        SseAggregateKind::GeminiNative => aggregate_gemini_sse_stream(stream, raw_body_limit).await,
     }
 }
 
@@ -2131,11 +2136,7 @@ async fn aggregate_gemini_sse_stream(
 /// Fallback only when caller did not pass store_response_body snapshot limit.
 const FORCED_STREAM_RAW_BODY_FALLBACK_LIMIT: usize = 16 * 1024 * 1024;
 
-fn append_bounded_raw_body(
-    raw_body: &mut Vec<u8>,
-    chunk: &[u8],
-    raw_body_limit: Option<usize>,
-) {
+fn append_bounded_raw_body(raw_body: &mut Vec<u8>, chunk: &[u8], raw_body_limit: Option<usize>) {
     let limit = raw_body_limit.unwrap_or(FORCED_STREAM_RAW_BODY_FALLBACK_LIMIT);
     let remaining = limit.saturating_sub(raw_body.len());
     if remaining == 0 {
@@ -2453,7 +2454,10 @@ impl AnthropicSseAggregate {
             let tail = std::mem::take(&mut self.buffer);
             self.push_block(&tail);
         }
-        let has_terminal = self.stop_reason.as_ref().is_some_and(|reason| !reason.is_empty());
+        let has_terminal = self
+            .stop_reason
+            .as_ref()
+            .is_some_and(|reason| !reason.is_empty());
         // Fail-closed: a stream that ends without any terminal stop_reason is
         // treated as a connection failure even when no content block arrived,
         // so a truncated/empty stream is never surfaced to the non-streaming
@@ -3996,6 +4000,8 @@ fn buffered_gateway_response(
         provider_attempt_count: 1,
         provider_attempts: Vec::new(),
         failover: false,
+        source_protocol: source_protocol_from_route(route),
+        stream_outcome: GatewayStreamOutcome::NotStreaming,
         note: format!(
             "forwarded to provider id={} name={}",
             provider.id, provider.name
@@ -4016,10 +4022,11 @@ fn streaming_first_chunk_failure_response(
     failover: bool,
 ) -> DebugHttpResponse {
     // Prefer the probe-captured envelope, then any snapshot already on the response.
-    let captured_upstream_body = error
-        .upstream_response_body
-        .clone()
-        .or_else(|| response.upstream_response_body_snapshot().map(|(body, _)| body));
+    let captured_upstream_body = error.upstream_response_body.clone().or_else(|| {
+        response
+            .upstream_response_body_snapshot()
+            .map(|(body, _)| body)
+    });
     // Surface the upstream's own failure reason (error.message / error.type) when the
     // snapshot carries an envelope; otherwise keep the generic probe message. This does
     // not affect probing, retry, or failover — those are driven by `GatewayFailureKind`.
@@ -9984,7 +9991,7 @@ fn is_model_available(
         .unwrap_or(true)
 }
 
-fn record_health_failure(
+pub(super) fn record_health_failure(
     context: &GatewayRuntimeContext,
     health_key: &ProviderModelHealthKey,
     kind: GatewayFailureKind,
@@ -11621,7 +11628,9 @@ data: {data}\r\n\r\n"
         provider.model_mapping.haiku_model = Some("deepseek-haiku".to_string());
         provider.model_mapping.sonnet_model = Some("deepseek-sonnet".to_string());
 
-        let request = debug_request(br#"{"model":"claude-sonnet-5","thinking":{"type":"enabled","budget_tokens":2048}}"#);
+        let request = debug_request(
+            br#"{"model":"claude-sonnet-5","thinking":{"type":"enabled","budget_tokens":2048}}"#,
+        );
         assert_eq!(
             resolve_upstream_model_id(&request, "claude-sonnet-5", &provider, true, true),
             "deepseek-sonnet"
@@ -11824,13 +11833,7 @@ data: {data}\r\n\r\n"
         request.headers = vec![("x-openai-subagent".to_string(), "auto_review".to_string())];
 
         assert_eq!(
-            resolve_upstream_model_id(
-                &request,
-                "requested-review-model",
-                &provider,
-                true,
-                true,
-            ),
+            resolve_upstream_model_id(&request, "requested-review-model", &provider, true, true,),
             "p1-review"
         );
     }
@@ -11841,10 +11844,7 @@ data: {data}\r\n\r\n"
         provider.model_mapping.default_model = Some("p1-main".to_string());
         provider.model_mapping.auto_review_model = Some("p1-review".to_string());
 
-        assert_eq!(
-            resolve_model("gpt-5.4-codex", &provider, true),
-            "p1-main"
-        );
+        assert_eq!(resolve_model("gpt-5.4-codex", &provider, true), "p1-main");
     }
 
     #[test]
@@ -12258,6 +12258,8 @@ data: {data}\r\n\r\n"
             provider_attempt_count: 1,
             provider_attempts: Vec::new(),
             failover: false,
+            source_protocol: None,
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         }
     }
@@ -12496,8 +12498,9 @@ data: {data}\r\n\r\n"
             "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\",",
             "\"blockReasonMessage\":\"blocked by safety filters\"},\"candidates\":[]}\n\n"
         );
-        let stream: DebugBodyStream =
-            Box::pin(futures_util::stream::iter(vec![Ok(sse.as_bytes().to_vec())]));
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(sse
+            .as_bytes()
+            .to_vec())]));
         let mut response = protocol_error_debug_response(b"");
         response.is_streaming = true;
         response.headers = vec![("Content-Type".to_string(), "text/event-stream".to_string())];
@@ -14059,14 +14062,13 @@ data: {data}\r\n\r\n"
             ..provider_for_cli(GatewayCliKey::Claude)
         };
         let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
-        let request = debug_request_with_headers(
-            body,
-            vec![("User-Agent", "old-agent")],
-        );
+        let request = debug_request_with_headers(body, vec![("User-Agent", "old-agent")]);
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         assert_eq!(
-            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            headers
+                .get("user-agent")
+                .and_then(|value| value.to_str().ok()),
             Some("claude-cli/2.1.161 (external, cli)")
         );
     }
@@ -14085,7 +14087,9 @@ data: {data}\r\n\r\n"
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         assert_eq!(
-            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            headers
+                .get("user-agent")
+                .and_then(|value| value.to_str().ok()),
             Some("claude-code/1.0.0")
         );
     }
@@ -14097,14 +14101,13 @@ data: {data}\r\n\r\n"
             ..provider_for_cli(GatewayCliKey::Claude)
         };
         let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
-        let request = debug_request_with_headers(
-            body,
-            vec![("User-Agent", "client-agent")],
-        );
+        let request = debug_request_with_headers(body, vec![("User-Agent", "client-agent")]);
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         assert_eq!(
-            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            headers
+                .get("user-agent")
+                .and_then(|value| value.to_str().ok()),
             Some("client-agent")
         );
     }
@@ -14121,15 +14124,14 @@ data: {data}\r\n\r\n"
             ..provider_for_cli(GatewayCliKey::OpenCode)
         };
         let body = br#"{"model":"gpt-5","messages":[{"role":"user","content":"hi"}]}"#;
-        let request = debug_request_with_headers(
-            body,
-            vec![("User-Agent", "old-agent")],
-        );
+        let request = debug_request_with_headers(body, vec![("User-Agent", "old-agent")]);
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         // Copilot fingerprint UA must not be overridden by a custom header op.
         assert_eq!(
-            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            headers
+                .get("user-agent")
+                .and_then(|value| value.to_str().ok()),
             Some("GitHubCopilotChat/0.38.2")
         );
     }
@@ -14145,15 +14147,14 @@ data: {data}\r\n\r\n"
             ..provider_for_cli(GatewayCliKey::Claude)
         };
         let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
-        let request = debug_request_with_headers(
-            body,
-            vec![("User-Agent", "client-agent")],
-        );
+        let request = debug_request_with_headers(body, vec![("User-Agent", "client-agent")]);
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         // Invalid custom value is silently ignored; client UA is preserved.
         assert_eq!(
-            headers.get("user-agent").and_then(|value| value.to_str().ok()),
+            headers
+                .get("user-agent")
+                .and_then(|value| value.to_str().ok()),
             Some("client-agent")
         );
     }
@@ -14168,10 +14169,7 @@ data: {data}\r\n\r\n"
             ..provider_for_cli(GatewayCliKey::Claude)
         };
         let body = br#"{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
-        let request = debug_request_with_headers(
-            body,
-            vec![("User-Agent", "old-agent")],
-        );
+        let request = debug_request_with_headers(body, vec![("User-Agent", "old-agent")]);
         let headers = build_upstream_headers(&request, &provider, Some(body)).unwrap();
 
         let preserved_user_agents = headers
@@ -14180,7 +14178,10 @@ data: {data}\r\n\r\n"
             .filter(|header| header.name.eq_ignore_ascii_case("user-agent"))
             .collect::<Vec<_>>();
         assert_eq!(preserved_user_agents.len(), 1);
-        assert_eq!(preserved_user_agents[0].value.to_str().unwrap(), "claude-cli/2.1.161");
+        assert_eq!(
+            preserved_user_agents[0].value.to_str().unwrap(),
+            "claude-cli/2.1.161"
+        );
     }
 
     #[test]
@@ -14306,7 +14307,9 @@ data: {data}\r\n\r\n"
 
         // Invalid name is ignored; existing headers are preserved.
         assert_eq!(
-            headers.get("x-custom").and_then(|value| value.to_str().ok()),
+            headers
+                .get("x-custom")
+                .and_then(|value| value.to_str().ok()),
             Some("client")
         );
     }
@@ -14513,6 +14516,8 @@ data: {data}\r\n\r\n"
             provider_attempt_count: 1,
             provider_attempts: Vec::new(),
             failover: false,
+            source_protocol: None,
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         };
 
@@ -14571,6 +14576,8 @@ data: {data}\r\n\r\n"
             provider_attempt_count: 1,
             provider_attempts: Vec::new(),
             failover: false,
+            source_protocol: None,
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         };
 
@@ -14620,8 +14627,9 @@ data: {data}\r\n\r\n"
         let stream = Box::pin(futures_util::stream::iter(vec![Ok(sse
             .as_bytes()
             .to_vec())]));
-        let error = tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
-            .expect_err("missing Responses terminal event must fail closed");
+        let error =
+            tauri::async_runtime::block_on(aggregate_openai_responses_sse_stream(stream, None))
+                .expect_err("missing Responses terminal event must fail closed");
 
         assert_eq!(error.kind, GatewayFailureKind::Connection);
         assert!(error.message.contains("without a terminal event"));

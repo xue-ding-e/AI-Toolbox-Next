@@ -1,10 +1,11 @@
 use super::content_encoding::{
     decompress_body, get_content_encoding_from_pairs, is_supported_content_encoding,
 };
+use crate::coding::proxy_gateway::transformer::AiProtocol;
 use crate::coding::proxy_gateway::types::{
-    GatewayCliKey, GatewayProviderAttempt, ProxyGatewaySettings,
+    GatewayCliKey, GatewayProviderAttempt, GatewayStreamOutcome, ProxyGatewaySettings,
 };
-use crate::coding::proxy_gateway::usage_parser::{SseUsageCollector, TokenUsage};
+use crate::coding::proxy_gateway::usage_parser::{SseTerminalKind, SseUsageCollector, TokenUsage};
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 use std::io::Write;
@@ -20,6 +21,147 @@ pub(super) const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 pub(super) type DebugBodyStream =
     Pin<Box<dyn Stream<Item = Result<Vec<u8>, String>> + Send + 'static>>;
+
+/// Distinguish a client disconnect (the client is gone, so writing more would
+/// be wasted) from other write errors. Once the terminal event has already been
+/// delivered, a subsequent disconnect still counts as a successful stream.
+fn is_client_disconnect_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::WriteZero
+    )
+}
+
+/// Classify how a streaming response ended for the client, mirroring axonhub's
+/// `writeSSEStreamEnd` three-way priority:
+/// - `Failed` terminal delivered (`error` / `response.failed` /
+///   `response.completed`+`status=failed`) -> `Failed`: the stream ended
+///   properly but carried a protocol failure;
+/// - success terminal delivered -> `Completed` (success even if the client
+///   disconnects immediately afterwards);
+/// - `Incomplete` / `Canceled` terminal delivered -> the matching outcome, so
+///   the gateway's own cross-protocol `response.completed`+`status=incomplete`
+///   is not collapsed into `Completed`;
+/// - explicit stream error (idle timeout / upstream stream error) -> `Failed`;
+/// - client disconnected before the terminal event -> `Canceled`;
+/// - stream ended at EOF without a terminal event and without an error ->
+///   `Incomplete` (a failed stream the client read as a truncated success).
+fn classify_stream_outcome(
+    write_result: &std::io::Result<()>,
+    terminal_kind_delivered: Option<SseTerminalKind>,
+    idle_timeout: bool,
+    upstream_stream_error: bool,
+) -> GatewayStreamOutcome {
+    match terminal_kind_delivered {
+        Some(SseTerminalKind::Failed) => GatewayStreamOutcome::Failed,
+        Some(SseTerminalKind::Success) => GatewayStreamOutcome::Completed,
+        Some(SseTerminalKind::Incomplete) => GatewayStreamOutcome::Incomplete,
+        Some(SseTerminalKind::Canceled) => GatewayStreamOutcome::Canceled,
+        None => {
+            let client_disconnected = write_result
+                .as_ref()
+                .err()
+                .is_some_and(is_client_disconnect_error);
+            if idle_timeout || upstream_stream_error {
+                GatewayStreamOutcome::Failed
+            } else if client_disconnected {
+                GatewayStreamOutcome::Canceled
+            } else {
+                GatewayStreamOutcome::Incomplete
+            }
+        }
+    }
+}
+
+/// Render a protocol-dialect SSE error event so the client receives a clear
+/// failure instead of a silently truncated chunked stream. The shape follows
+/// the client's own protocol: Anthropic `event: error`, Responses
+/// `response.failed`, Gemini's `{code,message,status}` envelope, and a generic
+/// chat-compat error object for OpenAI Chat / unknown routes. Only meaningful
+/// for SSE responses.
+fn render_stream_error_event(
+    source_protocol: Option<AiProtocol>,
+    code: &str,
+    message: &str,
+) -> Vec<u8> {
+    let body = match source_protocol {
+        Some(AiProtocol::AnthropicMessages) => {
+            let payload = serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": message,
+                },
+            });
+            format!(
+                "event: error\ndata: {}\n\n",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        }
+        Some(AiProtocol::OpenAiResponses) => {
+            let payload = serde_json::json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_gateway_stream_error",
+                    "object": "response",
+                    "status": "failed",
+                    "error": {
+                        "code": code,
+                        "message": message,
+                    },
+                },
+            });
+            format!(
+                "event: response.failed\ndata: {}\n\n",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        }
+        Some(AiProtocol::GeminiNative) => {
+            // Gemini's native error envelope is `{"error":{"code":<numeric>,
+            // "message":..,"status":..}}` (see `transformer::gemini::convert`).
+            // Map the internal category string to an HTTP-like numeric code so
+            // `gemini_stream_error` produces a valid Gemini status; otherwise it
+            // falls back to 500 / INTERNAL.
+            let gemini_code = match code {
+                "stream_idle_timeout" => "408",
+                _ => "500",
+            };
+            let payload = crate::coding::proxy_gateway::transformer::gemini_stream_error(
+                gemini_code, message,
+            );
+            format!(
+                "data: {}\n\n",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        }
+        // OpenAI Chat and unknown routes: a generic chat-compatible error object.
+        _ => {
+            let payload = serde_json::json!({
+                "error": {
+                    "message": message,
+                    "type": "server_error",
+                    "code": code,
+                },
+            });
+            format!(
+                "data: {}\n\n",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        }
+    };
+    body.into_bytes()
+}
+
+/// Whether the response is being delivered as an SSE stream, so an error event
+/// rendered in the client's protocol dialect is meaningful.
+fn response_is_sse(headers: &[(String, String)]) -> bool {
+    header_value(headers, "content-type")
+        .map(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+        .unwrap_or(false)
+}
 
 #[derive(Clone)]
 pub(super) struct SharedBodySnapshot {
@@ -109,6 +251,14 @@ pub(super) struct DebugHttpResponse {
     pub(super) provider_attempts: Vec<GatewayProviderAttempt>,
     pub(super) failover: bool,
     pub(super) note: String,
+    /// Client-facing protocol of the request that produced this response. Used to
+    /// render a protocol-dialect error event when the stream ends abnormally.
+    pub(super) source_protocol: Option<AiProtocol>,
+    /// How the streaming response actually ended for the client. Set by
+    /// `write_streaming_body` from the terminal-event verdict; `NotStreaming`
+    /// for non-streaming responses. Drives `success` in observability instead of
+    /// the (already-sent) HTTP status code.
+    pub(super) stream_outcome: GatewayStreamOutcome,
 }
 
 impl DebugHttpResponse {
@@ -292,6 +442,8 @@ pub(super) fn json_response(
         provider_attempts: Vec::new(),
         failover: false,
         note: note.to_string(),
+        source_protocol: None,
+        stream_outcome: GatewayStreamOutcome::NotStreaming,
     }
 }
 
@@ -332,6 +484,8 @@ pub(super) fn empty_response(
         provider_attempts: Vec::new(),
         failover: false,
         note: note.to_string(),
+        source_protocol: None,
+        stream_outcome: GatewayStreamOutcome::NotStreaming,
     }
 }
 
@@ -393,9 +547,12 @@ async fn write_streaming_body(
         Some(body_stream) => body_stream,
         None => return Ok(()),
     };
-    let mut usage_collector = response
-        .cli_key
-        .map(|_| SseUsageCollector::with_provider_type(response.provider_type.as_deref()));
+    // The collector drives both token usage (needs cli_key at merge time) and
+    // terminal-event tracking (independent of cli_key). Create it unconditionally
+    // so a stream without a cli identity still gets a correct verdict and
+    // client-facing error event instead of being misclassified as incomplete.
+    let mut usage_collector =
+        SseUsageCollector::with_provider_type(response.provider_type.as_deref());
     response.response_body_bytes = 0;
     response.body.clear();
     let idle_timeout_secs = response
@@ -408,8 +565,12 @@ async fn write_streaming_body(
         .unwrap_or(settings.streaming_idle_timeout_secs)
         .max(1);
     let idle_timeout = Duration::from_secs(idle_timeout_secs);
+    let is_sse = response_is_sse(&response.headers);
 
     let mut write_result: std::io::Result<()> = Ok(());
+    let mut terminal_kind_delivered: Option<SseTerminalKind> = None;
+    let mut idle_timeout_hit = false;
+    let mut upstream_stream_error = false;
     loop {
         let next_chunk = match time::timeout(idle_timeout, body_stream.next()).await {
             Ok(next_chunk) => next_chunk,
@@ -419,6 +580,7 @@ async fn write_streaming_body(
                     "upstream streaming response was idle for {} seconds",
                     idle_timeout.as_secs()
                 );
+                idle_timeout_hit = true;
                 write_result = Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     response.note.clone(),
@@ -432,6 +594,9 @@ async fn write_streaming_body(
         let chunk = match chunk_result {
             Ok(chunk) => chunk,
             Err(error) => {
+                upstream_stream_error = true;
+                response.error_category = Some("stream_error".to_string());
+                response.note = format!("upstream streaming response error: {error}");
                 write_result = Err(std::io::Error::new(std::io::ErrorKind::Other, error));
                 break;
             }
@@ -450,9 +615,20 @@ async fn write_streaming_body(
         response.response_body_bytes = response
             .response_body_bytes
             .saturating_add(chunk.len() as u64);
-        if let (Some(cli_key), Some(collector)) = (response.cli_key, usage_collector.as_mut()) {
-            collector.push_chunk(cli_key, &chunk);
+        // Track whether this chunk carries a terminal event. Mark it delivered
+        // only after the write succeeds, so a BrokenPipe on the terminal chunk
+        // itself does not count as "delivered".
+        let terminal_before = usage_collector.terminal_kind();
+        match response.cli_key {
+            Some(cli_key) => usage_collector.push_chunk(cli_key, &chunk),
+            // Without a cli identity there is no usage to merge, but terminal
+            // tracking still drives the stream verdict and the client-facing
+            // error event, so keep ingesting blocks.
+            None => usage_collector.observe_chunk(&chunk),
         }
+        let new_terminal = usage_collector.terminal_kind();
+        let terminal_in_chunk =
+            new_terminal.is_some() && terminal_before.is_none();
         append_body_snapshot(response, &chunk, settings);
         let chunk_header = format!("{:X}\r\n", chunk.len());
         if let Err(error) = stream.write_all(chunk_header.as_bytes()).await {
@@ -471,14 +647,107 @@ async fn write_streaming_body(
             write_result = Err(error);
             break;
         }
+        if terminal_in_chunk {
+            terminal_kind_delivered = new_terminal;
+        }
     }
 
-    if write_result.is_ok() {
+    // Drain any terminal marker that arrived in the final SSE event without a
+    // trailing blank-line separator. Its bytes were already written to the
+    // client inside an earlier chunk, so when every write succeeded it still
+    // counts as delivered. Skip on write failure: those bytes may not have
+    // reached the client.
+    if write_result.is_ok() && terminal_kind_delivered.is_none() {
+        usage_collector.drain_terminal();
+        terminal_kind_delivered = usage_collector.terminal_kind();
+    }
+
+    // A `Failed` terminal event (upstream `error` / `response.failed` /
+    // `response.completed`+`status=failed` / non-null error envelope) ends the
+    // stream properly but is a failure; without this the summary row would
+    // carry a failed outcome with no category or message.
+    if matches!(terminal_kind_delivered, Some(SseTerminalKind::Failed))
+        && response.error_category.is_none()
+    {
+        response.error_category = Some("upstream_stream_error".to_string());
+        response.note = "upstream stream delivered a non-success terminal event".to_string();
+    }
+
+    // A real client disconnect before the terminal event -> Canceled. Record the
+    // disconnect reason explicitly so it is not lost behind the benign forwarding
+    // note ("streaming forwarded to provider id=... name=..."); otherwise the
+    // request log would show success=false with a note that reads like a success.
+    // A disconnect *after* the terminal event is left untouched: the stream
+    // already succeeded, and `runtime::handle_connection` must not attach a
+    // failure category to it.
+    let client_disconnected_pre_terminal = write_result
+        .as_ref()
+        .err()
+        .is_some_and(is_client_disconnect_error)
+        && terminal_kind_delivered.is_none();
+    if client_disconnected_pre_terminal {
+        if response.error_category.is_none() {
+            response.error_category = Some("client_disconnected".to_string());
+        }
+        if response.note.trim().is_empty() {
+            let err = write_result.as_ref().err().unwrap();
+            response.note = format!("client disconnected before stream terminal event: {err}");
+        }
+    }
+
+    let outcome = classify_stream_outcome(
+        &write_result,
+        terminal_kind_delivered,
+        idle_timeout_hit,
+        upstream_stream_error,
+    );
+
+    // When the stream did not end normally and the client is still reachable,
+    // render a protocol-dialect error event so the client sees an explicit
+    // failure instead of a silently truncated chunked stream. Skip when a
+    // terminal event was already delivered (the client saw the upstream's own
+    // terminal envelope) and when the client has disconnected (nobody left to
+    // receive it).
+    let client_disconnected = write_result
+        .as_ref()
+        .err()
+        .is_some_and(is_client_disconnect_error);
+    if terminal_kind_delivered.is_none() && !client_disconnected && is_sse {
+        let (code, message) = match outcome {
+            GatewayStreamOutcome::Failed => (
+                response.error_category.as_deref().unwrap_or("stream_error"),
+                response.note.clone(),
+            ),
+            _ => {
+                response.error_category = Some("stream_incomplete".to_string());
+                response.note = "stream ended without a terminal event".to_string();
+                ("stream_incomplete", response.note.clone())
+            }
+        };
+        let error_event = render_stream_error_event(response.source_protocol, code, &message);
+        let error_header = format!("{:X}\r\n", error_event.len());
+        // Best-effort: a failure here just means the client is gone, which the
+        // final terminator write below will also detect.
+        let _ = stream.write_all(error_header.as_bytes()).await;
+        let _ = stream.write_all(&error_event).await;
+        let _ = stream.write_all(b"\r\n").await;
+        let _ = stream.flush().await;
+    }
+
+    // Close the chunked stream so the client reads a clean EOF instead of a
+    // bare truncation. Skip when the client has already disconnected.
+    if !client_disconnected && write_result.is_ok() {
         write_result = stream.write_all(b"0\r\n\r\n").await;
+    } else if !client_disconnected {
+        // An upstream-side error (idle timeout / stream error) still leaves the
+        // client connected; send the terminator after the error event above.
+        let _ = stream.write_all(b"0\r\n\r\n").await;
     }
-    if let (Some(cli_key), Some(collector)) = (response.cli_key, usage_collector) {
-        response.token_usage = collector.finish(cli_key);
+
+    if let Some(cli_key) = response.cli_key {
+        response.token_usage = usage_collector.finish(cli_key);
     }
+    response.stream_outcome = outcome;
     write_result
 }
 
@@ -576,5 +845,137 @@ mod tests {
 
         let error = decode_inbound_request_body(&mut request).unwrap_err();
         assert!(error.contains("Failed to decompress request body (zstd)"));
+    }
+
+    fn io_error(kind: std::io::ErrorKind, message: &str) -> std::io::Error {
+        std::io::Error::new(kind, message.to_string())
+    }
+
+    #[test]
+    fn classify_stream_outcome_completed_wins_over_later_disconnect() {
+        // Terminal event already delivered -> Completed even if the client then
+        // resets the connection (common: client closes right after message_stop).
+        let outcome = classify_stream_outcome(
+            &Err(io_error(std::io::ErrorKind::BrokenPipe, "broken pipe")),
+            Some(SseTerminalKind::Success),
+            false,
+            false,
+        );
+        assert_eq!(outcome, GatewayStreamOutcome::Completed);
+    }
+
+    #[test]
+    fn classify_stream_outcome_error_terminal_event_is_failed() {
+        // An `error` / `response.failed` event ends the stream properly but the
+        // request is a failure, not a success — even though delivery succeeded.
+        let outcome = classify_stream_outcome(&Ok(()), Some(SseTerminalKind::Failed), false, false);
+        assert_eq!(outcome, GatewayStreamOutcome::Failed);
+    }
+
+    #[test]
+    fn classify_stream_outcome_incomplete_terminal_is_incomplete() {
+        // `response.completed` + `status=incomplete` (the gateway's own
+        // cross-protocol signal) is a terminal-but-incomplete outcome, not a
+        // success and not a hard failure.
+        let outcome =
+            classify_stream_outcome(&Ok(()), Some(SseTerminalKind::Incomplete), false, false);
+        assert_eq!(outcome, GatewayStreamOutcome::Incomplete);
+    }
+
+    #[test]
+    fn classify_stream_outcome_canceled_terminal_is_canceled() {
+        // `response.cancelled` delivered to the client is a canceled outcome.
+        let outcome =
+            classify_stream_outcome(&Ok(()), Some(SseTerminalKind::Canceled), false, false);
+        assert_eq!(outcome, GatewayStreamOutcome::Canceled);
+    }
+
+    #[test]
+    fn classify_stream_outcome_idle_timeout_is_failed() {
+        let outcome = classify_stream_outcome(
+            &Err(io_error(std::io::ErrorKind::TimedOut, "idle")),
+            None,
+            true,
+            false,
+        );
+        assert_eq!(outcome, GatewayStreamOutcome::Failed);
+    }
+
+    #[test]
+    fn classify_stream_outcome_disconnect_before_terminal_is_canceled() {
+        let outcome = classify_stream_outcome(
+            &Err(io_error(std::io::ErrorKind::ConnectionReset, "reset")),
+            None,
+            false,
+            false,
+        );
+        assert_eq!(outcome, GatewayStreamOutcome::Canceled);
+    }
+
+    #[test]
+    fn classify_stream_outcome_eof_without_terminal_is_incomplete() {
+        let outcome = classify_stream_outcome(&Ok(()), None, false, false);
+        assert_eq!(outcome, GatewayStreamOutcome::Incomplete);
+    }
+
+    #[test]
+    fn classify_stream_outcome_non_disconnect_write_error_is_incomplete() {
+        // A write error that is not a client disconnect (e.g. local disk/socket
+        // issue) without a terminal event is still an incomplete stream.
+        let outcome = classify_stream_outcome(
+            &Err(io_error(std::io::ErrorKind::Other, "weird")),
+            None,
+            false,
+            false,
+        );
+        assert_eq!(outcome, GatewayStreamOutcome::Incomplete);
+    }
+
+    #[test]
+    fn render_stream_error_event_matches_client_protocol_dialect() {
+        let anthropic = render_stream_error_event(Some(AiProtocol::AnthropicMessages), "x", "boom");
+        let text = String::from_utf8_lossy(&anthropic);
+        assert!(text.starts_with("event: error\n"));
+        assert!(text.contains("\"type\":\"api_error\""));
+
+        let responses = render_stream_error_event(Some(AiProtocol::OpenAiResponses), "x", "boom");
+        let text = String::from_utf8_lossy(&responses);
+        assert!(text.starts_with("event: response.failed\n"));
+        assert!(text.contains("\"status\":\"failed\""));
+
+        let generic = render_stream_error_event(None, "x", "boom");
+        let text = String::from_utf8_lossy(&generic);
+        assert!(text.starts_with("data: "));
+        assert!(text.contains("\"error\""));
+
+        let chat = render_stream_error_event(Some(AiProtocol::OpenAiChat), "x", "boom");
+        assert_eq!(chat, generic);
+
+        let gemini = render_stream_error_event(Some(AiProtocol::GeminiNative), "stream_idle_timeout", "boom");
+        let text = String::from_utf8_lossy(&gemini);
+        assert!(text.starts_with("data: "));
+        // Gemini error envelope: numeric code + message + status, not the
+        // generic `type`/string-code chat shape.
+        assert!(text.contains("\"code\":408"));
+        assert!(text.contains("\"message\":\"boom\""));
+        assert!(text.contains("\"status\""));
+        assert!(!text.contains("\"type\":\"server_error\""));
+    }
+
+    #[test]
+    fn response_is_sse_requires_event_stream_content_type() {
+        assert!(response_is_sse(&[(
+            "Content-Type".to_string(),
+            "text/event-stream".to_string(),
+        )]));
+        assert!(response_is_sse(&[(
+            "content-type".to_string(),
+            "text/event-stream; charset=utf-8".to_string(),
+        )]));
+        assert!(!response_is_sse(&[(
+            "Content-Type".to_string(),
+            "application/json".to_string(),
+        )]));
+        assert!(!response_is_sse(&[]));
     }
 }

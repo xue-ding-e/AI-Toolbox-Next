@@ -26,9 +26,11 @@ pub(crate) use self::providers::{
 
 #[cfg(test)]
 use self::http_io::DebugHttpRequest;
+use self::http_io::{
+    decode_inbound_request_body, json_response, read_http_request, write_response,
+};
 #[cfg(test)]
 use self::http_io::{find_header_end, header_value};
-use self::http_io::{decode_inbound_request_body, json_response, read_http_request, write_response};
 #[cfg(test)]
 use self::providers::{codex_base_url_from_config, json_object_string};
 #[cfg(test)]
@@ -46,7 +48,8 @@ use super::types::GatewayConnectivityTestRequest;
 #[cfg(test)]
 use super::types::ProviderGatewayMeta;
 use super::types::{
-    GatewayCliKey, ProxyGatewayHealthCheckResult, ProxyGatewaySettings, ProxyGatewayStatus,
+    GatewayCliKey, GatewayStreamOutcome, ProxyGatewayHealthCheckResult, ProxyGatewaySettings,
+    ProxyGatewayStatus,
 };
 use crate::db::SqliteDbState;
 use chrono::Utc;
@@ -763,11 +766,42 @@ async fn handle_connection(
         context.active_connections.clone(),
         MAX_CONCURRENT_CONNECTIONS,
     ) else {
+        // Concurrent connection cap reached: respond 503 and close. This path
+        // never enters request observability, so log it here so a saturated
+        // gateway does not fail silently.
+        let peer = stream
+            .peer_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        log::warn!(
+            "[proxy-gateway] connection rejected peer={} active={} max={}",
+            peer,
+            context.active_connections.load(Ordering::SeqCst),
+            MAX_CONCURRENT_CONNECTIONS
+        );
         write_busy_response(stream).await?;
         return Ok(());
     };
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
-    let mut request = read_http_request(stream, request_id).await?;
+    let mut request = match read_http_request(stream, request_id).await {
+        Ok(request) => request,
+        Err(error) => {
+            // Header/body read failure (2s header / 30s body timeout, oversize,
+            // peer reset). No parsed request exists, so this can never enter
+            // request observability; log a distinct reason here so these dead
+            // connections are not only the generic accept-loop warn.
+            let peer = stream
+                .peer_addr()
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            log::warn!(
+                "[proxy-gateway] request_read_failed peer={} error={}",
+                peer,
+                error
+            );
+            return Err(error);
+        }
+    };
     let started_at = Utc::now();
     let started_instant = Instant::now();
     let settings = context.settings_snapshot();
@@ -795,13 +829,77 @@ async fn handle_connection(
     let write_result = write_response(stream, &mut response, started_instant, &settings).await;
     let ended_at = Utc::now();
     if let Err(error) = &write_result {
-        if response.error_category.is_none() {
+        // A stream that already delivered its terminal event succeeded; a later
+        // write failure (the trailing `0\r\n\r\n` / final flush) must not attach
+        // a failure category or overwrite the note — the request is a success.
+        let stream_already_succeeded =
+            response.stream_outcome == GatewayStreamOutcome::Completed;
+        if response.error_category.is_none() && !stream_already_succeeded {
             response.error_category = Some("client_write_failed".to_string());
         }
-        response.note = format!("failed to write gateway response to client: {error}");
+        // `write_streaming_body` classifies stream failures itself (idle timeout,
+        // upstream stream error, no-terminal-event, pre-terminal disconnect);
+        // only fall back to the raw write error when it did not produce a richer
+        // reason, and never for an already-succeeded stream.
+        if !stream_already_succeeded
+            && (response.stream_outcome == GatewayStreamOutcome::NotStreaming
+                || response.note.trim().is_empty())
+        {
+            response.note = format!("failed to write gateway response to client: {error}");
+        }
     }
+    amend_health_after_stream(context, &response);
     observability::record_gateway_observability(&request, &response, context, started_at, ended_at);
     write_result
+}
+
+/// Reconcile provider health with the *actual* stream outcome. The first-chunk
+/// probe (`upstream.rs`) records `record_health_success` as soon as the probe
+/// passes — before `write_streaming_body` consumes the stream — so a mid-stream
+/// idle timeout / upstream stream error / no-terminal-event / pre-terminal
+/// disconnect is not reflected in health. Here, after the response is fully
+/// written, correct the health record for non-success streaming outcomes.
+/// `Completed` and `NotStreaming` are left alone (already settled);
+/// `Canceled` (client disconnect) is health-neutral by design
+/// (`GatewayFailureKind::ClientCancelled` scores 0).
+fn amend_health_after_stream(
+    context: &GatewayRuntimeContext,
+    response: &self::http_io::DebugHttpResponse,
+) {
+    if !response.is_streaming {
+        return;
+    }
+    let (Some(cli_key), Some(provider_id), Some(upstream_model_id)) =
+        (response.cli_key, response.provider_id.as_deref(), response.upstream_model_id.as_deref())
+    else {
+        return;
+    };
+    let health_key = super::types::ProviderModelHealthKey {
+        cli_key,
+        provider_id: provider_id.to_string(),
+        upstream_model_id: upstream_model_id.to_string(),
+    };
+    let changed = match response.stream_outcome {
+        GatewayStreamOutcome::Completed | GatewayStreamOutcome::NotStreaming => false,
+        GatewayStreamOutcome::Incomplete => self::upstream::record_health_failure(
+            context,
+            &health_key,
+            crate::coding::proxy_gateway::model_health::GatewayFailureKind::EmptyResponse,
+        ),
+        GatewayStreamOutcome::Failed => {
+            let kind = match response.error_category.as_deref() {
+                Some("stream_idle_timeout") => {
+                    crate::coding::proxy_gateway::model_health::GatewayFailureKind::Timeout
+                }
+                _ => crate::coding::proxy_gateway::model_health::GatewayFailureKind::Upstream5xx,
+            };
+            self::upstream::record_health_failure(context, &health_key, kind)
+        }
+        GatewayStreamOutcome::Canceled => false,
+    };
+    if changed {
+        context.save_health_registry_async();
+    }
 }
 
 async fn write_busy_response(stream: &mut TokioTcpStream) -> std::io::Result<()> {

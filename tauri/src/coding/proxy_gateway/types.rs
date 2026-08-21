@@ -26,7 +26,13 @@ impl GatewayCliKey {
     }
 
     pub fn supported_mvp() -> Vec<Self> {
-        vec![Self::Claude, Self::ClaudeDesktop, Self::Codex, Self::Grok, Self::Gemini]
+        vec![
+            Self::Claude,
+            Self::ClaudeDesktop,
+            Self::Codex,
+            Self::Grok,
+            Self::Gemini,
+        ]
     }
 }
 
@@ -232,8 +238,8 @@ impl Default for ProxyGatewaySettings {
             per_provider_retry_count: 0,
             max_retry_count: 8,
             retry_interval_secs: 1,
-            retryable_status_codes:
-                super::retryable_status::default_retryable_status_codes_compact(),
+            retryable_status_codes: super::retryable_status::default_retryable_status_codes_compact(
+            ),
             app_configs: HashMap::new(),
             model_failure_score_threshold: 5,
             model_failure_window_seconds: 300,
@@ -553,6 +559,12 @@ pub struct GatewayRequestLogFilters {
     pub end_date: Option<i64>,
     /// When true, exclude GET/HEAD model-list requests from request log queries.
     pub exclude_model_list: Option<bool>,
+    /// When true, surface only failed requests. A request counts as failed when
+    /// its HTTP status is non-2xx/3xx, or its recorded stream outcome is
+    /// `incomplete`, `failed`, or `canceled` (a 200 whose stream never delivered
+    /// a terminal event to the client).
+    #[serde(default)]
+    pub only_failed: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -679,6 +691,12 @@ pub struct GatewayRequestLogSummary {
     pub success: bool,
     pub error_category: Option<String>,
     pub error_message: Option<String>,
+    /// How the streaming response actually ended for the client. Derived from
+    /// the terminal-event verdict written during `write_streaming_body`, not
+    /// from the HTTP status code, so mid-stream failures on an already-written
+    /// 200 are no longer recorded as successes.
+    #[serde(default)]
+    pub stream_outcome: Option<GatewayStreamOutcome>,
     pub duration_ms: u64,
     pub attempt_count: u32,
     #[serde(default)]
@@ -701,6 +719,63 @@ pub struct GatewayRequestLogSummary {
     pub detail_file: Option<String>,
     #[serde(default)]
     pub detail_offset: Option<u64>,
+}
+
+/// How a streaming gateway response actually ended for the client.
+///
+/// Once the gateway has written `HTTP/1.1 200` + chunked headers, every later
+/// failure happens inside `write_streaming_body`, where the status code can no
+/// longer be changed. This verdict is derived from whether a protocol-level
+/// terminal event was actually written to the client, so the request record
+/// reflects stream reality instead of the (already-sent) 200.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayStreamOutcome {
+    /// Non-streaming response, or the outcome was not observed.
+    #[default]
+    NotStreaming,
+    /// A terminal event was written to the client and the stream closed.
+    Completed,
+    /// Stream ended at EOF without a terminal event and without an error.
+    Incomplete,
+    /// Explicit stream error (idle timeout, upstream stream error, write error
+    /// after the terminal event was already delivered is still `Completed`).
+    Failed,
+    /// Client disconnected before the terminal event was delivered.
+    Canceled,
+}
+
+impl GatewayStreamOutcome {
+    /// Stable lowercase key persisted in SQLite and reported in JSONL.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStreaming => "not_streaming",
+            Self::Completed => "completed",
+            Self::Incomplete => "incomplete",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+        }
+    }
+
+    /// Parse the key produced by [`as_str`]. Unknown / corrupt / legacy values
+    /// return `None` so the caller can fall back to HTTP-status-based success
+    /// derivation. (Previously unknown values mapped to `NotStreaming`, whose
+    /// `is_success()` is `true` — so a corrupt `stream_outcome` on a 500 row was
+    /// recorded as success, contradicting the status code.)
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value.trim() {
+            "completed" => Some(Self::Completed),
+            "incomplete" => Some(Self::Incomplete),
+            "failed" => Some(Self::Failed),
+            "canceled" => Some(Self::Canceled),
+            _ => None,
+        }
+    }
+
+    /// Whether this outcome should be recorded as a successful request.
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Completed | Self::NotStreaming)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -665,4 +665,33 @@ mod tests {
         );
         assert_eq!(loaded.health_items().len(), 1);
     }
+
+    #[test]
+    fn record_failure_incomplete_stream_maps_to_empty_response_score() {
+        // `amend_health_after_stream` maps stream Incomplete -> EmptyResponse
+        // (score 2, Model scope). Verify the underlying contract: a single
+        // Incomplete failure accumulates the EmptyResponse score.
+        let mut registry = ModelHealthRegistry::new(test_settings());
+        let key = key("incomplete");
+        let now = Utc::now();
+        registry.record_failure(&key, GatewayFailureKind::EmptyResponse, now);
+        let entry = registry.model_entry(&key).expect("entry created");
+        assert_eq!(entry.failure_score, 2);
+        assert_eq!(entry.last_error_category.as_deref(), Some("empty_response"));
+    }
+
+    #[test]
+    fn record_failure_client_cancelled_is_health_neutral() {
+        // `amend_health_after_stream` skips Canceled by design (ClientCancelled
+        // scores 0, scope None), so a client disconnect never penalizes the
+        // provider. Verify no entry is ever created for a canceled outcome.
+        let mut registry = ModelHealthRegistry::new(test_settings());
+        let key = key("canceled");
+        let now = Utc::now();
+        registry.record_failure(&key, GatewayFailureKind::ClientCancelled, now);
+        assert!(
+            registry.model_entry(&key).is_none(),
+            "ClientCancelled must not create a health entry"
+        );
+    }
 }
