@@ -84,3 +84,9 @@ strip = true
 opt-level = 3
 panic = "abort"
 codegen-units = 1
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
