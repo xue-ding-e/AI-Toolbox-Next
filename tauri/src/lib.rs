@@ -5,8 +5,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use surrealdb::engine::local::SurrealKv;
-use surrealdb::Surreal;
 #[cfg(not(test))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -28,7 +26,6 @@ use std::sync::Mutex as StdMutex;
 pub mod auto_launch;
 pub mod coding;
 pub mod db;
-pub mod db_migration;
 pub mod http_client;
 pub mod settings;
 pub mod single_instance;
@@ -42,137 +39,6 @@ pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 const AI_TOOLBOX_LATEST_RELEASE_URL: &str =
     "https://github.com/coulsontl/ai-toolbox/releases/latest";
-
-async fn open_legacy_surreal_database(
-    db_path: &Path,
-) -> Result<Surreal<surrealdb::engine::local::Db>, String> {
-    let db = Surreal::new::<SurrealKv>(db_path.to_path_buf())
-        .await
-        .map_err(|error| format!("Failed to open legacy SurrealDB database: {error}"))?;
-    db.use_ns("ai_toolbox")
-        .use_db("main")
-        .await
-        .map_err(|error| {
-            format!("Failed to select legacy SurrealDB namespace/database: {error}")
-        })?;
-    Ok(db)
-}
-
-async fn run_one_time_legacy_database_import(
-    app_handle: &tauri::AppHandle,
-    paths: &db::surreal_import::MigrationPaths,
-    sqlite_state: &SqliteDbState,
-    startup_state: db::surreal_import::StartupMigrationState,
-) -> Result<(), String> {
-    #[cfg(test)]
-    let _ = app_handle;
-
-    use db::surreal_import::{
-        archive_legacy_database, clear_migration_failure_state,
-        import_all_known_tables_from_surreal_with_warnings, mark_sqlite_import_complete,
-        record_migration_failure, write_migration_log, StartupMigrationState,
-    };
-
-    let migration_result: Result<(), String> = async {
-        match startup_state {
-            StartupMigrationState::NewInstall | StartupMigrationState::Ready => {
-                clear_migration_failure_state(paths)?;
-                return Ok(());
-            }
-            StartupMigrationState::NeedsLegacyArchive => {
-                write_migration_log(
-                    paths,
-                    "Detected completed SQLite import with legacy database still present; archiving legacy database.",
-                )?;
-                archive_legacy_database(paths)?;
-                clear_migration_failure_state(paths)?;
-                return Ok(());
-            }
-            StartupMigrationState::IncompleteImport => {
-                return Err(
-                    "Startup migration state was not cleaned before opening SQLite".to_string(),
-                );
-            }
-            StartupMigrationState::NeedsSurrealImport => {}
-        }
-
-        write_migration_log(paths, "Starting one-time SurrealDB -> SQLite import.")?;
-        let legacy_db = open_legacy_surreal_database(&paths.legacy_database_dir).await?;
-        db_migration::run_all_db_migrations(&legacy_db)
-            .await
-            .map_err(|error| {
-                format!("Failed to run legacy SurrealDB migrations before SQLite import: {error}")
-            })?;
-
-        let report =
-            import_all_known_tables_from_surreal_with_warnings(sqlite_state, &legacy_db, paths)
-                .await?;
-        write_migration_log(
-            paths,
-            &format!(
-                "Imported {} tables and {} records from legacy SurrealDB.",
-                report.tables.len(),
-                report.total_records()
-            ),
-        )?;
-        drop(legacy_db);
-
-        mark_sqlite_import_complete(paths)?;
-        archive_legacy_database(paths)?;
-        clear_migration_failure_state(paths)?;
-        write_migration_log(paths, "SQLite import completed successfully.")?;
-        Ok(())
-    }
-    .await;
-
-    if let Err(error) = migration_result {
-        let failure_state = record_migration_failure(paths, &error).unwrap_or_default();
-        let _ = write_migration_log(paths, &format!("Migration failed: {error}"));
-
-        #[cfg(not(test))]
-        if failure_state.consecutive_failures >= 3 {
-            let message = format!(
-                "数据库迁移失败，已连续失败 {} 次。\n\n迁移日志：{}\n\n错误：{}",
-                failure_state.consecutive_failures,
-                paths.migration_log.display(),
-                error
-            );
-            app_handle
-                .dialog()
-                .message(message)
-                .title("AI Toolbox 数据库迁移失败")
-                .kind(MessageDialogKind::Error)
-                .show(|_| {});
-        }
-        #[cfg(test)]
-        let _ = failure_state;
-
-        return Err(error);
-    }
-
-    Ok(())
-}
-
-fn prepare_startup_migration_state(
-    paths: &db::surreal_import::MigrationPaths,
-) -> Result<db::surreal_import::StartupMigrationState, String> {
-    use db::surreal_import::{
-        cleanup_incomplete_sqlite_database, detect_startup_migration_state, write_migration_log,
-        StartupMigrationState,
-    };
-
-    let startup_state = detect_startup_migration_state(paths);
-    if startup_state != StartupMigrationState::IncompleteImport {
-        return Ok(startup_state);
-    }
-
-    write_migration_log(
-        paths,
-        "Detected incomplete SQLite import; removing partial SQLite files before retry.",
-    )?;
-    cleanup_incomplete_sqlite_database(paths)?;
-    Ok(StartupMigrationState::NeedsSurrealImport)
-}
 
 /// Set window background color (affects macOS titlebar color)
 #[tauri::command]
@@ -1051,15 +917,7 @@ pub fn run() {
             db::model_pricing_seed::set_cache_dir(app_data_dir.clone());
             info!("模型定价缓存目录已初始化");
 
-            let migration_paths = db::surreal_import::MigrationPaths::new(&app_data_dir);
-            let startup_migration_state = match prepare_startup_migration_state(&migration_paths) {
-                Ok(state) => state,
-                Err(e) => {
-                    error!("数据库迁移状态准备失败: {}", e);
-                    panic!("Failed to prepare database migration state: {}", e);
-                }
-            };
-            let sqlite_db_path = migration_paths.sqlite_database_file.clone();
+            let sqlite_db_path = app_data_dir.join(db::SQLITE_DATABASE_FILE);
             info!("正在初始化 SQLite 主数据库: {:?}", sqlite_db_path);
             let db_state = match SqliteDbState::open(sqlite_db_path) {
                 Ok(state) => {
@@ -1106,31 +964,6 @@ pub fn run() {
                     panic!("Failed to initialize SQLite database: {}", e);
                 }
             };
-
-            let legacy_import_result =
-                tauri::async_runtime::block_on(run_one_time_legacy_database_import(
-                    &app_handle,
-                    &migration_paths,
-                    &db_state,
-                    startup_migration_state,
-                ));
-
-            if let Err(e) = legacy_import_result {
-                error!("一次性旧库导入失败: {}", e);
-                drop(db_state);
-                if matches!(
-                    startup_migration_state,
-                    db::surreal_import::StartupMigrationState::NeedsSurrealImport
-                        | db::surreal_import::StartupMigrationState::IncompleteImport
-                ) {
-                    if let Err(cleanup_error) =
-                        db::surreal_import::cleanup_incomplete_sqlite_database(&migration_paths)
-                    {
-                        warn!("清理不完整 SQLite 数据库失败: {}", cleanup_error);
-                    }
-                }
-                panic!("Failed to migrate legacy database into SQLite: {}", e);
-            }
 
             tauri::async_runtime::block_on(async {
                 if let Err(e) =

@@ -152,23 +152,14 @@ pub async fn restore_database(
     }
 
     // Legacy SurrealDB-only backups (db/ entries, no sqlite/ snapshot) cannot be
-    // restored on an app that already migrated to SQLite: on the next startup the
-    // restored legacy dir would only be archived and deleted without importing,
-    // silently discarding the restore. Fail loudly instead of pretending success.
+    // restored: the app no longer ships the SurrealDB import path, so a restored
+    // legacy dir would be silently ignored on next startup. Fail loudly instead of
+    // pretending success.
     if !restored_sqlite && is_new_format {
-        let app_data_dir = app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
-        if crate::db::surreal_import::MigrationPaths::new(&app_data_dir)
-            .complete_flag
-            .exists()
-        {
-            return Err(
-                "该备份是旧版 SurrealDB 格式，而当前应用已迁移到 SQLite，无法恢复此备份。请使用新版应用创建的备份文件。"
-                    .to_string(),
-            );
-        }
+        return Err(
+            "该备份是旧版 SurrealDB 格式，当前应用已不再支持，无法恢复此备份。请使用新版应用创建的备份文件。"
+                .to_string(),
+        );
     }
 
     // Remove existing database directory
