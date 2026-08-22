@@ -2373,6 +2373,8 @@ pub fn run() {
             coding::skills::skills_apply_inventory_import_file,
             // Skills Hub - Resync
             coding::skills::skills_resync_all,
+            // Skills Hub - Documents
+            coding::skills::skills_get_skill_documents,
             // MCP Servers
             coding::mcp::mcp_list_servers,
             coding::mcp::mcp_resolve_package_versions,

@@ -1,0 +1,693 @@
+// Detail drawer visual language follows the skills-manager reference panel:
+// a large title block, a description lead, chip-style tags, a mono path row,
+// per-tool toggle rows, and pill-style document tabs.
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-elevated);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 18px 0;
+}
+
+.titleBlock {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manageDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.manageDotEnabled {
+  background: var(--color-status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-success) 18%, transparent);
+}
+
+.manageDotDisabled {
+  background: var(--color-border);
+}
+
+.name {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.sourceLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.sourceBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+
+  // Only the text may shrink; the source glyph keeps its size.
+  > svg {
+    flex-shrink: 0;
+  }
+
+  &:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+// Show the full repo reference (owner/repo@branch can be long) — wrap instead
+// of truncating with an ellipsis.
+.sourceText {
+  overflow-wrap: anywhere;
+}
+
+.sourceSep {
+  color: var(--color-border);
+}
+
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+// ------------------------------------------------------------------ tags ----
+
+.tagRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tagPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 140px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 3px 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 20px;
+
+  --tag-pill-bg: color-mix(in srgb, var(--color-border-secondary) 22%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, var(--color-text-secondary) 62%, var(--color-text-primary));
+  background: var(--tag-pill-bg);
+  color: var(--tag-pill-fg);
+}
+
+.tagPillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tagRemoveBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    background 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.tagAddBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+// Empty-state placeholder shown when the skill has no tags yet: a muted
+// dashed pill that doubles as the add-tag entry, so the tag row never looks
+// bare (detail panel is the only place tags are edited).
+.tagAddEmptyPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+.tagAddInput {
+  width: 120px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.16s ease;
+
+  &::placeholder {
+    color: var(--color-text-tertiary);
+  }
+
+  &:focus {
+    border-color: var(--color-primary);
+  }
+}
+
+// ------------------------------------------------------------ central path ----
+
+// Single click copies the central path, double click reveals SKILL.md.
+.pathRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-card-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  cursor: copy;
+  transition:
+    border-color 0.16s ease,
+    color 0.16s ease;
+
+  &:hover {
+    border-color: var(--color-border);
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+.pathText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+// ------------------------------------------------------------------ meta ----
+
+.metaGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-card-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg-container) 70%, transparent);
+}
+
+.metaRow {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.metaLabel {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.metaValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+}
+
+// Group value cell: value text plus the inline edit affordance.
+.metaValueGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metaValueEmpty {
+  color: var(--color-text-tertiary);
+}
+
+// Small pencil entry for the inline group editor, styled after .tagAddBtn.
+.groupEditBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+.groupEditInput {
+  width: 160px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.16s ease;
+
+  &::placeholder {
+    color: var(--color-text-tertiary);
+  }
+
+  &:focus {
+    border-color: var(--color-primary);
+  }
+}
+
+// --------------------------------------------------------------- sections ----
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sectionCount {
+  letter-spacing: normal;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+// Tool sync grid: 4 cells per row, synced cells first. A synced cell reads as
+// a solid bordered tile; an unsynced cell uses a dashed border and recedes
+// until hovered. The whole cell toggles the sync target.
+.toolGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.toolCell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    border-color: var(--color-primary);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+// Unsynced cells recede with a dashed border until hovered.
+.toolCell:not(.toolCellSynced) {
+  border-style: dashed;
+  border-color: var(--color-border-card-subtle);
+  background: transparent;
+  opacity: 0.62;
+
+  &:hover:not(:disabled) {
+    opacity: 1;
+  }
+}
+
+// Green status dot in front of a synced cell's icon. Unsynced cells keep a
+// transparent placeholder dot so the centered icon + label stay aligned
+// across the grid.
+.toolCellDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-status-success);
+  flex-shrink: 0;
+}
+
+.toolCellDotOff {
+  background: transparent;
+}
+
+.toolCellLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyTools {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+// ------------------------------------------------------------------- docs ----
+
+.docTabs {
+  display: flex;
+  gap: 5px;
+}
+
+// Pill-style document tabs; the active tab uses the solid primary fill like
+// the reference project's content tabs.
+.docTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border-card-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease;
+
+  &:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+.docTabActive {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+
+  &:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    color: #fff;
+    opacity: 0.9;
+  }
+}
+
+.docBody {
+  // Scale with the viewport so long SKILL.md docs stay readable; the panel
+  // itself scrolls past this block, the block only caps a single document.
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  border: 1px solid var(--color-border-card-subtle);
+  border-radius: 10px;
+  background: var(--color-bg-container);
+  padding: 12px;
+}
+
+.docEmpty {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.docLoading {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.truncatedHint {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+// ---------------------------------------------------------------- footer ----
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--color-border-card-subtle);
+  flex-wrap: wrap;
+}
+
+.footerBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 27px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+}
+
+.footerBtnDanger {
+  color: var(--color-status-error);
+  border-color: color-mix(in srgb, var(--color-status-error) 40%, var(--color-border));
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-status-error) 8%, transparent);
+    border-color: var(--color-status-error);
+    color: var(--color-status-error);
+  }
+}

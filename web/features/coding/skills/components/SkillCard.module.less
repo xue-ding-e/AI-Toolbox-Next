@@ -1,37 +1,73 @@
-.skillCard {
-  box-sizing: border-box;
-  width: 100%;
-  border-radius: 8px !important;
-  background: var(--color-bg-container) !important;
+// Skill card visual language follows the skills-manager reference layout:
+// a three-zone vertical card — compact header row (status slot + name +
+// hover-revealed actions), body (description / meta / tags), and a footer
+// meta bar (source + time + tool sync slots) separated by a hairline border.
+
+.cardOuter {
+  container-type: inline-size;
+  container-name: skillCard;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-card);
+  background: var(--color-bg-container);
+  box-shadow: var(--shadow-card-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
 
   &:hover {
-    background: var(--color-bg-elevated) !important;
+    border-color: var(--color-border);
+    background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-card-sm-hover);
+    transform: translateY(-1px);
+
+    .name {
+      color: var(--color-primary);
+    }
   }
+
+  &:focus-within {
+    border-color: var(--color-border);
+  }
+}
+
+.cardSelected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-bg-container));
 }
 
 .disabledCard {
   border-color: color-mix(in srgb, var(--color-border) 62%, var(--color-bg-layout)) !important;
   background: color-mix(in srgb, var(--color-bg-layout) 72%, var(--color-bg-container)) !important;
-}
 
-.disabledCard .icon,
-.disabledCard .copySourceButton,
-.disabledCard .time,
-.disabledCard .groupTag,
-.disabledCard .note,
-.disabledCard .toolPill,
-.disabledCard .addToolBtn {
-  opacity: 0.48;
-}
+  .name,
+  .skillDescription,
+  .groupTag,
+  .note,
+  .tagRow,
+  .toolPill,
+  .addToolBtn,
+  .sourceBtn,
+  .footerTime {
+    opacity: 0.55;
+  }
 
-.disabledCard .skillNameText {
-  color: var(--color-text-tertiary);
-  opacity: 0.7;
-}
+  .name {
+    color: var(--color-text-tertiary);
+  }
 
-.disabledCard .detailButton,
-.disabledCard .sourceWarningMeta {
-  opacity: 0.72;
+  &:hover .name {
+    color: var(--color-text-tertiary);
+  }
 }
 
 .sourceWarningCard {
@@ -39,87 +75,97 @@
   background: color-mix(in srgb, var(--color-status-warning) 8%, var(--color-bg-container)) !important;
 }
 
-.icon {
-  color: var(--color-text-secondary);
-}
+// ---------------------------------------------------------------- header ----
 
-.clickableIcon {
-  color: var(--color-text-primary);
-}
-
-.cardHeader {
+.headerRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  margin-bottom: 7px;
-  flex-wrap: nowrap;
+  padding: 10px 12px 4px;
 }
 
-.skillNameText {
-  display: block;
-  flex: 0 1 auto;
+.statusDot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.statusDotEnabled {
+  background: var(--color-status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-success) 18%, transparent);
+}
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.name {
   min-width: 0;
-  max-width: 60%;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  transition: color 0.16s ease;
 }
 
-.headerMetaCompact {
+.sourceWarningMeta {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 5px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(52%, 236px);
-  overflow: hidden;
-  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--color-status-warning);
 }
 
-.detailButton {
+// Hover-revealed action cluster (open dir / copy / more / update). Revealed on
+// card hover and on focus-within so keyboard users can reach the buttons.
+.hoverActions {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+
+  .card:hover &,
+  .card:focus-within & {
+    opacity: 1;
+  }
+}
+
+.miniBtn {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
   transition:
     background 0.16s ease,
     color 0.16s ease;
-  flex-shrink: 0;
-
-  &:hover {
-    color: var(--color-text-primary);
-    background: var(--color-bg-hover);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--color-border-secondary);
-    outline-offset: 2px;
-  }
-}
-
-.copySourceButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition:
-    background 0.16s ease,
-    color 0.16s ease;
-  flex-shrink: 0;
 
   &:hover:not(:disabled) {
     color: var(--color-text-primary);
@@ -128,36 +174,37 @@
 
   &:focus-visible {
     outline: 2px solid var(--color-border-secondary);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
 
   &:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: 0.5;
   }
 }
 
-.dot {
-  color: var(--color-border);
-  flex-shrink: 0;
+// ------------------------------------------------------------------- body ----
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  // Push the footer meta bar to the card bottom (skills-manager `mt-auto`
+  // convention) so short bodies keep a stable visual skeleton.
+  flex: 1;
+  padding: 0 12px 10px;
 }
 
-.time {
-  font-size: 11px;
+.skillDescription {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-text-secondary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.sourceWarningMeta {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--color-status-warning);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .groupTag {
@@ -165,7 +212,7 @@
   align-items: center;
   max-width: 120px;
   min-width: 0;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
@@ -189,43 +236,102 @@
   flex: 1;
 }
 
-.toolPill {
+// ----------------------------------------------------------------- footer ----
+
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: auto;
+  padding: 7px 12px;
+  border-top: 1px solid var(--color-border-card-subtle);
+}
+
+.sourceBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 50%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: color 0.16s ease;
+
+  // Only the text may shrink; the source glyph keeps its size.
+  > svg {
+    flex-shrink: 0;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.sourceBtnStatic {
+  cursor: default;
+}
+
+.sourceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerTime {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.footerTools {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.toolPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
   cursor: pointer;
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
-    color 0.16s ease,
     opacity 0.16s ease;
   border: 1px solid;
 
+  // Synced tool: full opacity with a solid border.
   &.active {
     background: var(--color-bg-elevated);
     border-color: var(--color-border);
-    color: var(--color-text-secondary);
+    opacity: 1;
 
     &:hover:not(:disabled) {
-      border-color: var(--color-border-secondary);
-      color: var(--color-text-primary);
+      border-color: var(--color-primary);
       background: var(--color-bg-hover);
-    }
-  }
-
-  &.inactive {
-    background: var(--color-bg-layout);
-    border-color: var(--color-border);
-    color: var(--color-text-secondary);
-
-    &:hover {
-      border-color: var(--color-border-secondary);
-      color: var(--color-text-primary);
     }
   }
 
@@ -234,26 +340,17 @@
   }
 }
 
-.statusBadge {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-status-success);
-  flex-shrink: 0;
-}
-
 .addToolBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px dashed var(--color-border);
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 12px;
   transition:
     border-color 0.16s ease,
     background 0.16s ease,
@@ -264,4 +361,87 @@
     background: var(--color-bg-hover);
     color: var(--color-text-primary);
   }
+}
+
+// -------------------------------------------------------------------- tags ----
+
+// Pure display row (skills-manager convention): tags first, then the group
+// pill and the user note. No add/remove controls on cards, and the row is not
+// rendered at all when the skill has none of the three.
+.tagRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tagPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 140px;
+  min-width: 0;
+  height: 19px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 19px;
+
+  // Palette via CSS variables so both light and dark themes stay readable.
+  --tag-pill-bg: color-mix(in srgb, var(--color-border-secondary) 22%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, var(--color-text-secondary) 62%, var(--color-text-primary));
+  background: var(--tag-pill-bg);
+  color: var(--tag-pill-fg);
+}
+
+.tagPillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Tag pill palette — 8 entries, kept in sync with TAG_COLOR_COUNT in
+// utils/skillTags.ts (locked by that module's unit tests). Hue is the only
+// fixed dimension; saturation/lightness mix with theme variables so both
+// light and dark themes stay readable.
+.tagColor0 {
+  --tag-pill-bg: color-mix(in srgb, hsl(215 85% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(215 85% 40%) 70%, var(--color-text-primary));
+}
+
+.tagColor1 {
+  --tag-pill-bg: color-mix(in srgb, hsl(158 75% 45%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(158 75% 32%) 70%, var(--color-text-primary));
+}
+
+.tagColor2 {
+  --tag-pill-bg: color-mix(in srgb, hsl(35 90% 52%) 18%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(30 82% 42%) 70%, var(--color-text-primary));
+}
+
+.tagColor3 {
+  --tag-pill-bg: color-mix(in srgb, hsl(282 65% 58%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(282 58% 40%) 70%, var(--color-text-primary));
+}
+
+.tagColor4 {
+  --tag-pill-bg: color-mix(in srgb, hsl(190 75% 45%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(190 72% 34%) 70%, var(--color-text-primary));
+}
+
+.tagColor5 {
+  --tag-pill-bg: color-mix(in srgb, hsl(8 78% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(8 70% 44%) 70%, var(--color-text-primary));
+}
+
+.tagColor6 {
+  --tag-pill-bg: color-mix(in srgb, hsl(96 60% 46%) 18%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(96 52% 34%) 70%, var(--color-text-primary));
+}
+
+.tagColor7 {
+  --tag-pill-bg: color-mix(in srgb, hsl(330 70% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(332 62% 40%) 70%, var(--color-text-primary));
 }

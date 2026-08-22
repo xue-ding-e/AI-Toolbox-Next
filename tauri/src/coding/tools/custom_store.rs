@@ -34,6 +34,11 @@ pub fn from_db_custom_tool(value: Value) -> CustomTool {
             .get("force_copy")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        icon_url: value
+            .get("icon_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()),
         mcp_config_path: value
             .get("mcp_config_path")
             .and_then(|v| v.as_str())
@@ -139,7 +144,9 @@ fn save_custom_tool_to_sqlite(
     })
 }
 
-/// Save only skills-related fields, preserving MCP fields if they exist
+/// Save only skills-related fields, preserving MCP fields if they exist.
+/// `icon_url` is the desired value written by the Skills form (empty -> None
+/// clears it); MCP writes preserve the stored value instead.
 pub async fn save_custom_tool_skills_fields(
     state: &SqliteDbState,
     key: &str,
@@ -147,6 +154,7 @@ pub async fn save_custom_tool_skills_fields(
     relative_skills_dir: Option<String>,
     relative_detect_dir: Option<String>,
     force_copy: bool,
+    icon_url: Option<String>,
     created_at: i64,
 ) -> Result<(), String> {
     // First check if the tool already exists
@@ -166,6 +174,7 @@ pub async fn save_custom_tool_skills_fields(
             relative_skills_dir,
             relative_detect_dir,
             force_copy,
+            icon_url,
             mcp_config_path: mcp_path,
             mcp_config_format: mcp_format,
             mcp_field,
@@ -192,6 +201,8 @@ pub async fn save_custom_tool_mcp_fields(
         .as_ref()
         .map(|tool| tool.force_copy)
         .unwrap_or(false);
+    // Icon is owned by the Skills form; MCP writes keep the stored value.
+    let existing_icon_url = existing.as_ref().and_then(|tool| tool.icon_url.clone());
 
     // Preserve existing skills fields
     let (skills_dir, detect_dir) = match existing {
@@ -210,6 +221,7 @@ pub async fn save_custom_tool_mcp_fields(
             relative_skills_dir: skills_dir,
             relative_detect_dir: detect_dir,
             force_copy: existing_force_copy,
+            icon_url: existing_icon_url,
             mcp_config_path,
             mcp_config_format,
             mcp_field,
@@ -230,6 +242,7 @@ fn custom_tool_to_value(tool: &CustomTool) -> Value {
         "relative_skills_dir": tool.relative_skills_dir,
         "relative_detect_dir": tool.relative_detect_dir,
         "force_copy": tool.force_copy,
+        "icon_url": tool.icon_url,
         "mcp_config_path": tool.mcp_config_path,
         "mcp_config_format": tool.mcp_config_format,
         "mcp_field": tool.mcp_field,
@@ -257,6 +270,7 @@ mod tests {
                 relative_skills_dir: Some("skills".to_string()),
                 relative_detect_dir: Some("detect".to_string()),
                 force_copy: true,
+                icon_url: Some("https://example.com/zulu.png".to_string()),
                 mcp_config_path: None,
                 mcp_config_format: None,
                 mcp_field: None,
@@ -272,6 +286,7 @@ mod tests {
                 relative_skills_dir: None,
                 relative_detect_dir: None,
                 force_copy: false,
+                icon_url: None,
                 mcp_config_path: Some("mcp.json".to_string()),
                 mcp_config_format: Some("json".to_string()),
                 mcp_field: Some("mcpServers".to_string()),
@@ -288,5 +303,9 @@ mod tests {
         assert_eq!(tools[1].key, "tool_b");
         assert!(tools[1].force_copy);
         assert_eq!(tools[1].relative_skills_dir.as_deref(), Some("skills"));
+        assert_eq!(
+            tools[1].icon_url.as_deref(),
+            Some("https://example.com/zulu.png")
+        );
     }
 }

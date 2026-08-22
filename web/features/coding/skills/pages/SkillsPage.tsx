@@ -1,15 +1,19 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
 import {
+  Drawer,
   Modal,
   message,
+  Popover,
   Progress,
 } from 'antd';
 import {
+  Check,
   ChevronsDown,
   ChevronsUp,
   ChevronRight,
   ExternalLink,
+  FolderInput,
+  Folders,
   GripVertical,
   Import,
   FileJson,
@@ -22,8 +26,9 @@ import {
   Power,
   PowerOff,
   RefreshCw,
+  Search,
   SlidersHorizontal,
-  Tags,
+  Tag,
   Trash2,
 } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -44,7 +49,10 @@ import { useSkills } from '../hooks/useSkills';
 import { useSkillActions } from '../hooks/useSkillActions';
 import { SkillsList } from '../components/SkillsList';
 import { SkillsGroupedList } from '../components/SkillsGroupedList';
+import { SkillDetailPanel } from '../components/SkillDetailPanel';
+import { ToolIcon } from '../components/ToolIcon';
 import { AddSkillModal } from '../components/modals/AddSkillModal';
+import { BatchTagDialog } from '../components/modals/BatchTagDialog';
 import { ImportModal } from '../components/modals/ImportModal';
 import { SkillsSettingsModal } from '../components/modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
@@ -67,6 +75,13 @@ import {
   type SkillGroupingMode,
 } from '../utils/skillGrouping';
 import { GROUP_TOOL_BATCH_OPTIONS } from '../utils/batchToolOptions';
+import {
+  collectAllTags,
+  matchesTagFilters,
+  normalizeTagList,
+  pruneStaleTagFilters,
+  UNTAGGED_FILTER,
+} from '../utils/skillTags';
 import type { ManagedSkill, SkillEnabledFilter, SkillsUpdateProgress, SkillGroup, SkillViewMode } from '../types';
 import styles from './SkillsPage.module.less';
 
@@ -86,112 +101,38 @@ interface ToolbarActionItemProps {
   onClick: () => void;
 }
 
-const POPOVER_VIEWPORT_MARGIN = 12;
-const POPOVER_MAX_WIDTH = 420;
-
+// Options popover built on antd Popover (click trigger, viewport-aware
+// placement) so positioning, dismissal and layering stay consistent with the
+// rest of the app; only the inner layout comes from module styles.
 const ToolbarOptionsPopover: React.FC<ToolbarOptionsPopoverProps> = ({ title, active, activeTitle, children }) => {
-  const triggerRef = React.useRef<HTMLSpanElement | null>(null);
-  const popoverRef = React.useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = React.useState(false);
-  const [position, setPosition] = React.useState({ top: 0, left: 0 });
-
-  const closePopover = React.useCallback(() => setOpen(false), []);
-
-  const updatePosition = React.useCallback(() => {
-    const triggerElement = triggerRef.current;
-    if (!triggerElement) {
-      return;
-    }
-
-    const rect = triggerElement.getBoundingClientRect();
-    const popoverWidth = popoverRef.current?.offsetWidth
-      ?? Math.min(POPOVER_MAX_WIDTH, window.innerWidth - POPOVER_VIEWPORT_MARGIN * 2);
-    const nextLeft = Math.min(
-      Math.max(POPOVER_VIEWPORT_MARGIN, rect.right - popoverWidth),
-      Math.max(POPOVER_VIEWPORT_MARGIN, window.innerWidth - popoverWidth - POPOVER_VIEWPORT_MARGIN),
-    );
-
-    const popoverHeight = popoverRef.current?.offsetHeight
-      ?? Math.min(window.innerHeight - POPOVER_VIEWPORT_MARGIN * 2, window.innerHeight);
-    const nextTop = Math.min(
-      Math.max(POPOVER_VIEWPORT_MARGIN, rect.bottom + 6),
-      Math.max(POPOVER_VIEWPORT_MARGIN, window.innerHeight - popoverHeight - POPOVER_VIEWPORT_MARGIN),
-    );
-
-    setPosition({
-      top: nextTop,
-      left: nextLeft,
-    });
-  }, []);
-
-  React.useLayoutEffect(() => {
-    if (open) {
-      updatePosition();
-    }
-  }, [open, updatePosition]);
-
-  React.useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    updatePosition();
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
-        return;
-      }
-      closePopover();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closePopover();
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown, true);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown, true);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [closePopover, open, updatePosition]);
+  const close = React.useCallback(() => setOpen(false), []);
 
   return (
-    <span ref={triggerRef} className={styles.toolbarOptionsHost}>
-      <ManagementIconButton
-        icon={<SlidersHorizontal size={14} aria-hidden="true" />}
-        title={activeTitle ?? title}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={activeTitle ?? title}
-        className={active ? styles.toolbarOptionsTriggerActive : undefined}
-        onClick={() => {
-          updatePosition();
-          setOpen((previousOpen) => !previousOpen);
-        }}
-        controlSize="compact"
-      />
-      {open && createPortal(
-        <div
-          ref={popoverRef}
-          className={styles.toolbarOptionsPopover}
-          role="dialog"
-          aria-label={title}
-          style={{ top: position.top, left: position.left }}
-        >
-          {typeof children === 'function' ? children({ close: closePopover }) : children}
-        </div>,
-        document.body,
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      arrow={false}
+      open={open}
+      onOpenChange={setOpen}
+      content={(
+        <div className={styles.toolbarOptionsPopover} role="dialog" aria-label={title}>
+          {typeof children === 'function' ? children({ close }) : children}
+        </div>
       )}
-    </span>
+    >
+      <span className={styles.toolbarOptionsHost}>
+        <ManagementIconButton
+          icon={<SlidersHorizontal size={14} aria-hidden="true" />}
+          title={activeTitle ?? title}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={activeTitle ?? title}
+          className={active ? styles.toolbarOptionsTriggerActive : undefined}
+          controlSize="compact"
+        />
+      </span>
+    </Popover>
   );
 };
 
@@ -205,6 +146,128 @@ const ToolbarActionItem: React.FC<ToolbarActionItemProps> = ({ icon, title, desc
     <ChevronRight size={15} className={styles.toolbarActionArrow} aria-hidden="true" />
   </button>
 );
+
+interface TagFilterOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+// axonhub-style faceted tag filter: a dashed outline trigger (plus icon +
+// title + selected badges) opening a searchable option list with per-tag
+// counts and a clear action. Selection stays multi-select AND; the untagged
+// sentinel stays mutually exclusive with concrete tags (handleToggleTagFilter).
+const TagFilterDropdown: React.FC<{
+  options: TagFilterOption[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}> = ({ options, selected, onToggle, onClear }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+
+  const selectedSet = React.useMemo(() => new Set(selected), [selected]);
+  const selectedBadges = React.useMemo(
+    () => options.filter((option) => selectedSet.has(option.value)),
+    [options, selectedSet],
+  );
+  const visibleOptions = React.useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return options;
+    return options.filter((option) => option.label.toLowerCase().includes(keyword));
+  }, [options, query]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setQuery('');
+    }
+  };
+
+  return (
+    <Popover
+      trigger="click"
+      placement="bottomLeft"
+      arrow={false}
+      open={open}
+      onOpenChange={handleOpenChange}
+      content={(
+        <div className={styles.tagFilterPopover}>
+          <div className={styles.tagFilterSearch}>
+            <Search size={13} aria-hidden="true" />
+            <input
+              value={query}
+              placeholder={t('skills.tags.searchPlaceholder')}
+              aria-label={t('skills.tags.searchPlaceholder')}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <div className={styles.tagFilterList} role="listbox" aria-multiselectable aria-label={t('skills.tags.filterLabel')}>
+            {visibleOptions.map((option) => {
+              const isSelected = selectedSet.has(option.value);
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={styles.tagFilterOption}
+                  onClick={() => onToggle(option.value)}
+                >
+                  <span
+                    className={`${styles.tagFilterCheckbox}${isSelected ? ` ${styles.tagFilterCheckboxChecked}` : ''}`}
+                    aria-hidden="true"
+                  >
+                    {isSelected && <Check size={12} />}
+                  </span>
+                  <span className={styles.tagFilterOptionLabel}>{option.label}</span>
+                  <span className={styles.tagFilterCount}>{option.count}</span>
+                </button>
+              );
+            })}
+            {visibleOptions.length === 0 && (
+              <div className={styles.tagFilterEmpty}>{t('skills.tags.noMatch')}</div>
+            )}
+            {selected.length > 0 && (
+              <>
+                {visibleOptions.length > 0 && <div className={styles.tagFilterSeparator} />}
+                <button type="button" className={styles.tagFilterClear} onClick={onClear}>
+                  {t('skills.tags.clearFilter')}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    >
+      <button
+        type="button"
+        className={styles.tagFilterTrigger}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={t('skills.tags.filterLabel')}
+      >
+        <PlusCircle size={14} aria-hidden="true" />
+        <span>{t('skills.tags.filterLabel')}</span>
+        {selectedBadges.length > 0 && (
+          <>
+            <span className={styles.tagFilterDivider} aria-hidden="true" />
+            {selectedBadges.length > 2
+              ? (
+                <span className={styles.tagFilterBadge}>
+                  {t('skills.tags.selectedCount', { count: selectedBadges.length })}
+                </span>
+              )
+              : selectedBadges.map((badge) => (
+                <span key={badge.value} className={styles.tagFilterBadge}>{badge.label}</span>
+              ))}
+          </>
+        )}
+      </button>
+    </Popover>
+  );
+};
 
 const SkillsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -236,11 +299,15 @@ const SkillsPage: React.FC = () => {
   const [selectionMode, setSelectionMode] = React.useState(false);
   const [reorderMode, setReorderMode] = React.useState(false);
   const [metadataSkill, setMetadataSkill] = React.useState<ManagedSkill | null>(null);
+  const [detailSkillId, setDetailSkillId] = React.useState<string | null>(null);
   const [batchGroupModalOpen, setBatchGroupModalOpen] = React.useState(false);
   const [batchGroupValue, setBatchGroupValue] = React.useState('');
   const [groupsModalOpen, setGroupsModalOpen] = React.useState(false);
   const [inventoryModalOpen, setInventoryModalOpen] = React.useState(false);
   const [enabledFilter, setEnabledFilter] = React.useState<SkillEnabledFilter>('all');
+  const [tagFilter, setTagFilter] = React.useState<string[]>([]);
+  const [batchTagModalOpen, setBatchTagModalOpen] = React.useState(false);
+  const [batchTagApplying, setBatchTagApplying] = React.useState(false);
   const [groupToolMode, setGroupToolMode] = React.useState(false);
   const [updatingAll, setUpdatingAll] = React.useState(false);
   const [updateAllProgress, setUpdateAllProgress] = React.useState<SkillsUpdateProgress | null>(null);
@@ -344,15 +411,52 @@ const SkillsPage: React.FC = () => {
     handleSetManagementEnabled,
   } = useSkillActions({ allTools });
 
-  // Filter skills by search text
+  // Collect distinct tags across all managed skills (source for tag chips/datalists)
+  const allTags = React.useMemo(() => collectAllTags(skills), [skills]);
+  const hasUntaggedSkill = React.useMemo(
+    () => skills.some((skill) => normalizeTagList(skill.tags ?? []).length === 0),
+    [skills],
+  );
+  // Whether any tag chip (or the untagged chip) can be offered in the filter row
+  const hasTagFilters = allTags.length > 0 || hasUntaggedSkill;
+
+  // Options for the tag filter dropdown: untagged sentinel first (when
+  // applicable), then every distinct tag, each with its skill count.
+  const tagFilterOptions = React.useMemo<TagFilterOption[]>(() => {
+    const options: TagFilterOption[] = [];
+    if (hasUntaggedSkill) {
+      const untaggedCount = skills.filter(
+        (skill) => normalizeTagList(skill.tags ?? []).length === 0,
+      ).length;
+      options.push({ value: UNTAGGED_FILTER, label: t('skills.tags.untagged'), count: untaggedCount });
+    }
+    const tagCounts = new Map<string, number>();
+    for (const skill of skills) {
+      for (const tagItem of normalizeTagList(skill.tags ?? [])) {
+        tagCounts.set(tagItem, (tagCounts.get(tagItem) ?? 0) + 1);
+      }
+    }
+    for (const tagItem of allTags) {
+      options.push({ value: tagItem, label: tagItem, count: tagCounts.get(tagItem) ?? 0 });
+    }
+    return options;
+  }, [allTags, hasUntaggedSkill, skills, t]);
+
+  // Filter skills by status, tag filter, then search text
   const filteredSkills = React.useMemo(() => {
     const byStatus = skills.filter((skill) => {
       if (enabledFilter === 'enabled') return skill.management_enabled;
       if (enabledFilter === 'disabled') return !skill.management_enabled;
       return true;
     });
-    return filterSkillsBySearch(byStatus, deferredSearchText);
-  }, [skills, deferredSearchText, enabledFilter]);
+    const byTags = byStatus.filter((skill) => matchesTagFilters(skill, tagFilter));
+    return filterSkillsBySearch(byTags, deferredSearchText);
+  }, [skills, deferredSearchText, enabledFilter, tagFilter]);
+
+  // Drop stale tag filters when their tags disappear (e.g. skills removed)
+  React.useEffect(() => {
+    setTagFilter((prev) => pruneStaleTagFilters(prev, allTags, hasUntaggedSkill));
+  }, [allTags, hasUntaggedSkill]);
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
@@ -392,6 +496,20 @@ const SkillsPage: React.FC = () => {
     setSelectionMode((previousSelectionMode) => !previousSelectionMode);
   }, [selectionMode]);
 
+  // The "untagged" sentinel contradicts any concrete tag under AND semantics,
+  // so selecting one side drops the other instead of yielding an empty list.
+  const handleToggleTagFilter = React.useCallback((tag: string) => {
+    setTagFilter((prev) => {
+      if (prev.includes(tag)) {
+        return prev.filter((existing) => existing !== tag);
+      }
+      const next = tag === UNTAGGED_FILTER
+        ? prev.filter((existing) => existing === UNTAGGED_FILTER)
+        : prev.filter((existing) => existing !== UNTAGGED_FILTER);
+      return [...next, tag];
+    });
+  }, []);
+
   const handleSelectChange = React.useCallback((skillId: string, checked: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -426,6 +544,13 @@ const SkillsPage: React.FC = () => {
     () => new Map(skills.map((skill) => [skill.id, skill])),
     [skills],
   );
+  const detailSkill = detailSkillId ? skillById.get(detailSkillId) ?? null : null;
+  const handleOpenDetail = React.useCallback((skill: ManagedSkill) => {
+    setDetailSkillId(skill.id);
+  }, []);
+  const handleCloseDetail = React.useCallback(() => {
+    setDetailSkillId(null);
+  }, []);
   const selectedSkills = React.useMemo(
     () => selectedArray
       .map((skillId) => skillById.get(skillId))
@@ -440,6 +565,62 @@ const SkillsPage: React.FC = () => {
     () => selectedSkills.filter((skill) => !skill.management_enabled),
     [selectedSkills],
   );
+
+  const handleUpdateSkillsTags = React.useCallback(async (skillId: string, nextTags: string[]) => {
+    const skill = skillById.get(skillId);
+    if (!skill) {
+      return;
+    }
+    try {
+      await api.updateSkillMetadata(skill.id, skill.group_id, skill.user_note, nextTags);
+      await refresh();
+    } catch (error) {
+      message.error(String(error));
+    }
+  }, [refresh, skillById]);
+
+  // Group editing in the detail panel: resolve the name against existing
+  // groups, create the group when new, and clear it when empty. Tags stay
+  // untouched via the tri-state undefined argument.
+  const handleUpdateSkillGroup = React.useCallback(async (skillId: string, groupName: string) => {
+    const skill = skillById.get(skillId);
+    if (!skill) {
+      return;
+    }
+    const normalizedGroupName = normalizeSkillMetadataText(groupName);
+    try {
+      const groupId = normalizedGroupName
+        ? findSkillGroupOptionByName(groupOptions, normalizedGroupName)?.id
+          ?? await api.saveSkillGroup(normalizedGroupName, null, groupOptions.length)
+        : null;
+      await api.updateSkillMetadata(skillId, groupId, skill.user_note, undefined);
+      await refresh();
+    } catch (error) {
+      message.error(String(error));
+    }
+  }, [groupOptions, refresh, skillById]);
+
+  const handleApplyBatchTags = React.useCallback(async (nextTags: string[]) => {
+    if (selectedEnabledSkills.length === 0) {
+      return;
+    }
+    setBatchTagApplying(true);
+    try {
+      for (const skill of selectedEnabledSkills) {
+        const merged = normalizeTagList([...skill.tags, ...nextTags]);
+        await api.updateSkillMetadata(skill.id, skill.group_id, skill.user_note, merged);
+      }
+      await refresh();
+      setBatchTagModalOpen(false);
+      setSelectedIds(new Set());
+      message.success(t('skills.tags.applySuccess', { count: selectedEnabledSkills.length }));
+    } catch (error) {
+      message.error(String(error));
+    } finally {
+      setBatchTagApplying(false);
+    }
+  }, [refresh, selectedEnabledSkills, t]);
+
   const selectedEnabledToolCount = React.useMemo(
     () => selectedEnabledSkills.reduce((total, skill) => total + skill.enabled_tools.length, 0),
     [selectedEnabledSkills],
@@ -449,6 +630,7 @@ const SkillsPage: React.FC = () => {
     () => installedTools.map((tool) => ({
       key: `add-${tool.id}`,
       label: tool.label,
+      icon: <ToolIcon toolKey={tool.id} label={tool.label} size={14} iconUrl={tool.iconUrl ?? undefined} />,
       onSelect: () => handleBatchAddTool(selectedArray, tool.id),
     })),
     [handleBatchAddTool, installedTools, selectedArray],
@@ -457,6 +639,7 @@ const SkillsPage: React.FC = () => {
     () => installedTools.map((tool) => ({
       key: `remove-${tool.id}`,
       label: tool.label,
+      icon: <ToolIcon toolKey={tool.id} label={tool.label} size={14} iconUrl={tool.iconUrl ?? undefined} />,
       onSelect: () => handleBatchRemoveTool(selectedArray, tool.id),
     })),
     [handleBatchRemoveTool, installedTools, selectedArray],
@@ -740,11 +923,14 @@ const SkillsPage: React.FC = () => {
     if (viewMode === 'grouped' && selectionMode) {
       states.push(t('skills.batch.bulkManage'));
     }
+    if (tagFilter.length > 0) {
+      states.push(t('skills.tags.activeFilter'));
+    }
     if (viewMode === 'grouped' && groupToolMode) {
       states.push(t('skills.groupControls.groupTools'));
     }
     return states;
-  }, [enabledFilter, groupMode, groupToolMode, reorderMode, selectionMode, t, viewMode]);
+  }, [enabledFilter, groupMode, groupToolMode, reorderMode, selectionMode, tagFilter, t, viewMode]);
 
   const toolbarOptionsActive = toolbarOptionStates.length > 0;
   const toolbarOptionsTitle = toolbarOptionsActive
@@ -862,6 +1048,14 @@ const SkillsPage: React.FC = () => {
           >
             {t('skills.addSkill')}
           </ManagementButton>
+          {hasTagFilters && (
+            <TagFilterDropdown
+              options={tagFilterOptions}
+              selected={tagFilter}
+              onToggle={handleToggleTagFilter}
+              onClear={() => setTagFilter([])}
+            />
+          )}
         </div>
         <div className={styles.toolbarActions}>
           <ToolbarOptionsPopover
@@ -990,7 +1184,7 @@ const SkillsPage: React.FC = () => {
                   <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.management')}</div>
                   <div className={styles.toolbarActionList}>
                     <ToolbarActionItem
-                      icon={<Tags size={14} aria-hidden="true" />}
+                      icon={<Folders size={14} aria-hidden="true" />}
                       title={t('skills.toolbar.groupManagement')}
                       description={t('skills.toolbar.groupManagementDescription')}
                       onClick={() => {
@@ -1046,7 +1240,7 @@ const SkillsPage: React.FC = () => {
                 <MinusCircle size={14} aria-hidden="true" />
               </ManagementMenu>
               <ManagementIconButton
-                icon={<Tags size={14} aria-hidden="true" />}
+                icon={<FolderInput size={14} aria-hidden="true" />}
                 title={hasSelection ? t('skills.batch.setGroup') : t('skills.batch.noneSelected')}
                 disabled={!hasSelection || loading || actionLoading}
                 onClick={() => {
@@ -1061,6 +1255,13 @@ const SkillsPage: React.FC = () => {
                 disabled={!hasSelection || loading || actionLoading}
                 onClick={() => handleBatchDelete(selectedArray)}
                 danger
+                controlSize="compact"
+              />
+              <ManagementIconButton
+                icon={<Tag size={14} aria-hidden="true" />}
+                title={hasSelection ? t('skills.tags.batchAdd') : t('skills.batch.noneSelected')}
+                disabled={!hasSelection || loading || actionLoading}
+                onClick={() => setBatchTagModalOpen(true)}
                 controlSize="compact"
               />
               <span className={styles.batchDivider} />
@@ -1104,6 +1305,7 @@ const SkillsPage: React.FC = () => {
             updatingSkillIds={updatingSkillIds}
             columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
+            onOpenDetail={handleOpenDetail}
             getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={handleUpdate}
@@ -1126,6 +1328,7 @@ const SkillsPage: React.FC = () => {
             selectedIds={selectedIds}
             onSelectChange={handleSelectChange}
             onSelectAllGroup={handleSelectAllGroup}
+            onOpenDetail={handleOpenDetail}
             getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={handleUpdate}
@@ -1139,6 +1342,46 @@ const SkillsPage: React.FC = () => {
           />
         )}
       </div>
+
+      <Drawer
+        placement="right"
+        width="min(60vw, 760px)"
+        open={!!detailSkill}
+        onClose={handleCloseDetail}
+        destroyOnHidden
+        closable={false}
+        styles={{
+          body: {
+            padding: 0,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          },
+        }}
+      >
+        {detailSkill && (
+          <SkillDetailPanel
+            skill={detailSkill}
+            allTools={allTools}
+            loading={loading || actionLoading}
+            updatingSkillIds={updatingSkillIds}
+            getRepoInfo={getRepoInfo}
+            formatRelative={formatRelative}
+            onClose={handleCloseDetail}
+            onToggleTool={handleToggleTool}
+            onUpdate={handleUpdate}
+            onDelete={(skillId) => {
+              setDetailSkillId(null);
+              handleDelete(skillId);
+            }}
+            onSetManagementEnabled={handleSetSkillEnabled}
+            allTags={allTags}
+            onUpdateTags={handleUpdateSkillsTags}
+            groupOptions={groupOptions}
+            onUpdateGroup={handleUpdateSkillGroup}
+          />
+        )}
+      </Drawer>
 
       {isAddModalOpen && (
         <AddSkillModal
@@ -1220,6 +1463,16 @@ const SkillsPage: React.FC = () => {
           </p>
         </div>
       </Modal>
+
+      <BatchTagDialog
+        open={batchTagModalOpen}
+        skillCount={selectedEnabledSkills.length}
+        skippedCount={selectedDisabledSkills.length}
+        allTags={allTags}
+        applying={batchTagApplying}
+        onCancel={() => setBatchTagModalOpen(false)}
+        onApply={handleApplyBatchTags}
+      />
 
       <SkillMetadataModal
         open={!!metadataSkill}

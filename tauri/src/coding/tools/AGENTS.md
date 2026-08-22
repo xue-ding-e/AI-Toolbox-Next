@@ -35,6 +35,7 @@ sequenceDiagram
 
 - 不要把“自定义工具”当成一定已安装的真实运行时。当前检测层对 custom tool 默认视为可用，业务层要理解这是产品约束，不是系统级验证。
 - 保存自定义工具时，Skills 字段和 MCP 字段必须互相保留；只更新一侧时不要把另一侧清空。
+- `icon_url`（自定义工具品牌图标，http(s) 图片 URL）由 Skills 表单拥有：`save_custom_tool_skills_fields` 接收期望值（空字符串 → `None` 表示清除），`save_custom_tool_mcp_fields` 一律保留 DB 已有值；`skills_add_custom_tool` 校验非空值必须以 `http://`/`https://` 开头。
 - OpenCode、Claude Code、Codex、OpenClaw、Pi、Oh My Pi 的 Skills/MCP 路径在 WSL Direct 场景下必须用 `*_with_db` 版本解析，不能退回静态默认路径。
 - Hermes MCP 同步走 `mcp::hermes_mcp`（serde_yaml round-trip），不是 `hermes::commands` 的段落级 section splice。merge-on-write 保留 Hermes 专有字段（`enabled`/`timeout`/`connect_timeout`/`tools`/`sampling`/`roots`/`auth`），import 时剥离。Hermes 无 `type` 字段，靠 `command`/`url` 推断 stdio/http。
 - dsh MCP 同步走 `mcp::cordis_patch`（Cordis patch DSL），不是 yaml 段。每个 server 是一行 `insert`，包名固定 `@deepseek-ai/dsh-mcp-client`，`config.serverName` 作 key。dsh 是 developer preview，cordis 格式可能迭代；adapter 隔离在 `cordis_patch.rs` 便于更新。

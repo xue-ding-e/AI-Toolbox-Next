@@ -313,17 +313,22 @@ pub async fn delete_skill(state: &SqliteDbState, skill_id: &str) -> Result<(), S
 }
 
 /// Update user-managed metadata for a skill without touching content timestamps or sync state.
+/// `tags` uses tri-state semantics: None keeps existing tags untouched; Some replaces the whole list.
 pub async fn update_skill_metadata(
     state: &SqliteDbState,
     skill_id: &str,
     group_id: Option<String>,
     user_note: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<(), String> {
     let user_group = group_name_for_id(state, group_id.clone()).await?;
     sqlite_patch_skill(state, skill_id, |skill| {
         skill.group_id = group_id.clone();
         skill.user_group = user_group.clone();
         skill.user_note = user_note.clone();
+        if let Some(new_tags) = &tags {
+            skill.tags = new_tags.clone();
+        }
     })?;
     Ok(())
 }
@@ -677,6 +682,7 @@ pub async fn save_custom_tool(state: &SqliteDbState, tool: &CustomTool) -> Resul
         Some(tool.relative_skills_dir.clone()),
         Some(tool.relative_detect_dir.clone()),
         tool.force_copy,
+        tool.icon_url.clone(),
         tool.created_at,
     )
     .await

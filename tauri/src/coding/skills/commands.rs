@@ -43,8 +43,8 @@ use super::types::{
     DetectedCentralSkillDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
     ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillGroupDto, SkillGroupRecord,
     SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
-    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
-    ToolStatusDto, UpdateAllErrorDto, UpdateAllResultDto, UpdateResultDto,
+    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, SkillDocumentDto,
+    ToolInfoDto, ToolStatusDto, UpdateAllErrorDto, UpdateAllResultDto, UpdateResultDto,
     SkillsUpdateProgress,
 };
 use crate::coding::runtime_location;
@@ -233,6 +233,7 @@ pub async fn skills_get_tool_status(
             label: adapter.display_name.clone(),
             installed: ok,
             skills_dir: skills_path,
+            icon_url: adapter.icon_url.clone(),
         });
         // Only track built-in tools for "installed" detection
         // Custom tools are always "installed" but shouldn't trigger save
@@ -844,6 +845,7 @@ async fn adopt_detected_central_skill(
     let now = now_ms();
     let skill = Skill {
         id: String::new(),
+        tags: Vec::new(),
         name: detected.name,
         source_type: "central".to_string(),
         source_ref: None,
@@ -1237,6 +1239,7 @@ pub async fn skills_get_managed_skills(
             user_note: skill.user_note,
             management_enabled: skill.management_enabled,
             disabled_previous_tools: skill.disabled_previous_tools,
+            tags: skill.tags.clone(),
             description,
             content_hash: skill.content_hash,
             source_health: source_diagnosis.health,
@@ -1440,6 +1443,42 @@ mod skill_source_tests {
             .as_deref()
             .expect("source error")
             .contains("not a resolvable directory"));
+    }
+
+    #[test]
+    fn read_skill_document_returns_markdown_content() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(temp.path().join("SKILL.md"), "# Demo\n\nBody text")
+            .expect("write SKILL.md");
+
+        let doc = read_skill_document_file(temp.path(), "SKILL.md").expect("read doc");
+
+        assert_eq!(doc.filename, "SKILL.md");
+        assert!(doc.content.contains("# Demo"));
+        assert!(!doc.truncated);
+    }
+
+    #[test]
+    fn read_skill_document_skips_missing_file() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let doc = read_skill_document_file(temp.path(), "README.md");
+
+        assert!(doc.is_none());
+    }
+
+    #[test]
+    fn read_skill_document_truncates_large_file() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let oversized = vec![b'x'; SKILL_DOCUMENT_READ_CAP_BYTES * 2];
+        let mut content = b"---\nname: big\n---\n".to_vec();
+        content.extend_from_slice(&oversized);
+        std::fs::write(temp.path().join("SKILL.md"), &content).expect("write big SKILL.md");
+
+        let doc = read_skill_document_file(temp.path(), "SKILL.md").expect("read doc");
+
+        assert!(doc.truncated);
+        assert!(doc.content.len() <= SKILL_DOCUMENT_READ_CAP_BYTES + 16);
     }
 }
 
@@ -2280,6 +2319,7 @@ pub async fn skills_get_custom_tools(
             relative_detect_dir: t.relative_detect_dir,
             created_at: t.created_at,
             force_copy: t.force_copy,
+            icon_url: t.icon_url,
         })
         .collect())
 }
@@ -2293,6 +2333,7 @@ pub async fn skills_add_custom_tool(
     relativeSkillsDir: String,
     relativeDetectDir: String,
     forceCopy: Option<bool>,
+    iconUrl: Option<String>,
 ) -> Result<(), String> {
     use crate::coding::tools::path_utils::{normalize_path, to_storage_path};
 
@@ -2305,6 +2346,16 @@ pub async fn skills_add_custom_tool(
     let normalized_detect = normalize_path(relativeDetectDir.trim());
     let relative_skills_dir = to_storage_path(&normalized_skills);
     let relative_detect_dir = to_storage_path(&normalized_detect);
+
+    // Icon must be an http(s) image URL when provided; empty clears it
+    let icon_url = iconUrl
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty());
+    if let Some(ref url) = icon_url {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("Icon URL must start with http:// or https://".to_string());
+        }
+    }
 
     // Validate key format
     if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -2322,6 +2373,7 @@ pub async fn skills_add_custom_tool(
         relative_detect_dir,
         created_at: now_ms(),
         force_copy: forceCopy.unwrap_or(false),
+        icon_url,
     };
     skill_store::save_custom_tool(&state, &tool).await
 }
@@ -2437,12 +2489,14 @@ pub async fn skills_update_metadata(
     skillId: String,
     groupId: Option<String>,
     userNote: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<(), String> {
     skill_store::update_skill_metadata(
         &state,
         &skillId,
         normalize_optional_id(groupId),
         normalize_optional_text(userNote),
+        tags,
     )
     .await
 }
@@ -2546,6 +2600,7 @@ async fn build_inventory_json(
                     enabled: skill.management_enabled,
                     enabled_tools: skill.enabled_tools,
                     previous_enabled_tools: skill.disabled_previous_tools,
+                    tags: skill.tags,
                     source_type: skill.source_type,
                     source_ref: skill.source_ref,
                     central_path: resolved_path.to_string_lossy().to_string(),
@@ -2778,6 +2833,7 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             &skill.id,
             group_id,
             normalize_optional_text(item.user_note.clone()),
+            Some(item.tags.clone()),
         )
         .await?;
         skill_store::update_skill_sort_index(&state, &skill.id, item.order).await?;
@@ -2812,7 +2868,7 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
         let source_path = resolve_skill_source_path_for_cleanup(&app, &state, skill).await;
         remove_skill_targets_best_effort(&state, skill, source_path.as_deref()).await?;
         skill_store::disable_skill_with_previous_tools(&state, &skill.id, previous_tools).await?;
-        skill_store::update_skill_metadata(&state, &skill.id, None, skill.user_note.clone())
+        skill_store::update_skill_metadata(&state, &skill.id, None, skill.user_note.clone(), None)
             .await?;
     }
 
@@ -3160,4 +3216,67 @@ pub async fn skills_resync_all(
     state: State<'_, SqliteDbState>,
 ) -> Result<Vec<String>, String> {
     resync_all_skills_internal(app, state.inner()).await
+}
+
+const SKILL_DOCUMENT_READ_CAP_BYTES: usize = 128 * 1024;
+const SKILL_DOCUMENT_HARD_CAP_BYTES: u64 = (SKILL_DOCUMENT_READ_CAP_BYTES * 10) as u64;
+
+fn read_skill_document_file(path: &Path, filename: &str) -> Option<SkillDocumentDto> {
+    let file_path = path.join(filename);
+    let stat = std::fs::metadata(&file_path).ok()?;
+    if !stat.is_file() {
+        return None;
+    }
+
+    // Skip files that look like binaries / are unreasonably huge up-front.
+    if stat.len() > SKILL_DOCUMENT_HARD_CAP_BYTES {
+        return Some(SkillDocumentDto {
+            filename: filename.to_string(),
+            content: String::new(),
+            truncated: true,
+        });
+    }
+
+    let bytes = std::fs::read(&file_path).ok()?;
+    if bytes.len() > SKILL_DOCUMENT_READ_CAP_BYTES {
+        let text = String::from_utf8_lossy(&bytes[..SKILL_DOCUMENT_READ_CAP_BYTES]);
+        return Some(SkillDocumentDto {
+            filename: filename.to_string(),
+            content: text.into_owned(),
+            truncated: true,
+        });
+    }
+
+    let text = String::from_utf8_lossy(&bytes);
+    Some(SkillDocumentDto {
+        filename: filename.to_string(),
+        content: text.into_owned(),
+        truncated: false,
+    })
+}
+
+/// Read the Skill's central SKILL.md and README.md content for the detail panel.
+/// The command is read-only and never mutates the record or central repo.
+#[tauri::command]
+pub async fn skills_get_skill_documents(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+    skill_id: String,
+) -> Result<Vec<SkillDocumentDto>, String> {
+    let Some(skill) = skill_store::get_skill_by_id(&state, &skill_id).await? else {
+        return Ok(Vec::new());
+    };
+
+    let central_dir = resolve_central_repo_path(&app, &state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let central_path = resolve_skill_central_path(&skill.central_path, &central_dir);
+
+    let candidates = ["SKILL.md", "README.md"];
+    let documents = candidates
+        .into_iter()
+        .filter_map(|name| read_skill_document_file(&central_path, name))
+        .collect::<Vec<_>>();
+
+    Ok(documents)
 }

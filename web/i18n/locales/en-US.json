@@ -1218,7 +1218,8 @@
     "moreOptionsCliDetect": "Auto detect",
     "moreOptionsCliDetectSuccess": "CLI path auto-detected",
     "moreOptionsCliDetectFailed": "Auto detect failed, please choose manually",
-    "moreOptionsCliNotSet": "No manual CLI path set yet. Click Edit to auto-detect or pick a local CLI path."
+    "moreOptionsCliNotSet": "No manual CLI path set yet. Click Edit to auto-detect or pick a local CLI path.",
+    "apply": "Apply"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -3108,7 +3109,7 @@
     "addSkill": "Add Skill",
     "addSkillTitle": "Add Skill",
     "importExisting": "Import Existing Skills",
-    "searchPlaceholder": "Search name, source, group, or note",
+    "searchPlaceholder": "Search name, source, group, tags",
     "viewFlat": "Flat",
     "viewGrouped": "Grouped",
     "reorder": "Reorder",
@@ -3200,7 +3201,7 @@
       "noImportFile": "No file selected",
       "copyAgentPrompt": "Copy Agent Prompt",
       "copyPromptSuccess": "Agent prompt copied. Paste it to your AI assistant.",
-      "agentPromptText": "Please use your file read/write tools to reorganize this AI Toolbox Skills Inventory JSON file: {{path}}\n\nGoal: reorganize Skill groups, notes, ordering, and enabled states, then write the result to an importable JSON file.\n\nConstraints:\n1. Prefer reading {{path}} with tools. Do not ask me to paste a large JSON blob manually.\n2. Save the final result as a JSON file and tell me the output path; do not only print a huge JSON block in chat.\n3. The JSON content must be directly importable by AI Toolbox. Do not wrap it in Markdown fences and do not mix in explanatory text.\n4. Preserve the top-level schema_version field.\n5. Do not add, delete, or modify core records. Preserve every skill's id, source_ref, central_path, and content_hash exactly.\n6. Do not output a description field.\n7. Any local skill omitted from the JSON will be disabled by default, so do not drop any skill entries.\n8. You may modify the groups array (add, rename, reorder), but group names must remain unique.\n9. skill.group must reference an existing groups.name or be null.\n10. You may modify each skill's user_note, order, enabled, and previous_enabled_tools fields. Disabled skills (enabled: false) may still remain categorized in groups.",
+      "agentPromptText": "Please use your file read/write tools to reorganize this AI Toolbox Skills Inventory JSON file: {{path}}\n\nGoal: reorganize Skill groups, notes, ordering, enabled states, and tags, then write the result to an importable JSON file.\n\nConstraints:\n1. Prefer reading {{path}} with tools. Do not ask me to paste a large JSON blob manually.\n2. Save the final result as a JSON file and tell me the output path; do not only print a huge JSON block in chat.\n3. The JSON content must be directly importable by AI Toolbox. Do not wrap it in Markdown fences and do not mix in explanatory text.\n4. Preserve the top-level schema_version field.\n5. Do not add, delete, or modify core records. Preserve every skill's id, source_ref, central_path, and content_hash exactly.\n6. Do not output a description field.\n7. Any local skill omitted from the JSON will be disabled by default, so do not drop any skill entries.\n8. You may modify the groups array (add, rename, reorder), but group names must remain unique.\n9. skill.group must reference an existing groups.name or be null.\n10. You may modify each skill's user_note, order, enabled, previous_enabled_tools, and tags (an array of strings) fields. Disabled skills (enabled: false) may still remain categorized in groups.",
       "preview": "Preview Import",
       "previewInvalid": "Inventory validation failed",
       "apply": "Apply Import",
@@ -3384,7 +3385,7 @@
     "openRepo": "Open Source Repository",
     "openFolder": "Open Source Folder",
     "openDataDir": "Open Data Directory",
-    "updateTooltip": "Pull latest content from source (Git repository or local directory) and update the Skill folder",
+    "updateTooltip": "Update Skill",
     "remove": "Delete",
     "unknown": "Unknown",
     "customToolSettings": {
@@ -3405,7 +3406,10 @@
       "syncModeAuto": "Auto (Recommended)",
       "syncModeAutoHint": "Prefer symlinks, saves space and syncs changes automatically",
       "syncModeCopy": "Force Copy",
-      "syncModeCopyHint": "Always copy files, some tools may require this mode"
+      "syncModeCopyHint": "Always copy files, some tools may require this mode",
+      "iconUrl": "Icon URL",
+      "iconUrlHint": "Optional http(s) image URL used as the tool icon",
+      "iconUrlInvalid": "Icon URL must start with http:// or https://"
     },
     "globalDir": {
       "defaultTag": "Default",
@@ -3463,6 +3467,39 @@
       "previewEmpty": "Enter a valid schedule to see trigger times here.",
       "preview": "Preview",
       "dailyHint": "Runs every day at the selected time."
+    },
+    "section": {
+      "metadata": "Metadata",
+      "sync": "Sync",
+      "document": "Document"
+    },
+    "detail": {
+      "syncSummary": "{{synced}} / {{total}} tools synced",
+      "noTools": "No installed tools detected",
+      "documentLoading": "Loading document…",
+      "documentEmpty": "No content",
+      "noDocument": "This Skill has no SKILL.md / README.md",
+      "truncated": "File truncated for display.",
+      "toolSynced": "Synced",
+      "toolNotSynced": "Not synced"
+    },
+    "update": "Update",
+    "tags": {
+      "remove": "Remove tag",
+      "add": "Add tag",
+      "addPlaceholder": "Type a tag…",
+      "batchTitle": "Add Tags",
+      "batchHint": "Tags will be appended to {{count}} selected skill(s)",
+      "batchSkippedHint": "{{skipped}} disabled skill(s) will be skipped",
+      "batchAdd": "Add tags",
+      "filterLabel": "Tag filter",
+      "untagged": "Untagged",
+      "activeFilter": "Tag filter active",
+      "applySuccess": "Updated tags for {{count}} skill(s)",
+      "searchPlaceholder": "Search tags…",
+      "clearFilter": "Clear filter",
+      "selectedCount": "{{count}} selected",
+      "noMatch": "No matching tags"
     }
   },
   "mcp": {

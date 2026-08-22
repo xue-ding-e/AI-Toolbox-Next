@@ -80,6 +80,7 @@ Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从
 | user_group | string? | 旧版/兼容分组名称字段；新逻辑以 `group_id` 为准，写入时同步回填名称便于兼容读取 |
 | group_id | string? | 指向 `skill_group` 的稳定内部分组 ID；重命名 group 不迁移 skill，只更新 group 记录本身 |
 | user_note | string? | AI Toolbox 内部自定义备注，不写入 SKILL.md，不参与内容哈希 |
+| tags | array | 用户管理的 string 标签数组；AI Toolbox 内部元数据，adapter 缺省为空数组，不写入 SKILL.md、不参与内容哈希、不触发工具同步 |
 | management_enabled | bool | AI Toolbox 管理启用状态；不是 `status` 健康状态，false 表示 UX 禁用并从当前工具取消同步 |
 | disabled_previous_tools | array | 禁用前记录的工具绑定 key；重新启用时用于默认恢复勾选 |
 | enabled_tools | array | 已启用的工具列表，如 ["claude_code", "codex"] |
@@ -575,7 +576,8 @@ Inventory JSON 是完整管理清单，用于重排 AI Toolbox 元数据，不�
 - 导出全部 skill，包括 `management_enabled=false` 或当前 UI 筛选隐藏的 skill。
 - 主 UI 不再把完整 JSON 塞进 textarea 或剪贴板，而是直接写入用户目录下的 `~/skill-group-{timestamp}.json`，避免大清单在界面里卡顿或难以复制。
 - groups 只包含 `name/note/order`，不包含内部 `group_id`。
-- skills 包含 `id/name/group/user_note/order/enabled/enabled_tools/previous_enabled_tools/source_type/source_ref/central_path/content_hash`。
+- skills 包含 `id/name/group/user_note/tags/order/enabled/enabled_tools/previous_enabled_tools/source_type/source_ref/central_path/content_hash`。
+- `tags` 以 `#[serde(default)]` 默认空数组导出/导入；apply 时 matched skill 用 JSON 的 `tags` 整体覆盖（未提供则不覆盖），新装/默认禁用路径写空数组。tags 是用户管理元数据，与 `user_note` 同语义，见 §8.3。
 - 不导出 `description`。description 仅用于 UI 展示，来自中央仓库 `SKILL.md` frontmatter 缓存解析。
 
 **预览/应用入口：** `skills_preview_inventory_import_file` / `skills_apply_inventory_import_file`（主 UI 使用）/ 字符串版本命令（兼容旧调用）
@@ -619,6 +621,14 @@ Inventory JSON 是完整管理清单，用于重排 AI Toolbox 元数据，不�
    - 如果有删除失败的目标，返回警告信息
    - 列出无法清理的路径
 
+### 4.13 详情面板文档读取（只读）
+
+`skills_get_skill_documents` 供前端 Skill 详情面板预览中央仓库 `SKILL.md` / `README.md`。
+
+- 只读命令：从 `skill` 表按 `skill_id` 定位记录，再用 `resolve_skill_central_path` 解析中央仓库路径读取文件；不写数据库、不改中央仓库、不触发同步。
+- 文件读取做截断保护（约 128KiB 内容上限，超大文件只标记 `truncated` 不上传全文），避免大文件拖垮 UI。
+- 不允许把该命令改写成写路径；详情面板属于展示层，编辑/禁用/同步仍走既有命令。
+
 ## 五、功能模块详解
 
 ### 5.1 工具适配器 (tool_adapters.rs)
@@ -645,8 +655,20 @@ Inventory JSON 是完整管理清单，用于重排 AI Toolbox 元数据，不�
 | qoder | Qoder | ~/.qoder/skills | %APPDATA%/Qoder |
 | droid | Droid | ~/.factory/skills | ~/.factory |
 | windsurf | Windsurf | ~/.codeium/windsurf/skills | ~/.codeium/windsurf |
+| trae | TRAE IDE | ~/.trae/skills | ~/.trae |
+| trae_cn | TRAE CN | ~/.trae-cn/skills | ~/.trae-cn |
+| qclaw | QClaw | ~/.qclaw/skills | ~/.qclaw |
+| easyclaw | EasyClaw | ~/.easyclaw/skills | ~/.easyclaw |
+| autoclaw | AutoClaw | ~/.openclaw-autoclaw/skills | ~/.openclaw-autoclaw |
 
 工具检测逻辑：检测目录存在即认为工具已安装。
+
+补充内置工具适配器时的规则（2026-08 从 skills-manager 参考项目对齐时确立）：
+
+- 新条目加在共享 `BUILTIN_TOOLS`（`tauri/src/coding/tools/builtin.rs`）即可全链路生效；Skills 适配器、检测、导入发现都动态消费该清单，不要在 Skills 模块再维护平行列表。
+- 只确认了 skills 目录、未核实 MCP 配置文件路径的工具，必须保持 `mcp_* = None`（skills-only），并加集成测试锁住该决策，防止后续误填猜测路径。
+- **禁止把读取共享目录的工具加成独立同步目标**：Cline/Warp 读 `~/.agents/skills`（已被 `shared_agents` 覆盖），Kimi/Replit 读 `~/.config/agents/skills`（与 `amp` 相同）。两个 key 指向同一物理目录会造成双写，取消其中一个的同步会删除另一个的文件。这类工具依赖现有共享条目即可，不单独建条目。
+- AutoClaw 的家目录是 `~/.openclaw-autoclaw`（不是 `.autoclaw`），照抄参考项目路径时注意。
 
 ### 5.2 同步引擎 (sync_engine.rs)
 
@@ -739,7 +761,7 @@ description: "可选的描述"
 - 存储技能的原始内容
 - 工具目录通过链接或复制引用
 - WSL/SSH 自动同步时，源目录仍然是中央仓库；不要把工具运行时目录误判成同步源
-- 用户备注、手动分组、管理启用状态都属于 AI Toolbox 管理元数据，不属于中央仓库文件内容。分组事实源分拆为 `skill_group` + `skill.group_id`，`user_group` 仅为兼容名称；更新、同步、WSL/SSH 后续链路不能因为这些元数据变化而改写 `SKILL.md` 或发起技能内容同步。
+- 用户备注、手动分组、标签（tags）、管理启用状态都属于 AI Toolbox 管理元数据，不属于中央仓库文件内容。分组事实源分拆为 `skill_group` + `skill.group_id`，`user_group` 仅为兼容名称；tags 与 user_note 同语义，都是纯元数据。更新、同步、WSL/SSH 后续链路不能因为这些元数据变化而改写 `SKILL.md` 或发起技能内容同步。
 
 ### 8.4 代理支持
 

@@ -43,6 +43,7 @@ function makeSkill(overrides: Partial<ManagedSkill>): ManagedSkill {
     source_error: null,
     enabled_tools: [],
     targets: [],
+    tags: [],
     ...overrides,
   };
 }
@@ -91,6 +92,16 @@ test('filterSkillsBySearch matches custom group and note', () => {
 
   assert.deepEqual(filterSkillsBySearch(skills, 'reverse').map((skill) => skill.id), ['reverse']);
   assert.deepEqual(filterSkillsBySearch(skills, 'frida').map((skill) => skill.id), ['note']);
+});
+
+test('filterSkillsBySearch matches tags case-insensitively', () => {
+  const skills = [
+    makeSkill({ id: 'tagged', name: 'doc-writer', tags: ['Writing', 'docs'] }),
+    makeSkill({ id: 'untagged', name: 'writing-free-tool', tags: [] }),
+  ];
+
+  assert.deepEqual(filterSkillsBySearch(skills, 'writing').map((skill) => skill.id), ['tagged', 'untagged']);
+  assert.deepEqual(filterSkillsBySearch(skills, 'docs').map((skill) => skill.id), ['tagged']);
 });
 
 test('buildSkillGroups groups by custom group and keeps ungrouped skills', () => {

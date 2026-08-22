@@ -32,6 +32,7 @@ interface SkillsGroupedListProps {
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onEditMetadata: (skill: ManagedSkill) => void;
   onSetManagementEnabled: (skill: ManagedSkill, enabled: boolean) => void;
+  onOpenDetail?: (skill: ManagedSkill) => void;
   groupToolMode?: boolean;
   onAddGroupTool?: (group: SkillGroup, toolId: string) => void;
   onRemoveGroupTool?: (group: SkillGroup, toolId: string) => void;
@@ -56,6 +57,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   onToggleTool,
   onEditMetadata,
   onSetManagementEnabled,
+  onOpenDetail,
   groupToolMode = false,
   onAddGroupTool,
   onRemoveGroupTool,
@@ -187,6 +189,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                       selected={selectedIds.has(skill.id)}
                       toolsReadOnly={groupToolsEnabled}
                       onSelectChange={onSelectChange}
+                      onOpenDetail={onOpenDetail}
                       getRepoInfo={getRepoInfo}
                       formatRelative={formatRelative}
                       onUpdate={onUpdate}

@@ -21,6 +21,7 @@ import type {
   CentralRepoScan,
   AdoptCentralSkillsResult,
   DeleteManagedSkillOptions,
+  SkillDocument,
 } from '../types';
 
 // Tool Status
@@ -184,8 +185,14 @@ export const updateSkillMetadata = async (
   skillId: string,
   groupId: string | null,
   userNote: string | null,
+  tags?: string[],
 ): Promise<void> => {
-  return invoke('skills_update_metadata', { skillId, groupId, userNote });
+  // Backend tri-state: undefined keeps existing tags, array overwrites the list.
+  const payload: Record<string, unknown> = { skillId, groupId, userNote };
+  if (typeof tags !== 'undefined') {
+    payload.tags = tags;
+  }
+  return invoke('skills_update_metadata', payload);
 };
 
 export const batchUpdateSkillGroup = async (
@@ -339,6 +346,7 @@ export const addCustomTool = async (
   relativeSkillsDir: string,
   relativeDetectDir: string,
   forceCopy?: boolean,
+  iconUrl?: string,
 ): Promise<void> => {
   return invoke('skills_add_custom_tool', {
     key,
@@ -346,6 +354,7 @@ export const addCustomTool = async (
     relativeSkillsDir,
     relativeDetectDir,
     forceCopy,
+    iconUrl,
   });
 };
 
@@ -364,4 +373,9 @@ export const createCustomToolPath = async (relativeSkillsDir: string): Promise<v
 // Reorder Skills
 export const reorderSkills = async (ids: string[]): Promise<void> => {
   return invoke('skills_reorder', { ids });
+};
+
+// Skill documents (detail panel preview)
+export const getSkillDocuments = async (skillId: string): Promise<SkillDocument[]> => {
+  return invoke<SkillDocument[]>('skills_get_skill_documents', { skillId });
 };

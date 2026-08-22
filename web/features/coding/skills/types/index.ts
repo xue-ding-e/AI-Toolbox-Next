@@ -16,6 +16,7 @@ export interface ManagedSkill {
   user_note: string | null;
   management_enabled: boolean;
   disabled_previous_tools: string[];
+  tags: string[];
   description: string | null;
   content_hash: string | null;
   source_health: SkillSourceHealth;
@@ -62,6 +63,8 @@ export interface ToolInfo {
   label: string;
   installed: boolean;
   skills_dir: string;
+  /** Optional brand icon for custom tools (http(s) image URL) */
+  icon_url?: string | null;
 }
 
 export interface ToolStatus {
@@ -299,6 +302,10 @@ export interface ToolOption {
   id: string;
   label: string;
   installed: boolean;
+  /** Resolved skills directory of this tool (shown in the detail panel tooltip) */
+  skillDir?: string | null;
+  /** Optional brand icon for custom tools (http(s) image URL) */
+  iconUrl?: string | null;
 }
 
 export interface CustomTool {
@@ -308,4 +315,12 @@ export interface CustomTool {
   relative_detect_dir: string;
   created_at: number;
   force_copy: boolean;
+  /** Optional brand icon (http(s) image URL) */
+  icon_url?: string | null;
+}
+
+export interface SkillDocument {
+  filename: string;
+  content: string;
+  truncated: boolean;
 }

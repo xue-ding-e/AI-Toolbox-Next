@@ -74,6 +74,7 @@ pub async fn install_local_skill(
     let content_hash = compute_content_hash(&central_path);
 
     let record = Skill {
+        tags: Vec::new(),
         id: existing_skill
             .as_ref()
             .map(|skill| skill.id.clone())
@@ -214,6 +215,7 @@ pub async fn install_local_skill_from_selection(
     let content_hash = compute_content_hash(&central_path);
 
     let record = Skill {
+        tags: Vec::new(),
         id: existing_skill
             .as_ref()
             .map(|skill| skill.id.clone())
@@ -369,6 +371,7 @@ pub async fn install_git_skill(
     let content_hash = compute_content_hash(&central_path);
 
     let record = Skill {
+        tags: Vec::new(),
         id: existing_skill
             .as_ref()
             .map(|skill| skill.id.clone())
@@ -551,6 +554,7 @@ pub async fn install_git_skill_from_selection(
     let now = now_ms();
     let content_hash = compute_content_hash(&central_path);
     let record = Skill {
+        tags: Vec::new(),
         id: existing_skill
             .as_ref()
             .map(|skill| skill.id.clone())
@@ -692,6 +696,7 @@ pub async fn update_managed_skill_from_source(
         // swap and tool re-sync stay skipped — only the DB row is touched.
         let relative_central_path = to_relative_central_path(&central_path, &central_dir);
         let updated = Skill {
+            tags: record.tags.clone(),
             id: record.id.clone(),
             name: record.name.clone(),
             source_type: record.source_type.clone(),
@@ -746,6 +751,7 @@ pub async fn update_managed_skill_from_source(
     // Update DB skill row (store relative central_path)
     let relative_central_path = to_relative_central_path(&central_path, &central_dir);
     let updated = Skill {
+        tags: record.tags.clone(),
         id: record.id.clone(),
         name: record.name.clone(),
         source_type: record.source_type.clone(),

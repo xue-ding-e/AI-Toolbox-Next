@@ -50,6 +50,9 @@ export function filterSkillsBySearch(skills: ManagedSkill[], searchText: string)
       skill.description,
       skill.user_group,
       skill.user_note,
+      // Tags are part of the searchable surface so the search box can reach
+      // the same skills the tag filter chips select.
+      ...(skill.tags ?? []),
     ];
 
     return searchableValues.some((value) => value?.toLowerCase().includes(keyword));

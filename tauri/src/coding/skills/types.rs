@@ -29,6 +29,7 @@ pub struct Skill {
     pub user_note: Option<String>,
     pub management_enabled: bool,
     pub disabled_previous_tools: Vec<String>,
+    pub tags: Vec<String>,
 
     // Enabled tool keys list
     pub enabled_tools: Vec<String>, // ["claude_code", "codex", "opencode"]
@@ -128,6 +129,8 @@ pub struct ToolInfoDto {
     pub label: String,
     pub installed: bool,
     pub skills_dir: String,
+    /// Optional brand icon for custom tools (http(s) image URL)
+    pub icon_url: Option<String>,
 }
 
 /// DTO for managed skills (frontend display)
@@ -152,6 +155,7 @@ pub struct ManagedSkillDto {
     pub content_hash: Option<String>,
     pub source_health: String,
     pub source_error: Option<String>,
+    pub tags: Vec<String>,
     pub enabled_tools: Vec<String>,
     pub targets: Vec<SkillTargetDto>, // Derived from sync_details
 }
@@ -179,6 +183,8 @@ pub struct SkillInventorySkillJson {
     pub name: String,
     pub group: Option<String>,
     pub user_note: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub order: i32,
     pub enabled: bool,
     pub enabled_tools: Vec<String>,
@@ -542,6 +548,8 @@ pub struct CustomToolDto {
     pub relative_detect_dir: String,
     pub created_at: i64,
     pub force_copy: bool,
+    /// Optional brand icon for UI display (http(s) image URL)
+    pub icon_url: Option<String>,
 }
 
 /// DTO for skill repo
@@ -553,6 +561,17 @@ pub struct SkillRepoDto {
     pub branch: String,
     pub enabled: bool,
     pub created_at: i64,
+}
+
+/// A document file (e.g. SKILL.md / README.md) inside a Skill's central dir,
+/// returned for the Skill detail preview panel. Content is truncated to keep
+/// large files from stalling the UI.
+#[derive(Debug, Serialize)]
+pub struct SkillDocumentDto {
+    pub filename: String,
+    pub content: String,
+    /// True when the file was truncated because it exceeded the read cap.
+    pub truncated: bool,
 }
 
 /// Helper function to get current timestamp in milliseconds

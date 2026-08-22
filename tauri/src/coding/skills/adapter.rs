@@ -76,6 +76,7 @@ pub fn from_db_skill(value: Value) -> Skill {
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
         disabled_previous_tools,
+        tags: parse_string_array(value.get("tags")),
         enabled_tools,
         sync_details: value.get("sync_details").cloned().filter(|v| !v.is_null()),
     }
@@ -111,6 +112,7 @@ pub fn to_clean_skill_payload(skill: &Skill) -> Value {
         "user_note": skill.user_note,
         "management_enabled": skill.management_enabled,
         "disabled_previous_tools": skill.disabled_previous_tools,
+        "tags": skill.tags,
         "enabled_tools": skill.enabled_tools,
         "sync_details": skill.sync_details,
     })
@@ -410,6 +412,11 @@ pub fn from_db_custom_tool(value: Value) -> CustomTool {
             .get("force_copy")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        icon_url: value
+            .get("icon_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()),
     }
 }
 
@@ -421,6 +428,7 @@ pub fn to_custom_tool_payload(tool: &CustomTool) -> Value {
         "relative_detect_dir": tool.relative_detect_dir,
         "created_at": tool.created_at,
         "force_copy": tool.force_copy,
+        "icon_url": tool.icon_url,
     })
 }
 

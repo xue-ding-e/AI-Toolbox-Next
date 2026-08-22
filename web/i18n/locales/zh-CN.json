@@ -1218,7 +1218,8 @@
     "moreOptionsCliDetect": "自动检测",
     "moreOptionsCliDetectSuccess": "已自动检测到 CLI 路径",
     "moreOptionsCliDetectFailed": "自动检测失败，请手动选择",
-    "moreOptionsCliNotSet": "尚未手动指定 CLI 路径，点击编辑可自动检测或手动选择本机 CLI 路径"
+    "moreOptionsCliNotSet": "尚未手动指定 CLI 路径，点击编辑可自动检测或手动选择本机 CLI 路径",
+    "apply": "应用"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -3105,7 +3106,7 @@
     "addSkill": "添加 Skill",
     "addSkillTitle": "添加 Skill",
     "importExisting": "导入现有 Skills",
-    "searchPlaceholder": "搜索名称、来源、分组或备注",
+    "searchPlaceholder": "搜索名称、来源、分组、标签",
     "viewFlat": "平铺",
     "viewGrouped": "分组",
     "reorder": "排序",
@@ -3197,7 +3198,7 @@
       "noImportFile": "尚未选择文件",
       "copyAgentPrompt": "复制给 AI 整理",
       "copyPromptSuccess": "整理 Prompt 已复制，请发给 AI 助手",
-      "agentPromptText": "请使用你的文件读写工具整理 AI Toolbox Skills Inventory JSON 文件：{{path}}\n\n目标：重新整理 Skill 的分组、备注、排序和启用状态，并把结果写回一个可用于导入的 JSON 文件。\n\n约束条件：\n1. 尽可能使用工具读取 {{path}}，不要要求我手动粘贴大段 JSON。\n2. 输出结果应保存为 JSON 文件，并告诉我文件路径；不要只在聊天里输出大段 JSON。\n3. JSON 内容必须可被 AI Toolbox 直接导入，不要用 Markdown 代码块包裹，不要混入解释文字。\n4. 保留顶层 schema_version 字段。\n5. 不要新增、删除或修改核心记录；必须原样保留每个 skill 的 id、source_ref、central_path、content_hash 字段。\n6. 不要输出 description 字段。\n7. 未出现在 JSON 中的本地 skill 会被系统默认禁用，所以不要漏掉任何 skill 条目。\n8. 你可以修改 groups 数组（新增、重命名、调整排序），但 group name 必须唯一。\n9. skill.group 必须引用 groups 中存在的 name，或者为 null。\n10. 你可以修改 skill 的 user_note、order、enabled、previous_enabled_tools 字段；禁用的 skill（enabled: false）仍可以保留在分组内。",
+      "agentPromptText": "请使用你的文件读写工具整理 AI Toolbox Skills Inventory JSON 文件：{{path}}\n\n目标：重新整理 Skill 的分组、备注、排序、启用状态和标签，并把结果写回一个可用于导入的 JSON 文件。\n\n约束条件：\n1. 尽可能使用工具读取 {{path}}，不要要求我手动粘贴大段 JSON。\n2. 输出结果应保存为 JSON 文件，并告诉我文件路径；不要只在聊天里输出大段 JSON。\n3. JSON 内容必须可被 AI Toolbox 直接导入，不要用 Markdown 代码块包裹，不要混入解释文字。\n4. 保留顶层 schema_version 字段。\n5. 不要新增、删除或修改核心记录；必须原样保留每个 skill 的 id、source_ref、central_path、content_hash 字段。\n6. 不要输出 description 字段。\n7. 未出现在 JSON 中的本地 skill 会被系统默认禁用，所以不要漏掉任何 skill 条目。\n8. 你可以修改 groups 数组（新增、重命名、调整排序），但 group name 必须唯一。\n9. skill.group 必须引用 groups 中存在的 name，或者为 null。\n10. 你可以修改 skill 的 user_note、order、enabled、previous_enabled_tools 和 tags（字符串数组）字段；禁用的 skill（enabled: false）仍可以保留在分组内。",
       "preview": "预览导入",
       "previewInvalid": "清单校验未通过",
       "apply": "应用导入",
@@ -3381,7 +3382,7 @@
     "openRepo": "打开源仓库",
     "openFolder": "打开源文件夹",
     "openDataDir": "打开数据目录",
-    "updateTooltip": "从源地址（Git 仓库或本地目录）重新拉取最新内容，更新 Skill 文件夹",
+    "updateTooltip": "更新 Skill",
     "remove": "删除",
     "unknown": "未知",
     "customToolSettings": {
@@ -3402,7 +3403,10 @@
       "syncModeAuto": "自动（推荐）",
       "syncModeAutoHint": "优先使用符号链接，节省空间且修改自动同步",
       "syncModeCopy": "强制复制",
-      "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式"
+      "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式",
+      "iconUrl": "图标 URL",
+      "iconUrlHint": "可选，http(s) 图片链接，用于工具图标展示",
+      "iconUrlInvalid": "图标链接必须以 http:// 或 https:// 开头"
     },
     "globalDir": {
       "defaultTag": "默认",
@@ -3460,6 +3464,39 @@
       "previewEmpty": "输入有效计划后这里会显示触发时间。",
       "preview": "预览",
       "dailyHint": "每天在所选时间自动更新。"
+    },
+    "section": {
+      "metadata": "元数据",
+      "sync": "同步",
+      "document": "文档"
+    },
+    "detail": {
+      "syncSummary": "已同步 {{synced}} / {{total}} 个工具",
+      "noTools": "未检测到已安装工具",
+      "documentLoading": "加载文档中…",
+      "documentEmpty": "暂无内容",
+      "noDocument": "该 Skill 无 SKILL.md / README.md",
+      "truncated": "文件过长，已截断显示。",
+      "toolSynced": "已同步",
+      "toolNotSynced": "未同步"
+    },
+    "update": "更新",
+    "tags": {
+      "remove": "移除标签",
+      "add": "添加标签",
+      "addPlaceholder": "输入标签…",
+      "batchTitle": "批量添加标签",
+      "batchHint": "将标签追加到 {{count}} 个选中的 Skill",
+      "batchSkippedHint": "{{skipped}} 个禁用的 Skill 将被跳过",
+      "batchAdd": "批量添加标签",
+      "filterLabel": "标签筛选",
+      "untagged": "未打标签",
+      "activeFilter": "标签筛选已启用",
+      "applySuccess": "已更新 {{count}} 个 Skill 的标签",
+      "searchPlaceholder": "搜索标签…",
+      "clearFilter": "清除筛选",
+      "selectedCount": "已选 {{count}} 个",
+      "noMatch": "无匹配标签"
     }
   },
   "mcp": {

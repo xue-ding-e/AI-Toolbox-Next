@@ -114,6 +114,7 @@ fn build_onboarding_plan_in_home(
                     relative_detect_dir: source.skills_dir.to_string(),
                     is_custom: false,
                     force_copy: false,
+                    icon_url: None,
                 };
                 scanned += 1;
                 let detected = scan_runtime_tool_dir(&adapter, &dir)?;
@@ -135,6 +136,7 @@ fn build_onboarding_plan_in_home(
             relative_detect_dir: skills_dir.to_string_lossy().to_string(),
             is_custom: false,
             force_copy: true,
+            icon_url: None,
         };
         scanned += 1;
         let detected = scan_runtime_tool_dir(&adapter, &skills_dir)?;

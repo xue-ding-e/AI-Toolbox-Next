@@ -147,6 +147,8 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
         id: t.key,
         label: t.label,
         installed: t.installed,
+        skillDir: t.skills_dir || null,
+        iconUrl: t.icon_url ?? null,
       }));
   },
 
@@ -157,6 +159,8 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       id: t.key,
       label: t.label,
       installed: t.installed,
+      skillDir: t.skills_dir || null,
+      iconUrl: t.icon_url ?? null,
     }));
   },
 }));

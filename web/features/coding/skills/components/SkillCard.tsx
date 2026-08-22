@@ -3,9 +3,9 @@ import { message } from 'antd';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Copy,
-  Eye,
-  Folder,
-  Grid2X2,
+  FolderOpen,
+  Globe,
+  GripVertical,
   MoreHorizontal,
   Plus,
   Power,
@@ -19,40 +19,30 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  ManagementCard,
-  ManagementCardActions,
-  ManagementCardCheckboxArea,
-  ManagementCardDragHandle,
-  ManagementCardIcon,
-  ManagementCardMain,
-  ManagementCardMetaRow,
-  ManagementCardToolMatrix,
   ManagementCheckbox,
-  ManagementIconButton,
   ManagementMenu,
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
 import type { ManagedSkill, ToolOption } from '../types';
 import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
+import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
+import { GitHubSourceIcon, ToolIcon } from './ToolIcon';
 import styles from './SkillCard.module.less';
 
-const GitHubSourceIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
-    className={className}
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4" />
-    <path d="M9 18c-4.51 2-5-2-7-2" />
-  </svg>
-);
+// Tag pill color classes, kept in sync with .tagColor0..7 below and with
+// TAG_COLOR_COUNT in utils/skillTags.ts (locked by that module's unit tests).
+const TAG_COLOR_CLASS_NAMES: readonly string[] = [
+  styles.tagColor0,
+  styles.tagColor1,
+  styles.tagColor2,
+  styles.tagColor3,
+  styles.tagColor4,
+  styles.tagColor5,
+  styles.tagColor6,
+  styles.tagColor7,
+];
+const tagPillColorClass = (tag: string): string =>
+  TAG_COLOR_CLASS_NAMES[hashTagColorIndex(tag)] ?? styles.tagColor0;
 
 const isMissingPathError = (error: unknown): boolean => String(error ?? '').includes('Path does not exist');
 
@@ -67,6 +57,7 @@ interface SkillCardProps {
   selected?: boolean;
   toolsReadOnly?: boolean;
   onSelectChange?: (skillId: string, checked: boolean) => void;
+  onOpenDetail?: (skill: ManagedSkill) => void;
   getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
@@ -92,6 +83,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
   selected,
   toolsReadOnly,
   onSelectChange,
+  onOpenDetail,
   getRepoInfo,
   formatRelative,
   onUpdate,
@@ -110,7 +102,8 @@ const SkillCardContent = React.memo(function SkillCardContent({
     ? (skill.source_error || t('skills.sourceWarningFallback'))
     : undefined;
   const cardClassName = [
-    styles.skillCard,
+    styles.card,
+    selectable && selected ? styles.cardSelected : undefined,
     !skill.management_enabled ? styles.disabledCard : undefined,
     sourceWarningMessage ? styles.sourceWarningCard : undefined,
   ].filter(Boolean).join(' ');
@@ -118,6 +111,14 @@ const SkillCardContent = React.memo(function SkillCardContent({
   const userNoteText = skill.user_note?.trim() ?? '';
   const shouldShowGroupTag = showGroupTag && groupLabel.length > 0;
   const hasUserNote = userNoteText.length > 0;
+  // Description comes from the backend SKILL.md frontmatter cache; trim so a
+  // whitespace-only value never renders an empty line.
+  const skillDescriptionText = skill.description?.trim() ?? '';
+  const hasSkillDescription = skillDescriptionText.length > 0;
+  const skillTagList = React.useMemo(
+    () => normalizeTagList(skill.tags ?? []),
+    [skill.tags],
+  );
   const managementToggleLabel = skill.management_enabled ? t('skills.disableSkill') : t('skills.enableSkill');
 
   // These values are derived from stable inputs and are recalculated for every card.
@@ -138,6 +139,16 @@ const SkillCardContent = React.memo(function SkillCardContent({
     () => repoInfo?.href || skill.source_ref || '',
     [repoInfo, skill.source_ref],
   );
+
+  const sourceLabel = React.useMemo(() => {
+    if (typeKey.includes('git')) return repoInfo?.label ?? 'Git';
+    if (skill.source_type === 'local') {
+      const parts = (skill.source_ref || '').split(/[\/\\]/);
+      return parts[parts.length - 1] || 'Local';
+    }
+    if (skill.source_type === 'central') return t('skills.sourceCentral');
+    return skill.source_type;
+  }, [repoInfo, skill.source_ref, skill.source_type, t, typeKey]);
 
   const handleCopy = async () => {
     if (!copyValue) return;
@@ -244,11 +255,11 @@ const SkillCardContent = React.memo(function SkillCardContent({
   const iconClickable = !!iconTooltip;
 
   const iconNode = typeKey.includes('git') ? (
-    <GitHubSourceIcon className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
+    <GitHubSourceIcon size={13} />
   ) : typeKey.includes('local') ? (
-    <Folder size={18} className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
+    <FolderOpen size={13} aria-hidden="true" />
   ) : (
-    <Grid2X2 size={18} className={styles.icon} />
+    <Globe size={13} aria-hidden="true" />
   );
 
   // Tool grouping is pure derived data based on the skill targets and tool list.
@@ -274,6 +285,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
       availableDropdownTools.map((tool) => ({
         key: tool.id,
         label: tool.label,
+        icon: <ToolIcon toolKey={tool.id} label={tool.label} size={14} iconUrl={tool.iconUrl ?? undefined} />,
         onSelect: () => onToggleTool(skill, tool.id),
       })),
     [availableDropdownTools, onToggleTool, skill],
@@ -307,47 +319,63 @@ const SkillCardContent = React.memo(function SkillCardContent({
     [handleToggleManagement, isUpdating, loading, managementToggleLabel, onDelete, onEditMetadata, skill, t],
   );
 
+  // Tag editing lives in the detail panel only; the card tag row is pure
+  // display (skills-manager convention) and hides entirely when empty.
+  const handleCardClick: React.MouseEventHandler<HTMLDivElement> = React.useCallback((event) => {
+    // Selection mode uses the checkbox (and card body click is reserved for
+    // selecting); interactive elements handle their own click. Only open the
+    // detail panel from the card body in browse mode.
+    if (selectable) {
+      return;
+    }
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, [role="menuitem"], [role="checkbox"], [data-skill-card-no-detail]')) {
+      return;
+    }
+    onOpenDetail?.(skill);
+  }, [onOpenDetail, selectable, skill]);
+
   return (
-    <ManagementCard
-      containerRef={containerRef}
-      containerStyle={containerStyle}
-      selected={selected}
-      selectable={selectable}
-      className={cardClassName}
-    >
-      {selectable && (
-        <ManagementCardCheckboxArea>
-          <ManagementCheckbox
-            ariaLabel={`${t('common.select')} ${skill.name}`}
-            checked={!!selected}
-            onChange={(checked) => onSelectChange?.(skill.id, checked)}
-          />
-        </ManagementCardCheckboxArea>
-      )}
-      {dragHandle}
-      <ManagementCardIcon
-        icon={iconNode}
-        asButton={iconClickable}
-        title={iconTooltip}
-        onClick={iconClickable ? handleIconClick : undefined}
-        disabled={!iconClickable}
-      />
-      <ManagementCardMain>
-        <div className={styles.cardHeader}>
-          <span className={styles.skillNameText} title={skill.name}>{skill.name}</span>
-          <div className={styles.headerMetaCompact}>
+    <div ref={containerRef} style={containerStyle} className={styles.cardOuter}>
+      <div className={cardClassName} onClick={onOpenDetail ? handleCardClick : undefined}>
+        <div className={styles.headerRow}>
+          {selectable ? (
+            <ManagementCheckbox
+              ariaLabel={`${t('common.select')} ${skill.name}`}
+              checked={!!selected}
+              onChange={(checked) => onSelectChange?.(skill.id, checked)}
+            />
+          ) : dragHandle}
+          {!selectable && !dragHandle && (
+            <span
+              className={`${styles.statusDot}${skill.management_enabled ? ` ${styles.statusDotEnabled}` : ''}`}
+              title={skill.management_enabled ? t('skills.enableSkill') : t('skills.disableSkill')}
+              aria-hidden="true"
+            />
+          )}
+          <span className={styles.name} title={skill.name}>{skill.name}</span>
+          {sourceWarningMessage && (
+            <span
+              className={styles.sourceWarningMeta}
+              title={sourceWarningMessage}
+              aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
+            >
+              <TriangleAlert size={11} aria-hidden="true" />
+            </span>
+          )}
+          <span className={styles.hoverActions}>
             <button
               type="button"
-              className={styles.detailButton}
+              className={styles.miniBtn}
               title={t('skills.openDataDir')}
               aria-label={t('skills.openDataDir')}
               onClick={handleOpenCentralPath}
             >
-              <Eye size={13} aria-hidden="true" />
+              <FolderOpen size={13} aria-hidden="true" />
             </button>
             <button
-              className={styles.copySourceButton}
               type="button"
+              className={styles.miniBtn}
               title={copyValue ? `${t('common.copy')}: ${copyValue}` : t('common.copy')}
               aria-label={copyValue ? `${t('common.copy')}: ${copyValue}` : t('common.copy')}
               onClick={handleCopy}
@@ -355,81 +383,95 @@ const SkillCardContent = React.memo(function SkillCardContent({
             >
               <Copy size={12} aria-hidden="true" />
             </button>
-            {sourceWarningMessage && (
-              <span
-                className={styles.sourceWarningMeta}
-                title={sourceWarningMessage}
-                aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
-              >
-                <TriangleAlert size={12} aria-hidden="true" />
-                <span>{t('skills.sourceWarning')}</span>
-              </span>
-            )}
-            <span className={styles.dot}>•</span>
-            <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
-          </div>
-        </div>
-        {(shouldShowGroupTag || hasUserNote) && (
-          <ManagementCardMetaRow>
-            {shouldShowGroupTag && (
-              <span className={styles.groupTag} title={groupLabel}>{groupLabel}</span>
-            )}
-            {hasUserNote && (
-              <span className={styles.note} title={userNoteText}>{userNoteText}</span>
-            )}
-          </ManagementCardMetaRow>
-        )}
-        <ManagementCardToolMatrix>
-          {syncedTools.map((tool) => {
-            const target = skill.targets.find((t) => t.tool === tool.id);
-            return (
-              <button
-                key={`${skill.id}-${tool.id}`}
-                title={`${tool.label} (${target?.mode ?? t('skills.unknown')})`}
-                type="button"
-                className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
-                onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
-                disabled={loading || isUpdating || !skill.management_enabled}
-                aria-disabled={toolsReadOnly || loading || isUpdating || !skill.management_enabled}
-              >
-                <span className={styles.statusBadge} />
-                {tool.label}
-              </button>
-            );
-          })}
-          {!toolsReadOnly && dropdownItems.length > 0 && (
             <ManagementMenu
-              items={dropdownItems}
-              disabled={loading || isUpdating || !skill.management_enabled}
-              title={t('skills.batch.addTool')}
-              triggerClassName={styles.addToolBtn}
+              items={actionItems}
+              title={t('skills.more')}
+              triggerClassName={styles.miniBtn}
             >
-              <Plus size={13} aria-hidden="true" />
+              <MoreHorizontal size={14} aria-hidden="true" />
             </ManagementMenu>
+            <button
+              type="button"
+              className={styles.miniBtn}
+              title={t('skills.updateTooltip')}
+              aria-label={t('skills.updateTooltip')}
+              onClick={() => onUpdate(skill)}
+              disabled={loading || isUpdating || !skill.management_enabled}
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+
+        <div className={styles.body}>
+          {hasSkillDescription && (
+            <p className={styles.skillDescription} title={skillDescriptionText}>{skillDescriptionText}</p>
           )}
-        </ManagementCardToolMatrix>
-      </ManagementCardMain>
-      <ManagementCardActions>
-        <ManagementMenu
-          items={actionItems}
-          title={t('skills.more')}
-          controlSize="compact"
-        >
-          <MoreHorizontal size={16} aria-hidden="true" />
-        </ManagementMenu>
-        <ManagementIconButton
-          icon={<RefreshCw size={15} aria-hidden="true" />}
-          onClick={() => onUpdate(skill)}
-          disabled={loading || isUpdating || !skill.management_enabled}
-          title={t('skills.updateTooltip')}
-          controlSize="compact"
-        />
-      </ManagementCardActions>
-    </ManagementCard>
+          {(skillTagList.length > 0 || shouldShowGroupTag || hasUserNote) && (
+            <div className={styles.tagRow}>
+              {skillTagList.map((tagItem) => (
+                <span key={tagItem} className={`${styles.tagPill} ${tagPillColorClass(tagItem)}`}>
+                  <span className={styles.tagPillText} title={tagItem}>{tagItem}</span>
+                </span>
+              ))}
+              {shouldShowGroupTag && (
+                <span className={styles.groupTag} title={groupLabel}>{groupLabel}</span>
+              )}
+              {hasUserNote && (
+                <span className={styles.note} title={userNoteText}>{userNoteText}</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={styles.footerRow}>
+          <button
+            type="button"
+            className={`${styles.sourceBtn}${iconClickable ? '' : ` ${styles.sourceBtnStatic}`}`}
+            title={iconTooltip ?? sourceLabel}
+            onClick={iconClickable ? handleIconClick : undefined}
+            disabled={!iconClickable}
+          >
+            {iconNode}
+            <span className={styles.sourceText}>{sourceLabel}</span>
+          </button>
+          <span className={styles.footerTime}>{formatRelative(skill.updated_at)}</span>
+          <span className={styles.footerTools}>
+            {syncedTools.map((tool) => {
+              const target = skill.targets.find((t) => t.tool === tool.id);
+              return (
+                <button
+                  key={`${skill.id}-${tool.id}`}
+                  title={`${tool.label} (${target?.mode ?? t('skills.unknown')})`}
+                  type="button"
+                  className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                  onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
+                  disabled={loading || isUpdating || !skill.management_enabled}
+                  aria-disabled={toolsReadOnly || loading || isUpdating || !skill.management_enabled}
+                >
+                  <ToolIcon toolKey={tool.id} label={tool.label} size={14} iconUrl={tool.iconUrl ?? undefined} />
+                </button>
+              );
+            })}
+            {!toolsReadOnly && dropdownItems.length > 0 && (
+              <ManagementMenu
+                items={dropdownItems}
+                disabled={loading || isUpdating || !skill.management_enabled}
+                title={t('skills.batch.addTool')}
+                triggerClassName={styles.addToolBtn}
+              >
+                <Plus size={12} aria-hidden="true" />
+              </ManagementMenu>
+            )}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 });
 
 const SortableSkillCard: React.FC<Omit<SkillCardProps, 'dragDisabled'>> = (props) => {
+  const { t } = useTranslation();
   const {
     skill,
   } = props;
@@ -455,10 +497,16 @@ const SortableSkillCard: React.FC<Omit<SkillCardProps, 'dragDisabled'>> = (props
       containerRef={setNodeRef}
       containerStyle={sortableStyle}
       dragHandle={(
-        <ManagementCardDragHandle
+        <span
           {...attributes}
-          listeners={listeners}
-        />
+          {...listeners}
+          className={styles.dragHandle}
+          data-skill-card-no-detail
+          title={t('skills.reorderHint')}
+          aria-label={t('skills.reorderHint')}
+        >
+          <GripVertical size={14} aria-hidden="true" />
+        </span>
       )}
     />
   );
@@ -472,5 +520,8 @@ export const SkillCard = React.memo(function SkillCard({
     return <SkillCardContent {...props} />;
   }
 
-  return <SortableSkillCard {...props} />;
+  // In sortable/reorder mode, keep the card click focused on drag/sort and do
+  // not open the detail panel accidentally.
+  const { onOpenDetail: _ignored, ...sortableProps } = props;
+  return <SortableSkillCard {...sortableProps} />;
 });

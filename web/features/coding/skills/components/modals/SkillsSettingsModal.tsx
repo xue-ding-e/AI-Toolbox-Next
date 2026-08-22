@@ -12,6 +12,7 @@ import {
   parseManagementGridColumnSetting,
   type ManagementGridColumnSetting,
 } from '@/features/coding/shared/management';
+import { ToolIcon } from '../ToolIcon';
 import styles from './SkillsSettingsModal.module.less';
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
@@ -398,6 +399,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     displayName: string;
     relativeSkillsDir: string;
     forceCopy?: boolean;
+    iconUrl?: string;
   }) => {
     try {
       // Derive detectDir from skillsDir by taking the parent directory
@@ -409,7 +411,8 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
         values.displayName,
         values.relativeSkillsDir,
         relativeDetectDir,
-        values.forceCopy
+        values.forceCopy,
+        values.iconUrl
       );
       message.success(t('common.success'));
       form.resetFields();
@@ -686,7 +689,10 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
                       onChange={(e) => handleToolToggle(tool.key, e.target.checked)}
                       disabled={isDisabled}
                     >
-                      {tool.label}
+                      <span className={styles.toolItemLabel}>
+                        <ToolIcon toolKey={tool.key} label={tool.label} size={14} iconUrl={tool.icon_url ?? undefined} />
+                        {tool.label}
+                      </span>
                     </Checkbox>
                   </Tooltip>
                   {isCustomTool && (
@@ -819,6 +825,24 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
             extra={t('skills.customToolSettings.skillsDirHint')}
           >
             <Input placeholder="~/.mytool/skills" />
+          </Form.Item>
+          <Form.Item
+            name="iconUrl"
+            label={t('skills.customToolSettings.iconUrl')}
+            rules={[
+              {
+                validator: (_, value: string) => {
+                  const trimmed = (value ?? '').trim();
+                  if (!trimmed || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error(t('skills.customToolSettings.iconUrlInvalid')));
+                },
+              },
+            ]}
+            extra={t('skills.customToolSettings.iconUrlHint')}
+          >
+            <Input placeholder="https://example.com/icon.png" />
           </Form.Item>
           <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 24 }}>
             <label style={{ width: 100, flexShrink: 0, paddingTop: 5 }}>{t('skills.customToolSettings.syncMode')}</label>

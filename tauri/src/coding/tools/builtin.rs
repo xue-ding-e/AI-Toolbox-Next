@@ -175,6 +175,36 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcp.servers"),
     },
+    // QClaw - Skills only (OpenClaw-family; skills dir per skills-manager reference)
+    BuiltinTool {
+        key: "qclaw",
+        display_name: "QClaw",
+        relative_skills_dir: Some("~/.qclaw/skills"),
+        relative_detect_dir: Some("~/.qclaw"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
+    },
+    // EasyClaw - Skills only (OpenClaw-family; skills dir per skills-manager reference)
+    BuiltinTool {
+        key: "easyclaw",
+        display_name: "EasyClaw",
+        relative_skills_dir: Some("~/.easyclaw/skills"),
+        relative_detect_dir: Some("~/.easyclaw"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
+    },
+    // AutoClaw - Skills only (OpenClaw-family; note the `.openclaw-autoclaw` dir)
+    BuiltinTool {
+        key: "autoclaw",
+        display_name: "AutoClaw",
+        relative_skills_dir: Some("~/.openclaw-autoclaw/skills"),
+        relative_detect_dir: Some("~/.openclaw-autoclaw"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
+    },
     // Pi - Skills plus MCP config consumed by the pi-mcp-adapter extension.
     BuiltinTool {
         key: "pi",
@@ -234,6 +264,26 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_path: Some("~/.codeium/mcp_config.json"),
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
+    },
+    // TRAE IDE - Skills only (skills dir per skills-manager reference)
+    BuiltinTool {
+        key: "trae",
+        display_name: "TRAE IDE",
+        relative_skills_dir: Some("~/.trae/skills"),
+        relative_detect_dir: Some("~/.trae"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
+    },
+    // TRAE CN - Skills only (skills dir per skills-manager reference)
+    BuiltinTool {
+        key: "trae_cn",
+        display_name: "TRAE CN",
+        relative_skills_dir: Some("~/.trae-cn/skills"),
+        relative_detect_dir: Some("~/.trae-cn"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
     },
     // WorkBuddy AI (international) - supports both Skills and MCP
     BuiltinTool {

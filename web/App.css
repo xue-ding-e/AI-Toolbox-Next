@@ -19,6 +19,9 @@
   --color-border-card: rgba(0, 0, 0, 0.05);
   --color-border-card-subtle: rgba(0, 0, 0, 0.04);
 
+  /* Brand primary, aligned with the antd colorPrimary token in providers.tsx */
+  --color-primary: #1890ff;
+
   /* Semantic status colors */
   --color-status-success: #16a34a;
   --color-status-warning: #d97706;
@@ -60,6 +63,9 @@
   --color-border-secondary: rgba(255, 255, 255, 0.2);
   --color-border-card: rgba(255, 255, 255, 0.08);
   --color-border-card-subtle: rgba(255, 255, 255, 0.06);
+
+  /* Brand primary, aligned with the antd colorPrimary token in providers.tsx */
+  --color-primary: #1668dc;
 
   /* Semantic status colors */
   --color-status-success: #22c55e;

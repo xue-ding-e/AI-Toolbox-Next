@@ -27,6 +27,7 @@ interface SkillsListProps {
   updatingSkillIds: string[];
   columns?: number;
   dragDisabled?: boolean;
+  onOpenDetail?: (skill: ManagedSkill) => void;
   getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
   onUpdate: (skill: ManagedSkill) => void;
@@ -44,6 +45,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   updatingSkillIds,
   columns,
   dragDisabled,
+  onOpenDetail,
   getRepoInfo,
   formatRelative,
   onUpdate,
@@ -93,6 +95,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           loading={loading}
           isUpdating={updatingSkillIds.includes(skill.id)}
           dragDisabled={dragDisabled}
+          onOpenDetail={onOpenDetail}
           getRepoInfo={getRepoInfo}
           formatRelative={formatRelative}
           onUpdate={onUpdate}
@@ -122,6 +125,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
             loading={loading}
             isUpdating={updatingSkillIds.includes(skill.id)}
             dragDisabled
+            onOpenDetail={onOpenDetail}
             getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
             onUpdate={onUpdate}
