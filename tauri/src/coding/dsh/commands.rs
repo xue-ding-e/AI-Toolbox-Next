@@ -7,8 +7,10 @@ use std::path::{Path, PathBuf};
 use super::adapter;
 use super::builtin_models::{builtin_model_ids, builtin_models_for, has_builtin_models};
 use super::constants::{
-    builtin_provider_name, is_builtin_provider, DSH_CREDENTIALS_FILE, DSH_DEFAULT_MODEL_SECTION,
-    DSH_ENV_KEY, DSH_LLM_PI_AI_SECTION, DSH_PROMPT_FILE, DSH_PROVIDERS_KEY, DSH_SETTINGS_FILE,
+    builtin_provider_name, is_builtin_provider, DSH_CREDENTIALS_FILE, DSH_CREDENTIALS_RECORDS_KEY,
+    DSH_CREDENTIALS_REFS_KEY, DSH_CREDENTIALS_VERSION, DSH_CREDENTIALS_VERSION_KEY,
+    DSH_CREDENTIAL_RECORD_SCOPE, DSH_DEFAULT_MODEL_SECTION, DSH_ENV_KEY, DSH_LLM_PI_AI_SECTION,
+    DSH_PROMPT_FILE, DSH_PROVIDERS_KEY, DSH_SETTINGS_FILE,
 };
 use super::types::*;
 use crate::coding::db_id::db_new_id;
@@ -117,7 +119,9 @@ pub fn get_dsh_root_path_info_from_db(db: &SqliteDbState) -> Result<DshPathInfo,
     })
 }
 
-pub async fn get_dsh_root_path_info_from_db_async(db: &SqliteDbState) -> Result<DshPathInfo, String> {
+pub async fn get_dsh_root_path_info_from_db_async(
+    db: &SqliteDbState,
+) -> Result<DshPathInfo, String> {
     let (path, source) = get_dsh_config_dir_from_db_async(db).await?;
     Ok(DshPathInfo {
         path: path.to_string_lossy().to_string(),
@@ -256,6 +260,120 @@ fn write_credentials_map(path: &Path, map: &Map<String, Value>) -> Result<(), St
     Ok(())
 }
 
+/// Parsed `.credentials.yaml`.
+///
+/// dsh stores the document in a versioned layout — a `version: 1` marker with
+/// the refs nested under `refs:` and sign-in credentials under `records:` —
+/// and migrates older documents at boot (dsh >= 0.1.1-rc.1). This app always
+/// persists the versioned layout too; only ref entries are touched, while
+/// `records:` belongs to dsh's login flow and is carried through untouched.
+struct CredentialsDocument {
+    /// Ref entries: POSIX env-var-style names over secret values.
+    refs: Map<String, Value>,
+    /// Stored sign-in records keyed `<scope>/<provider_id>`.
+    records: Map<String, Value>,
+    /// The full document as parsed; rewritten verbatim on save/delete.
+    document: Map<String, Value>,
+}
+
+impl CredentialsDocument {
+    /// Read the document at `path`; missing files yield an empty store.
+    fn read(path: &Path) -> Result<Self, String> {
+        Ok(Self::from_document(read_credentials_map(path)?))
+    }
+
+    fn from_document(document: Map<String, Value>) -> Self {
+        let versioned = document
+            .get(DSH_CREDENTIALS_VERSION_KEY)
+            .and_then(Value::as_i64)
+            .is_some_and(|version| version == DSH_CREDENTIALS_VERSION);
+        let section = |key: &str| {
+            document
+                .get(key)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default()
+        };
+        Self {
+            records: if versioned {
+                section(DSH_CREDENTIALS_RECORDS_KEY)
+            } else {
+                Map::new()
+            },
+            // Versioned layout reads the nested refs; a not-yet-migrated flat
+            // document keeps its top-level entries visible until the next
+            // write adopts the versioned layout.
+            refs: if versioned {
+                section(DSH_CREDENTIALS_REFS_KEY)
+            } else {
+                document.clone()
+            },
+            document,
+        }
+    }
+
+    /// Move a pre-release flat document into the versioned layout before the
+    /// first write, mirroring dsh's boot migration: every existing top-level
+    /// entry nests verbatim under `refs:` so no stored secret is dropped.
+    fn adopt_versioned_layout(&mut self) {
+        if self.document.contains_key(DSH_CREDENTIALS_VERSION_KEY) {
+            return;
+        }
+        let legacy = std::mem::take(&mut self.document);
+        let mut refs = Map::new();
+        for (key, value) in legacy {
+            if !matches!(
+                key.as_str(),
+                DSH_CREDENTIALS_VERSION_KEY
+                    | DSH_CREDENTIALS_REFS_KEY
+                    | DSH_CREDENTIALS_RECORDS_KEY
+            ) {
+                refs.insert(key, value);
+            }
+        }
+        self.document.insert(
+            DSH_CREDENTIALS_VERSION_KEY.to_string(),
+            json!(DSH_CREDENTIALS_VERSION),
+        );
+        self.document
+            .insert(DSH_CREDENTIALS_REFS_KEY.to_string(), Value::Object(refs));
+    }
+
+    /// Set or delete one ref entry; a None or blank value deletes it.
+    fn set_ref(&mut self, ref_name: &str, value: Option<&str>) {
+        let has_value = value.is_some_and(|value| !value.trim().is_empty());
+        self.adopt_versioned_layout();
+        let refs = self
+            .document
+            .entry(DSH_CREDENTIALS_REFS_KEY.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !refs.is_object() {
+            *refs = Value::Object(Map::new());
+        }
+        if let Some(refs) = refs.as_object_mut() {
+            apply_ref_entry(refs, ref_name, has_value, value);
+        }
+    }
+
+    fn write(&self, path: &Path) -> Result<(), String> {
+        write_credentials_map(path, &self.document)
+    }
+}
+
+/// Insert or remove one entry inside a refs mapping.
+fn apply_ref_entry(
+    section: &mut Map<String, Value>,
+    ref_name: &str,
+    has_value: bool,
+    value: Option<&str>,
+) {
+    if has_value {
+        section.insert(ref_name.to_string(), json!(value.unwrap().trim()));
+    } else {
+        section.remove(ref_name);
+    }
+}
+
 fn credential_has_value(value: Option<&Value>) -> bool {
     match value {
         Some(Value::String(value)) => !value.trim().is_empty(),
@@ -266,9 +384,10 @@ fn credential_has_value(value: Option<&Value>) -> bool {
 }
 
 fn read_credentials_views(path: &Path) -> Vec<DshCredentialView> {
-    read_credentials_map(path)
-        .map(|map| {
-            let mut views: Vec<DshCredentialView> = map
+    CredentialsDocument::read(path)
+        .map(|document| {
+            let mut views: Vec<DshCredentialView> = document
+                .refs
                 .iter()
                 .map(|(ref_name, value)| DshCredentialView {
                     ref_name: ref_name.clone(),
@@ -375,9 +494,55 @@ fn model_ids_from_provider(provider: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Resolve `(credential_exists, api_key)` for one provider route.
+///
+/// Mirrors pi-ai's resolution order: a sign-in record wins over the `apiKeyEnv`
+/// reference when both exist, because that is the credential the runtime
+/// actually uses. A record without a displayable secret (an OAuth grant, or an
+/// env-only api-key) still counts as configured; its value stays hidden.
+fn resolve_provider_credential(
+    credentials: &CredentialsDocument,
+    provider_key: &str,
+    api_key_env: Option<&str>,
+) -> (bool, String) {
+    let record_key = format!("{DSH_CREDENTIAL_RECORD_SCOPE}/{provider_key}");
+    match credentials.records.get(&record_key) {
+        Some(record) => match record.get("kind").and_then(Value::as_str) {
+            Some("api-key") => {
+                let key = record
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let has_env = record
+                    .get("env")
+                    .and_then(Value::as_object)
+                    .is_some_and(|env| !env.is_empty());
+                (!key.trim().is_empty() || has_env, key)
+            }
+            Some("grant") => (true, String::new()),
+            _ => ref_credential(credentials, api_key_env),
+        },
+        None => ref_credential(credentials, api_key_env),
+    }
+}
+
+/// `(exists, value)` from the provider's `apiKeyEnv` reference entry.
+fn ref_credential(credentials: &CredentialsDocument, api_key_env: Option<&str>) -> (bool, String) {
+    api_key_env
+        .and_then(|ref_name| credentials.refs.get(ref_name))
+        .map(|value| {
+            (
+                credential_has_value(Some(value)),
+                value.as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .unwrap_or((false, String::new()))
+}
+
 fn build_provider_views(
     config: &Value,
-    credentials: &Map<String, Value>,
+    credentials: &CredentialsDocument,
 ) -> Vec<DshRuntimeProviderView> {
     if !config.is_object() {
         return Vec::new();
@@ -419,11 +584,8 @@ fn build_provider_views(
         let api_key_env = raw
             .and_then(|(_, value)| value.get("apiKeyEnv").and_then(Value::as_str))
             .map(str::to_string);
-        let credential_exists = api_key_env
-            .as_deref()
-            .and_then(|ref_name| credentials.get(ref_name))
-            .map(|value| credential_has_value(Some(value)))
-            .unwrap_or(false);
+        let (credential_exists, api_key) =
+            resolve_provider_credential(credentials, &provider_key, api_key_env.as_deref());
         let api = raw
             .and_then(|(_, value)| value.get("api").and_then(Value::as_str))
             .map(str::to_string);
@@ -476,13 +638,6 @@ fn build_provider_views(
                 }
             }
         }
-
-        let api_key = api_key_env
-            .as_deref()
-            .and_then(|ref_name| credentials.get(ref_name))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_default();
 
         views.push(DshRuntimeProviderView {
             provider_key,
@@ -596,7 +751,7 @@ pub async fn read_dsh_runtime_config(
     let prompt_path = get_dsh_prompt_path_from_root(&root_dir);
 
     let config = read_yaml_object_or_empty(&config_path)?;
-    let credentials = read_credentials_map(&credentials_path)?;
+    let credentials = CredentialsDocument::read(&credentials_path)?;
     let cordis_patch_path = get_dsh_cordis_patch_path(&db).await?;
 
     Ok(DshRuntimeConfig {
@@ -755,7 +910,11 @@ pub async fn save_dsh_model_settings(
     apply_string_field(model_object, "provider", input.provider);
     apply_string_field(model_object, "model", input.model);
     apply_string_field(model_object, "reasoningEffort", input.reasoning_effort);
-    if model_section.as_object().map(|m| m.is_empty()).unwrap_or(false) {
+    if model_section
+        .as_object()
+        .map(|m| m.is_empty())
+        .unwrap_or(false)
+    {
         object.remove(DSH_DEFAULT_MODEL_SECTION);
     } else {
         object.insert(DSH_DEFAULT_MODEL_SECTION.to_string(), model_section);
@@ -817,15 +976,10 @@ pub async fn save_dsh_credential(
     }
     let db = state.db();
     let credentials_path = get_dsh_credentials_path_async(&db).await?;
-    let mut credentials = read_credentials_map(&credentials_path)?;
-
-    if input.value.trim().is_empty() {
-        // Empty value deletes the ref (provider card clearing the key).
-        credentials.remove(ref_name);
-    } else {
-        credentials.insert(ref_name.to_string(), json!(input.value));
-    }
-    write_credentials_map(&credentials_path, &credentials)?;
+    let mut credentials = CredentialsDocument::read(&credentials_path)?;
+    // A blank value deletes the ref (provider card clearing the key).
+    credentials.set_ref(ref_name, Some(input.value.trim()));
+    credentials.write(&credentials_path)?;
     emit_config_changed(&app, "window");
     read_dsh_runtime_config(state).await
 }
@@ -842,11 +996,11 @@ pub async fn delete_dsh_credential(
     }
     let db = state.db();
     let credentials_path = get_dsh_credentials_path_async(&db).await?;
-    let mut credentials = read_credentials_map(&credentials_path)?;
-    if credentials.remove(ref_name).is_none() {
-        return Err(format!("Credential '{ref_name}' not found"));
-    }
-    write_credentials_map(&credentials_path, &credentials)?;
+    let mut credentials = CredentialsDocument::read(&credentials_path)?;
+    // Tolerated no-op when the ref is already gone — e.g. the effective
+    // credential lives in a dsh-managed sign-in record this app never touches.
+    credentials.set_ref(ref_name, None);
+    credentials.write(&credentials_path)?;
     emit_config_changed(&app, "window");
     read_dsh_runtime_config(state).await
 }
@@ -866,7 +1020,8 @@ pub async fn get_dsh_credential_value(
     }
     let db = state.db();
     let credentials_path = get_dsh_credentials_path_async(&db).await?;
-    Ok(read_credentials_map(&credentials_path)?
+    Ok(CredentialsDocument::read(&credentials_path)?
+        .refs
         .get(ref_name)
         .and_then(Value::as_str)
         .map(str::to_string))
@@ -944,7 +1099,10 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<DshPromptC
     }))
 }
 
-async fn write_prompt_content_to_file(db: &SqliteDbState, content: Option<&str>) -> Result<(), String> {
+async fn write_prompt_content_to_file(
+    db: &SqliteDbState,
+    content: Option<&str>,
+) -> Result<(), String> {
     let path = get_dsh_prompt_path_async(db).await?;
     write_prompt_content_file(&path, content, "dsh")
 }
@@ -1193,6 +1351,11 @@ pub async fn launch_dsh_dashboard(use_npx: Option<bool>) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// A parsed credentials document from a JSON object shape.
+    fn credentials_document(value: Value) -> CredentialsDocument {
+        CredentialsDocument::from_document(value.as_object().cloned().expect("object"))
+    }
+
     #[test]
     fn model_settings_from_config_reads_section() {
         let config = json!({
@@ -1255,9 +1418,12 @@ mod tests {
             },
             "agent-default-model": { "provider": "deepseek", "model": "deepseek-chat" }
         });
-        let mut credentials = Map::new();
-        credentials.insert("DEEPSEEK_API_KEY".to_string(), json!("sk-123"));
-        let views = build_provider_views(&config, &credentials);
+        let views = build_provider_views(
+            &config,
+            &credentials_document(json!({
+                "DEEPSEEK_API_KEY": "sk-123"
+            })),
+        );
         assert_eq!(views.len(), 1);
         let view = &views[0];
         assert_eq!(view.provider_key, "deepseek");
@@ -1280,8 +1446,7 @@ mod tests {
             },
             "agent-default-model": { "provider": "deepseek", "model": "deepseek-v4-flash" }
         });
-        let credentials = Map::new();
-        let views = build_provider_views(&config, &credentials);
+        let views = build_provider_views(&config, &credentials_document(json!({})));
         assert_eq!(views.len(), 1);
         let view = &views[0];
         assert_eq!(view.model_source, DshModelSource::Builtin);
@@ -1305,8 +1470,7 @@ mod tests {
             },
             "agent-default-model": { "provider": "deepseek-official", "model": "deepseek-v4-flash" }
         });
-        let credentials = Map::new();
-        let views = build_provider_views(&config, &credentials);
+        let views = build_provider_views(&config, &credentials_document(json!({})));
         let view = &views[0];
         assert_eq!(view.model_source, DshModelSource::Builtin);
         assert!(view.model_ids.iter().any(|id| id == "deepseek-v4-pro"));
@@ -1322,8 +1486,7 @@ mod tests {
             },
             "agent-default-model": { "provider": "deepseek", "model": "deepseek-chat" }
         });
-        let credentials = Map::new();
-        let views = build_provider_views(&config, &credentials);
+        let views = build_provider_views(&config, &credentials_document(json!({})));
         let view = &views[0];
         assert_eq!(view.model_source, DshModelSource::Explicit);
         assert_eq!(view.model_ids, vec!["deepseek-chat"]);
@@ -1343,8 +1506,7 @@ mod tests {
             },
             "agent-default-model": { "provider": "custom-x", "model": "missing-model" }
         });
-        let credentials = Map::new();
-        let views = build_provider_views(&config, &credentials);
+        let views = build_provider_views(&config, &credentials_document(json!({})));
         assert_eq!(views.len(), 1);
         let view = &views[0];
         assert!(!view.is_builtin);
@@ -1369,13 +1531,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(".credentials.yaml");
 
-        let mut saved = Map::new();
-        saved.insert("DEEPSEEK_API_KEY".to_string(), json!("sk-proj-12345"));
-        write_credentials_map(&path, &saved).expect("write");
+        let mut document = CredentialsDocument::from_document(Map::new());
+        document.set_ref("DEEPSEEK_API_KEY", Some("sk-proj-12345"));
+        document.write(&path).expect("write");
 
-        let read = read_credentials_map(&path).expect("read");
+        let read = CredentialsDocument::read(&path).expect("read");
         assert_eq!(
-            read.get("DEEPSEEK_API_KEY"),
+            read.refs.get("DEEPSEEK_API_KEY"),
             Some(&json!("sk-proj-12345"))
         );
 
@@ -1384,9 +1546,162 @@ mod tests {
         assert_eq!(view[0].ref_name, "DEEPSEEK_API_KEY");
         assert!(view[0].has_value);
 
-        // Writing an empty map clears the credential file.
-        write_credentials_map(&path, &Map::new()).expect("write empty");
-        assert!(read_credentials_map(&path).expect("read").is_empty());
+        // Deleting the last ref leaves an empty (version-stamped) store.
+        let mut document = CredentialsDocument::read(&path).expect("re-read");
+        document.set_ref("DEEPSEEK_API_KEY", None);
+        document.write(&path).expect("write empty");
+        assert!(CredentialsDocument::read(&path)
+            .expect("read empty")
+            .refs
+            .is_empty());
+    }
+
+    #[test]
+    fn versioned_document_write_preserves_version_and_records() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".credentials.yaml");
+
+        let versioned = json!({
+            "version": 1,
+            "refs": { "OLD_KEY": "sk-old" },
+            "records": {
+                "llm-pi-ai/deepseek": { "kind": "api-key", "key": "sk-signin" }
+            }
+        });
+        let mut document = credentials_document(versioned);
+        document.set_ref("NEW_KEY", Some("  sk-new  "));
+        document.set_ref("OLD_KEY", None);
+        document.write(&path).expect("write");
+
+        let text = fs::read_to_string(&path).expect("text");
+        assert!(text.contains("version: 1"), "version stamp kept: {text}");
+        assert!(text.contains("llm-pi-ai/deepseek"), "records kept: {text}");
+        assert!(!text.contains("OLD_KEY"), "deleted ref removed: {text}");
+
+        let read = CredentialsDocument::read(&path).expect("read");
+        assert_eq!(read.refs.get("NEW_KEY"), Some(&json!("sk-new")));
+        assert!(read.refs.get("OLD_KEY").is_none());
+        assert_eq!(
+            read.records
+                .get("llm-pi-ai/deepseek")
+                .and_then(|record| record.get("key"))
+                .and_then(Value::as_str),
+            Some("sk-signin")
+        );
+    }
+
+    #[test]
+    fn flat_document_adopted_to_versioned_on_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".credentials.yaml");
+
+        // A pre-release flat document, as an older ai-toolbox build wrote it.
+        write_credentials_map(
+            &path,
+            &json!({ "LEGACY_KEY": "sk-legacy" })
+                .as_object()
+                .cloned()
+                .expect("object"),
+        )
+        .expect("seed flat file");
+
+        let mut document = CredentialsDocument::read(&path).expect("read flat");
+        assert_eq!(document.refs.get("LEGACY_KEY"), Some(&json!("sk-legacy")));
+        document.set_ref("NEW_KEY", Some("sk-new"));
+        document.write(&path).expect("write");
+
+        let read = CredentialsDocument::read(&path).expect("read migrated");
+        assert_eq!(
+            read.refs.get("LEGACY_KEY"),
+            Some(&json!("sk-legacy")),
+            "existing entries nest into refs instead of being dropped"
+        );
+        assert_eq!(read.refs.get("NEW_KEY"), Some(&json!("sk-new")));
+        let text = fs::read_to_string(&path).expect("text");
+        assert!(text.contains("version: 1"), "stamped: {text}");
+    }
+
+    #[test]
+    fn delete_missing_ref_is_tolerated_noop() {
+        let mut document = credentials_document(json!({
+            "version": 1,
+            "refs": { "OTHER": "sk-x" },
+            "records": {}
+        }));
+        document.set_ref("NOT_PRESENT", None);
+        assert!(document.refs.contains_key("OTHER"));
+        assert!(!document.refs.contains_key("NOT_PRESENT"));
+    }
+
+    #[test]
+    fn build_provider_views_backfills_from_sign_in_records() {
+        let config = json!({
+            "llm-pi-ai": {
+                "providers": {
+                    "deepseek": { "apiKeyEnv": "DEEPSEEK_API_KEY" },
+                    "custom-oauth": {},
+                    "custom-envonly": {}
+                }
+            }
+        });
+        let credentials = credentials_document(json!({
+            "version": 1,
+            "refs": { "DEEPSEEK_API_KEY": "sk-ref" },
+            "records": {
+                // A stored api-key record wins over the apiKeyEnv reference —
+                // mirroring pi-ai's resolution order.
+                "llm-pi-ai/deepseek": { "kind": "api-key", "key": "sk-record" },
+                // An OAuth grant counts as configured without a displayable key.
+                "llm-pi-ai/custom-oauth": {
+                    "kind": "grant",
+                    "payload": { "access_token": "tok" }
+                },
+                // An env-only api-key record counts as configured too.
+                "llm-pi-ai/custom-envonly": {
+                    "kind": "api-key",
+                    "env": { "AWS_ACCESS_KEY_ID": "aws" }
+                }
+            }
+        }));
+
+        let views = build_provider_views(&config, &credentials);
+        let by_key = |key: &str| {
+            views
+                .iter()
+                .find(|view| view.provider_key == key)
+                .unwrap_or_else(|| panic!("view for {key}"))
+        };
+
+        let deepseek = by_key("deepseek");
+        assert_eq!(deepseek.api_key, "sk-record", "record beats ref");
+        assert!(deepseek.credential_exists);
+
+        let oauth = by_key("custom-oauth");
+        assert!(oauth.credential_exists);
+        assert_eq!(oauth.api_key, "", "grant payload stays hidden");
+
+        let env_only = by_key("custom-envonly");
+        assert!(env_only.credential_exists);
+        assert_eq!(env_only.api_key, "");
+    }
+
+    #[test]
+    fn build_provider_views_falls_back_to_ref_when_record_absent() {
+        let config = json!({
+            "llm-pi-ai": {
+                "providers": {
+                    "deepseek": { "apiKeyEnv": "DEEPSEEK_API_KEY" }
+                }
+            }
+        });
+        let credentials = credentials_document(json!({
+            "version": 1,
+            "refs": { "DEEPSEEK_API_KEY": "sk-ref" },
+            "records": {}
+        }));
+        let views = build_provider_views(&config, &credentials);
+        assert_eq!(views[0].api_key, "sk-ref");
+        assert!(views[0].credential_exists);
     }
 }
 

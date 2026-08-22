@@ -20,6 +20,20 @@ pub const DSH_PROVIDERS_KEY: &str = "providers";
 /// The top-level default-model section (`{ provider, model, reasoningEffort }`).
 pub const DSH_DEFAULT_MODEL_SECTION: &str = "agent-default-model";
 
+/// Versioned `.credentials.yaml` layout (dsh >= 0.1.1-rc.1): top-level `version`
+/// marker whose presence moves every ref entry under a nested mapping.
+pub const DSH_CREDENTIALS_VERSION_KEY: &str = "version";
+/// Document version this app reads and writes (`refs:` nesting + `records:`).
+pub const DSH_CREDENTIALS_VERSION: i64 = 1;
+/// Nested key holding the ref entries in the versioned credentials layout.
+pub const DSH_CREDENTIALS_REFS_KEY: &str = "refs";
+/// Nested key holding sign-in credential records (api-key / OAuth grant) that
+/// dsh's own login flow writes; managed by dsh, never written by this app.
+pub const DSH_CREDENTIALS_RECORDS_KEY: &str = "records";
+/// Record scope of the stored sign-in credentials (`<scope>/<provider_id>`
+/// record keys), mirroring `RECORD_SCOPE` in upstream `llm-pi-ai/src/auth.ts`.
+pub const DSH_CREDENTIAL_RECORD_SCOPE: &str = DSH_LLM_PI_AI_SECTION;
+
 /// Known dsh provider routes with official display names.
 ///
 /// Aligned with the dsh runtime's built-in/known providers plus the common
