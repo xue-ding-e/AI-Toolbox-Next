@@ -300,6 +300,14 @@ export const setPreferredTools = async (tools: string[]): Promise<void> => {
   return invoke('skills_set_preferred_tools', { tools });
 };
 
+export const getLimitAddMoreToPreferredTools = async (): Promise<boolean> => {
+  return invoke<boolean>('skills_get_limit_add_more_to_preferred_tools');
+};
+
+export const setLimitAddMoreToPreferredTools = async (enabled: boolean): Promise<void> => {
+  return invoke('skills_set_limit_add_more_to_preferred_tools', { enabled });
+};
+
 // Show Skills in Tray
 export const getShowSkillsInTray = async (): Promise<boolean> => {
   return invoke<boolean>('skills_get_show_in_tray');

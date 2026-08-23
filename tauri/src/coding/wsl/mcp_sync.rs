@@ -513,6 +513,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 14;
+pub const TARGET_SCHEMA_VERSION: i32 = 15;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -49,6 +49,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 14 {
         run_migration_step(conn, 14, migrate_v14)?;
+    }
+    if current_version < 15 {
+        run_migration_step(conn, 15, migrate_v15)?;
     }
 
     Ok(())
@@ -319,6 +322,12 @@ fn migrate_v14(conn: &Connection) -> Result<(), String> {
             ON proxy_request_logs(stream_outcome);",
     )
     .map_err(|error| format!("Failed to create proxy gateway stream outcome index: {error}"))
+}
+
+fn migrate_v15(conn: &Connection) -> Result<(), String> {
+    // Managed MCP groups for the group management modal (mirrors skill_group);
+    // membership stays on each server's user_group text.
+    create_jsonb_table(conn, DbTable::McpGroup)
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

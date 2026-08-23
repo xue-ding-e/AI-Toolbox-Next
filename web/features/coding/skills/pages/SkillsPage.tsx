@@ -50,7 +50,7 @@ import { useSkillActions } from '../hooks/useSkillActions';
 import { SkillsList } from '../components/SkillsList';
 import { SkillsGroupedList } from '../components/SkillsGroupedList';
 import { SkillDetailPanel } from '../components/SkillDetailPanel';
-import { ToolIcon } from '../components/ToolIcon';
+import { ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import { AddSkillModal } from '../components/modals/AddSkillModal';
 import { BatchTagDialog } from '../components/modals/BatchTagDialog';
 import { ImportModal } from '../components/modals/ImportModal';
@@ -312,6 +312,8 @@ const SkillsPage: React.FC = () => {
   const [updatingAll, setUpdatingAll] = React.useState(false);
   const [updateAllProgress, setUpdateAllProgress] = React.useState<SkillsUpdateProgress | null>(null);
   const [gridColumnSetting, setGridColumnSetting] = React.useState<ManagementGridColumnSetting>('auto');
+  const [preferredToolsForAddMore, setPreferredToolsForAddMore] = React.useState<string[]>([]);
+  const [limitAddMoreToPreferredTools, setLimitAddMoreToPreferredTools] = React.useState(false);
   const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<SkillViewMode>('flat');
   const previousAutoExpandRef = React.useRef(false);
@@ -332,6 +334,31 @@ const SkillsPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const loadSkillToolMenuPreferences = React.useCallback(async () => {
+    try {
+      const [savedPreferredTools, savedLimitAddMoreToPreferredTools] = await Promise.all([
+        api.getPreferredTools(),
+        api.getLimitAddMoreToPreferredTools(),
+      ]);
+      setPreferredToolsForAddMore(savedPreferredTools ?? []);
+      setLimitAddMoreToPreferredTools(savedLimitAddMoreToPreferredTools);
+    } catch (error) {
+      console.error('Failed to load Skill tool menu preferences:', error);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadSkillToolMenuPreferences();
+  }, [loadSkillToolMenuPreferences]);
+
+  const handleToolMenuPreferencesChange = React.useCallback((preferences: {
+    preferredTools: string[];
+    limitAddMoreToPreferredTools: boolean;
+  }) => {
+    setPreferredToolsForAddMore(preferences.preferredTools);
+    setLimitAddMoreToPreferredTools(preferences.limitAddMoreToPreferredTools);
   }, []);
 
   const handleViewModeChange = React.useCallback((mode: SkillViewMode) => {
@@ -539,6 +566,12 @@ const SkillsPage: React.FC = () => {
   const selectedArray = React.useMemo(() => [...selectedIds], [selectedIds]);
   const hasSelection = selectedArray.length > 0;
   const installedTools = React.useMemo(() => allTools.filter((tool) => tool.installed), [allTools]);
+  const effectivePreferredToolsForAddMore = React.useMemo(() => {
+    if (preferredToolsForAddMore.length > 0) {
+      return preferredToolsForAddMore;
+    }
+    return allTools.filter((tool) => tool.installed).map((tool) => tool.id);
+  }, [preferredToolsForAddMore, allTools]);
   const allToolIds = React.useMemo(() => new Set(allTools.map((tool) => tool.id)), [allTools]);
   const skillById = React.useMemo(
     () => new Map(skills.map((skill) => [skill.id, skill])),
@@ -578,27 +611,6 @@ const SkillsPage: React.FC = () => {
       message.error(String(error));
     }
   }, [refresh, skillById]);
-
-  // Group editing in the detail panel: resolve the name against existing
-  // groups, create the group when new, and clear it when empty. Tags stay
-  // untouched via the tri-state undefined argument.
-  const handleUpdateSkillGroup = React.useCallback(async (skillId: string, groupName: string) => {
-    const skill = skillById.get(skillId);
-    if (!skill) {
-      return;
-    }
-    const normalizedGroupName = normalizeSkillMetadataText(groupName);
-    try {
-      const groupId = normalizedGroupName
-        ? findSkillGroupOptionByName(groupOptions, normalizedGroupName)?.id
-          ?? await api.saveSkillGroup(normalizedGroupName, null, groupOptions.length)
-        : null;
-      await api.updateSkillMetadata(skillId, groupId, skill.user_note, undefined);
-      await refresh();
-    } catch (error) {
-      message.error(String(error));
-    }
-  }, [groupOptions, refresh, skillById]);
 
   const handleApplyBatchTags = React.useCallback(async (nextTags: string[]) => {
     if (selectedEnabledSkills.length === 0) {
@@ -1305,6 +1317,8 @@ const SkillsPage: React.FC = () => {
             updatingSkillIds={updatingSkillIds}
             columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
+            preferredToolKeysForAddMore={effectivePreferredToolsForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onOpenDetail={handleOpenDetail}
             getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}
@@ -1322,6 +1336,8 @@ const SkillsPage: React.FC = () => {
             loading={loading || actionLoading}
             updatingSkillIds={updatingSkillIds}
             columns={gridColumns}
+            preferredToolKeysForAddMore={effectivePreferredToolsForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             selectionMode={selectionMode}
@@ -1377,8 +1393,7 @@ const SkillsPage: React.FC = () => {
             onSetManagementEnabled={handleSetSkillEnabled}
             allTags={allTags}
             onUpdateTags={handleUpdateSkillsTags}
-            groupOptions={groupOptions}
-            onUpdateGroup={handleUpdateSkillGroup}
+            onEditMetadata={setMetadataSkill}
           />
         )}
       </Drawer>
@@ -1413,6 +1428,7 @@ const SkillsPage: React.FC = () => {
           cardColumnOptions={MANAGEMENT_GRID_COLUMN_OPTIONS}
           onCardColumnSettingChange={setGridColumnSetting}
           onDefaultViewModeApply={handleDefaultViewModeApply}
+          onToolMenuPreferencesChange={handleToolMenuPreferencesChange}
           onClose={() => setSettingsModalOpen(false)}
         />
       )}

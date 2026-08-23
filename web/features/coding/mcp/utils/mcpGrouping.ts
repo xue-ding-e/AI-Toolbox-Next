@@ -41,6 +41,7 @@ export function filterMcpServersBySearch(
       server.description,
       server.user_group,
       server.user_note,
+      ...(server.tags ?? []),
     ];
 
     return searchableValues.some((value) => value?.toLowerCase().includes(keyword));

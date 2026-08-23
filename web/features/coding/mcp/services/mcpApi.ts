@@ -5,6 +5,8 @@ import type {
   UpdateMcpServerInput,
   McpSyncResult,
   McpImportResult,
+  McpGroupInventoryPreview,
+  McpGroupRecord,
   McpTool,
   McpScanResult,
   McpPackageVersionResolveRequest,
@@ -38,6 +40,31 @@ export const toggleMcpTool = async (serverId: string, toolKey: string): Promise<
   return invoke<boolean>('mcp_toggle_tool', { serverId, toolKey });
 };
 
+/**
+ * Set the management enabled/disabled state for an MCP server.
+ * Disable removes the server from all tool configs and records prior bindings into the server;
+ * enable only flips the flag and returns the recorded previous tools so the caller can confirm
+ * which to restore through `syncMcpToTool`.
+ */
+export const setMcpManagementEnabled = async (
+  serverId: string,
+  enabled: boolean,
+): Promise<string[]> => {
+  return invoke<string[]>('mcp_set_management_enabled', { serverId, enabled });
+};
+
+/**
+ * Restore a just-re-enabled server's tool bindings: the backend writes the chosen
+ * tools back into `enabled_tools` and re-syncs this server into each tool config.
+ * Returns per-tool sync results (tool/success/error_message).
+ */
+export const restoreMcpTools = async (
+  serverId: string,
+  tools: string[],
+): Promise<McpSyncResult[]> => {
+  return invoke<McpSyncResult[]>('mcp_restore_tools', { serverId, tools });
+};
+
 export const reorderMcpServers = async (ids: string[]): Promise<void> => {
   return invoke('mcp_reorder_servers', { ids });
 };
@@ -46,8 +73,52 @@ export const updateMcpMetadata = async (
   serverId: string,
   userGroup: string | null,
   userNote: string | null,
+  tags?: string[] | null,
 ): Promise<void> => {
-  return invoke('mcp_update_metadata', { serverId, userGroup, userNote });
+  return invoke('mcp_update_metadata', { serverId, userGroup, userNote, tags });
+};
+
+/**
+ * Export every managed server's group assignment as a JSON inventory file at
+ * the given path (chosen via the save dialog). Returns the written path.
+ */
+export const exportMcpGroupInventory = async (path: string): Promise<string> => {
+  return invoke<string>('mcp_export_group_inventory', { path });
+};
+
+/** Validate an inventory file and report what would change, without writing. */
+export const previewMcpGroupInventoryImport = async (
+  path: string,
+): Promise<McpGroupInventoryPreview> => {
+  return invoke<McpGroupInventoryPreview>('mcp_preview_group_inventory_import', { path });
+};
+
+/** Apply a validated inventory file; returns the same preview shape. */
+export const applyMcpGroupInventoryImport = async (
+  path: string,
+): Promise<McpGroupInventoryPreview> => {
+  return invoke<McpGroupInventoryPreview>('mcp_apply_group_inventory_import', { path });
+};
+
+// Managed groups (group management modal)
+
+export const getMcpGroups = async (): Promise<McpGroupRecord[]> => {
+  return invoke<McpGroupRecord[]>('mcp_list_groups');
+};
+
+export const saveMcpGroup = async (
+  name: string,
+  note: string | null,
+  sortIndex: number,
+  id?: string,
+): Promise<McpGroupRecord> => {
+  // Backend parameter is `groupId`; passing a bare `id` would deserialize as
+  // None and turn every edit into a duplicate-name create.
+  return invoke<McpGroupRecord>('mcp_save_group', { groupId: id, name, note, sortIndex });
+};
+
+export const deleteMcpGroup = async (groupId: string): Promise<void> => {
+  return invoke('mcp_delete_group', { groupId });
 };
 
 // Sync operations
@@ -114,6 +185,8 @@ export interface AddMcpCustomToolInput {
   mcpConfigPath: string;
   mcpConfigFormat: 'json' | 'toml';
   mcpField: string;
+  /** Optional brand icon image URL; http(s) only, empty string clears it. */
+  iconUrl?: string;
 }
 
 export const addMcpCustomTool = async (input: AddMcpCustomToolInput): Promise<void> => {

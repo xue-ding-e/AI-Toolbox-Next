@@ -387,6 +387,9 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - 系统 `libwayland-client.so.0` 搜索路径必须覆盖常见 x86_64 和 aarch64 Debian/Ubuntu multiarch 路径，不能只写 `/usr/lib64` 或 x86_64 专用路径。
 - 不要覆盖用户显式设置的 `LD_PRELOAD`，并且必须有 sentinel 环境变量防止重启循环；`AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` 应禁用这类启动兼容处理。
 - Linux 发版如果新增或调整 AppImage 兼容策略，应同时确认 release workflow 的 Linux 产物覆盖 Fedora 用户可安装的 `rpm`，而不是只发布 `deb` 和 `AppImage`。
+- WebKitGTK 2.50+ 的 Skia 线程化渲染管线在 Wayland（尤其 AMD + KDE）上会引发滚动掉帧和「聚焦输入框冻结 UI」；应用版本对这类问题不可检测（界面能显示，watchdog 的 frontend-ready 超时/EGL 失败都不触发），只能靠预设级别规避（issue #301，`level 2` 即 `WEBKIT_DISABLE_GPU_PROCESS=1` 已由用户验证有效；`WEBKIT_SKIA_GPU_PAINTING_THREADS=0` 是候选轻量规避）。同类先例：psysonic#342、tauri-apps/tauri#9088。
+- Release 构建下，Wayland 会话的所有安装方式（不只 AppImage）默认 min level 1（禁 DMABUF renderer）；watchdog 自动降级仍只覆盖白屏/崩溃类失败。
+- 持久化 level 文件（`wayland_webview_workaround_level`）是 JSON 记录，绑定写入时的 app 版本；版本不一致或旧版纯数字格式一律按默认处理。这样应用升级后自动重新探索级别，避免旧 WebKitGTK 回归触发的降级永久拖累新版本，也让系统 WebKitGTK 修复后能回到更高渲染路径。相关纯函数挂 `#[cfg(any(target_os = "linux", test))]` 以便在 Windows 上单测版本重置语义。
 
 #### Async Runtime Safety
 

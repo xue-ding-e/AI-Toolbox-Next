@@ -79,6 +79,53 @@ impl Default for BackupFileFilterRule {
     }
 }
 
+/// Session-detail filter chip visibility persisted across app restarts.
+///
+/// Mirrors the frontend `SessionDetailWorkbench` role/content filters. All
+/// booleans are "visible" (true = show). Missing/None means "all visible".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionDetailFilters {
+    pub role_filter: SessionRoleFilter,
+    pub content_filter: SessionContentFilter,
+}
+
+impl Default for SessionDetailFilters {
+    fn default() -> Self {
+        Self {
+            role_filter: SessionRoleFilter::default(),
+            content_filter: SessionContentFilter::default(),
+        }
+    }
+}
+
+/// Role-level visibility: user vs assistant messages.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionRoleFilter {
+    pub user: bool,
+    pub assistant: bool,
+}
+
+impl Default for SessionRoleFilter {
+    fn default() -> Self {
+        Self { user: true, assistant: true }
+    }
+}
+
+/// Content-level visibility: text, thinking, tool calls, commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionContentFilter {
+    pub text: bool,
+    pub thinking: bool,
+    pub tool_call: bool,
+    pub command: bool,
+}
+
+impl Default for SessionContentFilter {
+    fn default() -> Self {
+        Self { text: true, thinking: true, tool_call: true, command: true }
+    }
+}
+
 /// Application settings
 ///
 /// Note: This struct is no longer directly serialized to/from database.
@@ -148,6 +195,9 @@ pub struct AppSettings {
     /// `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`). When present and the
     /// file exists, CLI execution prefers these paths over auto-discovery.
     pub cli_manual_paths: HashMap<String, String>,
+    /// Session-detail filter chip visibility, persisted across app restarts.
+    /// `None` means "no saved preference yet" (frontend defaults to all visible).
+    pub session_detail_filters: Option<SessionDetailFilters>,
 }
 
 impl Default for AppSettings {
@@ -201,6 +251,7 @@ impl Default for AppSettings {
             claude_cli_launch_full_access: false,
             backup_file_filter_rules: default_backup_file_filter_rules(),
             cli_manual_paths: HashMap::new(),
+            session_detail_filters: None,
         }
     }
 }

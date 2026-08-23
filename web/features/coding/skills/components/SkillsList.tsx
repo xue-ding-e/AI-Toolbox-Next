@@ -15,7 +15,7 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
-import { ManagementEmpty, VirtualGrid } from '@/features/coding/shared/management';
+import { ManagementEmpty, useAutoGridColumns, VirtualGrid } from '@/features/coding/shared/management';
 import { SkillCard } from './SkillCard';
 import type { ManagedSkill, ToolOption } from '../types';
 import styles from './SkillsList.module.less';
@@ -27,6 +27,8 @@ interface SkillsListProps {
   updatingSkillIds: string[];
   columns?: number;
   dragDisabled?: boolean;
+  preferredToolKeysForAddMore?: string[];
+  limitAddMoreToPreferredTools?: boolean;
   onOpenDetail?: (skill: ManagedSkill) => void;
   getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
@@ -45,6 +47,8 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   updatingSkillIds,
   columns,
   dragDisabled,
+  preferredToolKeysForAddMore,
+  limitAddMoreToPreferredTools,
   onOpenDetail,
   getRepoInfo,
   formatRelative,
@@ -56,6 +60,17 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   onDragEnd,
 }) => {
   const { t } = useTranslation();
+
+  // Measure the non-virtualized grid container width when on "auto" columns so
+  // drag-sort mode renders the same adaptive column count as browse mode.
+  // Disabled when the caller forces a fixed column count.
+  const { containerRef, columnCount: autoColumnCount } = useAutoGridColumns<HTMLDivElement>({
+    minColumnWidth: 350,
+    maxColumns: 3,
+    gap: 10,
+    enabled: columns === undefined,
+  });
+  const effectiveColumns = columns === undefined ? autoColumnCount : columns;
 
   // Configure drag sensors
   const sensors = useSensors(
@@ -79,12 +94,13 @@ export const SkillsList: React.FC<SkillsListProps> = ({
 
   const cardList = (
     <div
+      ref={containerRef}
       className={[
         styles.list,
         columns === undefined ? styles.listAuto : styles.listFixed,
       ].filter(Boolean).join(' ')}
-      style={columns === undefined ? undefined : ({
-        '--management-grid-columns': `repeat(${columns}, minmax(0, 1fr))`,
+      style={effectiveColumns === undefined ? undefined : ({
+        '--management-grid-columns': `repeat(${effectiveColumns}, minmax(0, 1fr))`,
       } as React.CSSProperties)}
     >
       {skills.map((skill) => (
@@ -95,6 +111,8 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           loading={loading}
           isUpdating={updatingSkillIds.includes(skill.id)}
           dragDisabled={dragDisabled}
+          preferredToolKeysForAddMore={preferredToolKeysForAddMore}
+          limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
           onOpenDetail={onOpenDetail}
           getRepoInfo={getRepoInfo}
           formatRelative={formatRelative}
@@ -125,6 +143,8 @@ export const SkillsList: React.FC<SkillsListProps> = ({
             loading={loading}
             isUpdating={updatingSkillIds.includes(skill.id)}
             dragDisabled
+            preferredToolKeysForAddMore={preferredToolKeysForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onOpenDetail={onOpenDetail}
             getRepoInfo={getRepoInfo}
             formatRelative={formatRelative}

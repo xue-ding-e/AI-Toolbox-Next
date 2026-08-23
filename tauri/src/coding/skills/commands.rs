@@ -2252,14 +2252,34 @@ pub async fn skills_set_preferred_tools(
     .await
 }
 
+/// Get whether Skill card add-more menus are limited to preferred tools.
+#[tauri::command]
+pub async fn skills_get_limit_add_more_to_preferred_tools(
+    state: State<'_, SqliteDbState>,
+) -> Result<bool, String> {
+    let raw = skill_store::get_setting(&state, "limit_add_more_to_preferred_tools").await?;
+    Ok(raw.as_deref() == Some("true"))
+}
+
+/// Set whether Skill card add-more menus are limited to preferred tools.
+#[tauri::command]
+pub async fn skills_set_limit_add_more_to_preferred_tools(
+    state: State<'_, SqliteDbState>,
+    enabled: bool,
+) -> Result<(), String> {
+    skill_store::set_setting(
+        &state,
+        "limit_add_more_to_preferred_tools",
+        if enabled { "true" } else { "false" },
+    )
+    .await
+}
+
 // --- Show Skills in Tray ---
 
 #[tauri::command]
 pub async fn skills_get_show_in_tray(state: State<'_, SqliteDbState>) -> Result<bool, String> {
-    let raw = skill_store::get_setting(&state, "show_skills_in_tray")
-        .await
-        .ok()
-        .flatten();
+    let raw = skill_store::get_setting(&state, "show_skills_in_tray").await?;
     match raw {
         Some(s) => Ok(s == "true"),
         None => Ok(false),

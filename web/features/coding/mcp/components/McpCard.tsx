@@ -2,10 +2,16 @@ import React from 'react';
 import { message } from 'antd';
 import {
   Code2,
+  Copy,
   Globe2,
+  GripVertical,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
+  RefreshCw,
   Tags,
   Trash2,
 } from 'lucide-react';
@@ -13,28 +19,43 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  ManagementCard,
-  ManagementCardActions,
-  ManagementCardCheckboxArea,
-  ManagementCardDragHandle,
-  ManagementCardHeader,
-  ManagementCardIcon,
-  ManagementCardMain,
-  ManagementCardMetaRow,
-  ManagementCardToolMatrix,
   ManagementCheckbox,
-  ManagementIconButton,
   ManagementMenu,
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
-import type { McpServer, McpTool } from '../types';
+import { ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
+import type { McpServer, McpSyncDetail, McpTool } from '../types';
 import {
-  formatMcpCommandPackageVersionLabel,
   getMcpCommandPackageVersion,
   getMcpCommandPackageVersionKey,
 } from '../utils/mcpCommandPackageVersion';
-import { getMcpDisplayNote } from '../utils/mcpGrouping';
+import {
+  hashTagColorIndex,
+  normalizeTagList,
+} from '../utils/mcpTags';
 import styles from './McpCard.module.less';
+
+const TAG_COLOR_CLASS_NAMES: readonly string[] = [
+  styles.tagColor0,
+  styles.tagColor1,
+  styles.tagColor2,
+  styles.tagColor3,
+  styles.tagColor4,
+  styles.tagColor5,
+  styles.tagColor6,
+  styles.tagColor7,
+];
+const tagPillColorClass = (tag: string): string =>
+  TAG_COLOR_CLASS_NAMES[hashTagColorIndex(tag)] ?? styles.tagColor0;
+
+/** Middle-ellipsis truncation for the package@version badge. */
+function truncateMiddle(text: string, maxLength = 24): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const keepLength = Math.max(3, Math.floor((maxLength - 1) / 2));
+  return `${text.slice(0, keepLength)}…${text.slice(-keepLength)}`;
+}
 
 interface McpCardProps {
   server: McpServer;
@@ -48,10 +69,16 @@ interface McpCardProps {
   preferredToolKeysForAddMore?: string[];
   limitAddMoreToPreferredTools?: boolean;
   onSelectChange?: (serverId: string, checked: boolean) => void;
+  /** Browse-mode card body click opens the detail drawer. */
+  onOpenDetail?: (server: McpServer) => void;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
   onToggleTool: (serverId: string, toolKey: string) => void;
+  /** Disable or re-enable a server's management state. */
+  onSetManagementEnabled?: (server: McpServer, enabled: boolean) => void;
+  /** High-frequency refresh of the server list (reloads sync statuses). */
+  onRefresh?: () => void;
 }
 
 interface McpCardContentProps extends Omit<McpCardProps, 'dragDisabled'> {
@@ -59,6 +86,11 @@ interface McpCardContentProps extends Omit<McpCardProps, 'dragDisabled'> {
   containerRef?: (node: HTMLDivElement | null) => void;
   containerStyle?: React.CSSProperties;
 }
+
+// Card-body click opens the detail panel only in browse mode; interactive
+// elements keep their own click. Mirrors the SkillCard exclusion rules.
+const DETAIL_CLICK_EXCLUDE_SELECTOR =
+  'button, a, input, [role="menuitem"], [role="checkbox"], [data-mcp-card-no-detail]';
 
 const McpCardContent = React.memo(function McpCardContent({
   server,
@@ -71,26 +103,46 @@ const McpCardContent = React.memo(function McpCardContent({
   preferredToolKeysForAddMore,
   limitAddMoreToPreferredTools,
   onSelectChange,
+  onOpenDetail,
   onEdit,
   onEditMetadata,
   onDelete,
   onToggleTool,
+  onSetManagementEnabled,
+  onRefresh,
   dragHandle,
   containerRef,
   containerStyle,
 }: McpCardContentProps) {
   const { t } = useTranslation();
 
-  const iconNode = React.useMemo(() => (
-    server.server_type === 'stdio' ? (
-      <Code2 size={18} className={styles.icon} />
-    ) : (
-      <Globe2 size={18} className={styles.icon} />
-    )
-  ), [server.server_type]);
+  const mcpTools = React.useMemo(
+    () => tools.filter((tool) => tool.supports_mcp),
+    [tools],
+  );
 
-  // Config summary only depends on the current server definition.
-  // Memoizing keeps repeated card renders from recalculating the same display string.
+  const enabledToolIds = React.useMemo(
+    () => new Set(server.enabled_tools),
+    [server.enabled_tools],
+  );
+
+  // Footer only shows tools already synced/enabled for this server; the "+"
+  // menu lists the remaining installed candidates. Matches SkillCard.
+  const enabledTools = React.useMemo(
+    () => mcpTools.filter((tool) => enabledToolIds.has(tool.key)),
+    [enabledToolIds, mcpTools],
+  );
+
+  const syncDetailByTool = React.useMemo(() => {
+    const detailMap = new Map<string, McpSyncDetail>();
+    for (const detail of server.sync_details) {
+      detailMap.set(detail.tool, detail);
+    }
+    return detailMap;
+  }, [server.sync_details]);
+
+  // Transport identity for the footer source slot: stdio shows the command,
+  // http/sse show the endpoint URL.
   const configSummary = React.useMemo(() => {
     if (server.server_type === 'stdio') {
       const config = server.server_config as { command?: string };
@@ -99,6 +151,39 @@ const McpCardContent = React.memo(function McpCardContent({
     const config = server.server_config as { url?: string };
     return config.url || 'http';
   }, [server.server_config, server.server_type]);
+
+  // Second row: full command line. For stdio, command + args joined by spaces;
+  // for http/sse, the endpoint URL.
+  const commandText = React.useMemo(() => {
+    if (server.server_type === 'stdio') {
+      const config = server.server_config as { command?: string; args?: string[] };
+      const args = Array.isArray(config.args) && config.args.length > 0
+        ? ` ${config.args.join(' ')}`
+        : '';
+      return `${config.command || 'stdio'}${args}`;
+    }
+    const config = server.server_config as { url?: string };
+    return config.url || 'http';
+  }, [server.server_config, server.server_type]);
+
+  const transportIconNode = React.useMemo(
+    () => (server.server_type === 'stdio'
+      ? <Code2 size={13} aria-hidden="true" />
+      : <Globe2 size={13} aria-hidden="true" />),
+    [server.server_type],
+  );
+
+  const handleCopyConfig = React.useCallback(async () => {
+    if (!configSummary) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(configSummary);
+      message.success(t('mcp.copiedConfig'));
+    } catch {
+      message.error(t('mcp.copyFailed'));
+    }
+  }, [configSummary, t]);
 
   const packageVersion = React.useMemo(
     () => (server.server_type === 'stdio' ? getMcpCommandPackageVersion(server.server_config) : null),
@@ -110,6 +195,7 @@ const McpCardContent = React.memo(function McpCardContent({
       return null;
     }
     if (packageVersion.versionLabel !== 'latest') {
+      // Pinned version: displayText is already the bare version label.
       return packageVersion.displayText;
     }
 
@@ -119,171 +205,291 @@ const McpCardContent = React.memo(function McpCardContent({
     if (!resolvedVersion) {
       return null;
     }
-
-    return formatMcpCommandPackageVersionLabel(resolvedVersion);
+    // Show only the version number; the package name is already visible in
+    // the command line above, so it is not repeated here.
+    return resolvedVersion;
   }, [packageVersion, resolvedPackageVersions]);
 
-  const displayNote = React.useMemo(() => getMcpDisplayNote(server), [server]);
+  const descriptionText = React.useMemo(
+    () => server.description?.trim() ?? '',
+    [server.description],
+  );
+
+  const groupText = React.useMemo(
+    () => server.user_group?.trim() ?? '',
+    [server.user_group],
+  );
+
+  const noteText = React.useMemo(
+    () => server.user_note?.trim() ?? '',
+    [server.user_note],
+  );
+
+  const tagList = React.useMemo(
+    () => normalizeTagList(server.tags ?? []),
+    [server.tags],
+  );
+
+  // Candidate tools for the footer "+" menu: installed, supports MCP, and not
+  // already enabled. The preferred-tools setting may narrow this list further.
+  const addToolCandidates = React.useMemo(() => {
+    const candidates = mcpTools.filter(
+      (tool) => tool.installed && !enabledToolIds.has(tool.key),
+    );
+    if (limitAddMoreToPreferredTools && preferredToolKeysForAddMore) {
+      const preferredKeys = new Set(preferredToolKeysForAddMore);
+      return candidates.filter((tool) => preferredKeys.has(tool.key));
+    }
+    return candidates;
+  }, [mcpTools, enabledToolIds, limitAddMoreToPreferredTools, preferredToolKeysForAddMore]);
+
+  const addToolItems = React.useMemo<ManagementMenuItem[]>(
+    () => addToolCandidates.map((tool) => ({
+      key: tool.key,
+      label: tool.display_name,
+      icon: (
+        <ToolIcon
+          toolKey={tool.key}
+          label={tool.display_name}
+          size={14}
+          iconUrl={tool.icon_url ?? undefined}
+        />
+      ),
+      onSelect: () => onToggleTool(server.id, tool.key),
+    })),
+    [addToolCandidates, onToggleTool, server.id],
+  );
+
+  // Disable/re-enable entry mirrors SkillCard's menu order: metadata first,
+  // then the management toggle. Omitted entirely when no handler is wired so
+  // a blank placeholder row can never appear.
+  const managementItems = React.useMemo<ManagementMenuItem[]>(() => {
+    if (!onSetManagementEnabled) {
+      return [];
+    }
+    if (server.management_enabled) {
+      return [{
+        key: 'disable',
+        icon: <PowerOff size={14} />,
+        label: t('mcp.disableServer'),
+        onSelect: () => onSetManagementEnabled(server, false),
+        disabled: loading,
+      }];
+    }
+    // Disabled server: only re-enable is offered and must never be disabled,
+    // otherwise the user could not recover the server.
+    return [{
+      key: 'enable',
+      icon: <Power size={14} />,
+      label: t('mcp.enableServer'),
+      onSelect: () => onSetManagementEnabled(server, true),
+      disabled: loading,
+    }];
+  }, [loading, onSetManagementEnabled, server, t]);
+
+  const actionItems = React.useMemo<ManagementMenuItem[]>(() => [
+    {
+      key: 'metadata',
+      icon: <Tags size={14} />,
+      label: t('mcp.metadata.edit'),
+      onSelect: () => onEditMetadata(server),
+      disabled: loading,
+    },
+    ...managementItems,
+    {
+      key: 'edit',
+      icon: <Pencil size={14} />,
+      label: t('mcp.edit'),
+      onSelect: () => onEdit(server),
+      disabled: loading,
+    },
+    {
+      key: 'delete',
+      danger: true,
+      icon: <Trash2 size={14} />,
+      label: t('common.delete'),
+      onSelect: () => onDelete(server.id),
+      disabled: loading,
+    },
+  ], [loading, managementItems, onDelete, onEdit, onEditMetadata, server, t]);
+
+  const handleCardClick: React.MouseEventHandler<HTMLDivElement> = React.useCallback((event) => {
+    // Selection mode reserves the card click for the checkbox; interactive
+    // elements handle their own click. Only browse-mode opens the drawer.
+    if (selectable) {
+      return;
+    }
+    const target = event.target as HTMLElement;
+    if (target.closest(DETAIL_CLICK_EXCLUDE_SELECTOR)) {
+      return;
+    }
+    onOpenDetail?.(server);
+  }, [onOpenDetail, selectable, server]);
 
   const handleReadOnlyToolClick = React.useCallback(() => {
     message.info(t('mcp.groupTools.cardToolReadOnly'));
   }, [t]);
 
-  // These tool collections are pure derived data from the server/tool definitions.
-  // Memoizing them reduces repeated filtering/sorting work across large card lists.
-  const enabledToolKeys = React.useMemo(
-    () => new Set(server.enabled_tools),
-    [server.enabled_tools],
-  );
+  const handleToolPillClick = React.useCallback((tool: McpTool) => {
+    if (toolsReadOnly) {
+      handleReadOnlyToolClick();
+      return;
+    }
+    if (loading) {
+      return;
+    }
+    onToggleTool(server.id, tool.key);
+  }, [handleReadOnlyToolClick, loading, onToggleTool, server.id, toolsReadOnly]);
 
-  const enabledTools = React.useMemo(
-    () => tools.filter((tool) => enabledToolKeys.has(tool.key)),
-    [enabledToolKeys, tools],
-  );
-
-  const availableDropdownTools = React.useMemo(() => {
-    const preferredToolKeys = new Set(preferredToolKeysForAddMore ?? []);
-    return tools.filter((tool) => (
-      tool.installed
-      && !enabledToolKeys.has(tool.key)
-      && (!limitAddMoreToPreferredTools || preferredToolKeys.has(tool.key))
-    ));
-  }, [enabledToolKeys, limitAddMoreToPreferredTools, preferredToolKeysForAddMore, tools]);
-
-  // Dropdown items are presentation-only data. Memoizing keeps the menu stable unless
-  // the tool list, translation output, or toggle handler actually changes.
-  const dropdownItems = React.useMemo<ManagementMenuItem[]>(
-    () =>
-      availableDropdownTools.map((tool) => ({
-        key: tool.key,
-        label: tool.display_name,
-        onSelect: () => onToggleTool(server.id, tool.key),
-      })),
-    [availableDropdownTools, onToggleTool, server.id],
-  );
-
-  const actionItems = React.useMemo<ManagementMenuItem[]>(
-    () => [
-      {
-        key: 'metadata',
-        icon: <Tags size={14} />,
-        label: t('mcp.metadata.edit'),
-        onSelect: () => onEditMetadata(server),
-      },
-      {
-        key: 'delete',
-        danger: true,
-        icon: <Trash2 size={14} />,
-        label: t('mcp.delete'),
-        onSelect: () => onDelete(server.id),
-      },
-    ],
-    [onDelete, onEditMetadata, server, t],
-  );
+  const cardClassName = [
+    styles.card,
+    selected ? styles.cardSelected : '',
+    !server.management_enabled ? styles.disabledCard : '',
+  ].filter(Boolean).join(' ');
 
   return (
-    <ManagementCard
-      containerRef={containerRef}
-      containerStyle={containerStyle}
-      selected={selected}
-      selectable={selectable}
-    >
-      {selectable && (
-        <ManagementCardCheckboxArea>
-          <ManagementCheckbox
-            ariaLabel={`${t('common.select')} ${server.name}`}
-            checked={!!selected}
-            onChange={(checked) => onSelectChange?.(server.id, checked)}
-          />
-        </ManagementCardCheckboxArea>
-      )}
-      {dragHandle}
-      <ManagementCardIcon icon={iconNode} />
-      <ManagementCardMain>
-        <ManagementCardHeader
-          title={server.name}
-          minWidth={92}
-          meta={
-            <span className={styles.headerMetaInline}>
-              <span className={styles.typeTag}>{server.server_type}</span>
-              <span className={styles.configSummary} title={configSummary}>{configSummary}</span>
-              {packageVersion && packageVersionDisplayText && (
-                <span
-                  className={styles.packageVersionTag}
-                  title={`${packageVersion.manager}: ${packageVersion.packageName}@${packageVersionDisplayText}`}
-                >
-                  {packageVersionDisplayText}
-                </span>
-              )}
-            </span>
-          }
-        />
-        {(server.user_group || displayNote) && (
-          <ManagementCardMetaRow>
-            {server.user_group && (
-              <span className={styles.groupTag} title={server.user_group}>{server.user_group}</span>
-            )}
-            {displayNote && (
-              <span className={styles.note} title={displayNote}>{displayNote}</span>
-            )}
-          </ManagementCardMetaRow>
-        )}
-        <ManagementCardToolMatrix>
-          {enabledTools.map((tool) => {
-            const syncDetail = server.sync_details.find((d) => d.tool === tool.key);
-            const status = syncDetail?.status || 'pending';
-            return (
-              <button
-                key={`${server.id}-${tool.key}`}
-                title={`${tool.display_name} - ${status}`}
-                type="button"
-                className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
-                onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
-                disabled={loading}
-                aria-disabled={toolsReadOnly || loading}
-              >
-                <span className={`${styles.statusBadge} ${styles[status]}`} />
-                {tool.display_name}
-              </button>
-            );
-          })}
-          {!toolsReadOnly && dropdownItems.length > 0 && (
-            <ManagementMenu
-              items={dropdownItems}
-              disabled={loading}
-              title={t('common.add')}
-              triggerClassName={styles.addToolBtn}
-            >
-              <Plus size={13} aria-hidden="true" />
-            </ManagementMenu>
+    <div ref={containerRef} style={containerStyle}>
+      <div className={cardClassName} onClick={onOpenDetail ? handleCardClick : undefined}>
+        <div className={styles.headerRow}>
+          {selectable ? (
+            <ManagementCheckbox
+              ariaLabel={`${t('common.select')} ${server.name}`}
+              checked={!!selected}
+              onChange={(checked) => onSelectChange?.(server.id, checked)}
+            />
+          ) : dragHandle ?? (
+            <span
+              className={`${styles.statusDot}${server.management_enabled ? ` ${styles.statusDotEnabled}` : ''}`}
+              title={server.management_enabled ? t('mcp.enableServer') : t('mcp.disableServer')}
+              aria-hidden="true"
+            />
           )}
-        </ManagementCardToolMatrix>
-      </ManagementCardMain>
-      <ManagementCardActions>
-        <ManagementMenu
-          items={actionItems}
-          disabled={loading}
-          title={t('mcp.more')}
-          controlSize="compact"
-        >
-          <MoreHorizontal size={16} aria-hidden="true" />
-        </ManagementMenu>
-        <ManagementIconButton
-          icon={<Pencil size={15} aria-hidden="true" />}
-          onClick={() => onEdit(server)}
-          disabled={loading}
-          title={t('mcp.editServer')}
-          controlSize="compact"
-        />
-      </ManagementCardActions>
-    </ManagementCard>
+          <span className={styles.name} title={server.name}>{server.name}</span>
+          <span className={styles.hoverActions}>
+            <button
+              type="button"
+              className={styles.miniBtn}
+              title={t('mcp.copyConfig')}
+              aria-label={t('mcp.copyConfig')}
+              disabled={!configSummary}
+              onClick={handleCopyConfig}
+            >
+              <Copy size={13} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={styles.miniBtn}
+              title={t('common.refresh')}
+              aria-label={t('common.refresh')}
+              disabled={loading || !onRefresh}
+              onClick={onRefresh}
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+            </button>
+            <ManagementMenu
+              items={actionItems}
+              title={t('mcp.settings')}
+              triggerClassName={styles.miniBtn}
+            >
+              <MoreHorizontal size={13} aria-hidden="true" />
+            </ManagementMenu>
+          </span>
+        </div>
+
+        <div className={styles.body}>
+          <p className={styles.commandLine} title={commandText}>{commandText}</p>
+          {descriptionText && (
+            <p className={styles.description} title={descriptionText}>{descriptionText}</p>
+          )}
+          {(tagList.length > 0 || groupText || noteText) && (
+            <div className={styles.tagRow}>
+              {tagList.map((tag) => (
+                <span key={tag} className={`${styles.tagPill} ${tagPillColorClass(tag)}`}>
+                  <span className={styles.tagPillText} title={tag}>{tag}</span>
+                </span>
+              ))}
+              {groupText && (
+                <span className={styles.groupTag} title={groupText}>{groupText}</span>
+              )}
+              {noteText && (
+                <span className={styles.note} title={noteText}>{noteText}</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={styles.footerRow}>
+          <span className={`${styles.sourceBtn} ${styles.sourceBtnStatic}`}>
+            {transportIconNode}
+            <span className={styles.typeText}>{server.server_type}</span>
+            {packageVersionDisplayText && (
+              <span className={styles.packageVersionTag} title={packageVersionDisplayText}>
+                {truncateMiddle(packageVersionDisplayText)}
+              </span>
+            )}
+          </span>
+          <span className={styles.footerTools}>
+            {enabledTools.map((tool) => {
+              const syncDetail = syncDetailByTool.get(tool.key);
+              const isError = syncDetail?.status === 'error';
+              const isPending = syncDetail?.status === 'pending';
+              const statusText = isPending
+                ? t('mcp.toolSync.pending')
+                : isError
+                  ? t('mcp.toolSync.error')
+                  : t('mcp.toolSync.synced');
+              const pillTitle = isError && syncDetail?.error_message
+                ? `${tool.display_name} — ${statusText}: ${syncDetail.error_message}`
+                : `${tool.display_name} — ${statusText}`;
+              const pillClassName = [
+                styles.toolPill,
+                styles.active,
+                isError ? styles.errorPill : '',
+                toolsReadOnly ? styles.readOnlyTool : '',
+              ].filter(Boolean).join(' ');
+
+              return (
+                <button
+                  key={tool.key}
+                  type="button"
+                  className={pillClassName}
+                  title={pillTitle}
+                  aria-label={pillTitle}
+                  disabled={loading || !server.management_enabled}
+                  onClick={() => handleToolPillClick(tool)}
+                >
+                  <ToolIcon
+                    toolKey={tool.key}
+                    label={tool.display_name}
+                    size={14}
+                    iconUrl={tool.icon_url ?? undefined}
+                  />
+                  {isPending && (
+                    <Loader2 size={10} className={styles.toolPendingIcon} aria-hidden="true" />
+                  )}
+                </button>
+              );
+            })}
+            {addToolItems.length > 0 && !toolsReadOnly && (
+              <ManagementMenu
+                items={addToolItems}
+                disabled={loading || !server.management_enabled}
+                title={t('mcp.addTool')}
+                triggerClassName={styles.addToolBtn}
+              >
+                <Plus size={12} aria-hidden="true" />
+              </ManagementMenu>
+            )}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 });
 
 const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) => {
-  const {
-    server,
-  } = props;
+  const { t } = useTranslation();
+  const { server } = props;
 
   const {
     attributes,
@@ -306,10 +512,16 @@ const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) =>
       containerRef={setNodeRef}
       containerStyle={sortableStyle}
       dragHandle={(
-        <ManagementCardDragHandle
+        <span
           {...attributes}
-          listeners={listeners}
-        />
+          {...listeners}
+          className={styles.dragHandle}
+          data-mcp-card-no-detail
+          title={t('mcp.reorderHint')}
+          aria-label={t('mcp.reorderHint')}
+        >
+          <GripVertical size={14} aria-hidden="true" />
+        </span>
       )}
     />
   );
@@ -323,7 +535,10 @@ export const McpCard = React.memo(function McpCard({
     return <McpCardContent {...props} />;
   }
 
-  return <SortableMcpCard {...props} />;
+  // In sortable/reorder mode, keep the card click focused on drag/sort and do
+  // not open the detail panel accidentally.
+  const { onOpenDetail: ignoredOnOpenDetail, ...sortableProps } = props;
+  return <SortableMcpCard {...sortableProps} />;
 });
 
 export default McpCard;

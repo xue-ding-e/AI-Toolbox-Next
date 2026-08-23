@@ -3,6 +3,7 @@ import { Drawer } from 'antd';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
+import { getSessionDetailFilters, saveSessionDetailFilters } from '@/services/settingsApi';
 import type { SessionDetail, SessionSubagentMeta } from '../types';
 import {
   DEFAULT_SESSION_CONTENT_FILTER,
@@ -52,8 +53,10 @@ interface SessionDetailWorkbenchProps {
   onCopyText: (text: string, successText: string) => void | Promise<void>;
 }
 
-// Process-lifetime memory shared across all tools' session detail pages.
-// Survives workbench remount when switching sessions; resets only on app restart.
+// In-process memory shared across all tools' session detail pages, plus the
+// persisted source of truth in SQLite (`session_detail_filters` in the settings
+// record). Survives workbench remount when switching sessions; hydrated from the
+// backend on mount and written back on every toggle.
 let rememberedSessionRoleFilter: SessionRoleFilter = { ...DEFAULT_SESSION_ROLE_FILTER };
 let rememberedSessionContentFilter: SessionContentFilter = { ...DEFAULT_SESSION_CONTENT_FILTER };
 
@@ -106,6 +109,44 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     setNavigatorCollapsed(false);
     viewerRef.current?.scrollTo({ top: 0 });
   }, [detail.meta.sourcePath]);
+
+  // Hydrate persisted filter chips from SQLite once per mount. While pending,
+  // the persist effect stays disabled so a slow read can never be clobbered by
+  // an early default-state write; on failure defaults are kept (all-on).
+  const hydratePendingRef = React.useRef(true);
+  React.useEffect(() => {
+    let cancelled = false;
+    void getSessionDetailFilters().then((filters) => {
+      if (cancelled) {
+        return;
+      }
+      hydratePendingRef.current = false;
+      if (!filters) {
+        return;
+      }
+      const nextRoleFilter = { ...DEFAULT_SESSION_ROLE_FILTER, ...filters.role_filter };
+      const nextContentFilter = { ...DEFAULT_SESSION_CONTENT_FILTER, ...filters.content_filter };
+      rememberedSessionRoleFilter = nextRoleFilter;
+      rememberedSessionContentFilter = nextContentFilter;
+      setRoleFilter(nextRoleFilter);
+      setContentFilter(nextContentFilter);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist chip toggles via the dedicated patching command (skips the mount
+  // hydration phase; writes only the session_detail_filters key in settings).
+  React.useEffect(() => {
+    if (hydratePendingRef.current) {
+      return;
+    }
+    void saveSessionDetailFilters({
+      role_filter: roleFilter,
+      content_filter: contentFilter,
+    });
+  }, [contentFilter, roleFilter]);
 
   React.useEffect(() => () => {
     messageRefs.current.clear();

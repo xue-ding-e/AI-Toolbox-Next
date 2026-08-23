@@ -2,6 +2,8 @@
 //!
 //! Provides the public API for the MCP feature.
 
+use std::collections::{BTreeMap, HashMap};
+
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::adapter::parse_sync_details_dto;
@@ -14,9 +16,9 @@ use super::mcp_store;
 use super::package_version;
 use super::types::{
     now_ms, CreateMcpServerInput, FavoriteMcp, FavoriteMcpDto, FavoriteMcpInput,
-    McpDiscoveredServerDto, McpImportResultDto, McpPackageVersionResolveRequest,
-    McpPackageVersionResolveResult, McpScanResultDto, McpServer, McpServerDto, McpSyncDetail,
-    McpSyncResultDto, UpdateMcpServerInput,
+    McpDiscoveredServerDto, McpGroup, McpGroupInventoryPreviewDto, McpImportResultDto,
+    McpPackageVersionResolveRequest, McpPackageVersionResolveResult, McpScanResultDto, McpServer,
+    McpServerDto, McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput,
 };
 use crate::coding::tools::{
     custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async,
@@ -60,6 +62,8 @@ pub async fn mcp_list_servers(
             tags: s.tags.clone(),
             timeout: s.timeout,
             sort_index: s.sort_index,
+            management_enabled: s.management_enabled,
+            disabled_previous_tools: s.disabled_previous_tools.clone(),
             created_at: s.created_at,
             updated_at: s.updated_at,
         })
@@ -97,6 +101,8 @@ pub async fn mcp_create_server<R: Runtime>(
         tags: input.tags,
         timeout: input.timeout,
         sort_index: 0, // Will be assigned by upsert
+        management_enabled: true,
+        disabled_previous_tools: Vec::new(),
         created_at: now,
         updated_at: now,
     };
@@ -155,6 +161,8 @@ pub async fn mcp_create_server<R: Runtime>(
         tags: created.tags,
         timeout: created.timeout,
         sort_index: created.sort_index,
+        management_enabled: created.management_enabled,
+        disabled_previous_tools: created.disabled_previous_tools,
         created_at: created.created_at,
         updated_at: created.updated_at,
     })
@@ -204,72 +212,14 @@ pub async fn mcp_update_server<R: Runtime>(
 
     mcp_store::upsert_mcp_server(&state, &server).await?;
 
-    // Re-sync to all enabled tools
-    let custom_tools = custom_store::get_custom_tools(&state)
-        .await
-        .unwrap_or_default();
-    let db = state.db();
-
-    // Clean up config files for tools that were removed from enabled_tools,
-    // and for the previous name when the server was renamed: without this the
-    // old entry stays in the tool config file and keeps loading at runtime.
-    let removed_tools: Vec<&String> = previous_enabled_tools
-        .iter()
-        .filter(|tool| !server.enabled_tools.contains(tool))
-        .collect();
-    let name_changed = previous_name != server.name;
-    for tool_key in removed_tools {
-        if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-            if let Err(e) = remove_server_from_tool_async(&db, &previous_name, &tool).await {
-                log::warn!(
-                    "Failed to remove MCP server '{}' from removed tool '{}' during update: {}",
-                    previous_name,
-                    tool_key,
-                    e
-                );
-            }
-            // Drop the stale sync detail so the UI no longer shows it.
-            let _ = mcp_store::delete_sync_detail(&state, &serverId, tool_key).await;
-        }
+    // Re-sync to all enabled tools. A disabled server must stay out of every
+    // runtime config, so the whole write-back section is skipped: the edited
+    // values persist as desired state only and reach tool configs through the
+    // documented re-enable + restore flow (same guard family as toggle /
+    // sync / restore below).
+    if server.management_enabled {
+        run_update_sync(&state, &server, &previous_name, &previous_enabled_tools).await;
     }
-    if name_changed {
-        for tool_key in &server.enabled_tools {
-            if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-                if let Err(e) = remove_server_from_tool_async(&db, &previous_name, &tool).await {
-                    log::warn!(
-                        "Failed to remove renamed MCP server '{}' from tool '{}': {}",
-                        previous_name,
-                        tool_key,
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    for tool_key in &server.enabled_tools {
-        if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-            if is_tool_installed_with_db_async(&db, &tool).await {
-                match sync_server_to_tool_async(&db, &server, &tool).await {
-                    Ok(detail) => {
-                        let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
-                    }
-                    Err(e) => {
-                        let detail = McpSyncDetail {
-                            tool: tool_key.clone(),
-                            status: "error".to_string(),
-                            synced_at: Some(now_ms()),
-                            error_message: Some(e),
-                        };
-                        let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
-                    }
-                }
-            }
-        }
-    }
-
-    // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
-    maybe_sync_disabled_to_opencode(&state, &server, &custom_tools).await;
 
     // Get the updated server with sync details
     let updated = mcp_store::get_mcp_server_by_id(&state, &serverId)
@@ -294,9 +244,88 @@ pub async fn mcp_update_server<R: Runtime>(
         tags: updated.tags,
         timeout: updated.timeout,
         sort_index: updated.sort_index,
+        management_enabled: updated.management_enabled,
+        disabled_previous_tools: updated.disabled_previous_tools,
         created_at: updated.created_at,
         updated_at: updated.updated_at,
     })
+}
+
+/// Write-back half of `mcp_update_server`: clean up configs for removed tools
+/// and renamed servers, re-sync the remaining enabled tools, and apply the
+/// opencode-disabled special case. Only called for management-enabled servers.
+async fn run_update_sync(
+    state: &State<'_, SqliteDbState>,
+    server: &McpServer,
+    previous_name: &str,
+    previous_enabled_tools: &[String],
+) {
+    let custom_tools = custom_store::get_custom_tools(state)
+        .await
+        .unwrap_or_default();
+    let db = state.db();
+    let server_id = server.id.clone();
+
+    // Clean up config files for tools that were removed from enabled_tools,
+    // and for the previous name when the server was renamed: without this the
+    // old entry stays in the tool config file and keeps loading at runtime.
+    let removed_tools: Vec<&String> = previous_enabled_tools
+        .iter()
+        .filter(|tool| !server.enabled_tools.contains(tool))
+        .collect();
+    let name_changed = previous_name != server.name.as_str();
+    for tool_key in removed_tools {
+        if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+            if let Err(e) = remove_server_from_tool_async(&db, previous_name, &tool).await {
+                log::warn!(
+                    "Failed to remove MCP server '{}' from removed tool '{}' during update: {}",
+                    previous_name,
+                    tool_key,
+                    e
+                );
+            }
+            // Drop the stale sync detail so the UI no longer shows it.
+            let _ = mcp_store::delete_sync_detail(state, &server_id, tool_key).await;
+        }
+    }
+    if name_changed {
+        for tool_key in &server.enabled_tools {
+            if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+                if let Err(e) = remove_server_from_tool_async(&db, previous_name, &tool).await {
+                    log::warn!(
+                        "Failed to remove renamed MCP server '{}' from tool '{}': {}",
+                        previous_name,
+                        tool_key,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    for tool_key in &server.enabled_tools {
+        if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+            if is_tool_installed_with_db_async(&db, &tool).await {
+                match sync_server_to_tool_async(&db, server, &tool).await {
+                    Ok(detail) => {
+                        let _ = mcp_store::update_sync_detail(state, &server_id, &detail).await;
+                    }
+                    Err(e) => {
+                        let detail = McpSyncDetail {
+                            tool: tool_key.clone(),
+                            status: "error".to_string(),
+                            synced_at: Some(now_ms()),
+                            error_message: Some(e),
+                        };
+                        let _ = mcp_store::update_sync_detail(state, &server_id, &detail).await;
+                    }
+                }
+            }
+        }
+    }
+
+    // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
+    maybe_sync_disabled_to_opencode(state, server, &custom_tools).await;
 }
 
 /// Delete an MCP server
@@ -341,6 +370,15 @@ pub async fn mcp_toggle_tool<R: Runtime>(
     serverId: String,
     toolKey: String,
 ) -> Result<bool, String> {
+    // Management-disabled servers are an invariant: rejects any tool toggle so the only
+    // way back is re-enable + explicit sync. DB end state wins regardless of what the UI
+    // sent, so we must check BEFORE flipping (toggling first would corrupt the record).
+    if let Some(existing) = mcp_store::get_mcp_server_by_id(&state, &serverId).await? {
+        if !existing.management_enabled {
+            return Err(format!("MCP_DISABLED|{}", serverId));
+        }
+    }
+
     let is_enabled = mcp_store::toggle_tool_enabled(&state, &serverId, &toolKey).await?;
 
     // Get the server
@@ -399,6 +437,142 @@ pub async fn mcp_toggle_tool<R: Runtime>(
     Ok(is_enabled)
 }
 
+/// Set the management enabled/disabled state for an MCP server.
+///
+/// Disable: removes the server from every currently enabled tool config (best-effort, matching
+/// delete cleanup semantics), records the current bindings into `disabled_previous_tools`
+/// (keeping existing history when there are no current bindings), clears
+/// `enabled_tools`/`sync_details`, sets `management_enabled = false`, and emits
+/// `config-changed` + `mcp-changed`. The server stays in its group; `user_group`/`user_note`/
+/// `tags` and the server config are preserved.
+///
+/// Enable: only flips `management_enabled = true` and returns the recorded
+/// `disabled_previous_tools` so the frontend can confirm which historical tools to restore
+/// through `mcp_sync_to_tool` (which emits its own events). No events are emitted here on
+/// re-enable — the restore confirmation step must not trigger an early WSL projection.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_set_management_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    serverId: String,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    if enabled {
+        // Re-enable only flips the flag; the previous tools are returned so the frontend
+        // can restore them through the normal sync flow.
+        return mcp_store::set_server_management_enabled(&state, &serverId, true).await;
+    }
+
+    // Disable: first remove the server from every currently enabled tool config
+    // (best-effort, mirrors mcp_delete_server cleanup), then record history and clear
+    // bindings in the DB. DB desired state wins even if a target removal fails.
+    let server = mcp_store::get_mcp_server_by_id(&state, &serverId)
+        .await?
+        .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
+    let custom_tools = custom_store::get_custom_tools(&state)
+        .await
+        .unwrap_or_default();
+    let db = state.db();
+    for tool_key in &server.enabled_tools {
+        let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
+            continue;
+        };
+        let _ = remove_server_from_tool_async(&db, &server.name, &tool).await;
+    }
+    maybe_remove_disabled_from_opencode(&state, &server, &custom_tools).await;
+
+    let previous_tools = mcp_store::set_server_management_enabled(&state, &serverId, false).await?;
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
+    Ok(previous_tools)
+}
+
+/// Restore user-confirmed tool bindings for a re-enabled MCP server.
+///
+/// Re-enable only flips `management_enabled` and leaves `enabled_tools` empty, so the
+/// generic `mcp_sync_to_tool` batch entry would skip the server (`enabled_tools.contains`
+/// check). This command writes the confirmed tool subset back into `enabled_tools`, then
+/// syncs each tool to its runtime config and records per-tool sync details (same shape as
+/// `mcp_sync_to_tool`). Rejects servers that are not management-enabled: the only way back
+/// from a disabled server is re-enable + this explicit restore flow. Emits
+/// `config-changed` + `mcp-changed` exactly once so tray and WSL auto-sync follow.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_restore_tools<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    serverId: String,
+    tools: Vec<String>,
+) -> Result<Vec<McpSyncResultDto>, String> {
+    let server = mcp_store::get_mcp_server_by_id(&state, &serverId)
+        .await?
+        .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
+    if !server.management_enabled {
+        return Err(format!("MCP_DISABLED|{}", serverId));
+    }
+
+    // Persist the user-confirmed (deduplicated) subset as the new desired bindings before
+    // syncing — the batch `mcp_sync_to_tool` entry filters on `enabled_tools`.
+    mcp_store::set_server_enabled_tools(&state, &serverId, tools).await?;
+    let server = mcp_store::get_mcp_server_by_id(&state, &serverId)
+        .await?
+        .ok_or_else(|| format!("MCP server not found: {}", serverId))?;
+
+    let custom_tools = custom_store::get_custom_tools(&state)
+        .await
+        .unwrap_or_default();
+    let db = state.db();
+    let mut results = Vec::new();
+    for tool_key in &server.enabled_tools {
+        let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
+            let detail = McpSyncDetail {
+                tool: tool_key.clone(),
+                status: "error".to_string(),
+                synced_at: Some(now_ms()),
+                error_message: Some(format!("Tool not found: {}", tool_key)),
+            };
+            let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
+            results.push(McpSyncResultDto {
+                tool: tool_key.clone(),
+                success: false,
+                error_message: Some(format!("Tool not found: {}", tool_key)),
+            });
+            continue;
+        };
+        match sync_server_to_tool_async(&db, &server, &tool).await {
+            Ok(detail) => {
+                let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
+                results.push(McpSyncResultDto {
+                    tool: tool_key.clone(),
+                    success: true,
+                    error_message: None,
+                });
+            }
+            Err(e) => {
+                let detail = McpSyncDetail {
+                    tool: tool_key.clone(),
+                    status: "error".to_string(),
+                    synced_at: Some(now_ms()),
+                    error_message: Some(e.clone()),
+                };
+                let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
+                results.push(McpSyncResultDto {
+                    tool: tool_key.clone(),
+                    success: false,
+                    error_message: Some(e),
+                });
+            }
+        }
+    }
+
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
+    Ok(results)
+}
+
 /// Reorder MCP servers
 #[tauri::command]
 pub async fn mcp_reorder_servers(
@@ -416,14 +590,337 @@ pub async fn mcp_update_metadata(
     serverId: String,
     userGroup: Option<String>,
     userNote: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<(), String> {
+    let normalized_tags = tags.map(|tags| {
+        let mut seen = std::collections::HashSet::new();
+        tags.into_iter()
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty() && seen.insert(tag.clone()))
+            .collect()
+    });
     mcp_store::update_mcp_server_metadata(
         &state,
         &serverId,
         normalize_optional_text(userGroup),
         normalize_optional_text(userNote),
+        normalized_tags,
     )
     .await
+}
+
+// ==================== Group Inventory (export / import) ====================
+
+/// Planned group assignment for one server during an inventory import. Note and
+/// tags are snapshotted because `update_mcp_server_metadata` treats `None` as
+/// "clear the field" — they must be passed back verbatim.
+struct GroupInventoryAssignment {
+    server_id: String,
+    target_group: String,
+    user_note: Option<String>,
+    tags: Vec<String>,
+}
+
+/// Parsed + validated inventory ready for preview or apply.
+struct GroupInventoryPlan {
+    assignments: Vec<GroupInventoryAssignment>,
+    group_count: usize,
+    matched_server_count: usize,
+    changed_count: usize,
+    errors: Vec<String>,
+}
+
+impl GroupInventoryPlan {
+    fn to_dto(&self) -> McpGroupInventoryPreviewDto {
+        McpGroupInventoryPreviewDto {
+            valid: self.errors.is_empty(),
+            group_count: self.group_count,
+            matched_server_count: self.matched_server_count,
+            changed_count: self.changed_count,
+            errors: self.errors.clone(),
+        }
+    }
+}
+
+/// Parse `{ "schema_version": 1, "groups": { "<group>": ["server", ...] } }`
+/// into ordered (group, server names) entries.
+fn parse_group_inventory_entries(content: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+    let value: serde_json::Value = serde_json::from_str(content)
+        .map_err(|error| format!("Invalid inventory JSON: {}", error))?;
+    let groups = value
+        .get("groups")
+        .ok_or_else(|| "Missing 'groups' object".to_string())?
+        .as_object()
+        .ok_or_else(|| "'groups' must be an object".to_string())?;
+
+    let mut entries = Vec::new();
+    for (group_name, members) in groups {
+        let trimmed_group = group_name.trim();
+        if trimmed_group.is_empty() {
+            continue;
+        }
+        let list = members
+            .as_array()
+            .ok_or_else(|| format!("Group '{}' must be an array of server names", trimmed_group))?;
+        let mut names = Vec::new();
+        for member in list {
+            let name = member
+                .as_str()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| format!("Group '{}' contains a non-string entry", trimmed_group))?;
+            names.push(name.to_string());
+        }
+        entries.push((trimmed_group.to_string(), names));
+    }
+    Ok(entries)
+}
+
+async fn load_group_inventory_plan(
+    state: &State<'_, SqliteDbState>,
+    path: &str,
+) -> Result<GroupInventoryPlan, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read import file: {}", error))?;
+    let entries = parse_group_inventory_entries(&content)?;
+    let servers = mcp_store::get_mcp_servers(state).await?;
+
+    let mut by_name: HashMap<&str, &McpServer> = HashMap::new();
+    for server in &servers {
+        by_name.insert(server.name.as_str(), server);
+    }
+
+    let mut plan = GroupInventoryPlan {
+        assignments: Vec::new(),
+        group_count: entries.len(),
+        matched_server_count: 0,
+        changed_count: 0,
+        errors: Vec::new(),
+    };
+
+    for (target_group, names) in &entries {
+        for name in names {
+            let Some(server) = by_name.get(name.as_str()) else {
+                plan.errors.push(format!("Server not found: {}", name));
+                continue;
+            };
+            plan.matched_server_count += 1;
+            let current_group = server.user_group.as_deref().unwrap_or("").trim();
+            if current_group != target_group.as_str() {
+                plan.changed_count += 1;
+                plan.assignments.push(GroupInventoryAssignment {
+                    server_id: server.id.clone(),
+                    target_group: target_group.clone(),
+                    user_note: server.user_note.clone(),
+                    tags: server.tags.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(plan)
+}
+
+/// Export every managed server's group assignment as a JSON inventory file so it
+/// can be curated manually (or by an AI assistant) and imported back.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_export_group_inventory(
+    state: State<'_, SqliteDbState>,
+    path: String,
+) -> Result<String, String> {
+    let export_path = path.trim().to_string();
+    if export_path.is_empty() {
+        return Err("Export path is empty".to_string());
+    }
+
+    let servers = mcp_store::get_mcp_servers(&state).await?;
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for server in &servers {
+        let Some(group) = normalize_optional_text(server.user_group.clone()) else {
+            continue;
+        };
+        groups.entry(group).or_default().push(server.name.clone());
+    }
+
+    let payload = serde_json::json!({ "schema_version": 1, "groups": groups });
+    let pretty = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+    std::fs::write(&export_path, format!("{}\n", pretty))
+        .map_err(|error| format!("Failed to write export file: {}", error))?;
+    Ok(export_path)
+}
+
+/// Validate a group-inventory JSON and report what would change, without writing.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_preview_group_inventory_import(
+    state: State<'_, SqliteDbState>,
+    path: String,
+) -> Result<McpGroupInventoryPreviewDto, String> {
+    let plan = load_group_inventory_plan(&state, &path).await?;
+    Ok(plan.to_dto())
+}
+
+/// Apply a validated group-inventory JSON: reassign each matched server's group
+/// (note and tags are preserved untouched) and emit refresh events once.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_apply_group_inventory_import<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    path: String,
+) -> Result<McpGroupInventoryPreviewDto, String> {
+    let plan = load_group_inventory_plan(&state, &path).await?;
+    if !plan.errors.is_empty() {
+        return Ok(plan.to_dto());
+    }
+
+    for assignment in &plan.assignments {
+        mcp_store::update_mcp_server_metadata(
+            &state,
+            &assignment.server_id,
+            Some(assignment.target_group.clone()),
+            assignment.user_note.clone(),
+            Some(assignment.tags.clone()),
+        )
+        .await?;
+    }
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
+    Ok(plan.to_dto())
+}
+
+// ==================== Managed Groups ====================
+
+/// List managed MCP groups for the group management modal.
+#[tauri::command]
+pub async fn mcp_list_groups(state: State<'_, SqliteDbState>) -> Result<Vec<McpGroup>, String> {
+    mcp_store::get_mcp_groups(&state).await
+}
+
+/// Create or update a managed group. Renaming an existing group also moves
+/// every server whose `user_group` matched the old name to the new name so the
+/// name-based membership follows the entity.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_save_group<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    name: String,
+    note: Option<String>,
+    sortIndex: i32,
+    groupId: Option<String>,
+) -> Result<McpGroup, String> {
+    let group_name =
+        normalize_optional_text(Some(name)).ok_or_else(|| "Group name is empty".to_string())?;
+    let group_note = normalize_optional_text(note);
+
+    let existing_groups = mcp_store::get_mcp_groups(&state).await?;
+    if let Some(duplicate) = existing_groups.iter().find(|group| {
+        group.name == group_name && Some(group.id.as_str()) != groupId.as_deref()
+    }) {
+        return Err(format!("Group name already exists: {}", duplicate.name));
+    }
+
+    let now = now_ms();
+    let (mut group, renamed_from) = match groupId.as_deref() {
+        Some(id) => {
+            let current = existing_groups
+                .iter()
+                .find(|group| group.id == id)
+                .ok_or_else(|| format!("Group not found: {}", id))?;
+            let renamed_from = if current.name != group_name {
+                Some(current.name.clone())
+            } else {
+                None
+            };
+            (current.clone(), renamed_from)
+        }
+        None => (
+            McpGroup {
+                id: String::new(),
+                name: group_name.clone(),
+                note: None,
+                sort_index: sortIndex,
+                created_at: now,
+                updated_at: now,
+            },
+            None,
+        ),
+    };
+    group.name = group_name;
+    group.note = group_note;
+    group.sort_index = sortIndex;
+    group.updated_at = now;
+
+    let saved_id = mcp_store::upsert_mcp_group(&state, &group).await?;
+
+    // Keep name-based membership glued across renames. Comparison trims both
+    // sides because grouping elsewhere treats user_group as normalized text.
+    if renamed_from.is_some() {
+        let old_name = renamed_from.as_deref().unwrap_or("");
+        let servers = mcp_store::get_mcp_servers(&state).await?;
+        for server in servers {
+            let matches_old = server.user_group.as_deref().map(str::trim) == Some(old_name);
+            if !matches_old {
+                continue;
+            }
+            mcp_store::update_mcp_server_metadata(
+                &state,
+                &server.id,
+                Some(group.name.clone()),
+                server.user_note.clone(),
+                Some(server.tags.clone()),
+            )
+            .await?;
+        }
+        let _ = app.emit("config-changed", "window");
+        let _ = app.emit("mcp-changed", "window");
+    }
+
+    group.id = saved_id;
+    Ok(group)
+}
+
+/// Delete a managed group. Servers keep their own config but fall back to
+/// ungrouped when their `user_group` matched the deleted name.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_delete_group<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    groupId: String,
+) -> Result<(), String> {
+    let groups = mcp_store::get_mcp_groups(&state).await?;
+    let group = groups
+        .iter()
+        .find(|group| group.id == groupId)
+        .ok_or_else(|| format!("Group not found: {}", groupId))?
+        .clone();
+    mcp_store::delete_mcp_group(&state, &groupId).await?;
+
+    let servers = mcp_store::get_mcp_servers(&state).await?;
+    let mut changed = false;
+    for server in servers {
+        if server.user_group.as_deref().map(str::trim) != Some(group.name.as_str()) {
+            continue;
+        }
+        mcp_store::update_mcp_server_metadata(
+            &state,
+            &server.id,
+            None,
+            server.user_note.clone(),
+            Some(server.tags.clone()),
+        )
+        .await?;
+        changed = true;
+    }
+    if changed {
+        let _ = app.emit("config-changed", "window");
+        let _ = app.emit("mcp-changed", "window");
+    }
+    Ok(())
 }
 
 // ==================== Sync Operations ====================
@@ -451,6 +948,10 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
     let mut results = Vec::new();
 
     for server in servers {
+        // Management-disabled servers must never be re-synced by the batch sync entry.
+        if !server.management_enabled {
+            continue;
+        }
         if !server.enabled_tools.contains(&toolKey) {
             continue;
         }
@@ -519,6 +1020,10 @@ async fn mcp_sync_all_internal<R: Runtime>(
     let mut results = Vec::new();
 
     for server in servers {
+        // Management-disabled servers must never be re-synced by the full sync entry.
+        if !server.management_enabled {
+            continue;
+        }
         for tool_key in &server.enabled_tools {
             let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
                 continue;
@@ -607,6 +1112,8 @@ pub async fn mcp_import_from_tool<R: Runtime>(
                     tags: c.tags,
                     timeout: None,
                     sort_index: 0,
+                    management_enabled: true,
+                    disabled_previous_tools: Vec::new(),
                     created_at: now,
                     updated_at: now,
                 })
@@ -1094,6 +1601,11 @@ async fn sync_opencode_disabled(
         return;
     }
     for server in servers {
+        // Disabled servers were fully removed from tool configs; never write them back
+        // as opencode disabled entries.
+        if !server.management_enabled {
+            continue;
+        }
         if !server.enabled_tools.contains(&"opencode".to_string()) {
             let _ = sync_server_to_tool_with_enabled_async(db, server, &tool, false).await;
         }
@@ -1129,6 +1641,7 @@ pub async fn mcp_add_custom_tool(
     mcpConfigPath: String,
     mcpConfigFormat: String,
     mcpField: String,
+    iconUrl: Option<String>,
 ) -> Result<(), String> {
     use crate::coding::tools::path_utils::{normalize_path, to_storage_path};
 
@@ -1147,6 +1660,15 @@ pub async fn mcp_add_custom_tool(
         let normalized = normalize_path(s.trim());
         to_storage_path(&normalized)
     });
+
+    // Icon: `None` preserves the stored icon; `Some("")` clears it (documented
+    // store contract); `Some(url)` sets it.
+    let icon_url: Option<Option<String>> = iconUrl.map(|u| Some(u.trim().to_string()));
+    if let Some(Some(ref url)) = icon_url {
+        if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("Icon URL must start with http:// or https://".to_string());
+        }
+    }
 
     // Validate key format
     if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -1172,6 +1694,7 @@ pub async fn mcp_add_custom_tool(
         Some(mcp_format),
         Some(mcp_field_name),
         now_ms(),
+        icon_url,
     )
     .await
 }
@@ -1197,6 +1720,7 @@ pub async fn mcp_remove_custom_tool(
                 None,
                 None,
                 tool.created_at,
+                None,
             )
             .await
         } else {

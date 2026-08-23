@@ -1,55 +1,278 @@
-.headerMetaInline {
+// MCP card visual language mirrors the skills-manager three-zone layout:
+// a compact header row (status slot + name + hover-revealed actions),
+// a body (description + single meta row), and a footer meta bar
+// (source identity + relative time + tool sync slots) separated by
+// a hairline border. Colors come from the shared App.css tokens only.
+
+.card {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-card);
+  background: var(--color-bg-container);
+  box-shadow: var(--shadow-card-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+
+  &:hover {
+    border-color: var(--color-border);
+    background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-card-sm-hover);
+    transform: translateY(-1px);
+
+    .name {
+      color: var(--color-primary);
+    }
+  }
+
+  &:focus-within {
+    border-color: var(--color-border);
+  }
+}
+
+.cardSelected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-bg-container));
+}
+
+// ---------------------------------------------------------------- header ----
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px 4px;
+}
+
+.dragHandle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.name {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  transition: color 0.16s ease;
+}
+
+// Management status dot occupies the header status slot in browse mode (when
+// there is no checkbox and no drag handle). It mirrors the Skills card so the
+// disabled state is visually obvious even though the item stays in place.
+.statusDot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.statusDotEnabled {
+  background: var(--color-status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-status-success) 18%, transparent);
+}
+
+// Disabled management state: keep the item in its group but mute the card.
+.disabledCard {
+  opacity: 0.55;
+  cursor: default;
+
+  .name {
+    color: var(--color-text-tertiary);
+  }
+
+  &:hover {
+    transform: none;
+    border-color: var(--color-border-card);
+    background: var(--color-bg-container);
+    box-shadow: var(--shadow-card-sm);
+
+    .name {
+      color: var(--color-text-tertiary);
+    }
+  }
+}
+
+// Hover-revealed action cluster (edit / more). Revealed on card hover and on
+// focus-within so keyboard users can reach the buttons.
+.hoverActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+
+  .card:hover &,
+  .card:focus-within & {
+    opacity: 1;
+  }
+}
+
+.miniBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+// ------------------------------------------------------------------- body ----
+
+.body {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   min-width: 0;
-  max-width: 100%;
-  flex: 1 1 auto;
+  // Push the footer meta bar to the card bottom so short bodies keep a
+  // stable visual skeleton (skills-manager `mt-auto` convention).
+  flex: 1;
+  padding: 0 12px 10px;
+}
+
+.commandLine {
+  margin: 0;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.typeTag {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.configSummary {
-  font-size: 11px;
   color: var(--color-text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
+  font-size: 11px;
+  line-height: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.packageVersionTag {
-  display: inline-flex;
-  align-items: center;
-  max-width: 72px;
+.description {
+  margin: 0;
   min-width: 0;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.tagRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tagPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 140px;
+  min-width: 0;
+  height: 19px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 19px;
+
+  --tag-pill-bg: color-mix(in srgb, var(--color-border-secondary) 22%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, var(--color-text-secondary) 62%, var(--color-text-primary));
+  background: var(--tag-pill-bg);
+  color: var(--tag-pill-fg);
+}
+
+.tagPillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tagColor0 {
+  --tag-pill-bg: color-mix(in srgb, hsl(215 85% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(215 85% 40%) 70%, var(--color-text-primary));
+}
+
+.tagColor1 {
+  --tag-pill-bg: color-mix(in srgb, hsl(158 75% 45%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(158 75% 32%) 70%, var(--color-text-primary));
+}
+
+.tagColor2 {
+  --tag-pill-bg: color-mix(in srgb, hsl(35 90% 52%) 18%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(30 82% 42%) 70%, var(--color-text-primary));
+}
+
+.tagColor3 {
+  --tag-pill-bg: color-mix(in srgb, hsl(282 65% 58%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(282 58% 40%) 70%, var(--color-text-primary));
+}
+
+.tagColor4 {
+  --tag-pill-bg: color-mix(in srgb, hsl(190 75% 45%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(190 72% 34%) 70%, var(--color-text-primary));
+}
+
+.tagColor5 {
+  --tag-pill-bg: color-mix(in srgb, hsl(8 78% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(8 70% 44%) 70%, var(--color-text-primary));
+}
+
+.tagColor6 {
+  --tag-pill-bg: color-mix(in srgb, hsl(96 60% 46%) 18%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(96 52% 34%) 70%, var(--color-text-primary));
+}
+
+.tagColor7 {
+  --tag-pill-bg: color-mix(in srgb, hsl(330 70% 55%) 15%, var(--color-bg-elevated));
+  --tag-pill-fg: color-mix(in srgb, hsl(332 62% 40%) 70%, var(--color-text-primary));
 }
 
 .groupTag {
@@ -57,7 +280,7 @@
   align-items: center;
   max-width: 120px;
   min-width: 0;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
@@ -81,49 +304,146 @@
   flex: 1;
 }
 
-.toolPill {
+// ----------------------------------------------------------------- footer ----
+
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: auto;
+  padding: 7px 12px;
+  border-top: 1px solid var(--color-border-card-subtle);
+}
+
+.sourceBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: color 0.16s ease;
+
+  // Only the text may shrink; the transport glyph keeps its size.
+  > svg {
+    flex-shrink: 0;
+  }
+
+  &.sourceBtnStatic {
+    cursor: default;
+  }
+
+  &:hover:not(:disabled):not(.sourceBtnStatic) {
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+}
+
+.typeText {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: lowercase;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+// package@version badge: full natural width by default, but it is the first
+// to shrink when space runs out (its label is middle-truncated in the card
+// component), so the command text keeps as much room as possible.
+.packageVersionTag {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerTools {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
+  margin-left: auto;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.toolPill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
   cursor: pointer;
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
-    color 0.16s ease,
     opacity 0.16s ease;
   border: 1px solid;
 
+  // Synced tool: full opacity with a solid border and a green dot.
   &.active {
     background: var(--color-bg-elevated);
     border-color: var(--color-border);
-    color: var(--color-text-secondary);
+    opacity: 1;
 
     &:hover:not(:disabled) {
-      border-color: var(--color-border-secondary);
-      color: var(--color-text-primary);
+      border-color: var(--color-primary);
       background: var(--color-bg-hover);
     }
   }
 
-  &.error {
-    background: var(--color-status-error-bg);
-    border-color: var(--color-status-error-border);
-    color: var(--color-status-error);
+  // Unsynced tool: dashed border with reduced opacity; hover restores it.
+  &:not(.active):not(.errorPill) {
+    border-style: dashed;
+    opacity: 0.55;
+
+    &:hover:not(:disabled) {
+      border-style: solid;
+      border-color: var(--color-border);
+      opacity: 1;
+      background: var(--color-bg-hover);
+    }
   }
 
-  &.inactive {
-    background: var(--color-bg-layout);
-    border-color: var(--color-border);
-    color: var(--color-text-secondary);
+  // Sync failure keeps the status-error accent regardless of sync state.
+  &.errorPill {
+    border-color: var(--color-status-error-border);
+    background: var(--color-status-error-bg);
 
-    &:hover {
-      border-color: var(--color-border-secondary);
-      color: var(--color-text-primary);
+    &:hover:not(:disabled) {
+      border-color: var(--color-status-error);
+      opacity: 1;
     }
   }
 
@@ -132,38 +452,26 @@
   }
 }
 
-.statusBadge {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-status-success);
-  flex-shrink: 0;
 
-  &.ok {
-    background: var(--color-status-success);
-  }
 
-  &.error {
-    background: var(--color-status-error);
-  }
-
-  &.pending {
-    background: var(--color-status-warning);
-  }
+.toolPendingIcon {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  color: var(--color-status-warning);
 }
 
 .addToolBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px dashed var(--color-border);
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 12px;
   transition:
     border-color 0.16s ease,
     background 0.16s ease,

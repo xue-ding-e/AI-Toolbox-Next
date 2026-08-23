@@ -84,6 +84,7 @@ pub struct SkillPreferences {
     pub show_skills_in_tray: bool,            // Show skills in system tray quick menu
     pub auto_update_enabled: bool,            // Enable scheduled auto-update of all skills
     pub auto_update_schedule: String,         // 5-field cron expression (min hour dom mon dow)
+    pub limit_add_more_to_preferred_tools: bool, // Add-more menus on Skill cards only show preferred tools
     pub updated_at: i64,
 }
 
@@ -100,6 +101,7 @@ impl Default for SkillPreferences {
             show_skills_in_tray: false,
             auto_update_enabled: false,
             auto_update_schedule: "0 3 * * *".to_string(),
+            limit_add_more_to_preferred_tools: false,
             updated_at: 0,
         }
     }

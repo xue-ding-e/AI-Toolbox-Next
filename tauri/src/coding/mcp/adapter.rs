@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use super::types::{FavoriteMcp, McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto};
+use super::types::{FavoriteMcp, McpGroup, McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto};
 use crate::coding::db_extract_id;
 
 /// Convert database record to McpServer struct
@@ -21,6 +21,16 @@ pub fn from_db_mcp_server(value: Value) -> McpServer {
 
     let tags: Vec<String> = value
         .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let disabled_previous_tools: Vec<String> = value
+        .get("disabled_previous_tools")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -67,6 +77,11 @@ pub fn from_db_mcp_server(value: Value) -> McpServer {
             .get("sort_index")
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32,
+        management_enabled: value
+            .get("management_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        disabled_previous_tools,
         created_at: value
             .get("created_at")
             .and_then(|v| v.as_i64())
@@ -92,6 +107,8 @@ pub fn to_clean_mcp_server_payload(server: &McpServer) -> Value {
         "tags": server.tags,
         "timeout": server.timeout,
         "sort_index": server.sort_index,
+        "management_enabled": server.management_enabled,
+        "disabled_previous_tools": server.disabled_previous_tools,
         "created_at": server.created_at,
         "updated_at": server.updated_at,
     })
@@ -211,6 +228,23 @@ pub fn to_mcp_preferences_payload(prefs: &McpPreferences) -> Value {
         "sync_disabled_to_opencode": prefs.sync_disabled_to_opencode,
         "limit_add_more_to_preferred_tools": prefs.limit_add_more_to_preferred_tools,
         "updated_at": prefs.updated_at,
+    })
+}
+
+/// Convert database record to McpGroup struct (id lives in the row key).
+pub fn from_db_mcp_group(value: Value) -> McpGroup {
+    let id = db_extract_id(&value);
+    let mut value = value;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("id".to_string(), Value::String(id));
+    }
+    serde_json::from_value(value).unwrap_or_else(|_| McpGroup {
+        id: String::new(),
+        name: String::new(),
+        note: None,
+        sort_index: 0,
+        created_at: 0,
+        updated_at: 0,
     })
 }
 

@@ -300,6 +300,8 @@ fn build_mcp_server_from_cordis(
                 tags: vec![],
                 timeout: None,
                 sort_index: 0,
+                management_enabled: true,
+                disabled_previous_tools: Vec::new(),
                 created_at: now,
                 updated_at: now,
             })
@@ -335,6 +337,8 @@ fn build_mcp_server_from_cordis(
                 tags: vec![],
                 timeout: None,
                 sort_index: 0,
+                management_enabled: true,
+                disabled_previous_tools: Vec::new(),
                 created_at: now,
                 updated_at: now,
             })
@@ -513,6 +517,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }
@@ -535,6 +541,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }

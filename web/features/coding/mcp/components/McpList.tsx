@@ -14,7 +14,7 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
-import { ManagementEmpty, ManagementLoading, VirtualGrid } from '@/features/coding/shared/management';
+import { ManagementEmpty, ManagementLoading, useAutoGridColumns, VirtualGrid } from '@/features/coding/shared/management';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { McpServer, McpTool } from '../types';
 import { McpCard } from './McpCard';
@@ -29,10 +29,13 @@ interface McpListProps {
   resolvedPackageVersions?: Record<string, string>;
   preferredToolKeysForAddMore?: string[];
   limitAddMoreToPreferredTools?: boolean;
+  onOpenDetail?: (server: McpServer) => void;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
   onToggleTool: (serverId: string, toolKey: string) => void;
+  onSetManagementEnabled?: (server: McpServer, enabled: boolean) => void;
+  onRefresh?: () => void;
   onDragEnd: (event: DragEndEvent) => void;
 }
 
@@ -45,13 +48,27 @@ export const McpList: React.FC<McpListProps> = ({
   resolvedPackageVersions,
   preferredToolKeysForAddMore,
   limitAddMoreToPreferredTools,
+  onOpenDetail,
   onEdit,
   onEditMetadata,
   onDelete,
   onToggleTool,
+  onSetManagementEnabled,
+  onRefresh,
   onDragEnd,
 }) => {
   const { t } = useTranslation();
+
+  // Measure the non-virtualized grid container width when on "auto" columns so
+  // drag-sort mode renders the same adaptive column count as browse mode.
+  // Disabled when the caller forces a fixed column count.
+  const { containerRef, columnCount: autoColumnCount } = useAutoGridColumns<HTMLDivElement>({
+    minColumnWidth: 350,
+    maxColumns: 3,
+    gap: 10,
+    enabled: columns === undefined,
+  });
+  const effectiveColumns = columns === undefined ? autoColumnCount : columns;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -82,12 +99,13 @@ export const McpList: React.FC<McpListProps> = ({
 
   const cardList = (
     <div
+      ref={containerRef}
       className={[
         styles.list,
         columns === undefined ? styles.listAuto : styles.listFixed,
       ].filter(Boolean).join(' ')}
-      style={columns === undefined ? undefined : ({
-        '--management-grid-columns': `repeat(${columns}, minmax(0, 1fr))`,
+      style={effectiveColumns === undefined ? undefined : ({
+        '--management-grid-columns': `repeat(${effectiveColumns}, minmax(0, 1fr))`,
       } as React.CSSProperties)}
     >
       {servers.map((server) => (
@@ -100,10 +118,13 @@ export const McpList: React.FC<McpListProps> = ({
           resolvedPackageVersions={resolvedPackageVersions}
           preferredToolKeysForAddMore={preferredToolKeysForAddMore}
           limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
+          onOpenDetail={onOpenDetail}
           onEdit={onEdit}
           onEditMetadata={onEditMetadata}
           onDelete={onDelete}
           onToggleTool={onToggleTool}
+          onSetManagementEnabled={onSetManagementEnabled}
+          onRefresh={onRefresh}
         />
       ))}
     </div>
@@ -127,10 +148,13 @@ export const McpList: React.FC<McpListProps> = ({
             resolvedPackageVersions={resolvedPackageVersions}
             preferredToolKeysForAddMore={preferredToolKeysForAddMore}
             limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
+            onOpenDetail={onOpenDetail}
             onEdit={onEdit}
             onEditMetadata={onEditMetadata}
             onDelete={onDelete}
             onToggleTool={onToggleTool}
+            onSetManagementEnabled={onSetManagementEnabled}
+            onRefresh={onRefresh}
           />
         )}
       />

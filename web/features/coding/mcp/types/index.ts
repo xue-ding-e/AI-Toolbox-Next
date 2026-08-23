@@ -13,6 +13,10 @@ export interface McpServer {
   tags: string[];
   timeout: number | null;
   sort_index: number;
+  /** AI Toolbox management state; false = UX-disabled and unsynced from all tools. */
+  management_enabled: boolean;
+  /** Tool bindings recorded before disable; used to default the re-enable restore check. */
+  disabled_previous_tools: string[];
   created_at: number;
   updated_at: number;
 }
@@ -76,6 +80,25 @@ export interface McpImportResult {
   errors: string[];
 }
 
+/** Preview of a group-inventory JSON import (server grouping only). */
+export interface McpGroupInventoryPreview {
+  valid: boolean;
+  group_count: number;
+  matched_server_count: number;
+  changed_count: number;
+  errors: string[];
+}
+
+/** Managed group entity for the group management modal (mirrors SkillGroupRecord). */
+export interface McpGroupRecord {
+  id: string;
+  name: string;
+  note: string | null;
+  sort_index: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface McpDiscoveredServer {
   name: string;
   tool_key: string;
@@ -102,6 +125,8 @@ export interface McpTool {
   mcp_config_format: string | null;
   mcp_field: string | null;
   supports_mcp: boolean;
+  /** Custom tool brand image URL (http/https), mirrors RuntimeToolDto.icon_url. */
+  icon_url?: string | null;
 }
 
 export interface McpGroup {

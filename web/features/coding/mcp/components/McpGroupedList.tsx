@@ -27,10 +27,13 @@ interface McpGroupedListProps {
   selectedIds: Set<string>;
   onSelectChange: (serverId: string, checked: boolean) => void;
   onSelectAllGroup: (group: McpGroup, checked: boolean) => void;
+  onOpenDetail?: (server: McpServer) => void;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
   onToggleTool: (serverId: string, toolKey: string) => void;
+  onSetManagementEnabled?: (server: McpServer, enabled: boolean) => void;
+  onRefresh?: () => void;
   groupToolMode?: boolean;
   onAddGroupTool?: (group: McpGroup, toolKey: string) => void;
   onRemoveGroupTool?: (group: McpGroup, toolKey: string) => void;
@@ -50,10 +53,13 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
   selectedIds,
   onSelectChange,
   onSelectAllGroup,
+  onOpenDetail,
   onEdit,
   onEditMetadata,
   onDelete,
   onToggleTool,
+  onSetManagementEnabled,
+  onRefresh,
   groupToolMode = false,
   onAddGroupTool,
   onRemoveGroupTool,
@@ -182,10 +188,13 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
                       selected={selectedIds.has(server.id)}
                       toolsReadOnly={groupToolsEnabled}
                       onSelectChange={onSelectChange}
+                      onOpenDetail={onOpenDetail}
                       onEdit={onEdit}
                       onEditMetadata={onEditMetadata}
                       onDelete={onDelete}
                       onToggleTool={onToggleTool}
+                      onSetManagementEnabled={onSetManagementEnabled}
+                      onRefresh={onRefresh}
                     />
                   )}
                 />

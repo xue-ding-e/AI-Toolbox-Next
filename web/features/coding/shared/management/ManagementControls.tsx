@@ -495,6 +495,70 @@ const DEFAULT_ROW_GAP = 10;
 const DEFAULT_OVERSCAN_ROWS = 4;
 const clampVirtualGridColumns = (columns: number) => Math.min(5, Math.max(1, columns));
 
+interface AutoGridColumnsOptions {
+  minColumnWidth: number;
+  maxColumns?: number;
+  gap?: number;
+  enabled?: boolean;
+}
+
+/**
+ * Computes a responsive grid column count from a container's measured width,
+ * mirroring the auto-layout math VirtualGrid uses. It powers the non-virtualized
+ * ("auto") full-list drag-sort grids so sort mode matches browse mode column
+ * counts at any window width. Returns undefined while the container is not
+ * measured or when `enabled` is false, so callers fall back to a CSS default.
+ *
+ * The callback ref attaches the ResizeObserver even when the measured element
+ * mounts later in the same component instance (e.g. switching browse -> sort),
+ * which a useEffect keyed on static options would miss.
+ */
+export function useAutoGridColumns<T extends HTMLElement>(
+  options: AutoGridColumnsOptions,
+): { containerRef: React.RefCallback<T>; columnCount: number | undefined } {
+  const { minColumnWidth, maxColumns = 2, gap = 10, enabled = true } = options;
+  const [columnCount, setColumnCount] = React.useState<number | undefined>(undefined);
+  const observerRef = React.useRef<ResizeObserver | null>(null);
+
+  const updateColumnCount = React.useCallback(
+    (element: T) => {
+      const width = element.clientWidth;
+      setColumnCount(Math.min(maxColumns, Math.max(1, Math.floor((width + gap) / minColumnWidth))));
+    },
+    [minColumnWidth, maxColumns, gap],
+  );
+
+  const containerRef = React.useCallback(
+    (node: T | null) => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (!node || !enabled) {
+        setColumnCount(undefined);
+        return;
+      }
+      updateColumnCount(node);
+      const observer = new ResizeObserver(() => updateColumnCount(node));
+      observer.observe(node);
+      observerRef.current = observer;
+    },
+    [enabled, updateColumnCount],
+  );
+
+  React.useEffect(
+    () => () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  return { containerRef, columnCount };
+}
+
 export function VirtualGrid<TItem>({
   items,
   getKey,

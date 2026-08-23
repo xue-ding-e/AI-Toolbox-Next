@@ -351,6 +351,10 @@ pub fn from_db_skill_preferences(value: Value) -> SkillPreferences {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| "0 3 * * *".to_string()),
+        limit_add_more_to_preferred_tools: value
+            .get("limit_add_more_to_preferred_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value
             .get("updated_at")
             .and_then(|v| v.as_i64())
@@ -377,6 +381,7 @@ pub fn to_skill_preferences_payload(prefs: &SkillPreferences) -> Value {
         "show_skills_in_tray": prefs.show_skills_in_tray,
         "auto_update_enabled": prefs.auto_update_enabled,
         "auto_update_schedule": prefs.auto_update_schedule,
+        "limit_add_more_to_preferred_tools": prefs.limit_add_more_to_preferred_tools,
         "updated_at": prefs.updated_at,
     })
 }

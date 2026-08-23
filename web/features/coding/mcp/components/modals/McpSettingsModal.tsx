@@ -4,6 +4,7 @@ import { ClearOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { McpServer, McpTool, StdioConfig, HttpConfig } from '../../types';
 import * as mcpApi from '../../services/mcpApi';
+import { ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import { useMcpStore } from '../../stores/mcpStore';
 import { refreshTrayMenu } from '@/services/appApi';
 import {
@@ -176,6 +177,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
     mcpConfigPath: string;
     mcpConfigFormat: 'json' | 'toml';
     mcpField: string;
+    iconUrl?: string;
   }) => {
     setAddingTool(true);
     try {
@@ -185,6 +187,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
         mcpConfigPath: values.mcpConfigPath,
         mcpConfigFormat: values.mcpConfigFormat,
         mcpField: values.mcpField,
+        iconUrl: values.iconUrl,
       });
       message.success(t('common.success'));
       form.resetFields();
@@ -356,7 +359,15 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
                       onChange={(e) => handleToolToggle(tool.key, e.target.checked)}
                       disabled={isDisabled}
                     >
-                      {tool.display_name}
+                      <span className={styles.toolItemLabel}>
+                        <ToolIcon
+                          toolKey={tool.key}
+                          label={tool.display_name}
+                          size={14}
+                          iconUrl={tool.icon_url ?? undefined}
+                        />
+                        {tool.display_name}
+                      </span>
                     </Checkbox>
                   </Tooltip>
                   {isCustomTool && (
@@ -478,6 +489,24 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
             rules={[{ required: true, message: t('mcp.customToolSettings.configFieldRequired') }]}
           >
             <Input placeholder="mcpServers" />
+          </Form.Item>
+          <Form.Item
+            name="iconUrl"
+            label={t('mcp.customToolSettings.iconUrl')}
+            rules={[
+              {
+                validator: (_, value: string) => {
+                  const trimmed = (value ?? '').trim();
+                  if (!trimmed || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error(t('mcp.customToolSettings.iconUrlInvalid')));
+                },
+              },
+            ]}
+            extra={t('mcp.customToolSettings.iconUrlHint')}
+          >
+            <Input placeholder="https://example.com/icon.png" />
           </Form.Item>
           <div style={{ textAlign: 'right' }}>
             <Space>

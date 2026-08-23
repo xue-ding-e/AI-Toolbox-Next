@@ -12,7 +12,7 @@ import {
   parseManagementGridColumnSetting,
   type ManagementGridColumnSetting,
 } from '@/features/coding/shared/management';
-import { ToolIcon } from '../ToolIcon';
+import { ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import styles from './SkillsSettingsModal.module.less';
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
@@ -25,6 +25,10 @@ interface SkillsSettingsModalProps {
   cardColumnOptions?: readonly ManagementGridColumnSetting[];
   onCardColumnSettingChange?: (value: ManagementGridColumnSetting) => void;
   onDefaultViewModeApply?: (mode: SkillViewMode) => void;
+  onToolMenuPreferencesChange?: (preferences: {
+    preferredTools: string[];
+    limitAddMoreToPreferredTools: boolean;
+  }) => void;
   onClose: () => void;
 }
 
@@ -34,6 +38,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   cardColumnOptions,
   onCardColumnSettingChange,
   onDefaultViewModeApply,
+  onToolMenuPreferencesChange,
   onClose,
 }) => {
   const { t } = useTranslation();
@@ -56,6 +61,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   const [clearingCache, setClearingCache] = React.useState(false);
   const [allTools, setAllTools] = React.useState<ToolInfo[]>([]);
   const [preferredTools, setPreferredTools] = React.useState<string[]>([]);
+  const [limitAddMoreToPreferredTools, setLimitAddMoreToPreferredTools] = React.useState(false);
   const [customTools, setCustomTools] = React.useState<CustomTool[]>([]);
   const [addingTool, setAddingTool] = React.useState(false);
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
@@ -81,6 +87,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
     api.getShowSkillsInTray().then(setShowInTray).catch(console.error);
     api.getDefaultViewMode().then(setDefaultViewMode).catch(console.error);
+    api.getLimitAddMoreToPreferredTools().then(setLimitAddMoreToPreferredTools).catch(console.error);
     api.getAutoUpdate().then((config) => {
       setAutoUpdateEnabled(config.enabled);
       const match = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(config.schedule.trim());
@@ -319,6 +326,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     try {
       await api.setGitCacheCleanupDays(cleanupDays);
       await api.setPreferredTools(preferredTools);
+      await api.setLimitAddMoreToPreferredTools(limitAddMoreToPreferredTools);
       await api.setDefaultViewMode(defaultViewMode);
       await api.setAutoUpdate({
         enabled: autoUpdateEnabled,
@@ -326,6 +334,10 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
       });
       await loadToolStatus(); // Refresh global store
       onDefaultViewModeApply?.(defaultViewMode);
+      onToolMenuPreferencesChange?.({
+        preferredTools,
+        limitAddMoreToPreferredTools,
+      });
       message.success(t('common.success'));
       onClose();
     } catch (error) {
@@ -717,6 +729,14 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
             </Button>
           </div>
           <p className={styles.hint}>{t('skills.preferredToolsHint')}</p>
+          <div className={styles.inlineOption}>
+            <Switch
+              checked={limitAddMoreToPreferredTools}
+              onChange={setLimitAddMoreToPreferredTools}
+            />
+            <span className={styles.optionLabel}>{t('skills.limitAddMoreToPreferredTools')}</span>
+          </div>
+          <p className={styles.hint}>{t('skills.limitAddMoreToPreferredToolsHint')}</p>
         </div>
       </div>
 

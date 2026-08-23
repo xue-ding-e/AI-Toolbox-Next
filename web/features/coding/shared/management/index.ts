@@ -19,6 +19,7 @@ export {
   ManagementSearchInput,
   ManagementSegmented,
   VirtualGrid,
+  useAutoGridColumns,
   type ManagementMenuItem,
   type ManagementSegmentedOption,
 } from './ManagementControls';

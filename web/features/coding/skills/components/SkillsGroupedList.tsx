@@ -19,6 +19,8 @@ interface SkillsGroupedListProps {
   loading: boolean;
   updatingSkillIds: string[];
   columns?: number;
+  preferredToolKeysForAddMore?: string[];
+  limitAddMoreToPreferredTools?: boolean;
   activeKeys: string[];
   onActiveKeysChange: (keys: string[]) => void;
   selectionMode: boolean;
@@ -44,6 +46,8 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   loading,
   updatingSkillIds,
   columns,
+  preferredToolKeysForAddMore,
+  limitAddMoreToPreferredTools,
   activeKeys,
   onActiveKeysChange,
   selectionMode,
@@ -188,6 +192,8 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                       selectable={selectionMode}
                       selected={selectedIds.has(skill.id)}
                       toolsReadOnly={groupToolsEnabled}
+                      preferredToolKeysForAddMore={preferredToolKeysForAddMore}
+                      limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
                       onSelectChange={onSelectChange}
                       onOpenDetail={onOpenDetail}
                       getRepoInfo={getRepoInfo}

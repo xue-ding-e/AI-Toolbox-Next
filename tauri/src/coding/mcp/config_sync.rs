@@ -1190,6 +1190,8 @@ fn parse_server_with_format_config(
         tags: vec![],
         timeout: None,
         sort_index: 0,
+        management_enabled: true,
+        disabled_previous_tools: Vec::new(),
         created_at: now,
         updated_at: now,
     })
@@ -1232,6 +1234,8 @@ fn parse_standard_server_config(name: &str, server_config: &Value, now: i64) -> 
         tags: vec![],
         timeout: None,
         sort_index: 0,
+        management_enabled: true,
+        disabled_previous_tools: Vec::new(),
         created_at: now,
         updated_at: now,
     })
@@ -1429,6 +1433,8 @@ fn import_servers_from_toml(
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: Vec::new(),
             created_at: now,
             updated_at: now,
         });
@@ -1531,6 +1537,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }
@@ -1555,6 +1563,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }
@@ -1577,6 +1587,8 @@ mod tests {
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }
@@ -2090,6 +2102,8 @@ X-Test = "yes"
             tags: vec![],
             timeout: None,
             sort_index: 0,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
             created_at: 0,
             updated_at: 0,
         }

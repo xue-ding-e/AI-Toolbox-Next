@@ -26,7 +26,7 @@ import {
 import type { ManagedSkill, ToolOption } from '../types';
 import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
 import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
-import { GitHubSourceIcon, ToolIcon } from './ToolIcon';
+import { GitHubSourceIcon, ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import styles from './SkillCard.module.less';
 
 // Tag pill color classes, kept in sync with .tagColor0..7 below and with
@@ -56,6 +56,8 @@ interface SkillCardProps {
   selectable?: boolean;
   selected?: boolean;
   toolsReadOnly?: boolean;
+  preferredToolKeysForAddMore?: string[];
+  limitAddMoreToPreferredTools?: boolean;
   onSelectChange?: (skillId: string, checked: boolean) => void;
   onOpenDetail?: (skill: ManagedSkill) => void;
   getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
@@ -82,6 +84,8 @@ const SkillCardContent = React.memo(function SkillCardContent({
   selectable,
   selected,
   toolsReadOnly,
+  preferredToolKeysForAddMore,
+  limitAddMoreToPreferredTools,
   onSelectChange,
   onOpenDetail,
   getRepoInfo,
@@ -275,8 +279,13 @@ const SkillCardContent = React.memo(function SkillCardContent({
   );
 
   const availableDropdownTools = React.useMemo(() => {
-    return allTools.filter((tool) => tool.installed && !syncedToolIds.has(tool.id));
-  }, [allTools, syncedToolIds]);
+    const candidates = allTools.filter((tool) => tool.installed && !syncedToolIds.has(tool.id));
+    if (limitAddMoreToPreferredTools && preferredToolKeysForAddMore) {
+      const preferredKeys = new Set(preferredToolKeysForAddMore);
+      return candidates.filter((tool) => preferredKeys.has(tool.id));
+    }
+    return candidates;
+  }, [allTools, syncedToolIds, limitAddMoreToPreferredTools, preferredToolKeysForAddMore]);
 
   // Dropdown items are also pure view data. Keep them memoized so large lists do not
   // recreate identical menu structures unless tools, translations, or handlers change.

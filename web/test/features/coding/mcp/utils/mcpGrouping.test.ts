@@ -29,6 +29,8 @@ function makeServer(overrides: Partial<McpServer>): McpServer {
     user_note: null,
     tags: [],
     timeout: null,
+    management_enabled: true,
+    disabled_previous_tools: [],
     sort_index: 0,
     created_at: 1,
     updated_at: 1,

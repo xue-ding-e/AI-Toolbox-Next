@@ -184,7 +184,10 @@ pub async fn save_custom_tool_skills_fields(
     .await
 }
 
-/// Save only MCP-related fields, preserving Skills fields if they exist
+/// Save only MCP-related fields, preserving Skills fields if they exist.
+/// `icon_url` is the desired icon from the MCP custom-tool form: `None` keeps
+/// the stored value (Skills ownership), `Some(None)`/`Some(Some(""))` clears
+/// it, `Some(Some(url))` sets it.
 pub async fn save_custom_tool_mcp_fields(
     state: &SqliteDbState,
     key: &str,
@@ -194,6 +197,7 @@ pub async fn save_custom_tool_mcp_fields(
     mcp_config_format: Option<String>,
     mcp_field: Option<String>,
     created_at: i64,
+    icon_url: Option<Option<String>>,
 ) -> Result<(), String> {
     // First check if the tool already exists
     let existing = get_custom_tool_by_key(state, key).await?;
@@ -201,7 +205,6 @@ pub async fn save_custom_tool_mcp_fields(
         .as_ref()
         .map(|tool| tool.force_copy)
         .unwrap_or(false);
-    // Icon is owned by the Skills form; MCP writes keep the stored value.
     let existing_icon_url = existing.as_ref().and_then(|tool| tool.icon_url.clone());
 
     // Preserve existing skills fields
@@ -213,6 +216,18 @@ pub async fn save_custom_tool_mcp_fields(
         None => (None, relative_detect_dir),
     };
 
+    let resolved_icon_url = match icon_url {
+        Some(value) => value.and_then(|inner| {
+            let trimmed = inner.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }),
+        None => existing_icon_url,
+    };
+
     save_custom_tool(
         state,
         &CustomTool {
@@ -221,7 +236,7 @@ pub async fn save_custom_tool_mcp_fields(
             relative_skills_dir: skills_dir,
             relative_detect_dir: detect_dir,
             force_copy: existing_force_copy,
-            icon_url: existing_icon_url,
+            icon_url: resolved_icon_url,
             mcp_config_path,
             mcp_config_format,
             mcp_field,

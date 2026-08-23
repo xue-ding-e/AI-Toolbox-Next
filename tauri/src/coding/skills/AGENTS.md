@@ -102,6 +102,7 @@ Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从
 |------|------|------|
 | id | string | 固定为 "default" |
 | preferred_tools | array? | 首选工具列表 |
+| limit_add_more_to_preferred_tools | bool | 是否限制 Skill 卡片“添加更多”菜单仅显示首选工具（默认 false） |
 | default_view_mode | string | 进入 Skills 页面时的默认 UI 视图：`flat` / `grouped`，非法或缺失时回退 `flat` |
 | git_cache_cleanup_days | i32 | Git 缓存清理天数，默认 30 |
 | git_cache_ttl_secs | i32 | Git 缓存 TTL 秒数，默认 60 |
@@ -868,6 +869,8 @@ description: "可选的描述"
 | skills_apply_inventory_import_file | 从 JSON 文件应用 Inventory 完整清单导入 |
 | skills_get_preferred_tools | 获取首选工具 |
 | skills_set_preferred_tools | 设置首选工具 |
+| skills_get_limit_add_more_to_preferred_tools | 获取“添加更多仅显示常用工具”开关 |
+| skills_set_limit_add_more_to_preferred_tools | 设置“添加更多仅显示常用工具”开关 |
 | skills_get_show_in_tray | 获取托盘显示设置 |
 | skills_set_show_in_tray | 设置托盘显示 |
 | skills_reorder | 重新排序技能 |

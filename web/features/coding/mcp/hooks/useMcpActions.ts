@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useMcpStore } from '../stores/mcpStore';
@@ -6,7 +7,8 @@ import type { CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 
 export const useMcpActions = () => {
   const { t } = useTranslation();
-  const { addServer, updateServer, removeServer, fetchServers } = useMcpStore();
+  const { servers, addServer, updateServer, removeServer, fetchServers } = useMcpStore();
+  const [actionLoading, setActionLoading] = useState(false);
 
   const createServer = async (input: CreateMcpServerInput) => {
     try {
@@ -118,7 +120,97 @@ export const useMcpActions = () => {
     }
   };
 
+  // Disable a server: mark management_enabled=false and cancel sync from all tools
+  // (backend records disabled_previous_tools and removes tool config best-effort).
+  const disableServer = async (serverId: string) => {
+    setActionLoading(true);
+    try {
+      await mcpApi.setMcpManagementEnabled(serverId, false);
+      await fetchServers();
+      message.success(t('mcp.serverDisabled'));
+    } catch (error) {
+      message.error(t('mcp.serverDisableFailed') + ': ' + String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Enable a server (management flag only). Returns the previously recorded tool
+  // bindings so the caller can confirm which tools to restore via syncMcpToTool.
+  const enableServer = async (serverId: string): Promise<string[]> => {
+    setActionLoading(true);
+    try {
+      const previousTools = await mcpApi.setMcpManagementEnabled(serverId, true);
+      await fetchServers();
+      return previousTools;
+    } catch (error) {
+      message.error(t('mcp.serverEnableFailed') + ': ' + String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Restore a just-enabled server's tool bindings: the backend writes the chosen
+  // tools back into enabled_tools and re-syncs this server into each tool config.
+  const restoreTools = async (serverId: string, tools: string[]) => {
+    setActionLoading(true);
+    try {
+      const results = await mcpApi.restoreMcpTools(serverId, tools);
+      const failed = results.filter((r) => !r.success);
+      if (failed.length > 0) {
+        message.warning(t('mcp.restorePartialFailed', { count: failed.length }));
+      } else {
+        message.success(t('mcp.serverRestored', { count: tools.length }));
+      }
+      await fetchServers();
+      return results;
+    } catch (error) {
+      message.error(t('mcp.restoreFailed') + ': ' + String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Batch enable/disable. Given the desired target state, skip servers already in
+  // that state. On enable, collect restore tools per server for a unified confirm.
+  const batchSetManagementEnabled = async (
+    serverIds: string[],
+    enabled: boolean,
+  ): Promise<{ restored: Record<string, string[]>; succeeded: number; failed: number }> => {
+    const targetServers = servers.filter(
+      (s) => serverIds.includes(s.id) && s.management_enabled !== enabled,
+    );
+    if (targetServers.length === 0) {
+      return { restored: {}, succeeded: 0, failed: 0 };
+    }
+    setActionLoading(true);
+    const restored: Record<string, string[]> = {};
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (const server of targetServers) {
+        try {
+          const previous = await mcpApi.setMcpManagementEnabled(server.id, enabled);
+          if (enabled) {
+            restored[server.id] = previous;
+          }
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      await fetchServers();
+      return { restored, succeeded, failed };
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   return {
+    actionLoading,
     createServer,
     editServer,
     deleteServer,
@@ -127,6 +219,10 @@ export const useMcpActions = () => {
     syncToTool,
     syncAll,
     importFromTool,
+    disableServer,
+    enableServer,
+    restoreTools,
+    batchSetManagementEnabled,
   };
 };
 

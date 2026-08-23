@@ -47,6 +47,25 @@ export interface BackupFileFilterPathOption {
   file_path: string;
 }
 
+// Session detail filter chips (role + content visibility), persisted to SQLite
+// under the `session_detail_filters` key of the settings singleton record.
+export interface SessionDetailRoleFilter {
+  user: boolean;
+  assistant: boolean;
+}
+
+export interface SessionDetailContentFilter {
+  text: boolean;
+  thinking: boolean;
+  tool_call: boolean;
+  command: boolean;
+}
+
+export interface SessionDetailFilters {
+  role_filter: SessionDetailRoleFilter;
+  content_filter: SessionDetailContentFilter;
+}
+
 export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'] as const;
 
 export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
@@ -210,6 +229,28 @@ export const getSettings = async (): Promise<AppSettings> => {
  */
 export const saveSettings = async (settings: AppSettings): Promise<void> => {
   await invoke('save_settings', { settings });
+};
+
+/**
+ * Get persisted session detail filter chips (role + content visibility).
+ * Returns null when no record exists yet (first run) — callers default to all-on.
+ */
+export const getSessionDetailFilters = async (): Promise<SessionDetailFilters | null> => {
+  try {
+    return await invoke<SessionDetailFilters | null>('get_session_detail_filters');
+  } catch (error) {
+    console.error('Failed to get session detail filters:', error);
+    return null;
+  }
+};
+
+/**
+ * Persist session detail filter chips to the settings record.
+ * Uses the dedicated command so it patches only the `session_detail_filters`
+ * key instead of racing with a full settings save.
+ */
+export const saveSessionDetailFilters = async (filters: SessionDetailFilters): Promise<void> => {
+  await invoke('save_session_detail_filters', { filters });
 };
 
 /**

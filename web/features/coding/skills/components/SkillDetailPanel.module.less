@@ -350,27 +350,20 @@
 
 // ------------------------------------------------------------------ meta ----
 
-.metaGrid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-card-subtle);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-bg-container) 70%, transparent);
-}
-
 .metaRow {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  display: flex;
+  align-items: center;
   gap: 8px;
-  align-items: baseline;
+  min-width: 0;
   font-size: 12px;
+  line-height: 19px;
 }
 
 .metaLabel {
-  color: var(--color-text-secondary);
-  white-space: nowrap;
+  flex-shrink: 0;
+  width: 48px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
 }
 
 .metaValue {
@@ -387,23 +380,45 @@
   min-width: 0;
 }
 
-.metaValueEmpty {
-  color: var(--color-text-tertiary);
+// MCP-style metadata card: bordered surface with group/note rows on the left
+// and a single edit button on the right.
+.metaCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--color-border-card-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
 }
 
-// Small pencil entry for the inline group editor, styled after .tagAddBtn.
-.groupEditBtn {
+.metaRows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.metaValueText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: var(--color-text-primary);
+}
+
+.metaEditBtn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  gap: 5px;
   flex-shrink: 0;
-  border-radius: 999px;
-  border: 1px dashed var(--color-border);
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 11px;
   cursor: pointer;
   transition:
     border-color 0.16s ease,
@@ -419,27 +434,6 @@
   &:disabled {
     cursor: default;
     opacity: 0.5;
-  }
-}
-
-.groupEditInput {
-  width: 160px;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font-size: 11px;
-  outline: none;
-  transition: border-color 0.16s ease;
-
-  &::placeholder {
-    color: var(--color-text-tertiary);
-  }
-
-  &:focus {
-    border-color: var(--color-primary);
   }
 }
 
@@ -484,7 +478,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
   min-width: 0;
   padding: 8px 6px;

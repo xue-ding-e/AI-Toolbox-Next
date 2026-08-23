@@ -5,11 +5,12 @@
 use serde_json::Value;
 
 use super::adapter::{
-    from_db_favorite_mcp, from_db_mcp_preferences, from_db_mcp_server, remove_sync_detail,
+    from_db_favorite_mcp, from_db_mcp_group, from_db_mcp_preferences, from_db_mcp_server,
+    remove_sync_detail,
     set_sync_detail, to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
 use super::command_normalize;
-use super::types::{now_ms, FavoriteMcp, McpPreferences, McpServer, McpSyncDetail};
+use super::types::{now_ms, FavoriteMcp, McpGroup, McpPreferences, McpServer, McpSyncDetail};
 use crate::coding::db_id::db_new_id;
 use crate::db::helpers::{db_delete, db_get, db_list, db_max_i64, db_put, db_query_by_field};
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
@@ -103,10 +104,14 @@ pub async fn update_mcp_server_metadata(
     server_id: &str,
     user_group: Option<String>,
     user_note: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<(), String> {
     if let Some(mut server) = get_mcp_server_by_id(state, server_id).await? {
         server.user_group = user_group;
         server.user_note = user_note;
+        if let Some(tags) = tags {
+            server.tags = tags;
+        }
         server.updated_at = now_ms();
         upsert_mcp_server(state, &server).await?;
     }
@@ -184,6 +189,68 @@ pub async fn toggle_tool_enabled(
     server.updated_at = now_ms();
     upsert_mcp_server(state, &server).await?;
     Ok(is_now_enabled)
+}
+
+/// Set the management enabled state for an MCP server.
+///
+/// Disable: records the current `enabled_tools` into `disabled_previous_tools` (keeping any
+/// existing history when there are no current bindings), clears `enabled_tools` /
+/// `sync_details`, and sets `management_enabled = false`. `name`, `server_config`,
+/// `user_group`, `user_note` and `tags` are preserved; the server stays in its group.
+///
+/// Enable: only flips `management_enabled = true` and returns the recorded
+/// `disabled_previous_tools` so the caller can let the user confirm which historical tools
+/// to restore through the normal sync flow.
+pub async fn set_server_management_enabled(
+    state: &SqliteDbState,
+    server_id: &str,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    let Some(mut server) = get_mcp_server_by_id(state, server_id).await? else {
+        return Err(format!("MCP server not found: {}", server_id));
+    };
+    if enabled {
+        server.management_enabled = true;
+        server.updated_at = now_ms();
+        upsert_mcp_server(state, &server).await?;
+        return Ok(server.disabled_previous_tools);
+    }
+
+    let previous_tools = if server.enabled_tools.is_empty() {
+        server.disabled_previous_tools.clone()
+    } else {
+        server.enabled_tools.clone()
+    };
+    server.management_enabled = false;
+    server.disabled_previous_tools = previous_tools.clone();
+    server.enabled_tools = Vec::new();
+    server.sync_details = Some(Value::Object(serde_json::Map::new()));
+    server.updated_at = now_ms();
+    upsert_mcp_server(state, &server).await?;
+    Ok(previous_tools)
+}
+
+/// Persist the user-confirmed tool restore set for a re-enabled server.
+///
+/// Re-enable only flips `management_enabled` and leaves `enabled_tools` empty, so the
+/// generic `mcp_sync_to_tool` batch entry would skip the server (`enabled_tools.contains`
+/// check). The restore command writes the confirmed tools back before syncing each one.
+pub async fn set_server_enabled_tools(
+    state: &SqliteDbState,
+    server_id: &str,
+    tools: Vec<String>,
+) -> Result<(), String> {
+    let Some(mut server) = get_mcp_server_by_id(state, server_id).await? else {
+        return Err(format!("MCP server not found: {}", server_id));
+    };
+    let mut seen = std::collections::HashSet::new();
+    server.enabled_tools = tools
+        .into_iter()
+        .filter(|tool| seen.insert(tool.clone()))
+        .collect();
+    server.updated_at = now_ms();
+    upsert_mcp_server(state, &server).await?;
+    Ok(())
 }
 
 // ==================== MCP Preferences ====================
@@ -267,6 +334,40 @@ pub async fn delete_favorite_mcp(state: &SqliteDbState, id: &str) -> Result<(), 
     state.with_conn(|conn| db_delete(conn, DbTable::FavoriteMcp, id).map(|_| ()))
 }
 
+// ==================== Managed Groups ====================
+
+/// List managed MCP groups ordered by sort_index then row id.
+pub async fn get_mcp_groups(state: &SqliteDbState) -> Result<Vec<McpGroup>, String> {
+    state.with_conn(|conn| {
+        let order = OrderSpec::new(vec![
+            OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+            OrderField::id(OrderDirection::Asc),
+        ]);
+        let records = db_list(conn, DbTable::McpGroup, Some(&order))?;
+        Ok(records.into_iter().map(from_db_mcp_group).collect())
+    })
+}
+
+/// Insert or update a managed group; returns the persisted row id.
+pub async fn upsert_mcp_group(state: &SqliteDbState, group: &McpGroup) -> Result<String, String> {
+    let id = if group.id.is_empty() {
+        db_new_id()
+    } else {
+        group.id.clone()
+    };
+    let mut payload = serde_json::to_value(group).map_err(|e| e.to_string())?;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("id");
+    }
+    state.with_conn(|conn| db_put(conn, DbTable::McpGroup, &id, &payload))?;
+    Ok(id)
+}
+
+/// Delete a managed group by id
+pub async fn delete_mcp_group(state: &SqliteDbState, group_id: &str) -> Result<(), String> {
+    state.with_conn(|conn| db_delete(conn, DbTable::McpGroup, group_id).map(|_| ()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +392,8 @@ mod tests {
             user_note: None,
             tags: Vec::new(),
             timeout: None,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
         };
         let server_id = upsert_mcp_server(&sqlite_state, &server)
             .await
@@ -340,5 +443,82 @@ mod tests {
             .expect("read favorites");
         assert_eq!(favorites.len(), 1);
         assert_eq!(favorites[0].name, "Favorite A");
+    }
+
+    #[tokio::test]
+    async fn sqlite_mcp_store_management_enabled_round_trips() {
+        let sqlite_state = SqliteDbState::in_memory_for_test().expect("sqlite");
+
+        let server = McpServer {
+            id: String::new(),
+            name: "Managed A".to_string(),
+            server_type: "stdio".to_string(),
+            server_config: json!({"command": "cmd", "args": ["/c", "node"]}),
+            enabled_tools: vec!["claude".to_string(), "codex".to_string()],
+            sync_details: Some(json!({
+                "claude": {"status": "ok"},
+                "codex": {"status": "ok"}
+            })),
+            description: None,
+            sort_index: 0,
+            created_at: 1,
+            updated_at: 2,
+            user_group: Some("Group A".to_string()),
+            user_note: Some("note".to_string()),
+            tags: vec!["tag".to_string()],
+            timeout: None,
+            management_enabled: true,
+            disabled_previous_tools: vec![],
+        };
+        let server_id = upsert_mcp_server(&sqlite_state, &server)
+            .await
+            .expect("upsert server");
+
+        // Disable: records current bindings, clears enabled_tools/sync_details.
+        let previous = set_server_management_enabled(&sqlite_state, &server_id, false)
+            .await
+            .expect("disable server");
+        assert_eq!(previous, vec!["claude".to_string(), "codex".to_string()]);
+
+        let disabled = get_mcp_server_by_id(&sqlite_state, &server_id)
+            .await
+            .expect("read server")
+            .expect("server exists");
+        assert!(!disabled.management_enabled);
+        assert!(disabled.enabled_tools.is_empty());
+        assert!(
+            disabled
+                .sync_details
+                .as_ref()
+                .map(|d| d.as_object().map(|o| o.is_empty()).unwrap_or(false))
+                .unwrap_or(false),
+            "sync_details should be an empty object after disable"
+        );
+        assert_eq!(
+            disabled.disabled_previous_tools,
+            vec!["claude".to_string(), "codex".to_string()]
+        );
+        assert_eq!(disabled.user_group.as_deref(), Some("Group A"));
+        assert_eq!(disabled.user_note.as_deref(), Some("note"));
+        assert_eq!(disabled.tags, vec!["tag".to_string()]);
+        assert_eq!(disabled.name, "Managed A");
+
+        // Re-enable: flips the flag and returns the recorded history.
+        let previous = set_server_management_enabled(&sqlite_state, &server_id, true)
+            .await
+            .expect("enable server");
+        assert_eq!(previous, vec!["claude".to_string(), "codex".to_string()]);
+
+        let reenabled = get_mcp_server_by_id(&sqlite_state, &server_id)
+            .await
+            .expect("read server")
+            .expect("server exists");
+        assert!(reenabled.management_enabled);
+        assert!(reenabled.enabled_tools.is_empty());
+        assert_eq!(
+            reenabled.disabled_previous_tools,
+            vec!["claude".to_string(), "codex".to_string()]
+        );
+        assert_eq!(reenabled.user_group.as_deref(), Some("Group A"));
     }
 }

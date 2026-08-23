@@ -577,6 +577,7 @@ pub async fn get_setting(state: &SqliteDbState, key: &str) -> Result<Option<Stri
         "show_skills_in_tray" => Some(prefs.show_skills_in_tray.to_string()),
         "auto_update_enabled" => Some(prefs.auto_update_enabled.to_string()),
         "auto_update_schedule" => Some(prefs.auto_update_schedule.clone()),
+        "limit_add_more_to_preferred_tools" => Some(prefs.limit_add_more_to_preferred_tools.to_string()),
         _ => None,
     };
 
@@ -615,6 +616,9 @@ pub async fn set_setting(state: &SqliteDbState, key: &str, value: &str) -> Resul
         }
         "auto_update_schedule" => {
             prefs.auto_update_schedule = value.to_string();
+        }
+        "limit_add_more_to_preferred_tools" => {
+            prefs.limit_add_more_to_preferred_tools = value == "true";
         }
         _ => return Err(format!("Unknown setting key: {}", key)),
     };
@@ -752,6 +756,43 @@ mod tests {
                 .and_then(|items| items.first())
                 .and_then(Value::as_str),
             Some("codex")
+        );
+    }
+
+    #[tokio::test]
+    async fn limit_add_more_to_preferred_tools_setting_round_trips() {
+        let (_temp, state) = create_test_db();
+
+        // Defaults to off.
+        assert_eq!(
+            get_setting(&state, "limit_add_more_to_preferred_tools")
+                .await
+                .expect("read setting")
+                .as_deref(),
+            Some("false")
+        );
+
+        set_setting(&state, "limit_add_more_to_preferred_tools", "true")
+            .await
+            .expect("enable limit");
+
+        let record = load_raw_preferences(&state);
+        assert_eq!(
+            record
+                .get("limit_add_more_to_preferred_tools")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        set_setting(&state, "limit_add_more_to_preferred_tools", "false")
+            .await
+            .expect("disable limit");
+        let record = load_raw_preferences(&state);
+        assert_eq!(
+            record
+                .get("limit_add_more_to_preferred_tools")
+                .and_then(Value::as_bool),
+            Some(false)
         );
     }
 }

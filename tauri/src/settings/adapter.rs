@@ -1,6 +1,7 @@
 use super::types::{
     default_backup_file_filter_rules, default_sidebar_hidden_by_page, AppSettings,
-    BackupCustomEntry, BackupFileFilterRule, S3Config, WebDAVConfig,
+    BackupCustomEntry, BackupFileFilterRule, S3Config, SessionContentFilter, SessionDetailFilters,
+    SessionRoleFilter, WebDAVConfig,
 };
 use std::collections::HashMap;
 /**
@@ -81,6 +82,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         claude_cli_launch_full_access: get_bool(&value, "claude_cli_launch_full_access", false),
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
         cli_manual_paths: get_string_map(&value, "cli_manual_paths"),
+        session_detail_filters: get_session_detail_filters(&value),
     }
 }
 
@@ -159,6 +161,59 @@ fn get_string_map(value: &Value, key: &str) -> HashMap<String, String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// Extracts the session-detail filter toggles from the stored settings object.
+// If the whole `session_detail_filters` key is absent (upgrading from a build
+// that never persisted them) returns None so the workbench falls back to
+// defaults. If the key exists but only part of the nested booleans is present,
+// missing keys fall back to their per-type default (all visible) instead of
+// dropping the whole block.
+fn get_session_detail_filters(value: &Value) -> Option<SessionDetailFilters> {
+    let block = value.get("session_detail_filters")?.as_object()?;
+
+    let role_block = block
+        .get("role_filter")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    let role_filter = SessionRoleFilter {
+        user: role_block
+            .get("user")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        assistant: role_block
+            .get("assistant")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    };
+
+    let content_block = block
+        .get("content_filter")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    let content_filter = SessionContentFilter {
+        text: content_block
+            .get("text")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        thinking: content_block
+            .get("thinking")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        tool_call: content_block
+            .get("tool_call")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        command: content_block
+            .get("command")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    };
+
+    Some(SessionDetailFilters {
+        role_filter,
+        content_filter,
+    })
 }
 
 fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {

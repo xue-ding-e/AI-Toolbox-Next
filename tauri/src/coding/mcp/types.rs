@@ -78,8 +78,16 @@ pub struct McpServer {
     pub timeout: Option<i64>,
     #[serde(default)]
     pub sort_index: i32,
+    #[serde(default = "default_true")]
+    pub management_enabled: bool,
+    #[serde(default)]
+    pub disabled_previous_tools: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// MCP Server sync detail for a specific tool
@@ -106,6 +114,8 @@ pub struct McpServerDto {
     pub tags: Vec<String>,
     pub timeout: Option<i64>,
     pub sort_index: i32,
+    pub management_enabled: bool,
+    pub disabled_previous_tools: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -183,6 +193,16 @@ pub struct McpSyncResultDto {
     pub error_message: Option<String>,
 }
 
+/// Preview result for a group-inventory JSON import (server grouping only).
+#[derive(Debug, Serialize)]
+pub struct McpGroupInventoryPreviewDto {
+    pub valid: bool,
+    pub group_count: usize,
+    pub matched_server_count: usize,
+    pub changed_count: usize,
+    pub errors: Vec<String>,
+}
+
 /// Import result
 #[derive(Debug, Serialize)]
 pub struct McpImportResultDto {
@@ -232,6 +252,20 @@ pub struct McpPackageVersionResolveResult {
     pub package_name: String,
     pub version: Option<String>,
     pub error_message: Option<String>,
+}
+
+/// Managed MCP group entity (mirrors SkillGroupRecord; membership is by the
+/// server's `user_group` text matching the group name).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub sort_index: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /// Favorite MCP server (for quick select in add modal)

@@ -21,7 +21,7 @@ import * as api from '../services/skillsApi';
 import type { ManagedSkill, SkillDocument, ToolOption } from '../types';
 import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
 import { getSkillManifestPath } from '../utils/skillPath';
-import { GitHubSourceIcon, ToolIcon } from './ToolIcon';
+import { GitHubSourceIcon, ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import cardStyles from './SkillCard.module.less';
 import styles from './SkillDetailPanel.module.less';
 
@@ -58,10 +58,8 @@ interface SkillDetailPanelProps {
   allTags?: string[];
   /** Persist an updated tag list; omit to render tags read-only. */
   onUpdateTags?: (skillId: string, nextTags: string[]) => void;
-  /** Existing custom group options, for the inline group editor datalist. */
-  groupOptions?: Array<{ id: string; name: string }>;
-  /** Persist an updated group name (empty string clears the group). */
-  onUpdateGroup?: (skillId: string, groupName: string) => void;
+  /** Open the shared skill metadata modal (group + note editing). */
+  onEditMetadata?: (skill: ManagedSkill) => void;
 }
 
 export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
@@ -78,8 +76,7 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
   onSetManagementEnabled,
   allTags = [],
   onUpdateTags,
-  groupOptions = [],
-  onUpdateGroup,
+  onEditMetadata,
 }) => {
   const { t } = useTranslation();
   const [documents, setDocuments] = React.useState<SkillDocument[] | null>(null);
@@ -109,16 +106,12 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
   const skillTagList = React.useMemo(() => normalizeTagList(skill.tags ?? []), [skill.tags]);
   const [tagEditorOpen, setTagEditorOpen] = React.useState(false);
   const [tagDraft, setTagDraft] = React.useState('');
-  const [groupEditorOpen, setGroupEditorOpen] = React.useState(false);
-  const [groupDraft, setGroupDraft] = React.useState('');
 
   // The drawer stays mounted while the user switches skills; reset per-skill
   // view state so a previous skill's editor does not leak into the next.
   React.useEffect(() => {
     setTagEditorOpen(false);
     setTagDraft('');
-    setGroupEditorOpen(false);
-    setGroupDraft('');
   }, [skill.id]);
 
   const isUpdating = updatingSkillIds.includes(skill.id);
@@ -227,23 +220,6 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
     onUpdateTags(skill.id, skillTagList.filter((item) => item !== removedTag));
   };
 
-  // Group editing mirrors the tag editor: Enter or blur commits (an empty
-  // value clears the group), Escape cancels. Name-to-id resolution and group
-  // creation live in the page-level onUpdateGroup callback.
-  const closeGroupEditor = () => {
-    setGroupEditorOpen(false);
-    setGroupDraft('');
-  };
-
-  const commitGroupDraft = () => {
-    const trimmedDraft = groupDraft.trim();
-    closeGroupEditor();
-    if (!onUpdateGroup) return;
-    if (trimmedDraft !== (skill.user_group ?? '').trim()) {
-      onUpdateGroup(skill.id, trimmedDraft);
-    }
-  };
-
   const activeDocument = documents?.find((doc) => doc.filename === activeDoc) ?? null;
   const sourceLabel = React.useMemo(() => {
     if (typeKey.includes('git')) return repoInfo?.label ?? skill.source_ref ?? 'Git';
@@ -298,6 +274,47 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
         {skill.description ? (
           <p className={styles.description}>{skill.description}</p>
         ) : null}
+
+        <button
+          type="button"
+          className={styles.pathRow}
+          title={skill.central_path}
+          onClick={handleCopyCentralPath}
+          onDoubleClick={handleRevealManifest}
+        >
+          <Folder size={13} aria-hidden="true" />
+          <span className={styles.pathText}>{skill.central_path}</span>
+        </button>
+
+        {(skill.user_group || skill.user_note || onEditMetadata) && (
+          <div className={styles.metaCard}>
+            <div className={styles.metaRows}>
+              <div className={styles.metaRow}>
+                <span className={styles.metaLabel}>{t('skills.metadata.group')}</span>
+                <span className={styles.metaValueGroup}>
+                  {skill.user_group?.trim() || t('skills.groupUngrouped')}
+                </span>
+              </div>
+              {skill.user_note?.trim() && (
+                <div className={styles.metaRow}>
+                  <span className={styles.metaLabel}>{t('skills.metadata.note')}</span>
+                  <span className={styles.metaValueText}>{skill.user_note.trim()}</span>
+                </div>
+              )}
+            </div>
+            {onEditMetadata && (
+              <button
+                type="button"
+                className={styles.metaEditBtn}
+                disabled={metaEditDisabled}
+                onClick={() => onEditMetadata(skill)}
+              >
+                <Pencil size={11} aria-hidden="true" />
+                {t('common.edit')}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className={styles.tagRow}>
           {skillTagList.map((tagItem) => (
@@ -362,78 +379,6 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
             </button>
           )}
         </div>
-
-        <button
-          type="button"
-          className={styles.pathRow}
-          title={skill.central_path}
-          onClick={handleCopyCentralPath}
-          onDoubleClick={handleRevealManifest}
-        >
-          <Folder size={13} aria-hidden="true" />
-          <span className={styles.pathText}>{skill.central_path}</span>
-        </button>
-
-        {(skill.user_group || skill.user_note || onUpdateGroup) && (
-          <div className={styles.metaGrid}>
-            {(skill.user_group || onUpdateGroup) && (
-              <div className={styles.metaRow}>
-                <span className={styles.metaLabel}>{t('skills.metadata.group')}</span>
-                <span className={styles.metaValueGroup}>
-                  {groupEditorOpen && onUpdateGroup ? (
-                    <>
-                      <input
-                        className={styles.groupEditInput}
-                        list={`skill-detail-group-options-${skill.id}`}
-                        autoFocus
-                        value={groupDraft}
-                        placeholder={t('skills.metadata.groupPlaceholder')}
-                        aria-label={t('skills.batch.setGroup')}
-                        disabled={metaEditDisabled}
-                        onChange={(event) => setGroupDraft(event.target.value)}
-                        onBlur={commitGroupDraft}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') commitGroupDraft();
-                          if (event.key === 'Escape') closeGroupEditor();
-                        }}
-                      />
-                      <datalist id={`skill-detail-group-options-${skill.id}`}>
-                        {groupOptions.map((option) => (<option key={option.id} value={option.name} />))}
-                      </datalist>
-                    </>
-                  ) : onUpdateGroup ? (
-                    <>
-                      {skill.user_group
-                        ? <span className={styles.metaValue}>{skill.user_group}</span>
-                        : <span className={styles.metaValueEmpty}>—</span>}
-                      <button
-                        type="button"
-                        className={styles.groupEditBtn}
-                        title={t('skills.batch.setGroup')}
-                        aria-label={`${t('skills.batch.setGroup')}: ${skill.user_group ?? ''}`}
-                        disabled={metaEditDisabled}
-                        onClick={() => {
-                          setGroupDraft(skill.user_group ?? '');
-                          setGroupEditorOpen(true);
-                        }}
-                      >
-                        <Pencil size={11} aria-hidden="true" />
-                      </button>
-                    </>
-                  ) : (
-                    <span className={styles.metaValue}>{skill.user_group}</span>
-                  )}
-                </span>
-              </div>
-            )}
-            {skill.user_note && (
-              <div className={styles.metaRow}>
-                <span className={styles.metaLabel}>{t('skills.metadata.note')}</span>
-                <span className={styles.metaValue}>{skill.user_note}</span>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className={styles.section}>
           <p className={styles.sectionTitle}>

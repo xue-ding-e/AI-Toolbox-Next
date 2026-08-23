@@ -1,5 +1,5 @@
 use super::store;
-use super::types::{AppSettings, BackupFileFilterPathOption};
+use super::types::{AppSettings, BackupFileFilterPathOption, SessionDetailFilters};
 use crate::auto_launch;
 use crate::db::SqliteDbState;
 use crate::tray;
@@ -26,6 +26,24 @@ pub async fn save_settings(
     }
 
     Ok(())
+}
+
+/// Load the persisted session-detail filter visibility. Returns `None` when no
+/// record exists yet; the frontend falls back to "all visible".
+#[tauri::command]
+pub async fn get_session_detail_filters(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+) -> Result<Option<SessionDetailFilters>, String> {
+    store::get_session_detail_filters_from_sqlite_state(&sqlite_state)
+}
+
+/// Persist only the nested `session_detail_filters` key.
+#[tauri::command]
+pub async fn save_session_detail_filters(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    filters: SessionDetailFilters,
+) -> Result<(), String> {
+    store::save_session_detail_filters_to_sqlite_state(&sqlite_state, &filters)
 }
 
 /// Normalize a backup custom entry path for portable storage and display.
