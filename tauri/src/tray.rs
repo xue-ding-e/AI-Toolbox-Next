@@ -1008,30 +1008,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     // Skills section (only if enabled)
     let skills_has_items = skills_enabled && !skills_data.items.is_empty();
-    let skills_header = if skills_has_items {
-        Some(
-            MenuItem::with_id(
-                app,
-                "skills_header",
-                &skills_data.title,
-                false,
-                None::<&str>,
-            )
-            .map_err(|e| e.to_string())?,
-        )
+    let skills_submenu = if skills_has_items {
+        Some(build_skills_submenu(app, &skills_data, texts)?)
     } else {
         None
     };
-
-    // Build Skills submenus - each skill gets a submenu with tools as CheckMenuItems
-    let mut skills_submenus: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if skills_has_items {
-        for skill in skills_data.items {
-            let skill_submenu = build_skill_submenu(app, &skill, texts)?;
-            let boxed: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(skill_submenu);
-            skills_submenus.push(boxed);
-        }
-    }
 
     // MCP section (only if enabled)
     let mcp_has_items = mcp_enabled && !mcp_data.items.is_empty();
@@ -1518,13 +1499,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         append_separator(&menu)?;
     }
     // Add Skills section if enabled
-    if skills_has_items {
-        if let Some(ref header) = skills_header {
-            menu.append(header).map_err(|e| e.to_string())?;
-        }
-        for item in &skills_submenus {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
-        }
+    if append_skills_submenu(&menu, skills_submenu.as_ref())? {
         append_separator(&menu)?;
     }
     // Add MCP section if enabled
@@ -2623,6 +2598,36 @@ impl NamedPromptTrayData for pi_tray::TrayPromptData {
     }
 }
 
+/// Append the single Skills entry to the root tray menu
+fn append_skills_submenu<R: Runtime>(
+    menu: &Menu<R>,
+    submenu: Option<&Submenu<R>>,
+) -> Result<bool, String> {
+    let Some(submenu) = submenu else {
+        return Ok(false);
+    };
+
+    menu.append(submenu).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Build the Skills submenu containing each managed skill
+fn build_skills_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &skills_tray::TraySkillData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let submenu =
+        Submenu::with_id(app, "skills_submenu", &data.title, true).map_err(|e| e.to_string())?;
+
+    for skill in &data.items {
+        let skill_submenu = build_skill_submenu(app, skill, texts)?;
+        submenu.append(&skill_submenu).map_err(|e| e.to_string())?;
+    }
+
+    Ok(submenu)
+}
+
 /// Build a skill submenu with tool checkmarks
 fn build_skill_submenu<R: Runtime>(
     app: &AppHandle<R>,
@@ -2816,4 +2821,54 @@ fn build_openclaw_model_submenu<R: Runtime>(
     }
 
     Ok(submenu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skills_section_is_a_single_root_submenu() {
+        let app = tauri::test::mock_app();
+        let data = skills_tray::TraySkillData {
+            title: "Skills".to_string(),
+            items: vec![
+                skills_tray::TraySkillItem {
+                    id: "skill-1".to_string(),
+                    display_name: "Skill One".to_string(),
+                    central_path: "skills/skill-1".to_string(),
+                    tools: Vec::new(),
+                },
+                skills_tray::TraySkillItem {
+                    id: "skill-2".to_string(),
+                    display_name: "Skill Two".to_string(),
+                    central_path: "skills/skill-2".to_string(),
+                    tools: Vec::new(),
+                },
+            ],
+        };
+
+        let submenu = build_skills_submenu(app.handle(), &data, tray_texts("en")).expect("submenu");
+        let menu = Menu::new(app.handle()).expect("root menu");
+        append_skills_submenu(&menu, Some(&submenu)).expect("append skills submenu");
+
+        let root_items = menu.items().expect("root menu items");
+        assert_eq!(root_items.len(), 1);
+        let root_submenu = root_items[0].as_submenu().expect("root skills submenu");
+        assert_eq!(root_submenu.id().as_ref(), "skills_submenu");
+        assert_eq!(root_submenu.text().expect("submenu text"), "Skills");
+
+        let items = root_submenu.items().expect("submenu items");
+        assert_eq!(items.len(), data.items.len());
+        assert!(items.iter().all(|item| item.as_submenu().is_some()));
+    }
+
+    #[test]
+    fn skills_section_is_omitted_without_a_submenu() {
+        let app = tauri::test::mock_app();
+        let menu = Menu::new(app.handle()).expect("root menu");
+
+        assert!(!append_skills_submenu(&menu, None).expect("skip skills submenu"));
+        assert!(menu.items().expect("root menu items").is_empty());
+    }
 }

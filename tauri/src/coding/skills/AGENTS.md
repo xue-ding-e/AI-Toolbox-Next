@@ -690,10 +690,12 @@ Inventory JSON 是完整管理清单，用于重排 AI Toolbox 元数据，不�
 
 菜单结构：
 ```
-──── Skills ────
+Skills  ▸
   my-skill-1  ▸  [✓ Claude Code, ✓ Codex, ○ OpenCode]
   my-skill-2  ▸  [✓ Claude Code, ○ Codex]
 ```
+
+Skills 列表统一放在单个顶层子菜单中，避免技能数量增长时挤占整个托盘菜单。
 
 事件处理：
 - 事件 ID 格式：`skill_tool_{skill_id}_{tool_key}`
