@@ -26,6 +26,7 @@ import {
 import type { ManagedSkill, ToolOption } from '../types';
 import { toGitWebUrl } from '../utils/gitUrl';
 import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
+import { flattenDescription } from '../utils/skillDescription';
 import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
 import { GitHubSourceIcon, ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import styles from './SkillCard.module.less';
@@ -116,9 +117,10 @@ const SkillCardContent = React.memo(function SkillCardContent({
   const userNoteText = skill.user_note?.trim() ?? '';
   const shouldShowGroupTag = showGroupTag && groupLabel.length > 0;
   const hasUserNote = userNoteText.length > 0;
-  // Description comes from the backend SKILL.md frontmatter cache; trim so a
-  // whitespace-only value never renders an empty line.
-  const skillDescriptionText = skill.description?.trim() ?? '';
+  // Description comes from the backend SKILL.md frontmatter cache. Block
+  // scalars (`|`/`>`) keep newlines; flatten to one line so the card shows the
+  // full text instead of just its first line.
+  const skillDescriptionText = flattenDescription(skill.description);
   const hasSkillDescription = skillDescriptionText.length > 0;
   const skillTagList = React.useMemo(
     () => normalizeTagList(skill.tags ?? []),

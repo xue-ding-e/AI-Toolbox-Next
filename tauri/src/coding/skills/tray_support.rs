@@ -75,6 +75,23 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
         .unwrap_or_default();
     let all_adapters = get_all_tool_adapters(&custom_tools);
 
+    // Precompute install status once per tool (it does not depend on the skill).
+    let mut installed_map: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::new();
+    for adapter in &all_adapters {
+        let installed = is_tool_installed_with_state_async(state.db(), adapter)
+            .await
+            .unwrap_or(false);
+        installed_map.insert(adapter.key.clone(), installed);
+    }
+
+    let limit_to_preferred = skill_store::get_setting(&state, "limit_add_more_to_preferred_tools")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s == "true")
+        .unwrap_or(false);
+
     let preferred_tools_raw = skill_store::get_setting(&state, "preferred_tools_v1")
         .await
         .ok()
@@ -82,32 +99,18 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
     let preferred_tools: Option<Vec<String>> =
         preferred_tools_raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok());
 
-    let tools_to_show: Vec<String> = if let Some(preferred_tool_keys) = preferred_tools {
-        if !preferred_tool_keys.is_empty() {
-            preferred_tool_keys
-        } else {
-            let mut installed_tool_keys = Vec::new();
-            for adapter in &all_adapters {
-                if is_tool_installed_with_state_async(state.db(), adapter)
-                    .await
-                    .unwrap_or(false)
-                {
-                    installed_tool_keys.push(adapter.key.clone());
-                }
-            }
-            installed_tool_keys
+    // Determine the candidate tool set, mirroring the SkillCard "add more" rule:
+    // - When "limit add-more to preferred tools" is on AND preferred tools are
+    //   configured, only the preferred (common) tools are candidates.
+    // - Otherwise every known tool (all adapters, incl. custom tools) is a
+    //   candidate; non-installed ones are shown but greyed out.
+    let candidate_keys: Vec<String> = if limit_to_preferred {
+        match &preferred_tools {
+            Some(keys) if !keys.is_empty() => keys.clone(),
+            _ => all_adapters.iter().map(|a| a.key.clone()).collect(),
         }
     } else {
-        let mut installed_tool_keys = Vec::new();
-        for adapter in &all_adapters {
-            if is_tool_installed_with_state_async(state.db(), adapter)
-                .await
-                .unwrap_or(false)
-            {
-                installed_tool_keys.push(adapter.key.clone());
-            }
-        }
-        installed_tool_keys
+        all_adapters.iter().map(|a| a.key.clone()).collect()
     };
 
     let skills = skill_store::get_managed_skills(&state).await?;
@@ -118,20 +121,42 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
         let synced_tools: std::collections::HashSet<String> =
             targets.iter().map(|target| target.tool.clone()).collect();
 
+        // Per-skill tool list = candidate ∪ already-synced tools. Synced tools
+        // are always shown even when the candidate set (preferred tools) would
+        // omit them, so an already-synced tool is never dropped from the menu.
         let mut tool_items: Vec<TraySkillToolItem> = Vec::new();
-        for tool_key in &tools_to_show {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Candidate tools first, in candidate order.
+        for tool_key in &candidate_keys {
+            if !seen.insert(tool_key.clone()) {
+                continue;
+            }
             let Some(adapter) = all_adapters.iter().find(|item| item.key == *tool_key) else {
                 continue;
             };
-
-            let is_installed = is_tool_installed_with_state_async(state.db(), adapter)
-                .await
-                .unwrap_or(false);
             tool_items.push(TraySkillToolItem {
                 tool_key: tool_key.clone(),
                 display_name: adapter.display_name.clone(),
                 is_synced: synced_tools.contains(tool_key),
-                is_installed,
+                is_installed: installed_map.get(tool_key).copied().unwrap_or(false),
+            });
+        }
+
+        // Then any synced tools not already in the candidate set, in adapter order.
+        for adapter in &all_adapters {
+            if !synced_tools.contains(&adapter.key) || seen.contains(&adapter.key) {
+                continue;
+            }
+            seen.insert(adapter.key.clone());
+            tool_items.push(TraySkillToolItem {
+                tool_key: adapter.key.clone(),
+                display_name: adapter.display_name.clone(),
+                is_synced: true,
+                is_installed: installed_map
+                    .get(&adapter.key)
+                    .copied()
+                    .unwrap_or(false),
             });
         }
 

@@ -1472,6 +1472,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     menu.append(&show_item).map_err(|e| e.to_string())?;
     append_separator(&menu)?;
 
+    // Add Skills section if enabled
+    if append_skills_submenu(&menu, skills_submenu.as_ref())? {
+        append_separator(&menu)?;
+    }
+
     // Add OpenCode section if enabled
     if opencode_enabled {
         if let Some(ref header) = opencode_model_header {
@@ -1496,10 +1501,6 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         for item in &opencode_plugin_items {
             menu.append(item.as_ref()).map_err(|e| e.to_string())?;
         }
-        append_separator(&menu)?;
-    }
-    // Add Skills section if enabled
-    if append_skills_submenu(&menu, skills_submenu.as_ref())? {
         append_separator(&menu)?;
     }
     // Add MCP section if enabled

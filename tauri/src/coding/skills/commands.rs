@@ -121,24 +121,7 @@ fn read_skill_description(central_path: &Path, content_hash: &Option<String>) ->
 }
 
 fn parse_skill_md_description(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut lines = text.lines();
-    if lines.next()?.trim() != "---" {
-        return None;
-    }
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == "---" {
-            break;
-        }
-        if let Some(value) = trimmed.strip_prefix("description:") {
-            let description = value.trim().trim_matches('"').trim_matches('\'').trim();
-            if !description.is_empty() {
-                return Some(description.to_string());
-            }
-        }
-    }
-    None
+    super::frontmatter::parse_skill_md_frontmatter(path).1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,44 +269,8 @@ pub async fn skills_get_tool_status(
 
 // --- Central Repo Path ---
 
-fn normalize_scalar(value: &str) -> String {
-    value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim()
-        .to_string()
-}
-
 fn parse_skill_md_metadata(path: &Path) -> (Option<String>, Option<String>) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return (None, None);
-    };
-    let mut lines = text.lines();
-    if lines.next().map(str::trim) != Some("---") {
-        return (None, None);
-    }
-
-    let mut name = None;
-    let mut description = None;
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == "---" {
-            break;
-        }
-        if let Some(value) = trimmed.strip_prefix("name:") {
-            let value = normalize_scalar(value);
-            if !value.is_empty() {
-                name = Some(value);
-            }
-        } else if let Some(value) = trimmed.strip_prefix("description:") {
-            let value = normalize_scalar(value);
-            if !value.is_empty() {
-                description = Some(value);
-            }
-        }
-    }
-    (name, description)
+    super::frontmatter::parse_skill_md_frontmatter(path)
 }
 
 fn normalize_path_for_compare(path: &Path) -> String {
@@ -2241,6 +2188,7 @@ pub async fn skills_get_preferred_tools(
 
 #[tauri::command]
 pub async fn skills_set_preferred_tools(
+    app: AppHandle,
     state: State<'_, SqliteDbState>,
     tools: Vec<String>,
 ) -> Result<(), String> {
@@ -2249,7 +2197,11 @@ pub async fn skills_set_preferred_tools(
         "preferred_tools_v1",
         &serde_json::to_string(&tools).unwrap_or_else(|_| "[]".to_string()),
     )
-    .await
+    .await?;
+    // Rebuild the tray menu so the skills submenu reflects the new preferred
+    // tools immediately (the "show only preferred tools" toggle reads this).
+    let _ = app.emit("config-changed", "window");
+    Ok(())
 }
 
 /// Get whether Skill card add-more menus are limited to preferred tools.
@@ -2264,6 +2216,7 @@ pub async fn skills_get_limit_add_more_to_preferred_tools(
 /// Set whether Skill card add-more menus are limited to preferred tools.
 #[tauri::command]
 pub async fn skills_set_limit_add_more_to_preferred_tools(
+    app: AppHandle,
     state: State<'_, SqliteDbState>,
     enabled: bool,
 ) -> Result<(), String> {
@@ -2272,7 +2225,11 @@ pub async fn skills_set_limit_add_more_to_preferred_tools(
         "limit_add_more_to_preferred_tools",
         if enabled { "true" } else { "false" },
     )
-    .await
+    .await?;
+    // Rebuild the tray menu so the skills submenu reflects the toggle
+    // immediately (it controls whether non-preferred tools are hidden).
+    let _ = app.emit("config-changed", "window");
+    Ok(())
 }
 
 // --- Show Skills in Tray ---

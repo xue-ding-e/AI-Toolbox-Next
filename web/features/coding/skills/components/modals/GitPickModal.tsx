@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, Checkbox, Button, Empty } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { GitSkillCandidate } from '../../types';
+import { flattenDescription } from '../../utils/skillDescription';
 import styles from './GitPickModal.module.less';
 
 interface GitPickModalProps {
@@ -88,7 +89,7 @@ export const GitPickModal: React.FC<GitPickModalProps> = ({
                 <div className={styles.info}>
                   <div className={styles.name}>{c.name}</div>
                   {c.description && (
-                    <div className={styles.description}>{c.description}</div>
+                    <div className={styles.description}>{flattenDescription(c.description)}</div>
                   )}
                   <div className={styles.path}>{c.subpath}</div>
                 </div>

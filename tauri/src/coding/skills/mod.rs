@@ -8,6 +8,7 @@ pub mod central_repo;
 pub mod commands;
 pub mod content_hash;
 pub mod cron_utils;
+pub mod frontmatter;
 pub mod git_fetcher;
 pub mod installer;
 pub mod onboarding;

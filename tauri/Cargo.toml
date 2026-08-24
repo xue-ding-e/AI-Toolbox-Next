@@ -78,7 +78,10 @@ junction = "1.1"
 libc = "0.2"
 
 [dev-dependencies]
-tauri = { version = "2.9.5", features = ["test"] }
+# Reuse the tauri version already declared in [dependencies]; only enable the
+# `test` feature (tauri::test::mock_app) during test builds. Keeping a loose
+# "2" range avoids re-pinning the exact version in two places.
+tauri = { version = "2", features = ["test"] }
 
 [profile.release]
 lto = true

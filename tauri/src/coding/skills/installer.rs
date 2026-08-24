@@ -1072,26 +1072,9 @@ fn compute_content_hash(path: &Path) -> Option<String> {
 }
 
 fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut lines = text.lines();
-    if lines.next()?.trim() != "---" {
-        return None;
-    }
-    let mut name: Option<String> = None;
-    let mut desc: Option<String> = None;
-    for line in lines.by_ref() {
-        let l = line.trim();
-        if l == "---" {
-            break;
-        }
-        if let Some(v) = l.strip_prefix("name:") {
-            name = Some(v.trim().trim_matches('"').to_string());
-        } else if let Some(v) = l.strip_prefix("description:") {
-            desc = Some(v.trim().trim_matches('"').to_string());
-        }
-    }
+    let (name, description) = super::frontmatter::parse_skill_md_frontmatter(path);
     let name = name?;
-    Some((name, desc))
+    Some((name, description))
 }
 
 /// Recursively scan a directory for SKILL.md files and add matching candidates to the output vector.
