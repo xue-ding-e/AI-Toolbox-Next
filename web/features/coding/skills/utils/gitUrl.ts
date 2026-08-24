@@ -21,8 +21,17 @@ export interface ParsedGitRepo {
  * Parse a Git remote URL (HTTPS, SSH, or SCP style) into its host / owner / repo.
  * Returns null when the URL does not look like a Git remote pointing at a repo.
  */
+/**
+ * Strip web-UI subpath suffixes so a subfolder ref resolves to its containing
+ * repo: /tree/{branch}/..., /blob/{branch}/... and GitLab's /-/tree/... form.
+ * Cutting at the first marker also handles branch names containing slashes.
+ */
+const stripWebSubpath = (rawPath: string): string => {
+  return rawPath.replace(/\/(?:-\/)?(?:tree|blob)\/[\s\S]*$/, '');
+};
+
 const parseRepositoryPath = (host: string, rawPath: string): ParsedGitRepo | null => {
-  const pathSegments = rawPath
+  const pathSegments = stripWebSubpath(rawPath)
     .split('/')
     .map((segment) => segment.trim())
     .filter(Boolean);
@@ -75,4 +84,15 @@ export function normalizeGitUrlToHttps(url: string | null | undefined): string |
   const parsed = parseGitRepo(url);
   if (!parsed) return null;
   return `https://${parsed.host}/${parsed.owner}/${parsed.repo}`;
+}
+
+/**
+ * Best browser-openable web URL for a source ref: keeps https refs (including
+ * /tree/ subfolder URLs) as-is, converts SSH/SCP refs to the repo's HTTPS web
+ * URL, and returns null when the ref cannot be opened in a browser.
+ */
+export function toGitWebUrl(url: string | null | undefined): string | null {
+  const trimmed = (url ?? '').trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return normalizeGitUrlToHttps(trimmed);
 }

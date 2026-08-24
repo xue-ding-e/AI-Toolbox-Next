@@ -20,6 +20,7 @@ import MarkdownPreview from '@/components/common/MarkdownPreview';
 import * as api from '../services/skillsApi';
 import type { ManagedSkill, SkillDocument, ToolOption } from '../types';
 import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
+import { toGitWebUrl } from '../utils/gitUrl';
 import { getSkillManifestPath } from '../utils/skillPath';
 import { GitHubSourceIcon, ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
 import cardStyles from './SkillCard.module.less';
@@ -183,9 +184,13 @@ export const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
 
   const handleOpenSource = React.useCallback(async () => {
     if (typeKey.includes('git')) {
-      if (repoInfo?.href) {
+      // Prefer the original ref verbatim for http(s) URLs so subfolder /tree/
+      // links open the exact skill page; SSH/SCP refs fall back to the
+      // normalized repo web URL, and finally to the managed central folder.
+      const webUrl = toGitWebUrl(skill.source_ref) ?? repoInfo?.href;
+      if (webUrl) {
         try {
-          await openUrl(repoInfo.href);
+          await openUrl(webUrl);
           return;
         } catch {
           // fall through to reveal the managed folder

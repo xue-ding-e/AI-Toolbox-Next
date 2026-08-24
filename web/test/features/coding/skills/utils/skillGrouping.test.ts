@@ -14,6 +14,7 @@ import {
   isSkillUngroupedCustomGroup,
   normalizeSkillMetadataText,
 } from '../../../../../features/coding/skills/utils/skillGrouping.ts';
+import { parseGitRepo } from '../../../../../features/coding/skills/utils/gitUrl.ts';
 import {
   GROUP_TOOL_BATCH_OPTIONS,
   shouldOverwriteExistingTarget,
@@ -147,6 +148,38 @@ test('buildSkillGroups preserves source grouping behavior for git and local skil
     ['git:https://github.com/acme/skills', 'acme/skills'],
     ['local:D:/repo/skills', 'skills'],
   ]);
+});
+
+test('buildSkillGroups groups same-repo subfolder skills into one source group', () => {
+  // Realistic source refs: a repo scanned via Git install where each skill
+  // lives in its own subfolder. Without /tree/ stripping these would each land
+  // in their own group; they must share a single `owner/repo` group instead.
+  const skills = [
+    makeSkill({
+      id: 'grill',
+      source_type: 'git',
+      source_ref: 'https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me',
+    }),
+    makeSkill({
+      id: 'types',
+      source_type: 'git',
+      source_ref: 'https://github.com/mattpocock/skills/tree/main/skills/typescript',
+    }),
+  ];
+
+  const groups = buildSkillGroups(skills, 'source', labels, (url) => {
+    const parsed = parseGitRepo(url);
+    if (!parsed) return null;
+    const href = `https://${parsed.host}/${parsed.owner}/${parsed.repo}`;
+    return { label: `${parsed.owner}/${parsed.repo}`, href };
+  });
+
+  assert.equal(groups.length, 1, 'both subfolder skills share one source group');
+  assert.equal(groups[0].label, 'mattpocock/skills');
+  assert.deepEqual(
+    groups[0].skills.map((skill) => skill.id).sort(),
+    ['grill', 'types'],
+  );
 });
 
 test('skill group tool helpers use union and detect mixed tool sets', () => {

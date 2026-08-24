@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   normalizeGitUrlToHttps,
   parseGitRepo,
+  toGitWebUrl,
 } from '../../../../../features/coding/skills/utils/gitUrl.ts';
 
 test('parseGitRepo parses HTTPS URLs with and without .git suffix', () => {
@@ -86,4 +87,48 @@ test('normalizeGitUrlToHttps returns null for non-git inputs', () => {
   assert.equal(normalizeGitUrlToHttps('/local/path/skill'), null);
   assert.equal(normalizeGitUrlToHttps('not a url'), null);
   assert.equal(normalizeGitUrlToHttps(null), null);
+});
+
+test('parseGitRepo resolves /tree/ subfolder refs to their containing repo', () => {
+  assert.deepEqual(
+    parseGitRepo('https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me'),
+    { host: 'github.com', owner: 'mattpocock', repo: 'skills' },
+  );
+});
+
+test('parseGitRepo resolves /blob/ subfolder refs to their containing repo', () => {
+  assert.deepEqual(
+    parseGitRepo('https://github.com/anthropics/skills/blob/main/scripts/setup.md'),
+    { host: 'github.com', owner: 'anthropics', repo: 'skills' },
+  );
+});
+
+test('parseGitRepo resolves GitLab /-/tree/ subfolder refs', () => {
+  assert.deepEqual(
+    parseGitRepo('https://gitlab.com/group/skills/-/tree/main/docs/guide'),
+    { host: 'gitlab.com', owner: 'group', repo: 'skills' },
+  );
+});
+
+test('parseGitRepo handles branch names containing slashes in /tree/ refs', () => {
+  assert.deepEqual(
+    parseGitRepo('https://github.com/acme/skills/tree/feature/sub/mypath'),
+    { host: 'github.com', owner: 'acme', repo: 'skills' },
+  );
+});
+
+test('toGitWebUrl keeps https refs verbatim and normalizes SSH/SCP refs', () => {
+  // Subfolder /tree/ refs are kept as-is so the skill page opens directly.
+  assert.equal(
+    toGitWebUrl('https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me'),
+    'https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me',
+  );
+  // Plain repo HTTPS URLs pass through unchanged.
+  assert.equal(toGitWebUrl('https://github.com/anthropics/skills'), 'https://github.com/anthropics/skills');
+  // SSH/SCP refs are normalized to the repo web URL (no subpath available).
+  assert.equal(toGitWebUrl('ssh://git@github.com/anthropics/skills.git'), 'https://github.com/anthropics/skills');
+  assert.equal(toGitWebUrl('git@github.com:anthropics/skills.git'), 'https://github.com/anthropics/skills');
+  // Non-git inputs resolve to null.
+  assert.equal(toGitWebUrl(null), null);
+  assert.equal(toGitWebUrl('C:\\Users\\ralph\\skills'), null);
 });

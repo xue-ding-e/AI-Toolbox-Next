@@ -24,6 +24,7 @@ import {
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
 import type { ManagedSkill, ToolOption } from '../types';
+import { toGitWebUrl } from '../utils/gitUrl';
 import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
 import { hashTagColorIndex, normalizeTagList } from '../utils/skillTags';
 import { GitHubSourceIcon, ToolIcon } from '@/features/coding/shared/toolIcon/ToolIcon';
@@ -132,15 +133,16 @@ const SkillCardContent = React.memo(function SkillCardContent({
     [getRepoInfo, skill.source_ref],
   );
 
-  // HTTPS web URL for opening the Git source in a browser. `href` is normalized
-  // by the resolver, so SCP/SSH refs from custom Git hosts work too.
+  // Web URL for opening the Git source in a browser. Prefer the original ref
+  // verbatim when it is already an http(s) URL so subfolder /tree/ links open
+  // the exact skill page; fall back to the normalized repo URL for SSH/SCP refs.
   const repoUrl = React.useMemo(
-    () => repoInfo?.href ?? '',
-    [repoInfo],
+    () => toGitWebUrl(skill.source_ref) ?? repoInfo?.href ?? '',
+    [repoInfo, skill.source_ref],
   );
 
   const copyValue = React.useMemo(
-    () => repoInfo?.href || skill.source_ref || '',
+    () => toGitWebUrl(skill.source_ref) ?? repoInfo?.href ?? skill.source_ref ?? '',
     [repoInfo, skill.source_ref],
   );
 
