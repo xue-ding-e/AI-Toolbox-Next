@@ -1222,12 +1222,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                             (!item.reasoningLevels || item.reasoningLevels.length === 0) &&
                             matchedPreset.reasoning === true
                           ) {
-                            // Default to the reasoning levels Codex's official
-                            // gpt-5.6 models commonly expose: excludes "none"
-                            // (disable thinking), "minimal" (rarely useful)
-                            // and "ultra" (max with automatic task delegation,
-                            // opt-in only).
-                            patch.reasoningLevels = ['low', 'medium', 'high', 'xhigh', 'max'];
+                            // Default to a conservative set: low/high/max.
+                            // Users can add medium/xhigh/ultra manually.
+                            patch.reasoningLevels = ['low', 'high', 'max'];
                             // Default to "high" when first auto-filled, matching
                             // the config.toml model_reasoning_effort default.
                             if (!item.defaultReasoningLevel) {
