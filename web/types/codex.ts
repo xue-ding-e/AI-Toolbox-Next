@@ -54,6 +54,15 @@ export interface CodexCatalogModel {
     input?: string[];
     output?: string[];
   };
+  /** Per-model reasoning effort levels exposed in the generated Codex catalog
+   * (e.g. ["low", "medium", "high", "xhigh", "max"]). When omitted the neutral
+   * template keeps its 6-level default; official vendor entries keep the
+   * vendor's declared levels. */
+  reasoningLevels?: string[];
+  /** Per-model default reasoning effort. Only meaningful together with
+   * reasoningLevels; when omitted the template default is kept if still in the
+   * list, otherwise the highest declared level wins. */
+  defaultReasoningLevel?: string;
 }
 
 export interface CodexModelCatalog {

@@ -2171,7 +2171,7 @@ fn normalize_codex_model_catalog_for_storage(
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array())?;
-    let mut seen_models = BTreeSet::new();
+    let mut seen_keys = BTreeSet::new();
     let mut normalized_models = Vec::new();
 
     for item in models {
@@ -2183,7 +2183,17 @@ fn normalize_codex_model_catalog_for_storage(
         else {
             continue;
         };
-        if !seen_models.insert(model.to_string()) {
+        let display_name = item
+            .get("displayName")
+            .or_else(|| item.get("display_name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        // Dedup by (model, displayName) so the same request model can appear
+        // under multiple menu display names; fully identical rows still collapse.
+        let dedup_key = (model.to_string(), display_name.clone());
+        if !seen_keys.insert(dedup_key) {
             continue;
         }
 
@@ -2193,13 +2203,7 @@ fn normalize_codex_model_catalog_for_storage(
             serde_json::Value::String(model.to_string()),
         );
 
-        if let Some(display_name) = item
-            .get("displayName")
-            .or_else(|| item.get("display_name"))
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(display_name) = display_name.as_deref() {
             normalized_item.insert(
                 "displayName".to_string(),
                 serde_json::Value::String(display_name.to_string()),
@@ -2224,6 +2228,40 @@ fn normalize_codex_model_catalog_for_storage(
 
         if let Some(modalities) = normalize_codex_model_catalog_modalities(item.get("modalities")) {
             normalized_item.insert("modalities".to_string(), modalities);
+        }
+
+        // Per-model reasoning-level override: preserve user-declared levels
+        // (camelCase only — DB is the SSOT). Unknown values are dropped later
+        // at catalog-generation time; here we only keep non-empty arrays so
+        // the storage stays compact and round-trips cleanly.
+        let reasoning_levels = item
+            .get("reasoningLevels")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(|level| serde_json::Value::String(level.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|levels| !levels.is_empty());
+        if let Some(levels) = reasoning_levels {
+            normalized_item.insert(
+                "reasoningLevels".to_string(),
+                serde_json::Value::Array(levels),
+            );
+        }
+
+        let default_reasoning_level = item
+            .get("defaultReasoningLevel")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|level| !level.is_empty())
+            .map(|level| serde_json::Value::String(level.to_string()));
+        if let Some(default_level) = default_reasoning_level {
+            normalized_item.insert("defaultReasoningLevel".to_string(), default_level);
         }
 
         normalized_models.push(serde_json::Value::Object(normalized_item));
@@ -2428,6 +2466,102 @@ struct CodexCatalogModelSpec {
     /// vendor catalog entries keep the vendor's declared window).
     context_window: Option<u64>,
     auto_review_model_override: Option<String>,
+    /// Per-row override for the generated catalog's `supported_reasoning_levels`.
+    /// When omitted the neutral template keeps its 6-level default; official
+    /// vendor entries keep the vendor's declared levels.
+    reasoning_levels: Option<Vec<String>>,
+    /// Per-row override for the generated catalog's `default_reasoning_level`.
+    /// Only meaningful together with `reasoning_levels`; when absent the
+    /// template default is kept if still supported, otherwise the highest
+    /// declared level wins.
+    default_reasoning_level: Option<String>,
+}
+
+/// Canonical reasoning effort levels Codex understands, in ascending depth
+/// order, with the descriptions the official gpt-5.6 template uses. `none`
+/// disables thinking. Source: codex-rs/models-manager/models.json.
+const CODEX_REASONING_LEVEL_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("none", "Disable Thinking"),
+    ("minimal", "Minimal reasoning"),
+    ("low", "Fast responses with lighter reasoning"),
+    (
+        "medium",
+        "Balances speed and reasoning depth for everyday tasks",
+    ),
+    ("high", "Greater reasoning depth for complex problems"),
+    ("xhigh", "Extra high reasoning depth for complex problems"),
+    ("max", "Maximum reasoning depth for the hardest problems"),
+    ("ultra", "Maximum reasoning with automatic task delegation"),
+];
+
+fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .find(|(candidate, _)| *candidate == effort)
+        .map(|(_, description)| *description)
+}
+
+/// User-declared levels reduced to the canonical efforts Codex understands,
+/// in canonical (lowest → highest) order regardless of declaration order.
+/// Unknown efforts are dropped so a typo can never produce an entry Codex
+/// would reject.
+fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
+        .iter()
+        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
+        .map(|(effort, _)| *effort)
+        .collect()
+}
+
+/// Build a `supported_reasoning_levels` array from user-declared effort values.
+fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
+    let entries: Vec<Value> = codex_canonical_efforts(levels)
+        .into_iter()
+        .map(|effort| {
+            let description = codex_reasoning_level_description(effort)
+                .expect("canonical effort always has a description");
+            serde_json::json!({ "effort": effort, "description": description })
+        })
+        .collect();
+    serde_json::json!(entries)
+}
+
+/// Apply a per-model reasoning-level override onto a catalog entry. Returns
+/// true when the override was applied. `template_default` is the base entry's
+/// `default_reasoning_level` (from the neutral template or an official vendor
+/// entry) used as the fallback when the user did not declare one explicitly.
+fn apply_codex_reasoning_level_override(
+    entry_obj: &mut serde_json::Map<String, Value>,
+    template_default: Option<&str>,
+    spec: &CodexCatalogModelSpec,
+) -> bool {
+    let Some(levels) = spec.reasoning_levels.as_deref() else {
+        return false;
+    };
+    let canonical = codex_canonical_efforts(levels);
+    if canonical.is_empty() {
+        return false;
+    }
+    let supported = codex_supported_reasoning_levels(levels);
+    entry_obj.insert("supported_reasoning_levels".to_string(), supported);
+
+    // Default: explicit user value wins; otherwise keep the template default
+    // when it is still supported; otherwise fall back to the highest supported
+    // level in canonical order. All candidates are validated against the
+    // canonical set so the default can never reference a dropped effort.
+    let default_level = spec
+        .default_reasoning_level
+        .as_deref()
+        .filter(|level| canonical.contains(level))
+        .or_else(|| template_default.filter(|level| canonical.contains(level)))
+        .or_else(|| canonical.last().copied());
+    if let Some(default_level) = default_level {
+        entry_obj.insert(
+            "default_reasoning_level".to_string(),
+            serde_json::json!(default_level),
+        );
+    }
+    true
 }
 
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
@@ -2466,6 +2600,13 @@ fn codex_catalog_model_specs(
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array());
 
+    // Dedup user mapping rows by (model, displayName) so the same request
+    // model can appear under multiple menu display names (e.g. "luna" and
+    // "terra" both pointing at terra). Fully identical rows still collapse.
+    let mut seen_keys = BTreeSet::new();
+    // Track every model already present in specs (by model id, ignoring
+    // display name) so the auto-review fallback below only seeds the default
+    // model when it is genuinely absent from the user's mapping.
     let mut seen_models = BTreeSet::new();
     let mut specs = Vec::new();
 
@@ -2480,10 +2621,6 @@ fn codex_catalog_model_specs(
                 continue;
             };
 
-            if !seen_models.insert(model.to_string()) {
-                continue;
-            }
-
             let display_name = item
                 .get("displayName")
                 .or_else(|| item.get("display_name"))
@@ -2491,16 +2628,47 @@ fn codex_catalog_model_specs(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
+
+            let dedup_key = (model.to_string(), display_name.clone());
+            if !seen_keys.insert(dedup_key) {
+                continue;
+            }
+            seen_models.insert(model.to_string());
+
             let context_window = parse_codex_positive_u64(
                 item.get("contextWindow")
                     .or_else(|| item.get("context_window")),
             );
+
+            let reasoning_levels = item
+                .get("reasoningLevels")
+                .or_else(|| item.get("reasoning_levels"))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|level| !level.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|levels| !levels.is_empty());
+            let default_reasoning_level = item
+                .get("defaultReasoningLevel")
+                .or_else(|| item.get("default_reasoning_level"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|level| !level.is_empty())
+                .map(str::to_string);
 
             specs.push(CodexCatalogModelSpec {
                 model: model.to_string(),
                 display_name,
                 context_window,
                 auto_review_model_override: auto_review_model_override.clone(),
+                reasoning_levels,
+                default_reasoning_level,
             });
         }
     }
@@ -2518,6 +2686,8 @@ fn codex_catalog_model_specs(
                 display_name: None,
                 context_window: None,
                 auto_review_model_override: Some(auto_review_model_override.clone()),
+                reasoning_levels: None,
+                default_reasoning_level: None,
             });
         }
     }
@@ -2539,9 +2709,11 @@ fn codex_model_catalog_entry(
         "default_reasoning_level": "medium",
         "supported_reasoning_levels": [
             { "effort": "low", "description": "Fast responses with lighter reasoning" },
-            { "effort": "medium", "description": "Balances speed and reasoning depth" },
-            { "effort": "high", "description": "Greater reasoning depth for complex work" },
-            { "effort": "xhigh", "description": "Extra high reasoning depth" }
+            { "effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
+            { "effort": "high", "description": "Greater reasoning depth for complex problems" },
+            { "effort": "xhigh", "description": "Extra high reasoning depth for complex problems" },
+            { "effort": "max", "description": "Maximum reasoning depth for the hardest problems" },
+            { "effort": "ultra", "description": "Maximum reasoning with automatic task delegation" }
         ],
         "shell_type": "shell_command",
         "visibility": "list",
@@ -2579,6 +2751,13 @@ fn codex_model_catalog_entry(
     if let Some(auto_review_model_override) = &spec.auto_review_model_override {
         entry["auto_review_model_override"] =
             serde_json::Value::String(auto_review_model_override.clone());
+    }
+
+    // Per-model reasoning-level override: when the spec declares levels they
+    // replace the neutral template's default set; otherwise the 6-level
+    // default above survives untouched.
+    if let Some(entry_obj) = entry.as_object_mut() {
+        apply_codex_reasoning_level_override(entry_obj, Some("medium"), spec);
     }
 
     entry
@@ -2731,6 +2910,15 @@ fn codex_vendor_catalog_model_entry(
             serde_json::json!(auto_review_model_override),
         );
     }
+
+    // Per-model reasoning-level override: when the spec declares levels they
+    // replace the vendor's declared set (e.g. DeepSeek low/high/max); absent
+    // override keeps the official entry verbatim.
+    let template_default = entry_obj
+        .get("default_reasoning_level")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    apply_codex_reasoning_level_override(entry_obj, template_default.as_deref(), spec);
 
     // Defensive: if a future codex parser requires a field the vendor file
     // predates, backfill only whitelisted parser-required keys.
@@ -4018,7 +4206,7 @@ approval_policy = "never"
     }
 
     #[test]
-    fn codex_model_catalog_from_settings_dedupes_and_defaults() {
+    fn codex_model_catalog_dedupes_identical_rows_keeps_distinct_display_names() {
         let settings = json!({
             "autoReviewModelOverride": "gpt-5.5",
             "modelCatalog": {
@@ -4026,11 +4214,21 @@ approval_policy = "never"
                     {
                         "model": "deepseek-v4-flash",
                         "displayName": "DeepSeek Flash",
-                        "contextWindow": "64000"
+                        "contextWindow": "64000",
+                        "reasoningLevels": ["low", "high", "max", "ultra"],
+                        "defaultReasoningLevel": "max"
                     },
                     {
+                        // Fully identical to the first row → collapsed.
                         "model": "deepseek-v4-flash",
-                        "displayName": "Duplicate"
+                        "displayName": "DeepSeek Flash"
+                    },
+                    {
+                        // Same model, different display name → kept, so the
+                        // same upstream model can appear twice in the Codex
+                        // model picker under different menu names.
+                        "model": "deepseek-v4-flash",
+                        "displayName": "Flash Alias"
                     },
                     {
                         "model": "kimi-k2"
@@ -4043,7 +4241,7 @@ approval_policy = "never"
 
         // No default model in config.toml, so the provider-level override itself
         // is also seeded as a catalog entry to keep auto-review resolvable.
-        assert_eq!(specs.len(), 3);
+        assert_eq!(specs.len(), 4);
         assert_eq!(specs[0].model, "deepseek-v4-flash");
         assert_eq!(specs[0].display_name.as_deref(), Some("DeepSeek Flash"));
         assert_eq!(specs[0].context_window, Some(64_000));
@@ -4051,18 +4249,129 @@ approval_policy = "never"
             specs[0].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
-        assert_eq!(specs[1].model, "kimi-k2");
-        assert_eq!(specs[1].display_name, None);
+        // Reasoning fields survive into the spec (canonical filtering happens
+        // later at catalog-entry generation).
+        assert_eq!(
+            specs[0].reasoning_levels,
+            Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+                "ultra".to_string()
+            ])
+        );
+        assert_eq!(specs[0].default_reasoning_level.as_deref(), Some("max"));
+        assert_eq!(specs[1].model, "deepseek-v4-flash");
+        assert_eq!(specs[1].display_name.as_deref(), Some("Flash Alias"));
         assert_eq!(specs[1].context_window, None);
+        assert_eq!(specs[1].reasoning_levels, None);
+        assert_eq!(specs[1].default_reasoning_level, None);
         assert_eq!(
             specs[1].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
         );
-        assert_eq!(specs[2].model, "gpt-5.5");
+        assert_eq!(specs[2].model, "kimi-k2");
+        assert_eq!(specs[2].display_name, None);
         assert_eq!(specs[2].context_window, None);
         assert_eq!(
             specs[2].auto_review_model_override.as_deref(),
             Some("gpt-5.5")
+        );
+        assert_eq!(specs[3].model, "gpt-5.5");
+        assert_eq!(specs[3].context_window, None);
+        assert_eq!(specs[3].reasoning_levels, None);
+        assert_eq!(specs[3].default_reasoning_level, None);
+        assert_eq!(
+            specs[3].auto_review_model_override.as_deref(),
+            Some("gpt-5.5")
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_applies_per_model_reasoning_override() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "mapped-a",
+                        "displayName": "Mapped A",
+                        "reasoningLevels": ["max", "ultra", "bogus"],
+                        "defaultReasoningLevel": "max"
+                    },
+                    {
+                        // No reasoning override → keeps the neutral template's
+                        // 6-level default (low..ultra).
+                        "model": "mapped-b"
+                    },
+                    {
+                        // Reasoning levels declared but default points at a
+                        // dropped/unknown value → falls back to highest declared.
+                        "model": "mapped-c",
+                        "displayName": "Mapped C",
+                        "reasoningLevels": ["low", "high"],
+                        "defaultReasoningLevel": "max"
+                    }
+                ]
+            }
+        });
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model_provider = \"custom\"",
+        )
+        .expect("catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        // Row 0: user override wins; unknown "bogus" dropped; canonical order;
+        // explicit default "max" preserved.
+        let entry_a = &catalog["models"][0];
+        let efforts_a: Vec<&str> = entry_a["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts_a, vec!["max", "ultra"]);
+        assert_eq!(
+            entry_a.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("max")
+        );
+
+        // Row 1: no override → neutral 6-level default survives untouched.
+        let entry_b = &catalog["models"][1];
+        let efforts_b: Vec<&str> = entry_b["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts_b, vec!["low", "medium", "high", "xhigh", "max", "ultra"]);
+        assert_eq!(
+            entry_b.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("medium")
+        );
+
+        // Row 2: default "max" not in declared set → falls back to highest
+        // declared ("high").
+        let entry_c = &catalog["models"][2];
+        let efforts_c: Vec<&str> = entry_c["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts_c, vec!["low", "high"]);
+        assert_eq!(
+            entry_c.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("high")
         );
     }
 
@@ -4373,6 +4682,58 @@ wire_api = "responses"
             Some("freeform")
         );
         assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
+    }
+
+    #[test]
+    fn deepseek_vendor_entry_user_reasoning_override_wins_over_official() {
+        // DeepSeek's official catalog declares low/high/max. A per-model
+        // reasoningLevels override must replace the vendor's set, and the
+        // default falls back to the template default ("high") when the user
+        // omits defaultReasoningLevel and it is still canonical.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek V4 Flash",
+                        "reasoningLevels": ["low", "medium", "high", "xhigh", "max", "ultra"]
+                    }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let entry = &catalog["models"][0];
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        // User's 6-level set replaces the vendor's low/high/max.
+        assert_eq!(
+            efforts,
+            vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        // No explicit user default → template default "high" is still canonical → kept.
+        assert_eq!(
+            entry.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("high")
+        );
     }
 
     #[test]
@@ -5068,9 +5429,17 @@ model = "deepseek-v4-flash"
                         "modalities": {
                             "input": ["text", " "],
                             "output": ["text"]
-                        }
+                        },
+                        "reasoningLevels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+                        "defaultReasoningLevel": "high"
                     },
                     {
+                        // Fully identical to the first row → collapsed.
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek Flash"
+                    },
+                    {
+                        // Same model, distinct display name → kept.
                         "model": "deepseek-v4-flash",
                         "displayName": "Duplicate"
                     },
@@ -5108,11 +5477,20 @@ model = "deepseek-v4-flash"
                 "modalities": {
                     "input": ["text"],
                     "output": ["text"]
-                }
+                },
+                "reasoningLevels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+                "defaultReasoningLevel": "high"
             }))
         );
         assert_eq!(
             provider_settings.pointer("/modelCatalog/models/1"),
+            Some(&json!({
+                "model": "deepseek-v4-flash",
+                "displayName": "Duplicate"
+            }))
+        );
+        assert_eq!(
+            provider_settings.pointer("/modelCatalog/models/2"),
             Some(&json!({
                 "model": "kimi-k2",
                 "displayName": "Kimi K2",
@@ -5124,7 +5502,7 @@ model = "deepseek-v4-flash"
             }))
         );
         assert!(provider_settings
-            .pointer("/modelCatalog/models/2")
+            .pointer("/modelCatalog/models/3")
             .is_none());
     }
 

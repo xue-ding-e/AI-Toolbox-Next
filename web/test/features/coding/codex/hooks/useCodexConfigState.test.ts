@@ -65,6 +65,56 @@ test('normalizeCodexCatalogModels preserves image capability metadata', () => {
   ]);
 });
 
+test('normalizeCodexCatalogModels keeps same model with distinct display names but collapses identical rows', () => {
+  const models = normalizeCodexCatalogModels([
+    { model: 'terra', displayName: 'luna' },
+    { model: 'terra', displayName: 'luna' }, // fully identical → collapsed
+    { model: 'terra', displayName: 'terra' }, // same model, distinct name → kept
+    { model: 'terra' }, // same model, no display name → kept as its own row
+  ]);
+
+  assert.deepEqual(
+    models.map((item) => ({ model: item.model, displayName: item.displayName })),
+    [
+      { model: 'terra', displayName: 'luna' },
+      { model: 'terra', displayName: 'terra' },
+      { model: 'terra', displayName: undefined },
+    ],
+  );
+});
+
+test('normalizeCodexCatalogModels preserves reasoning levels and drops empty values', () => {
+  const models = normalizeCodexCatalogModels([
+    {
+      model: 'glm-5.2',
+      displayName: 'GLM 5.2',
+      reasoningLevels: ['high', 'low', 'bogus', '  '],
+      defaultReasoningLevel: '  high  ',
+    },
+    {
+      model: 'deepseek-v4',
+      displayName: 'DeepSeek V4',
+      reasoningLevels: [],
+      defaultReasoningLevel: '',
+    },
+  ]);
+
+  // Empty/whitespace entries are dropped; non-canonical tokens like "bogus"
+  // survive here (canonical filtering happens later at catalog-generation).
+  assert.deepEqual(models, [
+    {
+      model: 'glm-5.2',
+      displayName: 'GLM 5.2',
+      reasoningLevels: ['high', 'low', 'bogus'],
+      defaultReasoningLevel: 'high',
+    },
+    {
+      model: 'deepseek-v4',
+      displayName: 'DeepSeek V4',
+    },
+  ]);
+});
+
 test('buildCodexSettingsConfig persists provider-level auto review model override', () => {
   const settingsConfig = JSON.parse(buildCodexSettingsConfig({
     category: 'custom',

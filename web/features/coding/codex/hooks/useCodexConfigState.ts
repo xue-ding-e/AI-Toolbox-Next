@@ -18,6 +18,7 @@ import type {
 import {
   normalizeCodexCatalogModalities,
   normalizeCodexCatalogModels,
+  normalizeCodexCatalogReasoningLevels,
 } from '../utils/codexCatalogModels';
 import {
   buildCodexSettingsConfig,
@@ -59,6 +60,8 @@ function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel
       const compatibleItem = item as CodexCatalogModel & {
         display_name?: unknown;
         context_window?: unknown;
+        reasoning_levels?: unknown;
+        default_reasoning_level?: unknown;
       };
 
       return {
@@ -80,6 +83,17 @@ function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel
         vision: typeof compatibleItem.vision === 'boolean' ? compatibleItem.vision : undefined,
         attachment: typeof compatibleItem.attachment === 'boolean' ? compatibleItem.attachment : undefined,
         modalities: normalizeCodexCatalogModalities(compatibleItem.modalities),
+        reasoningLevels: normalizeCodexCatalogReasoningLevels(
+          Array.isArray(compatibleItem.reasoningLevels)
+            ? compatibleItem.reasoningLevels
+            : compatibleItem.reasoning_levels,
+        ),
+        defaultReasoningLevel:
+          typeof compatibleItem.defaultReasoningLevel === 'string' && compatibleItem.defaultReasoningLevel.trim()
+            ? compatibleItem.defaultReasoningLevel.trim()
+            : typeof compatibleItem.default_reasoning_level === 'string' && compatibleItem.default_reasoning_level.trim()
+              ? compatibleItem.default_reasoning_level.trim()
+              : undefined,
       };
     }),
   );

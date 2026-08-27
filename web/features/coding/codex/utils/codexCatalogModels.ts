@@ -31,21 +31,38 @@ export function normalizeCodexCatalogModalities(value: unknown): CodexCatalogMod
   };
 }
 
+export function normalizeCodexCatalogReasoningLevels(value: unknown): string[] | undefined {
+  return normalizeStringArray(value);
+}
+
 export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexCatalogModel[] {
-  const seenModels = new Set<string>();
+  // Dedup by (model, displayName) so the same actual request model can appear
+  // multiple times under different menu display names (e.g. mapping both
+  // "luna" and "terra" menu entries to the same upstream model). Fully
+  // identical rows are still collapsed.
+  const seenKeys = new Set<string>();
   const normalizedModels: CodexCatalogModel[] = [];
 
   for (const item of models) {
     const model = item.model.trim();
-    if (!model || seenModels.has(model)) {
+    if (!model) {
       continue;
     }
-    seenModels.add(model);
-
     const displayName = item.displayName?.trim();
+    const dedupKey = `${model}\0${displayName ?? ''}`;
+    if (seenKeys.has(dedupKey)) {
+      continue;
+    }
+    seenKeys.add(dedupKey);
+
     const rawContextWindow = String(item.contextWindow ?? '').replace(/[^\d]/g, '');
     const contextWindow = rawContextWindow ? Number.parseInt(rawContextWindow, 10) : undefined;
     const modalities = normalizeCodexCatalogModalities(item.modalities);
+    const reasoningLevels = normalizeCodexCatalogReasoningLevels(item.reasoningLevels);
+    const defaultReasoningLevel =
+      typeof item.defaultReasoningLevel === 'string' && item.defaultReasoningLevel.trim()
+        ? item.defaultReasoningLevel.trim()
+        : undefined;
 
     normalizedModels.push({
       model,
@@ -55,6 +72,8 @@ export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexC
       ...(typeof item.vision === 'boolean' ? { vision: item.vision } : {}),
       ...(typeof item.attachment === 'boolean' ? { attachment: item.attachment } : {}),
       ...(modalities ? { modalities } : {}),
+      ...(reasoningLevels ? { reasoningLevels } : {}),
+      ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
     });
   }
 
