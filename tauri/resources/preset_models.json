@@ -102,6 +102,37 @@
       }
     },
     {
+      "id": "glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "contextLimit": 1000000,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false,
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        },
+        "max": {
+          "reasoningEffort": "max"
+        }
+      }
+    },
+    {
       "id": "glm-5.2",
       "name": "GLM 5.2",
       "contextLimit": 1000000,
@@ -156,6 +187,26 @@
       "modalities": {
         "input": [
           "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
+      "id": "qwen3.8-flash",
+      "name": "Qwen3.8 Flash",
+      "contextLimit": 1000000,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video"
         ],
         "output": [
           "text"

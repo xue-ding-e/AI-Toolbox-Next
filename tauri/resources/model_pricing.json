@@ -960,6 +960,14 @@
     "cache_creation_cost_per_million": "0"
   },
   {
+    "model_id": "glm-5.3-flash",
+    "display_name": "GLM-5.3-Flash",
+    "input_cost_per_million": "0.15",
+    "output_cost_per_million": "0.50",
+    "cache_read_cost_per_million": "0.03",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
     "model_id": "mimo-v2-flash",
     "display_name": "MiMo V2 Flash",
     "input_cost_per_million": "0.09",
@@ -989,6 +997,14 @@
     "input_cost_per_million": "0.435",
     "output_cost_per_million": "0.87",
     "cache_read_cost_per_million": "0.0036",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
+    "model_id": "qwen3.8-flash",
+    "display_name": "Qwen3.8 Flash",
+    "input_cost_per_million": "0.16",
+    "output_cost_per_million": "0.47",
+    "cache_read_cost_per_million": "0.016",
     "cache_creation_cost_per_million": "0"
   },
   {
