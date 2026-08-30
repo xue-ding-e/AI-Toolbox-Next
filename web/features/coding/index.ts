@@ -2,6 +2,7 @@ export * from './opencode';
 export * from './claudecode';
 export * from './codex';
 export * from './grok';
+export * from './kimi';
 export * from './openclaw';
 export * from './geminicli';
 export * from './pi';

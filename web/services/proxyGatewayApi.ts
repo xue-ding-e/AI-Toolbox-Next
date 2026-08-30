@@ -8,6 +8,7 @@ export type GatewayCliKey =
   | 'claude'
   | 'codex'
   | 'grok'
+  | 'kimi'
   | 'gemini'
   | 'opencode'
   | 'claude_desktop';
@@ -347,7 +348,7 @@ export interface GatewayModelHealthItem {
   last_error_category: string | null;
 }
 
-export type GatewaySessionImportCli = 'all' | 'claude' | 'codex' | 'grok' | 'gemini';
+export type GatewaySessionImportCli = 'all' | 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini';
 
 export interface GatewaySessionUsageImportInput {
   cli_key: GatewaySessionImportCli;

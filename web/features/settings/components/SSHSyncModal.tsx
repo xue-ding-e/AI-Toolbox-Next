@@ -39,6 +39,7 @@ const MODULE_NAMES: Record<string, string> = {
   claude_desktop: 'Claude Desktop',
   codex: 'Codex',
   grok: 'Grok',
+  kimi: 'Kimi',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
   pi: 'Pi',
@@ -54,6 +55,7 @@ const MODULE_COLORS: Record<string, string> = {
   claude_desktop: 'geekblue',
   codex: 'orange',
   grok: 'gold',
+  kimi: 'lime',
   openclaw: 'green',
   geminicli: 'cyan',
   pi: 'magenta',
@@ -89,6 +91,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   claude_desktop: 'claudedesktop',
   codex: 'codex',
   grok: 'grok',
+  kimi: 'kimi',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
@@ -97,7 +100,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 interface SSHSyncModalProps {
   open: boolean;

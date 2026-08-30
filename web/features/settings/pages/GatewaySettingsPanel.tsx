@@ -31,7 +31,7 @@ type BusyAction = 'load' | 'autosave';
 type NoticeKind = 'success' | 'error' | 'info';
 type SupportedGatewayCliKey = Extract<
   GatewayCliKey,
-  'claude' | 'codex' | 'grok' | 'gemini' | 'claude_desktop'
+  'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'
 >;
 
 interface NoticeState {
@@ -56,6 +56,10 @@ const CLI_OPTIONS: CliOption[] = [
   {
     key: 'grok',
     labelKey: 'settings.gateway.cli.grok',
+  },
+  {
+    key: 'kimi',
+    labelKey: 'settings.gateway.cli.kimi',
   },
   {
     key: 'gemini',

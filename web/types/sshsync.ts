@@ -40,7 +40,7 @@ export const DEFAULT_SSH_DIRECTORY_EXCLUDES = [
 export interface SSHFileMapping {
   id: string;
   name: string;
-  module: string; // "opencode" | "claude" | "codex" | "grok" | "openclaw" | "geminicli"
+  module: string; // "opencode" | "claude" | "codex" | "grok" | "kimi" | "openclaw" | "geminicli"
   localPath: string;
   remotePath: string;
   enabled: boolean;

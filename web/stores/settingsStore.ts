@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  defaultSettings,
   getSettings,
   saveSettings,
   saveManualCliPath,
@@ -213,7 +214,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   autoBackupMaxKeep: 10,
   lastAutoBackupTime: null,
   autoCheckUpdate: true,
-  visibleTabs: ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh', 'gateway', 'image', 'ssh', 'wsl'],
+  visibleTabs: defaultSettings.visible_tabs,
   sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
   opencodeAllowClearAppliedOhMyConfig: false,
   opencodeUseLegacyOhMyConfig: false,
@@ -250,7 +251,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         autoBackupMaxKeep: settings.auto_backup_max_keep ?? 10,
         lastAutoBackupTime: settings.last_auto_backup_time ?? null,
         autoCheckUpdate: settings.auto_check_update ?? true,
-        visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh', 'gateway', 'image', 'ssh', 'wsl'],
+        visibleTabs: settings.visible_tabs ?? defaultSettings.visible_tabs,
         sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         opencodeAllowClearAppliedOhMyConfig: settings.opencode_allow_clear_applied_oh_my_config ?? false,
         opencodeUseLegacyOhMyConfig: settings.opencode_use_legacy_oh_my_config ?? false,

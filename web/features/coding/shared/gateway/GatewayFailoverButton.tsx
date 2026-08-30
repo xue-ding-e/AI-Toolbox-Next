@@ -14,7 +14,7 @@ import { refreshTrayMenu } from '@/services/appApi';
 import { restoreDirectUnavailableHintKey, type GatewayProxyReason } from './providerProtocol';
 import styles from './GatewayFailoverButton.module.less';
 
-type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'gemini' | 'claude_desktop'>;
+type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'>;
 type ActionKind = 'load' | 'enableFailover' | 'disableFailover' | 'restore';
 type NoticeKind = 'success' | 'error' | 'info';
 

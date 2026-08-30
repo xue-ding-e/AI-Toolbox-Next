@@ -1,6 +1,7 @@
 export type SessionTool =
   | 'codex'
   | 'grok'
+  | 'kimi'
   | 'claudecode'
   | 'claudedesktop'
   | 'geminicli'

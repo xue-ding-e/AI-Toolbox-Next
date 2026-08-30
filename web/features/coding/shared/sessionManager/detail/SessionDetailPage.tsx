@@ -492,8 +492,9 @@ export const OpenCodeSessionDetailPage = () => <SessionDetailPage tool="opencode
 export const ClaudeCodeSessionDetailPage = () => <SessionDetailPage tool="claudecode" />;
 export const CodexSessionDetailPage = () => <SessionDetailPage tool="codex" />;
 export const GrokSessionDetailPage = () => <SessionDetailPage tool="grok" />;
-export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw" />;
 export const GeminiCliSessionDetailPage = () => <SessionDetailPage tool="geminicli" />;
+export const KimiSessionDetailPage = () => <SessionDetailPage tool="kimi" />;
+export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw" />;
 export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;
 
 export const OhMyPiSessionDetailPage = () => <SessionDetailPage tool="oh_my_pi" />;

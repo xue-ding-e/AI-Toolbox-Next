@@ -26,6 +26,7 @@ const TAB_TO_MODULE: Record<string, string> = {
   claudedesktop: 'claude_desktop',
   codex: 'codex',
   grok: 'grok',
+  kimi: 'kimi',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   pi: 'pi',
@@ -33,7 +34,7 @@ const TAB_TO_MODULE: Record<string, string> = {
   hermes: 'hermes',
   dsh: 'dsh',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 export function useSSHSync() {
   const [config, setConfig] = useState<SSHSyncConfig | null>(null);

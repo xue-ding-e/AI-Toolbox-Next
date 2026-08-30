@@ -68,8 +68,16 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   opencode: 'subModules.opencode',
   claude: 'subModules.claudecode',
   codex: 'subModules.codex',
+  grok: 'subModules.grok',
+  kimi: 'subModules.kimi',
   openclaw: 'subModules.openclaw',
   geminicli: 'subModules.geminicli',
+  pi: 'subModules.pi',
+  oh_my_pi: 'subModules.ohMyPi',
+  claudedesktop: 'subModules.claudedesktop',
+  claude_desktop: 'subModules.claudedesktop',
+  hermes: 'subModules.hermes',
+  dsh: 'subModules.dsh',
 };
 
 /** Local mutable holder so Modal.confirm content can toggle without reopening. */
@@ -675,7 +683,7 @@ const GeneralSettingsPage: React.FC = () => {
     </div>
   );
 
-  const CODING_TABS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'] as const;
+  const CODING_TABS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'kimi', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'] as const;
   const OTHER_TABS = ['gateway', 'image', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[];
 
   const [reorderMode, setReorderMode] = React.useState(false);

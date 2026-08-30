@@ -22,7 +22,8 @@
     "hermes": "Hermes",
     "dsh": "dsh",
     "ohMyPiFull": "Oh My Pi",
-    "dshFull": "DeepSeek Harness"
+    "dshFull": "DeepSeek Harness",
+    "kimi": "Kimi"
   },
   "providerBilling": {
     "title": "Billing Config",
@@ -595,7 +596,10 @@
         "geminiDesc": "Future takeover for Gemini settings",
         "grok": "Grok",
         "claude_desktop": "Claude Desktop",
-        "claude_desktopDesc": "Future takeover for Claude Desktop 3P gateway config"
+        "claude_desktopDesc": "Future takeover for Claude Desktop 3P gateway config",
+        "kimi": "Kimi Code",
+        "kimiDesc": "Take over Kimi CLI config.toml",
+        "opencode": "OpenCode"
       },
       "cliStatus": {
         "direct": "Direct",
@@ -669,10 +673,10 @@
       "scopeSectionTitle": "Backup Scope",
       "imageAssets": "Back up generated images",
       "cliConfigFiles": "Back up database-backed CLI runtime files",
-      "cliConfigFilesDesc": "Controls backup/restore of Codex, Claude, Grok, and Gemini CLI local runtime files (config, auth, prompts, etc.). When off, those files are not packaged or restored; providers and prompts can still be re-applied from SQLite after restart. OpenCode, OpenClaw, and Pi are runtime-file-owned and are always included in backup/restore (individual files can still be excluded via filter rules).",
+      "cliConfigFilesDesc": "Controls backup/restore of Codex, Claude, Grok, Gemini, and Kimi CLI local runtime files (config, auth, prompts, etc.). When off, those files are not packaged or restored; providers and prompts can still be re-applied from SQLite after restart. OpenCode, OpenClaw, and Pi are runtime-file-owned and are always included in backup/restore (individual files can still be excluded via filter rules).",
       "skipCliCustomRoots": "Do not restore CLI custom root directories",
       "skipCliCustomRootsDesc": "Clears custom root/config paths from the restored database so this machine uses defaults or env paths. Recommended across devices.",
-      "restoreWillReapply": "Database-backed CLI (Codex/Claude/Grok/Gemini) runtime files were skipped or missing from the backup. After restart, providers and prompts will be re-applied from SQLite. OpenCode, OpenClaw, and Pi still use runtime files from the backup when present.",
+      "restoreWillReapply": "Database-backed CLI (Codex/Claude/Grok/Gemini/Kimi) runtime files were skipped or missing from the backup. After restart, providers and prompts will be re-applied from SQLite. OpenCode, OpenClaw, and Pi still use runtime files from the backup when present.",
       "customEntries": {
         "title": "Custom Backup Items",
         "description": "Include extra local files or folders in backups.",
@@ -713,7 +717,7 @@
         "filePathPlaceholder": "Select a backup path to exclude",
         "selectToolFirst": "Select a tool first",
         "addTitle": "Add Filter Rule",
-        "disabledByCliConfigFiles": "When database-backed CLI runtime backup is off, filter rules for Codex/Claude/Grok/Gemini have no effect; OpenCode/OpenClaw/Pi filter rules still apply."
+        "disabledByCliConfigFiles": "When database-backed CLI runtime backup is off, filter rules for Codex/Claude/Grok/Gemini/Kimi have no effect; OpenCode/OpenClaw/Pi filter rules still apply."
       },
       "noPathConfigured": "Please configure backup path first",
       "noWebDAVConfigured": "Please configure WebDAV server first",
@@ -1219,7 +1223,8 @@
     "moreOptionsCliDetectSuccess": "CLI path auto-detected",
     "moreOptionsCliDetectFailed": "Auto detect failed, please choose manually",
     "moreOptionsCliNotSet": "No manual CLI path set yet. Click Edit to auto-detect or pick a local CLI path.",
-    "apply": "Apply"
+    "apply": "Apply",
+    "open": "Open"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -5278,6 +5283,150 @@
     },
     "providers": {
       "importAllApiHubNonAnthropicProtocolDesc": "The selected provider is not an Anthropic-native endpoint but will still be imported in Anthropic Messages protocol format. Requesting Google / Gemini or OpenAI endpoints with the Anthropic format will generally fail. Prefer Anthropic-compatible endpoints, or review the protocol in the edit page after import."
+    }
+  },
+  "kimi": {
+    "title": "Kimi Code CLI Configuration",
+    "provider": {
+      "title": "Providers",
+      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
+      "applied": "Applied",
+      "deviceAuthTitle": "Sign In to Kimi Official Account",
+      "deviceAuthHint": "Open the Kimi authorization page in your browser and enter the code below. The account will be saved automatically upon completion.",
+      "deviceAuthOpenBrowser": "Open Authorization Page",
+      "deviceAuthStatus": "Status: {{status}}, remaining {{seconds}}s",
+      "modeOfficial": "Official Subscription",
+      "apply": "Apply",
+      "deviceAuthStatusValue": {
+        "waiting": "Waiting for authorization",
+        "completed": "Completed",
+        "failed": "Failed",
+        "expired": "Expired",
+        "cancelled": "Cancelled"
+      }
+    },
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Manage Kimi Code CLI global prompts, written to AGENTS.md when applied",
+      "namePlaceholder": "e.g. Default Assistant",
+      "contentPlaceholder": "Enter global prompt Markdown content",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    },
+    "rootPathSource": {
+      "customize": "Customize",
+      "modal": {
+        "title": "Customize Kimi Code CLI Root Directory",
+        "sourceEnv": "Environment Variable KIMI_CODE_HOME",
+        "sourceShell": "Shell Config KIMI_CODE_HOME",
+        "description": "Kimi Code CLI config.toml and AGENTS.md are derived from this directory",
+        "envWarningDesc": "App custom path only affects AI Toolbox. CLI itself requires setting KIMI_CODE_HOME",
+        "placeholder": "Enter or select Kimi root directory",
+        "folderOnlyDesc": "Please select a directory folder",
+        "saveSuccess": "Kimi root directory saved",
+        "currentSource": "Current Source",
+        "sourceCustom": "App Custom Path",
+        "sourceDefault": "Default Path",
+        "envWarningTitle": "Note",
+        "envHint": "Currently controlled by environment variable: {{path}}",
+        "shellHint": "Currently controlled by shell config: {{path}}",
+        "customPath": "Custom Path",
+        "folderOnlyTitle": "Directory Only",
+        "resetSuccess": "Reset Kimi root directory",
+        "reset": "Reset"
+      }
+    },
+    "commonConfig": {
+      "title": "General Configuration",
+      "description": "These configurations will be appended to config.toml, applied to all providers."
+    },
+    "pageHint": "Add multiple provider configurations and quickly switch via Apply or the system tray menu. Common configuration is shared across all providers and merged automatically on apply.",
+    "addProvider": "Add Provider",
+    "emptyText": "No provider configuration, click button above to add",
+    "plugins": {
+      "title": "Plugins",
+      "name": "Plugin Name",
+      "version": "Version",
+      "description": "Description",
+      "openDirectory": "Open Plugins Directory",
+      "status": "Status",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "empty": "No plugins installed",
+      "globalHint": "Plugins are global resources (the plugins/ directory) and do not switch with providers. Install, uninstall, and update them with the /plugins command in the Kimi CLI."
+    },
+    "officialAccount": {
+      "loginSuccess": "Logged in successfully"
+    },
+    "officialAccounts": "Official Accounts",
+    "sessions": "Sessions",
+    "applySuccess": "Applied Successfully",
+    "deleteSuccess": "Deleted Successfully",
+    "saveSuccess": "Saved Successfully",
+    "officialAccountButton": "Official Account",
+    "configPath": "Config Path",
+    "viewDocs": "View Docs",
+    "viewUsage": "View Usage",
+    "providerForm": {
+      "editTitle": "Edit Provider",
+      "addTitle": "Add Provider",
+      "name": "Name",
+      "nameRequired": "Please enter provider name",
+      "category": "Category",
+      "categoryOfficial": "Official Account",
+      "categoryCustom": "Custom Provider",
+      "officialNoticeTitle": "Official account credentials managed via device login",
+      "officialNoticeDesc": "No need to configure API Key or Base URL. Credentials are automatically managed via Kimi Code device login.",
+      "apiKey": "API Key",
+      "apiKeyTooltip": "Mapped to auth.API_KEY in Kimi Code",
+      "baseUrl": "Base URL",
+      "baseUrlTooltip": "API endpoint address, mapped to base_url in providerConfigs",
+      "defaultModelKey": "Default Model",
+      "defaultModelKeyTooltip": "Default model key used when this provider is active",
+      "defaultModelKeyPlaceholder": "Select or enter default model key",
+      "modelCatalog": "Model Catalog",
+      "addModel": "Add Model",
+      "noModelsConfigured": "No models configured",
+      "modelCatalogKey": "Model Key",
+      "modelCatalogModel": "Upstream Model",
+      "deleteModelConfirm": "Are you sure you want to delete this model entry?",
+      "notes": "Notes",
+      "notesPlaceholder": "Optional notes...",
+      "advancedSettings": "Advanced Settings (Raw JSON)",
+      "advancedSettingsDesc": "Underlying settingsConfig raw JSON. Synchronized bidirectionally with form fields while preserving unmanaged fields.",
+      "invalidJsonPrompt": "Invalid JSON in advanced settings, please check",
+      "modelListRequiredForDefaultModel": "Model catalog cannot be empty when a default model is specified for custom providers",
+      "modelRowIncomplete": "Some model catalog rows are missing Model Key or Upstream Model",
+      "modelCatalogContextSize": "Context Size",
+      "modelCatalogContextSizeTooltip": "Written to config.toml as max_context_size. Kimi CLI requires a positive context size per model; defaults to 262144 (256k) when left empty.",
+      "apiKeyRequired": "Please enter the API key",
+      "baseUrlRequired": "Please enter the Base URL"
+    },
+    "localConfigHint": "From local file, will be saved to database after editing",
+    "providerDisabled": "Disabled",
+    "providerEnabled": "Enabled",
+    "account": {
+      "apply": "Apply",
+      "applied": "Applied",
+      "delete": "Delete",
+      "deleteConfirm": "Delete official account {{name}}? You will need to log in again.",
+      "applySuccess": "Official account applied",
+      "deleteSuccess": "Official account deleted"
     }
   }
 }

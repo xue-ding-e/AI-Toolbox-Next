@@ -77,7 +77,7 @@ const emptyState: StatisticsState = {
   modelStats: [],
 };
 
-const cliOptions: GatewayCliFilter[] = ['all', 'claude', 'codex', 'grok', 'gemini'];
+const cliOptions: GatewayCliFilter[] = ['all', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'gemini', 'opencode'];
 const rangeOptions: GatewayUsageRangePreset[] = ['today', '1d', '7d', '14d', '30d', 'custom'];
 const trendSeriesKeys: readonly TrendSeriesKey[] = ['input', 'output', 'cache', 'cost'];
 const trendCurveType = 'monotoneX' as const;

@@ -10,6 +10,7 @@ import {
   Grok,
   HermesAgent,
   KiloCode,
+  Kimi,
   OpenClaw,
   Qoder,
   Qwen,
@@ -80,6 +81,9 @@ const OmpMark: ToolIconRenderer = ({ size = 16 }) => (
 
 const TOOL_ICON_RENDERERS: Record<string, ToolIconRenderer> = {
   grok: Grok,
+  // Kimi.Color is a white glyph meant for a brand-blue badge background and is
+  // invisible on light surfaces; the mono mark follows currentColor instead.
+  kimi: Kimi,
   // Matches the geminicli tab, which uses Gemini.Color (not the CLI mark).
   gemini_cli: Gemini.Color,
   qwen_code: Qwen.Color,

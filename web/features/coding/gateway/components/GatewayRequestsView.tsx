@@ -699,9 +699,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             options={[
               { value: 'all', label: t('gateway.page.requests.filters.allCli') },
               { value: 'claude', label: t('settings.gateway.cli.claude') },
+              { value: 'claude_desktop', label: t('settings.gateway.cli.claude_desktop') },
               { value: 'codex', label: t('settings.gateway.cli.codex') },
               { value: 'grok', label: t('settings.gateway.cli.grok') },
+              { value: 'kimi', label: t('settings.gateway.cli.kimi') },
               { value: 'gemini', label: t('settings.gateway.cli.gemini') },
+              { value: 'opencode', label: t('settings.gateway.cli.opencode') },
             ]}
             onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
           />

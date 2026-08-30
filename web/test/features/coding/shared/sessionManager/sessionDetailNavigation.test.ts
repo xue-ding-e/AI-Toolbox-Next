@@ -43,4 +43,14 @@ test('parseSessionDetailSearchParams rejects missing sourcePath', () => {
 test('getSessionDetailRoutePath returns the hidden route path for each tool', () => {
   assert.equal(getSessionDetailRoutePath('codex'), '/coding/codex/sessions/detail');
   assert.equal(getSessionDetailRoutePath('openclaw'), '/coding/openclaw/sessions/detail');
+  assert.equal(getSessionDetailRoutePath('kimi'), '/coding/kimi/sessions/detail');
+});
+
+test('buildSessionDetailPath round-trips Kimi session source paths', () => {
+  const sourcePath = 'C:\\Users\\me\\.kimi\\sessions\\proj\\session-1.jsonl';
+  const path = buildSessionDetailPath('kimi', sourcePath);
+  const url = new URL(path, 'http://localhost');
+
+  assert.equal(url.pathname, '/coding/kimi/sessions/detail');
+  assert.deepEqual(parseSessionDetailSearchParams(url.searchParams), { sourcePath });
 });

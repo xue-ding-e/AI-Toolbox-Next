@@ -4,6 +4,7 @@ export type GatewayProviderToolKey =
   | 'claude'
   | 'codex'
   | 'grok'
+  | 'kimi'
   | 'gemini'
   | 'claude_desktop';
 
@@ -141,6 +142,7 @@ const normalizeGatewayProviderTool = (value?: string | null): GatewayProviderToo
     normalized === 'claude' ||
     normalized === 'codex' ||
     normalized === 'grok' ||
+    normalized === 'kimi' ||
     normalized === 'gemini' ||
     normalized === 'claude_desktop'
   ) {

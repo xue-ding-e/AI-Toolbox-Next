@@ -22,7 +22,8 @@
     "hermes": "Hermes",
     "dsh": "dsh",
     "ohMyPiFull": "Oh My Pi",
-    "dshFull": "DeepSeek Harness"
+    "dshFull": "DeepSeek Harness",
+    "kimi": "Kimi"
   },
   "providerBilling": {
     "title": "计费配置",
@@ -595,7 +596,10 @@
         "geminiDesc": "后续接管 Gemini settings",
         "grok": "Grok",
         "claude_desktop": "Claude Desktop",
-        "claude_desktopDesc": "后续接管 Claude Desktop 3P 网关配置"
+        "claude_desktopDesc": "后续接管 Claude Desktop 3P 网关配置",
+        "kimi": "Kimi Code",
+        "kimiDesc": "Kimi CLI config.toml 接管",
+        "opencode": "OpenCode"
       },
       "cliStatus": {
         "direct": "未接管",
@@ -669,10 +673,10 @@
       "scopeSectionTitle": "备份范围",
       "imageAssets": "备份生图图片",
       "cliConfigFiles": "备份 DB 型 CLI 运行时文件",
-      "cliConfigFilesDesc": "控制是否备份/恢复 Codex、Claude、Grok、Gemini CLI 的本机运行时文件（config、auth、prompt 等）。关闭后这些文件不进包、不覆盖本机；其渠道与提示词仍可由 SQLite 在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型与主配置以运行时文件为主数据，始终随备份迁移（仍可用下方「文件过滤规则」排除单个敏感文件）。",
+      "cliConfigFilesDesc": "控制是否备份/恢复 Codex、Claude、Grok、Gemini、Kimi CLI 的本机运行时文件（config、auth、prompt 等）。关闭后这些文件不进包、不覆盖本机；其渠道与提示词仍可由 SQLite 在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型与主配置以运行时文件为主数据，始终随备份迁移（仍可用下方「文件过滤规则」排除单个敏感文件）。",
       "skipCliCustomRoots": "不恢复各 CLI 自定义根目录",
       "skipCliCustomRootsDesc": "勾选后清空备份库中的自定义 root/config 路径，改用本机默认或环境变量路径。跨设备恢复时建议勾选。",
-      "restoreWillReapply": "已跳过或备份未包含 DB 型 CLI（Codex/Claude/Grok/Gemini）运行时文件：重启后将从数据库重新应用渠道与提示词。OpenCode、OpenClaw、Pi 仍以备份中的运行时文件为准。",
+      "restoreWillReapply": "已跳过或备份未包含 DB 型 CLI（Codex/Claude/Grok/Gemini/Kimi）运行时文件：重启后将从数据库重新应用渠道与提示词。OpenCode、OpenClaw、Pi 仍以备份中的运行时文件为准。",
       "customEntries": {
         "title": "自定义备份项",
         "description": "将额外的本地文件或目录加入备份。",
@@ -713,7 +717,7 @@
         "filePathPlaceholder": "选择要排除的备份路径",
         "selectToolFirst": "请先选择工具",
         "addTitle": "添加过滤规则",
-        "disabledByCliConfigFiles": "当前未备份 DB 型 CLI 运行时文件时，Codex/Claude/Grok/Gemini 的过滤规则无对象；OpenCode/OpenClaw/Pi 的过滤规则仍生效。"
+        "disabledByCliConfigFiles": "当前未备份 DB 型 CLI 运行时文件时，Codex/Claude/Grok/Gemini/Kimi 的过滤规则无对象；OpenCode/OpenClaw/Pi 的过滤规则仍生效。"
       },
       "noPathConfigured": "请先配置备份路径",
       "noWebDAVConfigured": "请先配置 WebDAV 服务器",
@@ -1219,7 +1223,8 @@
     "moreOptionsCliDetectSuccess": "已自动检测到 CLI 路径",
     "moreOptionsCliDetectFailed": "自动检测失败，请手动选择",
     "moreOptionsCliNotSet": "尚未手动指定 CLI 路径，点击编辑可自动检测或手动选择本机 CLI 路径",
-    "apply": "应用"
+    "apply": "应用",
+    "open": "打开"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -5275,6 +5280,150 @@
     },
     "providers": {
       "importAllApiHubNonAnthropicProtocolDesc": "检测到所选供应商不是 Anthropic 官方端点，仍会以 Anthropic Messages 协议格式导入。Google / Gemini、OpenAI 等端点用 Anthropic 格式请求通常无法成功。建议仅导入 Anthropic 兼容端点，或导入后立即进入编辑页核对协议。"
+    }
+  },
+  "kimi": {
+    "title": "Kimi Code CLI 配置管理",
+    "provider": {
+      "title": "供应商列表",
+      "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？",
+      "applied": "已应用",
+      "deviceAuthTitle": "登录 Kimi 官方账号",
+      "deviceAuthHint": "在浏览器中打开 Kimi 授权页面并输入下方设备码。授权完成后，账号会自动保存。",
+      "deviceAuthOpenBrowser": "打开授权页面",
+      "deviceAuthStatus": "状态：{{status}}，剩余 {{seconds}} 秒",
+      "modeOfficial": "官方订阅",
+      "apply": "应用",
+      "deviceAuthStatusValue": {
+        "waiting": "等待授权",
+        "completed": "已完成",
+        "failed": "失败",
+        "expired": "已过期",
+        "cancelled": "已取消"
+      }
+    },
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "管理 Kimi Code CLI 全局提示词，应用后写入 AGENTS.md",
+      "namePlaceholder": "如：默认助手",
+      "contentPlaceholder": "请输入全局提示词 Markdown 内容",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `AGENTS.md` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+    },
+    "rootPathSource": {
+      "customize": "自定义",
+      "modal": {
+        "title": "自定义 Kimi Code CLI 配置目录",
+        "sourceEnv": "环境变量 KIMI_CODE_HOME",
+        "sourceShell": "Shell 配置 KIMI_CODE_HOME",
+        "description": "Kimi Code CLI 的 config.toml、AGENTS.md 等会从该目录派生",
+        "envWarningDesc": "应用内自定义路径仅影响 AI Toolbox 读写位置。CLI 本体需设置 KIMI_CODE_HOME",
+        "placeholder": "输入或选择 Kimi 配置根目录",
+        "folderOnlyDesc": "请选择目录文件夹",
+        "saveSuccess": "Kimi 配置目录已保存",
+        "currentSource": "当前来源",
+        "sourceCustom": "应用内自定义路径",
+        "sourceDefault": "默认路径",
+        "envWarningTitle": "注意",
+        "envHint": "当前由环境变量控制：{{path}}",
+        "shellHint": "当前由 Shell 配置控制：{{path}}",
+        "customPath": "自定义路径",
+        "folderOnlyTitle": "仅支持目录",
+        "resetSuccess": "已恢复默认配置目录",
+        "reset": "恢复默认"
+      }
+    },
+    "commonConfig": {
+      "title": "通用配置",
+      "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。"
+    },
+    "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
+    "addProvider": "添加供应商",
+    "emptyText": "暂无供应商配置，点击上方按钮添加",
+    "plugins": {
+      "title": "插件管理",
+      "name": "插件名称",
+      "version": "版本",
+      "description": "描述",
+      "openDirectory": "打开插件目录",
+      "status": "状态",
+      "enabled": "已启用",
+      "disabled": "已禁用",
+      "empty": "暂无已安装插件",
+      "globalHint": "插件是全局资源（plugins/ 目录），不随供应商切换；安装、卸载与更新请在 Kimi CLI 中通过 /plugins 命令完成。"
+    },
+    "officialAccount": {
+      "loginSuccess": "官方账号登录成功"
+    },
+    "officialAccounts": "已登录账号",
+    "sessions": "会话管理",
+    "applySuccess": "应用成功",
+    "deleteSuccess": "删除成功",
+    "saveSuccess": "保存成功",
+    "officialAccountButton": "官方账号",
+    "configPath": "配置路径",
+    "viewDocs": "查看文档",
+    "viewUsage": "查看额度",
+    "providerForm": {
+      "editTitle": "编辑供应商",
+      "addTitle": "添加供应商",
+      "name": "名称",
+      "nameRequired": "请输入供应商名称",
+      "category": "分类",
+      "categoryOfficial": "官方账号",
+      "categoryCustom": "自定义配置",
+      "officialNoticeTitle": "官方账号凭据由设备登录管理",
+      "officialNoticeDesc": "无需配置 API Key 与 Base URL，凭据由 Kimi Code 设备登录自动保存并注入。",
+      "apiKey": "API Key",
+      "apiKeyTooltip": "对应 Kimi Code 的 auth.API_KEY 凭据",
+      "baseUrl": "Base URL",
+      "baseUrlTooltip": "服务商 API 端点地址，写入 providerConfigs 条目中的 base_url",
+      "defaultModelKey": "默认模型",
+      "defaultModelKeyTooltip": "当前供应商生效时使用的默认模型 Key",
+      "defaultModelKeyPlaceholder": "选择或输入默认模型 Key",
+      "modelCatalog": "模型列表 (Model Catalog)",
+      "addModel": "添加模型",
+      "noModelsConfigured": "暂未配置模型",
+      "modelCatalogKey": "模型 Key",
+      "modelCatalogModel": "上游模型",
+      "deleteModelConfirm": "确定删除该模型条目？",
+      "notes": "备注",
+      "notesPlaceholder": "可选备注说明...",
+      "advancedSettings": "高级配置 (Raw JSON)",
+      "advancedSettingsDesc": "底层 settingsConfig 原始 JSON。表单与原文双向同步，保存时会保留未受管未知字段。",
+      "invalidJsonPrompt": "高级配置中的 JSON 格式不合法，请检查",
+      "modelListRequiredForDefaultModel": "自定义供应商设置了默认模型时，模型列表不能为空",
+      "modelRowIncomplete": "模型列表存在未填写模型 Key 或上游模型的条目",
+      "modelCatalogContextSize": "上下文大小",
+      "modelCatalogContextSizeTooltip": "写入 config.toml 的 max_context_size 字段。Kimi CLI 要求每个模型必须有正数上下文大小，留空时应用默认 262144（256k）。",
+      "apiKeyRequired": "请输入 API Key",
+      "baseUrlRequired": "请输入 Base URL"
+    },
+    "localConfigHint": "来自本地文件，编辑后保存到数据库",
+    "providerDisabled": "已禁用",
+    "providerEnabled": "已启用",
+    "account": {
+      "apply": "应用",
+      "applied": "已应用",
+      "delete": "删除",
+      "deleteConfirm": "确定删除官方账号 {{name}}？删除后需要重新登录。",
+      "applySuccess": "官方账号已应用",
+      "deleteSuccess": "官方账号已删除"
     }
   }
 }

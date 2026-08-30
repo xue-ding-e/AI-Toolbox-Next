@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, KimiPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -12,6 +12,7 @@ import {
   ClaudeDesktopSessionDetailPage,
   CodexSessionDetailPage,
   GrokSessionDetailPage,
+  KimiSessionDetailPage,
   GeminiCliSessionDetailPage,
   OpenClawSessionDetailPage,
   OpenCodeSessionDetailPage,
@@ -92,6 +93,17 @@ export const PAGE_ROUTES: RouteEntry[] = [
       contentPadding: 'compact',
       ownerTabKey: 'grok',
       parentPath: '/coding/grok',
+    },
+  },
+  { path: '/coding/kimi', component: KimiPage },
+  {
+    path: '/coding/kimi/sessions/detail',
+    component: KimiSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'kimi',
+      parentPath: '/coding/kimi',
     },
   },
   { path: '/coding/openclaw', component: OpenClawPage },

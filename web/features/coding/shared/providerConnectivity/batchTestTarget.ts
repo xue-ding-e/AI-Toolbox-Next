@@ -26,7 +26,7 @@ export interface ProviderConnectivityBatchTarget {
     timeoutSecs: number;
   };
   gatewayRequest?: {
-    cliKey: 'claude' | 'codex' | 'grok' | 'gemini';
+    cliKey: 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini';
     providerId: string;
     prompt: string;
     stream: boolean;
@@ -42,7 +42,7 @@ interface ProviderConnectivityBatchTargetOptions {
   preferredModelId?: string;
   prompt?: string;
   timeoutSecs?: number;
-  gatewayCliKey?: 'claude' | 'codex' | 'grok' | 'gemini';
+  gatewayCliKey?: 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini';
   useGateway?: boolean;
   errorMessages: {
     missingBaseUrl: string;
