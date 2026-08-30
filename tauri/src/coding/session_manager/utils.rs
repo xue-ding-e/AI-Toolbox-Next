@@ -384,6 +384,28 @@ pub fn build_resume_command(project_dir: Option<&str>, resume_command: &str) -> 
     )
 }
 
+/// Quote an untrusted value (session id, source path) embedded in a resume
+/// command users copy into their terminal. Values from on-disk session
+/// metadata may contain spaces or shell metacharacters; without quoting they
+/// become command injection when pasted.
+pub fn quote_session_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '@'))
+    {
+        return value.to_string();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn build_change_directory_command(project_dir: &str) -> String {
     if is_windows_drive_path(project_dir) || is_windows_unc_path(project_dir) {
         return format!("pushd {}", quote_windows_shell_path(project_dir));
@@ -443,6 +465,73 @@ pub fn join_safe_relative(base: &Path, relative: &str) -> Result<PathBuf, String
     }
 
     Ok(resolved)
+}
+
+/// Validate an externally-selected relative path from a snapshot payload:
+/// no absolute paths, drive letters, empty/`.`/`..` segments, or any
+/// non-normal component.
+pub fn safe_relative_snapshot_path(value: &str, label: &str) -> Result<PathBuf, String> {
+    let path = Path::new(value);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || value.contains(':')
+        || value
+            .split(['/', '\\'])
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err(format!("Invalid absolute or empty {label} snapshot path"));
+    }
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("Invalid {label} snapshot path traversal"));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// A legal relative path can still escape the import root when an existing
+/// directory component is a symlink. Refuse any symlink among `root` itself
+/// and the components of `relative` that already exist on disk.
+pub fn reject_snapshot_symlink_components(
+    root: &Path,
+    relative: &Path,
+    label: &str,
+) -> Result<(), String> {
+    if fs_metadata_is_symlink(root) {
+        return Err(format!(
+            "{label} session import root cannot be a symlink: {}",
+            root.display()
+        ));
+    }
+
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "{label} session import path contains a symlink: {}",
+                    current.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect {label} session import path {}: {error}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn fs_metadata_is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 pub fn sanitize_path_segment(value: &str, fallback: &str) -> String {

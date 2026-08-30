@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -381,8 +381,8 @@ pub fn import_native_snapshot(
         .get("relativeDir")
         .and_then(Value::as_str)
         .unwrap_or(session_id);
-    let relative = safe_relative_path(relative)?;
-    reject_symlink_components(root, &relative)?;
+    let relative = super::utils::safe_relative_snapshot_path(relative, "Grok")?;
+    super::utils::reject_snapshot_symlink_components(root, &relative, "Grok")?;
     let target = root.join(relative);
     if fs::symlink_metadata(&target).is_ok() {
         return Err(format!("Grok session {session_id} already exists"));
@@ -392,8 +392,8 @@ pub fn import_native_snapshot(
         .and_then(Value::as_object)
         .ok_or_else(|| "Invalid Grok session snapshot".to_string())?;
     for (name, content) in files {
-        let relative_file = safe_relative_path(name)?;
-        reject_symlink_components(&target, &relative_file)?;
+        let relative_file = super::utils::safe_relative_snapshot_path(name, "Grok")?;
+        super::utils::reject_snapshot_symlink_components(&target, &relative_file, "Grok")?;
         let path = target.join(relative_file);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -414,60 +414,6 @@ pub fn import_native_snapshot(
         fs::write(path, bytes).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn reject_symlink_components(root: &Path, relative: &Path) -> Result<(), String> {
-    if fs::symlink_metadata(root)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false)
-    {
-        return Err(format!(
-            "Grok session import root cannot be a symlink: {}",
-            root.display()
-        ));
-    }
-
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        current.push(component.as_os_str());
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(format!(
-                    "Grok session import path contains a symlink: {}",
-                    current.display()
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => {
-                return Err(format!(
-                    "Failed to inspect Grok session import path {}: {error}",
-                    current.display()
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
-    let path = Path::new(value);
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || value.contains(':')
-        || value
-            .split(['/', '\\'])
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err("Invalid absolute or empty Grok snapshot path".to_string());
-    }
-    if path
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err("Invalid Grok snapshot path traversal".to_string());
-    }
-    Ok(path.to_path_buf())
 }
 
 #[cfg(test)]

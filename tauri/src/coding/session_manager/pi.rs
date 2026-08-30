@@ -298,7 +298,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let source_path = path.to_string_lossy().to_string();
     let resume_command = Some(build_resume_command(
         project_dir.as_deref(),
-        &format!("pi --session {}", quote_session_arg(&source_path)),
+        &format!("pi --session {}", super::utils::quote_session_arg(&source_path)),
     ));
 
     Some(SessionMeta {
@@ -648,10 +648,6 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     UUID_RE
         .find(&name)
         .map(|matched| matched.as_str().to_string())
-}
-
-fn quote_session_arg(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\\\""))
 }
 
 fn new_entry_id() -> String {
