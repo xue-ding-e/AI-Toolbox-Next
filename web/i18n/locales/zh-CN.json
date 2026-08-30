@@ -1833,6 +1833,7 @@
       "apply": "应用",
       "applySuccess": "配置已应用到文件",
       "noAgentsConfigured": "暂未配置 Agent 模型",
+      "fallbackCount": "备用 ×{{count}}",
       "noConfigs": "暂无配置，请先添加配置",
       "refresh": "刷新",
       "selectConfig": "选择配置方案",

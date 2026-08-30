@@ -1740,6 +1740,7 @@
       "apply": "Apply",
       "applySuccess": "Config applied to file",
       "noAgentsConfigured": "No Agent models configured yet",
+      "fallbackCount": "fallback ×{{count}}",
       "noConfigs": "No configs yet. Click the button above to add",
       "refresh": "Refresh",
       "selectConfig": "Select config scheme",

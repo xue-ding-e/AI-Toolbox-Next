@@ -7,6 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import AppliedTag from '@/components/common/AppliedTag';
 import { OH_MY_OPENAGENT_AGENTS, type OhMyOpenAgentConfig, type OhMyOpenAgentAgentType } from '@/types/ohMyOpenAgent';
 import { getOpenAgentDisplayName } from '@/services/ohMyOpenAgentApi';
+import { getAgentModelDisplay } from '../utils/ohMyOpenAgentModelChain';
 
 const { Text } = Typography;
 
@@ -73,8 +74,8 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
   const BUILT_IN_AGENT_KEYS = new Set(AGENT_ORDER);
 
   // Get configured agents as structured data (sorted)
-  const getAgentsData = (): { name: string; model: string; isCustom?: boolean }[] => {
-    const result: { name: string; model: string; isCustom?: boolean }[] = [];
+  const getAgentsData = (): { name: string; model: string; isCustom?: boolean; fallbackCount?: number }[] => {
+    const result: { name: string; model: string; isCustom?: boolean; fallbackCount?: number }[] = [];
 
     // Handle null agents
     if (!config.agents) {
@@ -84,9 +85,10 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
     // Iterate in the predefined order for built-in agents
     AGENT_ORDER.forEach((agentType) => {
       const agent = config.agents?.[agentType];
-      if (agent && typeof agent.model === 'string' && agent.model) {
+      const { primaryModel, fallbackCount } = getAgentModelDisplay(agent);
+      if (primaryModel) {
         const displayName = getOpenAgentDisplayName(agentType, t).split(' ')[0]; // Get short name
-        result.push({ name: displayName, model: agent.model });
+        result.push({ name: displayName, model: primaryModel, fallbackCount });
       }
     });
 
@@ -94,8 +96,9 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
     Object.keys(config.agents).forEach((key) => {
       if (!BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType)) {
         const agent = config.agents?.[key as OhMyOpenAgentAgentType];
-        if (agent && typeof agent.model === 'string' && agent.model) {
-          result.push({ name: key, model: agent.model, isCustom: true });
+        const { primaryModel, fallbackCount } = getAgentModelDisplay(agent);
+        if (primaryModel) {
+          result.push({ name: key, model: primaryModel, isCustom: true, fallbackCount });
         }
       }
     });
@@ -124,7 +127,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
   const configuredCount = config.agents
     ? Object.keys(config.agents).filter((key) => {
       const agent = config.agents?.[key as OhMyOpenAgentAgentType];
-      return BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType) && agent && typeof agent.model === 'string' && !!agent.model;
+      return BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType) && !!getAgentModelDisplay(agent).primaryModel;
     }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
@@ -289,6 +292,11 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
                       <Text strong style={{ color: item.isCustom ? '#722ed1' : '#1890ff', fontSize: 12 }}>{item.name}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
+                      {!!item.fallbackCount && (
+                        <Tag color="orange" style={{ marginInlineStart: 4, marginInlineEnd: 0, padding: '0 4px', fontSize: 11, lineHeight: '16px' }}>
+                          {t('opencode.ohMyOpenCode.fallbackCount', { count: item.fallbackCount })}
+                        </Tag>
+                      )}
                     </span>
                   ))}
                 </div>
