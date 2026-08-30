@@ -1,10 +1,12 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use chrono::Local;
 use serde_json::{json, Value};
 use tempfile::NamedTempFile;
+use tokio::sync::Mutex as AsyncMutex;
 use toml_edit::{value, DocumentMut, Item, Table};
 
 use super::adapter;
@@ -24,6 +26,16 @@ use crate::db::helpers::{
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use tauri::Emitter;
+
+/// Serializes all read-modify-write passes over the live config.toml
+/// (`apply_grok_provider_to_file_with_previous_settings`), plus the
+/// no-applied-provider full overwrite in `save_grok_common_config` so it
+/// cannot interleave with a concurrent apply. Each pass builds the next
+/// document from its own read snapshot; two concurrent applies would
+/// otherwise write back from the same stale snapshot and the later write
+/// would drop the earlier one's projection. Callers must not nest: the lock
+/// lives only inside these write paths.
+static CONFIG_WRITE_LOCK: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
 pub fn get_grok_default_root_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -611,6 +623,9 @@ async fn apply_grok_provider_to_file_with_previous_settings(
     let settings: Value = serde_json::from_str(&provider.settings_config)
         .map_err(|error| format!("Invalid Grok provider settings JSON: {error}"))?;
     let config_path = get_grok_config_path_async(db).await?;
+    // Hold across the whole read-modify-write so concurrent applies cannot
+    // project from the same stale snapshot (see CONFIG_WRITE_LOCK).
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
     let current = read_optional_text(&config_path)?.unwrap_or_default();
     let mut document = if current.trim().is_empty() {
         DocumentMut::new()
@@ -731,6 +746,9 @@ pub async fn save_grok_common_config(
         .await?;
     } else {
         let path = get_grok_config_path_async(db).await?;
+        // Full overwrite instead of a merge, but still under the write lock so
+        // it cannot interleave with a concurrent provider apply.
+        let _guard = CONFIG_WRITE_LOCK.lock().await;
         write_text_atomic(&path, &input.config)?;
     }
     resync_all_skills_if_tool_path_changed(

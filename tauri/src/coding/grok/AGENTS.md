@@ -38,6 +38,7 @@
   - **后台 / 启动巡检** 由共享模块 `coding::auth_refresh` 调度（startup + 15m interval），本模块只提供 `refresh_applied_grok_accounts_if_needed`
   - 巡检候选是**所有已入库官方 OAuth 账号**（含 `is_applied=false`），不是只刷已应用；登录后未点应用也要续期 SQLite 快照，避免关机重启后 token 静默过期
   - 并发：`OAUTH_REFRESH_LOCK` + 同 refresh_token 30s 缓存；续期成功后始终写 SQLite；**仅 applied** 时 merge live `auth.json` 并 `emit_grok_sync`
+  - `config.toml` 的读-改-写（`apply_grok_provider_to_file_with_previous_settings`）与 `save_grok_common_config` 的无 provider 全量覆盖必须在模块级 `CONFIG_WRITE_LOCK`（`tokio::sync::Mutex`）内进行：每次 apply 都基于自己的读取快照重建整个文档，并发 apply 会从同一旧快照回写、后写者丢失先写者的投影。锁不可重入；新增写入口时复用这两个函数，不要在锁外自建读改写
 - `refresh_grok_official_account_limits` 只写额度字段到 SQLite，不改 `is_applied`；若内部 ensure_fresh 续了 token 且账号已应用，才会写 auth。
 - 额度字段语义：`plan_type`（上游 null → `free`）、`limit_weekly_text`（`100 - creditUsagePercent`，无 percent 则空）、周 reset 来自 credits `currentPeriod.end`。月限只在默认 billing 的 `monthlyLimit>0` 时投影；**禁止**把 credits 的 `billingPeriodEnd` 当月重置（free/unified 会把它写成与周周期相同）。不要伪造 5h 窗口。
 - 删除 prompt 配置只删 SQLite 记录，不删除/清空当前 `AGENTS.md`。产品语义是“删除已保存的提示词记录”，不是“删除本地 runtime 提示词文件”；Claude Code / OpenCode / Codex / Gemini / Pi 统一此规则。
