@@ -1457,6 +1457,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // Kimi sync listener
+                let app_kimi = app_handle.clone();
+                let app_kimi_clone = app_kimi.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_kimi.listen("wsl-sync-request-kimi", move |_event| {
+                        let app = app_kimi_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("kimi".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
@@ -2207,6 +2232,37 @@ pub fn run() {
             coding::grok::validate_grok_plugin,
             coding::grok::update_grok_plugin_marketplace,
             coding::grok::set_grok_installed_plugins_enabled,
+            // Kimi Code CLI
+            coding::kimi::get_kimi_root_path_info,
+            coding::kimi::get_kimi_config_dir_path,
+            coding::kimi::get_kimi_config_file_path,
+            coding::kimi::reveal_kimi_config_folder,
+            coding::kimi::read_kimi_settings,
+            coding::kimi::list_kimi_providers,
+            coding::kimi::create_kimi_provider,
+            coding::kimi::update_kimi_provider,
+            coding::kimi::delete_kimi_provider,
+            coding::kimi::reorder_kimi_providers,
+            coding::kimi::toggle_kimi_provider_disabled,
+            coding::kimi::select_kimi_provider,
+            coding::kimi::get_kimi_common_config,
+            coding::kimi::extract_kimi_common_config_from_current_file,
+            coding::kimi::save_kimi_common_config,
+            coding::kimi::save_kimi_local_config,
+            coding::kimi::list_kimi_prompt_configs,
+            coding::kimi::create_kimi_prompt_config,
+            coding::kimi::update_kimi_prompt_config,
+            coding::kimi::delete_kimi_prompt_config,
+            coding::kimi::save_kimi_local_prompt_config,
+            coding::kimi::apply_kimi_prompt_config,
+            coding::kimi::reorder_kimi_prompt_configs,
+            coding::kimi::start_kimi_official_account_device_auth,
+            coding::kimi::cancel_kimi_official_account_device_auth,
+            coding::kimi::get_kimi_official_account_auth_status,
+            coding::kimi::list_kimi_official_accounts,
+            coding::kimi::apply_kimi_official_account,
+            coding::kimi::delete_kimi_official_account,
+            coding::kimi::list_kimi_plugins,
             // Gemini CLI
             coding::gemini_cli::get_gemini_cli_config_path,
             coding::gemini_cli::get_gemini_cli_root_path_info,

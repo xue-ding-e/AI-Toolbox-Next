@@ -5,6 +5,9 @@ mod dsh;
 mod gemini_cli;
 mod grok;
 mod hermes;
+// Public so `tauri/tests/coding/kimi/` can regression-test the Kimi session
+// scan/parse/snapshot helpers against fixtures.
+pub mod kimi;
 mod message_blocks;
 mod open_claw;
 mod open_code;
@@ -25,9 +28,10 @@ use serde_json::{json, Value};
 use crate::coding::runtime_location::{
     build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
     get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
-    get_grok_runtime_location_async, get_openclaw_runtime_location_async,
-    get_oh_my_pi_runtime_location_async, get_opencode_runtime_location_async,
-    get_pi_runtime_location_async, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
+    get_grok_runtime_location_async, get_kimi_runtime_location_async,
+    get_oh_my_pi_runtime_location_async, get_openclaw_runtime_location_async,
+    get_opencode_runtime_location_async, get_pi_runtime_location_async, RuntimeLocationInfo,
+    RuntimeLocationMode, WslLocationInfo,
 };
 use crate::db::helpers::db_get;
 use crate::db::schema::DbTable;
@@ -48,6 +52,7 @@ const SNAPSHOT_FORMAT_PI: &str = "pi-session-jsonl";
 const SNAPSHOT_FORMAT_OMP: &str = "omp-session-jsonl";
 const SNAPSHOT_FORMAT_GROK: &str = "grok-session-directory";
 const GROK_NATIVE_EXPORT_SCHEMA: &str = "ai-toolbox.grok-native-snapshot.v1";
+const SNAPSHOT_FORMAT_KIMI: &str = "kimi-session-directory";
 
 #[derive(Debug, Clone)]
 struct SessionCacheEntry {
@@ -309,6 +314,9 @@ enum ToolSessionContext {
     Grok {
         sessions_root: PathBuf,
     },
+    Kimi {
+        sessions_root: PathBuf,
+    },
     ClaudeDesktop {
         // Claude Desktop is a GUI with no CLI session files; kept minimal.
         sessions_root: PathBuf,
@@ -432,6 +440,7 @@ enum SessionTool {
     Pi,
     OhMyPi,
     Grok,
+    Kimi,
     ClaudeDesktop,
     Hermes,
     Dsh,
@@ -448,6 +457,7 @@ impl SessionTool {
             "pi" => Ok(Self::Pi),
             "oh_my_pi" | "omp" => Ok(Self::OhMyPi),
             "grok" => Ok(Self::Grok),
+            "kimi" => Ok(Self::Kimi),
             "claudedesktop" | "claude_desktop" => Ok(Self::ClaudeDesktop),
             "hermes" => Ok(Self::Hermes),
             "dsh" => Ok(Self::Dsh),
@@ -465,6 +475,7 @@ impl SessionTool {
             Self::Pi => "pi",
             Self::OhMyPi => "oh_my_pi",
             Self::Grok => "grok",
+            Self::Kimi => "kimi",
             Self::ClaudeDesktop => "claudedesktop",
             Self::Hermes => "hermes",
             Self::Dsh => "dsh",
@@ -498,6 +509,7 @@ impl ToolSessionContext {
             Self::Pi { sessions_root } => format!("pi:{}", sessions_root.display()),
             Self::OhMyPi { sessions_root } => format!("oh_my_pi:{}", sessions_root.display()),
             Self::Grok { sessions_root } => format!("grok:{}", sessions_root.display()),
+            Self::Kimi { sessions_root } => format!("kimi:{}", sessions_root.display()),
             Self::ClaudeDesktop { sessions_root } => {
                 format!("claudedesktop:{}", sessions_root.display())
             }
@@ -1225,6 +1237,9 @@ fn delete_session_from_meta(
         ToolSessionContext::Grok { sessions_root } => {
             grok::delete_session(sessions_root, Path::new(&session.source_path))?;
         }
+        ToolSessionContext::Kimi { sessions_root } => {
+            kimi::delete_session(sessions_root, Path::new(&session.source_path))?;
+        }
         ToolSessionContext::Hermes { sessions_root } => {
             hermes::delete_session(sessions_root, &session.source_path)?;
         }
@@ -1727,6 +1742,14 @@ fn import_session_blocking(
                 &exported_file.native_snapshot.payload,
             )?;
         }
+        ToolSessionContext::Kimi { sessions_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_KIMI)?;
+            kimi::import_native_snapshot(
+                sessions_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
         ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Hermes { .. }
         | ToolSessionContext::Dsh { .. } => {
@@ -1860,6 +1883,10 @@ fn build_native_snapshot(
             format: SNAPSHOT_FORMAT_GROK.to_string(),
             payload: grok::export_native_snapshot(sessions_root, Path::new(source_path))?,
         }),
+        ToolSessionContext::Kimi { sessions_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_KIMI.to_string(),
+            payload: kimi::export_native_snapshot(sessions_root, Path::new(source_path))?,
+        }),
         ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Hermes { .. }
         | ToolSessionContext::Dsh { .. } => {
@@ -1948,6 +1975,7 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
         ToolSessionContext::Pi { sessions_root } => pi::scan_sessions(sessions_root),
         ToolSessionContext::OhMyPi { sessions_root } => oh_my_pi::scan_sessions(sessions_root),
         ToolSessionContext::Grok { sessions_root } => grok::scan_sessions(sessions_root),
+        ToolSessionContext::Kimi { sessions_root } => kimi::scan_sessions(sessions_root),
         ToolSessionContext::Hermes { sessions_root } => hermes::scan_sessions(sessions_root),
         ToolSessionContext::Dsh { sessions_root } => dsh::scan_sessions(sessions_root),
         ToolSessionContext::ClaudeDesktop { sessions_root } => {
@@ -1989,6 +2017,9 @@ fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<Sessi
         ToolSessionContext::Grok { sessions_root } => {
             grok::scan_recent_sessions(sessions_root, limit)
         }
+        ToolSessionContext::Kimi { sessions_root } => {
+            kimi::scan_recent_sessions(sessions_root, limit)
+        }
         ToolSessionContext::Hermes { sessions_root } => {
             hermes::scan_recent_sessions(sessions_root, limit)
         }
@@ -2022,6 +2053,7 @@ fn load_messages(
         ToolSessionContext::Pi { .. } => pi::load_messages(Path::new(source_path)),
         ToolSessionContext::OhMyPi { .. } => oh_my_pi::load_messages(Path::new(source_path)),
         ToolSessionContext::Grok { .. } => grok::load_messages(Path::new(source_path)),
+        ToolSessionContext::Kimi { .. } => kimi::load_messages(Path::new(source_path)),
         ToolSessionContext::Hermes { .. } => hermes::load_messages(source_path),
         ToolSessionContext::Dsh { .. } => dsh::load_messages(source_path),
         ToolSessionContext::ClaudeDesktop { .. } => {
@@ -2047,6 +2079,7 @@ fn list_subagent_sessions(
         | ToolSessionContext::Pi { .. }
         | ToolSessionContext::OhMyPi { .. }
         | ToolSessionContext::Grok { .. }
+        | ToolSessionContext::Kimi { .. }
         | ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Hermes { .. }
         | ToolSessionContext::Dsh { .. } => Vec::new(),
@@ -2165,7 +2198,12 @@ fn scan_session_content_for_query(
         ToolSessionContext::Grok { .. } => {
             grok::scan_messages_for_query(Path::new(source_path), query_lower)
         }
-        ToolSessionContext::Hermes { .. } => hermes::scan_messages_for_query(source_path, query_lower),
+        ToolSessionContext::Kimi { .. } => {
+            kimi::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
+        ToolSessionContext::Hermes { .. } => {
+            hermes::scan_messages_for_query(source_path, query_lower)
+        }
         ToolSessionContext::Dsh { .. } => dsh::scan_messages_for_query(source_path, query_lower),
         ToolSessionContext::ClaudeDesktop { .. } => Ok(false),
     }
@@ -2264,6 +2302,7 @@ fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
         ToolSessionContext::Pi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::OhMyPi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Grok { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::Kimi { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::ClaudeDesktop { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Hermes { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Dsh { sessions_root } => path_wsl_info(sessions_root),
@@ -2359,6 +2398,9 @@ fn build_default_wsl_session_context(
         }),
         SessionTool::Grok => Some(ToolSessionContext::Grok {
             sessions_root: wsl_home_path(distro, linux_home, ".grok/sessions"),
+        }),
+        SessionTool::Kimi => Some(ToolSessionContext::Kimi {
+            sessions_root: wsl_home_path(distro, linux_home, ".kimi-code/sessions"),
         }),
         // Claude Desktop GUI / Hermes have no WSL session dirs; keep minimal empty scans.
         SessionTool::ClaudeDesktop => Some(ToolSessionContext::ClaudeDesktop {
@@ -2479,6 +2521,12 @@ async fn resolve_context(
         SessionTool::Grok => {
             let runtime_location = get_grok_runtime_location_async(db).await?;
             Ok(ToolSessionContext::Grok {
+                sessions_root: runtime_location.host_path.join("sessions"),
+            })
+        }
+        SessionTool::Kimi => {
+            let runtime_location = get_kimi_runtime_location_async(db).await?;
+            Ok(ToolSessionContext::Kimi {
                 sessions_root: runtime_location.host_path.join("sessions"),
             })
         }
@@ -2841,13 +2889,15 @@ mod tests {
             info.remove("tokens");
         }
 
-        if let Some(path) = info.get("path").and_then(Value::as_str) {
-            let normalized_path = normalize_test_path(path);
-            let normalized_path = normalized_path
-                .find("ai-toolbox-session-manager-")
-                .map(|marker_index| normalized_path[marker_index..].to_string())
-                .unwrap_or(normalized_path);
-            info.insert("path".to_string(), Value::String(normalized_path));
+        for key in ["path", "directory"] {
+            if let Some(raw) = info.get(key).and_then(Value::as_str) {
+                let normalized_path = normalize_test_path(raw);
+                let normalized_path = normalized_path
+                    .find("ai-toolbox-session-manager-")
+                    .map(|marker_index| normalized_path[marker_index..].to_string())
+                    .unwrap_or(normalized_path);
+                info.insert(key.to_string(), Value::String(normalized_path));
+            }
         }
     }
 
@@ -4536,5 +4586,21 @@ mod tests {
     fn read_json_file(path: &Path) -> Value {
         let data = fs::read_to_string(path).expect("failed to read json file");
         serde_json::from_str(&data).expect("failed to parse json file")
+    }
+
+    #[test]
+    fn build_default_wsl_session_context_targets_kimi_code_sessions() {
+        let context =
+            build_default_wsl_session_context(SessionTool::Kimi, "Ubuntu-22.04", "/home/developer");
+        match context {
+            Some(ToolSessionContext::Kimi { sessions_root }) => {
+                let path_str = sessions_root.to_string_lossy();
+                assert!(
+                    path_str.contains(".kimi-code") && path_str.ends_with("sessions"),
+                    "Expected WSL Kimi sessions root to point to .kimi-code/sessions, got: {path_str}"
+                );
+            }
+            _ => panic!("Expected ToolSessionContext::Kimi"),
+        }
     }
 }

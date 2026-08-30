@@ -6,15 +6,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
-use crate::coding::{claude_code, codex, gemini_cli, grok, oh_my_pi, open_claw, open_code, pi};
+use crate::coding::{
+    claude_code, codex, gemini_cli, grok, kimi, oh_my_pi, open_claw, open_code, pi,
+};
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 8] = [
+const MODULE_KEYS: [&str; 9] = [
     "opencode",
     "claude",
     "codex",
     "grok",
+    "kimi",
     "openclaw",
     "geminicli",
     "pi",
@@ -193,6 +196,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "claude" | "claude_code" => Some("claude"),
         "codex" => Some("codex"),
         "grok" | "grok_cli" => Some("grok"),
+        "kimi" | "kimi_cli" => Some("kimi"),
         "openclaw" => Some("openclaw"),
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
         "pi" => Some("pi"),
@@ -277,6 +281,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("grok") => {
             let location = resolve_grok_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("grok", location.clone());
+            Ok(location)
+        }
+        Some("kimi") => {
+            let location = resolve_kimi_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("kimi", location.clone());
             Ok(location)
         }
         Some("openclaw") => {
@@ -1044,6 +1053,93 @@ pub async fn get_grok_wsl_target_path_async(
     }
 }
 
+pub fn get_kimi_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("kimi"))
+}
+
+pub async fn get_kimi_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "kimi").await
+}
+
+async fn resolve_kimi_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let custom_path =
+        get_custom_path_from_record(db, DbTable::KimiCommonConfig, "common", |value| {
+            crate::coding::kimi::adapter::common_from_db_value(value)
+                .root_dir
+                .filter(|path| !path.trim().is_empty())
+        })
+        .await;
+    let (path, source) = if let Some(path) = custom_path {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_kimi_path_without_db()
+    };
+    Ok(build_runtime_location(path, source))
+}
+
+fn resolve_kimi_path_without_db() -> (PathBuf, String) {
+    if let Ok(path) = std::env::var(kimi::constants::KIMI_HOME_ENV_KEY) {
+        if !path.trim().is_empty() {
+            return (PathBuf::from(path), "env".to_string());
+        }
+    }
+    if let Some(path) = shell_env::get_env_from_shell_config(kimi::constants::KIMI_HOME_ENV_KEY) {
+        if !path.trim().is_empty() {
+            return (PathBuf::from(path), "shell".to_string());
+        }
+    }
+    (
+        kimi::commands::get_kimi_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.kimi-code")),
+        "default".to_string(),
+    )
+}
+
+pub fn get_kimi_config_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_sync(db)?
+        .host_path
+        .join(kimi::constants::KIMI_CONFIG_FILE))
+}
+
+pub async fn get_kimi_config_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(kimi::constants::KIMI_CONFIG_FILE))
+}
+
+pub fn get_kimi_prompt_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_sync(db)?
+        .host_path
+        .join(kimi::constants::KIMI_PROMPT_FILE))
+}
+
+pub async fn get_kimi_prompt_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(kimi::constants::KIMI_PROMPT_FILE))
+}
+
+pub async fn get_kimi_wsl_target_path_async(
+    db: &crate::db::SqliteDbState,
+    file_name: &str,
+) -> String {
+    match get_kimi_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.kimi-code/{file_name}")),
+        Err(_) => format!("~/.kimi-code/{file_name}"),
+    }
+}
+
 pub fn get_gemini_cli_runtime_location_sync(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1373,6 +1469,16 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
                 location.host_path.join("skills")
             }
         }),
+        "kimi" => get_kimi_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.kimi-code/skills"),
+                )
+            } else {
+                location.host_path.join("skills")
+            }
+        }),
         "opencode" => get_opencode_runtime_location_sync(db).ok().map(|location| {
             if let Some(wsl) = location.wsl {
                 build_windows_unc_path(
@@ -1455,6 +1561,22 @@ pub async fn get_tool_skills_path_async(
                         &expand_home_from_user_root(
                             wsl.linux_user_root.as_deref(),
                             "~/.grok/skills",
+                        ),
+                    )
+                } else {
+                    location.host_path.join("skills")
+                }
+            }),
+        "kimi" => get_kimi_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| {
+                if let Some(wsl) = location.wsl {
+                    build_windows_unc_path(
+                        &wsl.distro,
+                        &expand_home_from_user_root(
+                            wsl.linux_user_root.as_deref(),
+                            "~/.kimi-code/skills",
                         ),
                     )
                 } else {
@@ -1612,6 +1734,7 @@ pub fn get_tool_mcp_config_path_sync(
         "claude_code" => get_claude_mcp_config_path_sync(db).ok(),
         "codex" => get_codex_config_path_sync(db).ok(),
         "grok" => get_grok_config_path_sync(db).ok(),
+        "kimi" => get_kimi_config_path_sync(db).ok(),
         "opencode" => get_opencode_runtime_location_sync(db)
             .ok()
             .map(|location| location.host_path),
@@ -1636,6 +1759,7 @@ pub async fn get_tool_mcp_config_path_async(
         "claude_code" => get_claude_mcp_config_path_async(db).await.ok(),
         "codex" => get_codex_config_path_async(db).await.ok(),
         "grok" => get_grok_config_path_async(db).await.ok(),
+        "kimi" => get_kimi_config_path_async(db).await.ok(),
         "opencode" => get_opencode_runtime_location_async(db)
             .await
             .ok()
@@ -1682,6 +1806,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "claude" => resolve_claude_path_without_db(),
         "codex" => resolve_codex_path_without_db(),
         "grok" => resolve_grok_path_without_db(),
+        "kimi" => resolve_kimi_path_without_db(),
         "openclaw" => resolve_openclaw_path_without_db(),
         "geminicli" => resolve_gemini_cli_path_without_db(),
         "pi" => resolve_pi_path_without_db(),

@@ -140,6 +140,16 @@ fn build_gateway_connectivity_request(
             "stream": stream,
             "store": false,
         }),
+        GatewayCliKey::Kimi => json!({
+            "model": model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "stream": stream,
+        }),
         GatewayCliKey::Gemini => json!({
             "contents": [
                 {
@@ -187,6 +197,7 @@ fn gateway_connectivity_path(cli_key: GatewayCliKey, model_id: &str, stream: boo
         GatewayCliKey::ClaudeDesktop => "/claude-desktop/v1/messages".to_string(),
         GatewayCliKey::Codex => "/openai/v1/responses".to_string(),
         GatewayCliKey::Grok => "/grok/v1/responses".to_string(),
+        GatewayCliKey::Kimi => "/kimi/v1/chat/completions".to_string(),
         GatewayCliKey::Gemini => {
             let model = model_id
                 .trim()

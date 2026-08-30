@@ -45,3 +45,23 @@ pub async fn read_text_file_with_timeout(path: PathBuf, label: &str) -> Result<S
         .await?
         .unwrap_or_default())
 }
+
+/// Run a best-effort filesystem probe on the blocking pool with a wall-clock
+/// timeout. Returns `None` on timeout or join failure. The timeout only bounds
+/// the await; the blocking thread may stay busy briefly afterwards, so callers
+/// must not retry in a loop against unreachable paths.
+pub async fn blocking_probe_with_timeout<F, T>(probe: F) -> Option<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::time::timeout(
+        DEFAULT_CONFIG_FILE_IO_TIMEOUT,
+        tauri::async_runtime::spawn_blocking(probe),
+    )
+    .await
+    {
+        Ok(Ok(value)) => Some(value),
+        _ => None,
+    }
+}

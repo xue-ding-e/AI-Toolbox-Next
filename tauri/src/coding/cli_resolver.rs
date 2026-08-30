@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::process::Command as TokioCommand;
 
 /// In-memory registry of user-specified manual CLI paths, keyed by command name
-/// (e.g. `claude`, `opencode`, `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`).
+/// (e.g. `claude`, `opencode`, `grok`, `kimi`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`).
 ///
 /// When set, these paths take priority over PATH / candidate-dir resolution in
 /// `resolve_local_cli_program`. The map is refreshed whenever application
@@ -218,7 +218,7 @@ pub fn resolve_local_cli_by_name(command_name: &str) -> Option<LocalCliProgram> 
 }
 
 /// Resolve a CLI program by the command name used across the app (e.g. `claude`,
-/// `opencode`, `grok`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`). Uses each
+/// `opencode`, `grok`, `kimi`, `pi`, `omp`, `hermes`, `dsh`, `openclaw`). Uses each
 /// tool's dedicated resolver when one exists so tool-specific install locations
 /// are also honored.
 pub fn resolve_local_cli_by_command_name(command_name: &str) -> Option<LocalCliProgram> {
@@ -226,6 +226,7 @@ pub fn resolve_local_cli_by_command_name(command_name: &str) -> Option<LocalCliP
         "claude" => Some(resolve_local_claude_program()),
         "opencode" => Some(resolve_local_opencode_program()),
         "grok" => Some(resolve_local_grok_program()),
+        "kimi" => Some(resolve_local_kimi_program()),
         "pi" => Some(resolve_local_pi_program()),
         "omp" => Some(resolve_local_omp_program()),
         _ => resolve_local_cli_by_name(command_name),
@@ -243,6 +244,13 @@ pub fn resolve_local_omp_program() -> LocalCliProgram {
 
 pub fn resolve_local_grok_program() -> LocalCliProgram {
     resolve_named_cli_program("grok", default_npm_global_candidates("grok"))
+}
+
+/// Resolve the Kimi Code CLI (`kimi`, installed by `@moonshot-ai/kimi-code`).
+/// Uses the shared npm global candidate paths so GUI-launched processes can
+/// discover installs managed by npm, nvm, volta, fnm, bun, mise, or asdf.
+pub fn resolve_local_kimi_program() -> LocalCliProgram {
+    resolve_named_cli_program("kimi", default_npm_global_candidates("kimi"))
 }
 
 pub fn resolve_local_npx_program() -> LocalCliProgram {

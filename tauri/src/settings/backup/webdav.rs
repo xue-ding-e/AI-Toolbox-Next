@@ -9,7 +9,7 @@ use zip::ZipArchive;
 use super::utils::{
     clear_restored_cli_custom_roots, create_backup_zip, get_claude_desktop_settings_paths,
     get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
-    get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir, get_dsh_restore_dir,
+    get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir, get_kimi_restore_dir, get_dsh_restore_dir,
     get_image_assets_dir, get_opencode_auth_restore_path,
     get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file,
     normalize_restore_entry_name, push_restore_warning, read_backup_meta_from_archive,
@@ -669,6 +669,13 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
     .flatten();
+    let kimi_restore_dir_override = should_use_root_override_for_tool(
+        "kimi",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(&mut archive, "external-configs/kimi/root-dir.txt"))
+    .flatten();
     let openclaw_restore_dir_override = should_use_root_override_for_tool(
         "openclaw",
         include_cli_config_files,
@@ -743,6 +750,11 @@ pub async fn restore_from_webdav(
     let (grok_restore_dir, grok_warning) =
         resolve_restore_dir_override("grok", grok_restore_dir_override, get_grok_restore_dir()?);
     if let Some(warning) = grok_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+    let (kimi_restore_dir, kimi_warning) =
+        resolve_restore_dir_override("kimi", kimi_restore_dir_override, get_kimi_restore_dir()?);
+    if let Some(warning) = kimi_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -1004,6 +1016,34 @@ pub async fn restore_from_webdav(
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
                 if matches!(relative_path, "auth.json" | "config.toml") {
+                    harden_restored_sensitive_file(&outpath)?;
+                }
+            } else if file_name.starts_with("external-configs/kimi/") {
+                let relative_path = &file_name["external-configs/kimi/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+                if should_filter_external_config_entry(&filter_rules, "kimi", relative_path) {
+                    continue;
+                }
+                let Some(outpath) =
+                    resolve_external_config_restore_output_path(&kimi_restore_dir, relative_path)?
+                else {
+                    continue;
+                };
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "kimi");
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("Failed to create Kimi restore directory: {}", e))?;
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                if matches!(relative_path, "config.toml") || relative_path.starts_with("credentials/") {
                     harden_restored_sensitive_file(&outpath)?;
                 }
             } else if file_name.starts_with("external-configs/geminicli/") {

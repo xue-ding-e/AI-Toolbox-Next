@@ -84,6 +84,12 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     })
     .await;
 
+    let kimi_app = app.clone();
+    reapply_cli(&mut summary, "kimi", async move {
+        reapply_kimi(&kimi_app).await
+    })
+    .await;
+
     let gemini_app = app.clone();
     reapply_cli(&mut summary, "gemini", async move {
         reapply_gemini(&gemini_app).await
@@ -204,6 +210,7 @@ fn wsl_module_for_reapply_label(label: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "claude" => Some("claude"),
         "grok" => Some("grok"),
+        "kimi" => Some("kimi"),
         "gemini" => Some("geminicli"),
         "opencode" | "oh-my-openagent" | "oh-my-opencode-slim" => Some("opencode"),
         "pi" => Some("pi"),
@@ -231,6 +238,7 @@ pub fn unchanged_wsl_modules(changed_modules: &[String]) -> Vec<String> {
         "claude",
         "codex",
         "grok",
+        "kimi",
         "openclaw",
         "geminicli",
         "pi",
@@ -544,6 +552,66 @@ async fn reapply_grok<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
 
     apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
         grok::apply_grok_prompt_config_internal_without_events(&db, app, &prompt_id).await
+    })
+    .await;
+    result
+}
+
+async fn reapply_kimi<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::kimi;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    let provider_id = resolve_record_id(
+        &mut result,
+        "provider",
+        first_applied_provider_id(&db, DbTable::KimiProvider),
+    );
+    let prompt_id = resolve_record_id(
+        &mut result,
+        "prompt",
+        first_applied_prompt_id(&db, DbTable::KimiPromptConfig),
+    );
+    if provider_id.is_none() && prompt_id.is_none() {
+        return result;
+    }
+
+    match runtime_location::get_kimi_runtime_location_async(&db).await {
+        Ok(location) => {
+            if let Err(error) = probe_runtime_path(location.host_path).await {
+                result.warnings.push(error);
+                return result;
+            }
+        }
+        Err(error) => {
+            result
+                .warnings
+                .push(format!("failed to resolve runtime path: {error}"));
+            return result;
+        }
+    }
+
+    if gateway_locked(app, GatewayCliKey::Kimi) {
+        if let Some(provider_id) = provider_id {
+            result.warnings.push(format!(
+                "provider:{provider_id}: gateway takeover is active; direct provider projection was skipped"
+            ));
+        }
+    } else {
+        apply_record(
+            &mut result,
+            "provider",
+            provider_id,
+            |provider_id| async move {
+                kimi::select_kimi_provider_internal_with_sync(&db, app, &provider_id, false, false).await
+            },
+        )
+        .await;
+    }
+
+    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+        kimi::apply_kimi_prompt_config_internal_without_events(&db, app, &prompt_id).await
     })
     .await;
     result

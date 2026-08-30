@@ -941,7 +941,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 15;
+    const CURRENT_DEFAULTS_VERSION: u64 = 16;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -953,6 +953,8 @@ async fn backfill_default_mappings(
     const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
         &["dsh-config", "dsh-credentials", "dsh-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V14: &[&str] = &["dsh-mcp"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] =
+        &["kimi-config", "kimi-prompt", "kimi-credentials", "kimi-plugins"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1003,6 +1005,11 @@ async fn backfill_default_mappings(
                 14,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V14,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                16,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V16,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1290,6 +1297,38 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .wsl
                         .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
                         .unwrap_or_else(|| "~/.grok/plugins".to_string());
+                }
+            }
+            "kimi-config" => {
+                if let Ok(path) = runtime_location::get_kimi_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_kimi_wsl_target_path_async(db, "config.toml").await;
+                }
+            }
+            "kimi-prompt" => {
+                if let Ok(path) = runtime_location::get_kimi_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_kimi_wsl_target_path_async(db, "AGENTS.md").await;
+                }
+            }
+            "kimi-credentials" | "kimi-plugins" => {
+                if let Ok(location) = runtime_location::get_kimi_runtime_location_async(db).await {
+                    let dir_name = if mapping.id == "kimi-credentials" {
+                        crate::coding::kimi::constants::KIMI_CREDENTIALS_DIR
+                    } else {
+                        crate::coding::kimi::constants::KIMI_PLUGINS_DIR
+                    };
+                    mapping.windows_path = location
+                        .host_path
+                        .join(dir_name)
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = location
+                        .wsl
+                        .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), dir_name))
+                        .unwrap_or_else(|| format!("~/.kimi-code/{dir_name}"));
                 }
             }
             "openclaw-config" => {
@@ -2076,6 +2115,55 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
+        // Kimi Code CLI - runtime config.toml + authored prompt + credentials + plugins.
+        FileMapping {
+            id: "kimi-config".to_string(),
+            name: "Kimi Code CLI 配置".to_string(),
+            module: "kimi".to_string(),
+            windows_path: "~/.kimi-code/config.toml".to_string(),
+            wsl_path: "~/.kimi-code/config.toml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "kimi-prompt".to_string(),
+            name: "Kimi Code CLI 全局提示词".to_string(),
+            module: "kimi".to_string(),
+            windows_path: "~/.kimi-code/AGENTS.md".to_string(),
+            wsl_path: "~/.kimi-code/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "kimi-credentials".to_string(),
+            name: "Kimi Code CLI 凭据".to_string(),
+            module: "kimi".to_string(),
+            windows_path: "~/.kimi-code/credentials".to_string(),
+            wsl_path: "~/.kimi-code/credentials".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "kimi-plugins".to_string(),
+            name: "Kimi Code CLI 插件目录".to_string(),
+            module: "kimi".to_string(),
+            windows_path: "~/.kimi-code/plugins".to_string(),
+            wsl_path: "~/.kimi-code/plugins".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
     ]
 }
 
@@ -2273,6 +2361,33 @@ mod tests {
             9,
             "grok-config",
             &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"],
+        ));
+    }
+
+    #[test]
+    fn defaults_backfill_v16_only_adds_kimi_mappings_for_existing_v15_users() {
+        let kimi_ids = [
+            "kimi-config",
+            "kimi-prompt",
+            "kimi-credentials",
+            "kimi-plugins",
+        ];
+        for mapping_id in kimi_ids {
+            assert!(should_backfill_versioned_mapping(
+                15, 16, mapping_id, &kimi_ids,
+            ));
+        }
+        assert!(!should_backfill_versioned_mapping(
+            15,
+            16,
+            "grok-config",
+            &kimi_ids,
+        ));
+        assert!(!should_backfill_versioned_mapping(
+            16,
+            16,
+            "kimi-config",
+            &kimi_ids,
         ));
     }
 

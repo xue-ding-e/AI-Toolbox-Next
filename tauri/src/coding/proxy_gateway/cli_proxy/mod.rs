@@ -35,6 +35,7 @@ const CLAUDE_SETTINGS_KIND: &str = "claude_settings_json";
 const CODEX_CONFIG_KIND: &str = "codex_config_toml";
 const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GROK_CONFIG_KIND: &str = "grok_config_toml";
+const KIMI_CONFIG_KIND: &str = "kimi_config_toml";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
 const DESKTOP_NORMAL_CONFIG_KIND: &str = "claude_desktop_normal_config_json";
@@ -105,6 +106,11 @@ const DEFAULT_CODEX_PROVIDER_ID: &str = "custom";
 const CODEX_AUTH_MANAGED_FIELDS: [&str; 2] = ["OPENAI_API_KEY", "auth_mode"];
 const GROK_CONFIG_MANAGED_FIELDS: [&str; 2] = ["models.default", "model.ai-toolbox-gateway"];
 
+/// Default Kimi provider table key (official managed provider). Custom applied
+/// providers project their own key, so the takeover target is resolved from
+/// `default_model -> models.<key>.provider` at patch/status/WSL time.
+const DEFAULT_KIMI_PROVIDER_KEY: &str = "managed:kimi-code";
+
 const GEMINI_MANAGED_ENV_KEYS: [&str; 14] = [
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -149,6 +155,20 @@ fn is_codex_gateway_managed_fields(managed_fields: &[String]) -> bool {
         field == "model_providers.ai-toolbox-gateway"
             || (field.starts_with("model_providers.") && field.ends_with(".base_url"))
     })
+}
+
+fn kimi_config_managed_fields_for_provider(provider_key: &str) -> Vec<String> {
+    vec![
+        format!("providers.{provider_key}.type"),
+        format!("providers.{provider_key}.base_url"),
+        format!("providers.{provider_key}.api_key"),
+    ]
+}
+
+fn is_kimi_gateway_managed_fields(managed_fields: &[String]) -> bool {
+    managed_fields
+        .iter()
+        .any(|field| field.starts_with("providers.") && field.ends_with(".base_url"))
 }
 
 #[derive(Debug, Clone)]
@@ -694,6 +714,7 @@ pub fn wsl_synced_gateway_target_for_mapping(
         "claude-settings" => Some((GatewayCliKey::Claude, CLAUDE_SETTINGS_KIND)),
         "codex-config" => Some((GatewayCliKey::Codex, CODEX_CONFIG_KIND)),
         "grok-config" => Some((GatewayCliKey::Grok, GROK_CONFIG_KIND)),
+        "kimi-config" => Some((GatewayCliKey::Kimi, KIMI_CONFIG_KIND)),
         "geminicli-env" => Some((GatewayCliKey::Gemini, GEMINI_ENV_KIND)),
         _ => None,
     }
@@ -764,6 +785,15 @@ pub fn rewrite_wsl_synced_gateway_target_content(
                 &wsl_gateway_endpoint,
             )
         }
+        (GatewayCliKey::Kimi, KIMI_CONFIG_KIND)
+            if is_kimi_gateway_managed_fields(&managed_file.managed_fields) =>
+        {
+            rewrite_kimi_wsl_gateway_content(
+                content,
+                &windows_gateway_endpoint,
+                &wsl_gateway_endpoint,
+            )
+        }
         (GatewayCliKey::Gemini, GEMINI_ENV_KIND)
             if managed_file
                 .managed_fields
@@ -820,6 +850,7 @@ fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
             | GatewayCliKey::ClaudeDesktop
             | GatewayCliKey::Codex
             | GatewayCliKey::Grok
+            | GatewayCliKey::Kimi
             | GatewayCliKey::Gemini
     )
 }
@@ -867,6 +898,7 @@ async fn resolve_targets(
         GatewayCliKey::Claude => runtime_location::get_claude_runtime_location_async(db).await?,
         GatewayCliKey::Codex => runtime_location::get_codex_runtime_location_async(db).await?,
         GatewayCliKey::Grok => runtime_location::get_grok_runtime_location_async(db).await?,
+        GatewayCliKey::Kimi => runtime_location::get_kimi_runtime_location_async(db).await?,
         GatewayCliKey::Gemini => {
             runtime_location::get_gemini_cli_runtime_location_async(db).await?
         }
@@ -905,6 +937,11 @@ async fn resolve_targets(
             kind: GROK_CONFIG_KIND,
             path: runtime_root.join("config.toml"),
             managed_fields: static_managed_fields(&GROK_CONFIG_MANAGED_FIELDS),
+        }],
+        GatewayCliKey::Kimi => vec![CliProxyTarget {
+            kind: KIMI_CONFIG_KIND,
+            path: runtime_root.join("config.toml"),
+            managed_fields: kimi_config_managed_fields_for_provider(DEFAULT_KIMI_PROVIDER_KEY),
         }],
         GatewayCliKey::Gemini => vec![
             CliProxyTarget {
@@ -1491,6 +1528,20 @@ fn apply_gateway_config(
             required_target_path(targets, GROK_CONFIG_KIND)?,
             &cli_gateway_endpoint(cli_key, base_origin),
         ),
+        GatewayCliKey::Kimi => {
+            let provider_key = patch_kimi_config(
+                required_target_path(targets, KIMI_CONFIG_KIND)?,
+                &cli_gateway_endpoint(cli_key, base_origin),
+            )?;
+            if let Some(target) = targets
+                .files
+                .iter_mut()
+                .find(|file| file.kind == KIMI_CONFIG_KIND)
+            {
+                target.managed_fields = kimi_config_managed_fields_for_provider(&provider_key);
+            }
+            Ok(())
+        }
         GatewayCliKey::Gemini => {
             patch_gemini_env(
                 required_target_path(targets, GEMINI_ENV_KIND)?,
@@ -1554,6 +1605,22 @@ fn restore_gateway_config(
             restore_grok_config(
                 path,
                 backup_content(paths, cli_key, manifest, GROK_CONFIG_KIND)?.as_deref(),
+            )
+        }
+        GatewayCliKey::Kimi => {
+            let path = required_target_path(targets, KIMI_CONFIG_KIND)?;
+            if should_delete_gateway_created_file(manifest, KIMI_CONFIG_KIND) {
+                return delete_if_exists(path);
+            }
+            restore_kimi_config(
+                path,
+                backup_content(paths, cli_key, manifest, KIMI_CONFIG_KIND)?.as_deref(),
+                manifest
+                    .files
+                    .iter()
+                    .find(|file| file.kind == KIMI_CONFIG_KIND)
+                    .map(|file| file.managed_fields.as_slice())
+                    .unwrap_or_default(),
             )
         }
         GatewayCliKey::Gemini => {
@@ -1629,6 +1696,9 @@ fn current_cli_gateway_endpoint(
         GatewayCliKey::Grok => {
             current_grok_gateway_endpoint(required_target_path(targets, GROK_CONFIG_KIND)?)
         }
+        GatewayCliKey::Kimi => {
+            current_kimi_gateway_endpoint(required_target_path(targets, KIMI_CONFIG_KIND)?)
+        }
         GatewayCliKey::Gemini => {
             current_gemini_gateway_endpoint(required_target_path(targets, GEMINI_ENV_KIND)?)
         }
@@ -1643,6 +1713,7 @@ fn cli_gateway_endpoint(cli_key: GatewayCliKey, base_origin: &str) -> String {
         GatewayCliKey::ClaudeDesktop => format!("{base_origin}/claude-desktop"),
         GatewayCliKey::Codex => format!("{base_origin}/openai/v1"),
         GatewayCliKey::Grok => format!("{base_origin}/grok/v1"),
+        GatewayCliKey::Kimi => format!("{base_origin}/kimi/v1"),
         GatewayCliKey::Gemini => format!("{base_origin}/gemini/v1beta"),
         GatewayCliKey::OpenCode => base_origin.to_string(),
     }
@@ -1746,6 +1817,34 @@ fn resolve_codex_takeover_provider_id(document: &DocumentMut) -> String {
     }
 }
 
+/// Active Kimi provider table key for takeover, resolved through the CLI's own
+/// lookup chain: `default_model` -> `[models.<key>].provider`. Custom applied
+/// providers project their own key (e.g. `axonhub`), so patching only
+/// `managed:kimi-code` would leave CLI traffic bypassing the gateway. Falls
+/// back to the official managed provider when the chain is incomplete.
+fn resolve_kimi_takeover_provider_key(document: &DocumentMut) -> String {
+    document
+        .as_table()
+        .get("default_model")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|model_key| {
+            document
+                .as_table()
+                .get("models")
+                .and_then(Item::as_table_like)
+                .and_then(|models| models.get(model_key))
+                .and_then(Item::as_table_like)
+                .and_then(|model| model.get("provider"))
+                .and_then(Item::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| DEFAULT_KIMI_PROVIDER_KEY.to_string())
+}
+
 fn codex_provider_base_url(document: &DocumentMut, provider_id: &str) -> Option<String> {
     document
         .as_table()
@@ -1817,6 +1916,34 @@ fn current_grok_gateway_endpoint(path: &Path) -> Result<Option<String>, String> 
         .and_then(|models| models.get(GATEWAY_PROVIDER_ID))
         .and_then(Item::as_table_like)
         .and_then(|model| model.get("base_url"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+fn current_kimi_gateway_endpoint(path: &Path) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let document = parse_toml_file(path)?;
+    let provider_key = resolve_kimi_takeover_provider_key(&document);
+    let provider_table = document
+        .as_table()
+        .get("providers")
+        .and_then(Item::as_table)
+        .and_then(|providers| providers.get(&provider_key))
+        .and_then(Item::as_table_like);
+    if provider_table
+        .and_then(|provider| provider.get("api_key"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        != Some(GATEWAY_API_KEY)
+    {
+        return Ok(None);
+    }
+    Ok(provider_table
+        .and_then(|provider| provider.get("base_url"))
         .and_then(Item::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1956,6 +2083,42 @@ fn rewrite_grok_wsl_gateway_content(
         return Ok(None);
     }
     model_table.insert("base_url", value(wsl_gateway_endpoint));
+    Ok(Some(document.to_string()))
+}
+
+fn rewrite_kimi_wsl_gateway_content(
+    content: &str,
+    windows_gateway_endpoint: &str,
+    wsl_gateway_endpoint: &str,
+) -> Result<Option<String>, String> {
+    let mut document = parse_toml_document(content, "WSL Kimi config")?;
+    let provider_key = resolve_kimi_takeover_provider_key(&document);
+    let Some(provider_table) = document
+        .as_table_mut()
+        .get_mut("providers")
+        .and_then(Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(&provider_key))
+        .and_then(Item::as_table_like_mut)
+    else {
+        return Ok(None);
+    };
+    if provider_table
+        .get("api_key")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        != Some(GATEWAY_API_KEY)
+    {
+        return Ok(None);
+    }
+    if provider_table
+        .get("base_url")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        != Some(windows_gateway_endpoint)
+    {
+        return Ok(None);
+    }
+    provider_table.insert("base_url", value(wsl_gateway_endpoint));
     Ok(Some(document.to_string()))
 }
 
@@ -2229,6 +2392,25 @@ fn patch_grok_config(path: &Path, gateway_endpoint: &str) -> Result<(), String> 
     write_toml_file(path, &document)
 }
 
+fn patch_kimi_config(path: &Path, gateway_endpoint: &str) -> Result<String, String> {
+    let mut document = read_or_new_toml_document(path)?;
+    let provider_key = resolve_kimi_takeover_provider_key(&document);
+    let providers_root = document["providers"].or_insert(Item::Table(toml_edit::Table::new()));
+    let providers_root = providers_root
+        .as_table_mut()
+        .ok_or_else(|| "Kimi [providers] must be a table".to_string())?;
+    let managed_provider = providers_root
+        .entry(&provider_key)
+        .or_insert(Item::Table(toml_edit::Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| "Kimi active provider entry must be a table".to_string())?;
+    managed_provider.insert("type", value("openai"));
+    managed_provider.insert("base_url", value(gateway_endpoint));
+    managed_provider.insert("api_key", value(GATEWAY_API_KEY));
+    write_toml_file(path, &document)?;
+    Ok(provider_key)
+}
+
 fn restore_grok_config(path: &Path, backup_content: Option<&str>) -> Result<(), String> {
     let mut current = read_or_new_toml_document(path)?;
     let backup = backup_content
@@ -2410,6 +2592,127 @@ fn restore_codex_auth(path: &Path, backup_content: Option<&str>) -> Result<(), S
         &["/OPENAI_API_KEY", "/auth_mode"],
     );
     write_json_file(path, &current)
+}
+
+/// Managed Kimi provider fields. Takeover only rewrites these three fields on
+/// the active provider table, so restore must also be field-level: a whole-file
+/// rollback would revert unrelated edits made during the takeover window.
+const KIMI_MANAGED_PROVIDER_FIELDS: [&str; 3] = ["type", "base_url", "api_key"];
+
+/// Provider table keys recorded by a manifest's managed fields
+/// (`providers.<key>.type` / `.base_url` / `.api_key`).
+fn kimi_managed_provider_keys_from_fields(managed_fields: &[String]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for field in managed_fields {
+        let Some(rest) = field.strip_prefix("providers.") else {
+            continue;
+        };
+        let Some(stripped) = ["type", "base_url", "api_key"]
+            .iter()
+            .find_map(|suffix| rest.strip_suffix(suffix))
+        else {
+            continue;
+        };
+        // Drop the separator dot left behind by the suffix strip.
+        let key = stripped.strip_suffix('.').unwrap_or(stripped);
+        if !key.is_empty() && !keys.iter().any(|existing| existing == key) {
+            keys.push(key.to_string());
+        }
+    }
+    keys
+}
+
+fn restore_kimi_config(
+    path: &Path,
+    backup_content: Option<&str>,
+    managed_fields: &[String],
+) -> Result<(), String> {
+    let mut current = read_or_new_toml_document(path)?;
+    let backup = backup_content
+        .map(|content| parse_toml_document(content, "Kimi gateway backup"))
+        .transpose()?;
+
+    // Prefer the provider keys recorded at patch time (manifest managed
+    // fields); fall back to the CLI's own lookup chain for legacy manifests.
+    let mut provider_keys = kimi_managed_provider_keys_from_fields(managed_fields);
+    let resolved_key = resolve_kimi_takeover_provider_key(&current);
+    // Also always restore the key the live file itself resolves as managed: a
+    // crash between apply and the manifest re-sync leaves the manifest pointing
+    // at the placeholder key while the real provider table was patched.
+    // Placeholder-key restore is a harmless no-op; this one covers the drift.
+    if !provider_keys.iter().any(|key| key == &resolved_key) {
+        provider_keys.push(resolved_key);
+    }
+
+    for provider_key in provider_keys {
+        // 1. Clear the managed fields from the active provider table.
+        let mut table_left_empty = false;
+        if let Some(provider_table) = current
+            .as_table_mut()
+            .get_mut("providers")
+            .and_then(Item::as_table_mut)
+            .and_then(|providers| providers.get_mut(&provider_key))
+            .and_then(Item::as_table_like_mut)
+        {
+            for field in KIMI_MANAGED_PROVIDER_FIELDS {
+                provider_table.remove(field);
+            }
+            table_left_empty = provider_table.is_empty();
+        }
+        // 2. Restore the managed fields from the backup.
+        let backup_table = backup
+            .as_ref()
+            .and_then(|document| document.as_table().get("providers"))
+            .and_then(Item::as_table_like)
+            .and_then(|providers| providers.get(&provider_key))
+            .and_then(Item::as_table_like);
+        match backup_table {
+            Some(backup_table) => {
+                // Defensive mirror of `patch_kimi_config`'s table access: a
+                // user-corrupted non-table shape must fail cleanly instead of
+                // panicking the restore path — restore is the last-resort net
+                // that brings the CLI back to direct connectivity.
+                let providers_root = current["providers"]
+                    .or_insert(Item::Table(toml_edit::Table::new()));
+                let providers_root = providers_root
+                    .as_table_mut()
+                    .ok_or_else(|| "Kimi [providers] must be a table".to_string())?;
+                let provider_table = providers_root
+                    .entry(provider_key.as_str())
+                    .or_insert(Item::Table(toml_edit::Table::new()))
+                    .as_table_like_mut()
+                    .ok_or_else(|| "Kimi active provider entry must be a table".to_string())?;
+                for field in KIMI_MANAGED_PROVIDER_FIELDS {
+                    if let Some(backup_value) = backup_table.get(field) {
+                        provider_table.insert(field, backup_value.clone());
+                    }
+                }
+            }
+            // A missing backup table with no leftover fields means the patch
+            // created the provider table itself: drop it instead of leaving a
+            // hollow entry behind.
+            None if table_left_empty => {
+                if let Some(providers) = current
+                    .as_table_mut()
+                    .get_mut("providers")
+                    .and_then(Item::as_table_mut)
+                {
+                    providers.remove(&provider_key);
+                }
+            }
+            None => {}
+        }
+    }
+    // Drop an empty [providers] root that only existed for the gateway entry.
+    if current
+        .as_table()
+        .get("providers")
+        .and_then(Item::as_table_like)
+        .is_some_and(|providers| providers.is_empty())
+    {
+        current.as_table_mut().remove("providers");
+    }
+    write_toml_file(path, &current)
 }
 
 fn patch_gemini_env(path: &Path, gateway_endpoint: &str) -> Result<(), String> {
@@ -3802,6 +4105,393 @@ base_url = "http://127.0.0.1:9999/v1"
     }
 
     #[test]
+    fn resolve_kimi_takeover_provider_key_follows_default_model_provider() {
+        let document = parse_toml_document(
+            r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+"#,
+            "Kimi config",
+        )
+        .unwrap();
+        assert_eq!(resolve_kimi_takeover_provider_key(&document), "axonhub");
+    }
+
+    #[test]
+    fn resolve_kimi_takeover_provider_key_accepts_inline_models_table() {
+        // Inline `models = { ... }` tables must resolve like header tables.
+        let document = parse_toml_document(
+            "default_model = \"axonhub/k2\"\nmodels = { \"axonhub/k2\" = { provider = \"axonhub\" } }\n",
+            "Kimi config",
+        )
+        .unwrap();
+        assert_eq!(resolve_kimi_takeover_provider_key(&document), "axonhub");
+    }
+
+    #[test]
+    fn resolve_kimi_takeover_provider_key_falls_back_to_managed_provider() {
+        let missing_default = parse_toml_document(
+            "[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\n",
+            "Kimi config",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_kimi_takeover_provider_key(&missing_default),
+            DEFAULT_KIMI_PROVIDER_KEY
+        );
+
+        let missing_models =
+            parse_toml_document("default_model = \"kimi-code/k3\"\n", "Kimi config").unwrap();
+        assert_eq!(
+            resolve_kimi_takeover_provider_key(&missing_models),
+            DEFAULT_KIMI_PROVIDER_KEY
+        );
+
+        let missing_provider_field = parse_toml_document(
+            "default_model = \"kimi-code/k3\"\n\n[models.\"kimi-code/k3\"]\nmodel = \"k3\"\n",
+            "Kimi config",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_kimi_takeover_provider_key(&missing_provider_field),
+            DEFAULT_KIMI_PROVIDER_KEY
+        );
+    }
+
+    #[test]
+    fn patch_kimi_config_rewrites_active_custom_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+
+[providers.axonhub]
+type = "openai"
+base_url = "https://axonhub.example.com/v1"
+api_key = "real-key"
+
+[providers.axonhub.env]
+KIMI_CODE_CUSTOM_HEADERS = "x-trace: 1"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://api.kimi.com/coding/v1"
+"#,
+        )
+        .unwrap();
+
+        let provider_key = patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+        assert_eq!(provider_key, "axonhub");
+
+        let document = parse_toml_file(&path).unwrap();
+        assert_eq!(
+            document["providers"]["axonhub"]["base_url"].as_str(),
+            Some("http://127.0.0.1:37123/kimi/v1")
+        );
+        assert_eq!(
+            document["providers"]["axonhub"]["api_key"].as_str(),
+            Some(GATEWAY_API_KEY)
+        );
+        assert_eq!(
+            document["providers"]["axonhub"]["type"].as_str(),
+            Some("openai")
+        );
+        // Unrelated provider tables and user fields stay untouched.
+        assert_eq!(
+            document["providers"]["axonhub"]["env"]["KIMI_CODE_CUSTOM_HEADERS"].as_str(),
+            Some("x-trace: 1")
+        );
+        assert_eq!(
+            document["providers"]["managed:kimi-code"]["base_url"].as_str(),
+            Some("https://api.kimi.com/coding/v1")
+        );
+    }
+
+    #[test]
+    fn patch_kimi_config_without_active_chain_targets_managed_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\nbase_url = \"https://api.kimi.com/coding/v1\"\n",
+        )
+        .unwrap();
+
+        let provider_key = patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+        assert_eq!(provider_key, DEFAULT_KIMI_PROVIDER_KEY);
+
+        let document = parse_toml_file(&path).unwrap();
+        assert_eq!(
+            document["providers"]["managed:kimi-code"]["base_url"].as_str(),
+            Some("http://127.0.0.1:37123/kimi/v1")
+        );
+        assert_eq!(
+            document["providers"]["managed:kimi-code"]["api_key"].as_str(),
+            Some(GATEWAY_API_KEY)
+        );
+    }
+
+    #[test]
+    fn current_kimi_gateway_endpoint_follows_active_provider_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+
+[providers.axonhub]
+type = "openai"
+base_url = "http://127.0.0.1:37123/kimi/v1"
+api_key = "ai-toolbox-gateway"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            current_kimi_gateway_endpoint(&path).unwrap(),
+            Some("http://127.0.0.1:37123/kimi/v1".to_string())
+        );
+
+        // Legacy false-green: managed provider holds gateway values but the
+        // active model chain points at a direct custom provider.
+        fs::write(
+            &path,
+            r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+
+[providers.axonhub]
+type = "openai"
+base_url = "https://axonhub.example.com/v1"
+api_key = "real-key"
+
+[providers."managed:kimi-code"]
+type = "openai"
+base_url = "http://127.0.0.1:37123/kimi/v1"
+api_key = "ai-toolbox-gateway"
+"#,
+        )
+        .unwrap();
+        assert_eq!(current_kimi_gateway_endpoint(&path).unwrap(), None);
+    }
+
+    #[test]
+    fn kimi_patch_and_restore_round_trip_via_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+
+[providers.axonhub]
+type = "openai"
+base_url = "https://axonhub.example.com/v1"
+api_key = "real-key"
+"#;
+        fs::write(&path, original).unwrap();
+
+        patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+        assert_ne!(fs::read_to_string(&path).unwrap(), original);
+
+        let managed = kimi_config_managed_fields_for_provider("axonhub");
+        restore_kimi_config(&path, Some(original), &managed).unwrap();
+        let restored =
+            parse_toml_document(&fs::read_to_string(&path).unwrap(), "restored Kimi config")
+                .unwrap();
+        assert_eq!(
+            restored["providers"]["axonhub"]["type"].as_str(),
+            Some("openai")
+        );
+        assert_eq!(
+            restored["providers"]["axonhub"]["base_url"].as_str(),
+            Some("https://axonhub.example.com/v1")
+        );
+        assert_eq!(
+            restored["providers"]["axonhub"]["api_key"].as_str(),
+            Some("real-key")
+        );
+        assert_eq!(restored["default_model"].as_str(), Some("axonhub/k2"));
+    }
+
+    #[test]
+    fn kimi_restore_is_field_level_and_keeps_unmanaged_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+
+[providers.axonhub]
+type = "openai"
+base_url = "https://axonhub.example.com/v1"
+api_key = "real-key"
+"#;
+        fs::write(&path, original).unwrap();
+        patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+
+        // User edits unrelated parts of config.toml during the takeover window.
+        let drifted = fs::read_to_string(&path).unwrap()
+            + "\n[providers.axonhub.env]\nKIMI_CODE_CUSTOM_HEADERS = \"x-trace: 1\"\n\n[mcp_servers.docs]\ncommand = \"docs-mcp\"\n";
+        fs::write(&path, drifted).unwrap();
+
+        let managed = kimi_config_managed_fields_for_provider("axonhub");
+        restore_kimi_config(&path, Some(original), &managed).unwrap();
+
+        let restored =
+            parse_toml_document(&fs::read_to_string(&path).unwrap(), "restored Kimi config")
+                .unwrap();
+        assert_eq!(
+            restored["providers"]["axonhub"]["base_url"].as_str(),
+            Some("https://axonhub.example.com/v1")
+        );
+        assert_eq!(
+            restored["providers"]["axonhub"]["api_key"].as_str(),
+            Some("real-key")
+        );
+        // Unmanaged edits made during the takeover window survive the restore.
+        assert_eq!(
+            restored["providers"]["axonhub"]["env"]["KIMI_CODE_CUSTOM_HEADERS"].as_str(),
+            Some("x-trace: 1")
+        );
+        assert_eq!(
+            restored["mcp_servers"]["docs"]["command"].as_str(),
+            Some("docs-mcp")
+        );
+    }
+
+    #[test]
+    fn kimi_restore_without_backup_clears_managed_fields_only() {
+        // Missing backup (e.g. manifest without the file entry) must not blank
+        // the whole config: only the managed fields are cleared.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+
+[providers.axonhub]
+type = "openai"
+base_url = "https://axonhub.example.com/v1"
+api_key = "real-key"
+"#;
+        fs::write(&path, original).unwrap();
+        patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+
+        let managed = kimi_config_managed_fields_for_provider("axonhub");
+        restore_kimi_config(&path, None, &managed).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("default_model"));
+        assert!(content.contains("[models.\"axonhub/k2\"]"));
+        let restored = parse_toml_document(&content, "restored Kimi config").unwrap();
+        // The provider table only carried managed fields, so it is dropped
+        // entirely instead of being left hollow or blanked by a full-file
+        // overwrite.
+        assert!(restored.get("providers").is_none());
+    }
+
+    #[test]
+    fn kimi_restore_drops_gateway_created_provider_table() {
+        // Backup has no [providers.axonhub]: the patch created the table, so
+        // restore removes it once the managed fields are cleared.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+"#;
+        fs::write(&path, original).unwrap();
+        patch_kimi_config(&path, "http://127.0.0.1:37123/kimi/v1").unwrap();
+
+        let managed = kimi_config_managed_fields_for_provider("axonhub");
+        restore_kimi_config(&path, Some(original), &managed).unwrap();
+
+        let restored =
+            parse_toml_document(&fs::read_to_string(&path).unwrap(), "restored Kimi config")
+                .unwrap();
+        assert!(restored.get("providers").is_none());
+        assert_eq!(restored["default_model"].as_str(), Some("axonhub/k2"));
+        assert_eq!(
+            restored["models"]["axonhub/k2"]["provider"].as_str(),
+            Some("axonhub")
+        );
+    }
+
+    #[test]
+    fn wsl_gateway_rewrite_updates_active_kimi_provider_base_url_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let managed = kimi_config_managed_fields_for_provider("axonhub");
+        let managed_refs: Vec<&str> = managed.iter().map(String::as_str).collect();
+        let manifest =
+            test_manifest_with_file(GatewayCliKey::Kimi, KIMI_CONFIG_KIND, &managed_refs);
+        write_manifest(&paths, GatewayCliKey::Kimi, &manifest).unwrap();
+
+        let content = r#"
+default_model = "axonhub/k2"
+
+[models."axonhub/k2"]
+provider = "axonhub"
+model = "k2"
+
+[providers.axonhub]
+type = "openai"
+base_url = "http://127.0.0.1:37123/kimi/v1"
+api_key = "ai-toolbox-gateway"
+
+[providers.local]
+type = "openai"
+base_url = "http://127.0.0.1:9999/v1"
+"#;
+
+        let rewritten = rewrite_wsl_synced_gateway_target_content(
+            &paths,
+            &test_proxy_gateway_settings("172.20.10.1"),
+            GatewayCliKey::Kimi,
+            KIMI_CONFIG_KIND,
+            content,
+        )
+        .unwrap()
+        .unwrap();
+        let rewritten_document = parse_toml_document(&rewritten, "rewritten Kimi config").unwrap();
+
+        assert_eq!(
+            rewritten_document["providers"]["axonhub"]["base_url"].as_str(),
+            Some("http://172.20.10.1:37123/kimi/v1")
+        );
+        assert_eq!(
+            rewritten_document["providers"]["local"]["base_url"].as_str(),
+            Some("http://127.0.0.1:9999/v1")
+        );
+    }
+
+    #[test]
     fn wsl_gateway_rewrite_updates_gemini_gateway_env_only() {
         let dir = tempfile::tempdir().unwrap();
         let paths = ProxyGatewayPaths::new(dir.path());
@@ -4309,7 +4999,10 @@ api_backend = "responses"
             "a file the gateway created (existed=false) must be flagged for deletion"
         );
         delete_if_exists(&file_path).unwrap();
-        assert!(!file_path.exists(), "restore must delete the gateway-created file");
+        assert!(
+            !file_path.exists(),
+            "restore must delete the gateway-created file"
+        );
     }
 
     #[test]
@@ -4344,6 +5037,9 @@ api_backend = "responses"
             !should_delete_gateway_created_file(&manifest, CLAUDE_SETTINGS_KIND),
             "a pre-existing file (existed=true) must not be deleted on restore"
         );
-        assert!(file_path.exists(), "pre-existing file must be untouched by the delete path");
+        assert!(
+            file_path.exists(),
+            "pre-existing file must be untouched by the delete path"
+        );
     }
 }

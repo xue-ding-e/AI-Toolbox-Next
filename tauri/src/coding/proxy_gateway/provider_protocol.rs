@@ -10,6 +10,7 @@ pub(crate) fn native_cli_protocol(cli_key: GatewayCliKey) -> Option<AiProtocol> 
         }
         GatewayCliKey::Codex => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Grok => Some(AiProtocol::OpenAiResponses),
+        GatewayCliKey::Kimi => Some(AiProtocol::OpenAiChat),
         GatewayCliKey::Gemini => Some(AiProtocol::GeminiNative),
         GatewayCliKey::OpenCode => None,
     }
@@ -96,6 +97,9 @@ fn provider_target_protocol(
                     .and_then(|value| AiProtocol::from_api_format(&value))
             })
             .unwrap_or(AiProtocol::OpenAiChat),
+        GatewayCliKey::Kimi => {
+            protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::OpenAiChat)
+        }
         GatewayCliKey::ClaudeDesktop => {
             protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::AnthropicMessages)
         }

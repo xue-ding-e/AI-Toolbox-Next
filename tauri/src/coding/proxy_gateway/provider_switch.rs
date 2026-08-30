@@ -149,6 +149,7 @@ fn provider_table(cli_key: GatewayCliKey) -> Option<DbTable> {
         GatewayCliKey::ClaudeDesktop => Some(DbTable::ClaudeDesktopProvider),
         GatewayCliKey::Codex => Some(DbTable::CodexProvider),
         GatewayCliKey::Grok => Some(DbTable::GrokProvider),
+        GatewayCliKey::Kimi => Some(DbTable::KimiProvider),
         GatewayCliKey::Gemini => Some(DbTable::GeminiCliProvider),
         GatewayCliKey::OpenCode => None,
     }
@@ -256,6 +257,16 @@ async fn apply_direct_provider<R: Runtime>(
             )
             .await
         }
+        GatewayCliKey::Kimi => {
+            crate::coding::kimi::commands::select_kimi_provider_internal_with_sync(
+                &db,
+                app,
+                provider_id,
+                from_tray,
+                true,
+            )
+            .await
+        }
         GatewayCliKey::Gemini => {
             crate::coding::gemini_cli::commands::apply_config_internal_with_sync(
                 &db,
@@ -310,6 +321,16 @@ async fn apply_direct_provider_without_events<R: Runtime>(
             )
             .await
         }
+        GatewayCliKey::Kimi => {
+            crate::coding::kimi::commands::select_kimi_provider_internal_with_sync(
+                &db,
+                app,
+                provider_id,
+                false,
+                false,
+            )
+            .await
+        }
         GatewayCliKey::Gemini => {
             crate::coding::gemini_cli::commands::apply_config_internal_without_events(
                 &db,
@@ -350,6 +371,7 @@ fn emit_gateway_cli_wsl_sync_request<R: Runtime>(app: &AppHandle<R>, cli_key: Ga
         GatewayCliKey::ClaudeDesktop => "wsl-sync-request-claudedesktop",
         GatewayCliKey::Codex => "wsl-sync-request-codex",
         GatewayCliKey::Grok => "wsl-sync-request-grok",
+        GatewayCliKey::Kimi => "wsl-sync-request-kimi",
         GatewayCliKey::Gemini => "wsl-sync-request-geminicli",
         GatewayCliKey::OpenCode => return,
     };

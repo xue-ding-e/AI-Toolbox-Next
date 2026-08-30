@@ -11,6 +11,7 @@ pub mod dsh;
 pub mod gemini_cli;
 pub mod grok;
 pub mod image;
+pub mod kimi;
 pub mod magic_context;
 pub mod mcp;
 pub mod oh_my_openagent;

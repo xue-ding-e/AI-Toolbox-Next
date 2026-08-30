@@ -25,6 +25,7 @@ pub enum OfficialAuthTool {
     Grok,
     Codex,
     GeminiCli,
+    Kimi,
 }
 
 #[derive(Debug, Clone)]
@@ -37,10 +38,11 @@ pub struct AuthRefreshConfig {
 }
 
 impl OfficialAuthTool {
-    pub const ALL: [OfficialAuthTool; 3] = [
+    pub const ALL: [OfficialAuthTool; 4] = [
         OfficialAuthTool::Grok,
         OfficialAuthTool::Codex,
         OfficialAuthTool::GeminiCli,
+        OfficialAuthTool::Kimi,
     ];
 
     pub fn config(self) -> AuthRefreshConfig {
@@ -64,6 +66,12 @@ impl OfficialAuthTool {
                 run_on_startup: true,
                 interval: Some(Duration::from_secs(15 * 60)),
             },
+            // Startup scan + periodic refresh for applied Kimi official accounts.
+            OfficialAuthTool::Kimi => AuthRefreshConfig {
+                tool_id: "kimi",
+                run_on_startup: true,
+                interval: Some(Duration::from_secs(15 * 60)),
+            },
         }
     }
 
@@ -72,6 +80,7 @@ impl OfficialAuthTool {
             OfficialAuthTool::Grok => providers::grok_refresh_applied_pass(db, app).await,
             OfficialAuthTool::Codex => providers::codex_refresh_applied_pass(db, app).await,
             OfficialAuthTool::GeminiCli => providers::gemini_cli_refresh_applied_pass(db, app).await,
+            OfficialAuthTool::Kimi => providers::kimi_refresh_applied_pass(db, app).await,
         }
     }
 }
@@ -162,7 +171,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.config().tool_id)
             .collect();
-        assert_eq!(ids, vec!["grok", "codex", "gemini_cli"]);
+        assert_eq!(ids, vec!["grok", "codex", "gemini_cli", "kimi"]);
     }
 
     #[test]

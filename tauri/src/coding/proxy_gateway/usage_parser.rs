@@ -421,6 +421,15 @@ fn from_json_response_with_provider_type(
     let mut usage = match cli_key {
         GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => claude_usage(value, provider_type),
         GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => openai_usage(value),
+        // Moonshot-style OpenAI-compatible upstreams report the cached portion
+        // as top-level `usage.cached_tokens` (no `prompt_tokens_details`). The
+        // extra read path stays Kimi-only so the other OpenAI-compatible CLIs
+        // keep the exact shared parsing behavior; the fresh-input subtraction
+        // semantics come from the shared inclusive-input handling.
+        GatewayCliKey::Kimi => openai_usage_with_extra_cache_read_paths(
+            value,
+            &["/usage/cached_tokens", "/response/usage/cached_tokens"],
+        ),
         GatewayCliKey::Gemini => gemini_usage(value),
     };
     if usage.envelope_id.is_none() {
@@ -439,7 +448,7 @@ fn extract_envelope_id(cli_key: GatewayCliKey, value: &Value) -> Option<String> 
             "/messageId",
         ],
         GatewayCliKey::Gemini => &["/responseId", "/response/responseId", "/id"],
-        GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => {
+        GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
             &["/response/id", "/id", "/responseId"]
         }
     };
@@ -579,6 +588,17 @@ fn moonshot_fresh_input_tokens(
 }
 
 fn openai_usage(value: &Value) -> TokenUsage {
+    openai_usage_with_extra_cache_read_paths(value, &[])
+}
+
+/// `openai_usage` with additional envelope-rooted fallback paths for
+/// `cache_read_tokens`. Kimi uses this for Moonshot-style top-level
+/// `usage.cached_tokens`; the other OpenAI-compatible CLIs pass no extra
+/// paths and keep the exact shared parsing behavior.
+fn openai_usage_with_extra_cache_read_paths(
+    value: &Value,
+    extra_cache_read_paths: &[&str],
+) -> TokenUsage {
     let usage = value
         .pointer("/usage")
         .or_else(|| value.pointer("/response/usage"))
@@ -612,6 +632,13 @@ fn openai_usage(value: &Value) -> TokenUsage {
                 "/response/usage/prompt_tokens_details/cached_tokens",
             ],
         )
+    })
+    .or_else(|| {
+        if extra_cache_read_paths.is_empty() {
+            None
+        } else {
+            first_u64_at_paths(value, extra_cache_read_paths)
+        }
     });
     // Responses API cache writes (AxonHub 94704784) and Chat-compatible aliases.
     // OpenAI/Responses `input_tokens` / `prompt_tokens` are treated as cache-inclusive
@@ -825,6 +852,47 @@ data: {"type":"message_delta","usage":{"output_tokens":35}}
         assert_eq!(usage.output_tokens, Some(10));
         assert_eq!(usage.cache_read_tokens, Some(80));
         assert_eq!(usage.total_tokens(), Some(110));
+    }
+
+    #[test]
+    fn parses_kimi_moonshot_style_top_level_cached_tokens() {
+        // Moonshot-style OpenAI-compatible upstreams report the cached portion
+        // as top-level `usage.cached_tokens` without
+        // `prompt_tokens_details.cached_tokens`. Input is treated as a
+        // cache-inclusive total: fresh = raw - cached.
+        let usage = from_response_body(
+            GatewayCliKey::Kimi,
+            br#"{"id":"chatcmpl-1","usage":{"prompt_tokens":100,"completion_tokens":10,"cached_tokens":80}}"#,
+        );
+
+        assert_eq!(usage.input_tokens, Some(20));
+        assert_eq!(usage.output_tokens, Some(10));
+        assert_eq!(usage.cache_read_tokens, Some(80));
+        assert_eq!(usage.total_tokens(), Some(110));
+    }
+
+    #[test]
+    fn parses_kimi_nested_response_top_level_cached_tokens() {
+        let usage = from_response_body(
+            GatewayCliKey::Kimi,
+            br#"{"response":{"id":"resp_1","usage":{"prompt_tokens":90,"completion_tokens":12,"cached_tokens":30}}}"#,
+        );
+
+        assert_eq!(usage.input_tokens, Some(60));
+        assert_eq!(usage.output_tokens, Some(12));
+        assert_eq!(usage.cache_read_tokens, Some(30));
+    }
+
+    #[test]
+    fn non_kimi_openai_usage_ignores_top_level_cached_tokens() {
+        let usage = from_response_body(
+            GatewayCliKey::Codex,
+            br#"{"id":"chatcmpl-1","usage":{"prompt_tokens":100,"completion_tokens":10,"cached_tokens":80}}"#,
+        );
+
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(10));
+        assert_eq!(usage.cache_read_tokens, None);
     }
 
     #[test]

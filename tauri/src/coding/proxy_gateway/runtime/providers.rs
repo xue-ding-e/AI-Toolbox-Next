@@ -7,7 +7,7 @@ use crate::coding::proxy_gateway::{
     cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
     provider_profiles::load_gateway_provider_profiles_for_runtime, transformer::AiProtocol,
 };
-use crate::coding::{claude_code, claude_desktop, codex, gemini_cli, grok};
+use crate::coding::{claude_code, claude_desktop, codex, gemini_cli, grok, kimi};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -99,6 +99,7 @@ pub(crate) async fn load_candidate_providers_with_settings_and_selection(
         GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
         GatewayCliKey::Codex => DbTable::CodexProvider,
         GatewayCliKey::Grok => DbTable::GrokProvider,
+        GatewayCliKey::Kimi => DbTable::KimiProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
         GatewayCliKey::OpenCode => {
             return Err(
@@ -141,6 +142,7 @@ pub(crate) async fn load_provider_by_id_for_connectivity_test(
         GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
         GatewayCliKey::Codex => DbTable::CodexProvider,
         GatewayCliKey::Grok => DbTable::GrokProvider,
+        GatewayCliKey::Kimi => DbTable::KimiProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
         GatewayCliKey::OpenCode => {
             return Err(
@@ -520,6 +522,97 @@ fn provider_from_record(
                 },
             }))
         }
+        GatewayCliKey::Kimi => {
+            let provider = kimi::adapter::provider_from_db_value(record);
+            if provider.is_disabled || is_official_provider_category(&provider.category) {
+                return Ok(None);
+            }
+            let settings =
+                parse_json_config(&provider.settings_config, "Kimi provider settings_config")?;
+            let (selected_provider, selected_key) = kimi_selected_provider_entry(&settings)
+                .map(|(config, key)| (Some(config), key))
+                .unwrap_or((None, None));
+            if selected_key.is_none() {
+                let config_count = settings
+                    .get("providerConfigs")
+                    .and_then(Value::as_object)
+                    .map(|configs| configs.len())
+                    .unwrap_or(0);
+                if config_count > 1 {
+                    log::warn!(
+                        "[proxy-gateway] Kimi provider '{}' has an incomplete defaultModelKey -> modelCatalog chain; the gateway candidate falls back to the first providerConfigs entry while the takeover patch targets the managed:kimi-code table",
+                        provider.id
+                    );
+                }
+            }
+            // The Kimi CLI allows per-provider keys in `[providers.<key>].api_key`,
+            // which survives adoption as `providerConfigs.<key>.api_key`; records
+            // without any resolvable key (e.g. official OAuth setups adopted as
+            // custom) are skipped like official instead of failing the whole
+            // candidate list and turning the CLI takeover status into an error.
+            let api_key = settings
+                .pointer("/auth/API_KEY")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    selected_provider
+                        .and_then(|config| config.get("api_key"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                });
+            let Some(api_key) = api_key else {
+                return Ok(None);
+            };
+            let base_url = selected_provider
+                .and_then(|config| config.get("base_url"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(kimi::constants::KIMI_OFFICIAL_API_BASE_URL)
+                .to_string();
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
+            let target_protocol = meta
+                .api_format
+                .as_deref()
+                .and_then(AiProtocol::from_api_format)
+                .unwrap_or(AiProtocol::OpenAiChat);
+            let mut auth_strategy = auth_strategy_for_target_protocol(
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &api_key,
+                ProviderAuthStrategy::Bearer,
+            );
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
+            Ok(Some(UpstreamProvider {
+                cli_key,
+                id: provider.id,
+                name: provider.name,
+                base_url,
+                api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url,
+                sort_index: provider.sort_index,
+                meta,
+                model_mapping: UpstreamModelMapping {
+                    default_model: settings
+                        .get("defaultModelKey")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                    ..UpstreamModelMapping::default()
+                },
+            }))
+        }
         GatewayCliKey::Gemini => {
             let provider = gemini_cli::adapter::from_db_value_provider(record);
             if provider.is_disabled {
@@ -794,12 +887,66 @@ fn apply_gateway_profile_reference(cli_key: GatewayCliKey, meta: &mut ProviderGa
     };
 }
 
+/// Resolve the providerConfigs entry a gateway candidate should mirror.
+///
+/// Mirrors the CLI's own lookup chain used by the takeover patch
+/// (`resolve_kimi_takeover_provider_key`): `defaultModelKey` ->
+/// `modelCatalog.models[].provider` -> `providerConfigs[provider]`. Picking
+/// the first `providerConfigs` entry blindly would point gateway traffic at
+/// the wrong upstream when a record carries multiple providers. The returned
+/// key is `None` when the chain is incomplete and the selection fell back to
+/// the first entry — the takeover patch resolves the same incomplete chain to
+/// the managed official key instead, so with multiple entries candidates and
+/// the patch target may diverge for hand-edited records (both still route
+/// through the gateway); callers log that case.
+fn kimi_selected_provider_entry(settings: &Value) -> Option<(&Value, Option<String>)> {
+    let provider_configs = settings.get("providerConfigs").and_then(Value::as_object)?;
+    let provider_key = settings
+        .get("defaultModelKey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|model_key| {
+            settings
+                .pointer("/modelCatalog/models")
+                .and_then(Value::as_array)
+                .and_then(|models| {
+                    models.iter().find(|model| {
+                        model
+                            .get("key")
+                            .or_else(|| model.get("model"))
+                            .and_then(Value::as_str)
+                            == Some(model_key)
+                    })
+                })
+                .and_then(|model| model.get("provider"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    if let Some(key) = provider_key {
+        if let Some(config) = provider_configs.get(key) {
+            return Some((config, Some(key.to_string())));
+        }
+    }
+    provider_configs
+        .values()
+        .next()
+        .map(|config| (config, None))
+}
+
 fn gateway_profile_tool_for_cli(cli_key: GatewayCliKey) -> Option<&'static str> {
     match cli_key {
         GatewayCliKey::Claude => Some("claude"),
         GatewayCliKey::ClaudeDesktop => Some("claude_desktop"),
         GatewayCliKey::Codex => Some("codex"),
         GatewayCliKey::Grok => Some("grok"),
+        // Kimi has no verified built-in endpoint catalog yet
+        // (`SUPPORTED_PROFILE_TOOLS` and `gateway_provider_profiles.json`
+        // both exclude it), so a stored `gatewayProfile` reference must not
+        // resolve. Add it here together with the catalog once endpoints are
+        // verified.
+        GatewayCliKey::Kimi => None,
         GatewayCliKey::Gemini => Some("gemini"),
         GatewayCliKey::OpenCode => None,
     }
@@ -1645,6 +1792,167 @@ api_key = "secret"
             .map(|provider| provider.name.as_str())
             .collect();
         assert_eq!(names, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn kimi_provider_without_api_key_is_skipped_not_error() {
+        // Adopted official-OAuth setups (credentials live outside config.toml)
+        // carry no resolvable API key; they must not fail the whole candidate
+        // list and turn the CLI takeover status into an error.
+        let record = serde_json::json!({
+            "id": "p1",
+            "name": "Adopted Local",
+            "category": "custom",
+            "settings_config": serde_json::json!({
+                "auth": {},
+                "defaultModelKey": "kimi-code/k3",
+                "providerConfigs": { "kimi-official": { "type": "kimi" } }
+            })
+            .to_string(),
+            "sort_index": 0,
+            "is_disabled": false,
+        });
+        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
+            .expect("skip must not error");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn kimi_provider_falls_back_to_provider_config_api_key() {
+        let record = serde_json::json!({
+            "id": "p2",
+            "name": "Relay",
+            "category": "custom",
+            "settings_config": serde_json::json!({
+                "auth": {},
+                "defaultModelKey": "relay/k3",
+                "providerConfigs": {
+                    "relay": {
+                        "type": "openai",
+                        "base_url": "https://relay.example.com/v1",
+                        "api_key": "sk-relay"
+                    }
+                }
+            })
+            .to_string(),
+            "sort_index": 0,
+        });
+        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
+            .expect("provider ok")
+            .expect("provider present");
+        assert_eq!(result.api_key, "sk-relay");
+        assert_eq!(result.base_url, "https://relay.example.com/v1");
+    }
+
+    #[test]
+    fn kimi_custom_relay_record_loads_as_proxyable_candidate() {
+        // Regression shape reported from the field: an openai-style relay
+        // provider with auth.API_KEY and a catalog model without
+        // maxContextSize. It must load as a proxyable candidate so the CLI
+        // takeover status stays Direct (can_takeover) and the provider card
+        // keeps its gateway proxy button.
+        let record = serde_json::json!({
+            "id": "relay-1",
+            "name": "relay",
+            "category": "custom",
+            "settings_config": serde_json::json!({
+                "providerConfigs": {
+                    "custom": {
+                        "type": "openai",
+                        "base_url": "https://relay.example.com/v1"
+                    }
+                },
+                "modelCatalog": {
+                    "models": [
+                        { "key": "custom-model", "model": "custom-model", "provider": "custom", "displayName": "Model" }
+                    ]
+                },
+                "defaultModelKey": "custom-model",
+                "auth": { "API_KEY": "sk-test-key" }
+            })
+            .to_string(),
+            "sort_index": 1,
+            "is_applied": true,
+            "is_disabled": false,
+        });
+        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
+            .expect("candidate must load")
+            .expect("candidate present");
+        assert_eq!(result.api_key, "sk-test-key");
+        assert_eq!(result.base_url, "https://relay.example.com/v1");
+        assert_eq!(result.target_protocol, AiProtocol::OpenAiChat);
+    }
+
+    #[test]
+    fn kimi_candidate_resolves_provider_through_model_catalog_chain() {
+        // Multi-provider record: the first providerConfigs entry is NOT the
+        // active upstream. The candidate must mirror the takeover patch chain
+        // (defaultModelKey -> modelCatalog.models[].provider ->
+        // providerConfigs[provider]) instead of picking the first entry.
+        let record = serde_json::json!({
+            "id": "multi",
+            "name": "Multi",
+            "category": "custom",
+            "settings_config": serde_json::json!({
+                "providerConfigs": {
+                    "first": {
+                        "type": "openai",
+                        "base_url": "https://first.example.com/v1",
+                        "api_key": "sk-first"
+                    },
+                    "axonhub": {
+                        "type": "openai",
+                        "base_url": "https://axonhub.example.com/v1",
+                        "api_key": "sk-axonhub"
+                    }
+                },
+                "modelCatalog": {
+                    "models": [
+                        { "key": "k2", "model": "k2", "provider": "axonhub" }
+                    ]
+                },
+                "defaultModelKey": "k2"
+            })
+            .to_string(),
+            "sort_index": 0,
+            "is_disabled": false,
+        });
+        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
+            .expect("provider ok")
+            .expect("provider present");
+        assert_eq!(result.base_url, "https://axonhub.example.com/v1");
+        assert_eq!(result.api_key, "sk-axonhub");
+        assert_eq!(result.model_mapping.default_model.as_deref(), Some("k2"));
+    }
+
+    #[test]
+    fn kimi_candidate_falls_back_to_first_provider_config_without_chain() {
+        // Incomplete chain (no defaultModelKey / no catalog): the first
+        // providerConfigs entry remains the fallback instead of skipping the
+        // record.
+        let record = serde_json::json!({
+            "id": "chainless",
+            "name": "Chainless",
+            "category": "custom",
+            "settings_config": serde_json::json!({
+                "providerConfigs": {
+                    "solo": {
+                        "type": "openai",
+                        "base_url": "https://solo.example.com/v1",
+                        "api_key": "sk-solo"
+                    }
+                }
+            })
+            .to_string(),
+            "sort_index": 0,
+            "is_disabled": false,
+        });
+        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
+            .expect("provider ok")
+            .expect("provider present");
+        assert_eq!(result.base_url, "https://solo.example.com/v1");
+        assert_eq!(result.api_key, "sk-solo");
+        assert_eq!(result.model_mapping.default_model, None);
     }
 
     #[test]

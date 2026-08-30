@@ -46,16 +46,28 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                             query,
                         })
                     }
-                    _ => match strip_cli_prefix(&path, "/gemini") {
-                        Some(forwarded_path) if is_gemini_versioned_path(&forwarded_path) => {
+                    _ => match strip_cli_prefix(&path, "/kimi") {
+                        Some(forwarded_path)
+                            if matches!(forwarded_path.as_str(), "/v1" | "/v1/chat/completions") =>
+                        {
                             Some(GatewayRoute {
-                                cli_key: GatewayCliKey::Gemini,
-                                route_name: "gemini",
+                                cli_key: GatewayCliKey::Kimi,
+                                route_name: "kimi",
                                 forwarded_path,
                                 query,
                             })
                         }
-                        _ => None,
+                        _ => match strip_cli_prefix(&path, "/gemini") {
+                            Some(forwarded_path) if is_gemini_versioned_path(&forwarded_path) => {
+                                Some(GatewayRoute {
+                                    cli_key: GatewayCliKey::Gemini,
+                                    route_name: "gemini",
+                                    forwarded_path,
+                                    query,
+                                })
+                            }
+                            _ => None,
+                        },
                     },
                 },
             },
@@ -92,6 +104,21 @@ mod tests {
 
         assert!(match_gateway_route("/grok/v1/chat/completions").is_none());
         assert!(match_gateway_route("/grok/v1/responses/compact").is_none());
+    }
+
+    #[test]
+    fn kimi_route_accepts_probe_and_chat_only() {
+        let probe = match_gateway_route("/kimi/v1").expect("probe route");
+        assert_eq!(probe.cli_key, GatewayCliKey::Kimi);
+        assert_eq!(probe.forwarded_path, "/v1");
+
+        let chat = match_gateway_route("/kimi/v1/chat/completions?trace=1").expect("chat route");
+        assert_eq!(chat.cli_key, GatewayCliKey::Kimi);
+        assert_eq!(chat.forwarded_path, "/v1/chat/completions");
+        assert_eq!(chat.query.as_deref(), Some("trace=1"));
+
+        assert!(match_gateway_route("/kimi/v1/responses").is_none());
+        assert!(match_gateway_route("/kimi/v1/messages").is_none());
     }
 }
 

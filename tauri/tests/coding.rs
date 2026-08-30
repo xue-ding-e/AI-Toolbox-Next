@@ -11,6 +11,12 @@ mod codex_history_sync;
 mod config_cleanup;
 #[path = "coding/gemini_cli/default_official_config.rs"]
 mod gemini_cli_default_official_config;
+#[path = "coding/kimi/provider_and_config.rs"]
+mod kimi_provider_and_config;
+#[path = "coding/kimi/runtime_location.rs"]
+mod kimi_runtime_location;
+#[path = "coding/kimi/sessions.rs"]
+mod kimi_sessions;
 #[path = "coding/mcp/command_normalize.rs"]
 mod mcp_command_normalize;
 #[path = "coding/oh_my_opencode_slim/adapter.rs"]

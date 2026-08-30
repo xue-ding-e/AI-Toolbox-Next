@@ -293,6 +293,24 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
+    // Previous default before Kimi was added.
+    const PRE_KIMI_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "claudedesktop",
+        "codex",
+        "grok",
+        "geminicli",
+        "openclaw",
+        "pi",
+        "oh_my_pi",
+        "hermes",
+        "dsh",
+        "gateway",
+        "image",
+        "ssh",
+        "wsl",
+    ];
     const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
         "opencode",
         "claudecode",
@@ -300,6 +318,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "codex",
         "grok",
         "geminicli",
+        "kimi",
         "openclaw",
         "pi",
         "oh_my_pi",
@@ -317,6 +336,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         || string_vec_matches(&tabs, PRE_GROK_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_OMP_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_DESKTOP_DEFAULT_VISIBLE_TABS)
+        || string_vec_matches(&tabs, PRE_KIMI_DEFAULT_VISIBLE_TABS)
     {
         return CURRENT_DEFAULT_VISIBLE_TABS
             .iter()
@@ -540,6 +560,7 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
+                "kimi",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
@@ -577,6 +598,7 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
+                "kimi",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
@@ -614,6 +636,7 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
+                "kimi",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
@@ -682,6 +705,52 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
+                "kimi",
+                "openclaw",
+                "pi",
+                "oh_my_pi",
+                "hermes",
+                "dsh",
+                "gateway",
+                "image",
+                "ssh",
+                "wsl",
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_tabs_pre_kimi_default_is_migrated() {
+        let settings = from_db_value(json!({
+            "visible_tabs": [
+                "opencode",
+                "claudecode",
+                "claudedesktop",
+                "codex",
+                "grok",
+                "geminicli",
+                "openclaw",
+                "pi",
+                "oh_my_pi",
+                "hermes",
+                "dsh",
+                "gateway",
+                "image",
+                "ssh",
+                "wsl"
+            ],
+        }));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "opencode",
+                "claudecode",
+                "claudedesktop",
+                "codex",
+                "grok",
+                "geminicli",
+                "kimi",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
@@ -722,6 +791,7 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
+                "kimi",
                 "openclaw",
                 "pi",
                 "oh_my_pi",
@@ -911,6 +981,7 @@ mod tests {
                 "codex": false,
                 "grok": true,
                 "geminicli": false,
+                "kimi": true,
                 "openclaw": true,
                 "pi": false,
                 "oh_my_pi": true,
@@ -931,6 +1002,7 @@ mod tests {
         assert!(settings.sidebar_hidden_by_page.get("codex").copied() == Some(false));
         assert!(settings.sidebar_hidden_by_page.get("grok").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("geminicli").copied() == Some(false));
+        assert!(settings.sidebar_hidden_by_page.get("kimi").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("openclaw").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("pi").copied() == Some(false));
         assert!(settings.sidebar_hidden_by_page.get("oh_my_pi").copied() == Some(true));
@@ -985,6 +1057,7 @@ mod tests {
             "codex",
             "grok",
             "geminicli",
+            "kimi",
             "openclaw",
             "pi",
             "oh_my_pi",

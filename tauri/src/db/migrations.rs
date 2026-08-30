@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 15;
+pub const TARGET_SCHEMA_VERSION: i32 = 16;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -52,6 +52,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 15 {
         run_migration_step(conn, 15, migrate_v15)?;
+    }
+    if current_version < 16 {
+        run_migration_step(conn, 16, migrate_v16)?;
     }
 
     Ok(())
@@ -328,6 +331,32 @@ fn migrate_v15(conn: &Connection) -> Result<(), String> {
     // Managed MCP groups for the group management modal (mirrors skill_group);
     // membership stays on each server's user_group text.
     create_jsonb_table(conn, DbTable::McpGroup)
+}
+
+fn migrate_v16(conn: &Connection) -> Result<(), String> {
+    for table in [
+        DbTable::KimiProvider,
+        DbTable::KimiOfficialAccount,
+        DbTable::KimiCommonConfig,
+        DbTable::KimiPromptConfig,
+    ] {
+        create_jsonb_table(conn, table)?;
+    }
+
+    for table in [
+        DbTable::KimiProvider,
+        DbTable::KimiOfficialAccount,
+        DbTable::KimiPromptConfig,
+    ] {
+        create_json_index(conn, table, &JsonFieldPath::new("is_applied")?)?;
+        create_json_index(conn, table, &JsonFieldPath::new("sort_index")?)?;
+    }
+
+    create_json_index(
+        conn,
+        DbTable::KimiOfficialAccount,
+        &JsonFieldPath::new("provider_id")?,
+    )
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

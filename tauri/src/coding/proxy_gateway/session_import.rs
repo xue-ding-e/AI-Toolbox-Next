@@ -46,6 +46,7 @@ fn import_session_usage_blocking(
             GatewayCliKey::Claude,
             GatewayCliKey::Codex,
             GatewayCliKey::Grok,
+            GatewayCliKey::Kimi,
             GatewayCliKey::Gemini,
         ],
         GatewaySessionImportCli::Claude => vec![GatewayCliKey::Claude],
@@ -54,6 +55,7 @@ fn import_session_usage_blocking(
         GatewaySessionImportCli::ClaudeDesktop => vec![GatewayCliKey::ClaudeDesktop],
         GatewaySessionImportCli::Codex => vec![GatewayCliKey::Codex],
         GatewaySessionImportCli::Grok => vec![GatewayCliKey::Grok],
+        GatewaySessionImportCli::Kimi => vec![GatewayCliKey::Kimi],
         GatewaySessionImportCli::Gemini => vec![GatewayCliKey::Gemini],
     };
     let mut total = GatewaySessionUsageImportResult::default();
@@ -145,6 +147,15 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<Path
             }
             if let Some(home) = dirs::home_dir() {
                 push_unique(&mut roots, home.join(".grok").join("sessions"));
+            }
+        }
+        GatewayCliKey::Kimi => {
+            if let Ok(location) = crate::coding::runtime_location::get_kimi_runtime_location_sync(db)
+            {
+                push_unique(&mut roots, location.host_path.join("sessions"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                push_unique(&mut roots, home.join(".kimi-code").join("sessions"));
             }
         }
         GatewayCliKey::Gemini => {

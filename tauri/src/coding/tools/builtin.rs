@@ -42,6 +42,16 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("toml"),
         mcp_field: Some("mcp_servers"),
     },
+    // Kimi Code CLI - supports both Skills and MCP
+    BuiltinTool {
+        key: "kimi",
+        display_name: "Kimi",
+        relative_skills_dir: Some("~/.kimi-code/skills"),
+        relative_detect_dir: Some("~/.kimi-code"),
+        mcp_config_path: Some("~/.kimi-code/config.toml"),
+        mcp_config_format: Some("toml"),
+        mcp_field: Some("mcp_servers"),
+    },
     // Gemini CLI - supports both Skills and MCP
     BuiltinTool {
         key: "gemini_cli",

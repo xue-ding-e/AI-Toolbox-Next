@@ -706,6 +706,7 @@ fn is_cli_route_probe(request: &DebugHttpRequest, route: &GatewayRoute) -> bool 
         GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => route.forwarded_path == "/",
         GatewayCliKey::Codex => route.forwarded_path == "/v1",
         GatewayCliKey::Grok => route.forwarded_path == "/v1",
+        GatewayCliKey::Kimi => route.forwarded_path == "/v1",
         GatewayCliKey::Gemini => route.forwarded_path == "/v1beta",
         GatewayCliKey::OpenCode => false,
     }
@@ -4843,6 +4844,22 @@ fn resolve_upstream_model_id(
             .unwrap_or_else(|| requested_model.to_string());
             strip_one_m_context_marker(&resolved_model).to_string()
         }
+        // Kimi only rewrites in failover (same rule as Codex): single-mode CLI
+        // config already carries the real model via defaultModelKey, while a
+        // failover candidate channel may use a different model naming scheme
+        // (e.g. relay station vs Moonshot official) and receives the candidate
+        // channel's default_model instead of the P0 request's model id.
+        GatewayCliKey::Kimi => {
+            if !apply_failover_model_mapping {
+                return strip_one_m_context_marker(requested_model).to_string();
+            }
+            let resolved_model = provider
+                .model_mapping
+                .default_model
+                .as_deref()
+                .unwrap_or(requested_model);
+            strip_one_m_context_marker(resolved_model).to_string()
+        }
         GatewayCliKey::Gemini | GatewayCliKey::OpenCode => {
             strip_one_m_context_marker(requested_model).to_string()
         }
@@ -5056,6 +5073,27 @@ fn build_upstream_body_for_provider(
     {
         if let Value::Object(object) = &mut value {
             object.insert("stream".to_string(), Value::Bool(true));
+        }
+    }
+    // Identity Chat→Chat passthrough (Kimi) skips the outbound transformer,
+    // which is where cross-protocol conversions inject
+    // `stream_options.include_usage`. OpenAI-strict upstreams omit the usage
+    // chunk without it, silently zeroing streaming usage stats — mirror the
+    // transformer's semantics (explicit CLI value always wins).
+    if cli_key == GatewayCliKey::Kimi
+        && conversion_route.is_none()
+        && value.get("stream").and_then(Value::as_bool) == Some(true)
+    {
+        if let Some(object) = value.as_object_mut() {
+            let include_usage = object
+                .get("stream_options")
+                .and_then(|options| options.get("include_usage"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            object.insert(
+                "stream_options".to_string(),
+                serde_json::json!({ "include_usage": include_usage }),
+            );
         }
     }
     if cli_key == GatewayCliKey::Claude && strip_thinking_for_retry {
@@ -8032,6 +8070,14 @@ fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
                 None
             }
         }
+        GatewayCliKey::Kimi => {
+            let path = route.forwarded_path.as_str();
+            if path == "/v1/chat/completions" || path == "/chat/completions" {
+                Some(AiProtocol::OpenAiChat)
+            } else {
+                None
+            }
+        }
         GatewayCliKey::Gemini => {
             if route.forwarded_path.contains(":generateContent")
                 || route.forwarded_path.contains(":streamGenerateContent")
@@ -10084,18 +10130,18 @@ mod tests {
                 GatewayCliKey::Codex | GatewayCliKey::Grok => {
                     crate::coding::proxy_gateway::transformer::AiProtocol::OpenAiResponses
                 }
+                GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
+                    crate::coding::proxy_gateway::transformer::AiProtocol::OpenAiChat
+                }
                 GatewayCliKey::Gemini => {
                     crate::coding::proxy_gateway::transformer::AiProtocol::GeminiNative
-                }
-                GatewayCliKey::OpenCode => {
-                    crate::coding::proxy_gateway::transformer::AiProtocol::OpenAiChat
                 }
             },
             auth_strategy: match cli_key {
                 GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
                     ProviderAuthStrategy::AnthropicApiKey
                 }
-                GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::OpenCode => {
+                GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
                     ProviderAuthStrategy::Bearer
                 }
                 GatewayCliKey::Gemini => ProviderAuthStrategy::GoogleApiKey,
@@ -10668,6 +10714,120 @@ mod tests {
         let value: Value = serde_json::from_slice(&prepared.body).unwrap();
 
         assert_eq!(value["max_tokens"], 256);
+    }
+
+    #[test]
+    fn kimi_identity_streaming_body_injects_include_usage() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/kimi/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"kimi-k2.5","messages":[{"role":"user","content":"hi"}],"stream":true}"#
+                .to_vec(),
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "kimi-k2.5",
+            "kimi-k2.5",
+            false,
+            false,
+            GatewayCliKey::Kimi,
+            Some(AiProtocol::OpenAiChat),
+            AiProtocol::OpenAiChat,
+            None,
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(value["stream_options"]["include_usage"], true);
+
+        // An explicit CLI-provided value must win over the default.
+        let request_with_explicit = DebugHttpRequest {
+            id: 2,
+            method: "POST".to_string(),
+            path: "/kimi/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"kimi-k2.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":false}}"#
+                .to_vec(),
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request_with_explicit,
+            "kimi-k2.5",
+            "kimi-k2.5",
+            false,
+            false,
+            GatewayCliKey::Kimi,
+            Some(AiProtocol::OpenAiChat),
+            AiProtocol::OpenAiChat,
+            None,
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(value["stream_options"]["include_usage"], false);
+    }
+
+    #[test]
+    fn kimi_non_kimi_identity_streaming_bodies_keep_stream_options_untouched() {
+        // Only Kimi is allowed to touch stream_options on the identity path.
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/openai/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#
+                .to_vec(),
+        };
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "gpt-4o",
+            "gpt-4o",
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiChat),
+            AiProtocol::OpenAiChat,
+            None,
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert!(value.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn kimi_failover_rewrites_model_to_candidate_default() {
+        let request = DebugHttpRequest {
+            id: 1,
+            method: "POST".to_string(),
+            path: "/kimi/v1/chat/completions".to_string(),
+            headers: Vec::new(),
+            body: br#"{"model":"relay-model","messages":[{"role":"user","content":"hi"}]}"#
+                .to_vec(),
+        };
+        let mut provider = provider_for_cli(GatewayCliKey::Kimi);
+        provider.model_mapping.default_model = Some("moonshot-k2.5".to_string());
+
+        // Failover: rewrite to the candidate channel's default model.
+        let rewritten = resolve_upstream_model_id(&request, "relay-model", &provider, true, true);
+        assert_eq!(rewritten, "moonshot-k2.5");
+
+        // Single mode: CLI config carries the real model, passthrough.
+        let passthrough = resolve_upstream_model_id(&request, "relay-model", &provider, false, true);
+        assert_eq!(passthrough, "relay-model");
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub enum GatewayCliKey {
     ClaudeDesktop,
     Codex,
     Grok,
+    Kimi,
     Gemini,
     OpenCode,
 }
@@ -20,6 +21,7 @@ impl GatewayCliKey {
             Self::ClaudeDesktop => "claude_desktop",
             Self::Codex => "codex",
             Self::Grok => "grok",
+            Self::Kimi => "kimi",
             Self::Gemini => "gemini",
             Self::OpenCode => "opencode",
         }
@@ -31,6 +33,7 @@ impl GatewayCliKey {
             Self::ClaudeDesktop,
             Self::Codex,
             Self::Grok,
+            Self::Kimi,
             Self::Gemini,
         ]
     }
@@ -856,6 +859,7 @@ pub enum GatewaySessionImportCli {
     ClaudeDesktop,
     Codex,
     Grok,
+    Kimi,
     Gemini,
 }
 

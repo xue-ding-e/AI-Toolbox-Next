@@ -1061,6 +1061,7 @@ fn emit_gateway_cli_wsl_sync_request(app: &tauri::AppHandle, cli_key: GatewayCli
         GatewayCliKey::ClaudeDesktop => "wsl-sync-request-claudedesktop",
         GatewayCliKey::Codex => "wsl-sync-request-codex",
         GatewayCliKey::Grok => "wsl-sync-request-grok",
+        GatewayCliKey::Kimi => "wsl-sync-request-kimi",
         GatewayCliKey::Gemini => "wsl-sync-request-geminicli",
         GatewayCliKey::OpenCode => return,
     };
@@ -1078,6 +1079,7 @@ async fn load_provider_name_map(
         (GatewayCliKey::ClaudeDesktop, DbTable::ClaudeDesktopProvider),
         (GatewayCliKey::Codex, DbTable::CodexProvider),
         (GatewayCliKey::Grok, DbTable::GrokProvider),
+        (GatewayCliKey::Kimi, DbTable::KimiProvider),
         (GatewayCliKey::Gemini, DbTable::GeminiCliProvider),
     ] {
         let order = OrderSpec::single(OrderField::id(OrderDirection::Asc));

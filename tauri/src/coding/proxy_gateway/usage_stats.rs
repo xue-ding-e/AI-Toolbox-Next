@@ -1699,6 +1699,7 @@ fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
         ("codex", "codex_provider"),
         ("gemini", "gemini_cli_provider"),
         ("grok", "grok_provider"),
+        ("kimi", "kimi_provider"),
     ] {
         let sql = format!("SELECT id, json_extract(data, '$.name') FROM {table}");
         let mut stmt = conn.prepare(&sql).map_err(|error| {
@@ -1768,6 +1769,7 @@ fn cli_key_from_app_type(app_type: &str) -> Option<GatewayCliKey> {
         "claude_desktop" => Some(GatewayCliKey::ClaudeDesktop),
         "codex" => Some(GatewayCliKey::Codex),
         "grok" => Some(GatewayCliKey::Grok),
+        "kimi" => Some(GatewayCliKey::Kimi),
         "gemini" => Some(GatewayCliKey::Gemini),
         "opencode" => Some(GatewayCliKey::OpenCode),
         _ => None,
@@ -2344,6 +2346,7 @@ mod tests {
             GatewayCliKey::ClaudeDesktop => DbTable::ClaudeDesktopProvider,
             GatewayCliKey::Codex => DbTable::CodexProvider,
             GatewayCliKey::Grok => DbTable::GrokProvider,
+            GatewayCliKey::Kimi => DbTable::KimiProvider,
             GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
             GatewayCliKey::OpenCode => {
                 panic!("OpenCode provider insertion is not used by usage_stats unit tests")
@@ -2454,6 +2457,7 @@ mod tests {
             GatewayCliKey::ClaudeDesktop => ("claude_desktop_messages", "/v1/messages"),
             GatewayCliKey::Codex => ("codex_responses", "/v1/responses"),
             GatewayCliKey::Grok => ("grok_responses", "/v1/responses"),
+            GatewayCliKey::Kimi => ("kimi_chat", "/v1/chat/completions"),
             GatewayCliKey::Gemini => ("gemini_generate", "/v1beta/models/gemini:generateContent"),
             GatewayCliKey::OpenCode => ("opencode", "/v1/chat/completions"),
         };
@@ -3108,6 +3112,44 @@ mod tests {
         );
         assert_eq!(provider_rows[0].request_count, 1);
         assert_eq!(provider_rows[0].total_tokens, 13);
+    }
+
+    #[test]
+    fn kimi_usage_rows_appear_in_request_logs_and_resolve_provider_name() {
+        let db = test_db();
+        insert_provider_for_cli(&db, GatewayCliKey::Kimi, "provider-kimi", "AxonHub Kimi");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail_for_cli(
+                GatewayCliKey::Kimi,
+                "trace-kimi",
+                "provider-kimi",
+                200,
+                9,
+                4,
+            ),
+        )
+        .expect("record kimi summary");
+
+        let logs =
+            request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10).expect("request logs");
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data.len(), 1);
+        assert_eq!(logs.data[0].cli_key, GatewayCliKey::Kimi);
+        assert_eq!(
+            logs.data[0].provider_name.as_deref(),
+            Some("AxonHub Kimi"),
+            "Kimi request rows must not be dropped and must resolve display names from kimi_provider"
+        );
+
+        let provider_rows =
+            provider_stats(&db, None, None, Some(GatewayCliKey::Kimi)).expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(
+            provider_rows[0].provider_name.as_deref(),
+            Some("AxonHub Kimi")
+        );
     }
 
     #[test]

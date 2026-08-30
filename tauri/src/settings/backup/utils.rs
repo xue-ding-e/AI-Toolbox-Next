@@ -10,7 +10,7 @@ use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::{resolve_central_repo_path_sync, skill_storage_dir_name};
-use crate::coding::{claude_code, codex, gemini_cli, grok, oh_my_pi, pi, runtime_location};
+use crate::coding::{claude_code, codex, gemini_cli, grok, kimi, oh_my_pi, pi, runtime_location};
 use crate::settings::types::{
     BackupCustomEntry, BackupCustomEntryType, BackupFileFilterPathOption, BackupFileFilterRule,
 };
@@ -357,6 +357,10 @@ pub fn get_codex_restore_dir() -> Result<PathBuf, String> {
 
 pub fn get_grok_restore_dir() -> Result<PathBuf, String> {
     grok::get_grok_root_dir_without_db()
+}
+
+pub fn get_kimi_restore_dir() -> Result<PathBuf, String> {
+    kimi::commands::get_kimi_root_dir_without_db()
 }
 
 /// Platform-default Hermes config directory (used as the restore fallback).
@@ -706,6 +710,20 @@ pub async fn get_grok_prompt_path_from_db(
     Ok(path.exists().then_some(path))
 }
 
+pub async fn get_kimi_config_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_kimi_config_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_kimi_prompt_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_kimi_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
 /// Get Codex prompt file path if it exists
 pub fn get_codex_prompt_path() -> Result<Option<PathBuf>, String> {
     let resolved_root_dir = codex::get_codex_root_dir_without_db()?;
@@ -926,6 +944,7 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "claude" => format!("~/.claude/{relative_path}"),
         "codex" => format!("~/.codex/{relative_path}"),
         "grok" => format!("~/.grok/{relative_path}"),
+        "kimi" => format!("~/.kimi-code/{relative_path}"),
         "openclaw" => format!("~/.openclaw/{relative_path}"),
         "geminicli" => format!("~/.gemini/{relative_path}"),
         "pi" => format!("~/.pi/agent/{relative_path}"),
@@ -1021,6 +1040,42 @@ pub async fn list_backup_file_filter_path_options(
     }
     if get_grok_prompt_path_from_db(db).await?.is_some() {
         push_backup_filter_option(&mut options, &mut seen, "grok", "AGENTS.md");
+    }
+    if get_kimi_config_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "kimi", "config.toml");
+    }
+    if get_kimi_prompt_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "kimi", "AGENTS.md");
+    }
+    if let Ok(root_dir) = runtime_location::get_kimi_runtime_location_async(db).await {
+        // The runtime root may be an unreachable WSL UNC path; walking it
+        // synchronously would block the tokio worker, so collect the relative
+        // paths on a blocking thread first.
+        let host_path = root_dir.host_path.clone();
+        let kimi_relative_paths = tokio::task::spawn_blocking(move || {
+            let credentials_dir = host_path.join(kimi::constants::KIMI_CREDENTIALS_DIR);
+            let mut relative_paths = Vec::new();
+            if credentials_dir.is_dir() {
+                for entry in WalkDir::new(&credentials_dir) {
+                    let Ok(entry) = entry else {
+                        continue;
+                    };
+                    if !entry.file_type().is_file() {
+                        continue;
+                    }
+                    let Ok(rel) = entry.path().strip_prefix(&host_path) else {
+                        continue;
+                    };
+                    relative_paths.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            relative_paths
+        })
+        .await
+        .map_err(|e| format!("Failed to walk Kimi credentials directory: {}", e))?;
+        for rel in kimi_relative_paths {
+            push_backup_filter_option(&mut options, &mut seen, "kimi", &rel);
+        }
     }
 
     if get_openclaw_config_path_from_db(db).await?.is_some() {
@@ -1228,7 +1283,7 @@ pub fn read_backup_meta_from_archive<R: Read + Seek>(
 /// Runtime-file-owned CLIs: always packaged/restored under external-configs/.
 const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi", "oh_my_pi", "hermes", "dsh"];
 /// DB-backed CLIs: gated by `backup_cli_config_files_enabled`.
-const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "geminicli", "claude_desktop"];
+const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "kimi", "geminicli", "claude_desktop"];
 
 pub fn is_always_backup_cli_tool(tool: &str) -> bool {
     ALWAYS_BACKUP_CLI_TOOLS.contains(&tool)
@@ -1328,6 +1383,7 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
         "grok" => Some("grok"),
+        "kimi" => Some("kimi"),
         "openclaw" => Some("openclaw"),
         "geminicli" => Some("geminicli"),
         "pi" => Some("pi"),
@@ -1395,6 +1451,7 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
         clear_table(conn, DbTable::ClaudeCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::GrokCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::GeminiCliCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::KimiCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::PiSettingsConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::OhMyPiSettingsConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::OpenCodeCommonConfig, PATH_KEYS)?;
@@ -1608,6 +1665,12 @@ pub async fn get_custom_root_dir_path_info(
         }
         "grok" => {
             let location = runtime_location::get_grok_runtime_location_async(db)
+                .await
+                .ok()?;
+            (location.source == "custom").then(|| location.host_path.to_string_lossy().to_string())
+        }
+        "kimi" => {
+            let location = runtime_location::get_kimi_runtime_location_async(db)
                 .await
                 .ok()?;
             (location.source == "custom").then(|| location.host_path.to_string_lossy().to_string())
@@ -2448,6 +2511,7 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
         "claude" => &["~/.claude/"],
         "codex" => &["~/.codex/"],
         "grok" => &["~/.grok/"],
+        "kimi" => &["~/.kimi-code/"],
         "openclaw" => &["~/.openclaw/"],
         "geminicli" => &["~/.gemini/"],
         "pi" => &["~/.pi/agent/"],
@@ -2569,7 +2633,7 @@ fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
             format!("{}/{}", normalized_relative_prefix, relative_str)
         };
 
-        if tool == "grok"
+        if matches!(tool, "grok" | "kimi")
             && normalized_relative_prefix == "plugins"
             && relative_path.components().any(|component| {
                 matches!(
@@ -2848,6 +2912,68 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
             &grok_plugins_dir,
             "grok",
             "plugins",
+            filter_rules,
+            options,
+        )?;
+
+        if let Some(custom_dir) = get_custom_root_dir_path_info(db, "kimi").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/kimi/",
+                options,
+                "kimi directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/kimi/root-dir.txt",
+                &custom_dir,
+                options,
+            )?;
+        }
+        if let Some(path) = get_kimi_config_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "kimi",
+                "config.toml",
+                filter_rules,
+                options,
+            )?;
+        }
+        if let Some(path) = get_kimi_prompt_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &path,
+                "kimi",
+                "AGENTS.md",
+                filter_rules,
+                options,
+            )?;
+        }
+        let kimi_credentials_dir = runtime_location::get_kimi_runtime_location_async(db)
+            .await?
+            .host_path
+            .join(kimi::constants::KIMI_CREDENTIALS_DIR);
+        add_external_config_directory_contents_to_zip(
+            zip,
+            &kimi_credentials_dir,
+            "kimi",
+            kimi::constants::KIMI_CREDENTIALS_DIR,
+            filter_rules,
+            options,
+        )?;
+        let kimi_plugins_dir = runtime_location::get_kimi_runtime_location_async(db)
+            .await?
+            .host_path
+            .join(kimi::constants::KIMI_PLUGINS_DIR);
+        add_external_config_directory_contents_to_zip(
+            zip,
+            &kimi_plugins_dir,
+            "kimi",
+            kimi::constants::KIMI_PLUGINS_DIR,
             filter_rules,
             options,
         )?;
@@ -3481,6 +3607,7 @@ mod tests {
         assert!(is_optional_backup_cli_tool("claude"));
         assert!(is_optional_backup_cli_tool("codex"));
         assert!(is_optional_backup_cli_tool("grok"));
+        assert!(is_optional_backup_cli_tool("kimi"));
         assert!(is_optional_backup_cli_tool("geminicli"));
         assert!(!is_optional_backup_cli_tool("opencode"));
     }
@@ -3532,6 +3659,10 @@ mod tests {
         assert!(should_skip_external_config_on_restore(
             false,
             "external-configs/grok/auth.json"
+        ));
+        assert!(should_skip_external_config_on_restore(
+            false,
+            "external-configs/kimi/config.toml"
         ));
         assert!(should_skip_external_config_on_restore(
             false,
@@ -3624,6 +3755,16 @@ mod tests {
                     "configPath": "C:/old/opencode.jsonc"
                 }),
             )?;
+            db_put(
+                connection,
+                DbTable::KimiCommonConfig,
+                "common",
+                &serde_json::json!({
+                    "id": "common",
+                    "root_dir": "/old/kimi",
+                    "other": "preserved"
+                }),
+            )?;
             Ok(())
         })
         .expect("seed common configs");
@@ -3635,6 +3776,8 @@ mod tests {
                 db_get(connection, DbTable::CodexCommonConfig, "common")?.expect("codex common");
             let opencode = db_get(connection, DbTable::OpenCodeCommonConfig, "common")?
                 .expect("opencode common");
+            let kimi =
+                db_get(connection, DbTable::KimiCommonConfig, "common")?.expect("kimi common");
             assert!(codex
                 .get("root_dir")
                 .is_some_and(serde_json::Value::is_null));
@@ -3645,6 +3788,13 @@ mod tests {
             assert!(opencode
                 .get("configPath")
                 .is_some_and(serde_json::Value::is_null));
+            assert!(kimi
+                .get("root_dir")
+                .is_some_and(serde_json::Value::is_null));
+            assert_eq!(
+                kimi.get("other").and_then(|value| value.as_str()),
+                Some("preserved")
+            );
             Ok(())
         })
         .expect("verify cleared roots");
@@ -4287,6 +4437,59 @@ mod tests {
         assert!(!names.iter().any(|name| name.contains("/dist/")));
     }
 
+    #[test]
+    fn kimi_plugin_backup_excludes_generated_artifacts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let plugins_dir = temp_dir.path().join("plugins");
+        fs::create_dir_all(plugins_dir.join("sample").join("node_modules"))
+            .expect("create node_modules");
+        fs::create_dir_all(plugins_dir.join("sample").join(".git")).expect("create git metadata");
+        fs::create_dir_all(plugins_dir.join("sample").join("dist")).expect("create dist");
+        fs::write(plugins_dir.join("sample").join("plugin.json"), "{}")
+            .expect("write plugin manifest");
+        fs::write(
+            plugins_dir
+                .join("sample")
+                .join("node_modules")
+                .join("cache.js"),
+            "generated",
+        )
+        .expect("write generated dependency");
+        fs::write(plugins_dir.join("sample").join(".git").join("HEAD"), "ref")
+            .expect("write git metadata");
+        fs::write(
+            plugins_dir.join("sample").join("dist").join("bundle.js"),
+            "built",
+        )
+        .expect("write build output");
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            add_external_config_directory_contents_to_zip(
+                &mut zip,
+                &plugins_dir,
+                "kimi",
+                "plugins",
+                &[],
+                options,
+            )
+            .expect("add Kimi plugins");
+            zip.finish().expect("finish zip");
+        }
+
+        let archive = ZipArchive::new(Cursor::new(buffer.into_inner())).expect("zip archive");
+        let names = archive.file_names().map(str::to_string).collect::<Vec<_>>();
+        assert!(names
+            .iter()
+            .any(|name| name == "external-configs/kimi/plugins/sample/plugin.json"));
+        assert!(!names.iter().any(|name| name.contains("node_modules")));
+        assert!(!names.iter().any(|name| name.contains("/.git/")));
+        assert!(!names.iter().any(|name| name.contains("/dist/")));
+    }
+
     /// Helper: simulate restore filtering logic for a given file path
     fn should_skip_restore_entry(
         filter_rules: &[BackupFileFilterRule],
@@ -4298,6 +4501,7 @@ mod tests {
             "claude",
             "codex",
             "grok",
+            "kimi",
             "openclaw",
             "geminicli",
         ] {
@@ -4358,6 +4562,23 @@ mod tests {
         assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/grok/config.toml"
+        ));
+    }
+
+    #[test]
+    fn restore_filter_skips_kimi_config_toml_when_rule_exists() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "kimi".to_string(),
+            file_path: "config.toml".to_string(),
+        }];
+
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/kimi/config.toml"
+        ));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/kimi/AGENTS.md"
         ));
     }
 

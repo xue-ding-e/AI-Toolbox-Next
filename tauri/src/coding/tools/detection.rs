@@ -169,6 +169,7 @@ pub fn resolve_mcp_config_path_with_db(
         | "claude_code"
         | "codex"
         | "grok"
+        | "kimi"
         | "openclaw"
         | "pi"
         | "oh_my_pi" => {
@@ -199,6 +200,7 @@ pub async fn resolve_mcp_config_path_with_db_async(
         | "claude_code"
         | "codex"
         | "grok"
+        | "kimi"
         | "openclaw"
         | "pi"
         | "oh_my_pi" => {
@@ -227,6 +229,7 @@ pub fn resolve_skills_path_with_db(
         | "claude_code"
         | "codex"
         | "grok"
+        | "kimi"
         | "openclaw"
         | "pi"
         | "oh_my_pi" => {
@@ -251,6 +254,7 @@ pub async fn resolve_skills_path_with_db_async(
         | "claude_code"
         | "codex"
         | "grok"
+        | "kimi"
         | "openclaw"
         | "pi"
         | "oh_my_pi" => {
