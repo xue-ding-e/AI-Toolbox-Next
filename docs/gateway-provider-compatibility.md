@@ -486,12 +486,15 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 响应侧：
 
 - Moonshot/Kimi Anthropic-compatible usage 解析按 provider-aware 规则处理 `cached_tokens` 和可能的负 input token 折扣；该逻辑属于 usage/cost 兼容，不在 transformer。
+- Kimi CLI 接管的 OpenAI Chat 兼容 usage 解析除 `prompt_tokens_details.cached_tokens` 外，还会防御性读取 Moonshot 风格顶层 `usage.cached_tokens` 作为 `cache_read_tokens`，并按仓库统一语义把 `prompt_tokens` 当 cache-inclusive 总数扣减 fresh input。该路径仅对 `GatewayCliKey::Kimi` 生效；Codex/Grok/OpenCode 不读顶层 `cached_tokens`，保持共享 `openai_usage` 行为不变（`usage_parser.rs` 的 `openai_usage_with_extra_cache_read_paths`）。
 
 测试：
 
 - `provider_body_compat_anthropic_reasoning_vendor_normalizes_tool_thinking_history`
 - `provider_compat_moonshot_rewrites_schema_and_backfills_tool_reasoning`
 - `chat_prompt_cache_key_reinjects_explicit_for_allowlisted_provider`
+- `parses_kimi_moonshot_style_top_level_cached_tokens`
+- `non_kimi_openai_usage_ignores_top_level_cached_tokens`
 
 ### 5.5 Z.ai / GLM / 智谱
 

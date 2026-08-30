@@ -41,6 +41,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/claude_desktop/` | Claude Desktop 3P profile 配置（deploymentMode+configLibrary+_meta）、Direct 应用、快照回滚与恢复官方；网关接管由 proxy_gateway 的 GatewayCliKey::ClaudeDesktop 驱动 |
 | `tauri/src/coding/hermes/` | Hermes Agent 运行时 config.yaml 的 custom_providers/模型/MCP 可视化与同步 |
 | `tauri/src/coding/grok/` | Grok CLI 后端 provider、config/auth、官方账号、prompt、plugin 与同步约束 |
+| `tauri/src/coding/kimi/` | Kimi Code CLI 后端 provider、config/credentials、官方账号、prompt 与同步约束 |
 | `tauri/src/coding/gemini_cli/` | Gemini CLI 后端配置、env/settings、prompt、usage、tray 与 WSL/SSH/备份同步约束 |
 | `tauri/src/coding/mcp/` | MCP Server 后端存储、工具配置同步、导入导出与 WSL 联动 |
 | `tauri/src/coding/open_code/` | OpenCode 后端配置文件、provider、prompt、tray 与 WSL 同步约束 |
@@ -62,6 +63,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
+| `web/features/coding/kimi/` | Kimi Code CLI 前端页面、根目录配置、provider、官方账号、prompt 与通用配置交互 |
 | `web/features/coding/gateway/` | Gateway 前端页面、统计/请求/设置 Tab、顶部入口与 visibleTabs 可见性 |
 | `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |
 | `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
@@ -243,6 +245,8 @@ cd tauri && cargo test test_name
   - 失败是否为本轮新增
   - 失败定位到的文件或测试名
 - 如果本轮只改一个非常局部的点，但用户明确要求“全量测试”或“完整验证”，仍然按上面的全量集合执行，而不是自行降级为 smoke test。
+- macOS 本地全量 `cargo test` 有两个已知环境失败，不是代码回归：`tray::tests::skills_section_*` 会因 muda 要求 `Menu`/`MenuChild` 只能在主线程创建而 panic（CI/Linux 不受影响）；另外 `coding::codex::official_accounts::tests::browser_oauth_callback_rejects_invalid_state` 在全量高并行下偶发 flaky，单测重跑可通过。判断是否为既有失败时，用 `git worktree` 检出干净 HEAD 单跑同一测试对比，不要直接归因为本轮改动。
+- 涉及真实 CLI 的 session 导入导出往返测试（如 opencode round trip）在 macOS 上会遇到 `/var` -> `/private/var` symlink realpath 差异；断言前必须用 `normalize_test_path` + `ai-toolbox-session-manager-` marker 对 `path`/`directory` 等临时目录字段做归一化，不能直接比较原始绝对路径。
 - Windows 本地 `cargo test` 的 doctest 段偶发 `error[E0460]: found possibly newer version of crate 'windows'`（可伴随 `memory allocation of ... failed`、`failed to mmap ... os error 1455` / `页面文件太小`）：rustdoc 加载到损坏/半写状态的 rlib 元数据所致，常见诱因是 ① 并发构建写同一 target（其它 `cargo run`/`cargo build` 与测试共用 `tauri/target`）；② 本机或沙箱存在进程级 commit 配额时，默认高并行度的全量 `cargo test` 会让 rustdoc mmap 整个依赖图超限（物理内存再空闲也会报 1455）。自愈顺序：先 `cargo clean -p windows && cargo test --doc`（只重编 windows 相关产物，约 1-2 分钟）；若全量仍在 doctest 段复现 mmap/E0460，改用 `cargo test --jobs 2`（限并行后已验证稳定通过）或错开其它 cargo 构建进程。另一个 Windows 特有失败是 `failed to remove file target\debug\ai-toolbox.exe`：exe 被正在运行的进程锁定（如其它 `cargo run` 启动的应用），等该进程退出后重试即可。若全量 `cargo test` 仅 doctest 段失败而其余套件全过，应先按上述自愈流程处理，不要误判为本轮代码回归。
 - 新增或修复高价值回归时，应优先补**最贴近用户路径**的自动化用例；不要只补实现细节测试而漏掉“表单提交 -> 持久化 -> 再读取”这类关键往返语义。
 
@@ -489,6 +493,7 @@ When implementing new components or features, test light, dark, and system theme
 - Before adding, updating, deleting, checking, or looking up translation keys, use `scripts/i18n-keys.mjs` instead of manually reading or editing the full locale JSON files.
   - `pnpm i18n:check` verifies statically used keys exist in every locale and locale key sets stay aligned.
   - `pnpm i18n:set-key <key> --zh-CN "中文" --en-US "English" --write` adds a key to every locale; use `--allow-overwrite` only when intentionally replacing existing copy.
+  - `pnpm run` forwards arguments through a shell, so locale copy containing backticks (`` `AGENTS.md` ``) or `$` gets command-substituted and silently corrupted (e.g. `本地 \`AGENTS.md\` 文件` becomes `本地  文件`). When passing copy that contains backticks / `$`, call `node scripts/i18n-keys.mjs set-key ...` directly (or spawn it without a shell) instead of `pnpm i18n:set-key`, then verify the stored value.
   - `pnpm i18n:find-text <text>` finds keys by translated copy.
   - `pnpm i18n:find-key <key-or-prefix>` shows locale values and static usage locations.
   - `pnpm i18n:prune --prefix <key-prefix> --write` removes high-confidence unused keys only inside the explicit prefix; do not run broad prune without a prefix.
@@ -1035,13 +1040,13 @@ Several places hardcode a list of tab or page/module keys. Adding a new tab with
 
 Two distinct key sets — do not conflate:
 
-- Sidebar-only (11 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, openclaw, pi, oh_my_pi, hermes, dsh.
-- visible_tabs full set (includes non-coding tools like gateway/image/ssh/wsl): `CURRENT_DEFAULT_VISIBLE_TABS` + `CURRENT_DEFAULT_TAB_SET` in `tauri/src/settings/adapter.rs`, mirrored by `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and by `defaultSettings.visible_tabs` in `web/services/settingsApi.ts`.
+- Sidebar-only (12 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, kimi, openclaw, pi, oh_my_pi, hermes, dsh.
+- visible_tabs full set (includes non-coding tools like gateway/image/ssh/wsl): `CURRENT_DEFAULT_VISIBLE_TABS` in `tauri/src/settings/adapter.rs`, mirrored by `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and by `defaultSettings.visible_tabs` in `web/services/settingsApi.ts`.
 
 ### When Adding or Changing a Tab
 
-- Update the relevant authority source **and every downstream list**. Lists to re-check (grep the tab key string repo-wide, this list is not exhaustive): `tauri/src/settings/types.rs` `AppSettings::default()` (visible_tabs + default_sidebar_hidden_by_page), `tauri/src/coding/runtime_location.rs` `MODULE_KEYS`, `tauri/src/coding/reapply_applied_runtime.rs` `ALL_WSL_FILE_MODULES`, `tauri/src/settings/backup/utils.rs` `ALWAYS_BACKUP_CLI_TOOLS`/`OPTIONAL_BACKUP_CLI_TOOLS`, `tauri/src/tray.rs` section builders, frontend `useWSLSync.ts`/`useSSHSync.ts`/`*SyncModal.tsx` `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_*`, and `FileMappingModal`/`SSHFileMappingModal` module dropdowns.
-- A new default-visible tab must update **both** `CURRENT_DEFAULT_VISIBLE_TABS` (full-replace migration baseline) and `CURRENT_DEFAULT_TAB_SET` (additive insert set for custom-order users), plus the `visible_tabs_*` migration test expectations.
+- Update the relevant authority source **and every downstream list**. Lists to re-check (grep the tab key string repo-wide, this list is not exhaustive): `web/constants/modules.tsx` `MODULES` subTabs（侧边栏显示的唯一入口——`visible_tabs` 里有但 `MODULES` 没有时 tab 会静默不显示，本次 kimi 集成即踩到此坑）, `web/features/settings/pages/GeneralSettingsPage.tsx` `CODING_TABS`（设置页模块显隐/排序管理列表，漏了会在设置里静默消失，kimi 再次踩到）, `tauri/src/settings/types.rs` `AppSettings::default()` (visible_tabs + default_sidebar_hidden_by_page), `tauri/src/coding/runtime_location.rs` `MODULE_KEYS`, `tauri/src/coding/reapply_applied_runtime.rs` `ALL_WSL_FILE_MODULES`, `tauri/src/settings/backup/utils.rs` `ALWAYS_BACKUP_CLI_TOOLS`/`OPTIONAL_BACKUP_CLI_TOOLS`, `tauri/src/tray.rs` section builders, frontend `useWSLSync.ts`/`useSSHSync.ts`/`*SyncModal.tsx` `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_*`, `FileMappingModal`/`SSHFileMappingModal` module dropdowns, and the Gateway frontend CLI lists（`GatewayStatisticsView.tsx` `cliOptions`、`GatewayRequestsView.tsx` 请求筛选、`ModelPricingModal.tsx` `pricingCliKeys`、`GatewaySettingsPanel.tsx` `CLI_OPTIONS`、`shared/gateway/providerProfiles.ts` `normalizeGatewayProviderTool`——kimi 集成时统计页筛选/定价弹窗/normalize 三处漏注册，统计页看不到 kimi），以及 Gateway 后端 usage 读路径映射（`usage_stats.rs` 的 `cli_key_from_app_type` 和 `load_provider_names`——漏注册会让该 CLI 已落库的请求行在列表/统计查询里被静默丢弃，kimi 再次踩到）。
+- A new default-visible tab must update `CURRENT_DEFAULT_VISIBLE_TABS` (full-replace migration baseline) plus `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and the frontend mirror `defaultSettings.visible_tabs` in `web/services/settingsApi.ts` (reused by `web/stores/settingsStore.ts`), plus the `visible_tabs_*` migration test expectations. Custom-order users are intentionally **not** force-inserted newly added tabs (see the comment in `adapter.rs`); they surface new tabs only through the full-replace baseline.
 - Regression tests for this class of bug must assert that a newly added key round-trips its stored value through the full read path, not just that the default is present.
 - Do not silently truncate coverage. If a list intentionally excludes some keys (e.g. a historical `PRE_*` migration baseline snapshot, or a tool that has no MCP config), leave a comment saying so.
 - Whether an unregistered `runtime_location` module is a bug depends on intent: hermes/dsh document "not yet registered, path resolution is self-contained in commands.rs, known future work" in their AGENTS.md — that is by-design, not an allowlist miss. A tab whose config dir is user-customizable to a WSL UNC path needs runtime_location; a fixed-path GUI-config tool (e.g. claudedesktop) may not.

@@ -2,7 +2,7 @@
 
 ## One-line role
 
-- Schedules **startup** and **interval** OAuth token freshness passes for official CLI accounts (Grok / Codex / Gemini CLI).
+- Schedules **startup** and **interval** OAuth token freshness passes for official CLI accounts (Grok / Codex / Gemini CLI / Kimi).
 - Does **not** own OAuth HTTP, auth file schemas, or quota/limits APIs.
 
 ## Source of Truth
@@ -30,6 +30,7 @@
 | Grok | yes | 15m | Lead 30m inside Grok ensure_fresh |
 | Gemini CLI | yes | 15m | Lead 5m inside Gemini ensure_fresh |
 | Codex | yes | 12h | Lead 3d inside Codex ensure_fresh |
+| Kimi | yes | 15m | Lead inside Kimi ensure_fresh |
 
 ## Gotchas
 

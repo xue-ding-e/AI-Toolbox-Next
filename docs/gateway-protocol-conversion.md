@@ -8,7 +8,7 @@
 
 ## 0. 产品场景与设计动机
 
-Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本机接管 Claude Code、Codex、Grok CLI、Gemini CLI 这类 AI Coding CLI 的固定运行时协议，再把请求转发到用户选择的任意上游 provider。客户端协议、上游真实 wire API、provider metadata、特殊 endpoint 和运行时状态共同决定是否需要协议转换。
+Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本机接管 Claude Code、Codex、Grok CLI、Kimi CLI、Gemini CLI 这类 AI Coding CLI 的固定运行时协议，再把请求转发到用户选择的任意上游 provider。客户端协议、上游真实 wire API、provider metadata、特殊 endpoint 和运行时状态共同决定是否需要协议转换。
 
 典型组合：
 
@@ -17,6 +17,7 @@ Proxy Gateway 的目标不是提供一个通用云端 API 网关，而是在本�
 | Claude Code | Anthropic Messages | OpenAI Chat、OpenAI Responses、Gemini Native、Anthropic-compatible |
 | Codex | OpenAI Responses / OpenAI Chat | Anthropic Messages、OpenAI Chat、Gemini Native、OpenAI Responses-compatible |
 | Grok CLI | OpenAI Responses | Anthropic Messages、OpenAI Chat、Gemini Native、OpenAI Responses-compatible |
+| Kimi CLI | OpenAI Chat | Anthropic Messages、OpenAI Responses、Gemini Native、OpenAI-compatible |
 | Gemini CLI | Gemini Native | Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini-compatible |
 
 因此本模块必须同时解决两类问题：
@@ -86,6 +87,7 @@ flowchart LR
 | `/anthropic` | Claude Code | `anthropic` | `/v1/messages` |
 | `/openai` | Codex / OpenAI-compatible | `openai-compatible` | `/v1/responses`、`/v1/chat/completions` |
 | `/grok` | Grok CLI | `grok` | `/v1/responses` |
+| `/kimi` | Kimi CLI | `kimi` | `/v1/chat/completions` |
 | `/gemini` | Gemini CLI | `gemini` | `/v1beta/models/...:generateContent` |
 
 随后 `runtime/upstream.rs::source_protocol_from_route()` 按 CLI 和 forwarded path 推导 source protocol：
@@ -96,9 +98,10 @@ flowchart LR
 | Codex | `/v1/chat/completions` 或 `/chat/completions` | `OpenAiChat` |
 | Codex | `/v1/responses`、`/responses`、`/v1/responses/compact`、`/responses/compact` | `OpenAiResponses` |
 | Grok | `/v1/responses` 或 `/responses` | `OpenAiResponses` |
+| Kimi | `/v1/chat/completions` 或 `/chat/completions` | `OpenAiChat` |
 | Gemini | path 包含 `:generateContent` 或 `:streamGenerateContent` | `GeminiNative` |
 
-Grok 的 `/grok/v1` 只用于 `GET`/`HEAD` 根路径探测；正式请求必须使用 `/grok/v1/responses`。当前不接受 `/grok/v1/chat/completions` 或 `/grok/v1/responses/compact`。如果 route 无法推导 source protocol，则不会创建 `ConversionRoute`，请求只能走 runtime 的普通转发/兼容路径。
+Grok 的 `/grok/v1` 只用于 `GET`/`HEAD` 根路径探测；正式请求必须使用 `/grok/v1/responses`。当前不接受 `/grok/v1/chat/completions` 或 `/grok/v1/responses/compact`。Kimi 同理：`/kimi/v1` 只用于 `GET`/`HEAD` 根路径探测，正式请求必须使用 `/kimi/v1/chat/completions`。如果 route 无法推导 source protocol，则不会创建 `ConversionRoute`，请求只能走 runtime 的普通转发/兼容路径。
 
 ## 4. Provider target protocol
 
@@ -111,6 +114,7 @@ provider 读取在 `runtime/providers.rs`。`load_candidate_providers*()` 从对
 | Claude | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `openrouter_compat_mode=true` | `AnthropicMessages` |
 | Codex | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` -> `config.toml` 的 `wire_api` / `api_format` -> base URL 是否是 `/chat/completions` | 非 Chat URL 默认 `OpenAiResponses` |
 | Grok | effective `apiFormat` -> selected model `api_backend` | `OpenAiChat` |
+| Kimi | effective `apiFormat`（`meta.api_format`） | `OpenAiChat` |
 | Gemini | `gatewayProfile` 解析出的 effective `apiFormat` -> legacy `data.meta.api_format/apiFormat` -> `settings_config.api_format/apiFormat` | `GeminiNative` |
 
 `UpstreamProvider.target_protocol`（`runtime/providers.rs`）按上表解析 Grok 等 CLI 的上游目标协议。
@@ -645,7 +649,7 @@ session key 来源：
 
 Claude / Codex / Grok / Gemini CLI 渠道表单里的内置供应商 profile 使用同一份 Gateway profile catalog。仓库内的 bundled 默认数据是 `tauri/resources/gateway_provider_profiles.json`，后端 `provider_profiles.rs` 会优先读取 app data 下缓存的 `gateway_provider_profiles.json`，缓存无效或不存在时再 fallback 到 bundled 默认数据；`web/app/providers.tsx` 启动时先 `loadCachedGatewayProviderProfiles()`，再后台 `fetchRemoteGatewayProviderProfiles()` 刷新前端共享 store。
 
-前端共享类型 `GatewayProviderToolKey` 当前覆盖 `claude | codex | grok | gemini`，后端 `SUPPORTED_PROFILE_TOOLS` 保持同一集合。`gateway_provider_profiles.json` 的 `tools.<tool>` 节点分别描述各 CLI 表单可选的 endpoint：四个 CLI 表单都从共享 catalog 生成内置渠道选项。渠道下拉本身就是关联内置渠道的入口，不需要额外“关联内置渠道”按钮。
+后端 `SUPPORTED_PROFILE_TOOLS`（`provider_profiles.rs`）固定为已验证内置 endpoint 的 `claude | codex | grok | gemini` 四个 tool，承担 catalog 校验与远端 diff 的工具集合不变式。`gateway_provider_profiles.json` 的 `tools.<tool>` 节点分别描述各 CLI 表单可选的 endpoint：bundled catalog 当前覆盖 claude / claude_desktop / codex / grok / gemini（Claude Desktop 复用同一 catalog 的 `tools.claude_desktop` 节点）。前端共享类型 `GatewayProviderToolKey` 额外接受 `kimi`，但 bundled catalog 没有 `tools.kimi` 节点——Kimi 暂无已验证内置 endpoint，runtime 的 `gateway_profile_tool_for_cli` 对 Kimi 返回 `None`，已保存的 `gatewayProfile` 引用不会解析；后续为 Kimi 提供内置 endpoint 时，必须同时补 `SUPPORTED_PROFILE_TOOLS`、catalog `tools.kimi` 节点和该函数，不能只改一端。渠道下拉本身就是关联内置渠道的入口，不需要额外“关联内置渠道”按钮。
 
 用户选择某个 Claude / Codex / Grok / Gemini profile endpoint 并保存 provider 时，provider `data.meta` 不再固化 endpoint/profile 上的派生兼容快照，而是保存稳定引用：
 
@@ -1022,9 +1026,9 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 
 | 维度 | AI Toolbox Proxy Gateway | AxonHub |
 |---|---|---|
-| 产品定位 | 本机 CLI 接管网关，服务 Claude Code、Codex、Grok CLI、Gemini CLI 的运行时代理 | 通用 API gateway，面向多渠道、多 endpoint、多请求类型 |
+| 产品定位 | 本机 CLI 接管网关，服务 Claude Code、Codex、Grok CLI、Kimi CLI、Gemini CLI 的运行时代理 | 通用 API gateway，面向多渠道、多 endpoint、多请求类型 |
 | 协议范围 | 只把 Anthropic Messages、OpenAI Chat、OpenAI Responses、Gemini Native 四种聊天协议纳入 transformer 矩阵 | `llm.Request` 覆盖 chat、compact、completion、embedding、image、video、speech、transcription、translation、rerank 等 |
-| source 选择 | `runtime/routes.rs` 按 `/anthropic`、`/openai`、`/grok`、`/gemini` 前缀和 forwarded path 推导 source protocol | 不同 API handler 绑定不同 inbound transformer；inbound transformer 把原始 HTTP request 转成 `llm.Request` 并写入 `RequestType` / `APIFormat` |
+| source 选择 | `runtime/routes.rs` 按 `/anthropic`、`/openai`、`/grok`、`/kimi`、`/gemini` 前缀和 forwarded path 推导 source protocol | 不同 API handler 绑定不同 inbound transformer；inbound transformer 把原始 HTTP request 转成 `llm.Request` 并写入 `RequestType` / `APIFormat` |
 | target 选择 | `runtime/providers.rs` 从 provider meta/settings/config.toml 推导 `UpstreamProvider.target_protocol` | `SelectAPIFormat()` 根据 request type、入站 API format 和 channel endpoints 选择 candidate API format，再由 `selectOutboundForCandidate()` 取对应 outbound transformer |
 | 是否转换 | `conversion_route()` 只有 `source_protocol != provider.target_protocol` 时创建；相同协议不进结构转换器 | pipeline 总是走 inbound -> unified -> outbound；如果启用 pass-through 且 API format 对齐，可以在 raw request/response/stream middleware 中回用原始 provider body |
 | transformer 职责 | 纯 payload 转换：JSON body、错误 body、SSE；不读 DB，不拼 URL/header/auth，不接触 provider type | transformer 接收/返回 `httpclient.Request/Response`，出站 transformer 会构造 provider HTTP request；endpoint、headers、auth finalization、custom executor 与 pipeline 更紧密 |
