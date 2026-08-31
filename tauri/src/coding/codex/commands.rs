@@ -477,15 +477,71 @@ async fn read_codex_settings_from_disk(
     };
 
     let config = if config_path.exists() {
-        Some(
-            fs::read_to_string(&config_path)
-                .map_err(|e| format!("Failed to read config.toml: {}", e))?,
-        )
+        let raw = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.toml: {}", e))?;
+        // Self-heal a dangling `model_provider` that points to a missing
+        // `[model_providers.<id>]` table. Older gateway takeovers wrote
+        // `model_provider = "ai-toolbox-gateway"`; if that sentinel table was
+        // later lost (manual edit, partial migration, cross-replica sync) the
+        // leftover field makes Codex CLI refuse to load config.toml with
+        // "Model provider `ai-toolbox-gateway` not found".
+        heal_dangling_codex_model_provider(&config_path, &raw)?
+            .or(Some(raw))
     } else {
         None
     };
 
     Ok(CodexSettings { auth, config })
+}
+
+/// Remove a dangling top-level `model_provider` when it points to a
+/// `[model_providers.<id>]` table that does not exist in config.toml.
+///
+/// Returns `Some(healed_text)` and writes it back to disk when a dangling
+/// reference was repaired; returns `None` when no healing was needed (empty,
+/// unparseable, no `model_provider`, or the referenced table is present).
+/// Reads are the widest funnel to repair this regardless of how the dangling
+/// state was produced, so Codex CLI can always load config.toml.
+fn heal_dangling_codex_model_provider(
+    config_path: &Path,
+    config_text: &str,
+) -> Result<Option<String>, String> {
+    if config_text.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut document = match parse_toml_document(config_text, "config.toml self-heal") {
+        Ok(document) => document,
+        // Don't break the read path on a pre-existing parse error; surface the
+        // raw text so the caller or Codex itself can report it.
+        Err(_) => return Ok(None),
+    };
+
+    let Some(provider_id) = active_codex_model_provider_id(&document) else {
+        return Ok(None);
+    };
+
+    let table_exists = document
+        .as_table()
+        .get("model_providers")
+        .and_then(toml_edit::Item::as_table)
+        .and_then(|providers| providers.get(provider_id.as_str()))
+        .is_some();
+
+    if table_exists {
+        return Ok(None);
+    }
+
+    document.as_table_mut().remove("model_provider");
+    let healed = document.to_string();
+    fs::write(config_path, &healed).map_err(|e| {
+        format!("Failed to heal dangling model_provider in config.toml: {e}")
+    })?;
+    log::warn!(
+        "Codex config.toml had dangling model_provider = \"{}\" with no matching [model_providers.{}] table; removed it to restore Codex loadability.",
+        provider_id,
+        provider_id
+    );
+    Ok(Some(healed))
 }
 
 fn normalize_codex_model_tier(plan_type: &str) -> &'static str {
@@ -4005,13 +4061,13 @@ mod tests {
     use super::{
         append_toml_configs, build_written_codex_config_toml, codex_catalog_model_specs,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
-        infer_codex_provider_category_from_settings, merge_codex_auth_json,
-        merge_remote_codex_official_models, normalize_codex_model_tier,
-        prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
-        resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, CodexHistoryRuntimeSource,
-        CodexHistorySourceCandidate, CodexHistorySourceMode, RemoteCodexModel,
-        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
+        heal_dangling_codex_model_provider, infer_codex_provider_category_from_settings,
+        merge_codex_auth_json, merge_remote_codex_official_models, normalize_codex_model_tier,
+        prepare_codex_config_with_model_catalog,
+        project_codex_auth_to_runtime_config, resolve_local_provider_meta,
+        static_codex_official_models, strip_codex_common_config_from_toml,
+        CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
+        RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
@@ -5762,6 +5818,128 @@ approval_policy = "never"
         assert!(doc.get("model").is_none());
         assert!(doc.get("base_url").is_none());
         assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+    }
+
+    // Regression for issue #311: a leftover `model_provider` pointing to a
+    // missing `[model_providers.<id>]` table makes Codex CLI refuse to load
+    // config.toml ("Model provider `...` not found"). The read path must
+    // self-heal it so Codex can always start, regardless of how the dangling
+    // state was produced (legacy ai-toolbox-gateway takeover, manual edit,
+    // partial migration, cross-replica sync).
+
+    #[test]
+    fn heal_removes_legacy_ai_toolbox_gateway_dangling_model_provider() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let original = r#"
+model_provider = "ai-toolbox-gateway"
+
+[mcp_servers.keep]
+command = "node"
+"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let healed = heal_dangling_codex_model_provider(&config_path, original)
+            .expect("heal dangling model_provider");
+        assert!(healed.is_some(), "should heal dangling legacy sentinel");
+
+        let on_disk = std::fs::read_to_string(&config_path).unwrap();
+        assert_eq!(on_disk, healed.unwrap());
+        let doc: DocumentMut = on_disk.parse().unwrap();
+        assert!(doc.get("model_provider").is_none());
+        // Runtime-owned sections must be preserved verbatim.
+        assert_eq!(
+            doc["mcp_servers"]["keep"]["command"].as_str(),
+            Some("node")
+        );
+    }
+
+    #[test]
+    fn heal_removes_arbitrary_dangling_model_provider() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let original = r#"
+model_provider = "missing"
+
+[model_providers.real]
+name = "Real"
+base_url = "https://real.example.com/v1"
+"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let healed = heal_dangling_codex_model_provider(&config_path, original)
+            .expect("heal dangling model_provider");
+        assert!(healed.is_some());
+
+        let doc: DocumentMut = std::fs::read_to_string(&config_path)
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(doc.get("model_provider").is_none());
+        // An unrelated provider table is not the active one, keep it untouched.
+        assert_eq!(
+            doc["model_providers"]["real"]["base_url"].as_str(),
+            Some("https://real.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn heal_leaves_valid_config_untouched() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let original = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "http://127.0.0.1:37123/openai/v1"
+"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let healed = heal_dangling_codex_model_provider(&config_path, original)
+            .expect("heal check");
+        assert!(healed.is_none(), "valid config must not be rewritten");
+
+        let on_disk = std::fs::read_to_string(&config_path).unwrap();
+        assert_eq!(on_disk, original);
+    }
+
+    #[test]
+    fn heal_leaves_config_without_model_provider_untouched() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let original = r#"
+approval_policy = "never"
+"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let healed = heal_dangling_codex_model_provider(&config_path, original)
+            .expect("heal check");
+        assert!(healed.is_none());
+        let on_disk = std::fs::read_to_string(&config_path).unwrap();
+        assert_eq!(on_disk, original);
+    }
+
+    #[test]
+    fn heal_leaves_empty_and_unparseable_config_untouched() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Empty content -> no healing.
+        std::fs::write(&config_path, "   ").unwrap();
+        assert_eq!(
+            heal_dangling_codex_model_provider(&config_path, "   ").unwrap(),
+            None
+        );
+
+        // Unparseable content -> no healing, no panic, file untouched.
+        let garbage = "this is not = = valid toml [[";
+        std::fs::write(&config_path, garbage).unwrap();
+        assert_eq!(
+            heal_dangling_codex_model_provider(&config_path, garbage).unwrap(),
+            None
+        );
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), garbage);
     }
 }
 

@@ -69,6 +69,7 @@ sequenceDiagram
 - Codex 历史同步会直接修改选定 history source 下的 runtime 私有状态：`state_5.sqlite`、`session_index.jsonl` 和 `sessions/**/rollout-*.jsonl` 首行 metadata。必须先备份，默认只修复 provider 路由，不改写 `model` 或 `cwd`，恢复最新备份前必须再创建 `pre-restore` 安全备份。`all` 这种列表来源不能被解释成同时同步本机和 WSL；写操作必须先解析成单一 Codex root。
 - 历史同步读写 `state_5.sqlite` 时必须带 busy timeout，并对 `database is locked` / busy 做统一重试。`get_status` 打开弹窗就会读库，不能只在写路径重试；WSL/VS Code 远程场景下 Codex 持锁更常见。重试耗尽后的错误文案要可操作（结束当前回复/关闭 Codex 后再试），前端应对 locked 错误做本地化，不要直接抛原始 SQLite 字符串。
 - 统一 Codex 会话历史只应让官方 provider 的 live `config.toml` 注入共享 `custom` history bucket，并保持 `auth.json` 官方登录态不变；注入段不能进入 provider 存储主数据。存量迁移只能按窄边界执行 `openai -> custom`，恢复只能按迁移账本把当初迁入的官方 session/thread 改回 `openai`，不能猜测开启期间新产生的 `custom` 会话来源。
+- `read_codex_settings_from_disk` 读路径必须自愈悬空 `model_provider`：当顶层 `model_provider = "<id>"` 指向的 `[model_providers.<id>]` 表不存在时，就地删除该字段并落盘，`log::warn` 记录修复。入口是 `heal_dangling_codex_model_provider`。来源 issue #311：旧版网关接管（commit `43a8fd83` 之前）写入 `model_provider = "ai-toolbox-gateway"` + 对应表，升级或跨副本改写后表丢失但字段残留，Codex CLI 加载 config.toml 时硬性校验 `model_provider` 必须有对应表，否则报 `Model provider 'ai-toolbox-gateway' not found` 并拒绝启动对话。读路径是覆盖面最广的兜底，无论悬空态由手动编辑、部分迁移还是跨副本同步产生都能自愈；网关 `restore_codex_config` 只在主动恢复直连时清理 legacy sentinel，不能替代读路径自愈。自愈只删悬空字段让 Codex 回退默认 provider，不猜测/重建 provider 表（那需要 DB 里的 provider 信息，超出读路径职责）；空/不可解析的 config 不修复，原样返回让 Codex 自己报错；runtime-owned section（如 `mcp_servers`）必须原样保留。
 
 ## 跨模块依赖
 
