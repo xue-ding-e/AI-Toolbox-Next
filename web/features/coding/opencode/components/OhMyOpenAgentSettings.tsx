@@ -58,6 +58,9 @@ interface OhMyOpenAgentSettingsProps {
   allowClearAppliedConfig?: boolean;
   /** Whether to write the legacy flat config format instead of unified ~/.omo/omo.jsonc */
   useLegacyConfig?: boolean;
+  /** Dual-write `variant` alongside canonical `reasoning` when saving OMO agent/category
+   *  configs. Works around upstream issue #6614 (effort lost on task() delegation). */
+  dualWriteReasoningVariant?: boolean;
   onConfigApplied?: (config: OhMyOpenAgentConfig) => void;
   onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
   onLegacyUpgraded?: () => void;
@@ -69,6 +72,7 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
   disabled = false,
   allowClearAppliedConfig = false,
   useLegacyConfig = false,
+  dualWriteReasoningVariant = false,
   onConfigApplied,
   onConfigUpdated,
   onLegacyUpgraded,
@@ -624,6 +628,7 @@ const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
         }
         modelOptions={modelOptions}
         modelVariantsMap={modelVariantsMap}
+        dualWriteReasoningVariant={dualWriteReasoningVariant}
         onCancel={() => {
           setModalOpen(false);
           setEditingConfig(null);

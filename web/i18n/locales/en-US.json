@@ -1910,6 +1910,8 @@
       },
       "legacyConfigToggle": "Write legacy config format",
       "legacyConfigToggleHint": "When enabled, OMO config is written to ~/.config/opencode/oh-my-openagent.jsonc (only needed for oh-my-openagent versions before 4.20); when disabled, the unified ~/.omo/omo.jsonc is used",
+      "dualWriteReasoningVariantToggle": "Dual-write variant + reasoning",
+      "dualWriteReasoningVariantToggleHint": "When enabled, saving an OMO agent/category writes both the legacy `variant` and canonical `reasoning` fields with the same value. Works around oh-my-openagent issue #6614 (effort lost when the main agent delegates to subagents via task() under the `reasoning` key). Disable once the upstream bug is fixed.",
       "upgradeConfirmTitle": "Has OMO been upgraded to the latest version?",
       "upgradeConfirmDesc": "The new unified config (~/.omo/omo.jsonc) is incompatible with the legacy config (~/.config/opencode/oh-my-openagent.jsonc). Choosing \"Already upgraded\" uses the unified format; choosing \"Not upgraded\" auto-enables legacy writes.",
       "upgradeConfirmUpgraded": "Already upgraded",
@@ -2215,7 +2217,11 @@
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "reasoningLabel": "Reasoning",
       "selectFromProvider": "Select from provider models",
-      "roleFable": "Fable"
+      "roleFable": "Fable",
+      "tierAliasHeader": "Tier alias",
+      "tierAliasLabel": "Tier",
+      "tierAliasNone": "None",
+      "roleMythos": "Mythos"
     },
     "import": {
       "title": "Import from OpenCode",

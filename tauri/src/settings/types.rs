@@ -183,6 +183,11 @@ pub struct AppSettings {
     /// Whether the user has already answered the one-time "has OMO been upgraded?"
     /// confirmation shown on the first Oh My OpenAgent apply (default: false)
     pub opencode_omo_upgrade_confirmed: bool,
+    /// Dual-write `variant` alongside canonical `reasoning` when saving OMO agent/category
+    /// configs. Works around upstream issue #6614 where the main agent loses effort when
+    /// delegating to subagents under the `reasoning` key. Off (default) keeps current behavior
+    /// (write `reasoning` only); on writes both fields with the same value. (default: false)
+    pub opencode_dual_write_reasoning_variant: bool,
     /// Keep Codex official OAuth login when applying third-party providers (default: false)
     pub codex_preserve_official_auth_on_switch: bool,
     /// Let official Codex sessions use the shared custom history bucket (default: false)
@@ -246,6 +251,7 @@ impl Default for AppSettings {
             opencode_allow_clear_applied_oh_my_config: false,
             opencode_use_legacy_oh_my_config: false,
             opencode_omo_upgrade_confirmed: false,
+            opencode_dual_write_reasoning_variant: false,
             codex_preserve_official_auth_on_switch: false,
             codex_unified_session_history_enabled: false,
             claude_cli_launch_full_access: false,

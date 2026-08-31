@@ -69,6 +69,11 @@ pub fn from_db_value(value: Value) -> AppSettings {
             false,
         ),
         opencode_omo_upgrade_confirmed: get_bool(&value, "opencode_omo_upgrade_confirmed", false),
+        opencode_dual_write_reasoning_variant: get_bool(
+            &value,
+            "opencode_dual_write_reasoning_variant",
+            false,
+        ),
         codex_preserve_official_auth_on_switch: get_bool(
             &value,
             "codex_preserve_official_auth_on_switch",
@@ -776,6 +781,22 @@ mod tests {
         }));
 
         assert!(settings.opencode_omo_upgrade_confirmed);
+    }
+
+    #[test]
+    fn opencode_dual_write_reasoning_variant_defaults_to_false() {
+        let settings = from_db_value(json!({}));
+
+        assert!(!settings.opencode_dual_write_reasoning_variant);
+    }
+
+    #[test]
+    fn opencode_dual_write_reasoning_variant_preserves_explicit_true() {
+        let settings = from_db_value(json!({
+            "opencode_dual_write_reasoning_variant": true,
+        }));
+
+        assert!(settings.opencode_dual_write_reasoning_variant);
     }
 
     #[test]

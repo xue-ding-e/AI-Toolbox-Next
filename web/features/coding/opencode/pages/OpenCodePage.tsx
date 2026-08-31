@@ -307,6 +307,8 @@ const OpenCodePage: React.FC = () => {
     setOpencodeAllowClearAppliedOhMyConfig,
     opencodeUseLegacyOhMyConfig,
     setOpencodeUseLegacyOhMyConfig,
+    opencodeDualWriteReasoningVariant,
+    setOpencodeDualWriteReasoningVariant,
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
@@ -2193,6 +2195,7 @@ const OpenCodePage: React.FC = () => {
 	                  disabled={!omoPluginEnabled}
 	                  allowClearAppliedConfig={opencodeAllowClearAppliedOhMyConfig}
 	                  useLegacyConfig={opencodeUseLegacyOhMyConfig}
+                  dualWriteReasoningVariant={opencodeDualWriteReasoningVariant}
 	                  onConfigApplied={() => {
                     // 当配置被应用时，触发 Selector 刷新以更新选中状态
                     setOhMyOpenAgentRefreshKey((prev) => prev + 1);
@@ -2765,6 +2768,14 @@ const OpenCodePage: React.FC = () => {
                     incrementOmoConfigRefresh();
                     await refreshTrayMenu();
                   })();
+                }}
+              />
+              <SettingsToggleRow
+                title={t('opencode.ohMyOpenCode.dualWriteReasoningVariantToggle')}
+                hint={t('opencode.ohMyOpenCode.dualWriteReasoningVariantToggleHint')}
+                checked={opencodeDualWriteReasoningVariant}
+                onChange={(checked) => {
+                  void setOpencodeDualWriteReasoningVariant(checked);
                 }}
               />
             </SidebarSettingsModal>

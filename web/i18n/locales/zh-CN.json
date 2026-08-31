@@ -2001,6 +2001,8 @@
       },
       "legacyConfigToggle": "写入旧版配置格式",
       "legacyConfigToggleHint": "开启后 OMO 配置写入 ~/.config/opencode/oh-my-openagent.jsonc(仅 oh-my-openagent 4.20 之前的旧版本需要);关闭则写入统一配置 ~/.omo/omo.jsonc",
+      "dualWriteReasoningVariantToggle": "双写 variant + reasoning",
+      "dualWriteReasoningVariantToggleHint": "开启后,保存 OMO agent/category 时会同时写入 legacy `variant` 与 canonical `reasoning` 两个字段(同值)。用于规避 oh-my-openagent issue #6614(主 agent 用 task() 委派 subagent 时在 `reasoning` 键下丢失 effort)。上游修复后可关闭。",
       "upgradeConfirmTitle": "OMO 是否已升级到最新版本?",
       "upgradeConfirmDesc": "新版本配置(~/.omo/omo.jsonc)与老版本配置(~/.config/opencode/oh-my-openagent.jsonc)不兼容。选择『已升级』将使用统一格式,选择『未升级』将自动开启旧配置写入。",
       "upgradeConfirmUpgraded": "已升级",
@@ -2212,7 +2214,11 @@
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "reasoningLabel": "思考",
       "selectFromProvider": "从供应商模型中选择",
-      "roleFable": "Fable"
+      "roleFable": "Fable",
+      "tierAliasHeader": "Tier alias",
+      "tierAliasLabel": "Tier",
+      "tierAliasNone": "无",
+      "roleMythos": "Mythos"
     },
     "import": {
       "title": "从 OpenCode 导入",

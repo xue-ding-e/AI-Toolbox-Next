@@ -89,6 +89,9 @@ interface OhMyOpenAgentConfigModalProps {
   modelOptions: GroupedModelOptions;
   /** Map of model ID to its variant keys, e.g., { "opencode/openai/gpt-5": ["high", "medium", "low"] } */
   modelVariantsMap?: Record<string, string[]>;
+  /** Dual-write `variant` alongside canonical `reasoning` when saving. Works around
+   *  upstream issue #6614 (effort lost on task() delegation under the `reasoning` key). */
+  dualWriteReasoningVariant?: boolean;
   onCancel: () => void;
   onSuccess: (values: OhMyOpenAgentConfigFormValues) => void;
 }
@@ -107,6 +110,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
   initialValues,
   modelOptions,
   modelVariantsMap = {},
+  dualWriteReasoningVariant = false,
   onCancel,
   onSuccess,
 }) => {
@@ -575,7 +579,9 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           modelField = { models: [...fallbackValue] };
         }
         if (variantValue) {
-          reasoningField = { reasoning: variantValue };
+          reasoningField = dualWriteReasoningVariant
+            ? { reasoning: variantValue, variant: variantValue }
+            : { reasoning: variantValue };
         }
 
         // Build ultrawork object if either model or reasoning is set
@@ -583,7 +589,10 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         if (ultraworkModelValue || ultraworkVariantValue) {
           const uw: Record<string, string> = {};
           if (ultraworkModelValue) uw.model = ultraworkModelValue;
-          if (ultraworkVariantValue) uw.reasoning = ultraworkVariantValue;
+          if (ultraworkVariantValue) {
+            uw.reasoning = ultraworkVariantValue;
+            if (dualWriteReasoningVariant) uw.variant = ultraworkVariantValue;
+          }
           ultraworkField = { ultrawork: uw };
         }
 
@@ -638,7 +647,9 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           modelField = { models: [...fallbackValue] };
         }
         if (variantValue) {
-          reasoningField = { reasoning: variantValue };
+          reasoningField = dualWriteReasoningVariant
+            ? { reasoning: variantValue, variant: variantValue }
+            : { reasoning: variantValue };
         }
 
         // Only create category config if model is set OR reasoning is set OR advanced settings exist OR fallback exists

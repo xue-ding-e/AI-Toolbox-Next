@@ -71,6 +71,7 @@ sequenceDiagram
 - OMO **首次应用**前有一次「OMO 是否已升级到最新版本？」二次确认，由共享 hook `useOmoUpgradeGate` 实现，两个 apply 入口（`OhMyOpenAgentSettings.handleApplyConfig` 和 `OhMyOpenAgentConfigSelector.handleChange`）都要用 `guardedApply` 包裹并把 `upgradeConfirmModal` 渲染进 JSX。选「已升级」→ 确保关闭 legacy 开关（走 unified）并应用；选「未升级」→ 自动开 `setOpencodeUseLegacyOhMyConfig(true)` 再应用；选「取消」→ 中止且不持久化。确认标志 `opencodeOmoUpgradeConfirmed` 持久化后不再弹。
 - **局限（产品已接受）**：该确认门只罩上述两个显式 apply 入口；后端 re-apply（编辑已应用配置、保存全局配置、toggle disabled、托盘、备份恢复/启动）不经确认直接写运行时文件。UI 只能保证从这两个入口触发的路径受控。
 - OMO 的 `OhMyOpenAgentConfigModal` 写入 agent/category 的推理字段必须用上游 `2026-08-reasoning-unification` 产物形状：`reasoning`（不是 `variant`）；有主模型+回退时合并为有序 `models` 数组（首项主模型，其余回退），不再写 `model`+`fallback_models`；仅主模型无回退时保留 `model` 单字符串。`ultrawork`/`compaction` 子对象内 `variant` 同样改 `reasoning`。读侧（初始化回填 + JSON 导入）兼容老 `variant`/`fallback_models`/`models`：`models` 数组首项→主模型字段、其余→回退字段；`reasoning` 优先、回退读 `variant`。表单字段后缀是 `_reasoning`/`_models`/`_ultrawork_reasoning`。OpenCode Core 的 `agent.<name>.variant` 是另一回事，不要在此混淆。issue #286。
+- settings 开关 `opencode_dual_write_reasoning_variant`（`opencodeDualWriteReasoningVariant`，默认关）是上述 `reasoning`-only 写入的可选旁路：开启后 `OhMyOpenAgentConfigModal` 保存 agent/category（含 `ultrawork` 子对象）时对每个有值的推理字段同时写 `variant` 和 `reasoning`（同值），用于规避 oh-my-openagent issue #6614（主 agent 用 `task()` 委派 subagent 时在 `reasoning` 键下丢失 effort；`variant` 键不受影响）。开关在侧栏设置弹窗「写入旧版配置格式」下方，由 `OpenCodePage` 经 `OhMyOpenAgentSettings` 透传给 `OhMyOpenAgentConfigModal`。关闭即恢复 canonical `reasoning` 单写。上游修复 #6614 后可移除该开关。issue #312。
 
 ## 跨模块依赖
 

@@ -83,6 +83,7 @@ interface SettingsState {
   opencodeAllowClearAppliedOhMyConfig: boolean;
   opencodeUseLegacyOhMyConfig: boolean;
   opencodeOmoUpgradeConfirmed: boolean;
+  opencodeDualWriteReasoningVariant: boolean;
 
   // Codex options
   codexPreserveOfficialAuthOnSwitch: boolean;
@@ -124,6 +125,7 @@ interface SettingsState {
   setOpencodeAllowClearAppliedOhMyConfig: (enabled: boolean) => Promise<void>;
   setOpencodeUseLegacyOhMyConfig: (enabled: boolean) => Promise<void>;
   setOpencodeOmoUpgradeConfirmed: (confirmed: boolean) => Promise<void>;
+  setOpencodeDualWriteReasoningVariant: (enabled: boolean) => Promise<void>;
   setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
   setCodexUnifiedSessionHistoryEnabled: (enabled: boolean) => void;
   setClaudeCliLaunchFullAccess: (enabled: boolean) => Promise<void>;
@@ -216,6 +218,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   opencodeAllowClearAppliedOhMyConfig: false,
   opencodeUseLegacyOhMyConfig: false,
   opencodeOmoUpgradeConfirmed: false,
+  opencodeDualWriteReasoningVariant: false,
   codexPreserveOfficialAuthOnSwitch: false,
   codexUnifiedSessionHistoryEnabled: false,
   claudeCliLaunchFullAccess: false,
@@ -252,6 +255,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         opencodeAllowClearAppliedOhMyConfig: settings.opencode_allow_clear_applied_oh_my_config ?? false,
         opencodeUseLegacyOhMyConfig: settings.opencode_use_legacy_oh_my_config ?? false,
         opencodeOmoUpgradeConfirmed: settings.opencode_omo_upgrade_confirmed ?? false,
+        opencodeDualWriteReasoningVariant: settings.opencode_dual_write_reasoning_variant ?? false,
         codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
         codexUnifiedSessionHistoryEnabled: settings.codex_unified_session_history_enabled ?? false,
         claudeCliLaunchFullAccess: settings.claude_cli_launch_full_access ?? false,
@@ -498,6 +502,17 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       opencode_omo_upgrade_confirmed: confirmed,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setOpencodeDualWriteReasoningVariant: async (enabled) => {
+    set({ opencodeDualWriteReasoningVariant: enabled });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      opencode_dual_write_reasoning_variant: enabled,
     };
     await saveSettings(newSettings);
   },
