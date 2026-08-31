@@ -68,8 +68,20 @@ interface ModelRoleRow {
   displayName: string;
   modelField: 'sonnetModel' | 'opusModel' | 'fableModel' | 'haikuModel';
   displayNameField: 'sonnetModelName' | 'opusModelName' | 'fableModelName' | 'haikuModelName';
+  tierAliasField: 'sonnetTierAlias' | 'opusTierAlias' | 'fableTierAlias' | 'haikuTierAlias';
+  tierAlias: string;
   supportsOneM: boolean;
 }
+
+/** Claude Desktop `anthropicFamilyTier` legal values. */
+const TIER_ALIAS_OPTIONS: Array<{ value: string; labelKey: string }> = [
+  { value: '', labelKey: 'claudecode.model.tierAliasNone' },
+  { value: 'sonnet', labelKey: 'claudecode.model.roleSonnet' },
+  { value: 'opus', labelKey: 'claudecode.model.roleOpus' },
+  { value: 'fable', labelKey: 'claudecode.model.roleFable' },
+  { value: 'haiku', labelKey: 'claudecode.model.roleHaiku' },
+  { value: 'mythos', labelKey: 'claudecode.model.roleMythos' },
+];
 
 type ClaudeDesktopApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses' | 'gemini_native';
 
@@ -133,7 +145,14 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
 
   const providerEndpointOptions = React.useMemo(() => [
     { value: CUSTOM_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileCustom') },
-    ...(provider?.category === 'official' || isEdit ? [{ value: OFFICIAL_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileOfficial') }] : []),
+    // "官方渠道" is only selectable when creating a new provider, or when editing
+    // an existing official (seed) entry. A non-official provider's channel is
+    // fixed at creation time and cannot be switched to official afterwards
+    // (backend apply only treats the seeded claude-desktop-official id, or a
+    // category=official row with empty credentials, as an official restore).
+    ...(!isEdit || provider?.category === 'official'
+      ? [{ value: OFFICIAL_PROVIDER_ENDPOINT_KEY, label: t('claudecode.provider.providerProfileOfficial') }]
+      : []),
     ...getGatewayProviderProfilesForTool('claude_desktop').flatMap((profile) => {
       const endpoints = profile.tools.claude_desktop?.endpoints || [];
       return endpoints.map((endpoint) => ({
@@ -155,6 +174,10 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const fableModelName = Form.useWatch('fableModelName', watchOptions) || '';
   const haikuModel = Form.useWatch('haikuModel', watchOptions) || '';
   const haikuModelName = Form.useWatch('haikuModelName', watchOptions) || '';
+  const sonnetTierAlias = Form.useWatch('sonnetTierAlias', watchOptions) || '';
+  const opusTierAlias = Form.useWatch('opusTierAlias', watchOptions) || '';
+  const fableTierAlias = Form.useWatch('fableTierAlias', watchOptions) || '';
+  const haikuTierAlias = Form.useWatch('haikuTierAlias', watchOptions) || '';
 
   const modelRoleRows: ModelRoleRow[] = React.useMemo(() => [
     {
@@ -164,6 +187,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       displayName: sonnetModelName,
       modelField: 'sonnetModel',
       displayNameField: 'sonnetModelName',
+      tierAliasField: 'sonnetTierAlias',
+      tierAlias: sonnetTierAlias,
       supportsOneM: true,
     },
     {
@@ -173,6 +198,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       displayName: opusModelName,
       modelField: 'opusModel',
       displayNameField: 'opusModelName',
+      tierAliasField: 'opusTierAlias',
+      tierAlias: opusTierAlias,
       supportsOneM: true,
     },
     {
@@ -182,6 +209,8 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       displayName: fableModelName,
       modelField: 'fableModel',
       displayNameField: 'fableModelName',
+      tierAliasField: 'fableTierAlias',
+      tierAlias: fableTierAlias,
       supportsOneM: true,
     },
     {
@@ -191,9 +220,11 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       displayName: haikuModelName,
       modelField: 'haikuModel',
       displayNameField: 'haikuModelName',
+      tierAliasField: 'haikuTierAlias',
+      tierAlias: haikuTierAlias,
       supportsOneM: false,
     },
-  ], [fableModel, fableModelName, haikuModel, haikuModelName, opusModel, opusModelName, sonnetModel, sonnetModelName, t]);
+  ], [fableModel, fableModelName, fableTierAlias, haikuModel, haikuModelName, haikuTierAlias, opusModel, opusModelName, opusTierAlias, sonnetModel, sonnetModelName, sonnetTierAlias, t]);
 
   // Initialize the form when the modal opens.
   React.useEffect(() => {
@@ -212,11 +243,20 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       // created before the routes-based shape.
       const roleModel = (role: 'sonnet' | 'opus' | 'fable' | 'haiku') => {
         const route = routes?.[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]];
-        return route?.model || modelConfig.roles[role].model;
+        if (route) {
+          // Stored route carries 1M intent as `supports1m` (model is stripped of
+          // the [1m] marker); rebuild the marker so the checkbox reflects state.
+          return route.supports1m ? setClaudeOneMMarker(route.model, true) : route.model;
+        }
+        return modelConfig.roles[role].model;
       };
       const roleModelName = (role: 'sonnet' | 'opus' | 'fable' | 'haiku') => {
         const route = routes?.[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]];
         return route?.labelOverride || route?.model || modelConfig.roles[role].displayName;
+      };
+      const roleTierAlias = (role: 'sonnet' | 'opus' | 'fable' | 'haiku') => {
+        const route = routes?.[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]];
+        return route?.tierAlias || '';
       };
       const nextProviderCategory = provider.category === 'official' ? 'official' : 'custom';
       const providerEndpointSelection = nextProviderCategory === 'official'
@@ -263,6 +303,10 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         opusModelName: roleModelName('opus'),
         fableModel: roleModel('fable'),
         fableModelName: roleModelName('fable'),
+        sonnetTierAlias: roleTierAlias('sonnet'),
+        opusTierAlias: roleTierAlias('opus'),
+        fableTierAlias: roleTierAlias('fable'),
+        haikuTierAlias: roleTierAlias('haiku'),
         notes: provider.notes,
       });
     } else {
@@ -299,6 +343,10 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         opusModelName: undefined,
         fableModel: undefined,
         fableModelName: undefined,
+        sonnetTierAlias: undefined,
+        opusTierAlias: undefined,
+        fableTierAlias: undefined,
+        haikuTierAlias: undefined,
       });
       return;
     }
@@ -479,6 +527,10 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         opusModelName: values.opusModelName,
         fableModel: values.fableModel,
         fableModelName: values.fableModelName,
+        sonnetTierAlias: values.sonnetTierAlias,
+        opusTierAlias: values.opusTierAlias,
+        fableTierAlias: values.fableTierAlias,
+        haikuTierAlias: values.haikuTierAlias,
         notes: values.notes,
         customHeaders: providerCategory === 'official'
           ? { enabled: false, headers: [] }
@@ -548,6 +600,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
           <span>{t('claudecode.model.displayNameHeader')}</span>
           <span>{t('claudecode.model.requestModelHeader')}</span>
           <span>{t('claudecode.model.oneMHeader')}</span>
+          <span>{t('claudecode.model.tierAliasHeader')}</span>
         </div>
 
         <div className={styles.modelRows}>
@@ -605,6 +658,15 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
                     </Checkbox>
                   )}
                 </div>
+                <Form.Item name={row.tierAliasField} noStyle initialValue="">
+                  <Select
+                    options={TIER_ALIAS_OPTIONS.map((option) => ({
+                      value: option.value,
+                      label: t(option.labelKey),
+                    }))}
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
               </div>
             );
           })}
@@ -682,7 +744,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
             >
               <Select
                 options={providerEndpointOptions}
-                disabled={isOfficialMode && isEdit}
+                disabled={isEdit}
                 onChange={handleProviderEndpointChange}
               />
             </Form.Item>

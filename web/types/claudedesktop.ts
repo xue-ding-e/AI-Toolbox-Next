@@ -20,6 +20,8 @@ export interface ClaudeDesktopModelRoute {
   model: string;
   labelOverride?: string;
   supports1m: boolean;
+  /** Claude Desktop `anthropicFamilyTier`: haiku/sonnet/opus/fable/mythos. */
+  tierAlias?: string;
 }
 
 /** `meta.claudeDesktopModelRoutes`: route_id (claude-safe, e.g. `claude-sonnet-5`) → route. */
@@ -141,12 +143,16 @@ export interface ClaudeDesktopFormValues {
   model?: string;
   haikuModel?: string;
   haikuModelName?: string;
+  haikuTierAlias?: string;
   sonnetModel?: string;
   sonnetModelName?: string;
+  sonnetTierAlias?: string;
   opusModel?: string;
   opusModelName?: string;
+  opusTierAlias?: string;
   fableModel?: string;
   fableModelName?: string;
+  fableTierAlias?: string;
   notes?: string;
   /** Provider-level custom request-header override state (gateway-injected). */
   customHeaders?: CustomHeadersState;

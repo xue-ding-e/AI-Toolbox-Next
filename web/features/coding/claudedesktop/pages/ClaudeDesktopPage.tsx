@@ -70,13 +70,8 @@ import {
 import { hasAllApiHubExtension, refreshTrayMenu } from '@/services/appApi';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import {
-  firstGatewayApiFormat,
   GatewayFailoverButton,
-  getGatewayProviderApiFormatFromMeta,
-  getGatewayProviderProfilesVersion,
-  providerNeedsGatewayProxy,
   saveProviderWithGatewayReengage,
-  subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import {
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -109,7 +104,9 @@ import type { AllApiHubProviderItem } from '@/types/allApiHub';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import {
   getClaudeConfiguredModelIds,
+  hasClaudeOneMMarker,
   parseClaudeSettingsConfig,
+  stripClaudeOneMMarker,
 } from '../../claudecode/utils/claudeModelConfig';
 import styles from './ClaudeDesktopPage.module.less';
 
@@ -157,6 +154,19 @@ const CLAUDE_DESKTOP_ROLE_ROUTE_ORDER: Array<'sonnet' | 'opus' | 'fable' | 'haik
   'haiku',
 ];
 
+/** Claude Desktop `anthropicFamilyTier` legal values (per official config schema). */
+const TIER_ALIAS_VALUES = ['haiku', 'sonnet', 'opus', 'fable', 'mythos'] as const;
+/** Normalize a tier alias input to a legal `anthropicFamilyTier` value, or undefined. */
+function normalizeTierAlias(value?: string): string | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
+  return TIER_ALIAS_VALUES.includes(trimmed as (typeof TIER_ALIAS_VALUES)[number])
+    ? trimmed
+    : undefined;
+}
+
 /** Build `meta.claudeDesktopModelRoutes` from the form's role model mapping.
  * route_id is the claude-safe name Claude Desktop accepts; `model` is the real
  * upstream model; `labelOverride` is the in-app menu display name. */
@@ -181,14 +191,33 @@ function buildClaudeDesktopModelRoutes(
           : role === 'fable'
             ? values.fableModelName
             : values.haikuModelName;
-    const trimmedModel = model?.trim();
-    if (!trimmedModel) {
+    const tierAlias =
+      role === 'sonnet'
+        ? values.sonnetTierAlias
+        : role === 'opus'
+          ? values.opusTierAlias
+          : role === 'fable'
+            ? values.fableTierAlias
+            : values.haikuTierAlias;
+    const rawModel = model?.trim();
+    if (!rawModel) {
       continue;
     }
+    // The [1m] marker on the model string expresses the user's 1M intent (set by
+    // the form checkbox). Strip it from the stored upstream `model` and carry the
+    // intent as `supports1m`; config_writer writes `supports1m: true` into the
+    // profile's inferenceModels. Storing the marker in `model` would also make
+    // direct mode reject it as a model mapping (upstream != route_id).
+    const modelBase = stripClaudeOneMMarker(rawModel).trim();
+    if (!modelBase) {
+      continue;
+    }
+    const normalizedTierAlias = normalizeTierAlias(tierAlias);
     routes[CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role]] = {
-      model: trimmedModel,
+      model: modelBase,
       ...(labelOverride?.trim() ? { labelOverride: labelOverride.trim() } : {}),
-      supports1m: false,
+      supports1m: hasClaudeOneMMarker(rawModel),
+      ...(normalizedTierAlias ? { tierAlias: normalizedTierAlias } : {}),
     };
   }
   return routes;
@@ -305,32 +334,6 @@ const ClaudeDesktopPage: React.FC = () => {
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
   const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
   const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
-  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
-    subscribeGatewayProviderProfiles,
-    getGatewayProviderProfilesVersion,
-    getGatewayProviderProfilesVersion,
-  );
-  const primaryGatewayProviderNeedsProxy = React.useMemo(() => {
-    const primaryProvider = providers.find(
-      (provider) => provider.id === gatewayCliStatus?.primary_provider_id,
-    );
-    if (!primaryProvider) {
-      return false;
-    }
-    const settingsConfig = parseClaudeSettingsConfig(primaryProvider.settingsConfig) as {
-      apiFormat?: unknown;
-      api_format?: unknown;
-      openrouter_compat_mode?: unknown;
-    };
-    const providerApiFormat = firstGatewayApiFormat(
-      getGatewayProviderApiFormatFromMeta(primaryProvider.meta, 'claude_desktop'),
-      primaryProvider.meta?.apiFormat,
-      typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
-      typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
-    );
-    return providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
-  }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
-  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
 
   // Modal states
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -950,8 +953,6 @@ const ClaudeDesktopPage: React.FC = () => {
                     <GatewayFailoverButton
                       cliKey="claude_desktop"
                       status={gatewayCliStatus}
-                      primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
-                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
                       onStatusChange={setGatewayCliStatus}
                     />
                   </Space>

@@ -39,6 +39,7 @@ pub struct GatewayModelSpec {
     name: String,
     label_override: Option<String>,
     supports_1m: bool,
+    tier_alias: Option<String>,
 }
 
 /// Byte snapshot of one managed file, used for rollback on apply failure.
@@ -381,13 +382,16 @@ pub fn build_gateway_profile(
 }
 
 fn inference_model_json(spec: &GatewayModelSpec) -> Value {
-    if spec.supports_1m || spec.label_override.is_some() {
+    if spec.supports_1m || spec.label_override.is_some() || spec.tier_alias.is_some() {
         let mut item = json!({ "name": spec.name });
         if let Some(label_override) = spec.label_override.as_deref() {
             item["labelOverride"] = json!(label_override);
         }
         if spec.supports_1m {
             item["supports1m"] = json!(true);
+        }
+        if let Some(tier_alias) = spec.tier_alias.as_deref() {
+            item["anthropicFamilyTier"] = json!(tier_alias);
         }
         item
     } else {
@@ -512,6 +516,19 @@ fn direct_inference_model_specs(
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            tier_alias: route
+                .get("tier_alias")
+                .or_else(|| route.get("tierAlias"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_lowercase())
+                .filter(|value| {
+                    matches!(
+                        value.as_str(),
+                        "haiku" | "sonnet" | "opus" | "fable" | "mythos"
+                    )
+                }),
         });
     }
 
@@ -559,6 +576,19 @@ pub fn desktop_proxy_model_specs(
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            tier_alias: route
+                .get("tier_alias")
+                .or_else(|| route.get("tierAlias"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_lowercase())
+                .filter(|value| {
+                    matches!(
+                        value.as_str(),
+                        "haiku" | "sonnet" | "opus" | "fable" | "mythos"
+                    )
+                }),
         });
     }
 
@@ -974,5 +1004,92 @@ mod tests {
         let sorted = sort_json_value(value);
         let text = serde_json::to_string(&sorted).expect("serialize");
         assert_eq!(text, r#"{"a":{"b":3,"y":2},"m":[4,{"p":6,"q":5}],"z":1}"#);
+    }
+
+    #[test]
+    fn proxy_specs_carry_supports1m_and_tier_alias() {
+        // Direct mode forbids mapping (upstream must equal route_id), so the
+        // supports1m / anthropicFamilyTier wire fields are exercised via the proxy
+        // specs path, which reads them from meta.claudeDesktopModelRoutes.
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "test-token"
+            }
+        });
+        let meta = json!({
+            "claude_desktop_model_routes": {
+                "claude-sonnet-5": {
+                    "model": "glm-4.6",
+                    "labelOverride": "GLM 4.6",
+                    "supports1m": true,
+                    "tierAlias": "sonnet"
+                },
+                "claude-opus-5": {
+                    "model": "claude-opus-5",
+                    "tierAlias": "opus"
+                }
+            }
+        });
+
+        let specs = desktop_proxy_model_specs(Some(&meta), Some(&settings));
+        let by_name: std::collections::HashMap<String, &GatewayModelSpec> =
+            specs.iter().map(|spec| (spec.name.clone(), spec)).collect();
+
+        let sonnet = by_name.get("claude-sonnet-5").expect("sonnet spec");
+        assert!(sonnet.supports_1m);
+        assert_eq!(sonnet.tier_alias.as_deref(), Some("sonnet"));
+        assert_eq!(sonnet.label_override.as_deref(), Some("GLM 4.6"));
+
+        let opus = by_name.get("claude-opus-5").expect("opus spec");
+        assert!(!opus.supports_1m);
+        assert_eq!(opus.tier_alias.as_deref(), Some("opus"));
+
+        // Wire output: build_gateway_profile must emit anthropicFamilyTier +
+        // supports1m on the object form (never the bare-string form).
+        let profile = build_gateway_profile("https://gw", "key", Some(&specs));
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        let sonnet_obj = models
+            .iter()
+            .find(|item| item["name"] == json!("claude-sonnet-5"))
+            .expect("sonnet entry");
+        assert_eq!(sonnet_obj["supports1m"], json!(true));
+        assert_eq!(sonnet_obj["anthropicFamilyTier"], json!("sonnet"));
+        assert_eq!(sonnet_obj["labelOverride"], json!("GLM 4.6"));
+
+        let opus_obj = models
+            .iter()
+            .find(|item| item["name"] == json!("claude-opus-5"))
+            .expect("opus entry");
+        assert_eq!(opus_obj["anthropicFamilyTier"], json!("opus"));
+        // opus has no supports1m and no labelOverride, but tier_alias forces the
+        // object form (not a bare string).
+        assert!(opus_obj.get("supports1m").is_none());
+    }
+
+    #[test]
+    fn proxy_specs_reject_invalid_tier_alias() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "test-token"
+            }
+        });
+        let meta = json!({
+            "claude_desktop_model_routes": {
+                "claude-sonnet-5": {
+                    "model": "glm-4.6",
+                    "tierAlias": "Opan" // typo, not a legal tier
+                }
+            }
+        });
+        let specs = desktop_proxy_model_specs(Some(&meta), Some(&settings));
+        let sonnet = specs
+            .iter()
+            .find(|spec| spec.name == "claude-sonnet-5")
+            .expect("sonnet spec");
+        assert!(sonnet.tier_alias.is_none(), "invalid tier alias must be dropped");
     }
 }

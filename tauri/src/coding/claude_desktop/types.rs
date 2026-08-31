@@ -34,6 +34,10 @@ pub struct ClaudeDesktopModelRoute {
     pub label_override: Option<String>,
     #[serde(default)]
     pub supports_1m: bool,
+    /// Claude Desktop `anthropicFamilyTier`: which Claude tier (haiku/sonnet/opus/
+    /// fable/mythos) this model stands in for. None = omit the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_alias: Option<String>,
 }
 
 // ============================================================================

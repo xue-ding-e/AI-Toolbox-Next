@@ -440,6 +440,31 @@ pub async fn apply_claude_desktop_provider(
     apply_config_internal(&db, &app, &provider_id, false).await
 }
 
+/// True when `settings_config` is the empty-credentials shape the form writes
+/// for an official channel provider (`{"env":{}}` or an env object without a
+/// base URL / auth token). This distinguishes form-created official providers
+/// (which restore to 1P on apply) from imported rows that happen to carry
+/// `category="official"` but still have their own upstream credentials and must
+/// go through the direct/proxy apply path.
+fn official_restore_settings(settings_config: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(settings_config) else {
+        return false;
+    };
+    let Some(env) = value.get("env").and_then(Value::as_object) else {
+        // No env object at all (e.g. "{}") counts as empty-credentials.
+        return true;
+    };
+    let has_credential = env
+        .get("ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .is_some_and(|v| !v.trim().is_empty())
+        || env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .and_then(Value::as_str)
+            .is_some_and(|v| !v.trim().is_empty());
+    !has_credential
+}
+
 /// Write a provider's config to the on-disk profile (no DB changes).
 fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
     let provider = get_provider_from_sqlite(db, provider_id)?
@@ -454,11 +479,14 @@ fn apply_provider_to_sqlite_provider(db: &SqliteDbState, provider_id: &str) -> R
 
     let paths = config_writer::current_platform_paths()?;
 
-    // Official restore must be driven by the stable provider id only.
-    // A user/imported provider whose category happens to be "official" is not
-    // necessarily the built-in official Claude Desktop entry; treating it as
-    // such would delete the 3P profile and switch the app back to 1P.
-    if provider.id == OFFICIAL_PROVIDER_ID {
+    // Official restore is driven by the stable provider id, or by a provider
+    // created through the form's official channel (category=official with empty
+    // credentials). A user/imported provider whose category happens to be
+    // "official" but still carries its own credentials is NOT treated as an
+    // official restore — it goes through the direct/proxy apply path below.
+    if provider.id == OFFICIAL_PROVIDER_ID
+        || (provider.category == "official" && official_restore_settings(&provider.settings_config))
+    {
         return config_writer::restore_official(&paths);
     }
 
@@ -839,4 +867,38 @@ pub async fn resolve_claude_desktop_all_api_hub_providers(
         &providers,
         crate::coding::all_api_hub::candidate_to_claude_desktop_settings,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::official_restore_settings;
+
+    #[test]
+    fn official_restore_settings_for_empty_env() {
+        // Form official mode writes exactly `{"env":{}}`.
+        assert!(official_restore_settings(r#"{"env":{}}"#));
+        // A bare object with no env at all also counts as empty-credentials.
+        assert!(official_restore_settings(r#"{}"#));
+    }
+
+    #[test]
+    fn official_restore_settings_rejects_providers_with_credentials() {
+        // A custom provider carrying base url + token must NOT be treated as an
+        // official restore target, even if category were "official".
+        let with_creds = r#"{"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"sk"}}"#;
+        assert!(!official_restore_settings(with_creds));
+
+        // Only base url present is still a credential -> not official restore.
+        let base_only = r#"{"env":{"ANTHROPIC_BASE_URL":"https://x"}}"#;
+        assert!(!official_restore_settings(base_only));
+
+        // Whitespace-only credential is treated as absent.
+        let blank = r#"{"env":{"ANTHROPIC_BASE_URL":"   "}}"#;
+        assert!(official_restore_settings(blank));
+    }
+
+    #[test]
+    fn official_restore_settings_handles_invalid_json() {
+        assert!(!official_restore_settings("not json"));
+    }
 }

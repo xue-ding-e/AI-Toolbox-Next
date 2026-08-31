@@ -30,12 +30,10 @@ import ProviderNameLink from '@/components/common/ProviderNameLink';
 import {
   canApplyProviderWithGatewayProxy,
   firstGatewayApiFormat,
-  gatewayProxyReason,
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
   hasNonClaudeModelIds,
   providerNeedsGatewayProxy,
-  restoreDirectUnavailableHintKey,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import {
@@ -123,7 +121,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
       return modelRoutes;
     }
     const env = (settingsConfig.env || {}) as Record<string, string | undefined>;
-    const derived: Record<string, { model: string; labelOverride?: string; supports1m?: boolean }> = {};
+    const derived: Record<string, { model: string; labelOverride?: string; supports1m?: boolean; tierAlias?: string }> = {};
     (Object.keys(CLAUDE_DESKTOP_ROLE_ROUTE_IDS) as Array<keyof typeof CLAUDE_DESKTOP_ROLE_ROUTE_IDS>).forEach(
       (role) => {
         const routeId = CLAUDE_DESKTOP_ROLE_ROUTE_IDS[role];
@@ -191,12 +189,6 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
     !isOfficialProvider &&
     (providerNeedsGatewayProxy(providerApiFormat, 'anthropic') ||
       hasNonClaudeModelIds(configuredModelIds));
-  const restoreDirectUnavailableTitle = t(
-    restoreDirectUnavailableHintKey(
-      gatewayProxyReason(providerApiFormat, 'anthropic', configuredModelIds),
-    ),
-    { cli: t('settings.gateway.cli.claude_desktop') },
-  );
   const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
@@ -211,9 +203,11 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
     Boolean(gatewayStatus?.can_takeover) &&
     !provider.isDisabled &&
     !isOfficialProvider;
+  // Claude Desktop 的「恢复直连」= restore_official（脱离网关回到官方 1P），不依赖当前
+  // provider 能否直连，因此只看后端 can_restore_direct，不叠加 needsGatewayProxy gate。
+  // 其他 CLI 的恢复直连会重新直连当前 provider，那里继续保留 gate（见各自 ProviderCard）。
   const canRestoreDirect = showRuntimeApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
-  const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
-  const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
+  const canShowRestoreDirectButton = canRestoreDirect;
   const canSwitchGatewayProvider =
     gatewayProxyActive &&
     !isApplied &&
@@ -287,7 +281,7 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
   const actionAreaWidth =
     showApplyWithProxyAction
       ? 160
-      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
+      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
         ? 140
         : 40;
   const cardBorderColor = isGatewayPrimary
@@ -512,6 +506,11 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
                         <Text code style={{ fontSize: 12 }}>
                           {route.labelOverride || route.model}
                         </Text>
+                        {route.tierAlias && (
+                          <Tag style={{ fontSize: 10, marginInlineStart: 4 }}>
+                            {t('claudecode.model.tierAliasLabel')}: {route.tierAlias}
+                          </Tag>
+                        )}
                       </div>
                     );
                   })}
@@ -574,17 +573,6 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
                   size="small"
                   onClick={handleRestoreDirect}
                   loading={restoringDirect}
-                >
-                  {t('gateway.proxy.restoreDirectButton')}
-                </Button>
-              </Tooltip>
-            )}
-            {canShowRestoreDirectUnavailable && (
-              <Tooltip title={restoreDirectUnavailableTitle}>
-                <Button
-                  type="link"
-                  size="small"
-                  disabled
                 >
                   {t('gateway.proxy.restoreDirectButton')}
                 </Button>

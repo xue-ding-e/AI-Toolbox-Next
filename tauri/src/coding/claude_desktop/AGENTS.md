@@ -46,7 +46,8 @@
 - 直连模式 `inferenceModels` 由 `direct_inference_model_specs`(读 effective routes,要求上游==route_id);**网关接管**(engage)也把 model routes 经 `desktop_proxy_model_specs` 写进 profile 的 `inferenceModels`(cli_proxy 从 DB 读主 provider meta + settings,`apply_desktop_gateway_config` 传 `apply_gateway_proxy_profile`),保证走网关时 Claude Desktop 菜单仍显示映射模型。
 - **网关上游模型映射**:Claude Desktop 应用永远只发 profile 的 claude-safe route_id(`claude-opus-5` 等),不像 Claude Code 的单模式由 CLI 改写真实模型,因此运行时 `resolve_upstream_model_id` 对 `ClaudeDesktop` 在**所有模式**(单/故障转移,仅 provider_override 透传)下都按家族从 `provider.model_mapping` 改写上游模型;该 mapping 由 `providers.rs::claude_desktop_model_mapping` 从 meta routes 构建(env 回退)。
 - common config 没有独立表(`claude_desktop_common_config` 不存在),复用 `claude_desktop_provider` 表,以保留 id `__common__` 存储 base 配置 JSON;列表命令会过滤掉该记录。
-- 官方 seed 的 provider id 是 `claude-desktop-official`,`settings_config={"env":{}}`,apply 时按 id 判定走 `restore_official`。
+- 官方 seed 的 provider id 是 `claude-desktop-official`,`settings_config={"env":{}}`。apply 的 official 判定(`apply_provider_to_sqlite_provider` 的 `official_restore_settings`)同时接受「id==seed」或「`category=="official"` 且 env 无 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`」:前者覆盖 seed,后者覆盖用户新建 official 渠道供应商(表单 official 模式写 `{"env":{}}`)。带凭据的 imported 行即使 category 碰巧是 `official` 也不会被误判为 restore,继续走 direct/proxy。
+- `inferenceModels` 项支持三个可选字段:`labelOverride`(菜单显示名)、`supports1m`(声明 1M 变体)、`anthropicFamilyTier`(声明该模型代替哪个 Claude tier,合法值 `haiku`/`sonnet`/`opus`/`fable`/`mythos`)。它们来自 `meta.claudeDesktopModelRoutes` 的 `labelOverride`/`supports1m`/`tierAlias`;`config_writer::inference_model_json` 把 `tierAlias` 写成 wire 键 `anthropicFamilyTier`。表单 1M 复选框通过 `[1m]` marker 表达意图,`ClaudeDesktopPage.buildClaudeDesktopModelRoutes` 剥离 marker 存 `supports1m`(避免 marker 进 model 导致 direct 模式误判为 mapping、或被 `is_claude_safe_model_id` 拒收)。
 - 文件写入统一原子写(临时文件 + rename)+ JSON 键排序(确定性输出),回滚前先对 4 个受管文件做快照,失败时原字节写回(存在→原子写回,不存在→删除)。
 
 ## 关键流程
