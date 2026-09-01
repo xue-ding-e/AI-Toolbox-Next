@@ -7,6 +7,15 @@ import type {
 
 export const CUSTOM_KIMI_PROVIDER_KEY = 'custom';
 
+/**
+ * Official channel default model, matching what the real Kimi CLI projects:
+ * catalog key `kimi-code/kimi-for-coding` -> model id `kimi-for-coding`.
+ */
+export const KIMI_OFFICIAL_DEFAULT_MODEL_KEY = 'kimi-code/kimi-for-coding';
+export const KIMI_OFFICIAL_DEFAULT_MODEL_ID = 'kimi-for-coding';
+export const KIMI_OFFICIAL_DEFAULT_MODEL_DISPLAY_NAME = 'K2.7 Coding';
+export const KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE = 262144;
+
 export interface ParsedKimiSettings {
   apiKey: string;
   baseUrl: string;

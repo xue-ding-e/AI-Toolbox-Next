@@ -11,8 +11,9 @@ use toml_edit::{value, DocumentMut, Item, Table};
 
 use super::adapter;
 use super::constants::{
-    KIMI_CREDENTIALS_DIR, KIMI_HOME_ENV_KEY, KIMI_LOCAL_PROVIDER_ID, KIMI_OFFICIAL_API_BASE_URL,
-    KIMI_PLUGINS_DIR,
+    KIMI_CREDENTIALS_DIR, KIMI_DEFAULT_MODEL_MAX_CONTEXT_SIZE, KIMI_HOME_ENV_KEY,
+    KIMI_LOCAL_PROVIDER_ID, KIMI_OFFICIAL_API_BASE_URL, KIMI_OFFICIAL_DEFAULT_MODEL_DISPLAY_NAME,
+    KIMI_OFFICIAL_DEFAULT_MODEL_KEY, KIMI_PLUGINS_DIR,
 };
 use super::types::*;
 use crate::coding::db_id::db_new_id;
@@ -21,7 +22,8 @@ use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::G
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::helpers::{
-    db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_put, db_update_applied_status,
+    db_count, db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_put,
+    db_update_applied_status,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -174,12 +176,22 @@ pub async fn read_kimi_settings(
 pub async fn list_kimi_providers(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<KimiProvider>, String> {
-    let providers = list_kimi_providers_for_db(state.db())?;
+    // Lazy-adopt the on-disk setup as a real row on the first listing so it
+    // survives once the user adds their own providers. This stays in the
+    // command body: `list_kimi_providers_for_db` also runs inside the
+    // CONFIG_WRITE_LOCK window (`get_applied_provider`) and the import must
+    // never run there (the lock is not reentrant).
+    let db = state.db();
+    let mut providers = list_kimi_providers_for_db(db)?;
+    if providers.is_empty() {
+        import_kimi_local_provider_from_files(db).await?;
+        providers = list_kimi_providers_for_db(db)?;
+    }
     if !providers.is_empty() {
         return Ok(providers);
     }
 
-    match load_temp_kimi_provider_from_file(state.db()).await {
+    match load_temp_kimi_provider_from_file(db).await {
         Ok(Some(provider)) => Ok(vec![provider]),
         Ok(None) => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -1139,12 +1151,14 @@ fn determine_local_kimi_provider_category(
     }
 }
 
+const KIMI_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No local Kimi provider config found";
+
 fn parse_local_kimi_provider_snapshot(
     config_text: &str,
     has_credentials: bool,
 ) -> Result<LocalKimiProviderSnapshot, String> {
     if config_text.trim().is_empty() {
-        return Err("No local Kimi provider config found".to_string());
+        return Err(KIMI_NO_LOCAL_PROVIDER_CONFIG_ERROR.to_string());
     }
 
     let document = config_text
@@ -1300,6 +1314,67 @@ async fn load_temp_kimi_provider_from_file(
         created_at: now.clone(),
         updated_at: now,
     }))
+}
+
+/// Persist the on-disk Kimi setup as a real provider row when the DB has none,
+/// mirroring `import_codex_default_provider_from_local_files`
+/// (codex/commands.rs). Returns the new provider id when a row was inserted.
+/// DB-only: the live config.toml already IS this provider, so no re-projection,
+/// gateway gate, or event emission happens here.
+async fn import_kimi_local_provider_from_files(
+    db: &SqliteDbState,
+) -> Result<Option<String>, String> {
+    if db.with_conn(|conn| db_count(conn, DbTable::KimiProvider))? > 0 {
+        return Ok(None);
+    }
+
+    let snapshot = match load_local_kimi_provider_snapshot(db).await {
+        Ok(snapshot) => snapshot,
+        Err(error) if error == KIMI_NO_LOCAL_PROVIDER_CONFIG_ERROR => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let now = Local::now().to_rfc3339();
+    let content = KimiProviderContent {
+        name: snapshot.name,
+        category: snapshot.category,
+        settings_config: snapshot.settings_config,
+        source_provider_id: None,
+        website_url: None,
+        notes: Some("从配置文件自动导入".to_string()),
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        meta: snapshot.meta,
+        is_applied: true,
+        is_disabled: false,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let provider_id = db_new_id();
+    let inserted = db.with_conn(|conn| {
+        if db_count(conn, DbTable::KimiProvider)? > 0 {
+            return Ok(false);
+        }
+        db_put(
+            conn,
+            DbTable::KimiProvider,
+            &provider_id,
+            &adapter::provider_to_db_value(&content),
+        )?;
+        Ok(true)
+    })?;
+    if !inserted {
+        return Ok(None);
+    }
+
+    // Adopt the common config too so later applies take over the whole file
+    // state; an existing row (root_dir semantics) is never overwritten.
+    if get_common_config(db)?.is_none() {
+        let common = adapter::common_to_db_value(&snapshot.common_config, None);
+        db.with_conn(|conn| db_put(conn, DbTable::KimiCommonConfig, "common", &common))?;
+    }
+    Ok(Some(provider_id))
 }
 
 fn toml_item_to_json(item: &Item) -> Result<Value, String> {
@@ -1599,7 +1674,7 @@ fn project_provider_models(
     settings: &Value,
     category: &str,
 ) -> Result<(), String> {
-    let models = settings
+    let mut models = settings
         .pointer("/modelCatalog/models")
         .and_then(Value::as_array)
         .cloned()
@@ -1624,7 +1699,28 @@ fn project_provider_models(
     });
     let default_model_key = explicit_default_model_key
         .or(first_model_key)
-        .or_else(|| (category == "official").then(|| "kimi-code/k3".to_string()));
+        .or_else(|| (category == "official").then(|| KIMI_OFFICIAL_DEFAULT_MODEL_KEY.to_string()));
+    // Official channels keep no client-side catalog (credentials carry the
+    // channel), but a projected `default_model` without a matching [models]
+    // table is a dangling reference the CLI refuses to resolve — synthesize
+    // the missing entry so the key always resolves.
+    if category == "official" {
+        if let Some(key) = default_model_key.as_deref() {
+            let has_entry = models.iter().any(|model| {
+                ["key", "model"]
+                    .iter()
+                    .any(|field| model.get(field).and_then(Value::as_str).map(str::trim) == Some(key))
+            });
+            if !has_entry {
+                models.push(json!({
+                    "key": key,
+                    "model": key.rsplit('/').next().unwrap_or(key),
+                    "displayName": (key == KIMI_OFFICIAL_DEFAULT_MODEL_KEY)
+                        .then_some(KIMI_OFFICIAL_DEFAULT_MODEL_DISPLAY_NAME),
+                }));
+            }
+        }
+    }
     match default_model_key {
         Some(key) => document["default_model"] = value(key),
         None => {
@@ -1731,7 +1827,7 @@ fn insert_known_model_fields(
     model: &Value,
     category: &str,
 ) -> Result<(), String> {
-    const DEFAULT_MODEL_MAX_CONTEXT_SIZE: i64 = 262_144;
+    const DEFAULT_MODEL_MAX_CONTEXT_SIZE: i64 = KIMI_DEFAULT_MODEL_MAX_CONTEXT_SIZE;
     let model_id = model
         .get("model")
         .and_then(Value::as_str)
@@ -2359,11 +2455,41 @@ model = "old"
     }
 
     #[test]
-    fn project_keeps_official_fallback_default_model() {
+    fn project_synthesizes_official_default_model_entry() {
+        // Official channels keep no client-side catalog; the fallback default
+        // must still get a [models] table or the CLI refuses to resolve it.
         let settings = parse("{}");
         let mut document = DocumentMut::new();
         project_provider_models(&mut document, &settings, "official").expect("project ok");
-        assert!(render(&document).contains("default_model = \"kimi-code/k3\""));
+        let text = render(&document);
+        assert!(
+            text.contains("default_model = \"kimi-code/kimi-for-coding\""),
+            "text: {text}"
+        );
+        assert!(text.contains("[models.\"kimi-code/kimi-for-coding\"]"), "text: {text}");
+        assert!(text.contains("model = \"kimi-for-coding\""));
+        assert!(text.contains("provider = \"managed:kimi-code\""));
+        assert!(text.contains("display_name = \"K2.7 Coding\""));
+        assert!(text.contains("max_context_size = 262144"));
+    }
+
+    #[test]
+    fn project_synthesizes_missing_official_catalog_entry() {
+        // An explicit official defaultModelKey absent from the catalog must be
+        // synthesized too (covers legacy rows with dangling keys).
+        let settings = parse(r#"{ "defaultModelKey": "kimi-code/kimi-for-coding-highspeed" }"#);
+        let mut document = DocumentMut::new();
+        project_provider_models(&mut document, &settings, "official").expect("project ok");
+        let text = render(&document);
+        assert!(
+            text.contains("default_model = \"kimi-code/kimi-for-coding-highspeed\""),
+            "text: {text}"
+        );
+        assert!(
+            text.contains("[models.\"kimi-code/kimi-for-coding-highspeed\"]"),
+            "text: {text}"
+        );
+        assert!(text.contains("model = \"kimi-for-coding-highspeed\""));
     }
 
     #[test]

@@ -13,8 +13,8 @@ use tempfile::NamedTempFile;
 use tokio::sync::{watch, Mutex as AsyncMutex};
 
 use super::adapter;
-use super::commands::{emit_kimi_sync, get_kimi_root_dir_from_db_async};
-use super::constants::KIMI_CREDENTIALS_DIR;
+use super::commands::{emit_kimi_sync, get_kimi_root_dir_from_db_async, list_kimi_providers_for_db};
+use super::constants::{KIMI_CREDENTIALS_DIR, KIMI_LOCAL_PROVIDER_ID};
 use super::types::{KimiOfficialAccount, KimiProvider};
 use crate::coding::db_id::{db_extract_id, db_new_id};
 use crate::db::helpers::{
@@ -33,12 +33,19 @@ pub fn kimi_oauth_host() -> String {
         .unwrap_or_else(|| "https://auth.kimi.com".to_string())
 }
 
-const KIMI_OAUTH_CLIENT_ID: &str = "kimi-code-cli";
-const KIMI_OAUTH_SCOPE: &str = "openid profile email offline_access";
+/// Client id registered for the official Kimi CLI (matches kimi_cli oauth.py).
+const KIMI_OAUTH_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
+const KIMI_OAUTH_SCOPE: &str = "kimi-code";
+/// auth.kimi.com exposes no OIDC discovery document (`.well-known` returns
+/// 404); the real Kimi CLI hardcodes these paths on the OAuth host.
+const KIMI_OAUTH_DEVICE_AUTH_PATH: &str = "/api/oauth/device_authorization";
+const KIMI_OAUTH_TOKEN_PATH: &str = "/api/oauth/token";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_GRANT_TYPE: &str = "refresh_token";
-/// Access tokens last a few hours; refresh when remaining lifetime is within this lead.
-const KIMI_AUTH_REFRESH_LEAD_SECONDS: i64 = 30 * 60;
+/// Access tokens last ~15 minutes; refresh when remaining lifetime is within
+/// this lead. Must stay well below the token lifetime or every refresh pass
+/// would fire unconditionally.
+const KIMI_AUTH_REFRESH_LEAD_SECONDS: i64 = 5 * 60;
 
 static AUTH_SESSIONS: LazyLock<Mutex<HashMap<String, watch::Sender<bool>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -64,14 +71,6 @@ struct KimiAuthStatusEvent {
     status: String,
     message: Option<String>,
     account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DiscoveryResponse {
-    #[allow(dead_code)]
-    issuer: String,
-    device_authorization_endpoint: String,
-    token_endpoint: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +125,17 @@ pub async fn start_kimi_official_account_device_auth(
     app: tauri::AppHandle,
     provider_id: String,
 ) -> Result<KimiDeviceAuthStartResult, String> {
+    // The `__local__` projection is never a DB row; resolve it to the real
+    // official provider before the id-based lookup below.
+    let provider_id = if provider_id == KIMI_LOCAL_PROVIDER_ID {
+        list_kimi_providers_for_db(state.db())?
+            .into_iter()
+            .find(|provider| provider.category == "official")
+            .map(|provider| provider.id)
+            .ok_or_else(|| "No official Kimi provider found".to_string())?
+    } else {
+        provider_id
+    };
     load_official_provider(state.db(), &provider_id)?;
     {
         let mut sessions = AUTH_SESSIONS
@@ -143,23 +153,14 @@ pub async fn start_kimi_official_account_device_auth(
     }
     let host = kimi_oauth_host();
     let client = http_client::client_with_timeout(state.db(), 30).await?;
-    let discovery_url = format!("{host}/.well-known/openid-configuration");
-    let discovery: DiscoveryResponse = client
-        .get(&discovery_url)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|error| format!("Kimi discovery request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Kimi discovery failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("Failed to parse Kimi discovery: {error}"))?;
+    // The OAuth host publishes no discovery document; endpoints are constants
+    // (same as the official CLI). Validation still guards env-overridden hosts.
     let device_endpoint = validate_kimi_oauth_endpoint(
-        &discovery.device_authorization_endpoint,
+        &format!("{host}{KIMI_OAUTH_DEVICE_AUTH_PATH}"),
         "device_authorization_endpoint",
     )?;
-    let token_endpoint = validate_kimi_oauth_endpoint(&discovery.token_endpoint, "token_endpoint")?;
+    let token_endpoint =
+        validate_kimi_oauth_endpoint(&format!("{host}{KIMI_OAUTH_TOKEN_PATH}"), "token_endpoint")?;
     let device: DeviceCodeResponse = client
         .post(&device_endpoint)
         .form(&[
@@ -403,7 +404,10 @@ async fn store_official_account(
             .unwrap_or(0)
     });
     let now = Local::now().to_rfc3339();
-    let account_name = format!("kimi-{}", &provider_id.replace(':', "-"));
+    // The real Kimi CLI locates its credential file via the fixed storage key
+    // `oauth/kimi-code` -> `credentials/kimi-code.json`; any other file name
+    // would leave the CLI unable to see the login.
+    let account_name = "kimi-code".to_string();
     // Re-login on the same provider refreshes the existing account row instead
     // of appending a duplicate — duplicates share one credential file name and
     // would overwrite each other.
@@ -440,6 +444,10 @@ async fn store_official_account(
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_endpoint": token_endpoint,
+            "expires_at": expires_at,
+            "expires_in": expires_in,
+            "scope": KIMI_OAUTH_SCOPE,
+            "token_type": "Bearer",
         }))
         .unwrap_or_default(),
         "expires_at": expires_at,
@@ -735,7 +743,7 @@ pub async fn refresh_applied_kimi_accounts_if_needed<R: tauri::Runtime>(
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .or_else(|| account.token_endpoint.clone())
-            .unwrap_or_else(|| format!("{}/oauth/token", kimi_oauth_host()));
+            .unwrap_or_else(|| format!("{}{KIMI_OAUTH_TOKEN_PATH}", kimi_oauth_host()));
         let token_endpoint = match validate_kimi_oauth_endpoint(&token_endpoint, "token_endpoint")
         {
             Ok(endpoint) => endpoint,
@@ -815,6 +823,10 @@ pub async fn refresh_applied_kimi_accounts_if_needed<R: tauri::Runtime>(
             "access_token": access_token,
             "refresh_token": response.refresh_token.as_deref().unwrap_or(refresh_token),
             "token_endpoint": token_endpoint,
+            "expires_at": expires_at_new,
+            "expires_in": response.expires_in,
+            "scope": KIMI_OAUTH_SCOPE,
+            "token_type": "Bearer",
         });
         let now = Local::now().to_rfc3339();
         state.db().with_conn(|conn| {

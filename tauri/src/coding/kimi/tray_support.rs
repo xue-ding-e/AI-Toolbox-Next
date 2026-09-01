@@ -116,6 +116,20 @@ fn model_items_from_provider(settings_config: &str) -> Result<TrayModelData, Str
             })
         })
         .collect::<Vec<_>>();
+    // Official template rows keep no client-side catalog; still offer the
+    // resolved default so the tray model menu is not empty.
+    if items.is_empty() && !default_model_key.is_empty() {
+        items.push(TrayModelItem {
+            display_name: default_model_key
+                .rsplit('/')
+                .next()
+                .unwrap_or(default_model_key)
+                .to_string(),
+            id: default_model_key.to_string(),
+            is_selected: true,
+            is_disabled: false,
+        });
+    }
     items.sort_by(|left, right| left.display_name.cmp(&right.display_name));
     let current_display = items
         .iter()

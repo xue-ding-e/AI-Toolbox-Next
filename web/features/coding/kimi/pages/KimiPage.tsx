@@ -103,7 +103,7 @@ import KimiDeviceAuthModal from '../components/KimiDeviceAuthModal';
 import KimiPluginsPanel from '../components/KimiPluginsPanel';
 import KimiProviderCard from '../components/KimiProviderCard';
 import KimiProviderFormModal from '../components/KimiProviderFormModal';
-import { extractKimiBaseUrl } from '../utils/settingsConfig';
+import { extractKimiBaseUrl, KIMI_OFFICIAL_DEFAULT_MODEL_KEY } from '../utils/settingsConfig';
 import {
   buildKimiProviderSavePlan,
   shouldReengageKimiGatewayOnSave,
@@ -118,7 +118,7 @@ const { Link, Text, Title } = Typography;
 const KIMI_OFFICIAL_PROVIDER_TEMPLATE: KimiProviderInput = {
   name: 'Kimi Official',
   category: 'official',
-  settingsConfig: '{\n  "auth": { "API_KEY": "" },\n  "defaultModelKey": "kimi-code/k3",\n  "providerConfigs": {}\n}',
+  settingsConfig: `{\n  "auth": { "API_KEY": "" },\n  "defaultModelKey": "${KIMI_OFFICIAL_DEFAULT_MODEL_KEY}",\n  "providerConfigs": {}\n}`,
   sortIndex: 0,
 };
 
@@ -407,7 +407,11 @@ const KimiPage: React.FC = () => {
   };
 
   const handleStartOfficialAccountAuth = async () => {
-    let officialProvider = providers.find((p) => p.category === 'official');
+    // The `__local__` projection is not a real DB row — the backend cannot
+    // resolve it as an official provider, so only look at persisted rows.
+    let officialProvider = providers.find(
+      (p) => p.category === 'official' && p.id !== KIMI_LOCAL_PROVIDER_ID,
+    );
     if (!officialProvider) {
       try {
         const newProvider = await createKimiProvider({ ...KIMI_OFFICIAL_PROVIDER_TEMPLATE });
