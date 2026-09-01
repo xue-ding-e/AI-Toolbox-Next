@@ -5293,6 +5293,8 @@
       "deviceAuthOpenBrowser": "打开授权页面",
       "deviceAuthStatus": "状态：{{status}}，剩余 {{seconds}} 秒",
       "modeOfficial": "官方订阅",
+      "officialConnectivityHint": "官方订阅使用 Kimi 当前登录态，AI Toolbox 目前不支持直接做模型测试。",
+      "officialBatchSkipped": "已跳过 {{count}} 个官方订阅配置，AI Toolbox 目前不支持直接测试其登录态。",
       "apply": "应用",
       "deviceAuthStatusValue": {
         "waiting": "等待授权",

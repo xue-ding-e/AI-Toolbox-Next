@@ -2,6 +2,7 @@ import React from 'react';
 import type { ClaudeCodeProvider, ClaudeSettingsConfig } from '@/types/claudecode';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import type { GrokProvider, GrokSettingsConfig } from '@/types/grok';
+import type { KimiProvider } from '@/types/kimi';
 import type { OpenCodeProvider } from '@/types/opencode';
 import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
@@ -10,6 +11,7 @@ import {
   extractGrokSettingsModel,
 } from '@/utils/grokConfigUtils';
 import { getClaudeConfiguredModelIds } from '@/features/coding/claudecode/utils/claudeModelConfig';
+import { parseKimiSettingsConfig } from '@/features/coding/kimi/utils/settingsConfig';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 import type { GatewayCliKey } from '@/services/proxyGatewayApi';
 
@@ -145,6 +147,50 @@ export function buildGrokProviderConnectivityInfo(provider: GrokProvider): Provi
     providerName: provider.name,
     providerConfig: {
       npm: '@ai-sdk/openai',
+      name: provider.name,
+      options: {
+        baseURL: baseUrl,
+        ...(apiKey ? { apiKey } : {}),
+      },
+      models: buildProviderModels(modelIds),
+    },
+    modelIds,
+  };
+}
+
+const DEFAULT_KIMI_BASE_URL = 'https://api.kimi.com/coding/v1';
+
+// Kimi catalog keys are provider-aliased (e.g. "kimi-code/kimi-for-coding");
+// the upstream model id is the alias tail.
+function stripKimiModelAlias(key: string): string {
+  return key.includes('/') ? key.slice(key.lastIndexOf('/') + 1) : key;
+}
+
+export function buildKimiProviderConnectivityInfo(provider: KimiProvider): ProviderConnectivityInfo {
+  const settingsConfig = parseKimiSettingsConfig(provider.settingsConfig);
+  const defaultModelKey = settingsConfig.defaultModelKey.trim();
+  const catalogModels = settingsConfig.catalogModels;
+  const selectedCatalogModel = catalogModels.find(
+    (model) => model.key?.trim() === defaultModelKey || model.model?.trim() === defaultModelKey,
+  ) || catalogModels[0];
+  const selectedUpstreamModelId = selectedCatalogModel?.model?.trim()
+    || (selectedCatalogModel ? undefined : (defaultModelKey ? stripKimiModelAlias(defaultModelKey) : ''));
+  const catalogUpstreamModelIds = catalogModels
+    .map((model) => model.model?.trim())
+    .filter((modelId): modelId is string => Boolean(modelId));
+  const modelIds = [...new Set([
+    ...(selectedUpstreamModelId ? [selectedUpstreamModelId] : []),
+    ...catalogUpstreamModelIds,
+  ])];
+  const apiKey = settingsConfig.apiKey.trim();
+  const baseUrl = settingsConfig.baseUrl.trim() || DEFAULT_KIMI_BASE_URL;
+
+  return {
+    providerId: provider.id,
+    providerName: provider.name,
+    providerConfig: {
+      // Kimi relays are OpenAI-compatible endpoints.
+      npm: '@ai-sdk/openai-compatible',
       name: provider.name,
       options: {
         baseURL: baseUrl,

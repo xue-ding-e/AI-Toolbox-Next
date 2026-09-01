@@ -29,6 +29,7 @@ import {
   MessageOutlined,
   PlusOutlined,
   SyncOutlined,
+  ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { invoke } from '@tauri-apps/api/core';
@@ -62,6 +63,16 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import ProviderConnectivityTestModal, {
+  buildKimiProviderConnectivityInfo,
+  type ProviderConnectivityInfo,
+} from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import {
+  buildProviderConnectivityBatchTarget,
+  runProviderConnectivityBatch,
+} from '@/features/coding/shared/providerConnectivity/batchTest';
+import { getEnabledCustomProviderBatchCandidates } from '@/features/coding/shared/providerConnectivity/batchTestFilters';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import { useSettingsStore } from '@/stores';
 import {
   applyKimiOfficialAccount,
@@ -141,6 +152,10 @@ const KimiPage: React.FC = () => {
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<KimiProvider | null>(null);
+  const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
+  const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
+  const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [deviceAuthSession, setDeviceAuthSession] = React.useState<KimiDeviceAuthStartResult | null>(null);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
@@ -367,6 +382,82 @@ const KimiPage: React.FC = () => {
     });
   };
 
+  const handleTestProvider = (provider: KimiProvider) => {
+    if (provider.category === 'official') {
+      message.info(t('kimi.provider.officialConnectivityHint'));
+      return;
+    }
+    setConnectivityInfo(buildKimiProviderConnectivityInfo(provider));
+    setConnectivityModalOpen(true);
+  };
+
+  const handleBatchTestProviders = React.useCallback(async () => {
+    if (providers.length === 0) {
+      return;
+    }
+
+    const officialProviders = providers.filter((provider) => provider.category === 'official');
+    const testableProviders = getEnabledCustomProviderBatchCandidates(providers);
+
+    if (officialProviders.length > 0) {
+      message.info(t('kimi.provider.officialBatchSkipped', { count: officialProviders.length }));
+    }
+
+    if (testableProviders.length === 0) {
+      setConnectivityStatuses({});
+      return;
+    }
+
+    const targets = testableProviders.map((provider) => (
+      buildProviderConnectivityBatchTarget(buildKimiProviderConnectivityInfo(provider), {
+        requireBaseUrl: false,
+        requireApiKey: true,
+        errorMessages: {
+          missingBaseUrl: t('common.baseUrlMissing'),
+          missingApiKey: t('common.apiKeyMissing'),
+          missingModel: t('common.modelMissing'),
+        },
+      })
+    ));
+
+    setConnectivityStatuses(
+      Object.fromEntries(
+        testableProviders.map((provider) => [
+          provider.id,
+          { status: 'running' as const },
+        ]),
+      ),
+    );
+    setBatchTestingProviders(true);
+
+    try {
+      await runProviderConnectivityBatch(targets, (providerId, status) => {
+        const nextStatus = status.status === 'success'
+          ? {
+              ...status,
+              tooltipMessage: status.totalMs !== undefined
+                ? t('common.connectivityBatchSuccessWithTiming', {
+                    model: status.modelId || t('common.notSet'),
+                    totalMs: status.totalMs,
+                  })
+                : t('common.connectivityBatchSuccess', {
+                    model: status.modelId || t('common.notSet'),
+                  }),
+            }
+          : status;
+        setConnectivityStatuses((previousStatuses) => ({
+          ...previousStatuses,
+          [providerId]: nextStatus,
+        }));
+      });
+    } catch (error) {
+      console.error('Failed to batch test Kimi providers:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchTestingProviders(false);
+    }
+  }, [providers, t]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -592,6 +683,19 @@ const KimiPage: React.FC = () => {
                     type="link"
                     size="small"
                     style={{ fontSize: 12 }}
+                    icon={<ThunderboltOutlined />}
+                    loading={batchTestingProviders}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleBatchTestProviders();
+                    }}
+                  >
+                    {t('common.batchTest')}
+                  </Button>
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ fontSize: 12 }}
                     icon={<AppstoreOutlined />}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -666,6 +770,8 @@ const KimiPage: React.FC = () => {
                               onDelete={(value) => void handleDeleteProvider(value)}
                               onApply={(value) => void handleApplyProvider(value)}
                               onToggleDisabled={handleToggleDisabled}
+                              onTest={handleTestProvider}
+                              connectivityStatus={connectivityStatuses[provider.id]}
                             />
                           ))}
                         </div>
@@ -810,6 +916,13 @@ const KimiPage: React.FC = () => {
           setEditingProvider(null);
         }}
         onSubmit={handleSaveProvider}
+      />
+
+      <ProviderConnectivityTestModal
+        open={connectivityModalOpen}
+        connectivityInfo={connectivityInfo}
+        gatewayCliKey="kimi"
+        onCancel={() => setConnectivityModalOpen(false)}
       />
 
       <KimiCommonConfigModal

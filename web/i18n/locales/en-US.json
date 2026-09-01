@@ -5296,6 +5296,8 @@
       "deviceAuthOpenBrowser": "Open Authorization Page",
       "deviceAuthStatus": "Status: {{status}}, remaining {{seconds}}s",
       "modeOfficial": "Official Subscription",
+      "officialConnectivityHint": "The official subscription uses the Kimi login state; AI Toolbox cannot test it directly.",
+      "officialBatchSkipped": "Skipped {{count}} official subscription(s); AI Toolbox cannot test their login state directly.",
       "apply": "Apply",
       "deviceAuthStatusValue": {
         "waiting": "Waiting for authorization",

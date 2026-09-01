@@ -30,6 +30,8 @@ import {
 import AppliedTag from '@/components/common/AppliedTag';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
+import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import {
   canApplyProviderWithGatewayProxy,
   firstGatewayApiFormat,
@@ -53,6 +55,8 @@ interface KimiProviderCardProps {
   onDelete: (provider: KimiProvider) => void;
   onApply: (provider: KimiProvider) => void | Promise<void>;
   onToggleDisabled: (provider: KimiProvider, isDisabled: boolean) => void | Promise<void>;
+  onTest?: (provider: KimiProvider) => void;
+  connectivityStatus?: ProviderConnectivityStatusItem;
 }
 
 const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
@@ -65,6 +69,8 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
   onDelete,
   onApply,
   onToggleDisabled,
+  onTest,
+  connectivityStatus,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -282,6 +288,15 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
       icon: <EditOutlined />,
       onClick: () => onEdit(provider),
     },
+    {
+      key: 'test',
+      label: t('opencode.connectivity.button'),
+      icon: <ApiOutlined />,
+      // Official channels authenticate via the OAuth login state; there is no
+      // static API key to probe directly (same rule as grok/claude/codex).
+      disabled: isOfficialProvider || provider.isDisabled,
+      onClick: () => onTest?.(provider),
+    },
     ...(isLocalProvider
       ? []
       : [
@@ -350,6 +365,7 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
           <div style={{ flex: 1, minWidth: 0 }}>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <ProviderConnectivityStatus item={connectivityStatus} />
                 <ProviderNameLink
                   name={provider.name}
                   baseUrl={baseUrl}
