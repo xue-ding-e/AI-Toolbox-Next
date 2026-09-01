@@ -43,9 +43,13 @@ const KIMI_OAUTH_TOKEN_PATH: &str = "/api/oauth/token";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_GRANT_TYPE: &str = "refresh_token";
 /// Access tokens last ~15 minutes; refresh when remaining lifetime is within
-/// this lead. Must stay well below the token lifetime or every refresh pass
-/// would fire unconditionally.
+/// this lead. Paired with the 10-minute Kimi patrol interval (auth_refresh),
+/// interval passes fire ~5 minutes before expiry instead of after it.
 const KIMI_AUTH_REFRESH_LEAD_SECONDS: i64 = 5 * 60;
+/// The real Kimi CLI locates its credential file via the fixed storage key
+/// `oauth/kimi-code` -> `credentials/kimi-code.json`; any other file name
+/// would leave the CLI unable to see the login.
+const KIMI_OFFICIAL_CREDENTIAL_NAME: &str = "kimi-code";
 
 static AUTH_SESSIONS: LazyLock<Mutex<HashMap<String, watch::Sender<bool>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -404,10 +408,7 @@ async fn store_official_account(
             .unwrap_or(0)
     });
     let now = Local::now().to_rfc3339();
-    // The real Kimi CLI locates its credential file via the fixed storage key
-    // `oauth/kimi-code` -> `credentials/kimi-code.json`; any other file name
-    // would leave the CLI unable to see the login.
-    let account_name = "kimi-code".to_string();
+    let account_name = KIMI_OFFICIAL_CREDENTIAL_NAME.to_string();
     // Re-login on the same provider refreshes the existing account row instead
     // of appending a duplicate — duplicates share one credential file name and
     // would overwrite each other.
@@ -707,6 +708,53 @@ pub async fn delete_kimi_official_account(
     Ok(())
 }
 
+/// One-time adoption of legacy account rows created before the credential
+/// name was fixed to `kimi-code`: rename the row (and the credential file
+/// when possible) so the real Kimi CLI can see the login. No-op once every
+/// row uses the fixed name.
+pub async fn migrate_legacy_credential_names(db: &SqliteDbState) -> Result<(), String> {
+    let legacy_accounts = list_kimi_official_accounts_with_state(db)?
+        .into_iter()
+        .filter(|account| account.name != KIMI_OFFICIAL_CREDENTIAL_NAME)
+        .collect::<Vec<_>>();
+    if legacy_accounts.is_empty() {
+        return Ok(());
+    }
+    let credentials_dir = get_kimi_root_dir_from_db_async(db)
+        .await?
+        .join(KIMI_CREDENTIALS_DIR);
+    for account in legacy_accounts {
+        let legacy_path = credentials_dir.join(format!("{}.json", account.name));
+        let target_path = credentials_dir.join(format!("{KIMI_OFFICIAL_CREDENTIAL_NAME}.json"));
+        if legacy_path.exists() && !target_path.exists() {
+            if let Err(error) = fs::rename(&legacy_path, &target_path) {
+                // Best-effort: the row rename below already fixes future writes.
+                log::warn!(
+                    "[kimi-oauth] Failed to rename legacy credential file {}: {error}",
+                    legacy_path.display()
+                );
+            }
+        }
+        let now = Local::now().to_rfc3339();
+        db.with_conn(|conn| {
+            db_patch_fields(
+                conn,
+                DbTable::KimiOfficialAccount,
+                &account.id,
+                &[
+                    (
+                        "name",
+                        Value::String(KIMI_OFFICIAL_CREDENTIAL_NAME.to_string()),
+                    ),
+                    ("updated_at", Value::String(now)),
+                ],
+            )
+            .map(|_| ())
+        })?;
+    }
+    Ok(())
+}
+
 /// Background refresh: refresh access tokens that are within the lead window.
 /// Non-applied accounts only update the SQLite record; the applied account also
 /// rewrites the live credential file and emits sync events.
@@ -716,6 +764,7 @@ pub async fn refresh_applied_kimi_accounts_if_needed<R: tauri::Runtime>(
 ) -> Result<(), String> {
     let state = db;
     let _guard = OAUTH_REFRESH_LOCK.lock().await;
+    migrate_legacy_credential_names(state).await?;
     let accounts = list_kimi_official_accounts_with_state(state)?;
     for account in accounts {
         let Some(expires_at) = account.expires_at else {

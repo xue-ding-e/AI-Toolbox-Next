@@ -606,6 +606,56 @@ fn official_account_credentials_file_written_and_read() {
 }
 
 #[test]
+fn legacy_credential_names_are_migrated_to_fixed_file_name() {
+    let _guard = KIMI_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let (temp_dir, state) = setup_test_env();
+
+    // Rows created before the credential name was fixed store
+    // `kimi-<provider_id>`; the real Kimi CLI only reads
+    // credentials/kimi-code.json, so the migration must adopt both the row
+    // and the on-disk file.
+    let snapshot = json!({
+        "access_token": "tok_legacy",
+        "refresh_token": "ref_legacy",
+    });
+    let legacy_row = json!({
+        "provider_id": "kimi_official",
+        "name": "kimi-managed-kimi-code",
+        "kind": "official",
+        "auth_snapshot": snapshot.to_string(),
+        "expires_at": 4102444800i64,
+        "is_applied": true,
+        "sort_index": 0,
+        "created_at": "2026-03-31T00:00:00Z",
+        "updated_at": "2026-03-31T00:00:00Z",
+    });
+    state
+        .with_conn(|conn| db_put(conn, DbTable::KimiOfficialAccount, "account_legacy", &legacy_row))
+        .expect("db_put legacy account");
+    let credentials_dir = temp_dir.path().join("credentials");
+    fs::create_dir_all(&credentials_dir).expect("create credentials dir");
+    let legacy_file = credentials_dir.join("kimi-managed-kimi-code.json");
+    fs::write(&legacy_file, snapshot.to_string()).expect("write legacy credential file");
+
+    block_on(official_accounts::migrate_legacy_credential_names(&state))
+        .expect("migrate legacy credential names");
+
+    let accounts = official_accounts::list_kimi_official_accounts_with_state(&state)
+        .expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "kimi-code", "row must adopt the fixed name");
+    assert!(
+        !legacy_file.exists(),
+        "legacy credential file must be renamed"
+    );
+    let target_file = credentials_dir.join("kimi-code.json");
+    assert!(target_file.exists());
+    let read_back: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&target_file).unwrap()).unwrap();
+    assert_eq!(read_back["refresh_token"], "ref_legacy");
+}
+
+#[test]
 fn common_config_without_provider_merges_into_live_file_without_clobbering() {
     let _guard = KIMI_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let (temp_dir, state) = setup_test_env();

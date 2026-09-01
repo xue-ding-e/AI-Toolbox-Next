@@ -210,6 +210,15 @@ const KimiPage: React.FC = () => {
       setOfficialAccounts(accountList);
       setCommonConfig(nextCommonConfig);
       setAppliedProviderId(providerList.find((provider) => provider.isApplied)?.id ?? '');
+      // Drop statuses of providers that no longer exist so a delete/reload
+      // cannot leave stale badges behind.
+      setConnectivityStatuses((previous) => {
+        const liveIds = new Set(providerList.map((provider) => provider.id));
+        const pruned = Object.fromEntries(
+          Object.entries(previous).filter(([id]) => liveIds.has(id)),
+        );
+        return Object.keys(pruned).length === Object.keys(previous).length ? previous : pruned;
+      });
       // Takeover eligibility depends on the provider rows (proxyable
       // candidates), so re-read it with the list; otherwise a stale error
       // status keeps the gateway proxy button hidden after the underlying

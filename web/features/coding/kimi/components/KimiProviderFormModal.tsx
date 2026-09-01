@@ -47,6 +47,18 @@ import {
 } from '../utils/settingsConfig';
 import styles from './KimiProviderFormModal.module.less';
 
+/**
+ * Default catalog entry for a newly created provider: the current official
+ * model also serves as the default for custom Kimi relays. The CLI
+ * hard-requires a positive max_context_size on every projected model.
+ */
+const DEFAULT_NEW_PROVIDER_CATALOG_MODEL: KimiCatalogModel = {
+  key: KIMI_OFFICIAL_DEFAULT_MODEL_KEY,
+  model: KIMI_OFFICIAL_DEFAULT_MODEL_ID,
+  provider: CUSTOM_KIMI_PROVIDER_KEY,
+  maxContextSize: KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE,
+};
+
 interface KimiProviderFormModalProps {
   open: boolean;
   provider: KimiProvider | null;
@@ -138,16 +150,7 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
       });
     } else {
       setCategory('custom');
-      setCatalogModels([
-        {
-          key: KIMI_OFFICIAL_DEFAULT_MODEL_KEY,
-          model: KIMI_OFFICIAL_DEFAULT_MODEL_ID,
-          provider: CUSTOM_KIMI_PROVIDER_KEY,
-          // Keeps the projected config.toml valid (CLI hard-requires a
-          // positive max_context_size).
-          maxContextSize: KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE,
-        },
-      ]);
+      setCatalogModels([{ ...DEFAULT_NEW_PROVIDER_CATALOG_MODEL }]);
       setRawObject({});
       setRawJson('');
       setProviderKey(CUSTOM_KIMI_PROVIDER_KEY);
@@ -161,7 +164,7 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
         notes: '',
         apiKey: '',
         baseUrl: '',
-        defaultModelKey: KIMI_OFFICIAL_DEFAULT_MODEL_KEY,
+        defaultModelKey: DEFAULT_NEW_PROVIDER_CATALOG_MODEL.key,
       });
     }
     setAdvancedExpanded(false);

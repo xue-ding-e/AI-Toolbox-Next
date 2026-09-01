@@ -15,6 +15,8 @@ export const KIMI_OFFICIAL_DEFAULT_MODEL_KEY = 'kimi-code/kimi-for-coding';
 export const KIMI_OFFICIAL_DEFAULT_MODEL_ID = 'kimi-for-coding';
 export const KIMI_OFFICIAL_DEFAULT_MODEL_DISPLAY_NAME = 'K2.7 Coding';
 export const KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE = 262144;
+/** Official API base URL, mirroring the backend `KIMI_OFFICIAL_API_BASE_URL`. */
+export const KIMI_OFFICIAL_API_BASE_URL = 'https://api.kimi.com/coding/v1';
 
 export interface ParsedKimiSettings {
   apiKey: string;

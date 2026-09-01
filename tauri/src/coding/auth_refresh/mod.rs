@@ -66,11 +66,13 @@ impl OfficialAuthTool {
                 run_on_startup: true,
                 interval: Some(Duration::from_secs(15 * 60)),
             },
-            // Startup scan + periodic refresh for applied Kimi official accounts.
+            // ~15m access tokens with a 5m refresh lead (official_accounts.rs):
+            // a 10m interval lets passes fire before expiry instead of chasing
+            // tokens that just expired.
             OfficialAuthTool::Kimi => AuthRefreshConfig {
                 tool_id: "kimi",
                 run_on_startup: true,
-                interval: Some(Duration::from_secs(15 * 60)),
+                interval: Some(Duration::from_secs(10 * 60)),
             },
         }
     }

@@ -11,7 +11,6 @@ pub const KIMI_OFFICIAL_API_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 /// Official channel default model, matching what the real Kimi CLI projects:
 /// catalog key `kimi-code/kimi-for-coding` -> model id `kimi-for-coding`.
 pub const KIMI_OFFICIAL_DEFAULT_MODEL_KEY: &str = "kimi-code/kimi-for-coding";
-pub const KIMI_OFFICIAL_DEFAULT_MODEL_ID: &str = "kimi-for-coding";
 pub const KIMI_OFFICIAL_DEFAULT_MODEL_DISPLAY_NAME: &str = "K2.7 Coding";
 /// Conservative official per-model context size; the CLI hard-requires a
 /// positive `max_context_size` on every projected model.

@@ -11,7 +11,10 @@ import {
   extractGrokSettingsModel,
 } from '@/utils/grokConfigUtils';
 import { getClaudeConfiguredModelIds } from '@/features/coding/claudecode/utils/claudeModelConfig';
-import { parseKimiSettingsConfig } from '@/features/coding/kimi/utils/settingsConfig';
+import {
+  KIMI_OFFICIAL_API_BASE_URL,
+  parseKimiSettingsConfig,
+} from '@/features/coding/kimi/utils/settingsConfig';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 import type { GatewayCliKey } from '@/services/proxyGatewayApi';
 
@@ -158,8 +161,6 @@ export function buildGrokProviderConnectivityInfo(provider: GrokProvider): Provi
   };
 }
 
-const DEFAULT_KIMI_BASE_URL = 'https://api.kimi.com/coding/v1';
-
 // Kimi catalog keys are provider-aliased (e.g. "kimi-code/kimi-for-coding");
 // the upstream model id is the alias tail.
 function stripKimiModelAlias(key: string): string {
@@ -183,7 +184,7 @@ export function buildKimiProviderConnectivityInfo(provider: KimiProvider): Provi
     ...catalogUpstreamModelIds,
   ])];
   const apiKey = settingsConfig.apiKey.trim();
-  const baseUrl = settingsConfig.baseUrl.trim() || DEFAULT_KIMI_BASE_URL;
+  const baseUrl = settingsConfig.baseUrl.trim() || KIMI_OFFICIAL_API_BASE_URL;
 
   return {
     providerId: provider.id,
