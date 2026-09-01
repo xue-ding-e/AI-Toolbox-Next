@@ -87,10 +87,10 @@ export function getClaudeProviderModelConfig(
       },
       haiku: {
         role: 'haiku',
-        model: stripClaudeOneMMarker(haikuModel),
+        model: haikuModel,
         displayName: readEnvString(settingsConfig, 'ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME') ||
           stripClaudeOneMMarker(haikuModel),
-        supportsOneM: false,
+        supportsOneM: true,
       },
     },
     legacyReasoningModel: readConfigModel(settingsConfig, 'reasoningModel', 'ANTHROPIC_REASONING_MODEL'),

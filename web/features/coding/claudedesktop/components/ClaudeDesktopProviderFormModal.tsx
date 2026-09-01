@@ -222,7 +222,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       displayNameField: 'haikuModelName',
       tierAliasField: 'haikuTierAlias',
       tierAlias: haikuTierAlias,
-      supportsOneM: false,
+      supportsOneM: true,
     },
   ], [fableModel, fableModelName, fableTierAlias, haikuModel, haikuModelName, haikuTierAlias, opusModel, opusModelName, opusTierAlias, sonnetModel, sonnetModelName, sonnetTierAlias, t]);
 

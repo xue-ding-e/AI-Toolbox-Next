@@ -44,8 +44,9 @@ test('getClaudeProviderModelConfig prefers env fields and keeps legacy fallbacks
   assert.equal(config.roles.fable.model, 'env-fable[1M]');
   assert.equal(config.roles.fable.displayName, 'Env Fable');
   assert.equal(config.roles.fable.supportsOneM, true);
-  assert.equal(config.roles.haiku.model, 'env-haiku');
+  assert.equal(config.roles.haiku.model, 'env-haiku[1M]');
   assert.equal(config.roles.haiku.displayName, 'env-haiku');
+  assert.equal(config.roles.haiku.supportsOneM, true);
   assert.equal(config.legacyReasoningModel, 'env-reasoning');
 });
 

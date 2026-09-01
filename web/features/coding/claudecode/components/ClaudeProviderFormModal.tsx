@@ -285,7 +285,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       displayName: haikuModelName,
       modelField: 'haikuModel',
       displayNameField: 'haikuModelName',
-      supportsOneM: false,
+      supportsOneM: true,
     },
   ], [fableModel, fableModelName, haikuModel, haikuModelName, opusModel, opusModelName, sonnetModel, sonnetModelName, t]);
 
