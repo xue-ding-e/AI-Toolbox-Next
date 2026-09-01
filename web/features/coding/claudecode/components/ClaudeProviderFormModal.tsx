@@ -554,15 +554,18 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       return;
     }
 
-    // 构建 customUrl：在 baseUrl 后追加 /v1/models
-    const base = baseUrl.replace(/\/$/, '');
-    const customUrl = `${base}/v1/models`;
+    // Normalize the gateway root before appending the Anthropic API version.
+    // The model endpoint is always <gateway>/v1/models, so accepting a base URL
+    // that already ends in /v1 must not produce /v1/v1/models.
+    const base = String(baseUrl).trim().replace(/\/+$/, '');
+    const normalizedBase = base.replace(/\/v1$/i, '');
+    const customUrl = `${normalizedBase}/v1/models`;
 
     setLoadingModels(true);
     try {
       const response = await invoke<FetchModelsResponse>('fetch_provider_models', {
         request: {
-          baseUrl: `${base}/v1`,
+          baseUrl: `${normalizedBase}/v1`,
           apiKey,
           apiType: fetchApiType,
           sdkType: '@ai-sdk/anthropic',

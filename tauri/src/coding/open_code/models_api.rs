@@ -115,6 +115,45 @@ pub struct FetchModelsResponse {
     pub total: usize,
 }
 
+fn parse_anthropic_models_response(response_text: &str) -> Result<Vec<FetchedModel>, String> {
+    match serde_json::from_str::<AnthropicModelsResponse>(response_text) {
+        Ok(anthropic_response) => Ok(anthropic_response
+            .data
+            .into_iter()
+            .map(|model| {
+                let name = model
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| model.id.clone());
+                FetchedModel {
+                    id: model.id,
+                    name: Some(name),
+                    owned_by: Some("anthropic".to_string()),
+                    created: None,
+                }
+            })
+            .collect()),
+        Err(anthropic_error) => {
+            match serde_json::from_str::<OpenAIModelsResponse>(response_text) {
+                Ok(openai_response) => Ok(openai_response
+                    .data
+                    .into_iter()
+                    .map(|model| FetchedModel {
+                        id: model.id.clone(),
+                        name: Some(model.id),
+                        owned_by: model.owned_by,
+                        created: model.created.and_then(|value| value.as_i64()),
+                    })
+                    .collect()),
+                Err(openai_error) => Err(format!(
+                    "Failed to parse Anthropic-compatible response: Anthropic format: {}; OpenAI format: {}",
+                    anthropic_error, openai_error
+                )),
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Connectivity Test Types
 // ============================================================================
@@ -301,11 +340,12 @@ pub async fn fetch_provider_models(
             // Google Native: API key is in URL, no Authorization header
         }
         Some("@ai-sdk/anthropic") if matches!(request.api_type, ApiType::Native) => {
-            // Anthropic Native: use Bearer token
+            // Anthropic Native: use the Anthropic API key header. Anthropic-compatible
+            // gateways such as New API use this header to select the Anthropic response
+            // format for GET /v1/models.
             if let Some(api_key) = &resolved_request.api_key {
                 if !api_key.is_empty() {
-                    req_builder =
-                        req_builder.header("Authorization", format!("Bearer {}", api_key));
+                    req_builder = req_builder.header("x-api-key", api_key);
                     req_builder = req_builder.header("anthropic-version", "2023-06-01");
                 }
             }
@@ -375,25 +415,16 @@ pub async fn fetch_provider_models(
                 .collect()
         }
         (ApiType::Native, Some("@ai-sdk/anthropic")) => {
-            // Parse Anthropic response format
-            let anthropic_response: AnthropicModelsResponse = response
-                .json()
+            // Anthropic-compatible gateways may expose either the Anthropic model
+            // list schema or the OpenAI-compatible schema. Read the body once and
+            // accept both so authentication and schema quirks do not make discovery
+            // fail when inference itself is compatible.
+            let response_text = response
+                .text()
                 .await
-                .map_err(|e| format!("Failed to parse Anthropic response: {}", e))?;
+                .map_err(|e| format!("Failed to read Anthropic response: {}", e))?;
 
-            anthropic_response
-                .data
-                .into_iter()
-                .map(|m| {
-                    let name = m.display_name.clone().unwrap_or_else(|| m.id.clone());
-                    FetchedModel {
-                        id: m.id.clone(),
-                        name: Some(name),
-                        owned_by: Some("anthropic".to_string()),
-                        created: None,
-                    }
-                })
-                .collect()
+            parse_anthropic_models_response(&response_text)?
         }
         _ => {
             // Parse OpenAI compatible response format
@@ -1123,6 +1154,47 @@ mod tests {
             ),
             "https://api.anthropic.com/v1/models"
         );
+    }
+
+    #[test]
+    fn test_parse_anthropic_models_response() {
+        let models = parse_anthropic_models_response(
+            r#"{
+                "data": [{
+                    "id": "claude-sonnet-4-6",
+                    "type": "model",
+                    "display_name": "Claude Sonnet 4.6"
+                }]
+            }"#,
+        )
+        .expect("Anthropic model list should parse");
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-sonnet-4-6");
+        assert_eq!(models[0].name.as_deref(), Some("Claude Sonnet 4.6"));
+        assert_eq!(models[0].owned_by.as_deref(), Some("anthropic"));
+    }
+
+    #[test]
+    fn test_parse_openai_compatible_models_response_for_anthropic_gateway() {
+        let models = parse_anthropic_models_response(
+            r#"{
+                "object": "list",
+                "data": [{
+                    "id": "claude-sonnet-4-6",
+                    "object": "model",
+                    "created": 1626777600,
+                    "owned_by": "claude"
+                }]
+            }"#,
+        )
+        .expect("OpenAI-compatible model list should parse");
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-sonnet-4-6");
+        assert_eq!(models[0].name.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(models[0].owned_by.as_deref(), Some("claude"));
+        assert_eq!(models[0].created, Some(1626777600));
     }
 
     #[test]
