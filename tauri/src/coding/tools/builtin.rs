@@ -354,12 +354,12 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("cordis"),
         mcp_field: None,
     },
-    // Shared Agents - agentskills.io public shared skills directory.
+    // Universal - agentskills.io public shared skills directory.
     // Cross-tool directory scanned by dsh (rank 500) and other agentskills.io-
     // compliant tools. Skills-only sync target; no MCP config.
     BuiltinTool {
         key: "shared_agents",
-        display_name: "Shared Agents",
+        display_name: "Universal",
         relative_skills_dir: Some("~/.agents/skills"),
         relative_detect_dir: Some("~/.agents"),
         mcp_config_path: None,
