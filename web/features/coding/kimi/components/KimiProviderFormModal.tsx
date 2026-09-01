@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import { FileCode2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import JsonEditor from '@/components/common/JsonEditor';
 import type {
   KimiProvider,
   KimiProviderFormData,
@@ -650,11 +651,14 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
             <p className={styles.advancedHint}>
               {t('kimi.providerForm.advancedSettingsDesc')}
             </p>
-            <Input.TextArea
-              rows={6}
+            <JsonEditor
               value={rawJson}
-              onChange={(e) => setRawJson(e.target.value)}
-              className={styles.rawJsonTextArea}
+              onRawChange={setRawJson}
+              mode="text"
+              height={180}
+              minHeight={140}
+              maxHeight={360}
+              resizable
             />
           </ProviderConfigCollapse>
         </Form.Item>

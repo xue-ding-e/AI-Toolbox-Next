@@ -5331,7 +5331,7 @@
       "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     },
     "rootPathSource": {
-      "customize": "Customize",
+      "customize": "Customize Root Directory",
       "modal": {
         "title": "Customize Kimi Code CLI Root Directory",
         "sourceEnv": "Environment Variable KIMI_CODE_HOME",
@@ -5429,6 +5429,8 @@
       "deleteConfirm": "Delete official account {{name}}? You will need to log in again.",
       "applySuccess": "Official account applied",
       "deleteSuccess": "Official account deleted"
-    }
+    },
+    "openFolder": "Open Folder",
+    "refreshConfig": "Refresh Config"
   }
 }

@@ -5328,7 +5328,7 @@
       "confirmDelete": "确定要删除配置「{{name}}」吗？"
     },
     "rootPathSource": {
-      "customize": "自定义",
+      "customize": "自定义配置目录",
       "modal": {
         "title": "自定义 Kimi Code CLI 配置目录",
         "sourceEnv": "环境变量 KIMI_CODE_HOME",
@@ -5426,6 +5426,8 @@
       "deleteConfirm": "确定删除官方账号 {{name}}？删除后需要重新登录。",
       "applySuccess": "官方账号已应用",
       "deleteSuccess": "官方账号已删除"
-    }
+    },
+    "openFolder": "打开文件夹",
+    "refreshConfig": "刷新配置"
   }
 }

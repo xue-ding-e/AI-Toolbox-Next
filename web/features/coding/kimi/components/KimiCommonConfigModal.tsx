@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { Form, Input, Modal, message } from 'antd';
+import { Form, Modal, message } from 'antd';
 import { useTranslation } from 'react-i18next';
+import TomlEditor from '@/components/common/TomlEditor';
 import type { KimiCommonConfig, KimiCommonConfigInput } from '@/types/kimi';
 import { buildKimiCommonConfigSubmitValues } from '../utils/commonConfigForm';
 
@@ -50,15 +51,31 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
       onOk={() => void handleOk()}
       onCancel={onCancel}
       confirmLoading={submitting}
+      width={800}
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
         <Form.Item name="config">
-          <Input.TextArea rows={10} placeholder={t('kimi.commonConfig.description')} />
+          <TomlEditorFormItem placeholder={t('kimi.commonConfig.description')} />
         </Form.Item>
       </Form>
     </Modal>
   );
 };
+
+// TomlEditor 与 antd Form.Item 集成的包装组件（TomlEditor 的 value 是必填 prop，
+// Form.Item 在运行时注入 value/onChange，但 TS 静态类型无法感知，需要桥接）。
+const TomlEditorFormItem: React.FC<{
+  value?: string;
+  onChange?: (value: string) => void;
+  placeholder?: string;
+}> = ({ value = '', onChange, placeholder }) => (
+  <TomlEditor
+    value={value}
+    onChange={onChange}
+    height={300}
+    placeholder={placeholder}
+  />
+);
 
 export default KimiCommonConfigModal;

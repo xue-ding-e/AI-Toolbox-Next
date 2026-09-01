@@ -605,22 +605,25 @@ const KimiPage: React.FC = () => {
         }
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <Title level={4} style={{ margin: 0 }}>Kimi Code CLI</Title>
-              <Link
-                type="secondary"
-                style={{ fontSize: 12 }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void openUrl('https://www.npmjs.com/package/@moonshot-ai/kimi-code');
-                }}
-              >
-                {t('kimi.viewDocs')}
-              </Link>
-              {appliedProviderId ? (
+      <div>
+        {/* 页面头部 */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+                  Kimi Code CLI
+                </Title>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12 }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void openUrl('https://www.npmjs.com/package/@moonshot-ai/kimi-code');
+                  }}
+                >
+                  <LinkOutlined /> {t('kimi.viewDocs')}
+                </Link>
                 <Link
                   type="secondary"
                   style={{ fontSize: 12, marginLeft: 16 }}
@@ -631,50 +634,50 @@ const KimiPage: React.FC = () => {
                 >
                   <EyeOutlined /> {t('common.previewConfig')}
                 </Link>
-              ) : null}
+              </div>
+              <Space>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('kimi.configPath')}:
+                </Text>
+                <Text code style={{ fontSize: 12 }}>
+                  {configPath || '~/.kimi-code/config.toml'}
+                </Text>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => setRootDirectoryModalOpen(true)}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('kimi.rootPathSource.customize')}
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={() => void handleOpenConfigFolder()}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('kimi.openFolder')}
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<SyncOutlined />}
+                  onClick={() => void loadConfig()}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('kimi.refreshConfig')}
+                </Button>
+              </Space>
             </div>
-            <Space size="small" wrap>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('kimi.configPath')}:
-              </Text>
-              <Text code style={{ fontSize: 12 }}>
-                {configPath || '~/.kimi-code/config.toml'}
-              </Text>
-              <Button
-                type="text"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => setRootDirectoryModalOpen(true)}
-                style={{ padding: 0, fontSize: 12 }}
-              >
-                {t('kimi.rootPathSource.customize')}
-              </Button>
-              <Button
-                type="text"
-                size="small"
-                icon={<FolderOpenOutlined />}
-                onClick={() => void handleOpenConfigFolder()}
-                style={{ padding: 0, fontSize: 12 }}
-              >
-                {t('common.open')}
-              </Button>
-              <Button
-                type="text"
-                size="small"
-                icon={<SyncOutlined />}
-                onClick={() => void loadConfig()}
-                style={{ padding: 0, fontSize: 12 }}
-              >
-                {t('common.refresh')}
+
+            <Space>
+              <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
+                {t('common.moreOptions')}
               </Button>
             </Space>
           </div>
-
-          <Space>
-            <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
-              {t('common.moreOptions')}
-            </Button>
-          </Space>
         </div>
       </div>
 
