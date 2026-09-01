@@ -340,12 +340,13 @@ pub async fn fetch_provider_models(
             // Google Native: API key is in URL, no Authorization header
         }
         Some("@ai-sdk/anthropic") if matches!(request.api_type, ApiType::Native) => {
-            // Anthropic Native: use the Anthropic API key header. Anthropic-compatible
-            // gateways such as New API use this header to select the Anthropic response
-            // format for GET /v1/models.
+            // Anthropic Native: keep the standard Authorization Bearer header so
+            // proxies that only forward Authorization keep working. Anthropic-compatible
+            // gateways such as New API accept Bearer and return either the Anthropic or
+            // the OpenAI model-list schema, both handled by parse_anthropic_models_response.
             if let Some(api_key) = &resolved_request.api_key {
                 if !api_key.is_empty() {
-                    req_builder = req_builder.header("x-api-key", api_key);
+                    req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
                     req_builder = req_builder.header("anthropic-version", "2023-06-01");
                 }
             }
