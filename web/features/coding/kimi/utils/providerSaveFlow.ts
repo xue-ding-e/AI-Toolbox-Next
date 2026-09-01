@@ -15,7 +15,14 @@ export type KimiProviderSavePlan =
 export function buildKimiProviderSavePlan(
   editingProvider: KimiProvider | null | undefined,
   values: KimiProviderFormData,
+  options?: { isCopy?: boolean },
 ): KimiProviderSavePlan {
+  // A cloned provider always creates a new record — even when the source is
+  // the `__local__` projection or an applied row, its id must never be reused
+  // for update/adopt.
+  if (options?.isCopy) {
+    return { action: 'create', input: { ...values } };
+  }
   if (editingProvider && editingProvider.id === KIMI_LOCAL_PROVIDER_ID) {
     return { action: 'adopt_local', input: { ...values, id: undefined } };
   }

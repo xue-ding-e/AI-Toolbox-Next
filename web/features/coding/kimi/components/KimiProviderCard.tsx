@@ -4,6 +4,7 @@ import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
   CheckOutlined,
+  CopyOutlined,
   EditOutlined,
   DeleteOutlined,
   MoreOutlined,
@@ -56,6 +57,7 @@ interface KimiProviderCardProps {
   onApply: (provider: KimiProvider) => void | Promise<void>;
   onToggleDisabled: (provider: KimiProvider, isDisabled: boolean) => void | Promise<void>;
   onTest?: (provider: KimiProvider) => void;
+  onCopy?: (provider: KimiProvider) => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
 }
 
@@ -70,6 +72,7 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
   onApply,
   onToggleDisabled,
   onTest,
+  onCopy,
   connectivityStatus,
 }) => {
   const { t } = useTranslation();
@@ -296,6 +299,12 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
       // static API key to probe directly (same rule as grok/claude/codex).
       disabled: isOfficialProvider || provider.isDisabled,
       onClick: () => onTest?.(provider),
+    },
+    {
+      key: 'copy',
+      label: t('common.copy'),
+      icon: <CopyOutlined />,
+      onClick: () => onCopy?.(provider),
     },
     ...(isLocalProvider
       ? []

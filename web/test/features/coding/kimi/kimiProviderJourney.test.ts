@@ -271,3 +271,25 @@ test('journey: official login flow creates the official provider row once', () =
   // Reopening the flow must find the existing official provider (no duplicate).
   assert.equal(officialInList()?.id, created.id);
 });
+
+test('journey: copying a provider always creates, never updates or adopts', () => {
+  const store = new InMemoryKimiProviderStore();
+  store.localCategory = 'custom';
+  const adopted = store.adoptLocal(localConfigValues);
+
+  // Copy of a real record: the cloned editingProvider carries the source id,
+  // but isCopy must force a create so the source row is never overwritten.
+  const copiedPlan = buildKimiProviderSavePlan(
+    { ...adopted, id: `${adopted.id}_copy`, name: `${adopted.name}_copy`, isApplied: false },
+    localConfigValues,
+    { isCopy: true },
+  );
+  assert.equal(copiedPlan.action, 'create', 'copy of an applied row must create a new record');
+
+  // Copy of the __local__ projection must not re-adopt either — adoption only
+  // applies to a direct edit of the placeholder, never to a clone.
+  store.providers = [];
+  const localProjection = store.list()[0];
+  const copiedLocalPlan = buildKimiProviderSavePlan(localProjection, localConfigValues, { isCopy: true });
+  assert.equal(copiedLocalPlan.action, 'create', 'copy of __local__ must create, not adopt');
+});

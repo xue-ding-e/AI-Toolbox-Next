@@ -152,6 +152,7 @@ const KimiPage: React.FC = () => {
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<KimiProvider | null>(null);
+  const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
@@ -262,16 +263,29 @@ const KimiPage: React.FC = () => {
 
   const handleAddProvider = () => {
     setEditingProvider(null);
+    setIsCopyMode(false);
     setProviderModalOpen(true);
   };
 
   const handleEditProvider = (provider: KimiProvider) => {
     setEditingProvider(provider);
+    setIsCopyMode(false);
+    setProviderModalOpen(true);
+  };
+
+  const handleCopyProvider = (provider: KimiProvider) => {
+    setEditingProvider({
+      ...provider,
+      id: `${provider.id}_copy`,
+      name: `${provider.name}_copy`,
+      isApplied: false,
+    });
+    setIsCopyMode(true);
     setProviderModalOpen(true);
   };
 
   const handleSaveProvider = async (values: KimiProviderInput) => {
-    const plan = buildKimiProviderSavePlan(editingProvider, values);
+    const plan = buildKimiProviderSavePlan(editingProvider, values, { isCopy: isCopyMode });
     const gatewayModeBeforeSave = gatewayCliStatus?.mode;
     const shouldReengageGatewayProxy = shouldReengageKimiGatewayOnSave(editingProvider, gatewayModeBeforeSave);
 
@@ -309,6 +323,7 @@ const KimiPage: React.FC = () => {
     message.success(t('kimi.saveSuccess'));
     setProviderModalOpen(false);
     setEditingProvider(null);
+    setIsCopyMode(false);
     await loadConfig(true);
     await refreshTrayMenu();
   };
@@ -771,6 +786,7 @@ const KimiPage: React.FC = () => {
                               onApply={(value) => void handleApplyProvider(value)}
                               onToggleDisabled={handleToggleDisabled}
                               onTest={handleTestProvider}
+                              onCopy={handleCopyProvider}
                               connectivityStatus={connectivityStatuses[provider.id]}
                             />
                           ))}
@@ -914,6 +930,7 @@ const KimiPage: React.FC = () => {
         onCancel={() => {
           setProviderModalOpen(false);
           setEditingProvider(null);
+          setIsCopyMode(false);
         }}
         onSubmit={handleSaveProvider}
       />
