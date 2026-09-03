@@ -46,7 +46,9 @@ pub fn is_sensitive_header(normalized_name: &str) -> bool {
             | "api-key"
             | "anthropic-api-key"
             | "openai-api-key"
-    ) || normalized_name.contains("token")
+    ) || normalized_name == "token"
+        || normalized_name.ends_with("-token")
+        || normalized_name.ends_with("_token")
         || normalized_name.ends_with("-api-key")
 }
 
@@ -525,6 +527,29 @@ mod tests {
 
         assert_eq!(redacted.get("Content-Type").unwrap(), "application/json");
         assert_eq!(redacted.get("User-Agent").unwrap(), "ai-toolbox");
+    }
+
+    #[test]
+    fn is_sensitive_header_token_suffix_is_precise() {
+        // Singular credential-bearing names still count as sensitive.
+        assert!(is_sensitive_header("token"));
+        assert!(is_sensitive_header("csrf-token"));
+        assert!(is_sensitive_header("x-csrf-token"));
+        assert!(is_sensitive_header("csrf_token"));
+        assert!(is_sensitive_header("session-token"));
+        assert!(is_sensitive_header("access_token"));
+        assert!(is_sensitive_header("refresh_token"));
+        assert!(is_sensitive_header("auth_token"));
+
+        // Plural usage-metric fields and timing fields must NOT be redacted just
+        // because they contain the substring "token" (issue #318: exports hid the
+        // very token counts needed to diagnose consumption on failed requests).
+        assert!(!is_sensitive_header("input_tokens"));
+        assert!(!is_sensitive_header("output_tokens"));
+        assert!(!is_sensitive_header("cache_read_tokens"));
+        assert!(!is_sensitive_header("cache_creation_tokens"));
+        assert!(!is_sensitive_header("total_tokens"));
+        assert!(!is_sensitive_header("first_token_ms"));
     }
 
     #[test]

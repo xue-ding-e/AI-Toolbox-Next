@@ -766,6 +766,26 @@ mod tests {
     }
 
     #[test]
+    fn export_redaction_preserves_token_count_fields() {
+        // The gateway request-log export is how maintainers diagnose "failed
+        // request shows consumption" reports (issue #318). The token-count
+        // fields contain the substring "token" but are metrics, not secrets,
+        // so they must survive redaction alongside a genuine `access_token`.
+        let redacted = redact_body(Some(
+            r#"{"input_tokens":120,"output_tokens":40,"cache_read_tokens":8,"cache_creation_tokens":2,"total_tokens":170,"first_token_ms":312,"access_token":"sk-secret","csrf_token":"csrf-secret"}"#,
+        ));
+
+        assert_eq!(redacted["input_tokens"], 120);
+        assert_eq!(redacted["output_tokens"], 40);
+        assert_eq!(redacted["cache_read_tokens"], 8);
+        assert_eq!(redacted["cache_creation_tokens"], 2);
+        assert_eq!(redacted["total_tokens"], 170);
+        assert_eq!(redacted["first_token_ms"], 312);
+        assert_eq!(redacted["access_token"], "xxx");
+        assert_eq!(redacted["csrf_token"], "xxx");
+    }
+
+    #[test]
     fn export_redaction_redacts_auth_like_text() {
         let redacted = redact_auth_like_text(
             "Authorization: Bearer sk-test https://example.test/v1?api_key=secret&api-key=hyphen&client-secret=clientSecretValue&alt=sse keep",
