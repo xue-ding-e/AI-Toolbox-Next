@@ -29,6 +29,9 @@ interface SkillsListProps {
   dragDisabled?: boolean;
   preferredToolKeysForAddMore?: string[];
   limitAddMoreToPreferredTools?: boolean;
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onSelectChange?: (skillId: string, checked: boolean) => void;
   onOpenDetail?: (skill: ManagedSkill) => void;
   getRepoInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   formatRelative: (ms: number | null | undefined) => string;
@@ -49,6 +52,9 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   dragDisabled,
   preferredToolKeysForAddMore,
   limitAddMoreToPreferredTools,
+  selectionMode,
+  selectedIds,
+  onSelectChange,
   onOpenDetail,
   getRepoInfo,
   formatRelative,
@@ -111,6 +117,9 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           loading={loading}
           isUpdating={updatingSkillIds.includes(skill.id)}
           dragDisabled={dragDisabled}
+          selectable={selectionMode}
+          selected={selectedIds?.has(skill.id)}
+          onSelectChange={onSelectChange}
           preferredToolKeysForAddMore={preferredToolKeysForAddMore}
           limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
           onOpenDetail={onOpenDetail}
@@ -143,6 +152,9 @@ export const SkillsList: React.FC<SkillsListProps> = ({
             loading={loading}
             isUpdating={updatingSkillIds.includes(skill.id)}
             dragDisabled
+            selectable={selectionMode}
+            selected={selectedIds?.has(skill.id)}
+            onSelectChange={onSelectChange}
             preferredToolKeysForAddMore={preferredToolKeysForAddMore}
             limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onOpenDetail={onOpenDetail}

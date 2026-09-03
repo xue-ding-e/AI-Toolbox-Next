@@ -17,7 +17,7 @@
 ## 核心设计决策（Why）
 
 - 页面默认站在“中央仓库”视角组织技能，而不是站在某一个工具目录视角，因为真正的 source of truth 是中央仓库。
-- grouped view 按来源分组，flat view 按单个 skill 操作；两种视图服务不同任务，不能强行合并成一种。
+- grouped view 按来源分组，flat view 按单个 skill 操作；两种视图服务不同任务，不能强行合并成一种。flat view 同样支持 selection mode 批量操作（启停/加减工具/设分组/删除/打标），与 grouped view 复用同一套 `useSkillActions` 批量逻辑；但 flat 的组织语义仍是平铺单层，不引入组工具模式（组工具模式是 custom 分组视图专属）。
 - 自定义分组只影响页面组织和搜索，不改变中央仓库目录结构，也不改变同步到各工具的目标路径。
 - 手动分组是 first-class registry，用稳定 `group_id` 维护归属；应用内重命名 group 只改分组记录，组内 skill 归属保持不变。
 - Inventory JSON 是完整管理清单覆盖语义，不是局部 patch，也不是 skill 内容备份；导入导出只改管理元数据和工具同步状态，不改写中央仓库内容。
@@ -78,7 +78,7 @@ sequenceDiagram
 - 详情面板的单卡 tag 增删入口在 `management_enabled=false` 时禁用，与批量打标跳过禁用项的语义一致。
 - 详情抽屉（`SkillDetailPanel`）按参考项目的面板结构组织：标题区（管理状态点 + 大标题 + 来源按钮行）→ 描述 lead → 标签行 → 中央仓库路径 pill（单击复制、双击定位 `SKILL.md`，mono 字体）→ 分组 meta 卡（MCP 同款 `metaCard`：边框卡 + 左列"分组"行（无备注不渲染"备注: 暂无备注"行，有备注才显示只读备注行）+ 右侧"编辑"按钮（`common.edit`），点击经 `onEditMetadata` 打开共享 `SkillMetadataModal` 编辑分组与备注，不在面板内做行内铅笔编辑；`skills.metadata.edit`/`title` 只提"分组"，不把备注并列为标题）→ 工具同步网格（`.toolGrid`，固定一行 4 列、整格点击切换同步、格子内容左对齐（图标左、文字右）、已启用/synced 工具排前；已同步 = 实线边框 + 图标前绿点，未同步 = 虚线边框 + 透明占位点 + 降透明度、hover 恢复并主色描边，tooltip（title）显示"工具名 (该工具解析出的 skills 目录) — 已同步/未同步"（路径来自 `ToolOption.skillDir`，由 store 从 `ToolInfo.skills_dir` 透传，title 与 aria-label 共用同一文案）；不使用行式列表或渐变折叠 mask）→ pill 式文档 tab（激活态主色实底）→ 底部操作条。面板按 `skill.id` 重置 tag 编辑器等局部状态（Drawer 不重挂载，只换 `skill` prop）。宽度 `min(60vw, 760px)`。
 - sliders 选项浮层的浮层 chrome（定位、关闭、层级）基于 antd `Popover`（click、bottomRight、无箭头），模块样式只负责内部布局；不要重新手写 portal 定位代码。tag 筛选下拉的选项列表有 `max-height + overflow-y` 上限；`__untagged__` 哨兵与具体 tag 互斥——选中一边会自动清掉另一边，避免 AND 语义下的恒空结果。
-- 批量打标（BatchTagDialog）入口只在 grouped 视图 selectionMode 的批量操作栏；flat 视图没有批量选择，单卡增删标签走详情面板。批量打标是追加语义（新 tags 并集，不删除已有 tags），跳过 `management_enabled=false` 的项并展示 skippedCount，成功后清空选择集并刷新列表（tags 是纯元数据，不经 sync 链路）。
+- 批量打标（BatchTagDialog）入口在两种视图 selection mode 的批量操作栏（flat 与 grouped 均可）；flat 视图无组级全选，批量工具栏起始处的全局 checkbox 负责"全选当前筛选结果"。单卡增删标签仍走详情面板。批量打标是追加语义（新 tags 并集，不删除已有 tags），跳过 `management_enabled=false` 的项并展示 skippedCount，成功后清空选择集并刷新列表（tags 是纯元数据，不经 sync 链路）。
 - tag filter 是工具栏"添加 Skill"主按钮后的 axonhub 渠道页风格筛选按钮（`TagFilterDropdown` + `.tagFilterTrigger` 系列样式）：虚线 outline 触发器（`PlusCircle` + 标题 + 选中 badge，≤2 个显示各 tag 名、>2 个显示"已选 N 个"），点击弹 antd Popover（搜索框 + checkbox 选项列表 + 每项 skill 计数 + 有选中时的"清除筛选"项）。不要改回工具栏下方的独立筛选药丸行（已移除）。筛选语义不变：与 enabled 筛选叠加（顺序：enabled → tag → 搜索），多个 tag 必须全部命中（AND）；搜索框的命中范围也包含 tags（`filterSkillsBySearch` 的 searchableValues 含 `skill.tags` 展开，与名称/描述/分组/备注一起大小写不敏感匹配）；`UNTAGGED_FILTER`（`__untagged__`）哨兵选项排在列表首位、筛出"无任何 tag"的 skill，且与具体 tag 互斥（选中一边自动清掉另一边）。全部 tag 候选集与"是否存在未打标技能"都以完整 skills 列表为基准；选中项随 skills 变化自动裁剪失效项（`pruneStaleTagFilters`）。选项列表有 `max-height + overflow` 上限，防大标签集撑爆弹层。
 
 ## 跨模块依赖
@@ -100,7 +100,7 @@ sequenceDiagram
 
 ## 最小验证
 
-- 至少验证：搜索、平铺/分组切换、批量选择、批量刷新/删除仍一致工作。
+- 至少验证：搜索、平铺/分组切换、批量选择、批量刷新/删除仍一致工作。flat 视图下进入 selection mode 后卡片出现 checkbox、批量工具栏出现、拖拽排序禁用；reorder 与 selection 互斥（开一个自动关另一个）；切换 flat↔grouped 时选择集按 filteredSkills 裁剪、不强制清空。
 - 至少验证：导入或安装新 skill 后列表能回到中央仓库视角正确展示。
 - 涉及 Inventory JSON 或禁用状态时，至少验证：导出完整清单文件、复制整理 prompt、选择 JSON 文件预览导入、确认默认禁用数量、apply 后刷新列表、禁用 skill 仍留在原分组、重新启用可恢复历史工具。
 - 涉及 tags 时，至少验证：卡片 tag 增删与批量打标后列表、tag 筛选选项与计数同步刷新；tag 筛选（含未打标哨兵）与 enabled/搜索叠加正确；同一 tag 跨卡片颜色一致；批量打标跳过 disabled 项。

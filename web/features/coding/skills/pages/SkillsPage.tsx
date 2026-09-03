@@ -36,6 +36,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import {
   ManagementButton,
+  ManagementCheckbox,
   ManagementIconButton,
   ManagementMenu,
   ManagementSearchInput,
@@ -496,25 +497,32 @@ const SkillsPage: React.FC = () => {
     }
   }, [viewMode, isSearchActive]);
 
+  // In flat view, reorder and selection are mutually exclusive: enabling one
+  // turns the other off. SkillCard renders a checkbox in place of the drag
+  // handle when selectable, so the two modes cannot coexist on one card.
+  React.useEffect(() => {
+    if (viewMode !== 'flat') return;
+    if (selectionMode && reorderMode) {
+      setReorderMode(false);
+    }
+  }, [viewMode, selectionMode, reorderMode]);
+
   React.useEffect(() => {
     if (!canUseGroupToolMode) {
       setGroupToolMode(false);
     }
   }, [canUseGroupToolMode]);
 
-  // Keep selection scoped to the visible grouped list.
+  // Keep selection scoped to the visible skills in either view. Stale ids
+  // (removed skills, or skills hidden by filter/search) are pruned so the
+  // batch toolbar never operates on invisible cards.
   React.useEffect(() => {
-    if (viewMode !== 'grouped') {
-      setSelectionMode(false);
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds((prev) => {
-        const allSkillIds = new Set(filteredSkills.map((s) => s.id));
-        const next = new Set([...prev].filter((id) => allSkillIds.has(id)));
-        return next.size === prev.size ? prev : next;
-      });
-    }
-  }, [viewMode, filteredSkills]);
+    setSelectedIds((prev) => {
+      const allSkillIds = new Set(filteredSkills.map((s) => s.id));
+      const next = new Set([...prev].filter((id) => allSkillIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredSkills]);
 
   const handleToggleSelectionMode = React.useCallback(() => {
     if (selectionMode) {
@@ -562,6 +570,23 @@ const SkillsPage: React.FC = () => {
       return next;
     });
   }, []);
+
+  // Flat view has no group headers to host a per-group select-all, so the
+  // batch toolbar exposes a global checkbox that selects every visible
+  // (filtered) skill at once. Grouped view benefits from it too as a
+  // cross-group shortcut alongside the per-group checkboxes.
+  const handleSelectAllFiltered = React.useCallback((checked: boolean) => {
+    setSelectedIds((prev) => {
+      if (!checked) {
+        return prev.size === 0 ? prev : new Set();
+      }
+      const next = new Set(prev);
+      for (const skill of filteredSkills) {
+        next.add(skill.id);
+      }
+      return next;
+    });
+  }, [filteredSkills]);
 
   const selectedArray = React.useMemo(() => [...selectedIds], [selectedIds]);
   const hasSelection = selectedArray.length > 0;
@@ -932,7 +957,7 @@ const SkillsPage: React.FC = () => {
     if (groupMode !== 'custom') {
       states.push(t('skills.groupBySource'));
     }
-    if (viewMode === 'grouped' && selectionMode) {
+    if (selectionMode) {
       states.push(t('skills.batch.bulkManage'));
     }
     if (tagFilter.length > 0) {
@@ -1101,28 +1126,66 @@ const SkillsPage: React.FC = () => {
                     />
                   </div>
                   {viewMode === 'flat' && (
-                    <div className={styles.toolbarOptionRow}>
-                      <span className={styles.toolbarOptionLabel}>{t('skills.toolbar.arrange')}</span>
-                      <ManagementSegmented<'browse' | 'reorder'>
-                        value={reorderMode ? 'reorder' : 'browse'}
-                        ariaLabel={t('skills.reorder')}
-                        title={isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint')}
-                        disabled={isSearchActive}
-                        onChange={(nextMode) => setReorderMode(nextMode === 'reorder')}
-                        options={[
-                          { value: 'browse', label: t('skills.groupControls.browseMode') },
-                          {
-                            value: 'reorder',
-                            icon: <GripVertical size={13} aria-hidden="true" />,
-                            label: t('skills.reorder'),
-                            title: isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint'),
-                          },
-                        ]}
-                      />
-                      {flatReorderDisabledHint && (
-                        <div className={styles.toolbarOptionHint}>{flatReorderDisabledHint}</div>
-                      )}
-                    </div>
+                    <>
+                      <div className={styles.toolbarOptionRow}>
+                        <span className={styles.toolbarOptionLabel}>{t('skills.toolbar.arrange')}</span>
+                        <ManagementSegmented<'browse' | 'reorder'>
+                          value={reorderMode ? 'reorder' : 'browse'}
+                          ariaLabel={t('skills.reorder')}
+                          title={isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint')}
+                          disabled={isSearchActive}
+                          onChange={(nextMode) => {
+                            const nextReorder = nextMode === 'reorder';
+                            setReorderMode(nextReorder);
+                            // Reorder and selection are mutually exclusive in
+                            // flat view: the card renders either a drag handle
+                            // or a selection checkbox in the same status slot.
+                            if (nextReorder && selectionMode) {
+                              setSelectionMode(false);
+                              setSelectedIds(new Set());
+                            }
+                          }}
+                          options={[
+                            { value: 'browse', label: t('skills.groupControls.browseMode') },
+                            {
+                              value: 'reorder',
+                              icon: <GripVertical size={13} aria-hidden="true" />,
+                              label: t('skills.reorder'),
+                              title: isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint'),
+                            },
+                          ]}
+                        />
+                        {flatReorderDisabledHint && (
+                          <div className={styles.toolbarOptionHint}>{flatReorderDisabledHint}</div>
+                        )}
+                      </div>
+                      <div className={styles.toolbarOptionRow}>
+                        <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.selectionModeLabel')}</span>
+                        <ManagementSegmented<'browse' | 'select'>
+                          value={selectionMode ? 'select' : 'browse'}
+                          ariaLabel={t('skills.groupControls.selectionModeLabel')}
+                          onChange={(nextMode) => {
+                            const nextSelect = nextMode === 'select';
+                            if (nextSelect === selectionMode) return;
+                            setSelectionMode(nextSelect);
+                            if (nextSelect) {
+                              setReorderMode(false);
+                            } else {
+                              setSelectedIds(new Set());
+                            }
+                          }}
+                          options={[
+                            { value: 'browse', label: t('skills.groupControls.browseMode') },
+                            {
+                              value: 'select',
+                              label: t('skills.batch.bulkManage'),
+                              title: t('skills.groupControls.selectionModeTip'),
+                            },
+                          ]}
+                        />
+                        <div className={styles.toolbarOptionInfo}>{t('skills.groupControls.selectionModeTip')}</div>
+                      </div>
+                    </>
                   )}
                   {viewMode === 'grouped' && (
                     <>
@@ -1218,8 +1281,15 @@ const SkillsPage: React.FC = () => {
               </>
             )}
           </ToolbarOptionsPopover>
-          {viewMode === 'grouped' && selectionMode && (
+          {selectionMode && (
             <>
+              <ManagementCheckbox
+                checked={hasSelection && selectedArray.length === filteredSkills.length}
+                indeterminate={hasSelection && selectedArray.length !== filteredSkills.length}
+                ariaLabel={t('skills.batch.selectAll')}
+                onChange={handleSelectAllFiltered}
+                disabled={filteredSkills.length === 0 || loading || actionLoading}
+              />
               <ManagementIconButton
                 icon={<RefreshCw size={14} aria-hidden="true" />}
                 title={hasSelection ? t('skills.batch.refresh') : t('skills.batch.noneSelected')}
@@ -1316,7 +1386,10 @@ const SkillsPage: React.FC = () => {
             loading={loading || actionLoading}
             updatingSkillIds={updatingSkillIds}
             columns={gridColumns}
-            dragDisabled={!isFlatReorderEnabled}
+            dragDisabled={!isFlatReorderEnabled || selectionMode}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            onSelectChange={handleSelectChange}
             preferredToolKeysForAddMore={effectivePreferredToolsForAddMore}
             limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onOpenDetail={handleOpenDetail}
