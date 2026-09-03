@@ -114,20 +114,7 @@ impl SseUsageCollector {
     }
 
     pub fn push_chunk(&mut self, cli_key: GatewayCliKey, chunk: &[u8]) {
-        if chunk.len() > MAX_SSE_USAGE_BUFFER_BYTES {
-            self.buffer.clear();
-            return;
-        }
-        if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
-            self.buffer.clear();
-        }
-        self.buffer.extend_from_slice(chunk);
-        while let Some(block) = take_sse_block(&mut self.buffer) {
-            self.observe_block(&block);
-            if let Some(value) = parse_sse_data_block(&block) {
-                self.merge_event(cli_key, &value);
-            }
-        }
+        self.ingest_chunk(Some(cli_key), chunk);
     }
 
     pub fn finish(mut self, cli_key: GatewayCliKey) -> TokenUsage {
@@ -137,6 +124,11 @@ impl SseUsageCollector {
             if let Some(value) = parse_sse_data_block(&block) {
                 self.merge_event(cli_key, &value);
             }
+            // Degenerate flattened framing never forms a `\n\n` block, so the
+            // trailing events above are invisible to `parse_sse_data_block`.
+            // Scan them again with the flattened reader so terminal events and
+            // usage delivered in the residual buffer are still captured.
+            self.merge_flattened_usage(cli_key, &block);
         }
         self.usage
     }
@@ -164,17 +156,75 @@ impl SseUsageCollector {
     /// Ingest a chunk for terminal-event tracking only, without a cli identity
     /// to merge usage for. Same block splitting as [`push_chunk`].
     pub fn observe_chunk(&mut self, chunk: &[u8]) {
+        self.ingest_chunk(None, chunk);
+    }
+
+    /// Shared ingest path for [`push_chunk`] / [`observe_chunk`]. Chunks that
+    /// fit the bounded residual buffer are appended and split into blocks as
+    /// before; anything that would overflow (or an oversized chunk) is observed
+    /// in place instead of being silently dropped, so a terminal event is never
+    /// lost just because a stream arrived in huge pieces.
+    fn ingest_chunk(&mut self, cli_key: Option<GatewayCliKey>, chunk: &[u8]) {
         if chunk.len() > MAX_SSE_USAGE_BUFFER_BYTES {
-            self.buffer.clear();
+            // An upstream that omits SSE blank-line delimiters makes the
+            // outbound pipeline buffer the whole body and emit it as one
+            // oversized final chunk. Scanning it in place is what keeps the
+            // terminal verdict and usage for those streams.
+            let residual = std::mem::take(&mut self.buffer);
+            self.observe_bytes(cli_key, &residual);
+            self.observe_bytes(cli_key, chunk);
             return;
         }
         if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
-            self.buffer.clear();
+            // Overflow: classify what the buffer already holds before dropping
+            // it — the residual can still contain a terminal event that
+            // trailing events would otherwise push out of the bounded window.
+            let residual = std::mem::take(&mut self.buffer);
+            self.observe_bytes(cli_key, &residual);
         }
         self.buffer.extend_from_slice(chunk);
         while let Some(block) = take_sse_block(&mut self.buffer) {
             self.observe_block(&block);
+            if let (Some(cli_key), Some(value)) = (cli_key, parse_sse_data_block(&block)) {
+                self.merge_event(cli_key, &value);
+            }
         }
+    }
+
+    /// Observe terminal + usage for bytes that bypass the bounded residual
+    /// buffer. Complete blocks are observed individually; the undelimited
+    /// remainder (partial block or flattened framing) goes through the
+    /// flattened reader so nothing terminal-shaped is lost.
+    fn observe_bytes(&mut self, cli_key: Option<GatewayCliKey>, bytes: &[u8]) {
+        let mut rest = bytes;
+        while let Some((position, delimiter_len)) = find_sse_block_delimiter(rest) {
+            let block = &rest[..position];
+            self.observe_block(block);
+            if let (Some(cli_key), Some(value)) = (cli_key, parse_sse_data_block(block)) {
+                self.merge_event(cli_key, &value);
+            }
+            rest = &rest[position + delimiter_len..];
+        }
+        if rest.is_empty() {
+            return;
+        }
+        if let Some(cli_key) = cli_key {
+            self.merge_flattened_usage(cli_key, rest);
+        }
+        if self.terminal_kind.is_none() {
+            self.terminal_kind = sse_block_classify_terminal(rest);
+        }
+    }
+
+    /// Merge usage from every flattened-framing event inside `bytes`.
+    fn merge_flattened_usage(&mut self, cli_key: GatewayCliKey, bytes: &[u8]) {
+        let text = String::from_utf8_lossy(bytes);
+        for_each_flattened_sse_field(&text, |_event_name, data| {
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                self.merge_event(cli_key, &value);
+            }
+            false
+        });
     }
 
     /// Update the terminal kind from a complete SSE block (first-wins).
@@ -266,6 +316,10 @@ fn json_carries_error(value: &Value) -> bool {
 /// `response.error`/`response.status`), but extended to distinguish the three
 /// non-success terminal outcomes (`Failed` / `Incomplete` / `Canceled`) that two
 /// booleans could not express.
+///
+/// When the standard line-based parse finds nothing, a flattened-framing
+/// fallback scans the block for degenerate single-line SSE (see
+/// [`for_each_flattened_sse_field`]) before giving up.
 pub fn sse_block_classify_terminal(block: &[u8]) -> Option<SseTerminalKind> {
     let text = String::from_utf8_lossy(block);
     let mut event_name: Option<&str> = None;
@@ -284,6 +338,34 @@ pub fn sse_block_classify_terminal(block: &[u8]) -> Option<SseTerminalKind> {
         return Some(SseTerminalKind::Success);
     }
 
+    if let Some(kind) = classify_sse_event_fields(event_name, &data_lines.join("\n")) {
+        return Some(kind);
+    }
+
+    // Degenerate flattened framing: several upstream relays concatenate every
+    // event onto one whitespace-separated line, so the line-based parse above
+    // sees a single giant `event:` field and no data at all. Scan field pairs
+    // instead; first terminal wins, mirroring the block-level first-wins rule.
+    let mut flattened: Option<SseTerminalKind> = None;
+    for_each_flattened_sse_field(&text, |event_name, data| {
+        match classify_sse_event_fields(event_name, data) {
+            Some(kind) => {
+                flattened = Some(kind);
+                true
+            }
+            None => false,
+        }
+    });
+    flattened
+}
+
+/// Classify one `(event_name, data)` pair using the shared terminal rules. The
+/// data is either a JSON payload span or the `[DONE]` sentinel.
+fn classify_sse_event_fields(event_name: Option<&str>, data: &str) -> Option<SseTerminalKind> {
+    if data.trim() == "[DONE]" {
+        return Some(SseTerminalKind::Success);
+    }
+
     // SSE `event:` field — take precedence over JSON when present.
     if let Some(event_name) = event_name {
         if let Some(kind) = classify_terminal_event_name(event_name) {
@@ -291,8 +373,7 @@ pub fn sse_block_classify_terminal(block: &[u8]) -> Option<SseTerminalKind> {
         }
     }
 
-    let data = data_lines.join("\n");
-    let Ok(value) = serde_json::from_str::<Value>(&data) else {
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
         return None;
     };
 
@@ -392,6 +473,83 @@ fn classify_terminal_event_name(name: &str) -> Option<SseTerminalKind> {
         "response.cancelled" | "response.canceled" => Some(SseTerminalKind::Canceled),
         "response.completed" => None,
         _ => None,
+    }
+}
+
+/// Locate the next SSE field token (`event:` / `data:`) at or after `from`.
+/// A token only counts when preceded by whitespace or the text start, so
+/// `data:` inside URLs or identifiers is not mistaken for a field.
+fn find_sse_field_token(text: &str, from: usize) -> Option<(usize, &'static str)> {
+    let bytes = text.as_bytes();
+    let mut cursor = from;
+    while cursor <= bytes.len() {
+        let event = text[cursor..].find("event:").map(|offset| cursor + offset);
+        let data = text[cursor..].find("data:").map(|offset| cursor + offset);
+        let (index, token) = match (event, data) {
+            (Some(event_index), Some(data_index)) => {
+                if event_index <= data_index {
+                    (event_index, "event:")
+                } else {
+                    (data_index, "data:")
+                }
+            }
+            (Some(event_index), None) => (event_index, "event:"),
+            (None, Some(data_index)) => (data_index, "data:"),
+            (None, None) => return None,
+        };
+        if index == 0 || bytes[index - 1].is_ascii_whitespace() {
+            return Some((index, token));
+        }
+        cursor = index + 1;
+    }
+    None
+}
+
+/// Visit `(event_name, data)` pairs from text that may use degenerate
+/// flattened SSE framing: multiple events concatenated onto one line and
+/// separated by whitespace, with no blank-line delimiters (observed on Codex
+/// mirror relays since 2026-08). The `data` value is either an exact JSON span
+/// (parsed with a streaming deserializer so an ` event: ` sequence inside a
+/// JSON string cannot split it) or the `[DONE]` sentinel. Visiting stops early
+/// when the callback returns true.
+fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, &str) -> bool) {
+    let bytes = text.as_bytes();
+    let mut position = 0usize;
+    let mut current_event: Option<String> = None;
+    while let Some((index, token)) = find_sse_field_token(text, position) {
+        let mut value_start = index + token.len();
+        if bytes.get(value_start) == Some(&b' ') {
+            value_start += 1;
+        }
+        if token == "event:" {
+            // Event names never contain whitespace in any supported protocol.
+            let name_end = bytes[value_start..]
+                .iter()
+                .position(u8::is_ascii_whitespace)
+                .map_or(bytes.len(), |offset| value_start + offset);
+            current_event = Some(text[value_start..name_end].to_string());
+            position = name_end;
+            continue;
+        }
+        let rest = &text[value_start..];
+        let mut json_stream = serde_json::Deserializer::from_str(rest).into_iter::<Value>();
+        position = match json_stream.next() {
+            Some(Ok(_value)) => {
+                let json_end = value_start + json_stream.byte_offset();
+                if visit(current_event.as_deref(), &text[value_start..json_end]) {
+                    return;
+                }
+                json_end
+            }
+            _ => {
+                let trimmed = rest.trim_start();
+                if trimmed.starts_with("[DONE]") && visit(current_event.as_deref(), "[DONE]") {
+                    return;
+                }
+                // Not JSON: skip this token and keep scanning.
+                value_start
+            }
+        };
     }
 }
 
@@ -777,23 +935,29 @@ fn max_option(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 }
 
 fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let lf = buffer
+    let (position, delimiter_len) = find_sse_block_delimiter(buffer)?;
+    let block = buffer[..position].to_vec();
+    buffer.drain(..position + delimiter_len);
+    Some(block)
+}
+
+/// Locate the physically earliest SSE block delimiter (`\n\n` or `\r\n\r\n`)
+/// and return its position plus length. Mirrors the delimiter choice of
+/// [`take_sse_block`] for callers that split a borrowed slice in place.
+fn find_sse_block_delimiter(bytes: &[u8]) -> Option<(usize, usize)> {
+    let lf = bytes
         .windows(2)
         .position(|window| window == b"\n\n")
         .map(|index| (index, 2));
-    let crlf = buffer
+    let crlf = bytes
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|index| (index, 4));
-    let position = match (lf, crlf) {
-        (Some(lf), Some(crlf)) if crlf.0 < lf.0 => crlf,
-        (Some(lf), _) => lf,
-        (None, Some(crlf)) => crlf,
-        (None, None) => return None,
-    };
-    let block = buffer[..position.0].to_vec();
-    buffer.drain(..position.0 + position.1);
-    Some(block)
+    match (lf, crlf) {
+        (Some(lf), Some(crlf)) if crlf.0 < lf.0 => Some(crlf),
+        (Some(lf), _) => Some(lf),
+        (None, crlf) => crlf,
+    }
 }
 
 fn parse_sse_data_block(block: &[u8]) -> Option<Value> {
@@ -1279,6 +1443,246 @@ data: [DONE]
         assert!(
             collector.terminal_event_seen(),
             "drain_terminal must recover the terminal marker from the residual buffer"
+        );
+    }
+
+    /// Realistic degenerate framing observed on Codex mirror relays (issue #318):
+    /// every event concatenated onto one whitespace-separated line, including
+    /// relay-injected `codex.*` events, with no blank-line delimiters at all.
+    fn flattened_codex_relay_stream() -> String {
+        [
+            "event: codex.rate_limits data: {\"type\":\"codex.rate_limits\",\"rate_limits\":{\"allowed\":true}}",
+            "event: codex.response.metadata data: {\"type\":\"codex.response.metadata\",\"headers\":{\"x-codex-safety-buffering-enabled\":\"true\"}}",
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_x\",\"status\":\"in_progress\"}}",
+            "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+            "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_x\",\"status\":\"completed\",\"usage\":{\"input_tokens\":120,\"output_tokens\":40}}}",
+        ]
+        .join(" ")
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_codex_relay_stream_is_success() {
+        assert_eq!(
+            sse_block_classify_terminal(flattened_codex_relay_stream().as_bytes()),
+            Some(SseTerminalKind::Success)
+        );
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_stream_without_terminal_is_none() {
+        let text = [
+            "event: codex.rate_limits data: {\"type\":\"codex.rate_limits\",\"rate_limits\":{\"allowed\":true}}",
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_x\"}}",
+            "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}",
+        ]
+        .join(" ");
+        assert_eq!(sse_block_classify_terminal(text.as_bytes()), None);
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_failed_terminal_is_failed() {
+        let text = [
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_x\"}}",
+            "event: response.failed data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_x\",\"error\":{\"message\":\"boom\"}}}",
+        ]
+        .join(" ");
+        assert_eq!(
+            sse_block_classify_terminal(text.as_bytes()),
+            Some(SseTerminalKind::Failed)
+        );
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_done_sentinel_is_success() {
+        let text = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]} data: [DONE]";
+        assert_eq!(
+            sse_block_classify_terminal(text.as_bytes()),
+            Some(SseTerminalKind::Success)
+        );
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_json_with_embedded_event_marker_is_none() {
+        // A JSON string value containing an ` event: ` sequence must not be
+        // split: the streaming parser consumes the whole value, so the embedded
+        // marker never produces a fake terminal.
+        let text = "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"run event: response.completed data: {\\\"type\\\":\\\"response.completed\\\"}\"}";
+        assert_eq!(sse_block_classify_terminal(text.as_bytes()), None);
+    }
+
+    #[test]
+    fn sse_block_classify_terminal_flattened_completed_with_status_incomplete_is_incomplete() {
+        let text = "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"incomplete\"}}";
+        assert_eq!(
+            sse_block_classify_terminal(text.as_bytes()),
+            Some(SseTerminalKind::Incomplete)
+        );
+    }
+
+    #[test]
+    fn flattened_stream_terminal_survives_oversized_single_chunk() {
+        // Regression for issue #318: a flattened stream makes the outbound
+        // pipeline buffer the whole body and emit it as one oversized final
+        // chunk. The old code dropped oversized chunks, so the terminal verdict
+        // was lost and every such 200 response was misclassified as incomplete.
+        let padding = "x".repeat(MAX_SSE_USAGE_BUFFER_BYTES + 1024);
+        let stream = format!(
+            "{} {}",
+            flattened_codex_relay_stream().replace("\"hello\"", &format!("\"{padding}\"")),
+            "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_x\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}"
+        );
+        let mut collector = SseUsageCollector::default();
+        collector.observe_chunk(stream.as_bytes());
+        assert_eq!(
+            collector.terminal_kind(),
+            Some(SseTerminalKind::Success),
+            "oversized flattened chunk must still yield its terminal event"
+        );
+    }
+
+    #[test]
+    fn flattened_stream_usage_recovered_from_oversized_single_chunk() {
+        let padding = "x".repeat(MAX_SSE_USAGE_BUFFER_BYTES + 1024);
+        let stream = format!(
+            "{} {}",
+            flattened_codex_relay_stream().replace("\"hello\"", &format!("\"{padding}\"")),
+            "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_final\",\"status\":\"completed\",\"usage\":{\"input_tokens\":120,\"output_tokens\":40}}}"
+        );
+        let mut collector = SseUsageCollector::default();
+        collector.push_chunk(GatewayCliKey::Codex, stream.as_bytes());
+        let usage = collector.finish(GatewayCliKey::Codex);
+        assert_eq!(usage.input_tokens, Some(120));
+        assert_eq!(usage.output_tokens, Some(40));
+        // First envelope wins (`resp_x` from the head's own response.completed).
+        assert_eq!(usage.envelope_id.as_deref(), Some("resp_x"));
+    }
+
+    #[test]
+    fn flattened_stream_terminal_survives_buffer_overflow_before_trailing_events() {
+        // Terminal lands mid-stream; a later oversized chunk overflows the
+        // bounded buffer. The pre-discard observation must keep the verdict.
+        let padding = "x".repeat(MAX_SSE_USAGE_BUFFER_BYTES);
+        let head = flattened_codex_relay_stream();
+        let tail = format!(
+            "event: codex.event.balance data: {{\"type\":\"codex.event.balance\",\"note\":\"{padding}\"}}"
+        );
+        let mut collector = SseUsageCollector::default();
+        collector.observe_chunk(head.as_bytes());
+        assert!(
+            collector.terminal_kind().is_none(),
+            "a sub-cap flattened head stays in the residual buffer before drain"
+        );
+        collector.observe_chunk(tail.as_bytes());
+        assert_eq!(
+            collector.terminal_kind(),
+            Some(SseTerminalKind::Success),
+            "overflow pre-discard observation must keep the earlier terminal verdict"
+        );
+    }
+
+    #[test]
+    fn flattened_stream_classified_when_streamed_in_small_chunks() {
+        // The same flattened stream delivered in small slices: blocks never
+        // form, the buffer overflows repeatedly, and the terminal must still
+        // surface by the time the collector is drained.
+        let stream = flattened_codex_relay_stream();
+        let mut collector = SseUsageCollector::default();
+        for chunk in stream.as_bytes().chunks(64) {
+            collector.observe_chunk(chunk);
+        }
+        assert!(
+            collector.terminal_kind().is_none(),
+            "no terminal verdict before drain for an unseparated residual"
+        );
+        collector.drain_terminal();
+        assert_eq!(
+            collector.terminal_kind(),
+            Some(SseTerminalKind::Success),
+            "drain_terminal must classify the flattened residual"
+        );
+    }
+
+    #[test]
+    fn flattened_stream_usage_merged_from_finish_residual() {
+        let stream = flattened_codex_relay_stream();
+        let mut collector = SseUsageCollector::default();
+        collector.push_chunk(GatewayCliKey::Codex, stream.as_bytes());
+        let usage = collector.finish(GatewayCliKey::Codex);
+        assert_eq!(usage.input_tokens, Some(120));
+        assert_eq!(usage.output_tokens, Some(40));
+        assert_eq!(usage.envelope_id.as_deref(), Some("resp_x"));
+    }
+
+    #[test]
+    fn flattened_stream_terminal_found_mid_stream_before_long_tail() {
+        // A flattened stream whose `response.completed` is followed by a long
+        // relay tail: the tail must not push the terminal out of the window.
+        let padding = "y".repeat(MAX_SSE_USAGE_BUFFER_BYTES + 4096);
+        let tail = format!(
+            "event: codex.event.balance data: {{\"type\":\"codex.event.balance\",\"note\":\"{padding}\"}}"
+        );
+        let stream = format!("{} {}", flattened_codex_relay_stream(), tail);
+        let mut collector = SseUsageCollector::default();
+        collector.observe_chunk(stream.as_bytes());
+        assert_eq!(
+            collector.terminal_kind(),
+            Some(SseTerminalKind::Success),
+            "terminal before an oversized tail must be found during in-place scan"
+        );
+    }
+
+    #[test]
+    fn flattened_stream_with_line_break_separators_is_classified() {
+        // A milder relay quirk: events separated by a single newline but with no
+        // blank-line delimiter between events. take_sse_block still never forms
+        // a block; the flattened scanner must handle it because a field token at
+        // a line start is preceded by whitespace.
+        let stream = flattened_codex_relay_stream()
+            .split(" event: ")
+            .collect::<Vec<_>>()
+            .join("\nevent: ");
+        assert_eq!(
+            sse_block_classify_terminal(stream.as_bytes()),
+            Some(SseTerminalKind::Success)
+        );
+    }
+
+    #[test]
+    fn flattened_scanner_survives_adversarial_inputs() {
+        // Degenerate or truncated inputs must classify without panicking; a
+        // trailing `event:`/`data:` token with no value is simply ignored.
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"data:",
+            b"data: ",
+            b"event:",
+            b"event: ",
+            b"event: data: {}",
+            b"data: {invalid json",
+            b"data: {\"error\":",
+            b"event: response.completed data: ",
+            b"event: response.completed data: {\"type\":\"response.completed\"",
+            b"\xff\xfe data: {}",
+            b"data: {} data: [DONE] data: {",
+        ];
+        for input in inputs {
+            let _ = sse_block_classify_terminal(input);
+            let mut collector = SseUsageCollector::default();
+            collector.push_chunk(GatewayCliKey::Codex, input);
+            collector.observe_chunk(input);
+            let _ = collector.finish(GatewayCliKey::Codex);
+        }
+        // Invalid UTF-8 before a genuine terminal still classifies (lossy read);
+        // a truncated completed payload stays None instead of guessing Success.
+        assert_eq!(
+            sse_block_classify_terminal(b"\xff\xfe event: error data: {}"),
+            Some(SseTerminalKind::Failed)
+        );
+        assert_eq!(
+            sse_block_classify_terminal(
+                b"event: response.completed data: {\"type\":\"response.completed\""
+            ),
+            None
         );
     }
 
