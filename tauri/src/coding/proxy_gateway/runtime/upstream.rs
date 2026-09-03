@@ -6621,6 +6621,9 @@ fn apply_anthropic_provider_body_compat(
     object: &mut serde_json::Map<String, Value>,
     provider_kind: Option<ProviderBodyCompat>,
 ) {
+    if provider_kind == Some(ProviderBodyCompat::Zai) {
+        clamp_zai_anthropic_user_id(object);
+    }
     if matches!(
         provider_kind,
         Some(
@@ -7077,6 +7080,35 @@ fn ensure_vendor_request_id(object: &mut serde_json::Map<String, Value>) {
         Value::String(format!("req_{timestamp_ms}")),
     );
 }
+
+/// GLM/Zai's Anthropic-compatible endpoint validates `metadata.user_id` as
+/// 6-128 characters (HTTP 1214). Clients like Claude Code send a ~150-char
+/// JSON blob here; clamp long values to 128 chars and drop short ones so the
+/// request is accepted without losing the field entirely. Operates in place
+/// on the Anthropic body (the field stays under `metadata.user_id`).
+fn clamp_zai_anthropic_user_id(object: &mut serde_json::Map<String, Value>) {
+    let Some(metadata) = object.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(user_id) = metadata.get("user_id").and_then(Value::as_str) else {
+        return;
+    };
+    let char_count = user_id.chars().count();
+    if (MIN_ZAI_USER_ID_LEN..=MAX_ZAI_USER_ID_LEN).contains(&char_count) {
+        return;
+    }
+    if char_count > MAX_ZAI_USER_ID_LEN {
+        let clamped: String = user_id.chars().take(MAX_ZAI_USER_ID_LEN).collect();
+        metadata.insert("user_id".to_string(), Value::String(clamped));
+    } else {
+        // Below the minimum: drop rather than emit a value the upstream rejects.
+        metadata.remove("user_id");
+    }
+}
+
+/// GLM/Zai accept `user_id` values of 6-128 characters (error 1214).
+const MIN_ZAI_USER_ID_LEN: usize = 6;
+const MAX_ZAI_USER_ID_LEN: usize = 128;
 
 fn force_tool_choice_auto(object: &mut serde_json::Map<String, Value>) {
     if object.get("tool_choice").is_some() {
@@ -15728,6 +15760,53 @@ data: {data}\r\n\r\n"
         assert!(value["request_id"]
             .as_str()
             .is_some_and(|request_id| request_id.starts_with("req_")));
+    }
+
+    #[test]
+    fn provider_body_compat_zai_anthropic_clamps_user_id_length() {
+        // Claude Code sends a ~150-char JSON blob as metadata.user_id; GLM's
+        // anthropic endpoint rejects anything outside 6-128 chars (error 1214).
+        let long_user_id = "x".repeat(150);
+        let body = format!(
+            r#"{{"model":"glm-4.7","metadata":{{"user_id":"{long_user_id}"}},"messages":[{{"role":"user","content":"hi"}}]}}"#
+        );
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.into_bytes(),
+            None,
+            AiProtocol::AnthropicMessages,
+            "glm",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let user_id = value["metadata"]["user_id"].as_str().expect("user_id");
+        assert_eq!(user_id.chars().count(), 128);
+        assert!(user_id.chars().all(|c| c == 'x'));
+
+        // Valid length is preserved verbatim.
+        let body = br#"{"model":"glm-4.7","metadata":{"user_id":"user-123"},"messages":[{"role":"user","content":"hi"}]}"#;
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::AnthropicMessages,
+            "zhipu",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["metadata"]["user_id"], "user-123");
+
+        // Too short (<6) is dropped so the upstream doesn't reject it.
+        let body = br#"{"model":"glm-4.7","metadata":{"user_id":"abc","request_id":"r1"},"messages":[{"role":"user","content":"hi"}]}"#;
+        let body = apply_outbound_adapter_compat_for_provider_type(
+            body.to_vec(),
+            None,
+            AiProtocol::AnthropicMessages,
+            "zai",
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(value["metadata"].get("user_id").is_none());
+        // Other metadata keys are untouched.
+        assert_eq!(value["metadata"]["request_id"], "r1");
     }
 
     #[test]

@@ -35,6 +35,18 @@
         ["g", "AAAAABfixture-openai-responses-signature"].concat()
     }
 
+    /// Builds a realistic Anthropic thinking-signature fixture: standard base64
+    /// whose decoded opaque bytes embed a Claude model marker, so
+    /// `guess_signature_provider` recognizes it as Anthropic without an explicit
+    /// marker. The `label` keeps parallel SSE tests distinguishable.
+    fn anthropic_signature_fixture(label: &str) -> String {
+        use base64::Engine;
+        let mut bytes = vec![0x12, 0xad, 0x02, 0x0a, 0x89, 0x01];
+        bytes.extend_from_slice(b"claude-sonnet-5 ");
+        bytes.extend_from_slice(label.as_bytes());
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    }
+
     fn request_fixture(protocol: AiProtocol) -> Value {
         match protocol {
             AiProtocol::AnthropicMessages => json!({
@@ -2253,6 +2265,39 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             gemini["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "get_weather"
         );
+    }
+
+    #[test]
+    fn responses_type_only_tool_choice_survives_to_responses_and_gemini() {
+        let source = json!({
+            "model": "gpt-4o",
+            "input": "hi",
+            "tool_choice": {"type": "image_generation"}
+        });
+
+        // Responses -> Responses: type-only round-trips cleanly via the IR
+        // (no longer relies on the raw-preservation path).
+        let responses = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiResponses),
+            source.clone(),
+        )
+        .unwrap();
+        assert_eq!(responses["tool_choice"], json!({"type": "image_generation"}));
+
+        // Responses -> Gemini: a type-only choice must not emit an empty
+        // allowedFunctionNames entry; it degrades to mode ANY.
+        let gemini = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            source,
+        )
+        .unwrap();
+        assert_eq!(
+            gemini["toolConfig"]["functionCallingConfig"]["mode"],
+            "ANY"
+        );
+        assert!(gemini
+            .pointer("/toolConfig/functionCallingConfig/allowedFunctionNames")
+            .is_none());
     }
 
     #[test]
@@ -5865,15 +5910,22 @@ data: {"type":"message_stop"}
 
     #[test]
     fn anthropic_sse_defers_signature_until_thinking_block_close() {
+        let signature = anthropic_signature_fixture("stream-signature");
+        let signature_chunk = [
+            r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":""#,
+            signature.as_str(),
+            r#""}}]}
+
+"#,
+        ]
+        .concat();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
             [
                 r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
 
 "#,
-                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQstream-signature"}}]}
-
-"#,
+                signature_chunk.as_str(),
                 r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
 
 "#,
@@ -5911,7 +5963,7 @@ data: {"type":"message_stop"}
             values[signature_index]
                 .pointer("/delta/signature")
                 .and_then(Value::as_str),
-            Some("EqQstream-signature")
+            Some(signature.as_str())
         );
         assert!(signature_index < thinking_stop_index);
         assert!(thinking_stop_index < text_start_index);
@@ -5919,15 +5971,22 @@ data: {"type":"message_stop"}
 
     #[test]
     fn anthropic_sse_signature_only_creates_synthetic_thinking_block() {
+        let signature = anthropic_signature_fixture("signature-only");
+        let signature_chunk = [
+            r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":""#,
+            signature.as_str(),
+            r#""}}]}
+
+"#,
+        ]
+        .concat();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
             [
                 r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
 
 "#,
-                r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-only"}}]}
-
-"#,
+                signature_chunk.as_str(),
                 r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
 "#,
@@ -5961,21 +6020,28 @@ data: {"type":"message_stop"}
             values[signature_delta]
                 .pointer("/delta/signature")
                 .and_then(Value::as_str),
-            Some("EqQsignature-only")
+            Some(signature.as_str())
         );
     }
 
     #[test]
     fn anthropic_sse_signature_before_text_creates_synthetic_thinking_before_text() {
+        let signature = anthropic_signature_fixture("signature-before-text");
+        let signature_chunk = [
+            r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":""#,
+            signature.as_str(),
+            r#""}}]}
+
+"#,
+        ]
+        .concat();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
             [
                 r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
 
 "#,
-                r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-before-text"}}]}
-
-"#,
+                signature_chunk.as_str(),
                 r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"content":"Answer"}}]}
 
 "#,
@@ -6010,7 +6076,7 @@ data: {"type":"message_stop"}
             values[signature_delta]
                 .pointer("/delta/signature")
                 .and_then(Value::as_str),
-            Some("EqQsignature-before-text")
+            Some(signature.as_str())
         );
         assert!(signature_delta < thinking_stop);
         assert!(thinking_stop < text_start);
@@ -6018,15 +6084,22 @@ data: {"type":"message_stop"}
 
     #[test]
     fn anthropic_sse_signature_before_tool_creates_synthetic_thinking_before_tool() {
+        let signature = anthropic_signature_fixture("signature-before-tool");
+        let signature_chunk = [
+            r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":""#,
+            signature.as_str(),
+            r#""}}]}
+
+"#,
+        ]
+        .concat();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
             [
                 r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
 
 "#,
-                r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-before-tool"}}]}
-
-"#,
+                signature_chunk.as_str(),
                 r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
 
 "#,
@@ -6062,7 +6135,7 @@ data: {"type":"message_stop"}
             values[signature_delta]
                 .pointer("/delta/signature")
                 .and_then(Value::as_str),
-            Some("EqQsignature-before-tool")
+            Some(signature.as_str())
         );
         assert!(signature_delta < thinking_stop);
         assert!(thinking_stop < tool_start);
@@ -6070,6 +6143,15 @@ data: {"type":"message_stop"}
 
     #[test]
     fn anthropic_sse_signature_after_thinking_flushes_on_finish() {
+        let signature = anthropic_signature_fixture("signature-finish");
+        let signature_chunk = [
+            r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":""#,
+            signature.as_str(),
+            r#""}}]}
+
+"#,
+        ]
+        .concat();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
             [
@@ -6079,9 +6161,7 @@ data: {"type":"message_stop"}
                 r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
 
 "#,
-                r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-finish"}}]}
-
-"#,
+                signature_chunk.as_str(),
                 r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
 "#,

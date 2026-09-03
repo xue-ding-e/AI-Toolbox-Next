@@ -72,7 +72,7 @@ pub struct NamedToolChoice {
     pub function: ToolFunction,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ToolFunction {
     pub name: String,
 }

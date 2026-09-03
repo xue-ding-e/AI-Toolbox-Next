@@ -91,21 +91,52 @@ fn parse_marked_signature(value: &str) -> Option<SignatureValue> {
 }
 
 pub fn guess_signature_provider(raw: &str) -> SignatureProvider {
-    let value = raw.trim_matches('"');
+    let value = raw.trim().trim_matches('"').trim();
     if value.starts_with("gAAAA") || value.starts_with("gAAA") {
         return SignatureProvider::OpenAiResponses;
     }
-    if value.starts_with("EqQ") || value.starts_with("Eqo") || value.starts_with("Eqr") {
-        return SignatureProvider::Anthropic;
-    }
     if is_standard_base64(value) {
-        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(value) {
+        if let Some(bytes) = decode_std_base64(value) {
+            // Real Anthropic thinking signatures are opaque (often
+            // protobuf-like) bytes that embed the model name, so the marker
+            // check must precede the Gemini protobuf heuristic — otherwise a
+            // valid Anthropic signature would be misclassified as Gemini.
+            if contains_anthropic_model(&bytes) {
+                return SignatureProvider::Anthropic;
+            }
             if looks_like_protobuf(&bytes) {
                 return SignatureProvider::Gemini;
             }
         }
     }
     SignatureProvider::Unknown
+}
+
+/// Decodes standard Base64 accepting both padded and unpadded forms. Anthropic
+/// signatures are opaque bytes and commonly have a length divisible by three,
+/// but accepting the unpadded form keeps detection safe across proxies/clients.
+fn decode_std_base64(value: &str) -> Option<Vec<u8>> {
+    if value.contains('=') {
+        base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .ok()
+    } else {
+        base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(value)
+            .ok()
+    }
+}
+
+/// Checks decoded opaque bytes for an Anthropic model marker. Signatures are
+/// binary (often protobuf-like), so the model name is matched as an ASCII
+/// substring rather than parsing the whole payload as text or wire format.
+fn contains_anthropic_model(buf: &[u8]) -> bool {
+    let lower: Vec<u8> = buf.iter().map(|byte| byte.to_ascii_lowercase()).collect();
+    contains_subslice(&lower, b"claude") || contains_subslice(&lower, b"anthropic")
+}
+
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|window| window == needle)
 }
 
 fn is_standard_base64(value: &str) -> bool {
@@ -238,14 +269,31 @@ mod tests {
         );
     }
 
+    // Mirrors a current Anthropic signature: the encoded value starts with
+    // "Eq0C" and its opaque decoded payload contains a Claude model name. This
+    // is also protobuf-like, so it doubles as the ordering regression case —
+    // it must classify as Anthropic, not Gemini.
+    const REAL_ANTHROPIC_SIGNATURE: &str = "Eq0CCokBCBAYAipAmkim+S4ApjNpcVSh82hYj016e9aYlvNfdj8ZaVbASj64fkCHtgDxjvumIhTpVr6WsoYoGyBtZOuoFPg7JUV7vjIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRjYTEwYTFhOS03ZWFmLTRiZDUtYWFkMy1iY2MyY2Q1MWQ1MDgSDETIROQHvz1/jQbeLxIMwjZzeFruDsqTqYxwGgy4ekwdZi3oeDEsWGsiMD3w0HGjBb28dNuTqZE1X2zCSndpSwOWYwRhbrXFV8RIg6jFiS+MSo6Gt0QUFWKh4CpD8q8wDmAKZYQ45z+1rFBwX7SWdXo02qQNUkGIwm1fTFf/GIRTRwIUTNdG35tcDHWh6pJ/if5LjcPdJTMiiw+bFgPTCBgB";
+
     #[test]
     fn guesses_provider_from_unmarked_known_shapes() {
         assert_eq!(
             guess_signature_provider(concat!("g", "AAAAABfixture-openai")),
             SignatureProvider::OpenAiResponses
         );
+        // Old Eq*/Eqo*/Eqr* prefixes without a decoded model marker are no
+        // longer recognized as Anthropic on prefix alone.
         assert_eq!(
             guess_signature_provider("EqQBCAEDEgQIAhAEGAAgAigBMOzOAg=="),
+            SignatureProvider::Unknown
+        );
+        assert_eq!(guess_signature_provider("EqoBxxxxxxxx"), SignatureProvider::Unknown);
+        assert_eq!(guess_signature_provider("EqrBxxxxxxxx"), SignatureProvider::Unknown);
+        assert_eq!(guess_signature_provider("EqQ"), SignatureProvider::Unknown);
+        // Decoded payload carrying a Claude model marker is recognized as
+        // Anthropic even though it is also protobuf-shaped.
+        assert_eq!(
+            guess_signature_provider(REAL_ANTHROPIC_SIGNATURE),
             SignatureProvider::Anthropic
         );
         assert_eq!(
@@ -256,6 +304,33 @@ mod tests {
             guess_signature_provider("plain-unknown-signature"),
             SignatureProvider::Unknown
         );
+    }
+
+    #[test]
+    fn anthropic_signature_with_claude_marker_beats_gemini_protobuf_shape() {
+        // Order regression: a payload that is both protobuf-like AND embeds a
+        // Claude model name must resolve to Anthropic, never Gemini.
+        let mut binary_signature = vec![0x12, 0xad, 0x02, 0x0a, 0x89, 0x01];
+        binary_signature.extend_from_slice(
+            b"claude-sonnet-5 thinking ca10a1a9-7eaf-4bd5-aad3-bcc2cd51d508",
+        );
+        let raw = base64::engine::general_purpose::STANDARD.encode(&binary_signature);
+        assert_eq!(
+            guess_signature_provider(&raw),
+            SignatureProvider::Anthropic
+        );
+    }
+
+    #[test]
+    fn contains_anthropic_model_detects_markers_case_insensitively() {
+        assert!(contains_anthropic_model(&[
+            0x12, 0x03, 0x00, b'C', b'l', b'a', b'u', b'd', b'e'
+        ]));
+        assert!(contains_anthropic_model(&[
+            0x00, 0x01, b'a', b'n', b't', b'h', b'r', b'o', b'p', b'i', b'c'
+        ]));
+        assert!(!contains_anthropic_model(&[0x0a, 0x02, 0x08, 0x01]));
+        assert!(contains_anthropic_model(b"CLAUDE-OPUS"));
     }
 
     #[test]

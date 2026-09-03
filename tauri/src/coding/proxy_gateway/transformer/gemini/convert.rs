@@ -1032,6 +1032,12 @@ fn gemini_tool_config(choice: Option<ToolChoice>) -> Option<Value> {
                 }
             }
         })),
+        // A type-only tool choice (e.g. "image_generation") has no function
+        // name to constrain; emit ANY so Gemini still requires a tool call
+        // without pinning to an empty/invalid function name.
+        Some(ToolChoice::Named(named)) if named.function.name.is_empty() => Some(json!({
+            "functionCallingConfig": {"mode": "ANY"}
+        })),
         Some(ToolChoice::Named(named)) => Some(json!({
             "functionCallingConfig": {
                 "mode": "ANY",

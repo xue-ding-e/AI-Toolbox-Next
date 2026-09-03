@@ -422,15 +422,21 @@ pub fn tool_choice_from_openai(value: Option<&Value>) -> Option<ToolChoice> {
             if let Some(mode) = object.get("mode").and_then(Value::as_str) {
                 return Some(ToolChoice::String(mode.to_string()));
             }
+            // Require a `type` (e.g. "function", "image_generation") and treat
+            // `name` as optional so type-only tool choices survive a
+            // cross-protocol trip instead of being dropped by the inbound
+            // parser. The real `type` is preserved rather than hardcoded to
+            // "function".
+            let choice_type = object.get("type").and_then(Value::as_str)?;
             let name = object
                 .get("function")
                 .and_then(|function| function.get("name"))
                 .or_else(|| object.get("name"))
-                .and_then(Value::as_str)?;
+                .and_then(Value::as_str);
             Some(ToolChoice::Named(NamedToolChoice {
-                choice_type: "function".to_string(),
+                choice_type: choice_type.to_string(),
                 function: ToolFunction {
-                    name: name.to_string(),
+                    name: name.unwrap_or_default().to_string(),
                 },
             }))
         }
@@ -476,11 +482,13 @@ pub fn tool_choice_to_anthropic(choice: Option<ToolChoice>) -> Option<Value> {
                 _ => "auto",
             }
         })),
-        Some(ToolChoice::Named(named)) => Some(json!({
+        // Anthropic `tool` tool_choice requires a name; a type-only choice
+        // (e.g. "image_generation") has no Anthropic equivalent and is dropped.
+        Some(ToolChoice::Named(named)) if !named.function.name.is_empty() => Some(json!({
             "type": "tool",
             "name": named.function.name
         })),
-        None => None,
+        _ => None,
     }
 }
 
@@ -491,7 +499,9 @@ pub fn tool_choice_to_openai(choice: Option<ToolChoice>) -> Option<Value> {
         } else {
             choice.as_str()
         })),
-        Some(ToolChoice::Named(named)) => Some(json!({
+        // OpenAI Chat tool_choice always needs `function.name`; a type-only
+        // choice cannot be expressed in the Chat shape and is dropped.
+        Some(ToolChoice::Named(named)) if !named.function.name.is_empty() => Some(json!({
             "type": "function",
             "function": {
                 "name": named.function.name
@@ -508,10 +518,16 @@ pub fn tool_choice_to_responses(choice: Option<ToolChoice>) -> Option<Value> {
         } else {
             choice.as_str()
         })),
-        Some(ToolChoice::Named(named)) => Some(json!({
-            "type": "function",
-            "name": named.function.name
-        })),
+        // Preserve the real `type` and omit `name` when empty so type-only
+        // Responses tool choices (e.g. "image_generation") round-trip cleanly.
+        Some(ToolChoice::Named(named)) => {
+            let mut tool_choice = serde_json::Map::new();
+            tool_choice.insert("type".to_string(), json!(named.choice_type));
+            if !named.function.name.is_empty() {
+                tool_choice.insert("name".to_string(), json!(named.function.name));
+            }
+            Some(Value::Object(tool_choice))
+        }
         _ => None,
     }
 }
@@ -597,5 +613,72 @@ mod tests {
             tool_arguments_value(r#"{"path":"README.md""#),
             Value::String(r#"{"path":"README.md""#.to_string())
         );
+    }
+
+    #[test]
+    fn tool_choice_from_openai_preserves_type_only_choice() {
+        // type-only choice (e.g. image_generation) survives without a name
+        let named = match tool_choice_from_openai(Some(&json!({"type": "image_generation"}))) {
+            Some(ToolChoice::Named(named)) => named,
+            other => panic!("expected Named, got {other:?}"),
+        };
+        assert_eq!(named.choice_type, "image_generation");
+        assert_eq!(named.function.name, "");
+
+        // type + name is preserved with the real type (not hardcoded "function")
+        let named = match tool_choice_from_openai(Some(&json!({
+            "type": "function", "name": "get_weather"
+        }))) {
+            Some(ToolChoice::Named(named)) => named,
+            other => panic!("expected Named, got {other:?}"),
+        };
+        assert_eq!(named.choice_type, "function");
+        assert_eq!(named.function.name, "get_weather");
+
+        // Chat shape: function.name nested under "function"
+        let named = match tool_choice_from_openai(Some(&json!({
+            "type": "function", "function": {"name": "get_weather"}
+        }))) {
+            Some(ToolChoice::Named(named)) => named,
+            other => panic!("expected Named, got {other:?}"),
+        };
+        assert_eq!(named.function.name, "get_weather");
+
+        // no type at all -> None (cannot form a Named choice without a type)
+        assert_eq!(tool_choice_from_openai(Some(&json!({"name": "x"}))), None);
+    }
+
+    #[test]
+    fn tool_choice_to_responses_omits_empty_name_and_preserves_type() {
+        // type-only -> {"type": "image_generation"} (no name key)
+        assert_eq!(
+            tool_choice_to_responses(Some(ToolChoice::Named(NamedToolChoice {
+                choice_type: "image_generation".to_string(),
+                function: ToolFunction::default(),
+            }))),
+            Some(json!({"type": "image_generation"}))
+        );
+
+        // type + name -> both keys, real type preserved
+        assert_eq!(
+            tool_choice_to_responses(Some(ToolChoice::Named(NamedToolChoice {
+                choice_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "get_weather".to_string(),
+                },
+            }))),
+            Some(json!({"type": "function", "name": "get_weather"}))
+        );
+    }
+
+    #[test]
+    fn tool_choice_to_openai_and_anthropic_drop_type_only_choice() {
+        let type_only = ToolChoice::Named(NamedToolChoice {
+            choice_type: "image_generation".to_string(),
+            function: ToolFunction::default(),
+        });
+        // Chat and Anthropic cannot express a type-only choice -> dropped
+        assert_eq!(tool_choice_to_openai(Some(type_only.clone())), None);
+        assert_eq!(tool_choice_to_anthropic(Some(type_only)), None);
     }
 }
