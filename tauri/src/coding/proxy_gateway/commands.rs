@@ -417,43 +417,60 @@ pub fn proxy_gateway_request_logs(
 }
 
 #[tauri::command]
-pub fn proxy_gateway_request_log_detail(
+pub async fn proxy_gateway_request_log_detail(
     app: tauri::AppHandle,
     db_state: tauri::State<'_, SqliteDbState>,
     trace_id: String,
 ) -> Result<Option<GatewayRequestLogDetail>, String> {
-    load_request_log_detail(&app, &db_state, &trace_id)
+    let db = db_state.inner().clone();
+    // `app.path()` must run on the command thread; the file IO below is
+    // offloaded to a blocking task so a huge residual JSONL scan can no longer
+    // freeze the webview (issue #324).
+    let paths = proxy_gateway_paths(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        load_request_log_detail(&paths, &db, &trace_id).map(|opt| {
+            opt.map(truncate_bodies_for_display)
+                .map(sanitize_request_log_detail_for_display)
+        })
+    })
+    .await
+    .map_err(|join_error| format!("Gateway request detail load failed: {join_error}"))?
 }
 
 #[tauri::command]
-pub fn proxy_gateway_export_request_log_detail(
+pub async fn proxy_gateway_export_request_log_detail(
     app: tauri::AppHandle,
     db_state: tauri::State<'_, SqliteDbState>,
     trace_id: String,
     export_path: String,
 ) -> Result<(), String> {
-    let detail = load_request_log_detail(&app, &db_state, &trace_id)?
-        .ok_or_else(|| "Gateway request detail not found".to_string())?;
-    let export_json = build_request_log_detail_export(&detail);
-    write_export_json(Path::new(&export_path), &export_json)
+    let db = db_state.inner().clone();
+    let paths = proxy_gateway_paths(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let detail = load_request_log_detail(&paths, &db, &trace_id)?
+            .ok_or_else(|| "Gateway request detail not found".to_string())?;
+        let export_json = build_request_log_detail_export(&detail);
+        write_export_json(Path::new(&export_path), &export_json)
+    })
+    .await
+    .map_err(|join_error| format!("Gateway request detail export failed: {join_error}"))?
 }
 
 fn load_request_log_detail(
-    app: &tauri::AppHandle,
+    paths: &ProxyGatewayPaths,
     db_state: &SqliteDbState,
     trace_id: &str,
 ) -> Result<Option<GatewayRequestLogDetail>, String> {
-    let paths = proxy_gateway_paths(app)?;
     if let Some((detail_file, detail_offset)) =
         usage_stats::request_log_location(db_state, trace_id)?
     {
         if let Some(detail) =
-            request_log::get_request_log_detail_at(&paths, &detail_file, detail_offset, trace_id)?
+            request_log::get_request_log_detail_at(paths, &detail_file, detail_offset, trace_id)?
         {
             return Ok(Some(sanitize_request_log_detail_for_display(detail)));
         }
     }
-    if let Some(detail) = request_log::get_request_log_detail(&paths, trace_id)? {
+    if let Some(detail) = request_log::get_request_log_detail(paths, trace_id)? {
         return Ok(Some(sanitize_request_log_detail_for_display(detail)));
     }
     usage_stats::request_log_detail_from_summary(db_state, trace_id)
@@ -470,6 +487,46 @@ fn sanitize_request_log_detail_for_display(
         .as_deref()
         .map(request_log::redact_request_path);
     detail
+}
+
+/// Maximum body bytes shipped across IPC to the webview for the detail dialog.
+/// A single Codex turn can carry hundreds of KiB of request/response body;
+/// rendering all of it (and `CollapsiblePre`'s line-count scan over it) can
+/// peg the webview. Exports still carry the full bodies for diagnosis.
+const MAX_DISPLAY_BODY_BYTES: usize = 256 * 1024;
+
+/// Truncate each request/response body to [`MAX_DISPLAY_BODY_BYTES`] with a
+/// trailing marker, only on the UI display path. The export path keeps full
+/// bodies so maintainers can still diagnose "failed request shows consumption".
+fn truncate_bodies_for_display(mut detail: GatewayRequestLogDetail) -> GatewayRequestLogDetail {
+    detail.request_body = truncate_body_text(detail.request_body.take());
+    detail.upstream_request_body = truncate_body_text(detail.upstream_request_body.take());
+    detail.response_body = truncate_body_text(detail.response_body.take());
+    detail.upstream_response_body = truncate_body_text(detail.upstream_response_body.take());
+    detail
+}
+
+fn truncate_body_text(body: Option<String>) -> Option<String> {
+    let text = body?;
+    if text.len() <= MAX_DISPLAY_BODY_BYTES {
+        return Some(text);
+    }
+    // Walk to the last char boundary at or below the byte cap so the cut never
+    // splits a UTF-8 sequence.
+    let cut = text
+        .char_indices()
+        .take_while(|(byte_index, _)| *byte_index < MAX_DISPLAY_BODY_BYTES)
+        .last()
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(0);
+    let mut truncated = String::with_capacity(cut + 128);
+    truncated.push_str(&text[..cut]);
+    truncated.push_str(&format!(
+        "\n\n…[truncated: {} total bytes, {} shown — export the request for the full body]",
+        text.len(),
+        cut
+    ));
+    Some(truncated)
 }
 
 fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
@@ -783,6 +840,33 @@ mod tests {
         assert_eq!(redacted["first_token_ms"], 312);
         assert_eq!(redacted["access_token"], "xxx");
         assert_eq!(redacted["csrf_token"], "xxx");
+    }
+
+    #[test]
+    fn truncate_body_text_keeps_small_bodies_intact() {
+        assert_eq!(truncate_body_text(None), None);
+        assert_eq!(
+            truncate_body_text(Some("small body".to_string())),
+            Some("small body".to_string())
+        );
+    }
+
+    #[test]
+    fn truncate_body_text_caps_oversized_body_at_char_boundary() {
+        // A multi-megabyte body must be capped for the webview and carry a
+        // truncation marker; the cut must land on a UTF-8 boundary so the
+        // displayed prefix is not split mid-codepoint.
+        let body = "中".repeat(MAX_DISPLAY_BODY_BYTES); // each char is 3 bytes
+        let total_bytes = body.len();
+        let truncated = truncate_body_text(Some(body)).unwrap();
+        assert!(truncated.len() < total_bytes);
+        assert!(truncated.contains("[truncated"));
+        // The cap is a char boundary here, so the prefix is valid UTF-8.
+        let prefix_end = truncated
+            .find("\n\n…[truncated")
+            .expect("truncation marker present");
+        assert!(std::str::from_utf8(&truncated.as_bytes()[..prefix_end]).is_ok());
+        assert!(prefix_end <= MAX_DISPLAY_BODY_BYTES);
     }
 
     #[test]

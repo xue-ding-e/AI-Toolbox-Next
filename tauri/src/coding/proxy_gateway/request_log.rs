@@ -13,6 +13,11 @@ const REDACTED: &str = "[REDACTED]";
 const REQUEST_LOG_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_LOG_LIST_LIMIT: usize = 100;
 const MAX_LOG_LIST_LIMIT: usize = 500;
+/// Upper bound on a single JSONL file the trace-id fallback
+/// ([`get_request_log_detail`]) is willing to read into memory. Rows whose
+/// persisted detail locator works never hit that fallback; this only guards
+/// the residual case so an oversized log can no longer freeze the app.
+const MAX_FALLBACK_SCAN_FILE_KB: u64 = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestLogLocation {
@@ -297,6 +302,32 @@ pub fn get_request_log_detail(
     }
 
     for file_path in request_log_files_newest_first(paths)? {
+        // The trace-id fallback only runs when the persisted detail locator is
+        // missing or stale. Loading a multi-hundred-MB JSONL into a single
+        // `String` here froze the app (issue #324) even with the load offloaded
+        // to a blocking task. Skip oversized files: rows whose locator works use
+        // the fast `get_request_log_detail_at` path, and rows without a usable
+        // locator on an oversized file fall through to the DB-only summary.
+        let file_size = match fs::metadata(&file_path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                log::warn!(
+                    "Skipping unreadable proxy gateway request log {}: {error}",
+                    file_path.display()
+                );
+                continue;
+            }
+        };
+        if file_size > u64::from(MAX_FALLBACK_SCAN_FILE_KB) * 1024 {
+            log::warn!(
+                "Skipping proxy gateway request log {} ({} KB > {} KB fallback cap); \
+                 use the detail locator instead of the trace-id scan",
+                file_path.display(),
+                file_size / 1024,
+                MAX_FALLBACK_SCAN_FILE_KB,
+            );
+            continue;
+        }
         let content = fs::read_to_string(&file_path).map_err(|error| {
             format!(
                 "Failed to read proxy gateway request log {}: {}",
