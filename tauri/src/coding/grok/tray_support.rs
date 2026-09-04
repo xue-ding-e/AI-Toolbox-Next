@@ -18,7 +18,16 @@ pub struct TrayProviderItem {
 #[derive(Debug, Clone)]
 pub struct TrayProviderData {
     pub title: String,
+    pub current_display: String,
     pub items: Vec<TrayProviderItem>,
+}
+
+fn find_provider_display_name(items: &[TrayProviderItem]) -> String {
+    items
+        .iter()
+        .find(|item| item.is_selected)
+        .map(|item| item.display_name.clone())
+        .unwrap_or_default()
 }
 #[derive(Debug, Clone)]
 pub struct TrayModelItem {
@@ -94,8 +103,10 @@ pub async fn get_grok_tray_data<R: Runtime>(
         })
         .collect::<Vec<_>>();
     items.sort_by_key(|item| item.sort_index);
+    let current_display = find_provider_display_name(&items);
     Ok(TrayProviderData {
         title: "Grok".to_string(),
+        current_display,
         items,
     })
 }

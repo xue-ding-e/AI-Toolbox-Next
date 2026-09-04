@@ -23,6 +23,76 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Validate and normalize a user-selected working directory for CLI launch.
+///
+/// Returns `Ok(None)` when `cwd` is empty/absent (launch without `cd`).
+/// Rejects paths with newlines (shell injection guard), verifies the path
+/// exists and is a directory, and canonicalizes it. On Windows the canonical
+/// `\\?\` verbatim prefix — which `cmd.exe` dislikes — is stripped so the
+/// path is safe to embed in a `.bat` `cd /d` line.
+pub fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
+    let Some(raw) = cwd.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err("Directory path contains illegal newline".to_string());
+    }
+
+    let path = Path::new(&raw);
+    if !path.exists() {
+        return Err(format!("Directory does not exist: {raw}"));
+    }
+
+    let resolved = std::fs::canonicalize(path)
+        .map_err(|e| format!("Failed to resolve directory: {e}"))?;
+    if !resolved.is_dir() {
+        return Err(format!("Selected path is not a directory: {}", resolved.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let resolved = strip_verbatim_prefix(&resolved);
+        return Ok(Some(resolved));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    Ok(Some(resolved))
+}
+
+/// Strip the `\\?\` verbatim prefix that `std::fs::canonicalize` adds on Windows
+/// so the path works inside `.bat` scripts and `cmd.exe`.
+#[cfg(target_os = "windows")]
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut components = path.components();
+    let Some(first) = components.next() else {
+        return path.to_path_buf();
+    };
+
+    match first {
+        Component::Prefix(prefix) => match prefix.kind() {
+            std::path::Prefix::VerbatimDisk(letter) => {
+                let rest: PathBuf = components.collect();
+                let mut result = PathBuf::from(format!("{letter}:"));
+                result.push(rest);
+                result
+            }
+            std::path::Prefix::VerbatimUNC(server, share) => {
+                let mut result = PathBuf::from(r"\\");
+                result.push(server);
+                result.push(share);
+                let rest: PathBuf = components.collect();
+                result.push(rest);
+                result
+            }
+            _ => path.to_path_buf(),
+        },
+        _ => path.to_path_buf(),
+    }
+}
+
 /// Build a minimal Claude settings object from a provider's stored settings_config JSON.
 /// Only non-empty string env values are kept (same idea as cc-switch).
 pub fn build_minimal_temp_settings(settings_config: &str) -> Result<Value, String> {
@@ -303,6 +373,7 @@ pub fn launch_claude_provider_cli_session(
     provider_id: &str,
     settings_config: &str,
     full_access: bool,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_settings = build_minimal_temp_settings(settings_config)?;
     let include_settings = temp_settings_has_env(&temp_settings);
@@ -314,6 +385,7 @@ pub fn launch_claude_provider_cli_session(
             &temp_settings,
             include_settings,
             full_access,
+            cwd,
         ),
         RuntimeLocationMode::WslDirect => {
             let wsl = runtime_location
@@ -327,6 +399,7 @@ pub fn launch_claude_provider_cli_session(
                 &temp_settings,
                 include_settings,
                 full_access,
+                cwd,
             )
         }
     }
@@ -338,6 +411,7 @@ fn launch_local_session(
     temp_settings: &Value,
     include_settings: bool,
     full_access: bool,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let safe_id = sanitize_provider_id_for_filename(provider_id);
 
@@ -368,6 +442,7 @@ fn launch_local_session(
             full_access,
             &safe_id,
             pid,
+            cwd,
         )?;
         return Ok(());
     }
@@ -380,6 +455,7 @@ fn launch_local_session(
             settings_path_str.as_deref(),
             &claude_program,
             full_access,
+            cwd,
         )?;
         return Ok(());
     }
@@ -392,6 +468,7 @@ fn launch_local_session(
             settings_path_str.as_deref(),
             &claude_program,
             full_access,
+            cwd,
         )?;
         return Ok(());
     }
@@ -417,6 +494,7 @@ fn launch_wsl_session(
     temp_settings: &Value,
     include_settings: bool,
     full_access: bool,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let safe_id = sanitize_provider_id_for_filename(provider_id);
     let pid = std::process::id();
@@ -451,9 +529,28 @@ fn launch_wsl_session(
     let cleanup = unix_rm_command(&cleanup_paths);
     let trap_cleanup = unix_trap_cleanup_line(&cleanup_paths);
 
+    // Convert the user-selected Windows working directory to a WSL Linux path so
+    // the inner shell can `cd` into it. Falls back to the raw value if conversion
+    // fails (e.g. already a Linux path or a UNC path muda handled elsewhere).
+    let cd_line = cwd
+        .map(|path| {
+            let windows_path = path.to_string_lossy();
+            let linux_path =
+                crate::coding::wsl::windows_to_wsl_path(&windows_path).unwrap_or_else(|_| {
+                    // If it is already a WSL UNC path, parse_wsl_unc_path extracts the
+                    // Linux path directly; otherwise keep the raw value as a best effort.
+                    crate::coding::runtime_location::parse_wsl_unc_path(&windows_path)
+                        .map(|info| info.linux_path)
+                        .unwrap_or_else(|| windows_path.to_string())
+                });
+            format!("cd {}", shell_single_quote(&linux_path))
+        })
+        .unwrap_or_default();
+
     let inner = format!(
         r#"{trap_cleanup}
 {config_dir}
+{cd_line}
 echo "Using temporary Claude provider settings (does not change applied config)"
 {settings_echo}
 {claude_line}
@@ -465,6 +562,7 @@ read -r _
 "#,
         trap_cleanup = trap_cleanup,
         config_dir = unix_export_claude_config_dir_line(claude_config_dir),
+        cd_line = cd_line,
         settings_echo = if include_settings {
             format!("echo {}", shell_single_quote(&linux_settings_path))
         } else {
@@ -521,11 +619,20 @@ fn launch_windows_terminal(
     full_access: bool,
     safe_id: &str,
     pid: u32,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let bat_file = temp_dir.join(format!("ai_toolbox_claude_launch_{safe_id}_{pid}.bat"));
     let claude_line =
         format_claude_batch_invocation_line(claude_program, settings_path, full_access);
     let config_dir_line = windows_set_claude_config_dir_line(claude_config_dir);
+    let cd_line = cwd
+        .map(|path| {
+            format!(
+                "cd /d \"{}\"\r\n",
+                escape_windows_batch_value(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
     let settings_display = settings_path
         .map(|path| escape_windows_batch_value(path))
         .unwrap_or_else(|| "(none)".to_string());
@@ -541,6 +648,7 @@ fn launch_windows_terminal(
     let content = format!(
         "@echo off\r\n\
 {config_dir_line}\r\n\
+{cd_line}\
 echo Using temporary Claude provider settings (does not change applied config)\r\n\
 echo {settings_display}\r\n\
 {claude_line}\r\n\
@@ -549,6 +657,7 @@ del \"%~f0\" >nul 2>&1\r\n",
         settings_display = settings_display,
         claude_line = claude_line,
         config_dir_line = config_dir_line,
+        cd_line = cd_line,
         delete_settings = delete_settings,
     );
 
@@ -590,9 +699,13 @@ fn launch_macos_terminal(
     settings_path: Option<&str>,
     claude_program: &str,
     full_access: bool,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let claude_line = format_claude_command_line(claude_program, settings_path, full_access);
     let config_dir_line = unix_export_claude_config_dir_line(claude_config_dir);
+    let cd_line = cwd
+        .map(|path| format!("cd {}", shell_single_quote(&path.to_string_lossy())))
+        .unwrap_or_default();
     let script_file = std::env::temp_dir().join(format!(
         "ai_toolbox_claude_launch_{}.sh",
         std::process::id()
@@ -607,6 +720,7 @@ fn launch_macos_terminal(
         r#"#!/usr/bin/env sh
 {trap_cleanup}
 {config_dir_line}
+{cd_line}
 echo "Using temporary Claude provider settings (does not change applied config)"
 {settings_echo}
 {claude_line}
@@ -616,6 +730,7 @@ read -r _
 "#,
         trap_cleanup = trap_cleanup,
         config_dir_line = config_dir_line,
+        cd_line = cd_line,
         settings_echo = settings_path
             .map(|path| format!("echo {}", shell_single_quote(path)))
             .unwrap_or_else(|| {
@@ -672,9 +787,13 @@ fn launch_linux_terminal(
     settings_path: Option<&str>,
     claude_program: &str,
     full_access: bool,
+    cwd: Option<&Path>,
 ) -> Result<(), String> {
     let claude_line = format_claude_command_line(claude_program, settings_path, full_access);
     let config_dir_line = unix_export_claude_config_dir_line(claude_config_dir);
+    let cd_line = cwd
+        .map(|path| format!("cd {}", shell_single_quote(&path.to_string_lossy())))
+        .unwrap_or_default();
     let script_file = std::env::temp_dir().join(format!(
         "ai_toolbox_claude_launch_{}.sh",
         std::process::id()
@@ -689,6 +808,7 @@ fn launch_linux_terminal(
         r#"#!/usr/bin/env sh
 {trap_cleanup}
 {config_dir_line}
+{cd_line}
 echo "Using temporary Claude provider settings (does not change applied config)"
 {settings_echo}
 {claude_line}
@@ -698,6 +818,7 @@ read -r _
 "#,
         trap_cleanup = trap_cleanup,
         config_dir_line = config_dir_line,
+        cd_line = cd_line,
         settings_echo = settings_path
             .map(|path| format!("echo {}", shell_single_quote(path)))
             .unwrap_or_else(|| {

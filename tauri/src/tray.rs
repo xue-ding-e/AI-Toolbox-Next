@@ -44,6 +44,7 @@ struct TrayTexts {
     main_model: &'static str,
     small_model: &'static str,
     global_prompt: &'static str,
+    provider: &'static str,
     opencode_header: &'static str,
     opencode_plugins_header: &'static str,
     omo_header: &'static str,
@@ -78,6 +79,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             main_model: "Main Model",
             small_model: "Small Model",
             global_prompt: "Global Prompt",
+            provider: "Provider",
             opencode_header: "OpenCode",
             opencode_plugins_header: "OpenCode Plugins",
             omo_header: "Oh My OpenAgent",
@@ -106,6 +108,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             main_model: "主模型",
             small_model: "小模型",
             global_prompt: "全局提示词",
+            provider: "供应商",
             opencode_header: "OpenCode",
             opencode_plugins_header: "OpenCode 插件",
             omo_header: "Oh My OpenAgent",
@@ -737,6 +740,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         claude_tray::TrayProviderData {
             title: texts.claude_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -758,6 +762,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         codex_tray::TrayProviderData {
             title: texts.codex_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -779,6 +784,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         grok_tray::TrayProviderData {
             title: texts.grok_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -799,6 +805,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         kimi_tray::TrayProviderData {
             title: texts.kimi_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -841,6 +848,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         gemini_cli_tray::TrayProviderData {
             title: texts.gemini_cli_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -915,6 +923,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         claude_desktop_tray::TrayProviderData {
             title: texts.claude_desktop_header.to_string(),
+            current_display: String::new(),
             items: vec![],
         }
     };
@@ -1331,25 +1340,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    // Build Claude Code items (only if has items)
-    let mut claude_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if claude_has_items {
-        for item in claude_data.items {
-            let item_id = format!("claude_provider_{}", item.id);
-            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled, // enabled: 如果 is_disabled=true，则 enabled=false
-                    item.is_selected,  // checked: 是否已应用
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-            claude_items.push(menu_item);
-        }
-    }
+    // Build Claude Code provider submenu (only if has items)
+    let claude_provider_submenu = if claude_has_items {
+        Some(build_named_provider_submenu(app, "claude", &claude_data, texts)?)
+    } else {
+        None
+    };
 
     let codex_header = if codex_has_section {
         Some(
@@ -1360,25 +1356,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    // Build Codex items (only if has items)
-    let mut codex_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if codex_has_items {
-        for item in codex_data.items {
-            let item_id = format!("codex_provider_{}", item.id);
-            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-            codex_items.push(menu_item);
-        }
-    }
+    // Build Codex provider submenu (only if has items)
+    let codex_provider_submenu = if codex_has_items {
+        Some(build_named_provider_submenu(app, "codex", &codex_data, texts)?)
+    } else {
+        None
+    };
 
     let grok_header = if grok_has_section {
         Some(
@@ -1388,23 +1371,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         None
     };
-    let mut grok_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if grok_has_items {
-        for item in grok_data.items {
-            let item_id = format!("grok_provider_{}", item.id);
-            grok_items.push(Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            ));
-        }
-    }
+    let grok_provider_submenu = if grok_has_items {
+        Some(build_named_provider_submenu(app, "grok", &grok_data, texts)?)
+    } else {
+        None
+    };
 
     let kimi_header = if kimi_has_section {
         Some(
@@ -1414,23 +1385,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         None
     };
-    let mut kimi_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if kimi_has_items {
-        for item in kimi_data.items {
-            let item_id = format!("kimi_provider_{}", item.id);
-            kimi_items.push(Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            ));
-        }
-    }
+    let kimi_provider_submenu = if kimi_has_items {
+        Some(build_named_provider_submenu(app, "kimi", &kimi_data, texts)?)
+    } else {
+        None
+    };
 
     let gemini_cli_header = if gemini_cli_has_section {
         Some(
@@ -1447,24 +1406,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    let mut gemini_cli_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if gemini_cli_has_items {
-        for item in gemini_cli_data.items {
-            let item_id = format!("geminicli_provider_{}", item.id);
-            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-            gemini_cli_items.push(menu_item);
-        }
-    }
+    let gemini_cli_provider_submenu = if gemini_cli_has_items {
+        Some(build_named_provider_submenu(
+            app,
+            "geminicli",
+            &gemini_cli_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
 
     let pi_header = if pi_has_section {
         Some(
@@ -1512,25 +1463,17 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    // Build Claude Desktop provider items
-    let mut claude_desktop_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if claude_desktop_has_items {
-        for item in claude_desktop_data.items {
-            let item_id = format!("claude_desktop_provider_{}", item.id);
-            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-            claude_desktop_items.push(menu_item);
-        }
-    }
+    // Build Claude Desktop provider submenu (only if has items)
+    let claude_desktop_provider_submenu = if claude_desktop_has_items {
+        Some(build_named_provider_submenu(
+            app,
+            "claude_desktop",
+            &claude_desktop_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
 
     // Hermes section (only if enabled and has items)
     let hermes_header = if hermes_has_section {
@@ -1656,8 +1599,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref submenu) = claude_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        for item in &claude_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = claude_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1669,8 +1612,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref submenu) = codex_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        for item in &codex_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = codex_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1684,8 +1627,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref submenu) = grok_model_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        for item in &grok_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = grok_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1697,8 +1640,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref submenu) = gemini_cli_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        for item in &gemini_cli_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = gemini_cli_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1713,8 +1656,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref submenu) = kimi_model_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        for item in &kimi_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = kimi_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1749,8 +1692,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = claude_desktop_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        for item in &claude_desktop_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = claude_desktop_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -2515,6 +2458,68 @@ fn build_kimi_model_submenu<R: Runtime>(
     Ok(submenu)
 }
 
+/// Build a provider selection submenu titled `供应商 (current)` from any module's
+/// `TrayProviderData`. Item ids keep the `{prefix}_provider_{id}` shape used by the
+/// previous flat layout, so `on_menu_event` dispatch is unchanged.
+fn build_named_provider_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    prefix: &str,
+    data: &impl NamedProviderTrayData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display().is_empty() {
+        texts.provider.to_string()
+    } else {
+        format!("{} ({})", texts.provider, data.current_display())
+    };
+    let submenu = Submenu::with_id(app, format!("{}_provider_submenu", prefix), &title, true)
+        .map_err(|e| e.to_string())?;
+
+    if data.items().is_empty() {
+        let empty_item = MenuItem::with_id(
+            app,
+            format!("{}_provider_empty", prefix),
+            texts.no_config,
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for item in data.items() {
+            let item_id = format!("{}_provider_{}", prefix, item.id());
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                item.display_name(),
+                !item.is_disabled(),
+                item.is_selected(),
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+trait NamedProviderTrayItem {
+    fn id(&self) -> &str;
+    fn display_name(&self) -> &str;
+    fn is_selected(&self) -> bool;
+    fn is_disabled(&self) -> bool;
+}
+
+trait NamedProviderTrayData {
+    type Item: NamedProviderTrayItem;
+
+    #[allow(dead_code)]
+    fn title(&self) -> &str;
+    fn current_display(&self) -> &str;
+    fn items(&self) -> &[Self::Item];
+}
+
 trait NamedPromptTrayItem {
     fn id(&self) -> &str;
     fn display_name(&self) -> &str;
@@ -2786,6 +2791,176 @@ impl NamedPromptTrayData for pi_tray::TrayPromptData {
         &self.current_display
     }
 
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+// === Provider tray data trait impls for the 6 flat-provider modules ===
+
+impl NamedProviderTrayItem for claude_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for claude_tray::TrayProviderData {
+    type Item = claude_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for codex_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for codex_tray::TrayProviderData {
+    type Item = codex_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for grok_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for grok_tray::TrayProviderData {
+    type Item = grok_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for kimi_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for kimi_tray::TrayProviderData {
+    type Item = kimi_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for gemini_cli_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for gemini_cli_tray::TrayProviderData {
+    type Item = gemini_cli_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for claude_desktop_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for claude_desktop_tray::TrayProviderData {
+    type Item = claude_desktop_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
     fn items(&self) -> &[Self::Item] {
         &self.items
     }
@@ -3063,5 +3238,65 @@ mod tests {
 
         assert!(!append_skills_submenu(&menu, None).expect("skip skills submenu"));
         assert!(menu.items().expect("root menu items").is_empty());
+    }
+
+    #[test]
+    fn provider_submenu_shows_current_display_in_title() {
+        let app = tauri::test::mock_app();
+        let data = codex_tray::TrayProviderData {
+            title: "Codex".to_string(),
+            current_display: "PackyCode".to_string(),
+            items: vec![
+                codex_tray::TrayProviderItem {
+                    id: "packy".to_string(),
+                    display_name: "PackyCode".to_string(),
+                    is_selected: true,
+                    is_disabled: false,
+                    sort_index: 0,
+                },
+                codex_tray::TrayProviderItem {
+                    id: "zeta".to_string(),
+                    display_name: "ZetaAPI".to_string(),
+                    is_selected: false,
+                    is_disabled: false,
+                    sort_index: 1,
+                },
+            ],
+        };
+
+        let submenu =
+            build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
+                .expect("provider submenu");
+        assert_eq!(submenu.id().as_ref(), "codex_provider_submenu");
+        assert_eq!(
+            submenu.text().expect("submenu text"),
+            "Provider (PackyCode)"
+        );
+
+        let items = submenu.items().expect("submenu items");
+        assert_eq!(items.len(), data.items.len());
+        // Item ids keep the `{prefix}_provider_{id}` shape used by on_menu_event dispatch.
+        let first = items[0].as_check_menuitem().expect("check item");
+        assert!(first.is_checked().expect("is_checked"));
+    }
+
+    #[test]
+    fn provider_submenu_falls_back_to_plain_title_without_current() {
+        let app = tauri::test::mock_app();
+        let data = codex_tray::TrayProviderData {
+            title: "Codex".to_string(),
+            current_display: String::new(),
+            items: Vec::new(),
+        };
+
+        let submenu =
+            build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
+                .expect("provider submenu");
+        assert_eq!(submenu.text().expect("submenu text"), "Provider");
+
+        let items = submenu.items().expect("submenu items");
+        assert_eq!(items.len(), 1);
+        // Empty-state item is a disabled normal MenuItem (not a check item).
+        assert!(items[0].as_check_menuitem().is_none());
     }
 }

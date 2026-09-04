@@ -25,6 +25,7 @@ import {
 } from '@/services';
 import { launchClaudeProviderCli } from '@/services/claudeCodeApi';
 import { refreshTrayMenu } from '@/services/appApi';
+import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
 import {
@@ -197,10 +198,18 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     if (provider.isDisabled) {
       return;
     }
+    // Let the user pick a project folder to launch the CLI in. Cancelling the
+    // picker aborts the launch (KISS: no persistence of the last choice).
+    const selected = await openDirectoryDialog({ directory: true, multiple: false });
+    if (!selected) {
+      return;
+    }
+    const cwd = typeof selected === 'string' ? selected : selected[0];
     setLaunchingCli(true);
     try {
       await launchClaudeProviderCli(provider.id, {
         fullAccess: claudeCliLaunchFullAccess,
+        cwd,
       });
       message.success(t('claudecode.provider.launchCliSuccess'));
     } catch (error) {

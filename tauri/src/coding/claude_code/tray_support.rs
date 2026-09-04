@@ -28,8 +28,18 @@ pub struct TrayProviderItem {
 pub struct TrayProviderData {
     /// Title of the section
     pub title: String,
+    /// Currently selected provider display name (shown in submenu title)
+    pub current_display: String,
     /// Items for selection
     pub items: Vec<TrayProviderItem>,
+}
+
+fn find_provider_display_name(items: &[TrayProviderItem]) -> String {
+    items
+        .iter()
+        .find(|item| item.is_selected)
+        .map(|item| item.display_name.clone())
+        .unwrap_or_default()
 }
 
 fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
@@ -99,8 +109,11 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
     // Sort by sort_index
     items.sort_by_key(|c| c.sort_index);
 
+    let current_display = find_provider_display_name(&items);
+
     let data = TrayProviderData {
         title: "──── Claude Code ────".to_string(),
+        current_display,
         items: items
             .into_iter()
             .map(|mut item| {

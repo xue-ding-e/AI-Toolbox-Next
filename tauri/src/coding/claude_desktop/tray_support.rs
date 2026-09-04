@@ -22,7 +22,16 @@ pub struct TrayProviderItem {
 #[derive(Debug, Clone)]
 pub struct TrayProviderData {
     pub title: String,
+    pub current_display: String,
     pub items: Vec<TrayProviderItem>,
+}
+
+fn find_provider_display_name(items: &[TrayProviderItem]) -> String {
+    items
+        .iter()
+        .find(|item| item.is_selected)
+        .map(|item| item.display_name.clone())
+        .unwrap_or_default()
 }
 
 /// Get tray provider data for Claude Desktop.
@@ -44,8 +53,10 @@ pub async fn get_claude_desktop_tray_data<R: Runtime>(
         .collect();
 
     items.sort_by_key(|item| item.sort_index);
+    let current_display = find_provider_display_name(&items);
     Ok(TrayProviderData {
         title: "──── Claude Desktop ────".to_string(),
+        current_display,
         items,
     })
 }

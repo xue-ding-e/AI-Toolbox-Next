@@ -107,11 +107,12 @@ export const applyClaudeConfig = async (providerId: string): Promise<void> => {
  */
 export const launchClaudeProviderCli = async (
   providerId: string,
-  options?: { fullAccess?: boolean },
+  options?: { fullAccess?: boolean; cwd?: string },
 ): Promise<void> => {
   await invoke('launch_claude_provider_cli', {
     providerId,
     fullAccess: options?.fullAccess ?? false,
+    cwd: options?.cwd ?? null,
   });
 };
 

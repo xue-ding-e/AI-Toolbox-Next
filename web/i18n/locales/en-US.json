@@ -2187,7 +2187,7 @@
       "apply": "Apply",
       "applied": "Applied",
       "launchCli": "Launch CLI",
-      "launchCliHint": "Open Claude CLI with this provider's temporary settings without changing the applied config. Full Access is controlled by the More Options switch",
+      "launchCliHint": "Open Claude CLI with this provider's temporary settings without changing the applied config. A folder picker opens first; select a working directory to launch, or cancel to abort. Full Access is controlled by the More Options switch",
       "launchCliSuccess": "Claude CLI terminal opened",
       "launchCliFailed": "Failed to open Claude CLI: {{error}}",
       "apiFormat": "API format",

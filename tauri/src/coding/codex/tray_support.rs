@@ -24,7 +24,16 @@ pub struct TrayProviderItem {
 #[derive(Debug, Clone)]
 pub struct TrayProviderData {
     pub title: String,
+    pub current_display: String,
     pub items: Vec<TrayProviderItem>,
+}
+
+fn find_provider_display_name(items: &[TrayProviderItem]) -> String {
+    items
+        .iter()
+        .find(|item| item.is_selected)
+        .map(|item| item.display_name.clone())
+        .unwrap_or_default()
 }
 
 fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
@@ -93,8 +102,11 @@ pub async fn get_codex_tray_data<R: Runtime>(
 
     items.sort_by_key(|c| c.sort_index);
 
+    let current_display = find_provider_display_name(&items);
+
     Ok(TrayProviderData {
         title: "──── Codex ────".to_string(),
+        current_display,
         items,
     })
 }

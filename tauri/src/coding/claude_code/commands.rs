@@ -981,6 +981,7 @@ pub async fn launch_claude_provider_cli(
     state: tauri::State<'_, SqliteDbState>,
     provider_id: String,
     full_access: Option<bool>,
+    cwd: Option<String>,
 ) -> Result<(), String> {
     let db = state.db();
     let provider = get_claude_provider_from_sqlite(&db, &provider_id)?
@@ -995,12 +996,14 @@ pub async fn launch_claude_provider_cli(
 
     let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
     let full_access = full_access.unwrap_or(false);
+    let resolved_cwd = super::cli_launch::resolve_launch_cwd(cwd)?;
 
     super::cli_launch::launch_claude_provider_cli_session(
         &runtime_location,
         &provider.id,
         &provider.settings_config,
         full_access,
+        resolved_cwd.as_deref(),
     )
 }
 
