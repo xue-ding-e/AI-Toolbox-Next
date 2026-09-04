@@ -115,6 +115,35 @@ test('normalizeCodexCatalogModels preserves reasoning levels and drops empty val
   ]);
 });
 
+test('normalizeCodexCatalogModels preserves service tiers and drops empty values', () => {
+  const models = normalizeCodexCatalogModels([
+    {
+      model: 'glm-5.2',
+      displayName: 'GLM 5.2',
+      serviceTiers: ['priority', 'ultrafast', 'bogus', '  '],
+    },
+    {
+      model: 'deepseek-v4',
+      displayName: 'DeepSeek V4',
+      serviceTiers: [],
+    },
+  ]);
+
+  // Empty/whitespace entries are dropped; non-canonical tokens like "bogus"
+  // survive here (canonical filtering happens later at catalog-generation).
+  assert.deepEqual(models, [
+    {
+      model: 'glm-5.2',
+      displayName: 'GLM 5.2',
+      serviceTiers: ['priority', 'ultrafast', 'bogus'],
+    },
+    {
+      model: 'deepseek-v4',
+      displayName: 'DeepSeek V4',
+    },
+  ]);
+});
+
 test('buildCodexSettingsConfig persists provider-level auto review model override', () => {
   const settingsConfig = JSON.parse(buildCodexSettingsConfig({
     category: 'custom',

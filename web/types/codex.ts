@@ -63,6 +63,11 @@ export interface CodexCatalogModel {
    * reasoningLevels; when omitted the template default is kept if still in the
    * list, otherwise the highest declared level wins. */
   defaultReasoningLevel?: string;
+  /** Per-model service (speed) tier ids exposed in the generated Codex catalog
+   * (e.g. ["priority", "ultrafast"] for Fast/Ultrafast). The backend expands
+   * each id to a full {id,name,description} object; unknown ids are dropped.
+   * When omitted the generated entry advertises no speed tier (empty array). */
+  serviceTiers?: string[];
 }
 
 export interface CodexModelCatalog {

@@ -2320,6 +2320,16 @@ fn normalize_codex_model_catalog_for_storage(
             normalized_item.insert("defaultReasoningLevel".to_string(), default_level);
         }
 
+        // Per-model service (speed) tier ids: preserve user-declared ids
+        // (camelCase only — DB is the SSOT). Unknown ids are dropped later at
+        // catalog-generation time; here we only keep non-empty arrays so the
+        // storage stays compact and round-trips cleanly. Reuses the shared
+        // `normalize_codex_model_catalog_string_array` helper (same path as
+        // modalities) instead of inlining the trim/filter/collect chain.
+        if let Some(items) = normalize_codex_model_catalog_string_array(item.get("serviceTiers")) {
+            normalized_item.insert("serviceTiers".to_string(), items);
+        }
+
         normalized_models.push(serde_json::Value::Object(normalized_item));
     }
 
@@ -2531,6 +2541,13 @@ struct CodexCatalogModelSpec {
     /// template default is kept if still supported, otherwise the highest
     /// declared level wins.
     default_reasoning_level: Option<String>,
+    /// Per-row override for the generated catalog's `service_tiers` (speed
+    /// tiers like Fast/Ultrafast). Stored as bare tier ids; the catalog
+    /// generator expands them to `{ id, name, description }` objects. When
+    /// omitted the neutral template writes an empty array (no tier advertised,
+    /// matching cc-switch's safe default); official vendor entries keep the
+    /// vendor's declared tiers.
+    service_tiers: Option<Vec<String>>,
 }
 
 /// Canonical reasoning effort levels Codex understands, in ascending depth
@@ -2555,6 +2572,34 @@ fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
         .iter()
         .find(|(candidate, _)| *candidate == effort)
         .map(|(_, description)| *description)
+}
+
+/// Canonical service (speed) tiers Codex understands, mirroring the entries
+/// the official gpt-5.5 catalog declares. Each tier is emitted into a model's
+/// `service_tiers` array as `{ id, name, description }`. Only these ids are
+/// recognized; user-declared values are filtered to this set so a typo can
+/// never produce a tier Codex would reject. Source: codex-rs/models-manager.
+const CODEX_SERVICE_TIER_ENTRIES: &[(&str, &str, &str)] = &[
+    ("priority", "Fast", "1.5x speed, increased usage"),
+    (
+        "ultrafast",
+        "Ultrafast",
+        "The fastest available responses for latency-sensitive work.",
+    ),
+];
+
+/// Build a `service_tiers` array from user-declared tier ids. Unknown ids are
+/// dropped so a typo can never produce a tier Codex would reject; the result
+/// preserves canonical order (Fast before Ultrafast) regardless of input order.
+fn codex_service_tiers_value(ids: &[String]) -> Value {
+    let entries: Vec<Value> = CODEX_SERVICE_TIER_ENTRIES
+        .iter()
+        .filter(|(id, _, _)| ids.iter().any(|candidate| candidate == id))
+        .map(|(id, name, description)| {
+            serde_json::json!({ "id": id, "name": name, "description": description })
+        })
+        .collect();
+    serde_json::json!(entries)
 }
 
 /// User-declared levels reduced to the canonical efforts Codex understands,
@@ -2718,6 +2763,21 @@ fn codex_catalog_model_specs(
                 .filter(|level| !level.is_empty())
                 .map(str::to_string);
 
+            let service_tiers = item
+                .get("serviceTiers")
+                .or_else(|| item.get("service_tiers"))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|tier| !tier.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|tiers| !tiers.is_empty());
+
             specs.push(CodexCatalogModelSpec {
                 model: model.to_string(),
                 display_name,
@@ -2725,6 +2785,7 @@ fn codex_catalog_model_specs(
                 auto_review_model_override: auto_review_model_override.clone(),
                 reasoning_levels,
                 default_reasoning_level,
+                service_tiers,
             });
         }
     }
@@ -2744,6 +2805,7 @@ fn codex_catalog_model_specs(
                 auto_review_model_override: Some(auto_review_model_override.clone()),
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
             });
         }
     }
@@ -2814,6 +2876,17 @@ fn codex_model_catalog_entry(
     // default above survives untouched.
     if let Some(entry_obj) = entry.as_object_mut() {
         apply_codex_reasoning_level_override(entry_obj, Some("medium"), spec);
+        // Per-model service (speed) tiers: when the spec declares tiers they
+        // are emitted as full {id,name,description} objects; otherwise the
+        // neutral template advertises no speed tier (empty array, matching
+        // cc-switch's safe default so a third-party provider never falsely
+        // claims a tier it does not honor).
+        let service_tiers = spec
+            .service_tiers
+            .as_deref()
+            .map(codex_service_tiers_value)
+            .unwrap_or_else(|| serde_json::json!([]));
+        entry_obj.insert("service_tiers".to_string(), service_tiers);
     }
 
     entry
@@ -2975,6 +3048,17 @@ fn codex_vendor_catalog_model_entry(
         .and_then(|value| value.as_str())
         .map(str::to_string);
     apply_codex_reasoning_level_override(entry_obj, template_default.as_deref(), spec);
+
+    // Per-model service (speed) tiers override: when the spec declares tiers
+    // they replace the vendor's declared set; absent override keeps the
+    // official entry verbatim (DeepSeek entries carry no `service_tiers`
+    // array, so codex sees no fast mode unless the user opts in here).
+    if let Some(tiers) = spec.service_tiers.as_deref() {
+        entry_obj.insert(
+            "service_tiers".to_string(),
+            codex_service_tiers_value(tiers),
+        );
+    }
 
     // Defensive: if a future codex parser requires a field the vendor file
     // predates, backfill only whitelisted parser-required keys.
@@ -4429,6 +4513,66 @@ approval_policy = "never"
             entry_c.get("default_reasoning_level").and_then(|v| v.as_str()),
             Some("high")
         );
+    }
+
+    #[test]
+    fn codex_model_catalog_applies_per_model_service_tiers() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "mapped-a",
+                        "displayName": "Mapped A",
+                        // Declaration order is ignored; unknown "bogus" dropped;
+                        // canonical order (Fast before Ultrafast) is restored.
+                        "serviceTiers": ["ultrafast", "priority", "bogus"]
+                    },
+                    {
+                        // No service_tiers declared → neutral template writes
+                        // an empty array (no speed tier advertised, matching
+                        // cc-switch's safe default for third-party providers).
+                        "model": "mapped-b"
+                    }
+                ]
+            }
+        });
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model_provider = \"custom\"",
+        )
+        .expect("catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        // Row 0: user override wins; each tier expands to a full
+        // {id,name,description} object in canonical order.
+        let entry_a = &catalog["models"][0];
+        let tiers_a: Vec<&str> = entry_a["service_tiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tier| tier.get("id").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(tiers_a, vec!["priority", "ultrafast"]);
+        let first = &entry_a["service_tiers"].as_array().unwrap()[0];
+        assert_eq!(first["name"].as_str(), Some("Fast"));
+        assert_eq!(
+            first["description"].as_str(),
+            Some("1.5x speed, increased usage")
+        );
+
+        // Row 1: no override → empty array (safe default).
+        let entry_b = &catalog["models"][1];
+        assert!(entry_b["service_tiers"].is_array());
+        assert!(entry_b["service_tiers"].as_array().unwrap().is_empty());
     }
 
     #[test]

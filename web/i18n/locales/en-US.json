@@ -2487,6 +2487,8 @@
       "modelMappingReasoningLevelsPlaceholder": "Not set",
       "modelMappingDefaultReasoningLevel": "Default level",
       "modelMappingDefaultReasoningLevelAuto": "Auto",
+      "modelMappingServiceTiersPlaceholder": "Speed tiers",
+      "modelMappingServiceTiersHint": "Speed tiers the model advertises so Codex can enable fast mode. Leave unset if the provider does not support a priority tier.",
       "autoReviewModel": "Auto-review Model",
       "autoReviewModelHelp": "Overrides Codex's default codex-auto-review and may differ from the main model. On apply, it is written to every model mapping entry; if the current Model Name is missing from the mapping, it is added automatically so the override takes effect. If your gateway lacks codex-auto-review, set a servable model (commonly itself). Leave empty for no override.",
       "autoReviewModelPlaceholder": "Leave empty = no override (optional)",

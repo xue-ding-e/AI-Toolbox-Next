@@ -2484,6 +2484,8 @@
       "modelMappingReasoningLevelsPlaceholder": "未设置",
       "modelMappingDefaultReasoningLevel": "默认等级",
       "modelMappingDefaultReasoningLevelAuto": "自动",
+      "modelMappingServiceTiersPlaceholder": "速度等级",
+      "modelMappingServiceTiersHint": "模型声明的速度等级，使 Codex 可启用 fast 模式。若供应商不支持 priority 等级，请留空。",
       "autoReviewModel": "自动审批模型",
       "autoReviewModelHelp": "覆盖 Codex 默认的 codex-auto-review，可与主模型不同。应用时会写入全部模型映射；若当前「模型名称」不在映射中，会自动补入一条以确保生效。中转站没有 codex-auto-review 时，可填可用模型（常见是设为自身）。留空表示不覆盖。",
       "autoReviewModelPlaceholder": "留空=不覆盖（可选）",

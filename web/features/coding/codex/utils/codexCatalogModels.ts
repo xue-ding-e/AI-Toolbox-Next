@@ -35,6 +35,10 @@ export function normalizeCodexCatalogReasoningLevels(value: unknown): string[] |
   return normalizeStringArray(value);
 }
 
+export function normalizeCodexCatalogServiceTiers(value: unknown): string[] | undefined {
+  return normalizeStringArray(value);
+}
+
 export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexCatalogModel[] {
   // Dedup by (model, displayName) so the same actual request model can appear
   // multiple times under different menu display names (e.g. mapping both
@@ -63,6 +67,7 @@ export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexC
       typeof item.defaultReasoningLevel === 'string' && item.defaultReasoningLevel.trim()
         ? item.defaultReasoningLevel.trim()
         : undefined;
+    const serviceTiers = normalizeCodexCatalogServiceTiers(item.serviceTiers);
 
     normalizedModels.push({
       model,
@@ -74,6 +79,7 @@ export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexC
       ...(modalities ? { modalities } : {}),
       ...(reasoningLevels ? { reasoningLevels } : {}),
       ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+      ...(serviceTiers ? { serviceTiers } : {}),
     });
   }
 

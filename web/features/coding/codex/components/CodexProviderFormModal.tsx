@@ -20,6 +20,7 @@ import BillingConfigCollapse from '@/features/coding/shared/providerBilling/Bill
 import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import ReasoningLevelsEditor from './ReasoningLevelsEditor';
+import ServiceTiersEditor from './ServiceTiersEditor';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
   getBillingConfigFromMeta,
@@ -1181,7 +1182,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                   key={index}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(120px, 1fr) minmax(160px, 1.2fr) 120px minmax(150px, 1fr) 32px',
+                    gridTemplateColumns: 'minmax(110px, 1fr) minmax(140px, 1.2fr) 110px minmax(130px, 1fr) minmax(120px, 1fr) 28px',
                     gap: 8,
                     alignItems: 'center',
                   }}
@@ -1250,6 +1251,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                     defaultLevel={item.defaultReasoningLevel}
                     onLevelsChange={(levels) => handleUpdateModelMapping(index, { reasoningLevels: levels })}
                     onDefaultLevelChange={(level) => handleUpdateModelMapping(index, { defaultReasoningLevel: level })}
+                  />
+                  <ServiceTiersEditor
+                    tiers={item.serviceTiers}
+                    onTiersChange={(tiers) => handleUpdateModelMapping(index, { serviceTiers: tiers })}
                   />
                   <Button
                     type="text"
@@ -1473,7 +1478,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       onCancel={onCancel}
       onOk={handleSubmit}
       confirmLoading={loading}
-      width={800}
+      width="min(960px, 92vw)"
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
