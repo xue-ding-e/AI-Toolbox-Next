@@ -1546,6 +1546,13 @@ async fn send_request_once(
 ) -> Result<UpstreamResponse, GatewayForwardError> {
     if should_use_header_preserving_raw(upstream_url) {
         if let Some(proxy_url) = header_preserving_proxy {
+            // proxy_url is the inner Option<String>:
+            //   Some(None)     = Direct mode (no proxy) → fall back to reqwest on failure
+            //   Some(Some(_))  = Custom proxy mode    → do not fall back (would bypass the
+            //                                          user's explicitly configured proxy),
+            //                                          mirroring cc-switch's `proxy_url.is_some()`
+            //   None (outer)   = System mode           → never reaches this branch
+            let has_custom_proxy = proxy_url.is_some();
             match send_header_preserving_request(
                 upstream_url,
                 method.clone(),
@@ -1558,18 +1565,34 @@ async fn send_request_once(
             .await
             {
                 Ok(response) => return Ok(UpstreamResponse::HeaderPreserving(response)),
-                Err(error) if !error.request_body_written() => {
-                    // Only pre-write connection failures may fall back to reqwest.
-                    log::warn!(
-                        "Header-preserving upstream request failed before write; falling back to reqwest: {}",
-                        error.message()
-                    );
+                Err(error) if !has_custom_proxy => {
+                    // Indiscriminate fallback (PreWrite + PostWrite both fall back), mirroring
+                    // cc-switch. A PostWrite failure means the request bytes already left this
+                    // process, so re-sending via reqwest could result in duplicate billing; the
+                    // log line below calls that out explicitly. The trade-off is deliberate:
+                    // users report "direct connection works, gateway mode always fails", so
+                    // tolerating a potential double-bill is preferable to a hard failure.
+                    if error.request_body_written() {
+                        log::warn!(
+                            "Header-preserving upstream request failed after write; \
+                             falling back to reqwest (note: upstream request may have been \
+                             received, re-send could result in duplicate billing): {}",
+                            error.message()
+                        );
+                    } else {
+                        log::warn!(
+                            "Header-preserving upstream request failed before write; \
+                             falling back to reqwest: {}",
+                            error.message()
+                        );
+                    }
                 }
                 Err(error) => {
-                    // Request already left this process; re-sending via reqwest would double-bill.
+                    // A custom proxy is configured; do not bypass it with a direct reqwest
+                    // retry. Surface the original header-preserving failure instead.
                     return Err(GatewayForwardError {
                         message: format!(
-                            "Header-preserving upstream request failed after write: {}",
+                            "Header-preserving upstream request failed: {}",
                             error.message()
                         ),
                         kind: GatewayFailureKind::Connection,
