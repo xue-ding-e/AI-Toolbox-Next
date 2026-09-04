@@ -571,6 +571,11 @@ async fn write_streaming_body(
     let mut terminal_kind_delivered: Option<SseTerminalKind> = None;
     let mut idle_timeout_hit = false;
     let mut upstream_stream_error = false;
+    // Set when hyper's strict chunked decoder reported "error decoding response
+    // body" mid-stream and we demoted it to a clean EOF. Suppresses the synthetic
+    // error-event injection below so the already-forwarded bytes are not
+    // corrupted by a trailing error envelope the client cannot parse.
+    let mut demoted_hyper_decode_error = false;
     loop {
         let next_chunk = match time::timeout(idle_timeout, body_stream.next()).await {
             Ok(next_chunk) => next_chunk,
@@ -594,6 +599,25 @@ async fn write_streaming_body(
         let chunk = match chunk_result {
             Ok(chunk) => chunk,
             Err(error) => {
+                // hyper's http1 chunked body decoder is strict and can report
+                // "error decoding response body" mid-stream on upstream relays whose
+                // chunked framing it dislikes, even though the bytes already yielded
+                // (and forwarded to the client) are valid. Treating that as a hard
+                // failure injects a synthetic error event after the real data,
+                // breaking the client's SSE decoder (issue #318). Demote it to a
+                // clean EOF instead: the bytes already written stay, the terminal
+                // detector decides Completed vs Incomplete, and no synthetic error
+                // event is injected to corrupt the stream.
+                let is_hyper_decode_error = error
+                    .to_ascii_lowercase()
+                    .contains("error decoding response body");
+                if is_hyper_decode_error {
+                    log::warn!(
+                        "demoting hyper body decode error to clean stream EOF: {error}"
+                    );
+                    demoted_hyper_decode_error = true;
+                    break;
+                }
                 upstream_stream_error = true;
                 response.error_category = Some("stream_error".to_string());
                 response.note = format!("upstream streaming response error: {error}");
@@ -712,7 +736,11 @@ async fn write_streaming_body(
         .as_ref()
         .err()
         .is_some_and(is_client_disconnect_error);
-    if terminal_kind_delivered.is_none() && !client_disconnected && is_sse {
+    if terminal_kind_delivered.is_none()
+        && !client_disconnected
+        && is_sse
+        && !demoted_hyper_decode_error
+    {
         let (code, message) = match outcome {
             GatewayStreamOutcome::Failed => (
                 response.error_category.as_deref().unwrap_or("stream_error"),
