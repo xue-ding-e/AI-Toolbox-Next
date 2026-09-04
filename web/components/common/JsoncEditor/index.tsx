@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { editor } from 'monaco-editor';
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 import JSON5 from 'json5';
 import MonacoEditor from 'react-monaco-editor';
 

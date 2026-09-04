@@ -1,7 +1,10 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
 import MonacoEditor from 'react-monaco-editor';
 import type { editor } from 'monaco-editor';
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+// Register the JSON language (tokenization + diagnostics + worker) without
+// pulling in css/html/typescript workers that no editor in the app uses.
+import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 import { useThemeStore } from '@/stores/themeStore';
 
 type EditorMode = 'tree' | 'text' | 'table';

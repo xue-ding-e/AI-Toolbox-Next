@@ -3,7 +3,7 @@ import type { FC, MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import MonacoEditor from 'react-monaco-editor';
 import type { editor } from 'monaco-editor';
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { parse as parseToml } from 'smol-toml';
 import { useThemeStore } from '@/stores/themeStore';
 import { INVALID_UNCLOSED_DOUBLE_QUOTE_STRING_PATTERN } from './invalidDoubleQuoteStringPattern';
