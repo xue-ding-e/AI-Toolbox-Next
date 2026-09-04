@@ -298,6 +298,7 @@ mod tests {
                 .expect("bundled pricing");
 
         for (model_id, input, output, cache_read, cache_creation) in [
+            ("gpt-6-astra", "10", "50", "1", "12.5"),
             ("gpt-5.6", "5", "30", "0.50", "6.25"),
             ("gpt-5.6-sol", "5", "30", "0.50", "6.25"),
             ("gpt-5.6-terra", "2.50", "15", "0.25", "3.125"),
