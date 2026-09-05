@@ -1028,7 +1028,9 @@
     "window": {
       "launchOnStartup": "Launch on Startup",
       "startMinimized": "Start Minimized to Tray",
-      "minimizeToTrayOnClose": "Minimize to Tray on Close"
+      "minimizeToTrayOnClose": "Minimize to Tray on Close",
+      "startLightweight": "Start in lightweight mode",
+      "lightweightOnClose": "Enter lightweight mode on close"
     },
     "tabVisibility": {
       "hint": "Choose which modules to display in the top tab bar. Drag to reorder coding tabs.",

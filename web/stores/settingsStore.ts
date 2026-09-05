@@ -60,6 +60,8 @@ interface SettingsState {
   launchOnStartup: boolean;
   minimizeToTrayOnClose: boolean;
   startMinimized: boolean;
+  startLightweight: boolean;
+  lightweightOnClose: boolean;
 
   // Proxy settings
   proxyMode: ProxyMode;
@@ -112,6 +114,8 @@ interface SettingsState {
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   setMinimizeToTrayOnClose: (enabled: boolean) => Promise<void>;
   setStartMinimized: (enabled: boolean) => Promise<void>;
+  setStartLightweight: (enabled: boolean) => Promise<void>;
+  setLightweightOnClose: (enabled: boolean) => Promise<void>;
   setProxyMode: (mode: ProxyMode) => Promise<void>;
   setProxyUrl: (url: string) => Promise<void>;
   setAutoBackupSettings: (config: {
@@ -207,6 +211,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
+  startLightweight: false,
+  lightweightOnClose: false,
   proxyMode: 'system',
   proxyUrl: '',
   autoBackupEnabled: false,
@@ -244,6 +250,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
+        startLightweight: settings.start_lightweight ?? false,
+        lightweightOnClose: settings.lightweight_on_close ?? false,
         proxyMode: settings.proxy_mode ?? 'system',
         proxyUrl: settings.proxy_url || '',
         autoBackupEnabled: settings.auto_backup_enabled ?? false,
@@ -381,6 +389,30 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       start_minimized: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setStartLightweight: async (enabled) => {
+    set({ startLightweight: enabled });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      start_lightweight: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setLightweightOnClose: async (enabled) => {
+    set({ lightweightOnClose: enabled });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      lightweight_on_close: enabled,
     };
     await saveSettings(newSettings);
   },

@@ -155,6 +155,13 @@ pub struct AppSettings {
     pub minimize_to_tray_on_close: bool,
     /// Start minimized to tray (default: false)
     pub start_minimized: bool,
+    /// Enter lightweight mode at startup: destroy the main window before it is
+    /// ever shown and keep only the tray/backend (default: false)
+    pub start_lightweight: bool,
+    /// Enter lightweight mode (destroy window, release WebView memory) instead
+    /// of just hiding it when the user closes the window (default: false).
+    /// Only effective while minimize_to_tray_on_close is true.
+    pub lightweight_on_close: bool,
     /// Proxy mode for network requests: "direct", "custom", or "system" (default: "system")
     pub proxy_mode: String,
     /// Proxy URL for network requests (e.g., http://user:pass@proxy.com:8080 or socks5://proxy.com:1080)
@@ -222,6 +229,8 @@ impl Default for AppSettings {
             launch_on_startup: true,
             minimize_to_tray_on_close: true,
             start_minimized: false,
+            start_lightweight: false,
+            lightweight_on_close: false,
             proxy_mode: "system".to_string(),
             proxy_url: String::new(),
             theme: "system".to_string(),

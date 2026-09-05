@@ -36,6 +36,8 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     launch_on_startup: true,
     minimize_to_tray_on_close: true,
     start_minimized: false,
+    start_lightweight: false,
+    lightweight_on_close: false,
     proxy_mode: 'system',
     proxy_url: '',
     theme: 'system',

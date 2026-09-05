@@ -1028,7 +1028,9 @@
     "window": {
       "launchOnStartup": "开机自启",
       "startMinimized": "启动时最小化到托盘",
-      "minimizeToTrayOnClose": "关闭时最小化到托盘"
+      "minimizeToTrayOnClose": "关闭时最小化到托盘",
+      "startLightweight": "启动后进入轻量模式",
+      "lightweightOnClose": "关闭窗口时进入轻量模式"
     },
     "tabVisibility": {
       "hint": "选择在顶部标签栏中显示的模块，拖拽调整编码工具排序",

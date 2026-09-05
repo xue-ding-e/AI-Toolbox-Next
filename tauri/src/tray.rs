@@ -41,6 +41,7 @@ use tauri::{
 struct TrayTexts {
     show_window: &'static str,
     quit: &'static str,
+    lightweight_mode: &'static str,
     main_model: &'static str,
     small_model: &'static str,
     global_prompt: &'static str,
@@ -76,6 +77,7 @@ fn tray_texts(language: &str) -> TrayTexts {
         TrayTexts {
             show_window: "Open Main Window",
             quit: "Quit",
+            lightweight_mode: "Lightweight Mode",
             main_model: "Main Model",
             small_model: "Small Model",
             global_prompt: "Global Prompt",
@@ -105,6 +107,7 @@ fn tray_texts(language: &str) -> TrayTexts {
         TrayTexts {
             show_window: "打开主界面",
             quit: "退出",
+            lightweight_mode: "轻量模式",
             main_model: "主模型",
             small_model: "小模型",
             global_prompt: "全局提示词",
@@ -139,6 +142,7 @@ static TRAY_REFRESHING: AtomicBool = AtomicBool::new(false);
 static TRAY_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
 const TRAY_SHOW_MENU_ID: &str = "show";
 const TRAY_QUIT_MENU_ID: &str = "app_quit";
+const TRAY_LIGHTWEIGHT_MENU_ID: &str = "lightweight_mode";
 
 fn request_app_exit<R: Runtime>(app: &AppHandle<R>) {
     crate::APP_EXIT_REQUESTED.store(true, Ordering::SeqCst);
@@ -184,8 +188,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
         true,
         None::<&str>,
     )?;
+    let lightweight_item = CheckMenuItem::with_id(
+        app,
+        TRAY_LIGHTWEIGHT_MENU_ID,
+        texts.lightweight_mode,
+        true,
+        crate::lightweight::is_lightweight_mode(),
+        None::<&str>,
+    )?;
 
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &lightweight_item, &quit_item])?;
 
     let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)
@@ -193,16 +205,31 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
             let event_id = event.id().as_ref().to_string();
 
             if event_id == TRAY_SHOW_MENU_ID {
-                // macOS: Switch back to Regular mode to show in Dock
-                #[cfg(target_os = "macos")]
-                {
-                    use tauri::ActivationPolicy;
-                    let _ = app.set_activation_policy(ActivationPolicy::Regular);
-                }
+                if crate::lightweight::is_lightweight_mode() {
+                    // Window is destroyed in lightweight mode; rebuild it.
+                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                        eprintln!("Failed to exit lightweight mode: {}", e);
+                    }
+                } else {
+                    // macOS: Switch back to Regular mode to show in Dock
+                    #[cfg(target_os = "macos")]
+                    {
+                        use tauri::ActivationPolicy;
+                        let _ = app.set_activation_policy(ActivationPolicy::Regular);
+                    }
 
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            } else if event_id == TRAY_LIGHTWEIGHT_MENU_ID {
+                if crate::lightweight::is_lightweight_mode() {
+                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                        eprintln!("Failed to exit lightweight mode: {}", e);
+                    }
+                } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
+                    eprintln!("Failed to enter lightweight mode: {}", e);
                 }
             } else if event_id == TRAY_QUIT_MENU_ID {
                 request_app_exit(app);
@@ -1001,6 +1028,15 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None::<&str>,
     )
     .map_err(|e| e.to_string())?;
+    let lightweight_item = CheckMenuItem::with_id(
+        app,
+        TRAY_LIGHTWEIGHT_MENU_ID,
+        texts.lightweight_mode,
+        true,
+        crate::lightweight::is_lightweight_mode(),
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
     // OpenCode Model section (only if enabled)
     let opencode_model_header = if opencode_enabled {
         Some(
@@ -1528,6 +1564,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
 
     menu.append(&show_item).map_err(|e| e.to_string())?;
+    menu.append(&lightweight_item).map_err(|e| e.to_string())?;
     append_separator(&menu)?;
 
     // Add Skills section if enabled

@@ -955,6 +955,17 @@ web/
 
 ---
 
+## Lightweight Mode
+
+Lightweight mode (modeled after cc-switch) destroys the main WebView window to release frontend memory while the Rust backend (tray, gateway, schedulers) keeps running. Core implementation lives in `tauri/src/lightweight.rs`; the window builder is `build_main_window` in `tauri/src/lib.rs`.
+
+- **Silent-failure rule (highest recurrence risk)**: whenever adding a new backend entry point that needs the main window (new tray menu item, event callback, deep-link handler, second-instance action, protocol handler, etc.), it MUST handle lightweight mode first: if `lightweight::is_lightweight_mode()`, call `exit_lightweight_mode` to rebuild the window before touching it. A bare `if let Some(window) = app.get_webview_window("main")` silently does nothing while in lightweight mode — same failure class as the Tab/Page-Key allowlist omissions. Current covered entry points: tray "show" item, tray lightweight toggle, single-instance callback, macOS `RunEvent::Reopen`, deep-link `focus_main_window`.
+- **ExitRequested semantics**: the run loop prevents exit only when `code.is_none() && is_lightweight_mode()` (Tauri reports "no alive window" after `destroy()` as an automatic `ExitRequested` with no code). Do NOT widen this to all `code: None` events — `minimize_to_tray_on_close=false` still means "close window exits the app".
+- Settings: `start_lightweight` (destroy the never-shown window at startup; no geometry is saved for invisible windows) and `lightweight_on_close` (CloseRequested destroys instead of hiding; only effective while `minimize_to_tray_on_close` is true, mirrored by the frontend `disabled` state). The tray `CheckMenuItem` checked state follows `is_lightweight_mode()` via full menu rebuilds.
+- Window geometry is kept in memory (`SAVED_GEOMETRY`, logical units converted from physical pixels) for the lightweight-mode lifetime only; app restart intentionally falls back to the default 1200×800 centered window (no window-state plugin).
+
+---
+
 ## OpenCode Configuration Format
 
 迁移期说明：本节原有规则继续保留，不能弱化。实际修改 OpenCode 配置、tray 或页面交互时，还应同时阅读模块级文档：

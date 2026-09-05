@@ -25,6 +25,7 @@ pub mod auto_launch;
 pub mod coding;
 pub mod db;
 pub mod http_client;
+pub mod lightweight;
 pub mod settings;
 pub mod single_instance;
 pub mod startup_recovery;
@@ -34,6 +35,41 @@ pub mod update;
 // Re-export SqliteDbState for use in other modules
 pub use db::SqliteDbState;
 pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Create the main window. Shared by startup and lightweight-mode rebuild so
+/// both paths produce the same window. `geometry` (logical units) restores the
+/// pre-destroy window placement; `None` centers a default-sized window.
+pub(crate) fn build_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    geometry: Option<lightweight::WindowGeometry>,
+) -> tauri::Result<tauri::WebviewWindow<R>> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    let (width, height) = geometry
+        .map(|g| (g.width, g.height))
+        .unwrap_or((1200.0, 800.0));
+
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+        .title("AI Toolbox")
+        .inner_size(width, height)
+        .min_inner_size(800.0, 600.0)
+        .visible(false);
+
+    builder = match geometry {
+        Some(g) => builder.position(g.x, g.y).maximized(g.maximized),
+        None => builder.center(),
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::TitleBarStyle;
+        builder = builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+
+    builder.build()
+}
 
 /// Set window background color (affects macOS titlebar color)
 #[tauri::command]
@@ -859,6 +895,12 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, show and focus the existing window
+            if lightweight::is_lightweight_mode() {
+                if let Err(e) = lightweight::exit_lightweight_mode(app) {
+                    warn!("Failed to exit lightweight mode on second instance: {e}");
+                }
+                return;
+            }
             if let Some(window) = app.get_webview_window("main") {
                 // macOS: Switch back to Regular mode to show in Dock
                 #[cfg(target_os = "macos")]
@@ -898,35 +940,7 @@ pub fn run() {
 
             // Create main window with platform-specific configuration
             info!("正在创建主窗口...");
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
-
-                let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("AI Toolbox")
-                    .inner_size(1200.0, 800.0)
-                    .min_inner_size(800.0, 600.0)
-                    .center()
-                    .title_bar_style(TitleBarStyle::Overlay)
-                    .hidden_title(true)
-                    .visible(false)
-                    .build()
-                    .expect("Failed to create main window");
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                use tauri::{WebviewUrl, WebviewWindowBuilder};
-
-                let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("AI Toolbox")
-                    .inner_size(1200.0, 800.0)
-                    .min_inner_size(800.0, 600.0)
-                    .center()
-                    .visible(false)
-                    .build()
-                    .expect("Failed to create main window");
-            }
+            let _window = build_main_window(&app_handle, None).expect("Failed to create main window");
 
             // Create app data directory
             info!("正在获取应用数据目录...");
@@ -1134,27 +1148,34 @@ pub fn run() {
                 std::future::pending::<()>().await;
             });
 
-            // Enable auto-launch if setting is true, and handle start_minimized
+            // Enable auto-launch if setting is true, and handle start_minimized /
+            // start_lightweight
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                let start_minimized = {
+                let (start_minimized, start_lightweight) = {
                     let sqlite_state = app_handle_clone.state::<SqliteDbState>();
                     match settings::store::load_settings_from_sqlite_state(&sqlite_state) {
                         Ok(settings) => {
                             if settings.launch_on_startup {
                                 let _ = auto_launch::enable_auto_launch();
                             }
-                            settings.start_minimized
+                            (settings.start_minimized, settings.start_lightweight)
                         }
                         Err(error) => {
                             warn!("读取启动设置失败: {}", error);
-                            false
+                            (false, false)
                         }
                     }
                 }; // db lock released here
 
-                // Show window unless start_minimized is enabled
-                if !start_minimized {
+                if start_lightweight {
+                    // Enter lightweight mode at startup: destroy the window before
+                    // it is ever shown (no meaningful geometry to save).
+                    if let Err(e) = lightweight::enter_lightweight_mode(&app_handle_clone) {
+                        warn!("Failed to enter lightweight mode at startup: {e}");
+                    }
+                } else if !start_minimized {
+                    // Show window unless start_minimized is enabled
                     if let Some(window) = app_handle_clone.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
@@ -1825,25 +1846,38 @@ pub fn run() {
 
                 let app_handle = window.app_handle().clone();
 
-                // Check minimize_to_tray_on_close setting with default value.
-                let minimize_to_tray = app_handle
+                // Check tray-on-close settings with default values.
+                let (minimize_to_tray, lightweight_on_close) = app_handle
                     .try_state::<SqliteDbState>()
                     .and_then(|sqlite_state| {
                         settings::store::load_settings_from_sqlite_state(&sqlite_state).ok()
                     })
-                    .map(|settings| settings.minimize_to_tray_on_close)
-                    .unwrap_or(true);
+                    .map(|settings| {
+                        (
+                            settings.minimize_to_tray_on_close,
+                            settings.lightweight_on_close,
+                        )
+                    })
+                    .unwrap_or((true, false));
 
                 if minimize_to_tray {
-                    // Hide window instead of closing
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.hide();
+                    if lightweight_on_close {
+                        // Destroy the window entirely to release WebView memory.
+                        if let Err(e) = lightweight::enter_lightweight_mode(&app_handle) {
+                            warn!("Failed to enter lightweight mode on close: {e}");
+                        }
+                    } else {
+                        // Hide window instead of closing
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.hide();
 
-                        // macOS: Switch to Accessory mode to hide from Dock
-                        #[cfg(target_os = "macos")]
-                        {
-                            use tauri::ActivationPolicy;
-                            let _ = app_handle.set_activation_policy(ActivationPolicy::Accessory);
+                            // macOS: Switch to Accessory mode to hide from Dock
+                            #[cfg(target_os = "macos")]
+                            {
+                                use tauri::ActivationPolicy;
+                                let _ =
+                                    app_handle.set_activation_policy(ActivationPolicy::Accessory);
+                            }
                         }
                     }
                     // Prevent default close behavior
@@ -2541,6 +2575,21 @@ pub fn run() {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
+                    } else if lightweight::is_lightweight_mode() {
+                        // Dock click while in lightweight mode: rebuild the window.
+                        if let Err(e) = lightweight::exit_lightweight_mode(app_handle) {
+                            warn!("Failed to exit lightweight mode on Reopen: {e}");
+                        }
+                    }
+                }
+                // Destroying the main window in lightweight mode leaves no alive
+                // window, which Tauri reports as an automatic ExitRequested with no
+                // code. Keep the process (tray, gateway, schedulers) running. All
+                // other exit paths (user close with minimize_to_tray disabled,
+                // app.exit, restart) keep their current semantics.
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    if code.is_none() && lightweight::is_lightweight_mode() {
+                        api.prevent_exit();
                     }
                 }
 

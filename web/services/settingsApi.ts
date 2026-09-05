@@ -129,6 +129,8 @@ export interface AppSettings {
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
   start_minimized: boolean;
+  start_lightweight: boolean;
+  lightweight_on_close: boolean;
   proxy_mode: ProxyMode;
   proxy_url: string;
   theme: string;
@@ -181,6 +183,8 @@ export const defaultSettings: AppSettings = {
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
+  start_lightweight: false,
+  lightweight_on_close: false,
   proxy_mode: 'system',
   proxy_url: '',
   theme: 'system',

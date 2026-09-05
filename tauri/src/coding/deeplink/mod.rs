@@ -22,6 +22,7 @@ mod utils;
 
 use std::sync::Mutex;
 
+use log::warn;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -97,8 +98,15 @@ pub fn handle_deeplink_url(app: &AppHandle, url: &str, focus_window: bool) -> bo
 }
 
 /// Show and focus the main window (mirror of the existing single-instance
-/// callback behavior). No-op if the window doesn't exist.
+/// callback behavior). Rebuilds the window first when the app is in
+/// lightweight mode (main window destroyed). No-op if the window doesn't exist.
 fn focus_main_window(app: &AppHandle) {
+    if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            warn!("Failed to exit lightweight mode on deeplink: {e}");
+        }
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
         {

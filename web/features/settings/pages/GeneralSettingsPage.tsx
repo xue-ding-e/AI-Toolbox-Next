@@ -180,9 +180,13 @@ const GeneralSettingsPage: React.FC = () => {
     launchOnStartup,
     minimizeToTrayOnClose,
     startMinimized,
+    startLightweight,
+    lightweightOnClose,
     setLaunchOnStartup,
     setMinimizeToTrayOnClose,
     setStartMinimized,
+    setStartLightweight,
+    setLightweightOnClose,
     proxyMode,
     setProxyMode,
     proxyUrl,
@@ -792,10 +796,25 @@ const GeneralSettingsPage: React.FC = () => {
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.window.startLightweight')}</Text>
+                <Switch
+                  checked={startLightweight}
+                  onChange={setStartLightweight}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text>{t('settings.window.minimizeToTrayOnClose')}</Text>
                 <Switch
                   checked={minimizeToTrayOnClose}
                   onChange={setMinimizeToTrayOnClose}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.window.lightweightOnClose')}</Text>
+                <Switch
+                  checked={lightweightOnClose}
+                  disabled={!minimizeToTrayOnClose}
+                  onChange={setLightweightOnClose}
                 />
               </div>
             </div>
