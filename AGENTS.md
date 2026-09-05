@@ -391,7 +391,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - 系统 `libwayland-client.so.0` 搜索路径必须覆盖常见 x86_64 和 aarch64 Debian/Ubuntu multiarch 路径，不能只写 `/usr/lib64` 或 x86_64 专用路径。
 - 不要覆盖用户显式设置的 `LD_PRELOAD`，并且必须有 sentinel 环境变量防止重启循环；`AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` 应禁用这类启动兼容处理。
 - Linux 发版如果新增或调整 AppImage 兼容策略，应同时确认 release workflow 的 Linux 产物覆盖 Fedora 用户可安装的 `rpm`，而不是只发布 `deb` 和 `AppImage`。
-- WebKitGTK 2.50+ 的 Skia 线程化渲染管线在 Wayland（尤其 AMD + KDE）上会引发滚动掉帧和「聚焦输入框冻结 UI」；应用版本对这类问题不可检测（界面能显示，watchdog 的 frontend-ready 超时/EGL 失败都不触发），只能靠预设级别规避（issue #301，`level 2` 即 `WEBKIT_DISABLE_GPU_PROCESS=1` 已由用户验证有效；`WEBKIT_SKIA_GPU_PAINTING_THREADS=0` 是候选轻量规避）。同类先例：psysonic#342、tauri-apps/tauri#9088。
+- WebKitGTK 2.50+ 的 Skia 线程化渲染管线在 Wayland（尤其 AMD + KDE）上会引发滚动掉帧和「聚焦输入框冻结 UI」；应用版本对这类问题不可检测（界面能显示，watchdog 的 frontend-ready 超时/EGL 失败都不触发），只能靠预设级别规避（issue #301）。规避效果与 GPU 驱动强相关，呈分档态势：AMD 集显（Radeon 780M / radeonsi）下只有 `level 2` 即 `WEBKIT_DISABLE_GPU_PROCESS=1`（关 GPU 进程走软件合成）能消除冻结，`level 1 + WEBKIT_SKIA_GPU_PAINTING_THREADS=0` 干净环境仍卡死；Intel 集显（Iris Xe / iris）下 `level 0 + WEBKIT_SKIA_GPU_PAINTING_THREADS=0`（保留 GPU 进程、仅 Skia 单线程绘制）即可消除冻结且不牺牲 GPU 加速。即 `WEBKIT_SKIA_GPU_PAINTING_THREADS=0` 是有效的轻量规避，但仅对 Intel 路径完整修复，AMD 仍需 Level 2 兜底；固化时若按驱动分档（Intel 默认走 Skia 单线程、AMD 默认走 Level 2），可让 Intel 用户保留更流畅的 GPU 合成。同类先例：psysonic#342、tauri-apps/tauri#9088。
 - Release 构建下，Wayland 会话的所有安装方式（不只 AppImage）默认 min level 1（禁 DMABUF renderer）；watchdog 自动降级仍只覆盖白屏/崩溃类失败。
 - 持久化 level 文件（`wayland_webview_workaround_level`）是 JSON 记录，绑定写入时的 app 版本；版本不一致或旧版纯数字格式一律按默认处理。这样应用升级后自动重新探索级别，避免旧 WebKitGTK 回归触发的降级永久拖累新版本，也让系统 WebKitGTK 修复后能回到更高渲染路径。相关纯函数挂 `#[cfg(any(target_os = "linux", test))]` 以便在 Windows 上单测版本重置语义。
 

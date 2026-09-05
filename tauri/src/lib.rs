@@ -728,8 +728,13 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 /// - Debug builds default to level 4 to avoid dev-time white screens.
 /// - Release builds default to at least level 1 on Wayland sessions (any installation
 ///   method) and for AppImage on any session type; the DMABUF/Skia rendering path is the
-///   main source of WebKitGTK 2.50+ scroll jank and input-field freezes (issue #301, where
-///   level 2 was verified to fix the freeze on Arch + KDE Wayland + AMD).
+///   main source of WebKitGTK 2.50+ scroll jank and input-field freezes (issue #301).
+///   Mitigation is GPU-driver-dependent: on AMD iGPUs (radeonsi) only level 2 (disable
+///   the GPU process, software compositing) clears the freeze — level 1 + single-thread
+///   Skia painting still freezes in a clean env; on Intel iGPUs (iris) level 0 + Skia
+///   single-thread painting (`WEBKIT_SKIA_GPU_PAINTING_THREADS=0`) is enough and keeps
+///   GPU acceleration. So `WEBKIT_SKIA_GPU_PAINTING_THREADS=0` is a valid lightweight
+///   workaround for Intel, while AMD still needs the level-2 fallback.
 /// - The persisted level is bound to the app version that wrote it; upgrading the app
 ///   resets it so a downgrade forced by an old WebKitGTK regression does not pin newer
 ///   releases (or newer system WebKitGTK builds) to a slower rendering path.
