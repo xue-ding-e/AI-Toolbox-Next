@@ -1023,6 +1023,34 @@ pub async fn apply_kimi_prompt_config(
     apply_kimi_prompt_config_internal(state.inner(), &app, &config_id).await
 }
 
+/// Disable semantics: clear every applied flag and empty the live `AGENTS.md`,
+/// while keeping all DB records so any of them can be re-applied later.
+pub async fn disable_kimi_prompt_runtime(state: &SqliteDbState) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+    state.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::KimiPromptConfig, None, &now)
+    })?;
+    write_text_atomic(&get_kimi_prompt_path_async(state).await?, "")?;
+    Ok(())
+}
+
+/// Disable the applied Kimi prompt: clear every applied flag and empty the
+/// live `AGENTS.md`, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_kimi_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_prompt(db, &config_id)?.ok_or_else(|| format!("Kimi prompt '{config_id}' not found"))?;
+    disable_kimi_prompt_runtime(db).await?;
+
+    let _ = app.emit("config-changed", "window");
+    emit_kimi_sync(&app);
+    Ok(())
+}
+
 pub async fn apply_kimi_prompt_config_internal<R: tauri::Runtime>(
     state: &SqliteDbState,
     app: &tauri::AppHandle<R>,

@@ -972,6 +972,28 @@ pub async fn apply_opencode_prompt_config(
     apply_prompt_config_internal(state, &app, &config_id, false).await
 }
 
+/// Disable the applied OpenCode prompt: clear every applied flag and empty
+/// the prompt file, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_opencode_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    get_opencode_prompt_from_sqlite(&state, &config_id)?
+        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    let now = chrono::Local::now().to_rfc3339();
+    state.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::OpenCodePromptConfig, None, &now)
+    })?;
+    write_prompt_content_to_file(state.clone(), Some("")).await?;
+
+    let _ = app.emit("config-changed", "window");
+    emit_prompt_sync_requests(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reorder_opencode_prompt_configs(
     state: tauri::State<'_, SqliteDbState>,

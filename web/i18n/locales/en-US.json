@@ -1232,7 +1232,8 @@
     "terminalCmd": "Command Prompt",
     "terminalPowershell": "PowerShell",
     "terminalWt": "Windows Terminal",
-    "terminalGitBash": "Git Bash"
+    "terminalGitBash": "Git Bash",
+    "disable": "Disable"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1682,7 +1683,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "ohMyOpenCode": {
       "title": "OMO Configuration",
@@ -2404,7 +2406,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `CLAUDE.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "preview": {
       "currentConfigTitle": "Current Config Preview"
@@ -2702,7 +2705,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "preview": {
       "currentConfigTitle": "Current Config Preview",
@@ -2909,7 +2913,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from the local Gemini CLI context file and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "preview": {
       "currentConfigTitle": "Current Gemini Config Preview"
@@ -3926,7 +3931,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "title": "Pi Configuration",
     "viewDocs": "Docs",
@@ -4499,7 +4505,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "provider": {
       "addProvider": "Add Provider",
@@ -4667,7 +4674,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "title": "Oh My Pi Configuration",
     "viewDocs": "Docs",
@@ -5135,7 +5143,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "agentInstructions": {
       "disabledWarning": "The agent-instructions plugin is disabled. Global prompt will not take effect.",
@@ -5246,7 +5255,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `SOUL.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "preview": {
       "title": "Preview config"
@@ -5290,7 +5300,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "providers": {
       "importAllApiHubNonAnthropicProtocolDesc": "The selected provider is not an Anthropic-native endpoint but will still be imported in Anthropic Messages protocol format. Requesting Google / Gemini or OpenAI endpoints with the Anthropic format will generally fail. Prefer Anthropic-compatible endpoints, or review the protocol in the edit page after import."
@@ -5339,7 +5350,8 @@
       "applied": "Applied",
       "current": "Current",
       "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
-      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?",
+      "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "rootPathSource": {
       "customize": "Customize Root Directory",

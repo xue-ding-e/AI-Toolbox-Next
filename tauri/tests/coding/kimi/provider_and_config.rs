@@ -3,8 +3,9 @@ use std::sync::{LazyLock, Mutex};
 
 use ai_toolbox_lib::coding::kimi::adapter;
 use ai_toolbox_lib::coding::kimi::commands::{
-    apply_kimi_provider_to_file, delete_kimi_provider_internal, list_kimi_providers_for_db,
-    write_common_config_without_provider, write_kimi_prompt_and_mark_applied,
+    apply_kimi_provider_to_file, delete_kimi_provider_internal, disable_kimi_prompt_runtime,
+    list_kimi_providers_for_db, write_common_config_without_provider,
+    write_kimi_prompt_and_mark_applied,
 };
 use ai_toolbox_lib::coding::kimi::official_accounts;
 use ai_toolbox_lib::coding::kimi::types::{
@@ -543,6 +544,55 @@ fn prompt_config_crud_and_atomic_write_to_agents_md() {
     assert!(
         adapter::prompt_from_db_value(applied_raw).is_applied,
         "apply must mark the prompt applied"
+    );
+}
+
+#[test]
+fn disable_prompt_clears_agents_md_and_keeps_record() {
+    let _guard = KIMI_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let (temp_dir, state) = setup_test_env();
+
+    let agents_md_path = temp_dir.path().join("AGENTS.md");
+    let prompt_id = "prompt_disable";
+    let prompt_content = KimiPromptConfigContent {
+        name: "To Disable".to_string(),
+        content: "# Temp\nShould be cleared after disable.".to_string(),
+        is_applied: false,
+        sort_index: Some(0),
+        created_at: "2026-03-31T00:00:00Z".to_string(),
+        updated_at: "2026-03-31T00:00:00Z".to_string(),
+    };
+    state
+        .with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::KimiPromptConfig,
+                prompt_id,
+                &adapter::prompt_to_db_value(&prompt_content),
+            )
+        })
+        .expect("db_put prompt");
+
+    // Apply first: the runtime file gets content and the record is marked applied.
+    block_on(write_kimi_prompt_and_mark_applied(&state, prompt_id)).expect("apply prompt");
+    assert!(agents_md_path.exists());
+
+    // Disable: the runtime file must be emptied while the DB record survives
+    // (unapplied) so the prompt can be re-applied later.
+    block_on(disable_kimi_prompt_runtime(&state)).expect("disable prompt");
+
+    let cleared = fs::read_to_string(&agents_md_path).expect("read AGENTS.md");
+    assert_eq!(cleared, "", "disable must empty the runtime prompt file");
+
+    let record = state
+        .with_conn(|conn| db_get(conn, DbTable::KimiPromptConfig, prompt_id))
+        .expect("db_get prompt")
+        .expect("disable must keep the DB record");
+    let read_back = adapter::prompt_from_db_value(record);
+    assert!(!read_back.is_applied, "disable must unapply the prompt");
+    assert_eq!(
+        read_back.content, prompt_content.content,
+        "disable must keep the prompt content in DB"
     );
 }
 

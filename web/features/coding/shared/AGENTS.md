@@ -81,6 +81,7 @@ sequenceDiagram
 - Codex 消费内置 profile 时，显式 `modelCatalog` 优先；Anthropic/Claude 协议 endpoint 如果没有目录，前端可从同一 profile 的 Claude endpoint `models` 派生添加供应商表单的初始映射，避免协议切换时模型映射丢失。不要把这个派生规则反过来写成共享 profile JSON 的新必填字段。
 - Magic Context 配置卡片只在调用方确认插件/扩展已安装时展示；OpenCode 由页面检查 `config.plugin`，Pi 由扩展列表检查 `@cortexkit/pi-magic-context`。不要在 shared 组件里重复实现安装扫描。
 - `GlobalPromptSettings` 的 `__local__` 只是本地 prompt 文件的临时桥接项（DB 为空时读本地 `CLAUDE.md` / `AGENTS.md` 等映射出来）。后端可能把它标成 `isApplied=true`，表示“当前文件内容就是这份镜像”，但 UI 不能把它当正式已应用预设：不要显示「已应用」标签、不要高亮选中态、折叠标题也不要显示「当前: default」，也不要露出「应用」按钮。用户应通过编辑后 `saveLocalConfig` 收编入库，才进入真正的 applied 管理语义。
+- `GlobalPromptSettings` 卡片三点菜单的「禁用」只对"已应用且非 `__local__`"的配置显示（`showAsApplied` 即 `isApplied && !isLocalConfig`）。点击后 `Modal.confirm` 二次确认（文案 key 为各模块 `{prefix}.confirmDisable`，菜单标签用 `common.disable`），确认后调 `service.disableConfig`：后端语义是取消应用 + 清空 runtime 提示词文件 + 保留 DB 记录（可重新应用）。新增带全局提示词的工具 tab 时，service 的 disable 命令名必须与后端 `lib.rs` 注册一致，`web/test/services/globalPromptCommands.test.ts` 会校验这条映射，不要漏配。
 
 ## 跨模块依赖
 

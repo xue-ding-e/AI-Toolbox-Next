@@ -6,6 +6,7 @@ export const openCodePromptApi = createGlobalPromptApi({
   update: 'update_opencode_prompt_config',
   delete: 'delete_opencode_prompt_config',
   apply: 'apply_opencode_prompt_config',
+  disable: 'disable_opencode_prompt_config',
   reorder: 'reorder_opencode_prompt_configs',
   saveLocal: 'save_opencode_local_prompt_config',
 });

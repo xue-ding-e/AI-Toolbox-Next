@@ -6,6 +6,7 @@ export const grokPromptApi = createGlobalPromptApi({
   update: 'update_grok_prompt_config',
   delete: 'delete_grok_prompt_config',
   apply: 'apply_grok_prompt_config',
+  disable: 'disable_grok_prompt_config',
   reorder: 'reorder_grok_prompt_configs',
   saveLocal: 'save_grok_local_prompt_config',
 });

@@ -14,7 +14,9 @@ use super::config_writer;
 use super::types::*;
 use crate::coding::db_id::db_new_id;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
-use crate::db::helpers::{db_delete, db_get, db_list, db_max_i64, db_put};
+use crate::db::helpers::{
+    db_delete, db_get, db_list, db_max_i64, db_put, db_update_applied_status,
+};
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use tauri::Emitter;
@@ -309,6 +311,28 @@ pub async fn apply_claude_desktop_prompt_config(
     config_id: String,
 ) -> Result<(), String> {
     apply_prompt_config_internal(state, &app, &config_id, false).await
+}
+
+/// Disable the applied Claude Desktop prompt: clear every applied flag and
+/// empty `AGENTS.md`, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_claude_desktop_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_prompt_from_sqlite(db, &config_id)?
+        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::ClaudeDesktopPromptConfig, None, &now)
+    })?;
+    write_prompt_content_to_file(Some("")).await?;
+
+    let _ = app.emit("config-changed", "window");
+    Ok(())
 }
 
 /// Reorder Claude Desktop prompt configs by a full ordered id list.

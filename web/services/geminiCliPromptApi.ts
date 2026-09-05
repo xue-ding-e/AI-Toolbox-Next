@@ -6,6 +6,7 @@ export const geminiCliPromptApi = createGlobalPromptApi({
   update: 'update_gemini_cli_prompt_config',
   delete: 'delete_gemini_cli_prompt_config',
   apply: 'apply_gemini_cli_prompt_config',
+  disable: 'disable_gemini_cli_prompt_config',
   reorder: 'reorder_gemini_cli_prompt_configs',
   saveLocal: 'save_gemini_cli_local_prompt_config',
 });

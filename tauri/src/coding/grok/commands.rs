@@ -1044,6 +1044,26 @@ pub async fn apply_grok_prompt_config(
     apply_grok_prompt_config_internal(state.inner(), &app, &config_id).await
 }
 
+/// Disable the applied Grok prompt: clear every applied flag and empty the
+/// live `AGENTS.md`, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_grok_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_prompt(db, &config_id)?.ok_or_else(|| format!("Grok prompt '{config_id}' not found"))?;
+
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| db_update_applied_status(conn, DbTable::GrokPromptConfig, None, &now))?;
+    write_text_atomic(&get_grok_prompt_path_async(db).await?, "")?;
+
+    let _ = app.emit("config-changed", "window");
+    emit_grok_sync(&app);
+    Ok(())
+}
+
 pub async fn apply_grok_prompt_config_internal<R: tauri::Runtime>(
     state: &SqliteDbState,
     app: &tauri::AppHandle<R>,

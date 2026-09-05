@@ -6,6 +6,7 @@ export const codexPromptApi = createGlobalPromptApi({
   update: 'update_codex_prompt_config',
   delete: 'delete_codex_prompt_config',
   apply: 'apply_codex_prompt_config',
+  disable: 'disable_codex_prompt_config',
   reorder: 'reorder_codex_prompt_configs',
   saveLocal: 'save_codex_local_prompt_config',
 });

@@ -10,6 +10,7 @@ export interface GlobalPromptCommandSet {
   update: string;
   delete: string;
   apply: string;
+  disable: string;
   reorder: string;
   saveLocal: string;
 }
@@ -20,6 +21,7 @@ export interface GlobalPromptApi {
   updateConfig: (input: GlobalPromptConfigInput) => Promise<GlobalPromptConfig>;
   deleteConfig: (id: string) => Promise<void>;
   applyConfig: (configId: string) => Promise<void>;
+  disableConfig: (configId: string) => Promise<void>;
   reorderConfigs: (ids: string[]) => Promise<void>;
   saveLocalConfig: (input: GlobalPromptConfigInput) => Promise<GlobalPromptConfig>;
 }
@@ -39,6 +41,9 @@ export const createGlobalPromptApi = (commands: GlobalPromptCommandSet): GlobalP
   },
   applyConfig: async (configId) => {
     await invoke(commands.apply, { configId });
+  },
+  disableConfig: async (configId) => {
+    await invoke(commands.disable, { configId });
   },
   reorderConfigs: async (ids) => {
     await invoke(commands.reorder, { ids });

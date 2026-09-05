@@ -1232,7 +1232,8 @@
     "terminalCmd": "命令提示符",
     "terminalPowershell": "PowerShell",
     "terminalWt": "Windows Terminal",
-    "terminalGitBash": "Git Bash"
+    "terminalGitBash": "Git Bash",
+    "disable": "禁用"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -1679,7 +1680,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim 配置管理",
@@ -2401,7 +2403,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `CLAUDE.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "preview": {
       "currentConfigTitle": "当前配置预览"
@@ -2699,7 +2702,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "preview": {
       "currentConfigTitle": "当前配置预览",
@@ -2906,7 +2910,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 Gemini CLI context 文件，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "preview": {
       "currentConfigTitle": "当前 Gemini 配置预览"
@@ -3923,7 +3928,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "title": "Pi 配置管理",
     "viewDocs": "官方文档",
@@ -4496,7 +4502,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "provider": {
       "addProvider": "添加供应商",
@@ -4664,7 +4671,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "title": "Oh My Pi 配置管理",
     "viewDocs": "官方文档",
@@ -5132,7 +5140,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "agentInstructions": {
       "disabledWarning": "agent-instructions 插件未启用，全局提示词不会生效",
@@ -5243,7 +5252,8 @@
       "applied": "已应用",
       "current": "当前",
       "localConfigHint": "从本地 `SOUL.md` 加载，编辑后将保存到数据库",
-      "confirmDelete": "确定要删除 \"{{name}}\" 吗?"
+      "confirmDelete": "确定要删除 \"{{name}}\" 吗?",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "preview": {
       "title": "预览配置"
@@ -5287,7 +5297,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "providers": {
       "importAllApiHubNonAnthropicProtocolDesc": "检测到所选供应商不是 Anthropic 官方端点，仍会以 Anthropic Messages 协议格式导入。Google / Gemini、OpenAI 等端点用 Anthropic 格式请求通常无法成功。建议仅导入 Anthropic 兼容端点，或导入后立即进入编辑页核对协议。"
@@ -5336,7 +5347,8 @@
       "applied": "已应用",
       "current": "当前使用",
       "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
-      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+      "confirmDelete": "确定要删除配置「{{name}}」吗？",
+      "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "rootPathSource": {
       "customize": "自定义配置目录",

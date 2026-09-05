@@ -1271,6 +1271,26 @@ pub async fn apply_dsh_prompt_config(
     apply_dsh_prompt_config_internal(state, &app, &config_id, false).await
 }
 
+/// Disable the applied dsh prompt: clear every applied flag and empty the
+/// live prompt file, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_dsh_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_dsh_prompt_from_sqlite(&db, &config_id)?
+        .ok_or_else(|| format!("Prompt config '{config_id}' not found"))?;
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::DshPromptConfig, None, &now)
+    })?;
+    write_prompt_content_to_file(&db, Some("")).await?;
+    emit_config_changed(&app, "window");
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reorder_dsh_prompt_configs(
     state: tauri::State<'_, SqliteDbState>,

@@ -6,6 +6,7 @@ export const ohMyPiPromptApi = createGlobalPromptApi({
   update: 'update_omp_prompt_config',
   delete: 'delete_omp_prompt_config',
   apply: 'apply_omp_prompt_config',
+  disable: 'disable_omp_prompt_config',
   reorder: 'reorder_omp_prompt_configs',
   saveLocal: 'save_omp_local_prompt_config',
 });

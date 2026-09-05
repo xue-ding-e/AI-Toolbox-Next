@@ -7,6 +7,7 @@ import {
   EditOutlined,
   HolderOutlined,
   MoreOutlined,
+  StopOutlined,
   UpOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
@@ -26,6 +27,7 @@ interface GlobalPromptConfigCardProps {
   onEdit: (config: GlobalPromptConfig) => void;
   onDelete: (config: GlobalPromptConfig) => void;
   onApply: (config: GlobalPromptConfig) => void;
+  onDisable: (config: GlobalPromptConfig) => void;
 }
 
 const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
@@ -34,6 +36,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   onEdit,
   onDelete,
   onApply,
+  onDisable,
 }) => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -63,6 +66,16 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
       icon: <EditOutlined />,
       onClick: () => onEdit(config),
     },
+    // Only the managed applied preset can be disabled: `__local__` already
+    // represents the "not managed" state, and unapplied presets need no disable.
+    ...(showAsApplied
+      ? [{
+          key: 'disable',
+          label: t('common.disable'),
+          icon: <StopOutlined />,
+          onClick: () => onDisable(config),
+        }]
+      : []),
     ...(!isLocalConfig
       ? [{
           type: 'divider' as const,

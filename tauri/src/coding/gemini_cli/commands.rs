@@ -1932,6 +1932,29 @@ pub async fn apply_gemini_cli_prompt_config(
     apply_prompt_config_internal(state, &app, &config_id, false).await
 }
 
+/// Disable the applied Gemini CLI prompt: clear every applied flag and empty
+/// the prompt file, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_gemini_cli_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_gemini_prompt_from_sqlite(db, &config_id)?
+        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::GeminiCliPromptConfig, None, &now)
+    })?;
+    write_prompt_content_to_file(Some(&db), Some("")).await?;
+
+    let _ = app.emit("config-changed", "window");
+    emit_sync_requests(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reorder_gemini_cli_prompt_configs(
     state: tauri::State<'_, SqliteDbState>,

@@ -3972,6 +3972,29 @@ pub async fn apply_codex_prompt_config(
     apply_prompt_config_internal(state, &app, &config_id, false).await
 }
 
+/// Disable the applied Codex prompt: clear every applied flag and empty the
+/// prompt file, while keeping the DB record so it can be re-applied later.
+#[tauri::command]
+pub async fn disable_codex_prompt_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    let db = state.db();
+    get_codex_prompt_from_sqlite(db, &config_id)?
+        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::CodexPromptConfig, None, &now)
+    })?;
+    write_prompt_content_to_file(Some(&db), Some("")).await?;
+
+    let _ = app.emit("config-changed", "window");
+    emit_prompt_sync_requests(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reorder_codex_prompt_configs(
     state: tauri::State<'_, SqliteDbState>,

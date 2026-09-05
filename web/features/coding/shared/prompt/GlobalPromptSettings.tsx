@@ -125,6 +125,24 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
     }
   };
 
+  const handleDisableConfig = (config: GlobalPromptConfig) => {
+    Modal.confirm({
+      title: t('common.confirm'),
+      content: t(`${translationKeyPrefix}.confirmDisable`, { name: config.name }),
+      onOk: async () => {
+        try {
+          await service.disableConfig(config.id);
+          message.success(t('common.success'));
+          await loadConfigs();
+          await notifyUpdated();
+        } catch (error) {
+          console.error('Failed to disable global prompt config:', error);
+          message.error(t('common.error'));
+        }
+      },
+    });
+  };
+
   const handleConfigSuccess = async (values: GlobalPromptConfigFormValues) => {
     const payload: GlobalPromptConfigInput = {
       id: editingConfig?.id !== '__local__' ? editingConfig?.id : undefined,
@@ -209,6 +227,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
                   onEdit={handleEditConfig}
                   onDelete={handleDeleteConfig}
                   onApply={handleApplyConfig}
+                  onDisable={handleDisableConfig}
                 />
               ))}
             </div>

@@ -6,6 +6,7 @@ export const hermesPromptApi = createGlobalPromptApi({
   update: 'update_hermes_prompt_config',
   delete: 'delete_hermes_prompt_config',
   apply: 'apply_hermes_prompt_config',
+  disable: 'disable_hermes_prompt_config',
   reorder: 'reorder_hermes_prompt_configs',
   saveLocal: 'save_hermes_local_prompt_config',
 });

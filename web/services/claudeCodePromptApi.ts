@@ -6,6 +6,7 @@ export const claudeCodePromptApi = createGlobalPromptApi({
   update: 'update_claude_prompt_config',
   delete: 'delete_claude_prompt_config',
   apply: 'apply_claude_prompt_config',
+  disable: 'disable_claude_prompt_config',
   reorder: 'reorder_claude_prompt_configs',
   saveLocal: 'save_claude_local_prompt_config',
 });
