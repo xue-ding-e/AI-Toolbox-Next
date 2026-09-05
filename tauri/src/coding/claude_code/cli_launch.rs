@@ -157,6 +157,47 @@ fn unix_trap_cleanup_line(paths: &[String]) -> String {
     format!("trap {} EXIT", shell_single_quote(&unix_rm_command(paths)))
 }
 
+fn unix_settings_echo_line(settings_path: Option<&str>) -> String {
+    settings_path
+        .map(|path| format!("echo {}", shell_single_quote(path)))
+        .unwrap_or_else(|| {
+            "echo \"(no provider env overrides; using current Claude login/settings)\"".to_string()
+        })
+}
+
+/// Shared launcher script body for sh-compatible sessions (macOS, Linux, the
+/// WSL inner script and the Windows Git Bash launcher): set config dir, cd,
+/// run Claude, clean up temp files, then keep the window open until Enter.
+fn build_unix_session_script(
+    claude_line: &str,
+    config_dir_line: &str,
+    cd_line: &str,
+    settings_echo: &str,
+    cleanup_paths: &[String],
+) -> String {
+    format!(
+        r#"#!/usr/bin/env sh
+{trap_cleanup}
+{config_dir_line}
+{cd_line}
+echo "Using temporary Claude provider settings (does not change applied config)"
+{settings_echo}
+{claude_line}
+status=$?
+{cleanup}
+echo ""
+echo "Claude exited with code $status. Press Enter to close."
+read -r _
+"#,
+        trap_cleanup = unix_trap_cleanup_line(cleanup_paths),
+        config_dir_line = config_dir_line,
+        cd_line = cd_line,
+        settings_echo = settings_echo,
+        claude_line = claude_line,
+        cleanup = unix_rm_command(cleanup_paths),
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn escape_windows_batch_value(value: &str) -> String {
     value
@@ -368,12 +409,17 @@ fn write_wsl_temp_settings_file(
 }
 
 /// Write a temp settings file and open a system terminal that runs Claude CLI with it.
+///
+/// `preferred_terminal` selects the Windows terminal app used to open the
+/// launcher (`cmd` / `powershell` / `wt` / `gitbash`); it is ignored on other
+/// platforms and falls back to the system default when unavailable.
 pub fn launch_claude_provider_cli_session(
     runtime_location: &RuntimeLocationInfo,
     provider_id: &str,
     settings_config: &str,
     full_access: bool,
     cwd: Option<&Path>,
+    preferred_terminal: Option<&str>,
 ) -> Result<(), String> {
     let temp_settings = build_minimal_temp_settings(settings_config)?;
     let include_settings = temp_settings_has_env(&temp_settings);
@@ -386,6 +432,7 @@ pub fn launch_claude_provider_cli_session(
             include_settings,
             full_access,
             cwd,
+            preferred_terminal,
         ),
         RuntimeLocationMode::WslDirect => {
             let wsl = runtime_location
@@ -400,6 +447,7 @@ pub fn launch_claude_provider_cli_session(
                 include_settings,
                 full_access,
                 cwd,
+                preferred_terminal,
             )
         }
     }
@@ -412,7 +460,11 @@ fn launch_local_session(
     include_settings: bool,
     full_access: bool,
     cwd: Option<&Path>,
+    preferred_terminal: Option<&str>,
 ) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = preferred_terminal;
+
     let safe_id = sanitize_provider_id_for_filename(provider_id);
 
     let settings_file = if include_settings {
@@ -443,6 +495,7 @@ fn launch_local_session(
             &safe_id,
             pid,
             cwd,
+            preferred_terminal,
         )?;
         return Ok(());
     }
@@ -495,6 +548,7 @@ fn launch_wsl_session(
     include_settings: bool,
     full_access: bool,
     cwd: Option<&Path>,
+    preferred_terminal: Option<&str>,
 ) -> Result<(), String> {
     let safe_id = sanitize_provider_id_for_filename(provider_id);
     let pid = std::process::id();
@@ -526,8 +580,6 @@ fn launch_wsl_session(
         cleanup_paths.push(linux_settings_path.clone());
     }
     cleanup_paths.push(linux_script.clone());
-    let cleanup = unix_rm_command(&cleanup_paths);
-    let trap_cleanup = unix_trap_cleanup_line(&cleanup_paths);
 
     // Convert the user-selected Windows working directory to a WSL Linux path so
     // the inner shell can `cd` into it. Falls back to the raw value if conversion
@@ -547,29 +599,17 @@ fn launch_wsl_session(
         })
         .unwrap_or_default();
 
-    let inner = format!(
-        r#"{trap_cleanup}
-{config_dir}
-{cd_line}
-echo "Using temporary Claude provider settings (does not change applied config)"
-{settings_echo}
-{claude_line}
-status=$?
-{cleanup}
-echo ""
-echo "Claude exited with code $status. Press Enter to close."
-read -r _
-"#,
-        trap_cleanup = trap_cleanup,
-        config_dir = unix_export_claude_config_dir_line(claude_config_dir),
-        cd_line = cd_line,
-        settings_echo = if include_settings {
-            format!("echo {}", shell_single_quote(&linux_settings_path))
-        } else {
-            "echo \"(no provider env overrides; using current Claude login/settings)\"".to_string()
-        },
-        claude_line = claude_line,
-        cleanup = cleanup,
+    let settings_echo = if include_settings {
+        format!("echo {}", shell_single_quote(&linux_settings_path))
+    } else {
+        unix_settings_echo_line(None)
+    };
+    let inner = build_unix_session_script(
+        &claude_line,
+        &unix_export_claude_config_dir_line(claude_config_dir),
+        &cd_line,
+        &settings_echo,
+        &cleanup_paths,
     );
 
     #[cfg(target_os = "windows")]
@@ -598,13 +638,22 @@ del \"%~f0\" >nul 2>&1\r\n",
         );
         fs::write(&bat_file, content)
             .map_err(|e| format!("Failed to write batch launcher: {e}"))?;
-        run_windows_start_command(&["cmd", "/K", &bat_file.to_string_lossy()], "cmd")?;
+        let result = if normalize_preferred_terminal(preferred_terminal) == Some("gitbash") {
+            launch_git_bash_wsl_session(distro, &linux_script)
+        } else {
+            launch_bat_in_preferred_terminal(&bat_file, preferred_terminal)
+        };
+        if result.is_ok() && normalize_preferred_terminal(preferred_terminal) == Some("gitbash") {
+            // Same as the local path: the .bat launcher is never executed.
+            let _ = fs::remove_file(&bat_file);
+        }
+        fall_back_to_cmd_on_failure(result, preferred_terminal, &bat_file)?;
         return Ok(());
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (distro, claude_config_dir, inner);
+        let _ = (distro, claude_config_dir, inner, preferred_terminal);
         Err("WSL Direct Claude CLI launch is only supported on Windows".to_string())
     }
 }
@@ -620,6 +669,7 @@ fn launch_windows_terminal(
     safe_id: &str,
     pid: u32,
     cwd: Option<&Path>,
+    preferred_terminal: Option<&str>,
 ) -> Result<(), String> {
     let bat_file = temp_dir.join(format!("ai_toolbox_claude_launch_{safe_id}_{pid}.bat"));
     let claude_line =
@@ -662,8 +712,270 @@ del \"%~f0\" >nul 2>&1\r\n",
     );
 
     fs::write(&bat_file, content).map_err(|e| format!("Failed to write batch launcher: {e}"))?;
+    let preferred = normalize_preferred_terminal(preferred_terminal);
+    let result = if preferred == Some("gitbash") {
+        launch_git_bash_terminal(
+            temp_dir,
+            claude_config_dir,
+            settings_file,
+            settings_path,
+            claude_program,
+            full_access,
+            safe_id,
+            pid,
+            cwd,
+        )
+    } else {
+        launch_bat_in_preferred_terminal(&bat_file, preferred_terminal)
+    };
+    if result.is_ok() && preferred == Some("gitbash") {
+        // Git Bash never executes the .bat launcher, so its self-delete line
+        // never runs; clean it up here instead.
+        let _ = fs::remove_file(&bat_file);
+    }
+    fall_back_to_cmd_on_failure(result, preferred_terminal, &bat_file)
+}
+
+/// Build the `start` arguments that open a launcher `.bat` in the preferred
+/// Windows terminal. Returns `(start args, terminal label)`; `None`, empty or
+/// unknown preferences fall back to `cmd` (the system default).
+#[cfg(any(target_os = "windows", test))]
+fn windows_terminal_start_args(
+    preferred_terminal: Option<&str>,
+    bat_path: &str,
+) -> (Vec<String>, &'static str) {
+    let bat = bat_path.to_string();
+    match preferred_terminal.map(|value| value.trim()) {
+        Some("powershell") => (
+            vec![
+                "powershell".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                format!("& '{bat}'"),
+            ],
+            "PowerShell",
+        ),
+        Some("wt") => (
+            vec!["wt".to_string(), "cmd".to_string(), "/K".to_string(), bat],
+            "Windows Terminal",
+        ),
+        _ => (vec!["cmd".to_string(), "/K".to_string(), bat], "cmd"),
+    }
+}
+
+/// Open a launcher `.bat` in the user's preferred Windows terminal.
+#[cfg(target_os = "windows")]
+fn launch_bat_in_preferred_terminal(
+    bat_file: &Path,
+    preferred_terminal: Option<&str>,
+) -> Result<(), String> {
     let bat_path = bat_file.to_string_lossy().to_string();
-    run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
+    let (args, terminal_name) =
+        windows_terminal_start_args(normalize_preferred_terminal(preferred_terminal), &bat_path);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_windows_start_command(&arg_refs, terminal_name)
+}
+
+/// Normalize a stored terminal preference: trim and treat empty as unset.
+#[cfg(target_os = "windows")]
+fn normalize_preferred_terminal(preferred_terminal: Option<&str>) -> Option<&str> {
+    preferred_terminal
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+/// When a non-default preferred terminal fails to start (e.g. Windows Terminal
+/// or Git Bash not installed), fall back to `cmd` so the CLI still opens.
+#[cfg(target_os = "windows")]
+fn fall_back_to_cmd_on_failure(
+    result: Result<(), String>,
+    preferred_terminal: Option<&str>,
+    bat_file: &Path,
+) -> Result<(), String> {
+    let preferred = normalize_preferred_terminal(preferred_terminal);
+    if result.is_err() && preferred.is_some() && preferred != Some("cmd") {
+        log::warn!(
+            "Preferred terminal {preferred:?} failed to launch, falling back to cmd: {:?}",
+            result.as_ref().err()
+        );
+        return run_windows_start_command(&["cmd", "/K", &bat_file.to_string_lossy()], "cmd");
+    }
+    result
+}
+
+/// Convert a Windows path to its MSYS/Git-Bash POSIX form (`C:\a\b` →
+/// `/c/a/b`, `\\srv\share` → `//srv/share`). Bash-internal operations (`cd`,
+/// exec, script cleanup) need the POSIX form; arguments consumed by native
+/// Windows programs keep their Windows form.
+#[cfg(any(target_os = "windows", test))]
+fn windows_path_to_msys_path(path: &Path) -> String {
+    let win = path.to_string_lossy().replace('/', "\\");
+    // Strip device prefixes: \\?\C:\a → C:\a, \\?\UNC\srv\share → \\srv\share.
+    let win = if let Some(rest) = win.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", rest)
+    } else if let Some(rest) = win.strip_prefix("\\\\?\\") {
+        rest.to_string()
+    } else {
+        win
+    };
+    if let Some(rest) = win.strip_prefix("\\\\") {
+        return format!("//{}", rest.replace('\\', "/"));
+    }
+    let mut chars = win.chars();
+    match (chars.next(), chars.next()) {
+        (Some(drive), Some(':')) => {
+            let rest = chars.as_str().replace('\\', "/");
+            let trimmed = rest.trim_start_matches('/');
+            if trimmed.is_empty() {
+                format!("/{}", drive.to_ascii_lowercase())
+            } else {
+                format!("/{}/{}", drive.to_ascii_lowercase(), trimmed)
+            }
+        }
+        // Relative path: only normalize separators.
+        _ => win.replace('\\', "/"),
+    }
+}
+
+/// Resolve the Claude program for a Git Bash script: npm-style `.cmd`/`.bat`
+/// shims cannot be exec'd by bash, so prefer their extensionless sh sibling
+/// when it exists, then convert to the MSYS POSIX form.
+#[cfg(any(target_os = "windows", test))]
+fn resolve_bash_claude_command(claude_program: &str) -> String {
+    let program = Path::new(claude_program);
+    if is_windows_batch_script_path(claude_program) {
+        let sibling = program.with_extension("");
+        if sibling.is_file() {
+            return windows_path_to_msys_path(&sibling);
+        }
+    }
+    windows_path_to_msys_path(program)
+}
+
+/// Locate Git for Windows' mintty terminal (`usr\bin\mintty.exe` under the
+/// install root): standard install roots first, then the install root derived
+/// from `git.exe` on PATH. Returns `None` when Git Bash is not installed.
+#[cfg(target_os = "windows")]
+fn find_git_bash_mintty() -> Option<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from("C:\\Program Files\\Git"),
+        PathBuf::from("C:\\Program Files (x86)\\Git"),
+    ];
+    if let Some(local_data_dir) = dirs::data_local_dir() {
+        roots.push(local_data_dir.join("Programs").join("Git"));
+    }
+    if let Ok(output) = Command::new("where")
+        .arg("git")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(first_line) = stdout.lines().next() {
+                let git_path = PathBuf::from(first_line.trim());
+                // git.exe can live at <root>\cmd\git.exe, <root>\bin\git.exe or
+                // <root>\mingw64\bin\git.exe; walk up a few levels to the root.
+                for ancestor_level in 1..=4 {
+                    if let Some(root) = git_path.ancestors().nth(ancestor_level) {
+                        roots.push(root.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+
+    roots
+        .into_iter()
+        .map(|root| root.join("usr").join("bin").join("mintty.exe"))
+        .find(|mintty| mintty.is_file())
+}
+
+/// Spawn mintty running `/usr/bin/bash --login` with the given bash arguments.
+#[cfg(target_os = "windows")]
+fn spawn_mintty_bash(mintty: &Path, bash_args: &[String]) -> Result<(), String> {
+    Command::new(mintty)
+        .arg("-t")
+        .arg("AI Toolbox Claude")
+        .arg("/usr/bin/bash")
+        // Keep native-child arguments verbatim (e.g. WSL `/tmp/...` paths); the
+        // launcher script already carries Windows forms where native programs
+        // need them.
+        .env("MSYS_NO_PATHCONV", "1")
+        .env("MSYS2_ARG_CONV_EXCL", "*")
+        .args(bash_args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to launch Git Bash: {e}"))
+}
+
+/// Open the Git Bash launcher script in mintty. Bash needs POSIX forms for its
+/// own operations (`cd`, script path, trap cleanup) while Claude and its
+/// `--settings` argument keep their Windows forms.
+#[cfg(target_os = "windows")]
+fn launch_git_bash_terminal(
+    temp_dir: &Path,
+    claude_config_dir: &str,
+    settings_file: Option<&Path>,
+    settings_path: Option<&str>,
+    claude_program: &str,
+    full_access: bool,
+    safe_id: &str,
+    pid: u32,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
+    let mintty =
+        find_git_bash_mintty().ok_or_else(|| "Git Bash (mintty.exe) not found".to_string())?;
+
+    let claude_command = resolve_bash_claude_command(claude_program);
+    let claude_line = format_claude_command_line_with(
+        &claude_command,
+        settings_path,
+        full_access,
+        shell_single_quote,
+    );
+    let config_dir_line = unix_export_claude_config_dir_line(claude_config_dir);
+    let cd_line = cwd
+        .map(|path| {
+            format!(
+                "cd {}",
+                shell_single_quote(&windows_path_to_msys_path(path))
+            )
+        })
+        .unwrap_or_default();
+
+    let script_file = temp_dir.join(format!("ai_toolbox_claude_launch_{safe_id}_{pid}.sh"));
+    let mut cleanup_paths = Vec::new();
+    if let Some(path) = settings_file {
+        cleanup_paths.push(path.to_string_lossy().to_string());
+    }
+    cleanup_paths.push(windows_path_to_msys_path(&script_file));
+    let script = build_unix_session_script(
+        &claude_line,
+        &config_dir_line,
+        &cd_line,
+        &unix_settings_echo_line(settings_path),
+        &cleanup_paths,
+    );
+    fs::write(&script_file, script)
+        .map_err(|e| format!("Failed to write Git Bash launcher: {e}"))?;
+
+    spawn_mintty_bash(
+        &mintty,
+        &["--login".to_string(), windows_path_to_msys_path(&script_file)],
+    )
+}
+
+/// Open a WSL Direct Claude session in Git Bash: run the existing WSL launch
+/// command from bash so the inner Linux script keeps its own cleanup and pause.
+#[cfg(target_os = "windows")]
+fn launch_git_bash_wsl_session(distro: &str, linux_script: &str) -> Result<(), String> {
+    let mintty =
+        find_git_bash_mintty().ok_or_else(|| "Git Bash (mintty.exe) not found".to_string())?;
+    let inner = format!(
+        "wsl -d {distro} --exec bash {}",
+        shell_single_quote(linux_script)
+    );
+    spawn_mintty_bash(&mintty, &["--login".to_string(), "-c".to_string(), inner])
 }
 
 #[cfg(target_os = "windows")]
@@ -715,29 +1027,12 @@ fn launch_macos_terminal(
         cleanup_paths.push(path.to_string_lossy().to_string());
     }
     cleanup_paths.push(script_file.to_string_lossy().to_string());
-    let trap_cleanup = unix_trap_cleanup_line(&cleanup_paths);
-    let script = format!(
-        r#"#!/usr/bin/env sh
-{trap_cleanup}
-{config_dir_line}
-{cd_line}
-echo "Using temporary Claude provider settings (does not change applied config)"
-{settings_echo}
-{claude_line}
-echo ""
-echo "Claude exited. Press Enter to close."
-read -r _
-"#,
-        trap_cleanup = trap_cleanup,
-        config_dir_line = config_dir_line,
-        cd_line = cd_line,
-        settings_echo = settings_path
-            .map(|path| format!("echo {}", shell_single_quote(path)))
-            .unwrap_or_else(|| {
-                "echo \"(no provider env overrides; using current Claude login/settings)\""
-                    .to_string()
-            }),
-        claude_line = claude_line,
+    let script = build_unix_session_script(
+        &claude_line,
+        &config_dir_line,
+        &cd_line,
+        &unix_settings_echo_line(settings_path),
+        &cleanup_paths,
     );
 
     fs::write(&script_file, &script).map_err(|e| format!("Failed to write launch script: {e}"))?;
@@ -803,29 +1098,12 @@ fn launch_linux_terminal(
         cleanup_paths.push(path.to_string_lossy().to_string());
     }
     cleanup_paths.push(script_file.to_string_lossy().to_string());
-    let trap_cleanup = unix_trap_cleanup_line(&cleanup_paths);
-    let script = format!(
-        r#"#!/usr/bin/env sh
-{trap_cleanup}
-{config_dir_line}
-{cd_line}
-echo "Using temporary Claude provider settings (does not change applied config)"
-{settings_echo}
-{claude_line}
-echo ""
-echo "Claude exited. Press Enter to close."
-read -r _
-"#,
-        trap_cleanup = trap_cleanup,
-        config_dir_line = config_dir_line,
-        cd_line = cd_line,
-        settings_echo = settings_path
-            .map(|path| format!("echo {}", shell_single_quote(path)))
-            .unwrap_or_else(|| {
-                "echo \"(no provider env overrides; using current Claude login/settings)\""
-                    .to_string()
-            }),
-        claude_line = claude_line,
+    let script = build_unix_session_script(
+        &claude_line,
+        &config_dir_line,
+        &cd_line,
+        &unix_settings_echo_line(settings_path),
+        &cleanup_paths,
     );
 
     fs::write(&script_file, &script).map_err(|e| format!("Failed to write launch script: {e}"))?;
@@ -872,7 +1150,8 @@ mod tests {
     use super::write_local_temp_settings_file;
     use super::{
         build_minimal_temp_settings, format_claude_command_line, is_windows_batch_script_path,
-        sanitize_provider_id_for_filename, unix_export_claude_config_dir_line,
+        resolve_bash_claude_command, sanitize_provider_id_for_filename,
+        unix_export_claude_config_dir_line, windows_path_to_msys_path, windows_terminal_start_args,
     };
 
     #[test]
@@ -950,6 +1229,67 @@ mod tests {
         assert!(is_windows_batch_script_path("claude.BAT"));
         assert!(!is_windows_batch_script_path("claude.exe"));
         assert!(!is_windows_batch_script_path("claude"));
+    }
+
+    #[test]
+    fn windows_paths_convert_to_msys_form() {
+        let convert = |value: &str| windows_path_to_msys_path(std::path::Path::new(value));
+        assert_eq!(convert(r"C:\Users\t\claude.cmd"), "/c/Users/t/claude.cmd");
+        assert_eq!(convert(r"C:\"), "/c");
+        assert_eq!(convert(r"C:/a/b"), "/c/a/b");
+        assert_eq!(convert(r"\\?\C:\a\b"), "/c/a/b");
+        assert_eq!(convert(r"\\srv\share\x"), "//srv/share/x");
+        assert_eq!(convert(r"\\?\UNC\srv\share\x"), "//srv/share/x");
+        assert_eq!(convert(r"relative\path"), "relative/path");
+    }
+
+    #[test]
+    fn bash_claude_command_prefers_extensionless_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let cmd_shim = dir.path().join("claude.cmd");
+        std::fs::write(&cmd_shim, b"noop").unwrap();
+        let sh_shim = dir.path().join("claude");
+        std::fs::write(&sh_shim, b"noop").unwrap();
+
+        // .cmd shims resolve to their extensionless sh sibling.
+        assert_eq!(
+            resolve_bash_claude_command(&cmd_shim.to_string_lossy()),
+            windows_path_to_msys_path(&sh_shim)
+        );
+
+        // Native executables are used as-is.
+        let exe = dir.path().join("claude.exe");
+        std::fs::write(&exe, b"noop").unwrap();
+        assert_eq!(
+            resolve_bash_claude_command(&exe.to_string_lossy()),
+            windows_path_to_msys_path(&exe)
+        );
+    }
+
+    #[test]
+    fn windows_terminal_args_follow_preference() {
+        let (args, name) = windows_terminal_start_args(Some("powershell"), r"C:\t a\b.bat");
+        assert_eq!(name, "PowerShell");
+        assert_eq!(args[0], "powershell");
+        assert!(args.contains(&"-NoExit".to_string()));
+        assert_eq!(args.last().unwrap(), "& 'C:\\t a\\b.bat'");
+
+        let (args, name) = windows_terminal_start_args(Some("wt"), r"C:\t\b.bat");
+        assert_eq!(name, "Windows Terminal");
+        assert_eq!(
+            args,
+            vec!["wt".to_string(), "cmd".to_string(), "/K".to_string(), r"C:\t\b.bat".to_string()]
+        );
+
+        // Missing, empty, default and unknown preferences all fall back to cmd.
+        for preference in [None, Some(""), Some("   "), Some("cmd"), Some("hyper")] {
+            let (args, name) = windows_terminal_start_args(preference, r"C:\t\b.bat");
+            assert_eq!(name, "cmd");
+            assert_eq!(
+                args,
+                vec!["cmd".to_string(), "/K".to_string(), r"C:\t\b.bat".to_string()]
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

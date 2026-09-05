@@ -80,6 +80,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const claudeCliLaunchFullAccess = useSettingsStore((state) => state.claudeCliLaunchFullAccess);
+  const preferredTerminal = useSettingsStore((state) => state.preferredTerminal);
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
   const [restoringDirect, setRestoringDirect] = React.useState(false);
   const [switchingGatewayProvider, setSwitchingGatewayProvider] = React.useState(false);
@@ -210,6 +211,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       await launchClaudeProviderCli(provider.id, {
         fullAccess: claudeCliLaunchFullAccess,
         cwd,
+        terminal: preferredTerminal,
       });
       message.success(t('claudecode.provider.launchCliSuccess'));
     } catch (error) {

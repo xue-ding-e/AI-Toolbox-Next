@@ -1,7 +1,9 @@
 import React from 'react';
 import { message } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { platform } from '@tauri-apps/plugin-os';
 import SidebarSettingsModal, {
+  SettingsSelectRow,
   SettingsToggleRow,
 } from '@/components/common/SidebarSettingsModal';
 import CliManualPathSetting from '@/components/common/CliManualPathSetting';
@@ -28,10 +30,13 @@ export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = (
   onSidebarVisibleChange,
 }) => {
   const { t } = useTranslation();
+  const isWindows = React.useMemo(() => platform() === 'windows', []);
   const claudeCliLaunchFullAccess = useSettingsStore((state) => state.claudeCliLaunchFullAccess);
   const setClaudeCliLaunchFullAccess = useSettingsStore(
     (state) => state.setClaudeCliLaunchFullAccess,
   );
+  const preferredTerminal = useSettingsStore((state) => state.preferredTerminal);
+  const setPreferredTerminal = useSettingsStore((state) => state.setPreferredTerminal);
   const [vscodeEnabled, setVscodeEnabled] = React.useState(false);
   const [skipOnboarding, setSkipOnboarding] = React.useState(false);
   const [vscodeLoading, setVscodeLoading] = React.useState(false);
@@ -104,6 +109,15 @@ export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = (
     }
   };
 
+  const handlePreferredTerminalChange = async (terminal: string) => {
+    try {
+      await setPreferredTerminal(terminal);
+    } catch (error) {
+      console.error('Failed to save preferred terminal:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   return (
     <SidebarSettingsModal
       open={open}
@@ -136,6 +150,20 @@ export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = (
         loading={cliLaunchFullAccessLoading}
         onChange={handleCliLaunchFullAccessToggle}
       />
+      {isWindows && (
+        <SettingsSelectRow
+          title={t('common.preferredTerminal')}
+          hint={t('common.preferredTerminalHint')}
+          value={preferredTerminal ?? 'cmd'}
+          options={[
+            { value: 'cmd', label: t('common.terminalCmd') },
+            { value: 'powershell', label: t('common.terminalPowershell') },
+            { value: 'wt', label: t('common.terminalWt') },
+            { value: 'gitbash', label: t('common.terminalGitBash') },
+          ]}
+          onChange={handlePreferredTerminalChange}
+        />
+      )}
     </SidebarSettingsModal>
   );
 };

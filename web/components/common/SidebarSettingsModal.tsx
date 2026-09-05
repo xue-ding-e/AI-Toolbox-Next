@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Switch } from 'antd';
+import { Modal, Select, Switch } from 'antd';
 import { useTranslation } from 'react-i18next';
 import styles from './SidebarSettingsModal.module.less';
 
@@ -32,6 +32,41 @@ export const SettingsToggleRow: React.FC<SettingsToggleRowProps> = ({
         loading={loading}
         disabled={disabled}
         onChange={onChange}
+      />
+    </div>
+  </div>
+);
+
+export interface SettingsSelectRowProps {
+  title: string;
+  hint?: string;
+  value: string;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+  onChange: (value: string) => void | Promise<void>;
+}
+
+/** Flat select row for "More Options" modals: title + optional 10px hint on the left, Select on the right. */
+export const SettingsSelectRow: React.FC<SettingsSelectRowProps> = ({
+  title,
+  hint,
+  value,
+  options,
+  disabled = false,
+  onChange,
+}) => (
+  <div className={styles.row}>
+    <div className={styles.text}>
+      <div className={styles.title}>{title}</div>
+      {hint ? <p className={styles.hint}>{hint}</p> : null}
+    </div>
+    <div className={styles.control}>
+      <Select
+        value={value}
+        options={options}
+        disabled={disabled}
+        onChange={onChange}
+        style={{ width: 160 }}
       />
     </div>
   </div>

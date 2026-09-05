@@ -1226,7 +1226,13 @@
     "moreOptionsCliDetectFailed": "Auto detect failed, please choose manually",
     "moreOptionsCliNotSet": "No manual CLI path set yet. Click Edit to auto-detect or pick a local CLI path.",
     "apply": "Apply",
-    "open": "Open"
+    "open": "Open",
+    "preferredTerminal": "Preferred Terminal",
+    "preferredTerminalHint": "Choose the terminal app used when clicking the terminal button. If the selected terminal is unavailable, the system default terminal is used.",
+    "terminalCmd": "Command Prompt",
+    "terminalPowershell": "PowerShell",
+    "terminalWt": "Windows Terminal",
+    "terminalGitBash": "Git Bash"
   },
   "sessionManager": {
     "title": "Session Manager",

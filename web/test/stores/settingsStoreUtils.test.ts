@@ -68,6 +68,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     codex_preserve_official_auth_on_switch: false,
     codex_unified_session_history_enabled: false,
     claude_cli_launch_full_access: false,
+    preferred_terminal: null,
     cli_manual_paths: {},
     ...overrides,
   };

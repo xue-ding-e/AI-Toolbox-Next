@@ -94,6 +94,8 @@ interface SettingsState {
 
   // Claude Code options
   claudeCliLaunchFullAccess: boolean;
+  /** Windows terminal preference for the Claude CLI launch: 'cmd' | 'powershell' | 'wt'. */
+  preferredTerminal: string | null;
 
   // Manual CLI paths by command name (e.g. opencode, claude, grok, pi, omp, hermes, dsh, openclaw)
   cliManualPaths: Record<string, string>;
@@ -134,6 +136,7 @@ interface SettingsState {
   setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
   setCodexUnifiedSessionHistoryEnabled: (enabled: boolean) => void;
   setClaudeCliLaunchFullAccess: (enabled: boolean) => Promise<void>;
+  setPreferredTerminal: (terminal: string) => Promise<void>;
   setManualCliPath: (commandName: string, path: string) => Promise<string>;
 }
 
@@ -229,6 +232,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   codexPreserveOfficialAuthOnSwitch: false,
   codexUnifiedSessionHistoryEnabled: false,
   claudeCliLaunchFullAccess: false,
+  preferredTerminal: null,
   cliManualPaths: {},
 
   initSettings: async () => {
@@ -268,6 +272,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
         codexUnifiedSessionHistoryEnabled: settings.codex_unified_session_history_enabled ?? false,
         claudeCliLaunchFullAccess: settings.claude_cli_launch_full_access ?? false,
+        preferredTerminal: settings.preferred_terminal ?? null,
         cliManualPaths: settings.cli_manual_paths ?? {},
         isInitialized: true,
       });
@@ -568,6 +573,17 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       claude_cli_launch_full_access: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setPreferredTerminal: async (terminal) => {
+    set({ preferredTerminal: terminal });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      preferred_terminal: terminal,
     };
     await saveSettings(newSettings);
   },

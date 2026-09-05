@@ -201,6 +201,10 @@ pub struct AppSettings {
     pub codex_unified_session_history_enabled: bool,
     /// Append --dangerously-skip-permissions when launching Claude provider CLI (default: false)
     pub claude_cli_launch_full_access: bool,
+    /// Preferred terminal app used when launching the Claude provider CLI on
+    /// Windows. `None` or an unknown value falls back to `cmd` (system default).
+    /// Known values: `cmd`, `powershell`, `wt` (Windows Terminal), `gitbash`.
+    pub preferred_terminal: Option<String>,
     /// File filter rules for backup/restore
     pub backup_file_filter_rules: Vec<BackupFileFilterRule>,
     /// User-specified manual CLI paths by command name (e.g. `claude`, `opencode`,
@@ -265,6 +269,7 @@ impl Default for AppSettings {
             codex_preserve_official_auth_on_switch: false,
             codex_unified_session_history_enabled: false,
             claude_cli_launch_full_access: false,
+            preferred_terminal: None,
             backup_file_filter_rules: default_backup_file_filter_rules(),
             cli_manual_paths: HashMap::new(),
             session_detail_filters: None,

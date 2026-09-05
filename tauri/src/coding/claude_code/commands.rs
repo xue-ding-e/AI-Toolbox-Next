@@ -982,6 +982,7 @@ pub async fn launch_claude_provider_cli(
     provider_id: String,
     full_access: Option<bool>,
     cwd: Option<String>,
+    terminal: Option<String>,
 ) -> Result<(), String> {
     let db = state.db();
     let provider = get_claude_provider_from_sqlite(&db, &provider_id)?
@@ -1004,6 +1005,7 @@ pub async fn launch_claude_provider_cli(
         &provider.settings_config,
         full_access,
         resolved_cwd.as_deref(),
+        terminal.as_deref(),
     )
 }
 
