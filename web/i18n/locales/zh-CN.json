@@ -2225,7 +2225,8 @@
       "tierAliasHeader": "Tier alias",
       "tierAliasLabel": "Tier",
       "tierAliasNone": "无",
-      "roleMythos": "Mythos"
+      "roleMythos": "Mythos",
+      "quickSetTooltip": "把第一个已填写的模型（兜底模型优先）应用到全部角色，1M 声明跟随源模型"
     },
     "import": {
       "title": "从 OpenCode 导入",

@@ -16,6 +16,23 @@ test('Claude 1M marker helpers handle case-insensitive suffixes', () => {
   assert.equal(setClaudeOneMMarker('claude-sonnet[1M]', false), 'claude-sonnet');
 });
 
+test('Claude 1M marker helpers keep empty models empty and preserve existing markers', () => {
+  assert.equal(setClaudeOneMMarker('', true), '');
+  assert.equal(setClaudeOneMMarker('   [1M] ', true), '');
+  assert.equal(setClaudeOneMMarker('claude-sonnet[1M]', true), 'claude-sonnet[1M]');
+  assert.equal(hasClaudeOneMMarker('claude-sonnet[1M] '), true);
+});
+
+test('getClaudeProviderModelConfig keeps the 1M marker on the fallback model', () => {
+  const config = getClaudeProviderModelConfig({
+    env: {
+      ANTHROPIC_MODEL: 'env-fallback[1M]',
+    },
+  });
+
+  assert.equal(config.fallbackModel, 'env-fallback[1M]');
+});
+
 test('getClaudeProviderModelConfig prefers env fields and keeps legacy fallbacks', () => {
   const config = getClaudeProviderModelConfig({
     env: {

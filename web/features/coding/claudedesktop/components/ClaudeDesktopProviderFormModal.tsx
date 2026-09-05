@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Checkbox, Space, Dropdown, Select, message } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, Checkbox, Space, Dropdown, Select, message, Tooltip } from 'antd';
 import {
   EyeInvisibleOutlined,
   EyeOutlined,
@@ -558,14 +558,16 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
           <div className={styles.modelMappingActions}>
             {!isOfficialMode && (
               <>
-                <Button
-                  size="small"
-                  icon={<ThunderboltOutlined />}
-                  disabled={!fallbackModel && !sonnetModel && !opusModel && !fableModel && !haikuModel}
-                  onClick={handleQuickSetModels}
-                >
-                  {t('claudecode.model.quickSetModels')}
-                </Button>
+                <Tooltip title={t('claudecode.model.quickSetTooltip')}>
+                  <Button
+                    size="small"
+                    icon={<ThunderboltOutlined />}
+                    disabled={!fallbackModel && !sonnetModel && !opusModel && !fableModel && !haikuModel}
+                    onClick={handleQuickSetModels}
+                  >
+                    {t('claudecode.model.quickSetModels')}
+                  </Button>
+                </Tooltip>
                 <Space.Compact>
                   <Button
                     size="small"
@@ -618,6 +620,13 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
                 <Form.Item
                   name={row.modelField}
                   noStyle
+                  // The input edits the stripped base only; the 1M state lives in the
+                  // checkbox. Rendering the stored raw value would let trailing edits
+                  // (e.g. backspacing the "]") re-append the marker and pile up
+                  // garbage like `xxx[1M][1M]`.
+                  getValueProps={(value) => ({
+                    value: stripClaudeOneMMarker(typeof value === 'string' ? value : ''),
+                  })}
                   getValueFromEvent={(value: string) => {
                     const previousModelBase = stripClaudeOneMMarker(row.model).trim();
                     const nextModelBase = stripClaudeOneMMarker(value).trim();

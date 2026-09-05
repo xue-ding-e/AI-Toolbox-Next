@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Checkbox, Dropdown } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Checkbox, Dropdown, Tooltip } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined, DownOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -873,6 +873,14 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     });
   }, [form]);
 
+  const handleFallbackOneMChange = React.useCallback((enabled: boolean) => {
+    const baseModel = stripClaudeOneMMarker(fallbackModel).trim();
+    if (!baseModel) {
+      return;
+    }
+    form.setFieldsValue({ model: setClaudeOneMMarker(baseModel, enabled) });
+  }, [fallbackModel, form]);
+
   const handleQuickSetModels = React.useCallback(() => {
     const sourceModel = fallbackModel || sonnetModel || opusModel || fableModel || haikuModel;
     const sourceModelBase = stripClaudeOneMMarker(sourceModel).trim();
@@ -918,14 +926,16 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             <div className={styles.modelMappingHint}>{t('claudecode.model.mappingHint')}</div>
           </div>
           <div className={styles.modelMappingActions}>
-            <Button
-              size="small"
-              icon={<ThunderboltOutlined />}
-              disabled={!fallbackModel && !sonnetModel && !opusModel && !fableModel && !haikuModel}
-              onClick={handleQuickSetModels}
-            >
-              {t('claudecode.model.quickSetModels')}
-            </Button>
+            <Tooltip title={t('claudecode.model.quickSetTooltip')}>
+              <Button
+                size="small"
+                icon={<ThunderboltOutlined />}
+                disabled={!fallbackModel && !sonnetModel && !opusModel && !fableModel && !haikuModel}
+                onClick={handleQuickSetModels}
+              >
+                {t('claudecode.model.quickSetModels')}
+              </Button>
+            </Tooltip>
             {!isOfficialMode && mode !== 'import' && (
               <Space.Compact>
                 <Button
@@ -977,6 +987,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                 <Form.Item
                   name={row.modelField}
                   noStyle
+                  // 与兜底模型一致：输入框只显示剥离 [1M] 后的 base，1M 状态由开关表达。
+                  getValueProps={(value) => ({
+                    value: stripClaudeOneMMarker(typeof value === 'string' ? value : ''),
+                  })}
                   getValueFromEvent={(value: string) => {
                     const previousModelBase = stripClaudeOneMMarker(row.model).trim();
                     const nextModelBase = stripClaudeOneMMarker(value).trim();
@@ -1025,15 +1039,37 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         <div className={styles.fallbackModel}>
           <div className={styles.fallbackModelLabel}>{t('claudecode.model.fallbackModel')}</div>
           <div className={styles.fallbackModelInput}>
-            <Form.Item name="model" noStyle>
-              <AutoComplete
-                allowClear
-                options={modelOptions}
-                placeholder={t('claudecode.model.defaultModelPlaceholder')}
-                style={{ width: '100%' }}
-                filterOption={filterModelOption}
-              />
-            </Form.Item>
+            <div className={styles.fallbackModelRow}>
+              <Form.Item
+                name="model"
+                noStyle
+                // 输入框只显示剥离 [1M] 后的 base，1M 状态由右侧开关表达；
+                // 否则用户在输入框末尾退格/补字会与 getValueFromEvent 重组逻辑
+                // 相互作用，堆积出 `xxx[1M][1M]` 这类垃圾后缀。
+                getValueProps={(value) => ({
+                  value: stripClaudeOneMMarker(typeof value === 'string' ? value : ''),
+                })}
+                getValueFromEvent={(value: string) =>
+                  setClaudeOneMMarker(value, hasClaudeOneMMarker(fallbackModel))
+                }
+              >
+                <AutoComplete
+                  allowClear
+                  options={modelOptions}
+                  placeholder={t('claudecode.model.defaultModelPlaceholder')}
+                  style={{ width: '100%' }}
+                  filterOption={filterModelOption}
+                />
+              </Form.Item>
+              <div className={styles.oneMCell}>
+                <Checkbox
+                  checked={hasClaudeOneMMarker(fallbackModel)}
+                  onChange={(event) => handleFallbackOneMChange(event.target.checked)}
+                >
+                  {t('claudecode.model.oneMLabel')}
+                </Checkbox>
+              </div>
+            </div>
             <div className={styles.modelMappingHint}>
               {t('claudecode.model.fallbackModelHint')}
             </div>
