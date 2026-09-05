@@ -1,0 +1,30 @@
+{
+    "version": "1.1.4",
+    "description": "Desktop toolbox for managing AI coding assistant configurations",
+    "homepage": "https://github.com/coulsontl/ai-toolbox",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/coulsontl/ai-toolbox/releases/download/v1.1.4/AI.Toolbox_1.1.4_x64-setup.exe#/dl.exe",
+            "hash": "sha256:f8261d5719ca20e0179519bbde324f55474d2dae7e25a2c49c672dbdbc825f1e"
+        }
+    },
+    "installer": {
+        "script": [
+            "# Tauri NSIS installer (currentUser). /S = silent, /D = install dir.",
+            "# /D must be the LAST switch and unquoted (NSIS requirement).",
+            "Start-Process -Wait -FilePath \"$dir\\dl.exe\" -ArgumentList '/S', \"/D=$dir\""
+        ]
+    },
+    "uninstaller": {
+        "script": [
+            "if (Test-Path \"$dir\\uninstall.exe\") { Start-Process -Wait -FilePath \"$dir\\uninstall.exe\" -ArgumentList '/S' }"
+        ]
+    },
+    "shortcuts": [
+        [
+            "ai-toolbox.exe",
+            "AI Toolbox"
+        ]
+    ]
+}

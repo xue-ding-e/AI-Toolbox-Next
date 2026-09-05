@@ -168,7 +168,9 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
         if (info.hasUpdate) {
           notification.info({
             message: i18n.t('settings.about.newVersion'),
-            description: i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
+            description: info.scoopInstall
+              ? i18n.t('settings.about.scoopUpdateHint', { version: info.latestVersion })
+              : i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
             btn: (
               <Space>
                 <Button
@@ -180,13 +182,11 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
                 >
                   {i18n.t('settings.about.viewReleaseNotes')}
                 </Button>
-                <Button
-                  type="primary"
-                  size="small"
-                  onClick={() => handleInstallUpdate(info)}
-                >
-                  {i18n.t('settings.about.goToDownload')}
-                </Button>
+                {!info.scoopInstall && (
+                  <Button type="primary" size="small" onClick={() => handleInstallUpdate(info)}>
+                    {i18n.t('settings.about.goToDownload')}
+                  </Button>
+                )}
               </Space>
             ),
             duration: 10,

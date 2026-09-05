@@ -372,6 +372,117 @@ jobs:
           git pull --rebase origin "${DEFAULT_BRANCH}"
           git push origin "HEAD:${DEFAULT_BRANCH}"
 
+  update-scoop-bucket:
+    name: Update Scoop Bucket
+    # Runs after update-homebrew-cask so both manifest-update jobs never push
+    # to the default branch concurrently.
+    runs-on: ubuntu-latest
+    needs: [create-release, build, test, update-homebrew-cask]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'beta')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --pattern '*-setup.exe' --repo "$GITHUB_REPOSITORY"
+          ls -la dl
+
+      - name: Generate Scoop manifest
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+
+          shopt -s nullglob
+          setup_exe=""
+          for file in dl/*-setup.exe; do
+            setup_exe="$file"
+          done
+          if [ -z "$setup_exe" ]; then
+            echo "❌ Failed to detect Windows NSIS setup exe asset" >&2
+            ls -la dl
+            exit 1
+          fi
+
+          EXE_NAME="$(basename "$setup_exe")"
+          EXE_SHA="$(sha256sum "$setup_exe" | awk '{print $1}')"
+          export VERSION REPO EXE_NAME EXE_SHA
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          repo = os.environ["REPO"]
+          exe_name = os.environ["EXE_NAME"]
+          exe_sha = os.environ["EXE_SHA"]
+
+          manifest = {
+              "version": version,
+              "description": "Desktop toolbox for managing AI coding assistant configurations",
+              "homepage": f"https://github.com/{repo}",
+              "license": "MIT",
+              "architecture": {
+                  "64bit": {
+                      "url": f"https://github.com/{repo}/releases/download/v{version}/{exe_name}#/dl.exe",
+                      "hash": f"sha256:{exe_sha}",
+                  }
+              },
+              "installer": {
+                  "script": [
+                      "# Tauri NSIS installer (currentUser). /S = silent, /D = install dir.",
+                      "# /D must be the LAST switch and unquoted (NSIS requirement).",
+                      'Start-Process -Wait -FilePath "$dir\\dl.exe" -ArgumentList \'/S\', "/D=$dir"',
+                  ]
+              },
+              "uninstaller": {
+                  "script": [
+                      'if (Test-Path "$dir\\uninstall.exe") { Start-Process -Wait -FilePath "$dir\\uninstall.exe" -ArgumentList \'/S\' }'
+                  ]
+              },
+              "shortcuts": [["ai-toolbox.exe", "AI Toolbox"]],
+          }
+
+          Path("bucket/ai-toolbox.json").write_text(
+              json.dumps(manifest, indent=4) + "\n", encoding="utf-8"
+          )
+          PY
+
+          echo "Generated bucket/ai-toolbox.json:" && cat bucket/ai-toolbox.json
+
+      - name: Commit and push bucket update
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add bucket/ai-toolbox.json
+
+          if git diff --cached --quiet -- bucket/ai-toolbox.json; then
+            echo "No bucket changes detected, skip commit."
+            exit 0
+          fi
+
+          git commit -m "chore(scoop): update ai-toolbox for ${RELEASE_TAG}"
+          git pull --rebase origin "${DEFAULT_BRANCH}"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+
   assemble-latest-json:
     name: Assemble latest.json
     runs-on: ubuntu-latest

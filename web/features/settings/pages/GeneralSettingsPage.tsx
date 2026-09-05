@@ -288,7 +288,9 @@ const GeneralSettingsPage: React.FC = () => {
       const info = await checkForUpdates();
       setUpdateInfo(info);
       if (!silent) {
-        if (info.hasUpdate) {
+        if (info.hasUpdate && info.scoopInstall) {
+          message.info(t('settings.about.scoopUpdateHint', { version: info.latestVersion }));
+        } else if (info.hasUpdate) {
           message.info(t('settings.about.updateAvailable', { version: info.latestVersion }));
         } else {
           message.success(t('settings.about.latestVersion'));
@@ -843,10 +845,15 @@ const GeneralSettingsPage: React.FC = () => {
                 >
                   {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
                 </Button>
-                {updateInfo?.hasUpdate && (
+                {updateInfo?.hasUpdate && !updateInfo.scoopInstall && (
                   <Button type="primary" onClick={handleGoToDownload}>
                     {t('settings.about.goToDownload')} (v{updateInfo.latestVersion})
                   </Button>
+                )}
+                {updateInfo?.hasUpdate && updateInfo.scoopInstall && (
+                  <Typography.Text type="warning">
+                    {t('settings.about.scoopUpdateHint', { version: updateInfo.latestVersion })}
+                  </Typography.Text>
                 )}
                 <Button icon={<GithubOutlined />} onClick={handleOpenGitHub}>
                   {t('settings.about.github')}

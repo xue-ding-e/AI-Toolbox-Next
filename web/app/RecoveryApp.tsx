@@ -125,6 +125,7 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
     'checking' | 'ready' | 'noUpdate' | 'checkFailed' | 'downloading' | 'installFailed'
   >('checking');
   const [latestVersion, setLatestVersion] = React.useState<string>('');
+  const [scoopManaged, setScoopManaged] = React.useState(false);
 
   const runCheck = React.useCallback(async () => {
     setPhase('checking');
@@ -134,6 +135,10 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
         setLatestVersion(info.latestVersion);
         setPhase('ready');
       } else {
+        // A Scoop-managed install reports hasUpdate but no installer payload
+        // (dropped by the backend); surface a Scoop-specific hint instead of
+        // the misleading "already latest" message.
+        setScoopManaged(Boolean(info.hasUpdate && info.scoopInstall));
         setPhase('noUpdate');
       }
     } catch (error) {
@@ -209,8 +214,13 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
       )}
 
       {phase === 'noUpdate' && (
-        <Paragraph type="secondary" style={{ textAlign: 'center', marginBottom: 0 }}>
-          {i18n.t('recovery.alreadyLatest')}
+        <Paragraph
+          type={scoopManaged ? 'warning' : 'secondary'}
+          style={{ textAlign: 'center', marginBottom: 0 }}
+        >
+          {scoopManaged
+            ? i18n.t('recovery.scoopUpdateHint', { version: latestVersion })
+            : i18n.t('recovery.alreadyLatest')}
         </Paragraph>
       )}
 

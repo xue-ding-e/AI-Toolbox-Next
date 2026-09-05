@@ -1070,7 +1070,8 @@
       "downloadingComplete": "Download complete, installing...",
       "installingUpdate": "Installing update...",
       "viewReleaseNotes": "View Release Notes",
-      "autoCheckUpdate": "Auto check for updates"
+      "autoCheckUpdate": "Auto check for updates",
+      "scoopUpdateHint": "New version {{version}} found. This app is installed via Scoop; run `scoop update ai-toolbox` to upgrade."
     }
   },
   "theme": {
@@ -5467,6 +5468,7 @@
     "upgradeNow": "Upgrade now",
     "retry": "Retry",
     "newVersionAvailable": "New version {{version}} available. Click below to upgrade.",
-    "checkFailed": "Update check failed. Please retry or open the download page."
+    "checkFailed": "Update check failed. Please retry or open the download page.",
+    "scoopUpdateHint": "New version {{version}} available. This app is installed via Scoop; run `scoop update ai-toolbox` and restart the app."
   }
 }

@@ -28,6 +28,8 @@ export interface UpdateInfo {
   releaseNotes: string;
   signature?: string;
   url?: string;
+  /** The app is Scoop-managed; the in-app updater is unavailable. */
+  scoopInstall: boolean;
 }
 
 interface UpdateCheckResult {
@@ -38,6 +40,7 @@ interface UpdateCheckResult {
   release_notes: string;
   signature?: string;
   url?: string;
+  scoop_install?: boolean;
 }
 
 /**
@@ -61,6 +64,7 @@ export const checkForUpdates = async (): Promise<UpdateInfo> => {
     releaseNotes: result.release_notes,
     signature: result.signature,
     url: result.url,
+    scoopInstall: result.scoop_install ?? false,
   };
 };
 

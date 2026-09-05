@@ -33,6 +33,10 @@ pub struct UpdateCheckResult {
     pub release_notes: String,
     pub signature: Option<String>,
     pub url: Option<String>,
+    /// Whether the running app is managed by Scoop. When true the in-app
+    /// installer payload is dropped (see `check_for_updates`) and the user
+    /// must upgrade via `scoop update ai-toolbox`.
+    pub scoop_install: bool,
 }
 
 /// Check for updates from GitHub releases.
@@ -87,12 +91,23 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResul
 
     // Get signature and url for current platform
     let platform_info = release.platforms.get(&current_platform);
-    let signature = platform_info
+    let mut signature = platform_info
         .and_then(|p| p.signature.clone())
         .filter(|s| !s.is_empty());
-    let url = platform_info
+    let mut url = platform_info
         .and_then(|p| p.url.clone())
         .filter(|s| !s.is_empty());
+
+    let scoop_install = is_scoop_install();
+
+    // A Scoop-managed install lives under `<scoop>\apps\...`; running the
+    // in-app NSIS updater would create a second copy outside Scoop's control
+    // while the Scoop-managed copy stays stale. Drop the installer payload so
+    // every frontend path degrades to opening the release page instead.
+    if scoop_install {
+        signature = None;
+        url = None;
+    }
 
     Ok(UpdateCheckResult {
         has_update,
@@ -105,7 +120,32 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResul
         release_notes: release.notes.unwrap_or_default(),
         signature,
         url,
+        scoop_install,
     })
+}
+
+/// Whether the running executable is managed by Scoop (Windows package manager).
+///
+/// Scoop installs apps under `<scoop root>\apps\<app>\<version>\`, so checking
+/// for the `\scoop\apps\` path segment is sufficient in practice. This covers
+/// both per-user (`~\scoop\apps\...`) and global (`<SCOOP_GLOBAL>\apps\...`)
+/// installs regardless of the custom Scoop root.
+#[allow(unreachable_code)]
+pub fn is_scoop_install() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(exe_path) = std::env::current_exe() {
+            return is_scoop_install_path(&exe_path.to_string_lossy());
+        }
+        return false;
+    }
+
+    false
+}
+
+/// Pure path check for Scoop-managed executables (case-insensitive).
+fn is_scoop_install_path(exe_path: &str) -> bool {
+    exe_path.to_lowercase().contains("\\scoop\\apps\\")
 }
 
 /// Detect current platform string for matching latest.json
@@ -334,4 +374,40 @@ fn compare_versions(v1: &str, v2: &str) -> i32 {
     }
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_scoop_install_path;
+
+    #[test]
+    fn detects_per_user_scoop_install() {
+        assert!(is_scoop_install_path(
+            "C:\\Users\\foo\\scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+        ));
+    }
+
+    #[test]
+    fn detects_global_and_verbatim_paths_case_insensitively() {
+        assert!(is_scoop_install_path(
+            "C:\\Program Files\\Scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+        ));
+        assert!(is_scoop_install_path(
+            "\\\\?\\D:\\Scoop\\Apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_scoop_paths() {
+        assert!(!is_scoop_install_path(
+            "C:\\Program Files\\AI Toolbox\\ai-toolbox.exe"
+        ));
+        assert!(!is_scoop_install_path(
+            "C:\\Users\\foo\\AppData\\Local\\AI Toolbox\\ai-toolbox.exe"
+        ));
+        // "scoopless\apps" must not match "\scoop\apps\"
+        assert!(!is_scoop_install_path(
+            "C:\\Users\\foo\\scoopless\\apps\\ai-toolbox\\ai-toolbox.exe"
+        ));
+    }
 }

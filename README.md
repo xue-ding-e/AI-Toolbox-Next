@@ -108,6 +108,26 @@ brew untap coulsontl/ai-toolbox
 - 当前 Cask 暂时直接托管在本仓库，因此首次需要使用带仓库 URL 的 `brew tap`。
 - 后续发布新版本后，仓库中的 `Casks/ai-toolbox.rb` 会由 release workflow 自动更新，`brew upgrade` 即可获取新版本。
 
+Windows 也可以通过 [Scoop](https://scoop.sh/) 安装、升级和卸载：
+
+```bash
+scoop bucket add ai-toolbox https://github.com/coulsontl/ai-toolbox
+scoop install ai-toolbox/ai-toolbox
+
+# 升级：先刷新 bucket 拿到新 manifest，再升级应用
+scoop update
+scoop update ai-toolbox
+scoop uninstall ai-toolbox
+# 可选：不再需要此 bucket 时移除
+scoop bucket rm ai-toolbox
+```
+
+说明：
+
+- 当前 bucket 暂时直接托管在本仓库，因此首次需要使用带仓库 URL 的 `scoop bucket add`。
+- 后续发布新版本后，仓库中的 `bucket/ai-toolbox.json` 会由 release workflow 自动更新，`scoop update ai-toolbox` 即可获取新版本。
+- 通过 Scoop 安装时，应用内自动更新不可用，请使用 `scoop update ai-toolbox` 升级。
+
 ## 技术栈
 
 | 类别 | 技术 |
