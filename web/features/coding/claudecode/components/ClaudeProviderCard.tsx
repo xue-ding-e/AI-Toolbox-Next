@@ -11,7 +11,7 @@ import {
   CodeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { BarChart2 } from 'lucide-react';
+import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
@@ -54,6 +54,7 @@ interface ClaudeProviderCardProps {
   onEdit: (provider: ClaudeCodeProvider) => void;
   onDelete: (provider: ClaudeCodeProvider) => void;
   onCopy: (provider: ClaudeCodeProvider) => void;
+  onShare: (provider: ClaudeCodeProvider) => void;
   onTest: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
@@ -69,6 +70,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onEdit,
   onDelete,
   onCopy,
+  onShare,
   onTest,
   onSelect,
   onToggleDisabled,
@@ -252,6 +254,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       label: t('common.copy'),
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
+    },
+    {
+      key: 'share',
+      label: t('common.share'),
+      icon: <Share2 size={14} />,
+      onClick: () => onShare(provider),
     },
     // Hide delete button for __local__ provider
     ...(!isLocalProvider ? [

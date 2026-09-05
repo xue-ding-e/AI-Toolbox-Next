@@ -57,6 +57,7 @@ import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constan
 import { useSettingsStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import {
   createGeminiCliProvider,
@@ -193,6 +194,7 @@ const GeminiCliPage: React.FC = () => {
   const [previewData, setPreviewData] = React.useState<GeminiCliSettings | null>(null);
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<GeminiCliProvider | null>(null);
+  const [shareProvider, setShareProvider] = React.useState<GeminiCliProvider | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
@@ -430,6 +432,10 @@ const GeminiCliPage: React.FC = () => {
     });
     setIsCopyMode(true);
     setProviderModalOpen(true);
+  };
+
+  const handleShareProvider = (provider: GeminiCliProvider) => {
+    setShareProvider(provider);
   };
 
   const handleDeleteProvider = (provider: GeminiCliProvider) => {
@@ -878,6 +884,7 @@ const GeminiCliPage: React.FC = () => {
                                 onEdit={handleEditProvider}
                                 onDelete={handleDeleteProvider}
                                 onCopy={handleCopyProvider}
+                                onShare={handleShareProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
                                 officialAccounts={officialAccountsByProviderId[provider.id] || []}
@@ -966,6 +973,13 @@ const GeminiCliPage: React.FC = () => {
             onImport={handleImportFromCcSwitch}
           />
         )}
+
+        <ShareProviderModal
+          open={shareProvider !== null}
+          sourceApp="gemini"
+          provider={shareProvider}
+          onClose={() => setShareProvider(null)}
+        />
 
         <GeminiCliCommonConfigModal
           open={commonConfigModalOpen}

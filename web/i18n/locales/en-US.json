@@ -1211,7 +1211,12 @@
       "fieldNotes": "Notes",
       "category_official": "Official",
       "category_third_party": "Third-party",
-      "category_custom": "Custom"
+      "category_custom": "Custom",
+      "shareImportToLocal": "Import to this device",
+      "shareTitle": "Share Provider Link",
+      "shareTargetTool": "Target tool",
+      "shareDescription": "Generates an aitoolbox:// link that the receiver can click to import the provider into the selected tool. Only basic connection info is included.",
+      "shareWarning": "The link contains the API key in plain text. Only share it with people you trust."
     },
     "moreOptionsSelectCliFile": "Select CLI executable file",
     "moreOptionsCliPathPlaceholder": "Enter or select CLI path (executable)",
@@ -1234,7 +1239,8 @@
     "terminalPowershell": "PowerShell",
     "terminalWt": "Windows Terminal",
     "terminalGitBash": "Git Bash",
-    "disable": "Disable"
+    "disable": "Disable",
+    "share": "Share"
   },
   "sessionManager": {
     "title": "Session Manager",

@@ -1,27 +1,10 @@
 import React from 'react';
 import { Modal, Descriptions, Tag, Typography, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { router } from '@/app/routes';
-import {
-  importFromDeeplinkUnified,
-  type DeepLinkApp,
-  type DeepLinkImportRequest,
-} from '@/services/deeplinkApi';
-import { refreshTrayMenu } from '@/services/appApi';
-import { DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
+import type { DeepLinkImportRequest } from '@/services/deeplinkApi';
+import { importDeepLinkRequest } from './deeplinkImportAction';
 
 const { Text, Link } = Typography;
-
-/**
- * Map a deep-link `app` to the router path of its CLI tab, so that after a
- * successful import we can switch to that tab and let the user see the result.
- * `grok` is mapped for completeness even though v1 rejects it at parse time.
- */
-const APP_ROUTE_PATH: Record<DeepLinkApp, string> = {
-  claude: '/coding/claudecode',
-  codex: '/coding/codex',
-  gemini: '/coding/geminicli',
-};
 
 /** Mask a secret: first 4 chars + 20 asterisks; values ≤ 4 chars fully masked. */
 const maskApiKey = (value?: string): string => {
@@ -61,26 +44,7 @@ const DeepLinkImportDialog: React.FC<DeepLinkImportDialogProps> = ({
     if (!request) return;
     setImporting(true);
     try {
-      const result = await importFromDeeplinkUnified(request);
-      // Switch to the imported tool's tab so the user sees the result. The
-      // matching page (kept alive under KeepAliveOutlet) refreshes its
-      // provider list on the dispatched event below; if it was never mounted,
-      // navigating to it triggers its initial loadConfig on mount.
-      const targetPath = APP_ROUTE_PATH[result.app];
-      if (targetPath) {
-        await router.navigate(targetPath);
-      }
-      // Notify the matching tool page (if kept-alive) to refresh its list.
-      window.dispatchEvent(
-        new CustomEvent(DEEP_LINK_IMPORT_COMPLETED, {
-          detail: { app: result.app, id: result.id },
-        }),
-      );
-      try {
-        await refreshTrayMenu();
-      } catch (trayError) {
-        console.error('Failed to refresh tray menu after deep-link import:', trayError);
-      }
+      await importDeepLinkRequest(request);
       message.success(t('common.deepLink.importSuccess'));
       onDismiss();
     } catch (error) {

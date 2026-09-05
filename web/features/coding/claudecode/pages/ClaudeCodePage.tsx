@@ -59,6 +59,7 @@ import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
@@ -249,6 +250,7 @@ const ClaudeCodePage: React.FC = () => {
   // 模态框状态
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<ClaudeCodeProvider | null>(null);
+  const [shareProvider, setShareProvider] = React.useState<ClaudeCodeProvider | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [providerModalMode, setProviderModalMode] = React.useState<'manual' | 'import'>('manual');
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
@@ -566,6 +568,10 @@ const ClaudeCodePage: React.FC = () => {
     setIsCopyMode(true);
     setProviderModalMode('manual');
     setProviderModalOpen(true);
+  };
+
+  const handleShareProvider = (provider: ClaudeCodeProvider) => {
+    setShareProvider(provider);
   };
 
   const handleTestProvider = (provider: ClaudeCodeProvider) => {
@@ -1335,6 +1341,7 @@ const ClaudeCodePage: React.FC = () => {
                                 onEdit={handleEditProvider}
                                 onDelete={handleDeleteProvider}
                                 onCopy={handleCopyProvider}
+                                onShare={handleShareProvider}
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
@@ -1544,6 +1551,13 @@ const ClaudeCodePage: React.FC = () => {
           onImport={handleImportFavoriteProviders}
           existingProviderIds={providers.map((provider) => buildFavoriteProviderStorageKey('claudecode', provider.id))}
           providerFilter={(provider) => isFavoriteProviderForSource('claudecode', provider)}
+        />
+
+        <ShareProviderModal
+          open={shareProvider !== null}
+          sourceApp="claude"
+          provider={shareProvider}
+          onClose={() => setShareProvider(null)}
         />
 
         {/* Preview Modal */}

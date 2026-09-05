@@ -75,6 +75,7 @@ import { CODEX_LOCAL_PROVIDER_ID, shouldLoadCodexOfficialAccounts } from '../uti
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import SidebarSettingsModal, {
   SettingsToggleRow,
@@ -274,6 +275,7 @@ const CodexPage: React.FC = () => {
   // Modal states
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<CodexProvider | null>(null);
+  const [shareProvider, setShareProvider] = React.useState<CodexProvider | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [providerModalMode, setProviderModalMode] = React.useState<'manual' | 'import'>('manual');
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
@@ -797,6 +799,10 @@ const CodexPage: React.FC = () => {
     setIsCopyMode(true);
     setProviderModalMode('manual');
     setProviderModalOpen(true);
+  };
+
+  const handleShareProvider = (provider: CodexProvider) => {
+    setShareProvider(provider);
   };
 
   const handleTestProvider = (provider: CodexProvider) => {
@@ -1790,6 +1796,7 @@ const CodexPage: React.FC = () => {
                                 onEdit={handleEditProvider}
                                 onDelete={handleDeleteProvider}
                                 onCopy={handleCopyProvider}
+                                onShare={handleShareProvider}
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
@@ -2034,6 +2041,13 @@ const CodexPage: React.FC = () => {
           onClose={() => setPreviewModalOpen(false)}
           title={t('codex.preview.currentConfigTitle')}
           data={previewData}
+        />
+
+        <ShareProviderModal
+          open={shareProvider !== null}
+          sourceApp="codex"
+          provider={shareProvider}
+          onClose={() => setShareProvider(null)}
         />
 
         <SidebarSettingsModal

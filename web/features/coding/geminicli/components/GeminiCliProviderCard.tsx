@@ -15,7 +15,7 @@ import {
   RightOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
-import { BarChart2 } from 'lucide-react';
+import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
@@ -52,6 +52,7 @@ interface GeminiCliProviderCardProps {
   onEdit: (provider: GeminiCliProvider) => void;
   onDelete: (provider: GeminiCliProvider) => void;
   onCopy: (provider: GeminiCliProvider) => void;
+  onShare: (provider: GeminiCliProvider) => void;
   onSelect: (provider: GeminiCliProvider) => void;
   onToggleDisabled: (provider: GeminiCliProvider, isDisabled: boolean) => void;
   officialAccounts?: GeminiCliOfficialAccount[];
@@ -107,6 +108,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   onEdit,
   onDelete,
   onCopy,
+  onShare,
   onSelect,
   onToggleDisabled,
   officialAccounts = [],
@@ -306,6 +308,12 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       label: t('common.copy'),
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
+    },
+    {
+      key: 'share',
+      label: t('common.share'),
+      icon: <Share2 size={14} />,
+      onClick: () => onShare(provider),
     },
     // Hide delete button for __local__ provider
     ...(!isLocalProvider

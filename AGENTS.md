@@ -71,6 +71,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/openclaw/` | OpenClaw 前端页面、配置路径、provider 与配置文件交互 |
 | `web/features/coding/shared/` | coding 共享前端语义：根目录弹窗、全局 prompt、favorite provider、会话面板、连通性测试 |
 | `web/features/coding/skills/` | Skills 前端页面、中央仓库视角、分组展示与批量同步交互 |
+| `web/features/shared/deepLink/` | `aitoolbox://` 深链接前端两侧：导入确认弹窗与分享链接生成（URL 格式事实源在后端 `deeplink/parser.rs`） |
 | `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
 | `web/components/common/` | 共享编辑器与基础交互组件的性能和正确性约束 |
 | `tauri/src/settings/backup/` | 备份恢复、WebDAV、自动备份与恢复后续链路 |

@@ -1211,7 +1211,12 @@
       "fieldNotes": "备注",
       "category_official": "官方",
       "category_third_party": "第三方",
-      "category_custom": "自定义"
+      "category_custom": "自定义",
+      "shareImportToLocal": "导入到本机",
+      "shareTitle": "分享供应商链接",
+      "shareTargetTool": "目标工具",
+      "shareDescription": "生成一个 aitoolbox:// 链接，接收方点击并确认后即可导入到所选工具。链接仅包含基础连接信息。",
+      "shareWarning": "链接包含明文 API 密钥，请仅分享给可信对象。"
     },
     "moreOptionsSelectCliFile": "选择 CLI 可执行文件",
     "moreOptionsCliPathPlaceholder": "输入或选择 CLI 路径（可执行文件）",
@@ -1234,7 +1239,8 @@
     "terminalPowershell": "PowerShell",
     "terminalWt": "Windows Terminal",
     "terminalGitBash": "Git Bash",
-    "disable": "禁用"
+    "disable": "禁用",
+    "share": "分享"
   },
   "sessionManager": {
     "title": "会话管理",

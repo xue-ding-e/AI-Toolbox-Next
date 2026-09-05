@@ -15,7 +15,7 @@ import {
   EyeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { BarChart2 } from 'lucide-react';
+import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
@@ -58,6 +58,7 @@ interface CodexProviderCardProps {
   onEdit: (provider: CodexProvider) => void;
   onDelete: (provider: CodexProvider) => void;
   onCopy: (provider: CodexProvider) => void;
+  onShare: (provider: CodexProvider) => void;
   onTest: (provider: CodexProvider) => void;
   onSelect: (provider: CodexProvider) => void;
   onToggleDisabled: (provider: CodexProvider, isDisabled: boolean) => void;
@@ -82,6 +83,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onEdit,
   onDelete,
   onCopy,
+  onShare,
   onTest,
   onSelect,
   onToggleDisabled,
@@ -578,6 +580,12 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       label: t('common.copy'),
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
+    },
+    {
+      key: 'share',
+      label: t('common.share'),
+      icon: <Share2 size={14} />,
+      onClick: () => onShare(provider),
     },
     // Hide delete button for __local__ provider
     ...(!isLocalProvider
