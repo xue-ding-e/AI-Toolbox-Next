@@ -96,6 +96,22 @@ pub struct ProviderGatewayMeta {
     /// fingerprint managed by `inject_copilot_headers`.
     #[serde(default, rename = "customHeaders", alias = "custom_headers")]
     pub custom_headers: Option<Vec<CustomHeaderOverride>>,
+    /// Provider-level user-defined exact model rewrite rules (issue #321).
+    /// When the CLI requests `from`, the gateway forwards `to` to this
+    /// provider instead. Applied in every proxy mode (connectivity tests
+    /// keep the pinned model) and wins over family/default mapping.
+    #[serde(default, rename = "modelRewrites", alias = "model_rewrites")]
+    pub model_rewrites: Option<Vec<ModelRewriteRule>>,
+}
+
+/// One user-defined exact model rewrite rule: when the CLI requests `from`
+/// (compared trim + case-insensitively after stripping the `[1M]` context
+/// marker), the gateway forwards `to` to the upstream instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ModelRewriteRule {
+    pub from: String,
+    pub to: String,
 }
 
 /// One request-header override operation, mirroring axonhub's flat
@@ -167,6 +183,7 @@ impl Default for ProviderGatewayMeta {
             cost_multiplier: "1.0".to_string(),
             pricing_model_source: "upstream".to_string(),
             custom_headers: None,
+            model_rewrites: None,
         }
     }
 }

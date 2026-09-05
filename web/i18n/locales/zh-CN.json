@@ -5473,5 +5473,14 @@
     "newVersionAvailable": "发现新版本 {{version}}，点击下方按钮进行升级。",
     "checkFailed": "检查更新失败，请重试或前往下载页。",
     "scoopUpdateHint": "发现新版本 {{version}}。当前应用通过 Scoop 安装，请使用 `scoop update ai-toolbox` 升级后重启应用"
+  },
+  "providerModelRewrites": {
+    "title": "模型改写",
+    "useCustom": "启用改写",
+    "description": "为此供应商配置模型改写规则：CLI 请求左列模型时，网关改用右列模型向上游发起请求。精确匹配（忽略大小写），单渠道和故障转移模式均生效，连通性测试保留点选模型。适用于中转站禁用了 CLI 默认小模型（如对话标题模型）的场景。",
+    "fromPlaceholder": "请求模型，如 gpt-5-luna",
+    "toPlaceholder": "上游模型，如 gpt-5-mini",
+    "remove": "删除此规则",
+    "add": "添加规则"
   }
 }

@@ -107,7 +107,7 @@ Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受
 3. 运行 inbound middleware。`BillingHeaderCchMiddleware` 会从 Claude Code system 文本开头剥离动态 `x-anthropic-billing-header:` / `cch=...` 并保存到 `PipelineContext.billing_cch`。
 4. 如果是 Codex Responses 转 Chat/Anthropic，转换前用 `CodexHistoryStore` 补回上一轮缺失的 call item。
 5. 只在存在 conversion route 时执行有损检测；默认放过并写 `X-Transformer-Lossy`，用户开启 `lossy_rejection_enabled` 后才拒绝，且 `X-Allow-Lossy: true` 可绕过。
-6. 写入或改写最终上游 `model`，剥离 `[1M]` / `[1m]`。
+6. 写入或改写最终上游 `model`：先查 provider 精确模型改写规则（2.6），未命中再走各 CLI family/default 映射，最终剥离 `[1M]` / `[1m]`。
 7. Gemini source 转非 Gemini target 且 route streaming 时写 `stream=true`。
 8. thinking rectifier 重试路径才执行 `strip_thinking_blocks`；该 rectifier 按**入站 CLI=Claude** 门控，不是按 target protocol 判断；正常请求不会预先删除 thinking。
 9. `/responses/compact` 走 compact 专项 compat；普通跨协议请求调用 `convert_request_body_with_context()`；同协议请求直通当前 body。
@@ -197,7 +197,55 @@ Responses source 转 Anthropic Messages / Gemini Native 时，namespace child �
 
 测试：`provider_pipeline_caps_default_max_tokens_in_upstream_body`、`provider_pipeline_strips_billing_cch_for_non_anthropic_target`、`provider_pipeline_restores_billing_cch_for_anthropic_target`。
 
-### 2.6 Codex failover auto-review 模型映射
+### 2.6 用户自定义精确模型改写（model rewrites，issue #321）
+
+触发条件：
+
+- provider `data.meta.modelRewrites`（snake/camel 双兼容）是非空 `ModelRewriteRule` 数组，每项 `{ from, to }`；读取侧过滤 `from`/`to` 空白的规则，空数组视为未配置。
+- 不是指定 `provider_override_id` 的连通性测试（连通性测试保留用户点选模型）。
+- 与 family/default 映射不同，该规则**在所有代理模式生效**：single 模式 CLI 透传模型命中规则时同样改写。
+
+匹配与改写语义：
+
+- 精确匹配：请求模型先剥 `[1M]`/`[1m]` 上下文标记，再按 trim + 大小写不敏感与 `from` 相等比较；不支持通配/前缀/正则。
+- 命中后上游模型为 `to` trim 并剥 `[1M]` 后的值，且不再进入各 CLI 的 family/default/auto-review 映射。
+- 未命中进入既有 per-CLI 逻辑：Claude family（failover）、Codex default_model/auto_review（failover）、Grok default、ClaudeDesktop family、Kimi default（failover）、Gemini/OpenCode 透传。
+- 只改写请求方向，不改回上游响应模型。请求摘要同时记录 `requested_model`（改写前）与 `upstream_model_id`（改写后），成本按改写后真实模型计价。
+- Gemini 双路径覆盖：跨协议转 Gemini target 时 path 由 `gemini_native_forwarded_path(upstream_model_id)` 重建；Gemini CLI 入站直通 Gemini target 时 `gemini_forwarded_path_for_provider` 用 resolved 模型替换 `models/<model>` 段（Gemini 的模型在 URL path 而非 body），`models/` 无模型段的 path（模型列表等）原样保留。
+- 已知边界：Copilot provider 的 warmup 请求降级（`effective_upstream_model_id_for_request`）发生在本规则之后，命中 warmup 检测时会把改写结果覆盖为 `warmup_model`；这是 Copilot 专项适配的既有层次，不由本规则改变。
+
+各 CLI 优先级：exact 规则 > per-CLI family/default/auto-review 映射 > single 透传。用户配置的规则在 single 和 failover 下都生效——这是与“仅 failover 生效”门控的有意差异：issue #321 的场景是 Codex 单渠道代理下仍会请求被中转站禁用的内置小模型（对话标题模型），只有 all-mode 规则才能覆盖。
+
+源码：
+
+- `types.rs::ModelRewriteRule` / `ProviderGatewayMeta.model_rewrites`
+- `runtime/providers.rs::model_rewrites_from_meta()` / `model_rewrite_rules_from_meta()`
+- `runtime/upstream.rs::resolve_upstream_model_id()`
+
+测试：
+
+- `provider_meta_reads_model_rewrites_and_filters_blank_rules`
+- `provider_meta_reads_snake_case_model_rewrites_and_defaults_to_none`
+- `codex_single_exact_rewrite_rule_applies`
+- `codex_failover_exact_rewrite_rule_wins_over_default_model`
+- `codex_failover_exact_rewrite_rule_wins_over_auto_review_model`
+- `model_rewrite_rule_matches_case_insensitively_after_trim`
+- `model_rewrite_rule_strips_one_m_marker_from_match_and_target`
+- `model_rewrite_rule_skipped_for_connectivity_test`
+- `claude_single_exact_rewrite_rule_applies_before_passthrough`
+- `claude_failover_unmatched_rule_still_uses_family_mapping`
+- `gemini_exact_rewrite_rule_applies`
+- `gemini_forwarded_path_applies_resolved_model_segment`
+- `gemini_forwarded_path_strips_one_m_marker_from_resolved_model`
+- `gemini_forwarded_path_without_model_segment_unchanged`
+- `resolved_rewrite_model_reaches_upstream_body_and_gemini_path`
+
+前端：
+
+- 共享编辑器 `web/features/coding/shared/providerModelRewrites/`（`ModelRewritesCollapse` + `modelRewritesUtils`），挂载在 Codex/Claude/Grok/Kimi/Gemini/ClaudeDesktop 的 provider 表单；official 渠道保存时强制清空。切换 gateway profile 时 `modelRewrites` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key）。
+- 前端测试：`web/test/features/coding/shared/providerModelRewrites/modelRewritesUtils.test.ts`。
+
+### 2.7 Codex failover auto-review 模型映射
 
 触发条件：
 

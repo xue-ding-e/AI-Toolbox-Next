@@ -90,6 +90,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ImportFromAllApiHubModalForTool from '@/features/coding/shared/allApiHub/ImportFromAllApiHubModalForTool';
 import { mergeCustomHeadersIntoMeta } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+import { mergeModelRewritesIntoMeta } from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 import {
   buildFavoriteProviderOptions,
   buildFavoriteProviderStorageKey,
@@ -240,6 +241,8 @@ function buildProviderMeta(
     delete meta.custom_headers;
     delete meta.customUserAgent;
     delete meta.custom_user_agent;
+    delete meta.modelRewrites;
+    delete meta.model_rewrites;
     return meta;
   }
 
@@ -271,7 +274,10 @@ function buildProviderMeta(
     delete meta.apiFormat;
   }
 
-  return mergeCustomHeadersIntoMeta(meta, values.customHeaders ?? { enabled: false, headers: [] });
+  return mergeModelRewritesIntoMeta(
+    mergeCustomHeadersIntoMeta(meta, values.customHeaders ?? { enabled: false, headers: [] }),
+    values.modelRewrites ?? { enabled: false, rewrites: [] },
+  );
 }
 
 function buildDesktopProviderConnectivityInfo(provider: ClaudeDesktopProvider): ProviderConnectivityInfo {

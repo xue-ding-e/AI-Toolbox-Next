@@ -39,6 +39,12 @@ import {
   mergeCustomHeadersIntoMeta,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 import {
+  getModelRewritesFromMeta,
+  mergeModelRewritesIntoMeta,
+  type ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
+import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import {
   parseKimiSettingsConfig,
   buildKimiSettingsConfig,
   CUSTOM_KIMI_PROVIDER_KEY,
@@ -114,9 +120,11 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
   const [providerKey, setProviderKey] = useState<string>(CUSTOM_KIMI_PROVIDER_KEY);
   const [customTomlConfig, setCustomTomlConfig] = useState<string>('');
 
-  // Gateway meta sections (billing / custom headers), mirroring the Grok form.
+  // Gateway meta sections (billing / custom headers / model rewrites),
+  // mirroring the Grok form.
   const [billingConfig, setBillingConfig] = useState(() => getBillingConfigFromMeta(provider?.meta));
   const [customHeaders, setCustomHeaders] = useState(() => getCustomHeadersFromMeta(provider?.meta));
+  const [modelRewrites, setModelRewrites] = useState<ModelRewritesState>(() => getModelRewritesFromMeta(provider?.meta));
 
   // Advanced JSON section expand state (shared self-drawn collapse)
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
@@ -140,6 +148,7 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
       setCustomTomlConfig(parsed.customTomlConfig || '');
       setBillingConfig(getBillingConfigFromMeta(provider.meta));
       setCustomHeaders(getCustomHeadersFromMeta(provider.meta));
+      setModelRewrites(getModelRewritesFromMeta(provider.meta));
 
       form.setFieldsValue({
         name: provider.name || '',
@@ -158,6 +167,7 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
       setCustomTomlConfig('');
       setBillingConfig(getBillingConfigFromMeta(undefined));
       setCustomHeaders(getCustomHeadersFromMeta(undefined));
+      setModelRewrites(getModelRewritesFromMeta(undefined));
 
       form.setFieldsValue({
         name: '',
@@ -392,13 +402,18 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
       // Official providers always go through the real Kimi channel, so the
       // gateway billing/header overrides are meaningless for them.
       const isOfficialCategory = selectedCategory === 'official';
-      const meta = mergeCustomHeadersIntoMeta(
-        mergeBillingConfigIntoMeta(provider?.meta, isOfficialCategory
-          ? { enabled: false, pricingModelSource: 'inherit' }
-          : billingConfig),
+      const meta = mergeModelRewritesIntoMeta(
+        mergeCustomHeadersIntoMeta(
+          mergeBillingConfigIntoMeta(provider?.meta, isOfficialCategory
+            ? { enabled: false, pricingModelSource: 'inherit' }
+            : billingConfig),
+          isOfficialCategory
+            ? { enabled: false, headers: [] }
+            : customHeaders,
+        ),
         isOfficialCategory
-          ? { enabled: false, headers: [] }
-          : customHeaders,
+          ? { enabled: false, rewrites: [] }
+          : modelRewrites,
       );
 
       await onSubmit({
@@ -677,6 +692,13 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
               <CustomHeadersCollapse
                 value={customHeaders}
                 onChange={setCustomHeaders}
+              />
+            </Form.Item>
+
+            <Form.Item wrapperCol={sectionWrapperCol}>
+              <ModelRewritesCollapse
+                value={modelRewrites}
+                onChange={setModelRewrites}
               />
             </Form.Item>
           </>

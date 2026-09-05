@@ -15,6 +15,11 @@ import {
   getCustomHeadersFromMeta,
   type CustomHeadersState,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import {
+  getModelRewritesFromMeta,
+  type ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 import { useAppStore } from '@/stores';
 import type {
   ClaudeDesktopFormValues,
@@ -121,6 +126,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
   const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
     getCustomHeadersFromMeta(provider?.meta),
+  );
+  const [modelRewrites, setModelRewrites] = React.useState<ModelRewritesState>(() =>
+    getModelRewritesFromMeta(provider?.meta),
   );
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
@@ -280,6 +288,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         : normalizeApiFormat(provider.meta?.apiFormat);
       setProviderCategory(nextProviderCategory);
       setCustomHeaders(getCustomHeadersFromMeta(provider.meta));
+      setModelRewrites(getModelRewritesFromMeta(provider.meta));
 
       form.setFieldsValue({
         name: provider.name,
@@ -313,6 +322,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       form.resetFields();
       setProviderCategory('custom');
       setCustomHeaders(getCustomHeadersFromMeta(undefined));
+      setModelRewrites(getModelRewritesFromMeta(undefined));
       form.setFieldsValue({
         providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
         providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
@@ -327,6 +337,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
       setProviderCategory('official');
       setFetchedModels([]);
       setCustomHeaders(getCustomHeadersFromMeta(undefined));
+      setModelRewrites(getModelRewritesFromMeta(undefined));
       form.setFieldsValue({
         baseUrl: undefined,
         apiKey: undefined,
@@ -535,6 +546,9 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
         customHeaders: providerCategory === 'official'
           ? { enabled: false, headers: [] }
           : customHeaders,
+        modelRewrites: providerCategory === 'official'
+          ? { enabled: false, rewrites: [] }
+          : modelRewrites,
       });
       form.resetFields();
       setFetchedModels([]);
@@ -833,6 +847,15 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
             <CustomHeadersCollapse
               value={customHeaders}
               onChange={setCustomHeaders}
+            />
+          </Form.Item>
+        )}
+
+        {!isOfficialMode && (
+          <Form.Item wrapperCol={sectionWrapperCol}>
+            <ModelRewritesCollapse
+              value={modelRewrites}
+              onChange={setModelRewrites}
             />
           </Form.Item>
         )}

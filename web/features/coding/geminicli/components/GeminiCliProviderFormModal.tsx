@@ -17,6 +17,12 @@ import {
   mergeCustomHeadersIntoMeta,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 import {
+  getModelRewritesFromMeta,
+  mergeModelRewritesIntoMeta,
+  type ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
+import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
   findGatewayProviderEndpoint,
@@ -339,6 +345,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
   const [customHeaders, setCustomHeaders] = React.useState(() => getCustomHeadersFromMeta(provider?.meta));
+  const [modelRewrites, setModelRewrites] = React.useState<ModelRewritesState>(() => getModelRewritesFromMeta(provider?.meta));
   const selectedChannel = Form.useWatch('channel', form) as string | undefined;
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
@@ -488,6 +495,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
     setSelectedProviderCategory(initialCategory);
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
     setCustomHeaders(getCustomHeadersFromMeta(provider?.meta));
+    setModelRewrites(getModelRewritesFromMeta(provider?.meta));
     setSettingsConfigValue(initialConfig);
     setSettingsConfigValid(true);
     setFetchedModels([]);
@@ -770,20 +778,25 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         category: selectedCategory,
         settingsConfig,
         apiFormat: selectedApiFormat,
-        meta: mergeCustomHeadersIntoMeta(
-          mergeBillingConfigIntoMeta(
-            mergeGatewayMetaIntoProviderMeta(
-              provider?.meta,
-              gatewayProfile,
-              gatewayProfile ? undefined : selectedApiFormat,
+        meta: mergeModelRewritesIntoMeta(
+          mergeCustomHeadersIntoMeta(
+            mergeBillingConfigIntoMeta(
+              mergeGatewayMetaIntoProviderMeta(
+                provider?.meta,
+                gatewayProfile,
+                gatewayProfile ? undefined : selectedApiFormat,
+              ),
+              selectedCategory === 'official'
+                ? { enabled: false, pricingModelSource: 'inherit' }
+                : billingConfig,
             ),
             selectedCategory === 'official'
-              ? { enabled: false, pricingModelSource: 'inherit' }
-              : billingConfig,
+              ? { enabled: false, headers: [] }
+              : customHeaders,
           ),
           selectedCategory === 'official'
-            ? { enabled: false, headers: [] }
-            : customHeaders,
+            ? { enabled: false, rewrites: [] }
+            : modelRewrites,
         ),
         notes: values.notes,
       });
@@ -948,6 +961,15 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
               <CustomHeadersCollapse
                 value={customHeaders}
                 onChange={setCustomHeaders}
+              />
+            </Form.Item>
+          )}
+
+          {!isOfficialMode && (
+            <Form.Item wrapperCol={sectionWrapperCol}>
+              <ModelRewritesCollapse
+                value={modelRewrites}
+                onChange={setModelRewrites}
               />
             </Form.Item>
           )}

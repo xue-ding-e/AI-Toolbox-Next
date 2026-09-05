@@ -3080,6 +3080,7 @@ mod tests {
                 opus_model: opus_model.map(str::to_string),
                 fable_model: None,
                 reasoning_model: None,
+                rewrite_rules: Vec::new(),
             },
         }
     }

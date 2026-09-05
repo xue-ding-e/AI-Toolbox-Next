@@ -26,6 +26,12 @@ import {
   mergeCustomHeadersIntoMeta,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 import {
+  getModelRewritesFromMeta,
+  mergeModelRewritesIntoMeta,
+  type ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
+import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
   findGatewayProviderEndpoint,
@@ -323,6 +329,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
   const [customHeaders, setCustomHeaders] = React.useState(() => getCustomHeadersFromMeta(provider?.meta));
+  const [modelRewrites, setModelRewrites] = React.useState<ModelRewritesState>(() => getModelRewritesFromMeta(provider?.meta));
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
     getGatewayProviderProfilesVersion,
@@ -440,6 +447,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
     }
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
     setCustomHeaders(getCustomHeadersFromMeta(provider?.meta));
+    setModelRewrites(getModelRewritesFromMeta(provider?.meta));
 
     if (provider) {
       let settingsConfig: GrokSettingsConfig = {};
@@ -879,20 +887,25 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         providerEndpointId: selectedEndpoint?.id,
         settingsConfig: finalSettingsConfig,
         apiFormat: selectedApiFormat,
-        meta: mergeCustomHeadersIntoMeta(
-          mergeBillingConfigIntoMeta(
-            mergeGatewayMetaIntoProviderMeta(
-              provider?.meta,
-              gatewayProfile,
-              gatewayProfile ? undefined : selectedApiFormat,
+        meta: mergeModelRewritesIntoMeta(
+          mergeCustomHeadersIntoMeta(
+            mergeBillingConfigIntoMeta(
+              mergeGatewayMetaIntoProviderMeta(
+                provider?.meta,
+                gatewayProfile,
+                gatewayProfile ? undefined : selectedApiFormat,
+              ),
+              selectedCategory === 'official'
+                ? { enabled: false, pricingModelSource: 'inherit' }
+                : billingConfig,
             ),
             selectedCategory === 'official'
-              ? { enabled: false, pricingModelSource: 'inherit' }
-              : billingConfig,
+              ? { enabled: false, headers: [] }
+              : customHeaders,
           ),
           selectedCategory === 'official'
-            ? { enabled: false, headers: [] }
-            : customHeaders,
+            ? { enabled: false, rewrites: [] }
+            : modelRewrites,
         ),
         notes: submittedValues.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -1295,6 +1308,15 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         </Form.Item>
       )}
 
+      {!isOfficialMode && (
+        <Form.Item wrapperCol={sectionWrapperCol}>
+          <ModelRewritesCollapse
+            value={modelRewrites}
+            onChange={setModelRewrites}
+          />
+        </Form.Item>
+      )}
+
       <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
         <ProviderNotesCollapse
           title={t('grok.provider.notes')}
@@ -1419,6 +1441,15 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             <CustomHeadersCollapse
               value={customHeaders}
               onChange={setCustomHeaders}
+            />
+          </Form.Item>
+        )}
+
+        {!isOfficialMode && (
+          <Form.Item wrapperCol={sectionWrapperCol}>
+            <ModelRewritesCollapse
+              value={modelRewrites}
+              onChange={setModelRewrites}
             />
           </Form.Item>
         )}

@@ -5476,5 +5476,14 @@
     "newVersionAvailable": "New version {{version}} available. Click below to upgrade.",
     "checkFailed": "Update check failed. Please retry or open the download page.",
     "scoopUpdateHint": "New version {{version}} available. This app is installed via Scoop; run `scoop update ai-toolbox` and restart the app."
+  },
+  "providerModelRewrites": {
+    "title": "Model rewrites",
+    "useCustom": "Enable",
+    "description": "Configure model rewrite rules for this provider: when the CLI requests the left model, the gateway requests the right model from the upstream instead. Exact match (case-insensitive); applies in both single and failover modes, while connectivity tests keep the pinned model. Useful when relays disable CLI built-in helper models such as the conversation-title model.",
+    "fromPlaceholder": "Requested model, e.g. gpt-5-luna",
+    "toPlaceholder": "Upstream model, e.g. gpt-5-mini",
+    "remove": "Remove this rule",
+    "add": "Add rule"
   }
 }

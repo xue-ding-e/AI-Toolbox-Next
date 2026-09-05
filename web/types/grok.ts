@@ -5,6 +5,7 @@
  */
 
 import type { CustomHeaderEntry } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+import type { ModelRewriteEntry } from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 
 export type GrokProviderCategory = 'official' | 'third_party' | 'custom';
 export type GrokApiFormat =
@@ -36,6 +37,8 @@ export interface GatewayProviderMeta {
   pricingModelSource?: 'upstream' | 'requested' | string;
   /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
   customHeaders?: CustomHeaderEntry[];
+  /** Provider-level exact model rewrite rules applied by the gateway (issue #321). */
+  modelRewrites?: ModelRewriteEntry[];
 }
 
 export interface GrokAuthConfig extends Record<string, unknown> {

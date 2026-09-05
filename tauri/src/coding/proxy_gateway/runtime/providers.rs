@@ -1,7 +1,7 @@
 use crate::coding::proxy_gateway::types::{
     normalize_pricing_model_source, CodexChatReasoningMeta, CustomHeaderOverride, GatewayCliKey,
-    GatewayProviderProfileReference, GatewayProxyMode, ProviderGatewayMeta, ProviderPriorityEntry,
-    ProxyGatewaySettings,
+    GatewayProviderProfileReference, GatewayProxyMode, ModelRewriteRule, ProviderGatewayMeta,
+    ProviderPriorityEntry, ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::{
     cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
@@ -65,6 +65,9 @@ pub(crate) struct UpstreamModelMapping {
     pub(crate) opus_model: Option<String>,
     pub(crate) fable_model: Option<String>,
     pub(crate) reasoning_model: Option<String>,
+    /// User-defined exact rewrite rules from provider `data.meta.modelRewrites`
+    /// (issue #321). Applied before every per-CLI mapping in every proxy mode.
+    pub(crate) rewrite_rules: Vec<ModelRewriteRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -388,7 +391,10 @@ fn provider_from_record(
             let base_url = json_object_string(env, "ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string());
             let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
-            let model_mapping = claude_model_mapping_from_settings(&settings);
+            let model_mapping = UpstreamModelMapping {
+                rewrite_rules: model_rewrite_rules_from_meta(&meta),
+                ..claude_model_mapping_from_settings(&settings)
+            };
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
@@ -443,9 +449,9 @@ fn provider_from_record(
                 auth_strategy,
                 is_full_url,
                 sort_index: provider.sort_index,
-                meta,
                 model_mapping: UpstreamModelMapping {
                     default_model: codex_model_from_config(config_toml),
+                    rewrite_rules: model_rewrite_rules_from_meta(&meta),
                     auto_review_model: codex_auto_review_model_from_settings(&settings).or_else(
                         || {
                             settings
@@ -455,6 +461,7 @@ fn provider_from_record(
                     ),
                     ..UpstreamModelMapping::default()
                 },
+                meta,
             }))
         }
         GatewayCliKey::Grok => {
@@ -515,11 +522,12 @@ fn provider_from_record(
                 auth_strategy,
                 is_full_url,
                 sort_index: provider.sort_index,
-                meta,
                 model_mapping: UpstreamModelMapping {
                     default_model: selected_model.and_then(|model| model.model_id),
+                    rewrite_rules: model_rewrite_rules_from_meta(&meta),
                     ..UpstreamModelMapping::default()
                 },
+                meta,
             }))
         }
         GatewayCliKey::Kimi => {
@@ -601,7 +609,6 @@ fn provider_from_record(
                 auth_strategy,
                 is_full_url,
                 sort_index: provider.sort_index,
-                meta,
                 model_mapping: UpstreamModelMapping {
                     default_model: settings
                         .get("defaultModelKey")
@@ -609,8 +616,10 @@ fn provider_from_record(
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                         .map(str::to_string),
+                    rewrite_rules: model_rewrite_rules_from_meta(&meta),
                     ..UpstreamModelMapping::default()
                 },
+                meta,
             }))
         }
         GatewayCliKey::Gemini => {
@@ -653,8 +662,11 @@ fn provider_from_record(
                 auth_strategy,
                 is_full_url,
                 sort_index: provider.sort_index,
+                model_mapping: UpstreamModelMapping {
+                    rewrite_rules: model_rewrite_rules_from_meta(&meta),
+                    ..UpstreamModelMapping::default()
+                },
                 meta,
-                model_mapping: UpstreamModelMapping::default(),
             }))
         }
         // Claude Desktop reuses the Claude Code settings shape: its 3P profile
@@ -689,7 +701,10 @@ fn provider_from_record(
             let base_url = json_object_string(env, "ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string());
             let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
-            let model_mapping = claude_desktop_model_mapping(&provider.meta, &settings);
+            let model_mapping = UpstreamModelMapping {
+                rewrite_rules: model_rewrite_rules_from_meta(&meta),
+                ..claude_desktop_model_mapping(&provider.meta, &settings)
+            };
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
@@ -783,6 +798,7 @@ fn provider_meta_from_record(
         .map(|value| normalize_pricing_model_source(&value))
         .unwrap_or_else(|| default_pricing_model_source.clone()),
         custom_headers: custom_headers_from_meta(meta_value),
+        model_rewrites: model_rewrites_from_meta(meta_value),
     };
     apply_gateway_profile_reference(cli_key, &mut meta);
     if meta.provider_type.is_none() {
@@ -1114,6 +1130,29 @@ fn custom_headers_from_meta(meta_value: &Value) -> Option<Vec<CustomHeaderOverri
             ..Default::default()
         }]
     })
+}
+
+fn model_rewrites_from_meta(meta_value: &Value) -> Option<Vec<ModelRewriteRule>> {
+    let rewrites = meta_value
+        .get("model_rewrites")
+        .or_else(|| meta_value.get("modelRewrites"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<ModelRewriteRule>(item.clone()).ok())
+                .filter(|rule| !rule.from.trim().is_empty() && !rule.to.trim().is_empty())
+                .collect::<Vec<_>>()
+        })?;
+    if rewrites.is_empty() {
+        None
+    } else {
+        Some(rewrites)
+    }
+}
+
+fn model_rewrite_rules_from_meta(meta: &ProviderGatewayMeta) -> Vec<ModelRewriteRule> {
+    meta.model_rewrites.clone().unwrap_or_default()
 }
 
 fn json_string_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<String> {
@@ -2443,6 +2482,62 @@ base_url = "https://api.example.com/v1"
             result.meta.image_capable_models,
             vec!["vision-model".to_string()]
         );
+    }
+
+    #[test]
+    fn provider_meta_reads_model_rewrites_and_filters_blank_rules() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Codex,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "modelRewrites": [
+                        { "from": "gpt-5-luna", "to": "gpt-5-mini" },
+                        { "from": "", "to": "ignored" },
+                        { "from": "x", "to": "  " }
+                    ]
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(
+            meta.model_rewrites,
+            Some(vec![ModelRewriteRule {
+                from: "gpt-5-luna".to_string(),
+                to: "gpt-5-mini".to_string(),
+            }])
+        );
+    }
+
+    #[test]
+    fn provider_meta_reads_snake_case_model_rewrites_and_defaults_to_none() {
+        let meta = provider_meta_from_record(
+            GatewayCliKey::Gemini,
+            &serde_json::json!({
+                "category": "custom",
+                "meta": {
+                    "model_rewrites": [
+                        { "from": "gemini-2.5-flash-lite", "to": "gemini-2.5-flash" }
+                    ]
+                }
+            }),
+            None,
+        );
+        assert_eq!(
+            meta.model_rewrites,
+            Some(vec![ModelRewriteRule {
+                from: "gemini-2.5-flash-lite".to_string(),
+                to: "gemini-2.5-flash".to_string(),
+            }])
+        );
+
+        let empty = provider_meta_from_record(
+            GatewayCliKey::Gemini,
+            &serde_json::json!({ "category": "custom", "meta": {} }),
+            None,
+        );
+        assert_eq!(empty.model_rewrites, None);
     }
 
     #[test]

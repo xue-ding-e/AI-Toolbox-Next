@@ -11,6 +11,10 @@ import type {
   CustomHeaderEntry,
   CustomHeadersState,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+import type {
+  ModelRewriteEntry,
+  ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 
 /** How a Claude Desktop provider is applied to the on-disk 3P gateway profile. */
 export type ClaudeDesktopMode = 'direct' | 'proxy';
@@ -42,6 +46,8 @@ export interface ClaudeDesktopMeta {
   providerType?: string;
   /** Provider-level custom request-header overrides applied by the gateway on upstream requests. */
   customHeaders?: CustomHeaderEntry[];
+  /** Provider-level exact model rewrite rules applied by the gateway (issue #321). */
+  modelRewrites?: ModelRewriteEntry[];
   [key: string]: unknown;
 }
 
@@ -156,4 +162,6 @@ export interface ClaudeDesktopFormValues {
   notes?: string;
   /** Provider-level custom request-header override state (gateway-injected). */
   customHeaders?: CustomHeadersState;
+  /** Provider-level exact model rewrite rules applied by the gateway (issue #321). */
+  modelRewrites?: ModelRewritesState;
 }

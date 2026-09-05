@@ -4929,6 +4929,27 @@ fn resolve_upstream_model_id(
     apply_failover_model_mapping: bool,
     allow_provider_model_mapping: bool,
 ) -> String {
+    // User-defined exact rewrites (provider meta.modelRewrites, issue #321)
+    // apply in every proxy mode: single-mode CLI passthrough and failover
+    // family/default mapping both yield to an explicit rule. Connectivity
+    // tests keep the pinned model. [1M] is stripped before matching and again
+    // before forwarding so both the match key and the mapped target stay
+    // clean upstream model IDs.
+    if allow_provider_model_mapping {
+        let normalized_model = strip_one_m_context_marker(requested_model)
+            .trim()
+            .to_ascii_lowercase();
+        if !normalized_model.is_empty() {
+            if let Some(rule) = provider
+                .model_mapping
+                .rewrite_rules
+                .iter()
+                .find(|rule| rule.from.trim().to_ascii_lowercase() == normalized_model)
+            {
+                return strip_one_m_context_marker(rule.to.trim()).to_string();
+            }
+        }
+    }
     match provider.cli_key {
         GatewayCliKey::Claude => {
             if !apply_failover_model_mapping {
@@ -8556,7 +8577,11 @@ fn upstream_forwarded_path<'a>(
 
     if conversion_route.is_none() {
         if route.cli_key == GatewayCliKey::Gemini {
-            return gemini_forwarded_path_for_provider(&route.forwarded_path, provider);
+            return gemini_forwarded_path_for_provider(
+                &route.forwarded_path,
+                provider,
+                upstream_model_id,
+            );
         }
         return Cow::Borrowed(&route.forwarded_path);
     }
@@ -8784,10 +8809,35 @@ fn strip_one_m_context_marker_from_gemini_path(path: &str) -> Cow<'_, str> {
 fn gemini_forwarded_path_for_provider<'a>(
     path: &'a str,
     provider: &UpstreamProvider,
+    upstream_model_id: &str,
 ) -> Cow<'a, str> {
     let stripped_path = strip_one_m_context_marker_from_gemini_path(path);
     let api_version = gemini_api_version_from_base_url(&provider.base_url);
-    rewrite_gemini_api_version(stripped_path, &api_version)
+    let versioned_path = rewrite_gemini_api_version(stripped_path, &api_version);
+    match rewrite_gemini_path_model_segment(&versioned_path, upstream_model_id) {
+        Some(rewritten) => Cow::Owned(rewritten),
+        None => versioned_path,
+    }
+}
+
+/// Replace the `models/<model>` segment with the resolved upstream model so
+/// Gemini passthrough forwards the rewritten model in the URL path — the
+/// Gemini wire carries the model there, not in the request body. Returns
+/// `None` when the path has no model segment (e.g. model listing) or the
+/// segment already equals the resolved model.
+fn rewrite_gemini_path_model_segment(path: &str, upstream_model_id: &str) -> Option<String> {
+    let (model_start, model_end) = gemini_model_segment_bounds(path)?;
+    let rewritten_model = strip_one_m_context_marker(upstream_model_id);
+    let model = &path[model_start..model_end];
+    if model == rewritten_model {
+        return None;
+    }
+    let mut rewritten_path =
+        String::with_capacity(path.len() - model.len() + rewritten_model.len());
+    rewritten_path.push_str(&path[..model_start]);
+    rewritten_path.push_str(rewritten_model);
+    rewritten_path.push_str(&path[model_end..]);
+    Some(rewritten_path)
 }
 
 fn gemini_native_forwarded_path(
@@ -10260,7 +10310,9 @@ fn save_health_registry_if_needed(context: &GatewayRuntimeContext, changed: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::proxy_gateway::types::{CustomHeaderOverride, ProxyGatewaySettings};
+    use crate::coding::proxy_gateway::types::{
+        CustomHeaderOverride, ModelRewriteRule, ProxyGatewaySettings,
+    };
 
     fn debug_request(body: &[u8]) -> DebugHttpRequest {
         DebugHttpRequest {
@@ -12208,6 +12260,153 @@ data: {data}\r\n\r\n"
                 true,
             ),
             "requested-review-model"
+        );
+    }
+
+    #[test]
+    fn codex_single_exact_rewrite_rule_applies() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        // Issue #321: single-mode title requests for a relay-disabled model
+        // are rewritten even though default-model mapping is failover-only.
+        assert_eq!(resolve_model("gpt-5-luna", &provider, false), "gpt-5-mini");
+    }
+
+    #[test]
+    fn codex_failover_exact_rewrite_rule_wins_over_default_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        assert_eq!(resolve_model("gpt-5-luna", &provider, true), "gpt-5-mini");
+        // Unmatched models still follow the failover default-model mapping.
+        assert_eq!(resolve_model("gpt-5.4-codex", &provider, true), "p1-main");
+    }
+
+    #[test]
+    fn codex_failover_exact_rewrite_rule_wins_over_auto_review_model() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.auto_review_model = Some("p1-review".to_string());
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "requested-review-model".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &codex_auto_review_request(),
+                "requested-review-model",
+                &provider,
+                true,
+                true,
+            ),
+            "gpt-5-mini"
+        );
+    }
+
+    #[test]
+    fn model_rewrite_rule_matches_case_insensitively_after_trim() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: " GPT-5-Luna ".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        assert_eq!(resolve_model("gpt-5-LUNA", &provider, false), "gpt-5-mini");
+    }
+
+    #[test]
+    fn model_rewrite_rule_strips_one_m_marker_from_match_and_target() {
+        let mut provider = provider_for_cli(GatewayCliKey::Claude);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "claude-sonnet-4-6".to_string(),
+            to: "relay-sonnet[1M]".to_string(),
+        }];
+
+        // The [1M] context marker is stripped before matching and never
+        // reaches the upstream inside the mapped target.
+        assert_eq!(
+            resolve_model("claude-sonnet-4-6[1M]", &provider, false),
+            "relay-sonnet"
+        );
+    }
+
+    #[test]
+    fn model_rewrite_rule_skipped_for_connectivity_test() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        // Connectivity tests pin a provider and model; never rewrite them.
+        assert_eq!(
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "gpt-5-luna",
+                &provider,
+                false,
+                false,
+            ),
+            "gpt-5-luna"
+        );
+    }
+
+    #[test]
+    fn claude_single_exact_rewrite_rule_applies_before_passthrough() {
+        let mut provider = claude_provider(UpstreamModelMapping::default());
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "claude-haiku-4-5".to_string(),
+            to: "relay-haiku".to_string(),
+        }];
+
+        assert_eq!(
+            resolve_model("claude-haiku-4-5", &provider, false),
+            "relay-haiku"
+        );
+        // Unmatched models keep the single-mode passthrough.
+        assert_eq!(
+            resolve_model("claude-sonnet-4-6", &provider, false),
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn claude_failover_unmatched_rule_still_uses_family_mapping() {
+        let mut provider = claude_provider(UpstreamModelMapping {
+            haiku_model: Some("relay-haiku".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        assert_eq!(resolve_model("gpt-5-luna", &provider, true), "gpt-5-mini");
+        assert_eq!(
+            resolve_model("claude-haiku-4-5", &provider, true),
+            "relay-haiku"
+        );
+    }
+
+    #[test]
+    fn gemini_exact_rewrite_rule_applies() {
+        let mut provider = provider_for_cli(GatewayCliKey::Gemini);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gemini-2.5-flash-lite".to_string(),
+            to: "gemini-2.5-flash".to_string(),
+        }];
+
+        assert_eq!(
+            resolve_model("gemini-2.5-flash-lite", &provider, false),
+            "gemini-2.5-flash"
         );
     }
 
@@ -17327,6 +17526,100 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
     }
 
     #[test]
+    fn gemini_forwarded_path_applies_resolved_model_segment() {
+        // Issue #321: the Gemini wire carries the model in the URL path, so a
+        // resolved (exact-rewrite) model must replace the path segment.
+        let route = gateway_route(
+            GatewayCliKey::Gemini,
+            "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+        );
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
+
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-flash", false),
+            "/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+    }
+
+    #[test]
+    fn gemini_forwarded_path_strips_one_m_marker_from_resolved_model() {
+        let route = gateway_route(
+            GatewayCliKey::Gemini,
+            "/v1beta/models/gemini-2.5-pro:generateContent",
+        );
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
+
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-pro[1M]", false),
+            "/v1beta/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn gemini_forwarded_path_without_model_segment_unchanged() {
+        let route = gateway_route(GatewayCliKey::Gemini, "/v1beta/models");
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
+
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-pro", false),
+            "/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn resolved_rewrite_model_reaches_upstream_body_and_gemini_path() {
+        // End-to-end model rewrite path for issue #321: resolve step applies
+        // the exact rule, then the forward path writes the resolved model into
+        // body.model (JSON wire) or the URL models/<model> segment (Gemini).
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+        let request = debug_request(
+            br#"{"model":"gpt-5-luna","messages":[{"role":"user","content":"hi"}]}"#,
+        );
+        let resolved = resolve_upstream_model_id(&request, "gpt-5-luna", &provider, false, true);
+        assert_eq!(resolved, "gpt-5-mini");
+
+        let prepared = build_upstream_body_for_provider(
+            &request,
+            "gpt-5-luna",
+            &resolved,
+            false,
+            false,
+            GatewayCliKey::Codex,
+            Some(AiProtocol::OpenAiResponses),
+            AiProtocol::OpenAiResponses,
+            None,
+            None,
+            None,
+            None,
+            false,
+            CodexResponsesCompactCompat::none(),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&prepared.body).unwrap();
+        assert_eq!(value["model"], "gpt-5-mini");
+
+        let gemini_provider = provider_for_cli(GatewayCliKey::Gemini);
+        let gemini_route = gateway_route(
+            GatewayCliKey::Gemini,
+            "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+        );
+        assert_eq!(
+            upstream_forwarded_path(
+                &gemini_route,
+                &gemini_provider,
+                None,
+                "gemini-2.5-flash",
+                false,
+            ),
+            "/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+    }
+
+    #[test]
     fn conversion_route_rewrites_claude_to_gemini_native_generate_content_path() {
         let route = gateway_route(GatewayCliKey::Claude, "/v1/messages");
         let provider = UpstreamProvider {
@@ -17380,7 +17673,8 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             base_url: "https://generativelanguage.googleapis.com/v1".to_string(),
             ..provider_for_cli(GatewayCliKey::Gemini)
         };
-        let forwarded_path = upstream_forwarded_path(&route, &provider, None, "ignored", false);
+        let forwarded_path =
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-pro", false);
         let url = build_provider_target_url(
             &provider,
             forwarded_path.as_ref(),
