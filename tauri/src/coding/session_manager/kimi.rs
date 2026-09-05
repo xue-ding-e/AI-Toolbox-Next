@@ -322,12 +322,14 @@ pub fn export_native_snapshot(sessions_root: &Path, session_path: &Path) -> Resu
             .filter_map(Result::ok)
         {
             if entry.file_type().is_file() {
+                // Snapshot paths are cross-platform JSON fields; always use
+                // forward slashes (WalkDir yields backslashes on Windows).
                 let rel_path = entry
                     .path()
                     .strip_prefix(session_path)
                     .unwrap_or(entry.path())
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
                 let bytes = fs::read(entry.path())
                     .map_err(|e| format!("Failed to read {}: {e}", entry.path().display()))?;
                 let content = match String::from_utf8(bytes.clone()) {

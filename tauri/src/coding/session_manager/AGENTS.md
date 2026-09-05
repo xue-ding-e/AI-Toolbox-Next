@@ -47,6 +47,7 @@ sequenceDiagram
 - 对所有可 resume 的 CLI，复制命令只有在能从工具自己的会话元数据解析出真实项目目录时，才加目录前缀。Codex 用 `cwd`，Claude Code 用 JSONL `cwd` 或 index `projectPath`，OpenCode 用 `directory`，Gemini CLI 用 `.project_root` 或 `projects.json`；不要用 sessions/projects/tmp/cache 这类运行时存储目录冒充项目目录。
 - Grok 的项目目录取自 `summary.json.info.cwd`，resume 使用 `grok --resume <session-id>`；Session Manager 不读取 `session_search.sqlite` 作为事实源，也不把整个 `sessions/` 放进普通 WSL/SSH/备份映射。
 - Grok native snapshot 必须递归保留完整 session 目录；UTF-8 文件直接存文本，非 UTF-8 文件使用带显式 `base64` encoding 的 payload，不能静默跳过 plan/rewind/signals/feedback/subagents 等伴随状态或二进制文件。
+- 所有 native snapshot 里出现的相对路径字段（`path`、`relativeDir`、`relativeSessionPath` 等）必须统一为正斜杠。Windows 下 `WalkDir` / `strip_prefix` + `to_string_lossy` 产出反斜杠，导出时必须 `replace('\\', "/")`（参考 `session_manager/utils.rs` 的 `strip_path_prefix`），否则导出的快照在跨平台导入、以及 Windows 本机按正斜杠路径断言的回归测试里都会 miss。
 - Grok native snapshot 属于可从外部选择的导入数据。除拒绝绝对路径、`..`、盘符和空段外，写入前还必须拒绝 sessions root 或目标相对路径中的现有 symlink component，避免合法相对路径经链接逃逸 runtime root。
 - Grok 0.2.93 的 `grok sessions` 没有 export 子命令，但根命令存在 `grok export <SESSION_ID> [OUTPUT]`。官方 Markdown 必须走该根命令；`grok import` 仍不是 native snapshot restore。导出格式明确区分共享 `ai-toolbox.session-export.v2`、官方 Markdown 和独立 `ai-toolbox.grok-native-snapshot.v1`，不要只查 `grok sessions --help` 后误判官方能力。
 - Grok 官方 Markdown 导出和 CLI 删除必须跟随会话来源执行：本机会话调用本机 Grok，WSL 会话进入对应 distro 并使用 Linux `GROK_HOME`；导出到 Windows 路径时还要转换成 WSL 可访问路径，不能把 UNC runtime root 直接交给本机 CLI。
