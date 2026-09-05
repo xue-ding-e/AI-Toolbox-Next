@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 target
+target-test
 node_modules
 dist
 dist-ssr
