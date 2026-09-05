@@ -348,6 +348,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - 官方 Codex 上游可能被强制流式。客户端非流时 runtime 聚合 Responses SSE 为 Responses JSON，再按需要做 response conversion。
 - 聚合必须等待 terminal event；缺 terminal event 按连接错误进入 retry/failover。
 - 2026-08 起，部分 Codex 镜像中转站会把上游事件连同中转注入的 `codex.rate_limits` / `codex.response.metadata` / `codex.event.balance` 自定义事件重排成单行空格分隔的退化 SSE（全程无 `\n\n` 边界）。客户端（Codex Desktop）可容错解析、上游扣费正常，但网关终态判定与 usage 提取必须走扁平扫描兜底（见架构主文档「退化扁平 SSE 帧的终态判定」），否则完整 200 响应会被误标 `stream_incomplete` 且丢 token 统计。中转站首包后 idle 停流触发的 `stream_idle_timeout` 是真实失败，不要归入该兼容项。
+- 同一批中转站的 chunked framing 也可能不规范（终止 chunk 缺失、chunk size 行异常、连接提前断开），触发 hyper body 解码层在流中途报错（reqwest 路径统一显示 `error decoding response body`；header-preserving/hyper-util 路径显示 `error reading a body from connection` / `connection closed before message completed`）。`runtime/http_io.rs::is_demotable_stream_body_error()` 会把这类错误 demote 成干净流 EOF，不再注入合成 error event 破坏客户端已收到的流；成败仍按终态事件是否送达判定。这不是 provider 专属规则，对所有上游生效；见架构主文档「流中途 body 解码错误 demote 为干净 EOF」。
 
 源码：
 

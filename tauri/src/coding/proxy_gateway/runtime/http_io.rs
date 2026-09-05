@@ -35,6 +35,33 @@ fn is_client_disconnect_error(error: &std::io::Error) -> bool {
     )
 }
 
+/// Errors that mean the upstream body's own framing/decode layer gave up
+/// mid-stream even though the bytes already yielded (and forwarded to the
+/// client) are valid. These are demoted to a clean stream EOF (issue #318):
+/// the terminal-event detector, not the decoder's failure, decides Completed
+/// vs Incomplete from what was actually delivered.
+///
+/// Text sources, lowercase-matched because both upstream paths wrap the raw
+/// library error with "Failed to read upstream response body: ":
+/// - reqwest 0.12 maps every hyper body-frame error to `Kind::Decode`, whose
+///   display is "error decoding response body"; its `bytes_stream()` yields
+///   that text for any mid-body failure on the reqwest path (system/custom
+///   proxy modes);
+/// - the header-preserving path formats the raw `hyper::Error` display, so the
+///   same class of failure surfaces as hyper's own strings: "error reading a
+///   body from connection" (`Kind::Body`, includes strict chunked-decoder
+///   rejections) and "connection closed before message completed"
+///   (`Kind::IncompleteMessage`, upstream dropped the connection before the
+///   chunked terminator).
+/// Other errors (idle timeout, closed hyper channel) keep their hard-failure
+/// handling so real transport problems stay visible.
+fn is_demotable_stream_body_error(error: &str) -> bool {
+    let lowered = error.to_ascii_lowercase();
+    lowered.contains("error decoding response body")
+        || lowered.contains("error reading a body from connection")
+        || lowered.contains("connection closed before message completed")
+}
+
 /// Classify how a streaming response ended for the client, mirroring axonhub's
 /// `writeSSEStreamEnd` three-way priority:
 /// - `Failed` terminal delivered (`error` / `response.failed` /
@@ -571,11 +598,12 @@ async fn write_streaming_body(
     let mut terminal_kind_delivered: Option<SseTerminalKind> = None;
     let mut idle_timeout_hit = false;
     let mut upstream_stream_error = false;
-    // Set when hyper's strict chunked decoder reported "error decoding response
-    // body" mid-stream and we demoted it to a clean EOF. Suppresses the synthetic
-    // error-event injection below so the already-forwarded bytes are not
-    // corrupted by a trailing error envelope the client cannot parse.
-    let mut demoted_hyper_decode_error = false;
+    // Set when the upstream body's framing/decode layer gave up mid-stream (see
+    // `is_demotable_stream_body_error`) even though the bytes already forwarded
+    // to the client are valid. Suppresses the synthetic error-event injection
+    // below so the already-forwarded bytes are not corrupted by a trailing error
+    // envelope the client cannot parse.
+    let mut demoted_body_decode_error = false;
     loop {
         let next_chunk = match time::timeout(idle_timeout, body_stream.next()).await {
             Ok(next_chunk) => next_chunk,
@@ -599,23 +627,26 @@ async fn write_streaming_body(
         let chunk = match chunk_result {
             Ok(chunk) => chunk,
             Err(error) => {
-                // hyper's http1 chunked body decoder is strict and can report
-                // "error decoding response body" mid-stream on upstream relays whose
-                // chunked framing it dislikes, even though the bytes already yielded
-                // (and forwarded to the client) are valid. Treating that as a hard
-                // failure injects a synthetic error event after the real data,
-                // breaking the client's SSE decoder (issue #318). Demote it to a
-                // clean EOF instead: the bytes already written stay, the terminal
-                // detector decides Completed vs Incomplete, and no synthetic error
-                // event is injected to corrupt the stream.
-                let is_hyper_decode_error = error
-                    .to_ascii_lowercase()
-                    .contains("error decoding response body");
-                if is_hyper_decode_error {
+                // reqwest 0.12 surfaces every hyper body-frame error as "error
+                // decoding response body", and the header-preserving path surfaces
+                // the raw hyper display; both mean the body framing layer rejected
+                // the stream mid-flight while the bytes already forwarded stay
+                // valid. Treating that as a hard failure injects a synthetic error
+                // event after the real data, breaking the client's SSE decoder
+                // (issue #318, where relay chunked framing was non-standard yet the
+                // payload had already been yielded). Demote it to a clean stream
+                // EOF instead: the terminal detector decides Completed vs
+                // Incomplete from what was actually delivered.
+                if is_demotable_stream_body_error(&error) {
                     log::warn!(
-                        "demoting hyper body decode error to clean stream EOF: {error}"
+                        "demoting upstream body decode error to clean stream EOF: {error}"
                     );
-                    demoted_hyper_decode_error = true;
+                    demoted_body_decode_error = true;
+                    // Keep the raw reason in the summary note so these rows stay
+                    // distinguishable from a plain empty stream in request logs.
+                    response.note = format!(
+                        "upstream body decode error demoted to clean stream EOF: {error}"
+                    );
                     break;
                 }
                 upstream_stream_error = true;
@@ -739,7 +770,7 @@ async fn write_streaming_body(
     if terminal_kind_delivered.is_none()
         && !client_disconnected
         && is_sse
-        && !demoted_hyper_decode_error
+        && !demoted_body_decode_error
     {
         let (code, message) = match outcome {
             GatewayStreamOutcome::Failed => (
@@ -1005,5 +1036,170 @@ mod tests {
             "application/json".to_string(),
         )]));
         assert!(!response_is_sse(&[]));
+    }
+
+    #[test]
+    fn demotable_stream_body_error_covers_both_upstream_http_paths() {
+        // reqwest 0.12 wraps every hyper body-frame error as Kind::Decode.
+        assert!(is_demotable_stream_body_error(
+            "Failed to read upstream response body: error decoding response body"
+        ));
+        // Header-preserving path surfaces the raw hyper display.
+        assert!(is_demotable_stream_body_error(
+            "Failed to read upstream response body: error reading a body from connection"
+        ));
+        assert!(is_demotable_stream_body_error(
+            "Failed to read upstream response body: connection closed before message completed"
+        ));
+        // Matching is case-insensitive and prefix-tolerant.
+        assert!(is_demotable_stream_body_error(
+            "Failed to read upstream response body: Error Decoding Response Body"
+        ));
+        // Non-decode transport errors keep hard-failure handling.
+        assert!(!is_demotable_stream_body_error(
+            "Timed out waiting for upstream stream chunk after 60 seconds"
+        ));
+        assert!(!is_demotable_stream_body_error(
+            "Failed to read upstream response body: channel closed"
+        ));
+        assert!(!is_demotable_stream_body_error("upstream exploded"));
+    }
+
+    fn test_streaming_response(chunks: Vec<Result<Vec<u8>, String>>) -> DebugHttpResponse {
+        DebugHttpResponse {
+            status_code: 200,
+            status_text: "OK".to_string(),
+            headers: vec![(
+                "Content-Type".to_string(),
+                "text/event-stream".to_string(),
+            )],
+            body: Vec::new(),
+            body_stream: Some(Box::pin(futures_util::stream::iter(chunks))),
+            response_body_bytes: 0,
+            token_usage: TokenUsage::default(),
+            first_token_ms: None,
+            is_streaming: true,
+            cli_key: Some(GatewayCliKey::Codex),
+            route_name: "openai-compatible".to_string(),
+            provider_id: Some("provider-1".to_string()),
+            provider_name: Some("Provider One".to_string()),
+            provider_type: None,
+            cost_multiplier: None,
+            pricing_model_source: None,
+            requested_model: None,
+            upstream_model_id: None,
+            upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
+            upstream_response_body_stream_snapshot: None,
+            upstream_status_code: None,
+            upstream_url: None,
+            error_category: None,
+            attempt_count: 1,
+            provider_attempt_count: 1,
+            provider_attempts: Vec::new(),
+            failover: false,
+            source_protocol: Some(AiProtocol::OpenAiResponses),
+            stream_outcome: GatewayStreamOutcome::NotStreaming,
+            note: "streaming forwarded to provider id=provider-1 name=Provider One".to_string(),
+        }
+    }
+
+    /// Loopback client/server pair: `write_streaming_body` writes to the client
+    /// half while the spawned task collects everything the server half receives,
+    /// so tests can assert the exact bytes that reached the client.
+    async fn connect_write_pair() -> (TcpStream, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let reader = tokio::spawn(async move {
+            let mut server = server;
+            let mut collected = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match server.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => collected.extend_from_slice(&buffer[..read]),
+                }
+            }
+            collected
+        });
+        (client, reader)
+    }
+
+    async fn run_stream_test(
+        chunks: Vec<Result<Vec<u8>, String>>,
+    ) -> (DebugHttpResponse, std::io::Result<()>, String) {
+        let (mut client, reader) = connect_write_pair().await;
+        let mut response = test_streaming_response(chunks);
+        let settings = ProxyGatewaySettings::default();
+        let result =
+            write_streaming_body(&mut client, &mut response, Instant::now(), &settings).await;
+        drop(client);
+        let received = String::from_utf8_lossy(&reader.await.unwrap()).to_string();
+        (response, result, received)
+    }
+
+    #[tokio::test]
+    async fn stream_body_decode_error_demotes_to_incomplete_without_synthetic_event() {
+        let (response, result, received) = run_stream_test(vec![
+            Ok(b"data: {\"type\":\"response.created\"}\n\n".to_vec()),
+            Ok(b"data: {\"type\":\"response.in_progress\"}\n\n".to_vec()),
+            // reqwest-path text: every mid-body failure surfaces as this string.
+            Err("Failed to read upstream response body: error decoding response body".to_string()),
+        ])
+        .await;
+
+        assert!(result.is_ok());
+        // No terminal event was delivered -> still Incomplete (marked red), but
+        // the client stream was not corrupted with a synthetic error envelope.
+        assert_eq!(response.stream_outcome, GatewayStreamOutcome::Incomplete);
+        assert_eq!(response.error_category, None);
+        assert!(response.note.contains("upstream body decode error demoted"));
+        assert!(received.contains("response.created"));
+        assert!(!received.contains("response.failed"));
+        assert!(!received.contains("stream_incomplete"));
+        assert!(received.ends_with("0\r\n\r\n"));
+    }
+
+    #[tokio::test]
+    async fn stream_body_decode_error_after_terminal_tail_completes() {
+        let (response, result, received) = run_stream_test(vec![
+            Ok(b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n".to_vec()),
+            // Header-preserving-path text: raw hyper display for Kind::Body.
+            // The terminal event has no trailing blank line, so only
+            // `drain_terminal` can recover it after the demoted EOF.
+            Ok(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}".to_vec()),
+            Err("Failed to read upstream response body: error reading a body from connection".to_string()),
+        ])
+        .await;
+
+        assert!(result.is_ok());
+        // The terminal event was actually delivered -> the request is green even
+        // though the body decoder gave up on the framing afterwards.
+        assert_eq!(response.stream_outcome, GatewayStreamOutcome::Completed);
+        assert!(response.note.contains("upstream body decode error demoted"));
+        assert!(received.contains("response.completed"));
+        assert!(!received.contains("response.failed"));
+        assert!(received.ends_with("0\r\n\r\n"));
+    }
+
+    #[tokio::test]
+    async fn stream_non_decode_error_keeps_hard_failure_and_synthetic_event() {
+        let (response, result, received) = run_stream_test(vec![
+            Ok(b"data: {\"type\":\"response.created\"}\n\n".to_vec()),
+            Err("Failed to read upstream response body: some other transport failure".to_string()),
+        ])
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(response.stream_outcome, GatewayStreamOutcome::Failed);
+        assert_eq!(response.error_category.as_deref(), Some("stream_error"));
+        assert!(response.note.contains("some other transport failure"));
+        // Existing behavior for non-decode errors: a protocol-dialect error event
+        // is still injected so the client sees an explicit failure.
+        assert!(received.contains("event: response.failed"));
+        assert!(received.ends_with("0\r\n\r\n"));
     }
 }
