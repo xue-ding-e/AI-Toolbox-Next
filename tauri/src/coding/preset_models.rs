@@ -301,7 +301,12 @@ mod tests {
 
     #[test]
     fn openai_presets_define_gpt_5_6_family_with_max_reasoning() {
-        const GPT_5_6_MODEL_IDS: [&str; 3] = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+        // gpt-6-astra leads the bundled OpenAI preset list (added 2026-09) and
+        // shares the gpt-5.6 family's capability set; luna is still bundled but
+        // no longer among the first three presets.
+        const GPT_5_6_FAMILY_MODEL_IDS: [&str; 4] =
+            ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+        const LEADING_MODEL_IDS: [&str; 3] = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra"];
         const GPT_5_6_REASONING_LEVELS: [&str; 6] =
             ["none", "low", "medium", "high", "xhigh", "max"];
 
@@ -311,11 +316,11 @@ mod tests {
             .expect("OpenAI preset group should be an array");
         let leading_model_ids: Vec<&str> = model_list
             .iter()
-            .take(GPT_5_6_MODEL_IDS.len())
+            .take(LEADING_MODEL_IDS.len())
             .filter_map(|preset| preset.get("id").and_then(Value::as_str))
             .collect();
 
-        assert_eq!(leading_model_ids, GPT_5_6_MODEL_IDS);
+        assert_eq!(leading_model_ids, LEADING_MODEL_IDS);
         assert!(
             model_list
                 .iter()
@@ -323,7 +328,7 @@ mod tests {
             "the gpt-5.6 alias should not duplicate the canonical Sol preset"
         );
 
-        for model_id in GPT_5_6_MODEL_IDS {
+        for model_id in GPT_5_6_FAMILY_MODEL_IDS {
             let preset = model_list
                 .iter()
                 .find(|preset| preset.get("id").and_then(Value::as_str) == Some(model_id))
