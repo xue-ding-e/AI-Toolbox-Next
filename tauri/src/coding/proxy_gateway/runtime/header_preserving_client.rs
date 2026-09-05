@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use futures_util::Stream;
 use http_body_util::BodyExt;
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, HOST};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -12,8 +14,49 @@ pub(super) struct PreservedHeader {
     pub(super) value: HeaderValue,
 }
 
-const MAX_HEADER_PRESERVING_BODY_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_HEADER_PRESERVING_BODY_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+type HyperClient = Client<
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    http_body_util::Full<Bytes>,
+>;
+
+/// Lazily-initialized hyper-util client with header-case preservation enabled.
+///
+/// Used as the fallback when the header-preserving raw-write path fails. Uses the
+/// same root certificate store as `global_tls_connector()` (webpki + native
+/// certs) so MITM proxy CAs installed in the system keychain are trusted.
+pub(super) fn global_hyper_client() -> &'static HyperClient {
+    static CLIENT: OnceLock<HyperClient> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let native = rustls_native_certs::load_native_certs();
+        let (added, ignored) = root_store.add_parsable_certificates(native.certs);
+        if ignored > 0 {
+            log::debug!(
+                "Skipped {} native TLS certificates while building hyper-util client root store",
+                ignored
+            );
+        }
+        log::debug!(
+            "Gateway hyper-util fallback TLS root store loaded {added} native certificates"
+        );
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = HttpsConnectorBuilder::new()
+            .with_tls_config(config)
+            .https_or_http()
+            .enable_http1()
+            .build();
+        Client::builder(TokioExecutor::new())
+            .http1_preserve_header_case(true)
+            .http1_title_case_headers(true)
+            .build(connector)
+    })
+}
 
 pub(super) struct HeaderPreservingResponse {
     status: reqwest::StatusCode,

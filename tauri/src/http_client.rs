@@ -146,7 +146,9 @@ fn build_client(
     timeout_secs: Option<u64>,
     disable_content_decoding: bool,
 ) -> Result<Client, String> {
-    let mut builder = Client::builder().use_rustls_tls();
+    let mut builder = Client::builder()
+        .use_rustls_tls()
+        .http1_title_case_headers();
     if let Some(timeout_secs) = timeout_secs {
         builder = builder.timeout(Duration::from_secs(timeout_secs));
     } else {
@@ -192,6 +194,7 @@ fn build_client(
 pub fn create_client_no_proxy(timeout_secs: u64) -> Result<Client, String> {
     Client::builder()
         .use_rustls_tls()
+        .http1_title_case_headers()
         .timeout(Duration::from_secs(timeout_secs))
         .no_gzip()
         .no_brotli()
@@ -219,6 +222,7 @@ pub fn create_client_no_proxy(timeout_secs: u64) -> Result<Client, String> {
 pub fn create_client_with_env_proxy(timeout_secs: u64) -> Result<Client, String> {
     Client::builder()
         .use_rustls_tls()
+        .http1_title_case_headers()
         .timeout(Duration::from_secs(timeout_secs))
         .no_gzip()
         .no_brotli()

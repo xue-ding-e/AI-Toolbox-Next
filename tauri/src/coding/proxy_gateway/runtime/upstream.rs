@@ -11,8 +11,8 @@ use super::content_encoding::{
     strip_decoded_entity_headers, MAX_DECOMPRESSED_BODY_BYTES,
 };
 use super::header_preserving_client::{
-    append_preserved_header, append_preserved_header_value, send_header_preserving_request,
-    HeaderPreservingResponse, PreservedHeader,
+    append_preserved_header, append_preserved_header_value, global_hyper_client,
+    send_header_preserving_request, HeaderPreservingResponse, PreservedHeader,
 };
 use super::http_io::{
     empty_response, json_response, DebugBodyStream, DebugHttpRequest, DebugHttpResponse,
@@ -45,7 +45,9 @@ use crate::coding::proxy_gateway::usage_parser::{
 };
 use crate::db::SqliteDbState;
 use crate::http_client::{self, ProxyMode};
+use bytes::Bytes;
 use futures_util::StreamExt;
+use http_body_util::BodyExt;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONNECTION,
     CONTENT_LENGTH, CONTENT_TYPE, HOST, PROXY_AUTHENTICATE, PROXY_AUTHORIZATION, TE, TRAILER,
@@ -166,6 +168,7 @@ impl UpstreamHeaders {
 enum UpstreamResponse {
     Reqwest(reqwest::Response),
     HeaderPreserving(HeaderPreservingResponse),
+    Hyper(hyper::Response<hyper::body::Incoming>),
 }
 
 impl UpstreamResponse {
@@ -173,6 +176,7 @@ impl UpstreamResponse {
         match self {
             Self::Reqwest(response) => response.status(),
             Self::HeaderPreserving(response) => response.status(),
+            Self::Hyper(response) => response.status(),
         }
     }
 
@@ -180,6 +184,7 @@ impl UpstreamResponse {
         match self {
             Self::Reqwest(response) => response.headers(),
             Self::HeaderPreserving(response) => response.headers(),
+            Self::Hyper(response) => response.headers(),
         }
     }
 
@@ -222,6 +227,55 @@ impl UpstreamResponse {
                     GatewayForwardError::new(error, GatewayFailureKind::Connection)
                 })
             }
+            Self::Hyper(response) => {
+                let timeout = timeout.unwrap_or_else(|| Duration::from_secs(60));
+                let mut body = response.into_body();
+                let collected = tokio::time::timeout(timeout, async {
+                    let mut out = Vec::new();
+                    loop {
+                        match body.frame().await {
+                            Some(Ok(frame)) => {
+                                if let Ok(data) = frame.into_data() {
+                                    if out.len().saturating_add(data.len())
+                                        > super::header_preserving_client::MAX_HEADER_PRESERVING_BODY_BYTES
+                                    {
+                                        return Err(format!(
+                                            "Upstream response body exceeded {} bytes",
+                                            super::header_preserving_client::MAX_HEADER_PRESERVING_BODY_BYTES
+                                        ));
+                                    }
+                                    out.extend_from_slice(&data);
+                                }
+                            }
+                            Some(Err(error)) => {
+                                return Err(format!(
+                                    "Failed to read upstream response body: {error}"
+                                ));
+                            }
+                            None => return Ok(out),
+                        }
+                    }
+                })
+                .await
+                .map_err(|_| GatewayForwardError {
+                    message: format!(
+                        "Timed out reading upstream response body after {} seconds",
+                        timeout.as_secs()
+                    ),
+                    kind: GatewayFailureKind::Timeout,
+                    upstream_request_body: None,
+                    upstream_response_body: None,
+                    upstream_response_body_bytes: 0,
+                })?
+                .map_err(|error| GatewayForwardError {
+                    message: error,
+                    kind: GatewayFailureKind::Connection,
+                    upstream_request_body: None,
+                    upstream_response_body: None,
+                    upstream_response_body_bytes: 0,
+                })?;
+                Ok(collected)
+            }
         }
     }
 
@@ -236,6 +290,33 @@ impl UpstreamResponse {
                 Box::pin(body_stream)
             }
             Self::HeaderPreserving(response) => Box::pin(response.bytes_stream()),
+            Self::Hyper(response) => {
+                let body = response.into_body();
+                let stream = futures_util::stream::unfold(body, |mut body| async move {
+                    match body.frame().await {
+                        Some(Ok(frame)) => {
+                            if let Ok(data) = frame.into_data() {
+                                if data.is_empty() {
+                                    Some((Ok(Vec::new()), body))
+                                } else {
+                                    Some((Ok(data.to_vec()), body))
+                                }
+                            } else {
+                                Some((Ok(Vec::new()), body))
+                            }
+                        }
+                        Some(Err(error)) => Some((
+                            Err(format!("Failed to read upstream response body: {error}")),
+                            body,
+                        )),
+                        None => None,
+                    }
+                })
+                .filter(|result| {
+                    futures_util::future::ready(!matches!(result, Ok(ref v) if v.is_empty()))
+                });
+                Box::pin(stream)
+            }
         }
     }
 }
@@ -1568,24 +1649,74 @@ async fn send_request_once(
                 Err(error) if !has_custom_proxy => {
                     // Indiscriminate fallback (PreWrite + PostWrite both fall back), mirroring
                     // cc-switch. A PostWrite failure means the request bytes already left this
-                    // process, so re-sending via reqwest could result in duplicate billing; the
-                    // log line below calls that out explicitly. The trade-off is deliberate:
-                    // users report "direct connection works, gateway mode always fails", so
-                    // tolerating a potential double-bill is preferable to a hard failure.
+                    // process, so re-sending could result in duplicate billing; the log line
+                    // below calls that out explicitly. The trade-off is deliberate: users report
+                    // "direct connection works, gateway mode always fails", so tolerating a
+                    // potential double-bill is preferable to a hard failure.
+                    //
+                    // The fallback uses a hyper-util Client (not reqwest) configured with
+                    // `http1_title_case_headers` + `http1_preserve_header_case` so request
+                    // headers are sent in Title-Case, preserving compatibility with
+                    // case-sensitive upstream relays — mirroring cc-switch's fallback.
                     if error.request_body_written() {
                         log::warn!(
                             "Header-preserving upstream request failed after write; \
-                             falling back to reqwest (note: upstream request may have been \
-                             received, re-send could result in duplicate billing): {}",
+                             falling back to hyper-util client (note: upstream request may \
+                             have been received, re-send could result in duplicate billing): {}",
                             error.message()
                         );
                     } else {
                         log::warn!(
                             "Header-preserving upstream request failed before write; \
-                             falling back to reqwest: {}",
+                             falling back to hyper-util client: {}",
                             error.message()
                         );
                     }
+                    let uri = upstream_url.as_str().parse::<http::Uri>().map_err(|e| {
+                        GatewayForwardError {
+                            message: format!("Failed to parse upstream URL as URI: {e}"),
+                            kind: GatewayFailureKind::GatewayParse,
+                            upstream_request_body: None,
+                            upstream_response_body: None,
+                            upstream_response_body_bytes: 0,
+                        }
+                    })?;
+                    let req = http::Request::builder()
+                        .method(method.as_str())
+                        .uri(&uri)
+                        .body(http_body_util::Full::new(Bytes::from(upstream_body)))
+                        .map_err(|e| GatewayForwardError {
+                            message: format!("Failed to build hyper-util fallback request: {e}"),
+                            kind: GatewayFailureKind::GatewayParse,
+                            upstream_request_body: None,
+                            upstream_response_body: None,
+                            upstream_response_body_bytes: 0,
+                        })?;
+                    let mut req = req;
+                    *req.headers_mut() = headers.map;
+                    let resp = tokio::time::timeout(
+                        Duration::from_secs(timeout_secs.max(1)),
+                        global_hyper_client().request(req),
+                    )
+                    .await
+                    .map_err(|_| GatewayForwardError {
+                        message: format!(
+                            "Timed out sending upstream request after {} seconds",
+                            timeout_secs
+                        ),
+                        kind: GatewayFailureKind::Timeout,
+                        upstream_request_body: None,
+                        upstream_response_body: None,
+                        upstream_response_body_bytes: 0,
+                    })?
+                    .map_err(|error| GatewayForwardError {
+                        message: format!("Failed to send upstream request: {error}"),
+                        kind: GatewayFailureKind::Connection,
+                        upstream_request_body: None,
+                        upstream_response_body: None,
+                        upstream_response_body_bytes: 0,
+                    })?;
+                    return Ok(UpstreamResponse::Hyper(resp));
                 }
                 Err(error) => {
                     // A custom proxy is configured; do not bypass it with a direct reqwest
