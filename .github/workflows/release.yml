@@ -446,6 +446,8 @@ jobs:
                       "# Tauri NSIS installer (currentUser). /S = silent, /D = install dir.",
                       "# /D must be the LAST switch and unquoted (NSIS requirement).",
                       'Start-Process -Wait -FilePath "$dir\\dl.exe" -ArgumentList \'/S\', "/D=$dir"',
+                      "# Scoop only auto-removes the installer for installer.file/args, not for script hooks.",
+                      'Remove-Item "$dir\\dl.exe" -Force -ErrorAction SilentlyContinue',
                   ]
               },
               "uninstaller": {
