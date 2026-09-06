@@ -179,8 +179,14 @@ fn validate_relative_components(relative_path: &str) -> Result<Vec<String>, Stri
         return Ok(Vec::new());
     }
 
+    // Normalize backslashes to forward slashes before component parsing so the
+    // path splits identically on every OS. On Unix, `Path::new("a\\b")` yields
+    // a single `Normal` component containing the backslash, which the per-name
+    // guard below would reject even though a Windows-style relative path is a
+    // legitimate input (issue #318 CI: `extensions\ad_hoc\notes` rejected on Linux).
+    let normalized = trimmed.replace('\\', "/");
     let mut components = Vec::new();
-    for component in Path::new(trimmed).components() {
+    for component in Path::new(&normalized).components() {
         match component {
             Component::Normal(name) => {
                 let name = name.to_string_lossy().to_string();
