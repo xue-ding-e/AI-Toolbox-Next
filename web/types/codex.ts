@@ -417,3 +417,37 @@ export interface ImportConflictInfo {
   newProviderName: string;
   sourceProviderId: string;
 }
+
+/**
+ * Codex memories management (issue #296)
+ */
+export type CodexMemoriesSourceMode = 'local' | 'wsl';
+
+export interface CodexMemoriesSourceOption {
+  source: 'local' | 'wsl';
+  distro?: string | null;
+}
+
+export interface CodexMemoriesEntry {
+  name: string;
+  relativePath: string;
+  entryType: 'file' | 'directory';
+  size: number;
+  modifiedAtMs?: number | null;
+}
+
+export interface CodexMemoriesListResult {
+  rootPath: string;
+  source: 'local' | 'wsl';
+  distro?: string | null;
+  availableSources: CodexMemoriesSourceOption[];
+  entries: CodexMemoriesEntry[];
+  /** Requested source does not exist on this machine (e.g. host root is WSL Direct). */
+  unavailable?: boolean;
+}
+
+export interface CodexMemoryFileContent {
+  content: string;
+  size: number;
+  modifiedAtMs?: number | null;
+}

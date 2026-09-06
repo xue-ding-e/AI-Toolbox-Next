@@ -61,6 +61,11 @@ sequenceDiagram
 - 历史同步入口放在会话管理区域标题栏右侧，不属于 provider 卡片或已应用 provider 菜单；同步和恢复都是高影响本地写操作，必须使用后端返回的来源、统计、备份路径和锁等待信息展示结果，恢复最新备份必须强确认。历史同步默认只修复 provider 路由，不应在 UI 文案中承诺会同步或改写 model。
 - “统一 Codex 会话历史”入口属于 Codex 更多选项，不属于手动历史同步弹窗；开关行应沿用 SidebarSettingsModal 的左右布局，说明文字放在 Switch 下方。开启确认里“迁入现有官方会话历史”默认不勾，关闭确认里只有存在当前 Codex root 的迁移账本时才提供按账本恢复；Gateway 接管期间前端应禁用开关并提示先恢复直连。
 - “切换第三方时保留官方登录”同样在更多选项里，但语义不同：它会影响当前已应用渠道的 live 投影，不能只写 settings store。前端必须走 `setCodexPreserveOfficialAuthOnSwitch` → 后端 `set_codex_preserve_official_auth_on_switch`，由后端重投影（未接管直接 apply；Gateway 下 restore → apply → re-engage）。不要前端自己 `saveSettings` 或拼 Gateway 开关顺序。
+- 记忆管理（`CodexMemoriesPanel`，issue #296）挂在 Codex 页 sidebar 第 5 分区（`codex-memories`），UI 形态对齐会话管理：本机/WSL 来源切换（复用 `sessionManager.sourceMode.*` 文案）、相对路径面包屑导航、左侧紧凑表格 + 右侧详情分栏。
+- memories 来源切换后 `currentDir`、选中文件和批量选择必须整体重置；本机来源不可用时禁用本机选项并把 effective source mode 自动落到 WSL（对齐会话管理的 effective mode 语义）；WSL 选项只显示 "WSL"，不带 distro 名（与来源切换控件样式一并对齐会话管理的分段胶囊样式）。
+- `list` 响应的 `unavailable=true` 表示请求来源在本机不存在：列表区显示“来源不可用”空态并禁用新建/打开/删除/清空入口，来源切换仍可用；不要把该状态当成加载失败弹错误。页面级 `refreshToken` 变化只刷新列表，不得重置用户的目录导航与选中状态。
+- `MEMORY.md`、`memory_summary.md`、`raw_memories.md`、`rollout_summaries/*` 的详情区要显示“Codex 会自动重建”辅助提示（10px tertiary 文字）；空态必须区分“目录为空”（表格内 Empty）和“未选中文件”（详情区 Empty）两种。
+- 编辑保存走 `write_codex_memory_file`：.md 预览用共享 `MarkdownPreview`，编辑统一用 `MarkdownEditor`（自带编辑/预览切换），非 .md 只读预览用 `PlainTextEditor`。文件大小/字符数显示在详情头部，不要弹窗编辑。
 
 ## 跨模块依赖
 

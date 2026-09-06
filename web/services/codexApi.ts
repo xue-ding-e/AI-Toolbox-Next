@@ -30,6 +30,9 @@ import type {
   CodexHistoryRestoreResult,
   CodexUnifiedHistoryRestoreResult,
   CodexUnifiedSessionHistoryUpdateResult,
+  CodexMemoriesSourceMode,
+  CodexMemoriesListResult,
+  CodexMemoryFileContent,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -359,4 +362,61 @@ export const resolveCodexAllApiHubProviders = async (
   return await invoke<OpenCodeAllApiHubProvider[]>('resolve_codex_all_api_hub_providers', {
     request: { providerIds },
   });
+};
+
+// ============================================================================
+// Codex memories management (issue #296)
+// ============================================================================
+
+export const listCodexMemories = async (
+  sourceMode: CodexMemoriesSourceMode = 'local',
+  relativePath = '',
+): Promise<CodexMemoriesListResult> => {
+  return await invoke<CodexMemoriesListResult>('list_codex_memories', {
+    sourceMode,
+    relativePath,
+  });
+};
+
+export const readCodexMemoryFile = async (
+  sourceMode: CodexMemoriesSourceMode,
+  relativePath: string
+): Promise<CodexMemoryFileContent> => {
+  return await invoke<CodexMemoryFileContent>('read_codex_memory_file', {
+    sourceMode,
+    relativePath,
+  });
+};
+
+export const writeCodexMemoryFile = async (
+  sourceMode: CodexMemoriesSourceMode,
+  relativePath: string,
+  content: string
+): Promise<void> => {
+  await invoke('write_codex_memory_file', { sourceMode, relativePath, content });
+};
+
+export const renameCodexMemoryEntry = async (
+  sourceMode: CodexMemoriesSourceMode,
+  relativePath: string,
+  newName: string
+): Promise<void> => {
+  await invoke('rename_codex_memory_entry', { sourceMode, relativePath, newName });
+};
+
+export const deleteCodexMemoryEntries = async (
+  sourceMode: CodexMemoriesSourceMode,
+  relativePaths: string[]
+): Promise<void> => {
+  await invoke('delete_codex_memory_entries', { sourceMode, relativePaths });
+};
+
+export const clearCodexMemories = async (sourceMode: CodexMemoriesSourceMode): Promise<void> => {
+  await invoke('clear_codex_memories', { sourceMode });
+};
+
+export const revealCodexMemoriesFolder = async (
+  sourceMode: CodexMemoriesSourceMode
+): Promise<void> => {
+  await invoke('reveal_codex_memories_folder', { sourceMode });
 };

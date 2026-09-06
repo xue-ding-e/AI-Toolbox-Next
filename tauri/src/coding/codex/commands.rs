@@ -100,13 +100,13 @@ impl CodexHistorySourceMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodexHistoryRuntimeSource {
+pub(super) enum CodexHistoryRuntimeSource {
     Local,
     Wsl,
 }
 
 impl CodexHistoryRuntimeSource {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Local => "local",
             Self::Wsl => "wsl",
@@ -115,10 +115,10 @@ impl CodexHistoryRuntimeSource {
 }
 
 #[derive(Debug, Clone)]
-struct CodexHistorySourceCandidate {
-    root_dir: PathBuf,
-    source: CodexHistoryRuntimeSource,
-    distro: Option<String>,
+pub(super) struct CodexHistorySourceCandidate {
+    pub(super) root_dir: PathBuf,
+    pub(super) source: CodexHistoryRuntimeSource,
+    pub(super) distro: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,7 +278,7 @@ fn select_codex_history_source_candidate<'a>(
     })
 }
 
-async fn resolve_codex_history_source_candidates(
+pub(super) async fn resolve_codex_history_source_candidates(
     db: &crate::db::SqliteDbState,
 ) -> Result<Vec<CodexHistorySourceCandidate>, String> {
     let runtime_location = runtime_location::get_codex_runtime_location_async(db).await?;

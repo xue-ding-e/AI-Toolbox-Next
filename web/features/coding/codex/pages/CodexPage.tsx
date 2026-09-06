@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Checkbox } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined, BulbOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -70,6 +70,7 @@ import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
+import CodexMemoriesPanel from '../components/CodexMemoriesPanel/CodexMemoriesPanel';
 import CodexHistorySyncModal from '../components/CodexHistorySyncModal';
 import { CODEX_LOCAL_PROVIDER_ID, shouldLoadCodexOfficialAccounts } from '../utils/localProvider';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
@@ -344,6 +345,11 @@ const CodexPage: React.FC = () => {
       id: 'codex-session-manager',
       title: t('sessionManager.title'),
       order: 4,
+    },
+    {
+      id: 'codex-memories',
+      title: t('codex.memories.title'),
+      order: 5,
     },
   ], [t]);
 
@@ -1589,6 +1595,8 @@ const CodexPage: React.FC = () => {
             return <AppstoreOutlined />;
           case 'codex-session-manager':
             return <MessageOutlined />;
+          case 'codex-memories':
+            return <BulbOutlined />;
           default:
             return null;
         }
@@ -1938,6 +1946,29 @@ const CodexPage: React.FC = () => {
                 {t('codex.historySync.menu')}
               </Button>
             )}
+          />
+        </div>
+
+        <div
+          id="codex-memories"
+          data-sidebar-section="true"
+          data-sidebar-title={t('codex.memories.title')}
+        >
+          <Collapse
+            style={{ marginBottom: 16 }}
+            defaultActiveKey={['memories']}
+            items={[
+              {
+                key: 'memories',
+                label: (
+                  <Text strong>
+                    <FileTextOutlined style={{ marginRight: 8 }} />
+                    {t('codex.memories.title')}
+                  </Text>
+                ),
+                children: <CodexMemoriesPanel refreshToken={pluginPanelRefreshToken} />,
+              },
+            ]}
           />
         </div>
 

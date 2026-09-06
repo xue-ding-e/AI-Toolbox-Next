@@ -2787,6 +2787,44 @@
       "unifiedSessionHistorySkippedNothingToRestore": "账本中的官方历史当前无需恢复",
       "unifiedSessionHistorySkippedToggleOn": "统一会话历史仍处于开启状态",
       "unifiedSessionHistorySkippedMigrationFailed": "迁移执行失败，可稍后重试"
+    },
+    "memories": {
+      "title": "记忆管理",
+      "column": {
+        "name": "名称",
+        "size": "大小",
+        "modified": "修改时间"
+      },
+      "actions": {
+        "newFile": "新建文件",
+        "openFolder": "打开目录",
+        "clearAll": "清空记忆",
+        "rename": "重命名"
+      },
+      "emptyDescription": "暂无记忆文件。Codex 会在对话后自动生成记忆，也可以手动新建。",
+      "detail": {
+        "emptyDescription": "选择左侧文件查看内容",
+        "characters": "{{length}} 字符"
+      },
+      "regeneratedHint": "该文件由 Codex 整理记忆时自动重建，手动删除后可能重新出现。",
+      "deleteConfirmTitle": "删除记忆文件",
+      "deleteConfirmContent": "确定删除「{{name}}」？此操作不可恢复。",
+      "deleteDirConfirmContent": "确定删除目录「{{name}}」及其全部内容？此操作不可恢复。",
+      "batchDeleteConfirmTitle": "删除 {{total}} 项",
+      "batchDeleteConfirmContent": "确定删除选中的记忆文件？此操作不可恢复。",
+      "clearConfirmTitle": "清空 Codex 记忆",
+      "clearConfirmContent": "将删除当前来源下 memories 与 memories_extensions 目录中的全部记忆内容，且不可恢复。",
+      "newFileTitle": "新建记忆文件",
+      "newFileNamePlaceholder": "文件名，例如 notes.md",
+      "renameTitle": "重命名",
+      "messages": {
+        "saveSuccess": "已保存",
+        "createSuccess": "已创建",
+        "renameSuccess": "已重命名",
+        "deleteSuccess": "已删除",
+        "clearSuccess": "记忆已清空"
+      },
+      "sourceUnavailableDescription": "当前来源在本机不可用，请切换到可用来源。"
     }
   },
   "geminicli": {

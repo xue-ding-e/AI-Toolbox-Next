@@ -2790,6 +2790,44 @@
       "unifiedSessionHistorySkippedNothingToRestore": "Ledgered official history does not need restoration now",
       "unifiedSessionHistorySkippedToggleOn": "Unified session history is still enabled",
       "unifiedSessionHistorySkippedMigrationFailed": "Migration failed. You can retry later"
+    },
+    "memories": {
+      "title": "Memories",
+      "column": {
+        "name": "Name",
+        "size": "Size",
+        "modified": "Modified"
+      },
+      "actions": {
+        "newFile": "New File",
+        "openFolder": "Open Folder",
+        "clearAll": "Clear All",
+        "rename": "Rename"
+      },
+      "emptyDescription": "No memory files yet. Codex generates memories after conversations, or create one manually.",
+      "detail": {
+        "emptyDescription": "Select a file on the left to view its content",
+        "characters": "{{length}} characters"
+      },
+      "regeneratedHint": "This file is rebuilt automatically by Codex during memory consolidation and may reappear after deletion.",
+      "deleteConfirmTitle": "Delete memory file",
+      "deleteConfirmContent": "Delete \"{{name}}\"? This cannot be undone.",
+      "deleteDirConfirmContent": "Delete directory \"{{name}}\" and all its contents? This cannot be undone.",
+      "batchDeleteConfirmTitle": "Delete {{total}} item(s)",
+      "batchDeleteConfirmContent": "Delete the selected memory files? This cannot be undone.",
+      "clearConfirmTitle": "Clear Codex memories",
+      "clearConfirmContent": "All memory content under memories and memories_extensions for the current source will be deleted permanently.",
+      "newFileTitle": "New memory file",
+      "newFileNamePlaceholder": "File name, e.g. notes.md",
+      "renameTitle": "Rename",
+      "messages": {
+        "saveSuccess": "Saved",
+        "createSuccess": "Created",
+        "renameSuccess": "Renamed",
+        "deleteSuccess": "Deleted",
+        "clearSuccess": "Memories cleared"
+      },
+      "sourceUnavailableDescription": "The current source is not available on this machine. Switch to an available source."
     }
   },
   "geminicli": {
