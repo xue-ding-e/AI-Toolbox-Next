@@ -2833,7 +2833,7 @@ fn codex_model_catalog_entry(
             { "effort": "max", "description": "Maximum reasoning depth for the hardest problems" },
             { "effort": "ultra", "description": "Maximum reasoning with automatic task delegation" }
         ],
-        "shell_type": "shell_command",
+        "shell_type": "unified_exec",
         "visibility": "list",
         "supported_in_api": true,
         "priority": 1000 + index,
@@ -3089,7 +3089,7 @@ fn fill_template_fields_from_static(entry: &mut serde_json::Value) {
         return;
     };
     if !entry_obj.contains_key("shell_type") {
-        entry_obj.insert("shell_type".to_string(), serde_json::json!("shell_command"));
+        entry_obj.insert("shell_type".to_string(), serde_json::json!("unified_exec"));
     }
     if !entry_obj.contains_key("visibility") {
         entry_obj.insert("visibility".to_string(), serde_json::json!("list"));
@@ -4168,13 +4168,14 @@ mod tests {
     use super::{
         append_toml_configs, build_written_codex_config_toml, codex_catalog_model_specs,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
-        heal_dangling_codex_model_provider, infer_codex_provider_category_from_settings,
-        merge_codex_auth_json, merge_remote_codex_official_models, normalize_codex_model_tier,
-        prepare_codex_config_with_model_catalog,
-        project_codex_auth_to_runtime_config, resolve_local_provider_meta,
-        static_codex_official_models, strip_codex_common_config_from_toml,
-        CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
-        RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
+        fill_template_fields_from_static, heal_dangling_codex_model_provider,
+        infer_codex_provider_category_from_settings, merge_codex_auth_json,
+        merge_remote_codex_official_models, normalize_codex_model_tier,
+        prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
+        resolve_local_provider_meta, static_codex_official_models,
+        strip_codex_common_config_from_toml, CodexHistoryRuntimeSource,
+        CodexHistorySourceCandidate, CodexHistorySourceMode, RemoteCodexModel,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
@@ -4596,6 +4597,64 @@ approval_policy = "never"
         let entry_b = &catalog["models"][1];
         assert!(entry_b["service_tiers"].is_array());
         assert!(entry_b["service_tiers"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn codex_model_catalog_shell_type_uses_unified_exec() {
+        // Codex #39757 removed the standalone `shell_command` runtime; the
+        // value is now only a legacy alias of `unified_exec`. The neutral
+        // template must declare the canonical `unified_exec` value the
+        // official models.json uses for all current models.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "mapped-a", "displayName": "Mapped A" },
+                    { "model": "mapped-b" }
+                ]
+            }
+        });
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model_provider = \"custom\"",
+        )
+        .expect("catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        for entry in catalog["models"].as_array().unwrap() {
+            assert_eq!(
+                entry.get("shell_type").and_then(|v| v.as_str()),
+                Some("unified_exec")
+            );
+        }
+    }
+
+    #[test]
+    fn fill_template_fields_backfills_unified_exec_and_preserves_declared_shell_type() {
+        // Missing shell_type is backfilled with the canonical `unified_exec`;
+        // an already-declared value (e.g. a vendor file still using the
+        // legacy alias) must survive untouched.
+        let mut missing = json!({ "slug": "vendor-model" });
+        fill_template_fields_from_static(&mut missing);
+        assert_eq!(
+            missing.get("shell_type").and_then(|v| v.as_str()),
+            Some("unified_exec")
+        );
+
+        let mut declared = json!({ "slug": "vendor-model", "shell_type": "shell_command" });
+        fill_template_fields_from_static(&mut declared);
+        assert_eq!(
+            declared.get("shell_type").and_then(|v| v.as_str()),
+            Some("shell_command")
+        );
     }
 
     #[test]
