@@ -459,32 +459,41 @@ fn classify_sse_event_fields(event_name: Option<&str>, data: &str) -> Option<Sse
         return Some(SseTerminalKind::Failed);
     }
 
-    // Responses-API delta/part events (e.g. `response.reasoning_summary_part.done`,
-    // `response.output_text.delta`) carry an item-level `status` field — e.g.
-    // `"status":"incomplete"` meaning "this reasoning part is not the final one" —
-    // which is NOT a stream-terminal signal. All genuine Responses terminal
-    // envelopes (`response.completed` / `response.incomplete` /
-    // `response.failed` / `response.cancelled`) are already handled above, so any
-    // remaining `response.*` event is a delta whose `status` must be ignored.
-    // Without this guard the delta's `status:"incomplete"` prematurely locks the
-    // verdict to Incomplete before the real `response.completed` arrives, marking a
-    // healthy 200 stream as an error (issue #318, 2026-09 regression).
-    if !is_responses_delta_event(event_name, &value) {
-        if let Some(kind) = value
-            .get("status")
-            .and_then(Value::as_str)
-            .and_then(classify_response_status)
-        {
-            return Some(kind);
-        }
-        if let Some(kind) = value
-            .get("response")
-            .and_then(|r| r.get("status"))
-            .and_then(Value::as_str)
-            .and_then(classify_response_status)
-        {
-            return Some(kind);
-        }
+    // Top-level / nested `status` string for non-Responses envelopes. Responses-API
+    // delta/part events (e.g. `response.reasoning_summary_part.done`) carry an
+    // item-level `status` that is NOT a stream-terminal signal — observed in the
+    // wild: `"status":"incomplete"` on a reasoning-summary part, meaning "this part
+    // is not the final one". Treating that as a stream Incomplete prematurely locks
+    // the verdict before the real `response.completed` arrives, marking a healthy
+    // 200 stream as an error (issue #318, 2026-09 regression).
+    //
+    // But only `status:"incomplete"` is observed as item-level noise on deltas;
+    // `status:"failed"` / `status:"cancelled"` are stream-level terminal signals that
+    // no standard Responses delta carries as an item status, so a non-standard
+    // `response.*` event carrying `status:"failed"` (without an `error` field, which
+    // the earlier `json_carries_error` check would have caught) is still a genuine
+    // failure. Block only the `Incomplete` outcome on Responses deltas, and let
+    // `Failed`/`Canceled` through so custom non-standard failure events are not
+    // swallowed.
+    let is_responses_delta = is_responses_delta_event(event_name, &value);
+    let allow_status =
+        |kind: SseTerminalKind| !is_responses_delta || kind != SseTerminalKind::Incomplete;
+    if let Some(kind) = value
+        .get("status")
+        .and_then(Value::as_str)
+        .and_then(classify_response_status)
+        .filter(|&kind| allow_status(kind))
+    {
+        return Some(kind);
+    }
+    if let Some(kind) = value
+        .get("response")
+        .and_then(|r| r.get("status"))
+        .and_then(Value::as_str)
+        .and_then(classify_response_status)
+        .filter(|&kind| allow_status(kind))
+    {
+        return Some(kind);
     }
 
     None
@@ -631,11 +640,23 @@ fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, 
 /// broken event, never the alignment of the ones after it. Returns 0 when the
 /// buffer holds no complete event, meaning nothing can be flushed safely.
 fn flattened_flush_boundary(buffer: &[u8]) -> usize {
-    let text = String::from_utf8_lossy(buffer);
+    // Operate on a UTF-8 string whose byte offsets stay aligned with the
+    // original buffer. `String::from_utf8_lossy` would replace invalid bytes
+    // with the 3-byte U+FFFD, making the lossy string longer than `buffer`;
+    // a `boundary` computed on it could then exceed `buffer.len()` and panic
+    // the caller's `&buffer[..boundary]` slice (issue #318 review finding).
+    // Invalid UTF-8 in an SSE stream is itself malformed framing — flushing
+    // nothing (boundary 0) and letting the bounded window retry later is the
+    // safe fallback, matching `for_each_flattened_sse_field`'s lossy path
+    // which never indexes back into the original bytes.
+    let text = match std::str::from_utf8(buffer) {
+        Ok(text) => text,
+        Err(_) => return 0,
+    };
     let bytes = text.as_bytes();
     let mut boundary = 0usize;
     let mut cursor = 0usize;
-    while let Some((index, token)) = find_sse_field_token(&text, cursor) {
+    while let Some((index, token)) = find_sse_field_token(text, cursor) {
         let mut value_start = index + token.len();
         if bytes.get(value_start) == Some(&b' ') {
             value_start += 1;
@@ -1934,6 +1955,21 @@ data: [DONE]
             sse_block_classify_terminal(b"data: {\"status\":\"incomplete\"}\n\n"),
             Some(SseTerminalKind::Incomplete)
         );
+        // A non-standard `response.*` delta carrying `status:"failed"` (no `error`
+        // field) is still a genuine failure: only item-level `status:"incomplete"`
+        // is suppressed on deltas, never Failed/Canceled.
+        assert_eq!(
+            sse_block_classify_terminal(
+                b"event: response.custom_reject data: {\"type\":\"response.custom_reject\",\"status\":\"failed\",\"reason\":\"policy\"}"
+            ),
+            Some(SseTerminalKind::Failed)
+        );
+        assert_eq!(
+            sse_block_classify_terminal(
+                b"event: response.custom_cancel data: {\"type\":\"response.custom_cancel\",\"status\":\"cancelled\"}"
+            ),
+            Some(SseTerminalKind::Canceled)
+        );
     }
 
     /// End-to-end guard: a delimiter-free stream larger than the bounded window
@@ -2018,5 +2054,36 @@ data: [DONE]
         assert_eq!(flattened_flush_boundary(b"{\"just\":\"json bytes\"}"), 0);
         assert_eq!(flattened_flush_boundary(b"event: a data: {\"cut"), 0);
         assert_eq!(flattened_flush_boundary(b""), 0);
+    }
+
+    /// Regression: invalid UTF-8 in the buffered flattened stream must not
+    /// panic `flattened_flush_boundary` (issue #318 review). The lossy-string
+    /// path made the string longer than the original buffer, so a boundary
+    /// computed on it could exceed `buffer.len()` and panic the caller's slice.
+    /// Now invalid UTF-8 returns boundary 0 (flush nothing) and the overflow
+    /// path observes the raw residual without slicing past its end.
+    #[test]
+    fn flattened_flush_boundary_invalid_utf8_does_not_panic() {
+        let mut buffer: Vec<u8> = Vec::new();
+        // A complete event followed by an invalid UTF-8 byte, sized past the
+        // 256 KiB overflow threshold so the flush path runs.
+        let event = b"event: a data: {\"x\":1} ";
+        while buffer.len() < MAX_SSE_USAGE_BUFFER_BYTES {
+            buffer.extend_from_slice(event);
+        }
+        buffer.push(0xff);
+        buffer.push(0xfe);
+        // No panic; boundary never exceeds the original buffer length.
+        let boundary = flattened_flush_boundary(&buffer);
+        assert!(
+            boundary <= buffer.len(),
+            "boundary {boundary} must not exceed buffer len {}",
+            buffer.len()
+        );
+
+        // The chunked collector itself must not panic on the same input.
+        let mut collector = SseUsageCollector::with_provider_type(None);
+        collector.observe_chunk(&buffer);
+        collector.drain_terminal();
     }
 }
