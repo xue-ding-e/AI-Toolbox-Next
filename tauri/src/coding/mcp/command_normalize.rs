@@ -564,8 +564,8 @@ pub fn process_cordis_patch_yaml(
     let mut changed = false;
     let mut new_array: Vec<Value> = Vec::with_capacity(array.len());
     for op in array {
-        let json_op: Value = serde_json::to_value(op)
-            .map_err(|e| format!("Failed to convert cordis op: {}", e))?;
+        let json_op: Value =
+            serde_json::to_value(op).map_err(|e| format!("Failed to convert cordis op: {}", e))?;
         let Some(insert_list) = json_op.get("insert").and_then(|v| v.as_array()) else {
             new_array.push(json_op);
             continue;
@@ -647,8 +647,8 @@ mcp_servers:
     command: cmd
     args: ["/c", "npx", "-y", "@mcp/test"]
 "#;
-        let processed =
-            process_hermes_yaml_mcp_servers(raw, &|s: &str| s.to_string()).expect("should heal duplicates");
+        let processed = process_hermes_yaml_mcp_servers(raw, &|s: &str| s.to_string())
+            .expect("should heal duplicates");
         // Only one mcp_servers section should remain in the output.
         assert_eq!(processed.matches("mcp_servers:").count(), 1);
         assert!(processed.contains("command: npx"));
@@ -683,16 +683,14 @@ mcp_servers:
         );
         // args must NOT be transformed
         assert_eq!(v["mcpServers"]["fs"]["args"][0], "-c");
-        assert_eq!(
-            v["mcpServers"]["fs"]["args"][1],
-            "C:\\Users\\x\\conf.json"
-        );
+        assert_eq!(v["mcpServers"]["fs"]["args"][1], "C:\\Users\\x\\conf.json");
     }
 
     #[test]
     fn process_claude_json_wsl_transform_after_cmd_unwrap() {
         // cmd /c wrapping a full path: strip cmd first, then transform the real exe.
-        let raw = r#"{"mcpServers":{"fs":{"type":"stdio","command":"cmd","args":["/c","C:\\x.exe"]}}}"#;
+        let raw =
+            r#"{"mcpServers":{"fs":{"type":"stdio","command":"cmd","args":["/c","C:\\x.exe"]}}}"#;
         let processed = process_claude_json(raw, false, &wsl_transform).unwrap();
         let v: Value = serde_json::from_str(&processed).unwrap();
         assert_eq!(v["mcpServers"]["fs"]["command"], "/mnt/c/x.exe");
@@ -725,8 +723,7 @@ mcp_servers:
         // http server command (if present) must not be touched
         assert_eq!(v["mcpServers"]["r"]["url"], "https://e.com/mcp");
         assert_eq!(
-            v["mcpServers"]["r"]["command"],
-            "C:\\x.exe",
+            v["mcpServers"]["r"]["command"], "C:\\x.exe",
             "http servers must not be path-transformed"
         );
     }

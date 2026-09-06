@@ -67,7 +67,10 @@ fn is_session_artifact(path: &Path) -> bool {
 /// the file is a `.zstd` artifact.
 fn open_session_reader(path: &Path) -> std::io::Result<Box<dyn BufRead>> {
     let file = File::open(path)?;
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     if name.ends_with(".zstd") {
         let decoder = zstd::stream::read::Decoder::new(file)?;
         Ok(Box::new(BufReader::new(decoder)))
@@ -114,7 +117,12 @@ fn collect_session_artifacts(root: &Path) -> Vec<PathBuf> {
 
 fn file_modified_ms(path: &Path) -> Option<i64> {
     let modified = path.metadata().ok()?.modified().ok()?;
-    Some(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
+    Some(
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64,
+    )
 }
 
 /// Whether a surface event entered the ordered surface as an append — the
@@ -230,9 +238,9 @@ fn pending_tool_call_from_event(event: &Value) -> Option<PendingToolCall> {
 fn parse_tool_arguments(arguments: &Value) -> Option<Value> {
     match arguments {
         Value::Null => None,
-        Value::String(raw) => Some(
-            serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.clone())),
-        ),
+        Value::String(raw) => {
+            Some(serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.clone())))
+        }
         parsed => Some(parsed.clone()),
     }
 }
@@ -290,8 +298,12 @@ fn tool_execution_message(
 
 /// Replay a dsh session artifact into surface transcript messages.
 fn load_transcript(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let mut reader = open_session_reader(path)
-        .map_err(|error| format!("Failed to open dsh session file {}: {error}", path.display()))?;
+    let mut reader = open_session_reader(path).map_err(|error| {
+        format!(
+            "Failed to open dsh session file {}: {error}",
+            path.display()
+        )
+    })?;
 
     // A tool/call immediately emits a placeholder message at its file position;
     // the matching tool/result later merges its block back into that message,
@@ -303,7 +315,10 @@ fn load_transcript(path: &Path) -> Result<Vec<SessionMessage>, String> {
     loop {
         line.clear();
         let read = reader.read_line(&mut line).map_err(|error| {
-            format!("Failed to read dsh session file {}: {error}", path.display())
+            format!(
+                "Failed to read dsh session file {}: {error}",
+                path.display()
+            )
         })?;
         if read == 0 {
             break;
@@ -361,13 +376,7 @@ fn load_transcript(path: &Path) -> Result<Vec<SessionMessage>, String> {
                         *existing = message_from_blocks("tool", ts, blocks);
                     }
                     None => {
-                        messages.push(tool_execution_message(
-                            None,
-                            call_id,
-                            output,
-                            is_error,
-                            ts,
-                        ));
+                        messages.push(tool_execution_message(None, call_id, output, is_error, ts));
                     }
                 }
             }
@@ -474,8 +483,12 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
         return Ok(false);
     }
     let path = Path::new(source);
-    let mut reader = open_session_reader(path)
-        .map_err(|error| format!("Failed to open dsh session file {}: {error}", path.display()))?;
+    let mut reader = open_session_reader(path).map_err(|error| {
+        format!(
+            "Failed to open dsh session file {}: {error}",
+            path.display()
+        )
+    })?;
 
     // Lightweight streaming scan: extract the same searchable text the full
     // transcript would surface (user prompts, assistant text/reasoning, tool
@@ -487,7 +500,10 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
     loop {
         line.clear();
         let read = reader.read_line(&mut line).map_err(|error| {
-            format!("Failed to read dsh session file {}: {error}", path.display())
+            format!(
+                "Failed to read dsh session file {}: {error}",
+                path.display()
+            )
         })?;
         if read == 0 {
             return Ok(false);
@@ -505,7 +521,11 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
                 .map(|text| vec![text])
                 .unwrap_or_default(),
             "assistant/message" => append_event_data(&value, "assistant/message")
-                .and_then(|data| data.get("message").filter(|message| message.is_object()).or(Some(data)))
+                .and_then(|data| {
+                    data.get("message")
+                        .filter(|message| message.is_object())
+                        .or(Some(data))
+                })
                 .map(|message| {
                     message
                         .get("content")
@@ -525,14 +545,17 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
                         .unwrap_or_default()
                 })
                 .unwrap_or_default(),
-            "tool/call" => value.get("data").map(|data| {
-                let name = data.get("name").and_then(Value::as_str).unwrap_or("");
-                let arguments = data
-                    .get("arguments")
-                    .map(|value| value.to_string())
-                    .unwrap_or_default();
-                vec![format!("{name} {arguments}")]
-            }).unwrap_or_default(),
+            "tool/call" => value
+                .get("data")
+                .map(|data| {
+                    let name = data.get("name").and_then(Value::as_str).unwrap_or("");
+                    let arguments = data
+                        .get("arguments")
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    vec![format!("{name} {arguments}")]
+                })
+                .unwrap_or_default(),
             "tool/result" => tool_result_fields(&value)
                 .map(|(_, output)| vec![output.to_string()])
                 .unwrap_or_default(),
@@ -564,8 +587,12 @@ pub fn delete_session(root: &Path, source: &str) -> Result<(), String> {
     if !session_dir.starts_with(root) {
         return Err("dsh session directory is outside the sessions root".to_string());
     }
-    std::fs::remove_dir_all(session_dir)
-        .map_err(|error| format!("Failed to delete dsh session {}: {error}", session_dir.display()))
+    std::fs::remove_dir_all(session_dir).map_err(|error| {
+        format!(
+            "Failed to delete dsh session {}: {error}",
+            session_dir.display()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -613,7 +640,12 @@ mod tests {
     #[test]
     fn scan_parses_zstd_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_artifact(dir.path(), "proj-a", true, &sample_events(1_700_000_000_000));
+        write_artifact(
+            dir.path(),
+            "proj-a",
+            true,
+            &sample_events(1_700_000_000_000),
+        );
         let sessions = scan_sessions(dir.path());
         assert_eq!(sessions.len(), 1);
         let meta = &sessions[0];
@@ -627,7 +659,12 @@ mod tests {
     #[test]
     fn load_messages_extracts_surface_messages() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_artifact(dir.path(), "proj-a", true, &sample_events(1_700_000_000_000));
+        write_artifact(
+            dir.path(),
+            "proj-a",
+            true,
+            &sample_events(1_700_000_000_000),
+        );
         let path = collect_session_artifacts(dir.path())[0].clone();
         let messages = load_messages(&path.to_string_lossy()).expect("load");
 
@@ -726,7 +763,12 @@ mod tests {
     #[test]
     fn scan_messages_query_matches() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_artifact(dir.path(), "proj-a", false, &sample_events(1_700_000_000_000));
+        write_artifact(
+            dir.path(),
+            "proj-a",
+            false,
+            &sample_events(1_700_000_000_000),
+        );
         let path = collect_session_artifacts(dir.path())[0].clone();
         let source = path.to_string_lossy();
         assert!(scan_messages_for_query(&source, "hi back").expect("scan"));
@@ -740,7 +782,12 @@ mod tests {
     #[test]
     fn delete_removes_session_directory() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_artifact(dir.path(), "proj-a", true, &sample_events(1_700_000_000_000));
+        write_artifact(
+            dir.path(),
+            "proj-a",
+            true,
+            &sample_events(1_700_000_000_000),
+        );
         let path = collect_session_artifacts(dir.path())[0].clone();
         delete_session(dir.path(), &path.to_string_lossy()).expect("delete");
         assert!(!path.parent().unwrap().exists());
@@ -781,6 +828,9 @@ mod tests {
             .collect();
         println!("total messages: {}", messages.len());
         println!("role counts: {role_counts:?}");
-        println!("tool blocks: {} ({tool_block_kinds:?})", tool_block_kinds.len());
+        println!(
+            "tool blocks: {} ({tool_block_kinds:?})",
+            tool_block_kinds.len()
+        );
     }
 }

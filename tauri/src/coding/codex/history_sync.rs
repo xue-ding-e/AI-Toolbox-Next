@@ -249,8 +249,7 @@ pub fn sync(codex_home: &Path) -> Result<CodexHistorySyncResult, String> {
 
     let db_sync = retry_sqlite_operation(|| sync_database(&paths.db_path, &target))?;
     let session_sync = sync_session_records(&paths, &target)?;
-    let index_result =
-        retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
+    let index_result = retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
     let status = get_status(codex_home)?;
 
     Ok(CodexHistorySyncResult {
@@ -283,8 +282,7 @@ pub fn restore_latest(codex_home: &Path) -> Result<CodexHistoryRestoreResult, St
         retry_sqlite_operation(|| restore_database_from_backup(&paths.db_path, &latest_backup))?;
     let (restored_session_meta_files, skipped_session_meta_files) =
         restore_metadata_sidecars(&paths, &latest_backup)?;
-    let index_result =
-        retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
+    let index_result = retry_sqlite_operation(|| rebuild_session_index(&paths))?.value;
     let status = get_status(codex_home)?;
 
     Ok(CodexHistoryRestoreResult {
@@ -582,9 +580,7 @@ fn retry_sqlite_operation<T>(
                     lock_wait_ms: start.elapsed().as_millis(),
                 });
             }
-            Err(error)
-                if is_sqlite_locked_error(&error) && attempts < SQLITE_LOCK_RETRY_LIMIT =>
-            {
+            Err(error) if is_sqlite_locked_error(&error) && attempts < SQLITE_LOCK_RETRY_LIMIT => {
                 thread::sleep(SQLITE_LOCK_RETRY_DELAY);
             }
             Err(error) if is_sqlite_locked_error(&error) => {
@@ -1366,9 +1362,8 @@ model = "gpt-new"
 
     #[test]
     fn sqlite_locked_error_message_is_actionable() {
-        let message = format_sqlite_locked_error(
-            "Failed to inspect Codex threads table: database is locked",
-        );
+        let message =
+            format_sqlite_locked_error("Failed to inspect Codex threads table: database is locked");
         assert!(message.contains("state_5.sqlite is locked"));
         assert!(message.contains("Finish the current Codex response/session"));
         assert!(message.contains("database is locked"));

@@ -287,8 +287,8 @@ fn delete_session_sqlite(root: &Path, source: &str, session_id: &str) -> Result<
         return Err("SQLite path does not match the expected Hermes database".to_string());
     }
 
-    let conn =
-        Connection::open(&db_path).map_err(|error| format!("Failed to open Hermes database: {error}"))?;
+    let conn = Connection::open(&db_path)
+        .map_err(|error| format!("Failed to open Hermes database: {error}"))?;
 
     let tx = conn
         .unchecked_transaction()
@@ -408,9 +408,11 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
                 .and_then(Value::as_str);
 
             if role == Some("user") {
-                let content = value
-                    .get("content")
-                    .or_else(|| value.get("message").and_then(|message| message.get("content")));
+                let content = value.get("content").or_else(|| {
+                    value
+                        .get("message")
+                        .and_then(|message| message.get("content"))
+                });
                 if let Some(content) = content {
                     let text = extract_text(content);
                     if !text.trim().is_empty() {
@@ -574,7 +576,9 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
             Ok(rows) => rows,
             Err(_) => return Ok(false),
         };
-        return Ok(rows.flatten().any(|content| text_contains_query(&content, query_lower)));
+        return Ok(rows
+            .flatten()
+            .any(|content| text_contains_query(&content, query_lower)));
     }
 
     let file = File::open(source)
@@ -657,7 +661,11 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("my-session.jsonl");
         let mut file = File::create(&path).expect("create");
-        writeln!(file, r#"{{"role":"user","content":"Hello","ts":1700000000}}"#).unwrap();
+        writeln!(
+            file,
+            r#"{{"role":"user","content":"Hello","ts":1700000000}}"#
+        )
+        .unwrap();
         file.flush().unwrap();
 
         let meta = parse_jsonl_session(&path).expect("parse");
@@ -670,7 +678,11 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("session.jsonl");
         let mut file = File::create(&path).expect("create");
-        writeln!(file, r#"{{"role":"user","content":"What is Rust?","ts":1700000000}}"#).unwrap();
+        writeln!(
+            file,
+            r#"{{"role":"user","content":"What is Rust?","ts":1700000000}}"#
+        )
+        .unwrap();
         writeln!(
             file,
             r#"{{"role":"assistant","content":"A systems programming language.","ts":1700000001}}"#

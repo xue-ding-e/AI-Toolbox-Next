@@ -56,7 +56,9 @@ pub fn open_browser(port: u16, path: Option<&str>) -> Result<(), String> {
 /// 分层派生无论子进程是否真正起来都会返回 Ok,前端会误显示"启动成功"toast。
 pub fn launch_gateway_in_terminal() -> Result<(), String> {
     if crate::coding::cli_resolver::resolve_local_cli_by_name("openclaw").is_none() {
-        return Err(crate::coding::cli_resolver::local_cli_missing_hint("openclaw"));
+        return Err(crate::coding::cli_resolver::local_cli_missing_hint(
+            "openclaw",
+        ));
     }
 
     #[cfg(target_os = "windows")]
@@ -148,13 +150,22 @@ mod tests {
 
     #[test]
     fn build_web_url_keeps_leading_slash() {
-        assert_eq!(build_web_url(18789, Some("/sessions")), "http://127.0.0.1:18789/sessions");
+        assert_eq!(
+            build_web_url(18789, Some("/sessions")),
+            "http://127.0.0.1:18789/sessions"
+        );
     }
 
     #[test]
     fn build_web_url_adds_slash_when_missing() {
-        assert_eq!(build_web_url(18789, Some("chat")), "http://127.0.0.1:18789/chat");
-        assert_eq!(build_web_url(19001, Some("plugins")), "http://127.0.0.1:19001/plugins");
+        assert_eq!(
+            build_web_url(18789, Some("chat")),
+            "http://127.0.0.1:18789/chat"
+        );
+        assert_eq!(
+            build_web_url(19001, Some("plugins")),
+            "http://127.0.0.1:19001/plugins"
+        );
     }
 
     #[test]

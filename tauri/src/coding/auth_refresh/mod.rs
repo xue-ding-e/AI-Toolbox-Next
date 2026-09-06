@@ -81,7 +81,9 @@ impl OfficialAuthTool {
         match self {
             OfficialAuthTool::Grok => providers::grok_refresh_applied_pass(db, app).await,
             OfficialAuthTool::Codex => providers::codex_refresh_applied_pass(db, app).await,
-            OfficialAuthTool::GeminiCli => providers::gemini_cli_refresh_applied_pass(db, app).await,
+            OfficialAuthTool::GeminiCli => {
+                providers::gemini_cli_refresh_applied_pass(db, app).await
+            }
             OfficialAuthTool::Kimi => providers::kimi_refresh_applied_pass(db, app).await,
         }
     }

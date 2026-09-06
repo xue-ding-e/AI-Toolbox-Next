@@ -82,8 +82,7 @@ pub(crate) fn convert_to_hermes_format(server: &McpServer, enabled: bool) -> Res
                 result.insert("url".to_string(), url.clone());
             }
             if let Some(headers) = obj.get("headers") {
-                if headers.is_object()
-                    && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
+                if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
                 {
                     result.insert("headers".to_string(), headers.clone());
                 }
@@ -163,9 +162,7 @@ pub(crate) fn convert_from_hermes_format(name: &str, spec: &Value) -> Option<Mcp
             unified.insert("url".to_string(), url.clone());
         }
         if let Some(headers) = obj.get("headers") {
-            if headers.is_object()
-                && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
-            {
+            if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true) {
                 unified.insert("headers".to_string(), headers.clone());
             }
         }
@@ -336,17 +333,20 @@ pub(crate) fn import_servers_from_hermes(config_path: &Path) -> Result<Vec<McpSe
 mod tests {
     use super::*;
 
-    fn make_stdio_server(name: &str, command: &str, args: &[&str], env: &[(&str, &str)]) -> McpServer {
+    fn make_stdio_server(
+        name: &str,
+        command: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> McpServer {
         let mut server_config = json!({
             "type": "stdio",
             "command": command,
             "args": args,
         });
         if !env.is_empty() {
-            let env_obj: serde_json::Map<String, Value> = env
-                .iter()
-                .map(|(k, v)| (k.to_string(), json!(v)))
-                .collect();
+            let env_obj: serde_json::Map<String, Value> =
+                env.iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
             server_config["env"] = Value::Object(env_obj);
         }
         McpServer {
@@ -403,7 +403,12 @@ mod tests {
 
     #[test]
     fn test_convert_stdio_to_hermes() {
-        let server = make_stdio_server("fs", "npx", &["-y", "@mcp/server-filesystem"], &[("HOME", "/u")]);
+        let server = make_stdio_server(
+            "fs",
+            "npx",
+            &["-y", "@mcp/server-filesystem"],
+            &[("HOME", "/u")],
+        );
         let result = convert_to_hermes_format(&server, true).unwrap();
         assert!(result.get("type").is_none());
         assert_eq!(result["command"], "npx");
@@ -414,7 +419,11 @@ mod tests {
 
     #[test]
     fn test_convert_http_to_hermes() {
-        let server = make_http_server("remote", "https://example.com/mcp", &[("Authorization", "Bearer x")]);
+        let server = make_http_server(
+            "remote",
+            "https://example.com/mcp",
+            &[("Authorization", "Bearer x")],
+        );
         let result = convert_to_hermes_format(&server, true).unwrap();
         assert!(result.get("type").is_none());
         assert_eq!(result["url"], "https://example.com/mcp");
@@ -453,7 +462,10 @@ mod tests {
         assert_eq!(result.server_config["env"]["HOME"], "/u");
         // Hermes-specific fields stripped
         for field in HERMES_EXTRA_FIELDS {
-            assert!(result.server_config.get(field).is_none(), "field {field} should be stripped");
+            assert!(
+                result.server_config.get(field).is_none(),
+                "field {field} should be stripped"
+            );
         }
     }
 
@@ -471,7 +483,10 @@ mod tests {
         assert_eq!(result.server_config["url"], "https://example.com/mcp");
         assert_eq!(result.server_config["headers"]["Authorization"], "Bearer x");
         for field in HERMES_EXTRA_FIELDS {
-            assert!(result.server_config.get(field).is_none(), "field {field} should be stripped");
+            assert!(
+                result.server_config.get(field).is_none(),
+                "field {field} should be stripped"
+            );
         }
     }
 
@@ -532,7 +547,8 @@ mod tests {
 
     #[test]
     fn test_sync_then_import_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -550,7 +566,8 @@ mod tests {
 
     #[test]
     fn test_sync_preserves_other_mcp_servers() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -567,7 +584,8 @@ mod tests {
 
     #[test]
     fn test_sync_update_preserves_hermes_extra_fields() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -595,7 +613,8 @@ mod tests {
 
     #[test]
     fn test_remove_server() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -611,7 +630,8 @@ mod tests {
 
     #[test]
     fn test_remove_missing_server_is_noop() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -628,7 +648,8 @@ mod tests {
 
     #[test]
     fn test_sync_preserves_comments_and_unrelated_sections() {
-        let dir = std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hermes_mcp_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.yaml");
 
@@ -654,9 +675,15 @@ agent:
 
         let result = std::fs::read_to_string(&config_path).unwrap();
         // Comments must survive
-        assert!(result.contains("# Hermes configuration"), "top comment lost");
+        assert!(
+            result.contains("# Hermes configuration"),
+            "top comment lost"
+        );
         assert!(result.contains("# user comment"), "inline comment lost");
-        assert!(result.contains("# trailing comment"), "trailing comment lost");
+        assert!(
+            result.contains("# trailing comment"),
+            "trailing comment lost"
+        );
         // Unrelated sections must survive
         assert!(result.contains("model:"), "model section lost");
         assert!(result.contains("default: gpt-4"), "model content lost");

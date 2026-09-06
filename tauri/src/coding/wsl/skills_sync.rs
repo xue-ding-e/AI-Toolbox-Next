@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 use super::adapter;
 use super::sync::{
     check_wsl_symlink_exists, create_wsl_symlink, inspect_wsl_path_kind, list_wsl_dir,
-    read_wsl_file_raw, remove_wsl_managed_symlink, remove_wsl_path, sync_directory,
-    write_wsl_file, WslPathKind,
+    read_wsl_file_raw, remove_wsl_managed_symlink, remove_wsl_path, sync_directory, write_wsl_file,
+    WslPathKind,
 };
 use super::types::{SyncProgress, WSLSyncConfig};
 use crate::coding::runtime_location;
@@ -58,8 +58,8 @@ async fn get_wsl_tool_skills_dir_with_db(
     tool_key: &str,
 ) -> Option<String> {
     match tool_key {
-        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi"
-        | "oh_my_pi" | "gemini_cli" => {
+        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
+        | "gemini_cli" => {
             runtime_location::get_tool_skills_path_async(db, tool_key)
                 .await
                 .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
@@ -319,8 +319,7 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
                     // Already an app-managed link: rebuild only when stale.
                     WslPathKind::Managed => {
                         if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
-                            if let Err(error) =
-                                create_wsl_symlink(&distro, &wsl_target, &link_path)
+                            if let Err(error) = create_wsl_symlink(&distro, &wsl_target, &link_path)
                             {
                                 log::warn!(
                                     "Skills WSL sync: failed to refresh symlink for skill '{}' tool '{}' at '{}': {}",

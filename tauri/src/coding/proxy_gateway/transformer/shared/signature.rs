@@ -117,9 +117,7 @@ pub fn guess_signature_provider(raw: &str) -> SignatureProvider {
 /// but accepting the unpadded form keeps detection safe across proxies/clients.
 fn decode_std_base64(value: &str) -> Option<Vec<u8>> {
     if value.contains('=') {
-        base64::engine::general_purpose::STANDARD
-            .decode(value)
-            .ok()
+        base64::engine::general_purpose::STANDARD.decode(value).ok()
     } else {
         base64::engine::general_purpose::STANDARD_NO_PAD
             .decode(value)
@@ -136,7 +134,9 @@ fn contains_anthropic_model(buf: &[u8]) -> bool {
 }
 
 fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn is_standard_base64(value: &str) -> bool {
@@ -287,8 +287,14 @@ mod tests {
             guess_signature_provider("EqQBCAEDEgQIAhAEGAAgAigBMOzOAg=="),
             SignatureProvider::Unknown
         );
-        assert_eq!(guess_signature_provider("EqoBxxxxxxxx"), SignatureProvider::Unknown);
-        assert_eq!(guess_signature_provider("EqrBxxxxxxxx"), SignatureProvider::Unknown);
+        assert_eq!(
+            guess_signature_provider("EqoBxxxxxxxx"),
+            SignatureProvider::Unknown
+        );
+        assert_eq!(
+            guess_signature_provider("EqrBxxxxxxxx"),
+            SignatureProvider::Unknown
+        );
         assert_eq!(guess_signature_provider("EqQ"), SignatureProvider::Unknown);
         // Decoded payload carrying a Claude model marker is recognized as
         // Anthropic even though it is also protobuf-shaped.
@@ -311,14 +317,10 @@ mod tests {
         // Order regression: a payload that is both protobuf-like AND embeds a
         // Claude model name must resolve to Anthropic, never Gemini.
         let mut binary_signature = vec![0x12, 0xad, 0x02, 0x0a, 0x89, 0x01];
-        binary_signature.extend_from_slice(
-            b"claude-sonnet-5 thinking ca10a1a9-7eaf-4bd5-aad3-bcc2cd51d508",
-        );
+        binary_signature
+            .extend_from_slice(b"claude-sonnet-5 thinking ca10a1a9-7eaf-4bd5-aad3-bcc2cd51d508");
         let raw = base64::engine::general_purpose::STANDARD.encode(&binary_signature);
-        assert_eq!(
-            guess_signature_provider(&raw),
-            SignatureProvider::Anthropic
-        );
+        assert_eq!(guess_signature_provider(&raw), SignatureProvider::Anthropic);
     }
 
     #[test]

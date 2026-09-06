@@ -48,7 +48,10 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                     }
                     _ => match strip_cli_prefix(&path, "/kimi") {
                         Some(forwarded_path)
-                            if matches!(forwarded_path.as_str(), "/v1" | "/v1/chat/completions") =>
+                            if matches!(
+                                forwarded_path.as_str(),
+                                "/v1" | "/v1/chat/completions"
+                            ) =>
                         {
                             Some(GatewayRoute {
                                 cli_key: GatewayCliKey::Kimi,

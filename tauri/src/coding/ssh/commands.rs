@@ -1106,15 +1106,24 @@ async fn backfill_default_file_mappings(
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
         &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"];
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
-        &["omp-config", "omp-models", "omp-mcp", "omp-agents", "omp-rules"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] = &[
+        "omp-config",
+        "omp-models",
+        "omp-mcp",
+        "omp-agents",
+        "omp-rules",
+    ];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V12: &[&str] =
         &["hermes-config", "hermes-prompt", "claude-desktop-config"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
         &["dsh-config", "dsh-credentials", "dsh-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V14: &[&str] = &["dsh-mcp"];
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V15: &[&str] =
-        &["kimi-config", "kimi-prompt", "kimi-credentials", "kimi-plugins"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V15: &[&str] = &[
+        "kimi-config",
+        "kimi-prompt",
+        "kimi-credentials",
+        "kimi-plugins",
+    ];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1640,8 +1649,7 @@ pub async fn resolve_dynamic_paths_with_db(
                 if let Ok(paths) =
                     crate::coding::claude_desktop::config_writer::current_platform_paths()
                 {
-                    mapping.local_path =
-                        paths.normal_config_path.to_string_lossy().to_string();
+                    mapping.local_path = paths.normal_config_path.to_string_lossy().to_string();
                     mapping.remote_path =
                         "~/.claude/desktop/claude_desktop_config.json".to_string();
                 }

@@ -366,12 +366,7 @@ fn marketplace_install_source(repository_root: &Path, source: &Value) -> Option<
     // { "type": "local", "path": "./external_plugins/neon" }
     if url.is_none() {
         let relative = local_or_subdir_path?;
-        return Some(
-            repository_root
-                .join(relative)
-                .to_string_lossy()
-                .to_string(),
-        );
+        return Some(repository_root.join(relative).to_string_lossy().to_string());
     }
 
     let mut install_source = url?.to_string();

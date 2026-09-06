@@ -141,7 +141,8 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<Path
             }
         }
         GatewayCliKey::Grok => {
-            if let Ok(location) = crate::coding::runtime_location::get_grok_runtime_location_sync(db)
+            if let Ok(location) =
+                crate::coding::runtime_location::get_grok_runtime_location_sync(db)
             {
                 push_unique(&mut roots, location.host_path.join("sessions"));
             }
@@ -150,7 +151,8 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<Path
             }
         }
         GatewayCliKey::Kimi => {
-            if let Ok(location) = crate::coding::runtime_location::get_kimi_runtime_location_sync(db)
+            if let Ok(location) =
+                crate::coding::runtime_location::get_kimi_runtime_location_sync(db)
             {
                 push_unique(&mut roots, location.host_path.join("sessions"));
             }

@@ -15,20 +15,20 @@
 //! - Quit
 
 use crate::coding::claude_code::tray_support as claude_tray;
+use crate::coding::claude_desktop::tray_support as claude_desktop_tray;
 use crate::coding::codex::tray_support as codex_tray;
+use crate::coding::dsh::tray_support as dsh_tray;
 use crate::coding::gemini_cli::tray_support as gemini_cli_tray;
 use crate::coding::grok::tray_support as grok_tray;
+use crate::coding::hermes::tray_support as hermes_tray;
 use crate::coding::kimi::tray_support as kimi_tray;
 use crate::coding::mcp::tray_support as mcp_tray;
 use crate::coding::oh_my_openagent::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
+use crate::coding::oh_my_pi::tray_support as omp_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
-use crate::coding::oh_my_pi::tray_support as omp_tray;
 use crate::coding::pi::tray_support as pi_tray;
-use crate::coding::claude_desktop::tray_support as claude_desktop_tray;
-use crate::coding::hermes::tray_support as hermes_tray;
-use crate::coding::dsh::tray_support as dsh_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
@@ -536,8 +536,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let config_id = config_id.to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) =
-                        dsh_tray::apply_dsh_prompt_config(&app_handle, &config_id).await
+                    if let Err(e) = dsh_tray::apply_dsh_prompt_config(&app_handle, &config_id).await
                     {
                         eprintln!("Failed to apply dsh prompt config: {}", e);
                     }
@@ -693,8 +692,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let pi_enabled = is_tab_visible("pi") && pi_tray::is_enabled_for_tray(app).await;
     let omp_enabled = is_tab_visible("oh_my_pi") && omp_tray::is_enabled_for_tray(app).await;
-    let claude_desktop_enabled = is_tab_visible("claudedesktop")
-        && claude_desktop_tray::is_enabled_for_tray(app).await;
+    let claude_desktop_enabled =
+        is_tab_visible("claudedesktop") && claude_desktop_tray::is_enabled_for_tray(app).await;
     let hermes_enabled = is_tab_visible("hermes") && hermes_tray::is_enabled_for_tray(app).await;
     let dsh_enabled = is_tab_visible("dsh") && dsh_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
@@ -1245,8 +1244,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
     let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
     let omp_has_prompt_items = omp_enabled && !omp_prompt_data.items.is_empty();
-    let claude_desktop_has_items =
-        claude_desktop_enabled && !claude_desktop_data.items.is_empty();
+    let claude_desktop_has_items = claude_desktop_enabled && !claude_desktop_data.items.is_empty();
     let hermes_has_items = hermes_enabled && !hermes_data.items.is_empty();
     let hermes_has_prompt_items = hermes_enabled && !hermes_prompt_data.items.is_empty();
     let dsh_has_items = dsh_enabled && !dsh_data.items.is_empty();
@@ -1355,7 +1353,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
     let dsh_prompt_submenu = if dsh_has_prompt_items {
-        Some(build_named_prompt_submenu(app, "dsh", &dsh_prompt_data, texts)?)
+        Some(build_named_prompt_submenu(
+            app,
+            "dsh",
+            &dsh_prompt_data,
+            texts,
+        )?)
     } else {
         None
     };
@@ -1378,7 +1381,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     // Build Claude Code provider submenu (only if has items)
     let claude_provider_submenu = if claude_has_items {
-        Some(build_named_provider_submenu(app, "claude", &claude_data, texts)?)
+        Some(build_named_provider_submenu(
+            app,
+            "claude",
+            &claude_data,
+            texts,
+        )?)
     } else {
         None
     };
@@ -1394,7 +1402,12 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     // Build Codex provider submenu (only if has items)
     let codex_provider_submenu = if codex_has_items {
-        Some(build_named_provider_submenu(app, "codex", &codex_data, texts)?)
+        Some(build_named_provider_submenu(
+            app,
+            "codex",
+            &codex_data,
+            texts,
+        )?)
     } else {
         None
     };
@@ -1408,7 +1421,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
     let grok_provider_submenu = if grok_has_items {
-        Some(build_named_provider_submenu(app, "grok", &grok_data, texts)?)
+        Some(build_named_provider_submenu(
+            app, "grok", &grok_data, texts,
+        )?)
     } else {
         None
     };
@@ -1422,7 +1437,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
     let kimi_provider_submenu = if kimi_has_items {
-        Some(build_named_provider_submenu(app, "kimi", &kimi_data, texts)?)
+        Some(build_named_provider_submenu(
+            app, "kimi", &kimi_data, texts,
+        )?)
     } else {
         None
     };
@@ -1514,8 +1531,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     // Hermes section (only if enabled and has items)
     let hermes_header = if hermes_has_section {
         Some(
-            MenuItem::with_id(app, "hermes_header", texts.hermes_header, false, None::<&str>)
-                .map_err(|e| e.to_string())?,
+            MenuItem::with_id(
+                app,
+                "hermes_header",
+                texts.hermes_header,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
         )
     } else {
         None
@@ -1529,8 +1552,10 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 
     // dsh section (only if enabled and has items)
     let dsh_header = if dsh_has_section {
-        Some(MenuItem::with_id(app, "dsh_header", texts.dsh_header, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(app, "dsh_header", texts.dsh_header, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -2138,9 +2163,14 @@ fn build_hermes_model_submenu<R: Runtime>(
         Submenu::with_id(app, "hermes_model_submenu", &title, true).map_err(|e| e.to_string())?;
 
     if data.items.is_empty() {
-        let empty_item =
-            MenuItem::with_id(app, "hermes_model_empty", texts.no_model, false, None::<&str>)
-                .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            "hermes_model_empty",
+            texts.no_model,
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
         return Ok(submenu);
     }
@@ -2471,8 +2501,8 @@ fn build_kimi_model_submenu<R: Runtime>(
     } else {
         format!("{} ({})", data.title, data.current_display)
     };
-    let submenu = Submenu::with_id(app, "kimi_model_submenu", &title, true)
-        .map_err(|e| e.to_string())?;
+    let submenu =
+        Submenu::with_id(app, "kimi_model_submenu", &title, true).map_err(|e| e.to_string())?;
     if data.items.is_empty() {
         let empty_item =
             MenuItem::with_id(app, "kimi_model_empty", texts.no_model, false, None::<&str>)
@@ -3301,9 +3331,8 @@ mod tests {
             ],
         };
 
-        let submenu =
-            build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
-                .expect("provider submenu");
+        let submenu = build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
+            .expect("provider submenu");
         assert_eq!(submenu.id().as_ref(), "codex_provider_submenu");
         assert_eq!(
             submenu.text().expect("submenu text"),
@@ -3326,9 +3355,8 @@ mod tests {
             items: Vec::new(),
         };
 
-        let submenu =
-            build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
-                .expect("provider submenu");
+        let submenu = build_named_provider_submenu(app.handle(), "codex", &data, tray_texts("en"))
+            .expect("provider submenu");
         assert_eq!(submenu.text().expect("submenu text"), "Provider");
 
         let items = submenu.items().expect("submenu items");

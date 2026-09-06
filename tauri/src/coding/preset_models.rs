@@ -304,8 +304,12 @@ mod tests {
         // gpt-6-astra leads the bundled OpenAI preset list (added 2026-09) and
         // shares the gpt-5.6 family's capability set; luna is still bundled but
         // no longer among the first three presets.
-        const GPT_5_6_FAMILY_MODEL_IDS: [&str; 4] =
-            ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+        const GPT_5_6_FAMILY_MODEL_IDS: [&str; 4] = [
+            "gpt-6-astra",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+        ];
         const LEADING_MODEL_IDS: [&str; 3] = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra"];
         const GPT_5_6_REASONING_LEVELS: [&str; 6] =
             ["none", "low", "medium", "high", "xhigh", "max"];

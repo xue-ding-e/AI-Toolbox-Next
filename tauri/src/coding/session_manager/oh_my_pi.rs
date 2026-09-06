@@ -176,7 +176,9 @@ fn truncated_title(title: &str, updated_at: &str) -> String {
             "updatedAt": updated_at,
             "pad": "",
         });
-        serde_json::to_string(&slot).map(|s| s.len() + 1 <= 256).unwrap_or(false)
+        serde_json::to_string(&slot)
+            .map(|s| s.len() + 1 <= 256)
+            .unwrap_or(false)
     };
     let (mut low, mut high) = (0usize, title_chars.len());
     let mut best = 0;
@@ -203,8 +205,12 @@ fn update_title_slot_if_present(
     title: &str,
     updated_at: &str,
 ) -> Result<(), String> {
-    let content = std::fs::read_to_string(session_path)
-        .map_err(|error| format!("Failed to read OMP session {}: {error}", session_path.display()))?;
+    let content = std::fs::read_to_string(session_path).map_err(|error| {
+        format!(
+            "Failed to read OMP session {}: {error}",
+            session_path.display()
+        )
+    })?;
     let Some((first_line, rest)) = content.split_once('\n') else {
         return Ok(());
     };
@@ -237,7 +243,11 @@ fn update_title_slot_if_present(
     let slot_json = serde_json::to_string(&slot_value)
         .map_err(|error| format!("Failed to re-serialize OMP title slot: {error}"))?;
     // 验证整行恰好 256 字节
-    debug_assert_eq!(slot_json.len() + 1, 256, "title slot must be exactly 256 bytes");
+    debug_assert_eq!(
+        slot_json.len() + 1,
+        256,
+        "title slot must be exactly 256 bytes"
+    );
 
     let new_content = format!("{slot_json}\n{rest}");
     std::fs::write(session_path, new_content)
@@ -412,7 +422,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let source_path = path.to_string_lossy().to_string();
     let resume_command = Some(build_resume_command(
         project_dir.as_deref(),
-        &format!("omp --resume {}", super::utils::quote_session_arg(&source_path)),
+        &format!(
+            "omp --resume {}",
+            super::utils::quote_session_arg(&source_path)
+        ),
     ));
 
     Some(SessionMeta {
@@ -468,8 +481,16 @@ fn message_from_entry(entry: &Value) -> Option<SessionMessage> {
                     from_entry[index + 1..].to_string(),
                 ),
                 _ => (
-                    entry.get("provider").and_then(Value::as_str).unwrap_or("").to_string(),
-                    entry.get("modelId").and_then(Value::as_str).unwrap_or("").to_string(),
+                    entry
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    entry
+                        .get("modelId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
                 ),
             };
             let mut message = message_from_blocks(
@@ -897,7 +918,11 @@ mod tests {
         let lines: Vec<&str> = content.lines().collect();
 
         // 第一行仍是 256 字节 title 槽位且标题已更新
-        assert_eq!(content.split_once('\n').unwrap().0.len() + 1, 256, "title slot is 256 bytes");
+        assert_eq!(
+            content.split_once('\n').unwrap().0.len() + 1,
+            256,
+            "title slot is 256 bytes"
+        );
         let slot: Value = serde_json::from_str(lines[0]).expect("slot parses");
         assert_eq!(slot["type"], "title");
         assert_eq!(slot["title"], "New Title");

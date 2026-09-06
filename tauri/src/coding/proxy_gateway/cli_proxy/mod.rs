@@ -2672,8 +2672,8 @@ fn restore_kimi_config(
                 // user-corrupted non-table shape must fail cleanly instead of
                 // panicking the restore path — restore is the last-resort net
                 // that brings the CLI back to direct connectivity.
-                let providers_root = current["providers"]
-                    .or_insert(Item::Table(toml_edit::Table::new()));
+                let providers_root =
+                    current["providers"].or_insert(Item::Table(toml_edit::Table::new()));
                 let providers_root = providers_root
                     .as_table_mut()
                     .ok_or_else(|| "Kimi [providers] must be a table".to_string())?;

@@ -28,7 +28,11 @@ pub fn has_builtin_models(provider: &str) -> bool {
 pub fn builtin_models_for(provider: &str) -> Option<&[Value]> {
     catalog()
         .get(provider)
-        .or_else(|| provider.strip_suffix("-official").and_then(|plain| catalog().get(plain)))
+        .or_else(|| {
+            provider
+                .strip_suffix("-official")
+                .and_then(|plain| catalog().get(plain))
+        })
         .map(Vec::as_slice)
 }
 
@@ -51,9 +55,7 @@ fn catalog() -> &'static Catalog {
         };
         map.into_iter()
             .filter_map(|(provider, models)| {
-                models
-                    .as_array()
-                    .map(|array| (provider, array.clone()))
+                models.as_array().map(|array| (provider, array.clone()))
             })
             .collect()
     })

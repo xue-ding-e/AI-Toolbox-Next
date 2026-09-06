@@ -23,7 +23,6 @@
 //!   they fall back to `http_client::create_client_with_env_proxy` / env-proxy
 //!   and skip DB-backed proxy configuration.
 
-
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 

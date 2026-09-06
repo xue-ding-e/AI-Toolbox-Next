@@ -41,11 +41,11 @@ use super::types::{
     CentralRepoScanDto, CentralRepoTargetImpactDto, CentralSkillMatchDto,
     CentralSkillRepairCandidateDto, CustomTool, CustomToolDto, DeleteManagedSkillOptionsDto,
     DetectedCentralSkillDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
-    ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillGroupDto, SkillGroupRecord,
-    SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
-    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, SkillDocumentDto,
-    ToolInfoDto, ToolStatusDto, UpdateAllErrorDto, UpdateAllResultDto, UpdateResultDto,
-    SkillsUpdateProgress,
+    ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillDocumentDto, SkillGroupDto,
+    SkillGroupRecord, SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto,
+    SkillInventorySkillJson, SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto,
+    SkillsUpdateProgress, SyncResultDto, ToolInfoDto, ToolStatusDto, UpdateAllErrorDto,
+    UpdateAllResultDto, UpdateResultDto,
 };
 use crate::coding::runtime_location;
 use crate::http_client;
@@ -1446,14 +1446,9 @@ pub async fn skills_install_local(
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
     let source_path = resolve_local_source_path(&sourcePath)?;
-    let result = install_local_skill(
-        &app,
-        &state,
-        &source_path,
-        overwrite.unwrap_or(false),
-    )
-    .await
-    .map_err(|e| format_error(e))?;
+    let result = install_local_skill(&app, &state, &source_path, overwrite.unwrap_or(false))
+        .await
+        .map_err(|e| format_error(e))?;
 
     Ok(InstallResultDto {
         skill_id: result.skill_id,
@@ -1858,7 +1853,9 @@ async fn update_managed_skill_internal(
             }
             refresh_central_skill_hash_if_needed(state, &mut skill, &source_path).await?;
 
-            let custom_tools = skill_store::get_custom_tools(state).await.unwrap_or_default();
+            let custom_tools = skill_store::get_custom_tools(state)
+                .await
+                .unwrap_or_default();
             let mut updated_targets = Vec::new();
             let mut sync_errors = Vec::new();
             for tool in skill.enabled_tools.clone() {
@@ -2073,14 +2070,9 @@ pub async fn skills_import_existing(
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
     let source_path = resolve_local_source_path(&sourcePath)?;
-    let result = install_local_skill(
-        &app,
-        &state,
-        &source_path,
-        overwrite.unwrap_or(false),
-    )
-    .await
-    .map_err(|e| format_error(e))?;
+    let result = install_local_skill(&app, &state, &source_path, overwrite.unwrap_or(false))
+        .await
+        .map_err(|e| format_error(e))?;
 
     Ok(InstallResultDto {
         skill_id: result.skill_id,

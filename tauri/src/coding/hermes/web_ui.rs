@@ -178,13 +178,22 @@ mod tests {
 
     #[test]
     fn build_web_url_keeps_leading_slash() {
-        assert_eq!(build_web_url(9119, Some("/agents")), "http://127.0.0.1:9119/agents");
+        assert_eq!(
+            build_web_url(9119, Some("/agents")),
+            "http://127.0.0.1:9119/agents"
+        );
     }
 
     #[test]
     fn build_web_url_adds_slash_when_missing() {
-        assert_eq!(build_web_url(9119, Some("memory")), "http://127.0.0.1:9119/memory");
-        assert_eq!(build_web_url(8888, Some("health")), "http://127.0.0.1:8888/health");
+        assert_eq!(
+            build_web_url(9119, Some("memory")),
+            "http://127.0.0.1:9119/memory"
+        );
+        assert_eq!(
+            build_web_url(8888, Some("health")),
+            "http://127.0.0.1:8888/health"
+        );
     }
 
     #[test]

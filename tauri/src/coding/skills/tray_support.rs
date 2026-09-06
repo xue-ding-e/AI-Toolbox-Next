@@ -153,10 +153,7 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
                 tool_key: adapter.key.clone(),
                 display_name: adapter.display_name.clone(),
                 is_synced: true,
-                is_installed: installed_map
-                    .get(&adapter.key)
-                    .copied()
-                    .unwrap_or(false),
+                is_installed: installed_map.get(&adapter.key).copied().unwrap_or(false),
             });
         }
 

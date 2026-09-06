@@ -6,8 +6,7 @@ use serde_json::Value;
 
 use super::adapter::{
     from_db_favorite_mcp, from_db_mcp_group, from_db_mcp_preferences, from_db_mcp_server,
-    remove_sync_detail,
-    set_sync_detail, to_clean_mcp_server_payload, to_mcp_preferences_payload,
+    remove_sync_detail, set_sync_detail, to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
 use super::command_normalize;
 use super::types::{now_ms, FavoriteMcp, McpGroup, McpPreferences, McpServer, McpSyncDetail};

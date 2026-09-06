@@ -106,7 +106,10 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     reapply_cli(&mut summary, "pi", async move { reapply_pi(&pi_app).await }).await;
 
     let omp_app = app.clone();
-    reapply_cli(&mut summary, "oh_my_pi", async move { reapply_omp(&omp_app).await }).await;
+    reapply_cli(&mut summary, "oh_my_pi", async move {
+        reapply_omp(&omp_app).await
+    })
+    .await;
 
     let claude_desktop_app = app.clone();
     reapply_cli(&mut summary, "claude_desktop", async move {
@@ -121,7 +124,12 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     .await;
 
     let dsh_app = app.clone();
-    reapply_cli(&mut summary, "dsh", async move { reapply_dsh(&dsh_app).await }).await;
+    reapply_cli(
+        &mut summary,
+        "dsh",
+        async move { reapply_dsh(&dsh_app).await },
+    )
+    .await;
 
     let plugin_summary = reapply_applied_opencode_plugins_after_restore(app).await;
     summary.applied.extend(plugin_summary.applied);
@@ -604,7 +612,8 @@ async fn reapply_kimi<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
             "provider",
             provider_id,
             |provider_id| async move {
-                kimi::select_kimi_provider_internal_with_sync(&db, app, &provider_id, false, false).await
+                kimi::select_kimi_provider_internal_with_sync(&db, app, &provider_id, false, false)
+                    .await
             },
         )
         .await;
@@ -806,9 +815,14 @@ async fn reapply_claude_desktop<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliRes
         return result;
     }
 
-    apply_record(&mut result, "provider", provider_id, |provider_id| async move {
-        claude_desktop::apply_config_internal_without_events(&db, app, &provider_id).await
-    })
+    apply_record(
+        &mut result,
+        "provider",
+        provider_id,
+        |provider_id| async move {
+            claude_desktop::apply_config_internal_without_events(&db, app, &provider_id).await
+        },
+    )
     .await;
     result
 }

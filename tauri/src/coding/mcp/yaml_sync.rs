@@ -223,11 +223,7 @@ pub fn replace_yaml_section(raw: &str, section_key: &str, value: &Value) -> Resu
 /// Read a YAML file as raw text, replace a single top-level section, and
 /// atomically write it back. Preserves comments and unrelated sections
 /// (byte-level section splice, not serde round-trip).
-pub fn write_yaml_section(
-    path: &Path,
-    section_key: &str,
-    value: &Value,
-) -> Result<(), String> {
+pub fn write_yaml_section(path: &Path, section_key: &str, value: &Value) -> Result<(), String> {
     let raw = if path.exists() {
         fs::read_to_string(path)
             .map_err(|error| format!("Failed to read {}: {error}", path.display()))?

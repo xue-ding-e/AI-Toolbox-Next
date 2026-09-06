@@ -9,9 +9,8 @@ use tokio::process::Command;
 
 use super::constants::{OMP_ENV_KEY, OMP_EXTENSIONS_DIR};
 use super::types::{
-    OmpExtensionActionInput, OmpExtensionCommandResult, OmpExtensionInstallInput,
-    OmpExtensionKind, OmpExtensionListResult, OmpExtensionScope, OmpExtensionSummary,
-    OmpExtensionUpdateInput,
+    OmpExtensionActionInput, OmpExtensionCommandResult, OmpExtensionInstallInput, OmpExtensionKind,
+    OmpExtensionListResult, OmpExtensionScope, OmpExtensionSummary, OmpExtensionUpdateInput,
 };
 use crate::coding::cli_resolver::{
     apply_create_no_window_tokio, build_local_tokio_command, local_cli_missing_hint,
@@ -97,9 +96,10 @@ fn build_omp_command(
             })
         }
         RuntimeLocationMode::WslDirect => {
-            let wsl = runtime_location.wsl.as_ref().ok_or_else(|| {
-                "Missing WSL runtime metadata for OMP plugin command".to_string()
-            })?;
+            let wsl = runtime_location
+                .wsl
+                .as_ref()
+                .ok_or_else(|| "Missing WSL runtime metadata for OMP plugin command".to_string())?;
             let local_program_label = format!("wsl -d {} -- omp", wsl.distro);
             let mut command = Command::new("wsl");
             apply_create_no_window_tokio(&mut command);
@@ -164,7 +164,9 @@ fn build_omp_spawn_error(error: &std::io::Error, local_program_label: Option<&st
         } else {
             format!("{base_message}. {}", local_cli_missing_hint("omp"))
         };
-        if manual_hint.is_empty() { message } else {
+        if manual_hint.is_empty() {
+            message
+        } else {
             format!("{message} {manual_hint}")
         }
     } else if !manual_hint.is_empty() {
@@ -274,10 +276,12 @@ fn parse_plugin_list_json(raw: &str) -> Vec<OmpExtensionSummary> {
             let scope = entry
                 .get("scope")
                 .and_then(Value::as_str)
-                .map(|value| if value == "project" {
-                    OmpExtensionScope::Project
-                } else {
-                    OmpExtensionScope::User
+                .map(|value| {
+                    if value == "project" {
+                        OmpExtensionScope::Project
+                    } else {
+                        OmpExtensionScope::User
+                    }
                 })
                 .unwrap_or(OmpExtensionScope::Unknown);
             let first_entry = entry
@@ -336,7 +340,10 @@ fn scan_local_extensions(extensions_path: &Path) -> Result<Vec<OmpExtensionSumma
 
         let path = entry.path();
         let file_type = entry.file_type().map_err(|error| {
-            format!("Failed to inspect OMP extension {}: {error}", path.display())
+            format!(
+                "Failed to inspect OMP extension {}: {error}",
+                path.display()
+            )
         })?;
         let (source, kind) = if file_type.is_file() && file_name.ends_with(".ts") {
             (file_name.to_string(), OmpExtensionKind::LocalFile)
@@ -432,10 +439,7 @@ fn is_version_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-async fn fetch_npm_latest_version(
-    client: &reqwest::Client,
-    package_name: &str,
-) -> Option<String> {
+async fn fetch_npm_latest_version(client: &reqwest::Client, package_name: &str) -> Option<String> {
     let package_url = format!(
         "{}/{}",
         NPM_REGISTRY_BASE_URL,
@@ -528,8 +532,9 @@ async fn enrich_npm_update_availability(
             if pinned_version.is_some() {
                 return extension;
             }
-            let Some(latest_version) =
-                latest_by_package.get(&package_name.to_ascii_lowercase()).cloned()
+            let Some(latest_version) = latest_by_package
+                .get(&package_name.to_ascii_lowercase())
+                .cloned()
             else {
                 return extension;
             };
@@ -733,11 +738,19 @@ pub async fn update_omp_extensions(
 
     // 单插件:`omp plugin upgrade <name>`;全部:`omp plugin upgrade`。
     let args: Vec<String> = if let Some(source) = single_source.as_deref() {
-        vec!["plugin".to_string(), "upgrade".to_string(), source.to_string()]
+        vec![
+            "plugin".to_string(),
+            "upgrade".to_string(),
+            source.to_string(),
+        ]
     } else {
         vec!["plugin".to_string(), "upgrade".to_string()]
     };
-    let output = run_omp_command(&runtime_location, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+    let output = run_omp_command(
+        &runtime_location,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .await?;
     emit_extensions_changed(&app, "omp-extensions");
 
     Ok(OmpExtensionCommandResult {

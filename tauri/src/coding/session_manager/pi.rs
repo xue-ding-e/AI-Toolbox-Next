@@ -298,7 +298,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let source_path = path.to_string_lossy().to_string();
     let resume_command = Some(build_resume_command(
         project_dir.as_deref(),
-        &format!("pi --session {}", super::utils::quote_session_arg(&source_path)),
+        &format!(
+            "pi --session {}",
+            super::utils::quote_session_arg(&source_path)
+        ),
     ));
 
     Some(SessionMeta {

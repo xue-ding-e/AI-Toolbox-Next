@@ -44,10 +44,13 @@ pub fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String
         return Err(format!("Directory does not exist: {raw}"));
     }
 
-    let resolved = std::fs::canonicalize(path)
-        .map_err(|e| format!("Failed to resolve directory: {e}"))?;
+    let resolved =
+        std::fs::canonicalize(path).map_err(|e| format!("Failed to resolve directory: {e}"))?;
     if !resolved.is_dir() {
-        return Err(format!("Selected path is not a directory: {}", resolved.display()));
+        return Err(format!(
+            "Selected path is not a directory: {}",
+            resolved.display()
+        ));
     }
 
     #[cfg(target_os = "windows")]
@@ -961,7 +964,10 @@ fn launch_git_bash_terminal(
 
     spawn_mintty_bash(
         &mintty,
-        &["--login".to_string(), windows_path_to_msys_path(&script_file)],
+        &[
+            "--login".to_string(),
+            windows_path_to_msys_path(&script_file),
+        ],
     )
 }
 
@@ -1278,7 +1284,12 @@ mod tests {
         assert_eq!(name, "Windows Terminal");
         assert_eq!(
             args,
-            vec!["wt".to_string(), "cmd".to_string(), "/K".to_string(), r"C:\t\b.bat".to_string()]
+            vec![
+                "wt".to_string(),
+                "cmd".to_string(),
+                "/K".to_string(),
+                r"C:\t\b.bat".to_string()
+            ]
         );
 
         // Missing, empty, default and unknown preferences all fall back to cmd.
@@ -1287,7 +1298,11 @@ mod tests {
             assert_eq!(name, "cmd");
             assert_eq!(
                 args,
-                vec!["cmd".to_string(), "/K".to_string(), r"C:\t\b.bat".to_string()]
+                vec![
+                    "cmd".to_string(),
+                    "/K".to_string(),
+                    r"C:\t\b.bat".to_string()
+                ]
             );
         }
     }

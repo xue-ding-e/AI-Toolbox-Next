@@ -2,8 +2,7 @@ use std::collections::BTreeSet;
 
 /// Compact default matching historical gateway retry behavior.
 /// Prefer collapsed ranges so save/normalize keeps the same display form.
-pub const DEFAULT_RETRYABLE_STATUS_CODES_COMPACT: &str =
-    "400-404,408,429,500-599";
+pub const DEFAULT_RETRYABLE_STATUS_CODES_COMPACT: &str = "400-404,408,429,500-599";
 
 // Only error statuses can enter retry/failover; 1xx-3xx never hit
 // classify_status_failure as failures, so they are not configurable here.
@@ -154,10 +153,7 @@ mod tests {
     fn parse_supports_mixed_singles_and_ranges() {
         let codes = parse_retryable_status_codes("429, 502-504, 400").unwrap();
         assert_eq!(codes, vec![400, 429, 502, 503, 504]);
-        assert_eq!(
-            format_retryable_status_codes(&codes),
-            "400,429,502-504"
-        );
+        assert_eq!(format_retryable_status_codes(&codes), "400,429,502-504");
     }
 
     #[test]

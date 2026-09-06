@@ -10379,9 +10379,10 @@ mod tests {
                 GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
                     ProviderAuthStrategy::AnthropicApiKey
                 }
-                GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
-                    ProviderAuthStrategy::Bearer
-                }
+                GatewayCliKey::Codex
+                | GatewayCliKey::Grok
+                | GatewayCliKey::Kimi
+                | GatewayCliKey::OpenCode => ProviderAuthStrategy::Bearer,
                 GatewayCliKey::Gemini => ProviderAuthStrategy::GoogleApiKey,
             },
             is_full_url: false,
@@ -11022,8 +11023,9 @@ mod tests {
             method: "POST".to_string(),
             path: "/openai/v1/chat/completions".to_string(),
             headers: Vec::new(),
-            body: br#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#
-                .to_vec(),
+            body:
+                br#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#
+                    .to_vec(),
         };
         let prepared = build_upstream_body_for_provider(
             &request,
@@ -11064,7 +11066,8 @@ mod tests {
         assert_eq!(rewritten, "moonshot-k2.5");
 
         // Single mode: CLI config carries the real model, passthrough.
-        let passthrough = resolve_upstream_model_id(&request, "relay-model", &provider, false, true);
+        let passthrough =
+            resolve_upstream_model_id(&request, "relay-model", &provider, false, true);
         assert_eq!(passthrough, "relay-model");
     }
 
@@ -12348,13 +12351,7 @@ data: {data}\r\n\r\n"
 
         // Connectivity tests pin a provider and model; never rewrite them.
         assert_eq!(
-            resolve_upstream_model_id(
-                &debug_request(b"{}"),
-                "gpt-5-luna",
-                &provider,
-                false,
-                false,
-            ),
+            resolve_upstream_model_id(&debug_request(b"{}"), "gpt-5-luna", &provider, false, false,),
             "gpt-5-luna"
         );
     }
@@ -17576,9 +17573,8 @@ data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"qwen3","choic
             from: "gpt-5-luna".to_string(),
             to: "gpt-5-mini".to_string(),
         }];
-        let request = debug_request(
-            br#"{"model":"gpt-5-luna","messages":[{"role":"user","content":"hi"}]}"#,
-        );
+        let request =
+            debug_request(br#"{"model":"gpt-5-luna","messages":[{"role":"user","content":"hi"}]}"#);
         let resolved = resolve_upstream_model_id(&request, "gpt-5-luna", &provider, false, true);
         assert_eq!(resolved, "gpt-5-mini");
 

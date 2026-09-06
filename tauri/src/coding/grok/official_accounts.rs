@@ -286,8 +286,7 @@ pub async fn apply_grok_official_account(
     let account = get_account(state.db(), &account_id)?
         .ok_or_else(|| format!("Grok official account '{account_id}' not found"))?;
     // Refresh near-expiry tokens before writing live auth.json.
-    let account =
-        ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await?;
+    let account = ensure_fresh_grok_account_auth(state.db(), Some(&app), account, false).await?;
     let snapshot = account
         .auth_snapshot
         .ok_or_else(|| "Grok official account snapshot is unavailable".to_string())?;
@@ -432,9 +431,11 @@ pub async fn logout_grok_official_runtime(
     if !auth_path.exists() {
         #[cfg(target_os = "windows")]
         {
-            let _ =
-                crate::coding::wsl::remove_auto_synced_wsl_mapping_target(state.inner(), "grok-auth")
-                    .await;
+            let _ = crate::coding::wsl::remove_auto_synced_wsl_mapping_target(
+                state.inner(),
+                "grok-auth",
+            )
+            .await;
         }
     }
     let now = Local::now().to_rfc3339();
@@ -931,19 +932,16 @@ fn refresh_token_from_snapshot(snapshot: &Value) -> Option<String> {
 }
 
 fn token_endpoint_from_account(account: &GrokOfficialAccount, snapshot: &Value) -> Option<String> {
-    account
-        .token_endpoint
-        .clone()
-        .or_else(|| {
-            let entry = find_xai_auth_entry(snapshot)
-                .ok()
-                .map(|(_, entry)| entry)
-                .unwrap_or(snapshot);
-            entry
-                .get("oidc_issuer")
-                .and_then(Value::as_str)
-                .map(|issuer| format!("{}/oauth2/token", issuer.trim_end_matches('/')))
-        })
+    account.token_endpoint.clone().or_else(|| {
+        let entry = find_xai_auth_entry(snapshot)
+            .ok()
+            .map(|(_, entry)| entry)
+            .unwrap_or(snapshot);
+        entry
+            .get("oidc_issuer")
+            .and_then(Value::as_str)
+            .map(|issuer| format!("{}/oauth2/token", issuer.trim_end_matches('/')))
+    })
 }
 
 fn access_token_expiration_unix(snapshot: &Value) -> Option<i64> {
@@ -959,8 +957,7 @@ fn access_token_expiration_unix(snapshot: &Value) -> Option<i64> {
         _ => None,
     });
     let from_jwt = access_token_from_snapshot(snapshot).and_then(|token| {
-        decode_jwt_claims(&token)
-            .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+        decode_jwt_claims(&token).and_then(|claims| claims.get("exp").and_then(Value::as_i64))
     });
     match (from_field, from_jwt) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -1008,7 +1005,11 @@ async fn request_xai_token_refresh(
         error_description: None,
     });
     if !status.is_success() || token.error.is_some() || token.access_token.is_none() {
-        return Err(format_xai_token_refresh_error(status.as_u16(), &body_text, &token));
+        return Err(format_xai_token_refresh_error(
+            status.as_u16(),
+            &body_text,
+            &token,
+        ));
     }
     Ok(token)
 }
@@ -1122,10 +1123,10 @@ async fn ensure_fresh_grok_account_auth(
         Some(response) => response,
         None => match request_xai_token_refresh(db, &token_endpoint, &refresh_token).await {
             Ok(response) => {
-                OAUTH_REFRESH_CACHE.lock().await.insert(
-                    refresh_token.clone(),
-                    (Instant::now(), response.clone()),
-                );
+                OAUTH_REFRESH_CACHE
+                    .lock()
+                    .await
+                    .insert(refresh_token.clone(), (Instant::now(), response.clone()));
                 response
             }
             Err(error) => {
@@ -1260,7 +1261,10 @@ pub async fn refresh_applied_grok_accounts_if_needed(
     Ok(())
 }
 
-fn apply_cli_proxy_headers(request: reqwest::RequestBuilder, access_token: &str) -> reqwest::RequestBuilder {
+fn apply_cli_proxy_headers(
+    request: reqwest::RequestBuilder,
+    access_token: &str,
+) -> reqwest::RequestBuilder {
     request
         .bearer_auth(access_token)
         .header("X-XAI-Token-Auth", GROK_CLI_TOKEN_AUTH)
@@ -1345,7 +1349,11 @@ fn parse_subscription_tier(body: &Value) -> Option<String> {
 fn subscription_tier_from_jwt(access_token: &str) -> Option<String> {
     let claims = decode_jwt_claims(access_token)?;
     let tier = claims.get("tier")?;
-    if let Some(text) = tier.as_str().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(text) = tier
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if let Ok(number) = text.parse::<i64>() {
             return subscription_tier_from_number(number);
         }
@@ -1431,12 +1439,10 @@ fn parse_grok_usage_snapshot(
         None
     };
 
-    let plan_from_billing = plan_name_from_billing(credits_body, credits_root)
-        .or_else(|| {
-            monthly_body.and_then(|body| {
-                monthly_root.and_then(|root| plan_name_from_billing(body, root))
-            })
-        });
+    let plan_from_billing = plan_name_from_billing(credits_body, credits_root).or_else(|| {
+        monthly_body
+            .and_then(|body| monthly_root.and_then(|root| plan_name_from_billing(body, root)))
+    });
     let plan_type = subscription_tier
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1509,13 +1515,11 @@ fn json_number(value: Option<&Value>) -> Option<f64> {
     match value {
         Value::Number(number) => number.as_f64(),
         Value::String(text) => text.trim().parse().ok(),
-        Value::Object(object) => object
-            .get("val")
-            .and_then(|nested| match nested {
-                Value::Number(number) => number.as_f64(),
-                Value::String(text) => text.trim().parse().ok(),
-                _ => None,
-            }),
+        Value::Object(object) => object.get("val").and_then(|nested| match nested {
+            Value::Number(number) => number.as_f64(),
+            Value::String(text) => text.trim().parse().ok(),
+            _ => None,
+        }),
         _ => None,
     }
 }
@@ -1705,9 +1709,7 @@ fn official_account_identity_matches(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase());
-    let subject = subject
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let subject = subject.map(str::trim).filter(|value| !value.is_empty());
 
     match (account_subject, subject) {
         (Some(left), Some(right)) if left == right => return true,

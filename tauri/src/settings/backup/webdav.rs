@@ -9,8 +9,8 @@ use zip::ZipArchive;
 use super::utils::{
     clear_restored_cli_custom_roots, create_backup_zip, get_claude_desktop_settings_paths,
     get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
-    get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir, get_kimi_restore_dir, get_dsh_restore_dir,
-    get_image_assets_dir, get_opencode_auth_restore_path,
+    get_dsh_restore_dir, get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir,
+    get_image_assets_dir, get_kimi_restore_dir, get_opencode_auth_restore_path,
     get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file,
     normalize_restore_entry_name, push_restore_warning, read_backup_meta_from_archive,
     read_root_dir_override, record_restored_external_config_wsl_module,
@@ -655,27 +655,18 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt"))
     .flatten();
-    let codex_restore_dir_override = should_use_root_override_for_tool(
-        "codex",
-        include_cli_config_files,
-        skip_cli_custom_roots,
-    )
-    .then(|| read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt"))
-    .flatten();
-    let grok_restore_dir_override = should_use_root_override_for_tool(
-        "grok",
-        include_cli_config_files,
-        skip_cli_custom_roots,
-    )
-    .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
-    .flatten();
-    let kimi_restore_dir_override = should_use_root_override_for_tool(
-        "kimi",
-        include_cli_config_files,
-        skip_cli_custom_roots,
-    )
-    .then(|| read_root_dir_override(&mut archive, "external-configs/kimi/root-dir.txt"))
-    .flatten();
+    let codex_restore_dir_override =
+        should_use_root_override_for_tool("codex", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt"))
+            .flatten();
+    let grok_restore_dir_override =
+        should_use_root_override_for_tool("grok", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(&mut archive, "external-configs/grok/root-dir.txt"))
+            .flatten();
+    let kimi_restore_dir_override =
+        should_use_root_override_for_tool("kimi", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(&mut archive, "external-configs/kimi/root-dir.txt"))
+            .flatten();
     let openclaw_restore_dir_override = should_use_root_override_for_tool(
         "openclaw",
         include_cli_config_files,
@@ -690,13 +681,10 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt"))
     .flatten();
-    let pi_restore_dir_override = should_use_root_override_for_tool(
-        "pi",
-        include_cli_config_files,
-        skip_cli_custom_roots,
-    )
-    .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
-    .flatten();
+    let pi_restore_dir_override =
+        should_use_root_override_for_tool("pi", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt"))
+            .flatten();
     let oh_my_pi_restore_dir_override = should_use_root_override_for_tool(
         "oh_my_pi",
         include_cli_config_files,
@@ -711,13 +699,10 @@ pub async fn restore_from_webdav(
     )
     .then(|| read_root_dir_override(&mut archive, "external-configs/hermes/root-dir.txt"))
     .flatten();
-    let dsh_restore_dir_override = should_use_root_override_for_tool(
-        "dsh",
-        include_cli_config_files,
-        skip_cli_custom_roots,
-    )
-    .then(|| read_root_dir_override(&mut archive, "external-configs/dsh/root-dir.txt"))
-    .flatten();
+    let dsh_restore_dir_override =
+        should_use_root_override_for_tool("dsh", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(&mut archive, "external-configs/dsh/root-dir.txt"))
+            .flatten();
     let mut restore_result = RestoreResult::default();
     let mut restored_wsl_modules = Vec::new();
 
@@ -803,11 +788,8 @@ pub async fn restore_from_webdav(
         push_restore_warning(&mut restore_result, warning);
     }
 
-    let (dsh_restore_dir, dsh_warning) = resolve_restore_dir_override(
-        "dsh",
-        dsh_restore_dir_override,
-        get_dsh_restore_dir()?,
-    );
+    let (dsh_restore_dir, dsh_warning) =
+        resolve_restore_dir_override("dsh", dsh_restore_dir_override, get_dsh_restore_dir()?);
     if let Some(warning) = dsh_warning {
         push_restore_warning(&mut restore_result, warning);
     }
@@ -1043,7 +1025,9 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
-                if matches!(relative_path, "config.toml") || relative_path.starts_with("credentials/") {
+                if matches!(relative_path, "config.toml")
+                    || relative_path.starts_with("credentials/")
+                {
                     harden_restored_sensitive_file(&outpath)?;
                 }
             } else if file_name.starts_with("external-configs/geminicli/") {
@@ -1174,13 +1158,14 @@ pub async fn restore_from_webdav(
                 }
 
                 if !hermes_restore_dir.exists() {
-                    fs::create_dir_all(&hermes_restore_dir).map_err(|e| {
-                        format!("Failed to create Hermes config directory: {}", e)
-                    })?;
+                    fs::create_dir_all(&hermes_restore_dir)
+                        .map_err(|e| format!("Failed to create Hermes config directory: {}", e))?;
                 }
 
-                let Some(outpath) =
-                    resolve_external_config_restore_output_path(&hermes_restore_dir, relative_path)?
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &hermes_restore_dir,
+                    relative_path,
+                )?
                 else {
                     continue;
                 };
@@ -1192,8 +1177,8 @@ pub async fn restore_from_webdav(
                     }
                 }
                 record_restored_external_config_wsl_module(&mut restored_wsl_modules, "hermes");
-                let mut outfile =
-                    std::fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
             } else if file_name.starts_with("external-configs/dsh/") {
@@ -1210,9 +1195,8 @@ pub async fn restore_from_webdav(
                 }
 
                 if !dsh_restore_dir.exists() {
-                    fs::create_dir_all(&dsh_restore_dir).map_err(|e| {
-                        format!("Failed to create dsh config directory: {}", e)
-                    })?;
+                    fs::create_dir_all(&dsh_restore_dir)
+                        .map_err(|e| format!("Failed to create dsh config directory: {}", e))?;
                 }
 
                 let Some(outpath) =
@@ -1222,14 +1206,13 @@ pub async fn restore_from_webdav(
                 };
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
-                        fs::create_dir_all(parent).map_err(|e| {
-                            format!("Failed to create dsh parent directory: {}", e)
-                        })?;
+                        fs::create_dir_all(parent)
+                            .map_err(|e| format!("Failed to create dsh parent directory: {}", e))?;
                     }
                 }
                 record_restored_external_config_wsl_module(&mut restored_wsl_modules, "dsh");
-                let mut outfile =
-                    std::fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
                 if relative_path == ".credentials.yaml" {
@@ -1268,10 +1251,8 @@ pub async fn restore_from_webdav(
                     };
                     outpath
                 } else if let Some(rest) = relative_path.strip_prefix("configLibrary/") {
-                    let Some(outpath) = resolve_external_config_restore_output_path(
-                        &config_library_path,
-                        rest,
-                    )?
+                    let Some(outpath) =
+                        resolve_external_config_restore_output_path(&config_library_path, rest)?
                     else {
                         continue;
                     };

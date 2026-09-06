@@ -44,14 +44,12 @@ async fn get_remote_tool_skills_dir_with_db(
     tool_key: &str,
 ) -> Option<String> {
     match tool_key {
-        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi"
-        | "oh_my_pi" | "gemini_cli" => {
-            runtime_location::get_tool_skills_path_async(db, tool_key)
-                .await
-                .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
-                .map(|wsl| wsl.linux_path)
-                .or_else(|| get_remote_tool_skills_dir(tool_key))
-        }
+        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
+        | "gemini_cli" => runtime_location::get_tool_skills_path_async(db, tool_key)
+            .await
+            .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+            .map(|wsl| wsl.linux_path)
+            .or_else(|| get_remote_tool_skills_dir(tool_key)),
         _ => get_remote_tool_skills_dir(tool_key),
     }
 }

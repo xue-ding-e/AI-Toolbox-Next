@@ -245,7 +245,10 @@ mod tests {
             "directory_excludes": ["cache", ".venv"],
         }));
 
-        assert_eq!(mapping.directory_excludes, vec!["cache".to_string(), ".venv".to_string()]);
+        assert_eq!(
+            mapping.directory_excludes,
+            vec!["cache".to_string(), ".venv".to_string()]
+        );
         assert_eq!(
             mapping_to_db_value(&mapping)["directory_excludes"],
             json!(["cache", ".venv"])
@@ -267,6 +270,9 @@ mod tests {
         }));
 
         assert!(mapping.directory_excludes.is_empty());
-        assert_eq!(mapping_to_db_value(&mapping)["directory_excludes"], json!([]));
+        assert_eq!(
+            mapping_to_db_value(&mapping)["directory_excludes"],
+            json!([])
+        );
     }
 }

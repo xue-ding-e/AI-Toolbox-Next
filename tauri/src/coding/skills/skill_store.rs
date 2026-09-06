@@ -577,7 +577,9 @@ pub async fn get_setting(state: &SqliteDbState, key: &str) -> Result<Option<Stri
         "show_skills_in_tray" => Some(prefs.show_skills_in_tray.to_string()),
         "auto_update_enabled" => Some(prefs.auto_update_enabled.to_string()),
         "auto_update_schedule" => Some(prefs.auto_update_schedule.clone()),
-        "limit_add_more_to_preferred_tools" => Some(prefs.limit_add_more_to_preferred_tools.to_string()),
+        "limit_add_more_to_preferred_tools" => {
+            Some(prefs.limit_add_more_to_preferred_tools.to_string())
+        }
         _ => None,
     };
 

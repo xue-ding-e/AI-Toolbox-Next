@@ -13,8 +13,8 @@ use super::types::OpenClawHealthWarning;
 use chrono::Local;
 use json_five::rt::parser::{
     from_str as rt_from_str, JSONKeyValuePair as RtJSONKeyValuePair,
-    JSONObjectContext as RtJSONObjectContext, JSONText as RtJSONText,
-    JSONValue as RtJSONValue, KeyValuePairContext as RtKeyValuePairContext,
+    JSONObjectContext as RtJSONObjectContext, JSONText as RtJSONText, JSONValue as RtJSONValue,
+    KeyValuePairContext as RtKeyValuePairContext,
 };
 use serde_json::Value;
 use std::fs;
@@ -46,14 +46,14 @@ pub struct OpenClawConfigDocument {
 impl OpenClawConfigDocument {
     /// 从 `path` 读取原文(文件不存在则用默认源)并解析为 round-trip AST。
     pub fn load(path: &Path) -> Result<Self, String> {
-        let original_source = if path.exists() {
-            Some(
-                fs::read_to_string(path)
-                    .map_err(|e| format!("Failed to read OpenClaw config '{}': {e}", path.display()))?,
-            )
-        } else {
-            None
-        };
+        let original_source =
+            if path.exists() {
+                Some(fs::read_to_string(path).map_err(|e| {
+                    format!("Failed to read OpenClaw config '{}': {e}", path.display())
+                })?)
+            } else {
+                None
+            };
 
         let source = original_source
             .clone()
@@ -141,8 +141,7 @@ impl OpenClawConfigDocument {
     /// 代价是丢失被改区外的根级注释。
     pub fn remove_root_section(&mut self, key: &str) -> Result<bool, String> {
         let RtJSONValue::JSONObject {
-            key_value_pairs,
-            ..
+            key_value_pairs, ..
         } = &mut self.text.value
         else {
             return Err("OpenClaw config root must be a JSON5 object".to_string());
@@ -193,9 +192,9 @@ impl OpenClawConfigDocument {
         new_value: &Value,
     ) -> Result<(), String> {
         let old_obj = old_value.as_object();
-        let new_obj = new_value.as_object().ok_or_else(|| {
-            "OpenClaw config root must serialize to a JSON5 object".to_string()
-        })?;
+        let new_obj = new_value
+            .as_object()
+            .ok_or_else(|| "OpenClaw config root must serialize to a JSON5 object".to_string())?;
 
         for (key, new_section) in new_obj {
             let changed = match old_obj.and_then(|obj| obj.get(key)) {
@@ -229,10 +228,12 @@ impl OpenClawConfigDocument {
             .map_err(|e| format!("Failed to lock OpenClaw config write: {e}"))?;
 
         let current_source = if self.path.exists() {
-            Some(
-                fs::read_to_string(&self.path)
-                    .map_err(|e| format!("Failed to read OpenClaw config '{}': {e}", self.path.display()))?,
-            )
+            Some(fs::read_to_string(&self.path).map_err(|e| {
+                format!(
+                    "Failed to read OpenClaw config '{}': {e}",
+                    self.path.display()
+                )
+            })?)
         } else {
             None
         };
@@ -278,8 +279,12 @@ pub fn create_openclaw_backup(
     backup_dir: &Path,
     retain_count: usize,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(backup_dir)
-        .map_err(|e| format!("Failed to create backup dir '{}': {e}", backup_dir.display()))?;
+    fs::create_dir_all(backup_dir).map_err(|e| {
+        format!(
+            "Failed to create backup dir '{}': {e}",
+            backup_dir.display()
+        )
+    })?;
 
     let base_id = format!("openclaw_{}", Local::now().format("%Y%m%d_%H%M%S"));
     let mut filename = format!("{base_id}.json5");
@@ -605,10 +610,7 @@ mod tests {
         });
 
         let warnings = scan_openclaw_health_from_value(&config);
-        let codes = warnings
-            .iter()
-            .map(|w| w.code.as_str())
-            .collect::<Vec<_>>();
+        let codes = warnings.iter().map(|w| w.code.as_str()).collect::<Vec<_>>();
 
         assert!(codes.contains(&"invalid_tools_profile"));
         assert!(codes.contains(&"legacy_agents_timeout"));
@@ -645,7 +647,8 @@ mod tests {
 
     #[test]
     fn migrate_legacy_timeout_keeps_existing_timeout_seconds() {
-        let mut root = json!({ "agents": { "defaults": { "timeout": 300, "timeoutSeconds": 999 } } });
+        let mut root =
+            json!({ "agents": { "defaults": { "timeout": 300, "timeoutSeconds": 999 } } });
         migrate_legacy_timeout(&mut root);
         let defaults = &root["agents"]["defaults"];
         assert!(defaults.get("timeout").is_none());
@@ -670,7 +673,10 @@ mod tests {
             "providers": {}
         });
         let rt = value_to_rt_value(&value, "").unwrap();
-        assert_eq!(rt.to_string(), "{\n  \"mode\": \"merge\",\n  \"providers\": {}\n}");
+        assert_eq!(
+            rt.to_string(),
+            "{\n  \"mode\": \"merge\",\n  \"providers\": {}\n}"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -682,12 +688,14 @@ mod tests {
         let _guard = test_guard();
         let dir = temp_dir();
         let path = dir.path().join("openclaw.json");
-        let source = "{\n  // keep me\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
+        let source =
+            "{\n  // keep me\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
         fs::write(&path, source).unwrap();
         let backup_dir = dir.path().join("backups");
 
         let mut doc = OpenClawConfigDocument::load(&path).unwrap();
-        doc.set_root_section("env", &json!({ "TOKEN": "value" })).unwrap();
+        doc.set_root_section("env", &json!({ "TOKEN": "value" }))
+            .unwrap();
         let outcome = doc.save(&backup_dir, 2).unwrap();
 
         assert!(outcome.backup_path.is_some());
@@ -706,7 +714,8 @@ mod tests {
         fs::write(&path, "{\n  models: { providers: {} },\n}\n").unwrap();
 
         let mut doc = OpenClawConfigDocument::load(&path).unwrap();
-        doc.set_root_section("env", &json!({ "TOKEN": "value" })).unwrap();
+        doc.set_root_section("env", &json!({ "TOKEN": "value" }))
+            .unwrap();
 
         fs::write(&path, "{ changedExternally: true }\n").unwrap();
         let err = doc.save(&dir.path().join("backups"), 2).unwrap_err();
@@ -730,7 +739,8 @@ mod tests {
 
         // 首次写入会产生备份。
         let mut doc = OpenClawConfigDocument::load(&path).unwrap();
-        doc.set_root_section("env", &json!({ "TOKEN": "1" })).unwrap();
+        doc.set_root_section("env", &json!({ "TOKEN": "1" }))
+            .unwrap();
         let first = doc.save(&backup_dir, 5).unwrap();
         assert!(first.backup_path.is_some());
         let first_written = fs::read_to_string(&path).unwrap();
@@ -738,7 +748,8 @@ mod tests {
 
         // 二次相同写入:不产生新备份、文件不变。
         let mut doc2 = OpenClawConfigDocument::load(&path).unwrap();
-        doc2.set_root_section("env", &json!({ "TOKEN": "1" })).unwrap();
+        doc2.set_root_section("env", &json!({ "TOKEN": "1" }))
+            .unwrap();
         let second = doc2.save(&backup_dir, 5).unwrap();
         assert!(second.backup_path.is_none());
         assert_eq!(fs::read_to_string(&path).unwrap(), first_written);
@@ -770,7 +781,8 @@ mod tests {
         let _guard = test_guard();
         let dir = temp_dir();
         let path = dir.path().join("openclaw.json");
-        let source = "{\n  models: { providers: {} },\n  agents: { defaults: {} },\n  env: { A: '1' },\n}\n";
+        let source =
+            "{\n  models: { providers: {} },\n  agents: { defaults: {} },\n  env: { A: '1' },\n}\n";
         fs::write(&path, source).unwrap();
 
         // 删除末尾 env。

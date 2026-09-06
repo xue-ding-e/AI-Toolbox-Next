@@ -338,9 +338,15 @@ pub fn candidate_to_claude_desktop_settings(candidate: &AllApiHubProviderCandida
         env.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(url));
     }
     if let Some(key) = candidate.api_key.as_deref().filter(|k| !k.is_empty()) {
-        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(key.to_string()));
+        env.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            Value::String(key.to_string()),
+        );
     }
-    Value::Object(serde_json::Map::from_iter([("env".to_string(), Value::Object(env))]))
+    Value::Object(serde_json::Map::from_iter([(
+        "env".to_string(),
+        Value::Object(env),
+    )]))
 }
 
 /// 把 OpenClaw 协议值(如 `anthropic-messages`)映射为 Hermes `api_mode` 枚举值。
@@ -377,7 +383,10 @@ pub fn candidate_to_hermes_provider(candidate: &AllApiHubProviderCandidate) -> V
     // Friendly display name decoupled from the list identity key (`name`, which
     // the Hermes writer forces to the provider key). Falls back to site name /
     // host so cards show "DeepSeek" instead of a slug like "deepseek-acct".
-    config.insert("display_name".to_string(), Value::String(imported_provider_name(candidate)));
+    config.insert(
+        "display_name".to_string(),
+        Value::String(imported_provider_name(candidate)),
+    );
     Value::Object(config)
 }
 
@@ -385,7 +394,10 @@ pub fn candidate_to_hermes_provider(candidate: &AllApiHubProviderCandidate) -> V
 /// `api_key` 一并携带(resolve 后前端经 `save_dsh_credential` 落盘,再从 route 配置中剔除)。
 pub fn candidate_to_dsh_provider(candidate: &AllApiHubProviderCandidate) -> Value {
     let mut config = serde_json::Map::new();
-    config.insert("api".to_string(), Value::String(candidate.api_protocol.clone()));
+    config.insert(
+        "api".to_string(),
+        Value::String(candidate.api_protocol.clone()),
+    );
     if let Some(url) = candidate
         .base_url
         .as_deref()
@@ -459,11 +471,7 @@ pub fn build_all_api_hub_items(
                 .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
                 .unwrap_or(false),
             is_disabled: c.is_disabled,
-            has_api_key: c
-                .api_key
-                .as_ref()
-                .map(|v| !v.is_empty())
-                .unwrap_or(false),
+            has_api_key: c.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
             api_key_preview: c.api_key.as_ref().map(|v| mask_api_key_preview(v)),
             balance_usd: c.balance_usd,
             balance_cny: c.balance_cny,
@@ -1758,7 +1766,10 @@ mod converter_tests {
         let provider = candidate_to_hermes_provider(&candidate());
         // OpenClaw `anthropic-messages` 必须映射为 Hermes `api_mode = "anthropic"`。
         assert_eq!(provider["api_mode"], "anthropic");
-        assert!(provider["base_url"].as_str().unwrap().contains("api.deepseek.com"));
+        assert!(provider["base_url"]
+            .as_str()
+            .unwrap()
+            .contains("api.deepseek.com"));
         assert_eq!(provider["api_key"], "sk-test");
         assert!(provider["models"].is_array());
     }

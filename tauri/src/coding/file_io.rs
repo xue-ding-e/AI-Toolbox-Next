@@ -22,9 +22,13 @@ pub async fn read_optional_text_file_with_timeout(
         if !path.exists() {
             return Ok(None);
         }
-        fs::read_to_string(&path)
-            .map(Some)
-            .map_err(|error| format!("Failed to read {} ({}): {error}", label_owned, path.display()))
+        fs::read_to_string(&path).map(Some).map_err(|error| {
+            format!(
+                "Failed to read {} ({}): {error}",
+                label_owned,
+                path.display()
+            )
+        })
     });
 
     match tokio::time::timeout(DEFAULT_CONFIG_FILE_IO_TIMEOUT, read_task).await {

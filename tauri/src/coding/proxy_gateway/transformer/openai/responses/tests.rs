@@ -15,7 +15,6 @@ use crate::coding::proxy_gateway::transformer::llm::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-
 use crate::coding::proxy_gateway::transformer::llm::ResponseCustomTool;
 
 #[test]
@@ -526,7 +525,10 @@ fn forward_merge_still_combines_reasoning_with_following_function_call() {
     let request = responses_request_to_llm(body);
     assert_eq!(request.messages.len(), 1);
     assert_eq!(request.messages[0].role, "assistant");
-    assert_eq!(request.messages[0].reasoning_content.as_deref(), Some("plan"));
+    assert_eq!(
+        request.messages[0].reasoning_content.as_deref(),
+        Some("plan")
+    );
     assert_eq!(request.messages[0].tool_calls.len(), 1);
     assert_eq!(request.messages[0].tool_calls[0].id, "call_1");
 }
@@ -791,7 +793,11 @@ fn responses_namespace_tools_expand_into_ir_functions() {
     let names: Vec<&str> = request
         .tools
         .iter()
-        .filter_map(|tool| tool.function.as_ref().map(|function| function.name.as_str()))
+        .filter_map(|tool| {
+            tool.function
+                .as_ref()
+                .map(|function| function.name.as_str())
+        })
         .collect();
     assert_eq!(
         names,
@@ -895,8 +901,8 @@ fn responses_namespace_tools_expand_into_ir_functions() {
 
 #[test]
 fn responses_usage_roundtrip_preserves_cache_write_tokens() {
-    use crate::coding::proxy_gateway::transformer::llm::Usage;
     use super::shared::{responses_usage_to_llm, usage_to_responses};
+    use crate::coding::proxy_gateway::transformer::llm::Usage;
 
     let wire = json!({
         "input_tokens": 100,
@@ -978,7 +984,11 @@ fn raw_tools_merge_drops_raw_tool_colliding_with_structured_signature() {
         })
         .collect();
     assert!(
-        names.iter().filter(|name| name.as_str() == "lookup").count() == 1,
+        names
+            .iter()
+            .filter(|name| name.as_str() == "lookup")
+            .count()
+            == 1,
         "colliding raw function:lookup must be dropped, got {names:?}"
     );
     assert!(
@@ -1009,10 +1019,7 @@ fn raw_tools_merge_skips_fragments_when_structured_signatures_are_reordered() {
             }
         }
     ]);
-    let expected_signatures = vec![
-        "function:first".to_string(),
-        "function:second".to_string(),
-    ];
+    let expected_signatures = vec!["function:first".to_string(), "function:second".to_string()];
 
     let merged = merge_raw_responses_fragments_with_signatures(
         &mut structured,

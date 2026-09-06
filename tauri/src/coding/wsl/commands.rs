@@ -946,15 +946,23 @@ async fn backfill_default_mappings(
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
         &["grok-auth", "grok-config", "grok-prompt", "grok-plugins"];
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] =
-        &["omp-config", "omp-models", "omp-mcp", "omp-agents", "omp-rules"];
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V12: &[&str] =
-        &["hermes-config", "hermes-prompt"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V11: &[&str] = &[
+        "omp-config",
+        "omp-models",
+        "omp-mcp",
+        "omp-agents",
+        "omp-rules",
+    ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V12: &[&str] = &["hermes-config", "hermes-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V13: &[&str] =
         &["dsh-config", "dsh-credentials", "dsh-prompt"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V14: &[&str] = &["dsh-mcp"];
-    const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] =
-        &["kimi-config", "kimi-prompt", "kimi-credentials", "kimi-plugins"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] = &[
+        "kimi-config",
+        "kimi-prompt",
+        "kimi-credentials",
+        "kimi-plugins",
+    ];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1485,10 +1493,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     } else {
                         crate::coding::hermes::constants::HERMES_PROMPT_FILE
                     };
-                    mapping.windows_path = config_dir
-                        .join(file_name)
-                        .to_string_lossy()
-                        .to_string();
+                    mapping.windows_path = config_dir.join(file_name).to_string_lossy().to_string();
                     mapping.wsl_path = format!("~/.hermes/{file_name}");
                 }
             }
@@ -1502,10 +1507,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         "dsh-mcp" => DSH_MCP_FILE,
                         _ => DSH_SETTINGS_FILE,
                     };
-                    mapping.windows_path = config_dir
-                        .join(file_name)
-                        .to_string_lossy()
-                        .to_string();
+                    mapping.windows_path = config_dir.join(file_name).to_string_lossy().to_string();
                     mapping.wsl_path = format!("~/.dsh/{file_name}");
                 }
             }

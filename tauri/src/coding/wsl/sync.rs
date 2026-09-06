@@ -529,9 +529,8 @@ mod tests {
         );
 
         assert!(command.contains("excl_args+=(--exclude=\"$excl\")"));
-        assert!(command.contains(
-            "tar -C \"$source\" \"${excl_args[@]}\" -cf - . | tar -C \"$tmp\" -xf -"
-        ));
+        assert!(command
+            .contains("tar -C \"$source\" \"${excl_args[@]}\" -cf - . | tar -C \"$tmp\" -xf -"));
         assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
     }
 }
@@ -902,11 +901,7 @@ pub fn inspect_wsl_path_kind(distro: &str, path: &str, central_prefix: &str) -> 
             WslPathKind::Foreign // fail safe: never delete what we cannot verify
         }
         Err(e) => {
-            log::warn!(
-                "Failed to run WSL path inspection for '{}': {}",
-                path,
-                e
-            );
+            log::warn!("Failed to run WSL path inspection for '{}': {}", path, e);
             WslPathKind::Foreign
         }
     }

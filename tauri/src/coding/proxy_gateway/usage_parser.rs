@@ -299,9 +299,7 @@ fn classify_response_status(status: &str) -> Option<SseTerminalKind> {
 /// under `response`). Mirrors the `value.error` / `response.error` arms of
 /// `upstream.rs` `gateway_json_reports_error`.
 fn json_carries_error(value: &Value) -> bool {
-    value
-        .get("error")
-        .is_some_and(|error| !error.is_null())
+    value.get("error").is_some_and(|error| !error.is_null())
         || value
             .get("response")
             .and_then(|response| response.get("error"))
@@ -606,9 +604,10 @@ fn extract_envelope_id(cli_key: GatewayCliKey, value: &Value) -> Option<String> 
             "/messageId",
         ],
         GatewayCliKey::Gemini => &["/responseId", "/response/responseId", "/id"],
-        GatewayCliKey::Codex | GatewayCliKey::Grok | GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
-            &["/response/id", "/id", "/responseId"]
-        }
+        GatewayCliKey::Codex
+        | GatewayCliKey::Grok
+        | GatewayCliKey::Kimi
+        | GatewayCliKey::OpenCode => &["/response/id", "/id", "/responseId"],
     };
     first_non_empty_string_at_paths(value, paths)
 }
@@ -1762,9 +1761,7 @@ data: [DONE]
     #[test]
     fn sse_block_classify_terminal_nested_response_status_incomplete_is_incomplete() {
         assert_eq!(
-            sse_block_classify_terminal(
-                b"data: {\"response\":{\"status\":\"incomplete\"}}\n\n"
-            ),
+            sse_block_classify_terminal(b"data: {\"response\":{\"status\":\"incomplete\"}}\n\n"),
             Some(SseTerminalKind::Incomplete)
         );
     }

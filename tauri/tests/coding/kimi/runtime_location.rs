@@ -1,11 +1,11 @@
 use std::fs;
 
 use ai_toolbox_lib::coding::kimi::adapter;
-use ai_toolbox_lib::coding::open_code::shell_env;
 use ai_toolbox_lib::coding::kimi::constants::{
     KIMI_CONFIG_FILE, KIMI_CREDENTIALS_DIR, KIMI_HOME_ENV_KEY, KIMI_PLUGINS_DIR, KIMI_PROMPT_FILE,
     KIMI_SESSIONS_DIR, KIMI_SKILLS_DIR,
 };
+use ai_toolbox_lib::coding::open_code::shell_env;
 use ai_toolbox_lib::coding::runtime_location::{
     self, get_kimi_config_path_async, get_kimi_prompt_path_async, get_kimi_runtime_location_async,
 };

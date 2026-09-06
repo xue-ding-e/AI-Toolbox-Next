@@ -133,10 +133,7 @@ mod tests {
         let (name, desc) = parse_frontmatter_text(text);
         assert_eq!(name.as_deref(), Some("frontend-dev"));
         let d = desc.expect("description");
-        assert!(
-            !d.contains('|'),
-            "block indicator must not leak: {d}"
-        );
+        assert!(!d.contains('|'), "block indicator must not leak: {d}");
         assert!(d.contains("Full-stack frontend development"));
         assert!(d.contains("cinematic animations"));
         assert!(d.contains("visual art."));

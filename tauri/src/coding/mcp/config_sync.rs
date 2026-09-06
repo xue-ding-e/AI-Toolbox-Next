@@ -93,10 +93,7 @@ fn wrap_server_for_target(server: &McpServer, should_wrap: bool) -> McpServer {
         return server.clone();
     }
     let mut wrapped = server.clone();
-    wrapped.server_config = command_normalize::wrap_cmd_c_for_target(
-        &wrapped.server_config,
-        true,
-    );
+    wrapped.server_config = command_normalize::wrap_cmd_c_for_target(&wrapped.server_config, true);
     wrapped
 }
 
@@ -118,10 +115,7 @@ fn expand_stdio_paths(server: &McpServer) -> McpServer {
 
     if let Some(cmd) = config.get("command").and_then(Value::as_str) {
         if let Ok(resolved) = expand_local_path(cmd) {
-            config.insert(
-                "command".to_string(),
-                Value::String(resolved),
-            );
+            config.insert("command".to_string(), Value::String(resolved));
         }
     }
 
@@ -1710,8 +1704,8 @@ X-Test = "yes"
         )
         .expect("write fixture");
 
-        let servers =
-            import_servers_from_toml(&config_path, "mcp_servers", "codex").expect("import Codex MCP");
+        let servers = import_servers_from_toml(&config_path, "mcp_servers", "codex")
+            .expect("import Codex MCP");
         let local = servers
             .iter()
             .find(|server| server.name == "local")
@@ -2111,10 +2105,8 @@ X-Test = "yes"
 
     #[test]
     fn expand_stdio_paths_expands_tilde_command_and_arg() {
-        let server = build_stdio_server_with(
-            "~/.fastctx/bin/fastctx.exe",
-            &["-c", "~/config/mcp.json"],
-        );
+        let server =
+            build_stdio_server_with("~/.fastctx/bin/fastctx.exe", &["-c", "~/config/mcp.json"]);
 
         let expanded = expand_stdio_paths(&server);
 
@@ -2166,15 +2158,15 @@ X-Test = "yes"
         let server = build_http_server();
         let expanded = expand_stdio_paths(&server);
         assert_eq!(expanded.server_type, "http");
-        assert_eq!(
-            expanded.server_config["url"],
-            "https://example.com/mcp"
-        );
+        assert_eq!(expanded.server_config["url"], "https://example.com/mcp");
     }
 
     #[test]
     fn expand_stdio_paths_leaves_pure_flags_untouched() {
-        let server = build_stdio_server_with("npx", &["-y", "--prefer-online", "@sammysnake/fast-context-mcp"]);
+        let server = build_stdio_server_with(
+            "npx",
+            &["-y", "--prefer-online", "@sammysnake/fast-context-mcp"],
+        );
         let expanded = expand_stdio_paths(&server);
         assert_eq!(expanded.server_config["command"], json!("npx"));
         assert_eq!(

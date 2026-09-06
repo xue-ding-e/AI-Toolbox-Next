@@ -1851,8 +1851,8 @@ api_key = "secret"
             "sort_index": 0,
             "is_disabled": false,
         });
-        let result = provider_from_record(GatewayCliKey::Kimi, record, None)
-            .expect("skip must not error");
+        let result =
+            provider_from_record(GatewayCliKey::Kimi, record, None).expect("skip must not error");
         assert!(result.is_none());
     }
 

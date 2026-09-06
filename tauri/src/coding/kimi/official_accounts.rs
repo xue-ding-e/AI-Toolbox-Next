@@ -13,7 +13,9 @@ use tempfile::NamedTempFile;
 use tokio::sync::{watch, Mutex as AsyncMutex};
 
 use super::adapter;
-use super::commands::{emit_kimi_sync, get_kimi_root_dir_from_db_async, list_kimi_providers_for_db};
+use super::commands::{
+    emit_kimi_sync, get_kimi_root_dir_from_db_async, list_kimi_providers_for_db,
+};
 use super::constants::{KIMI_CREDENTIALS_DIR, KIMI_LOCAL_PROVIDER_ID};
 use super::types::{KimiOfficialAccount, KimiProvider};
 use crate::coding::db_id::{db_extract_id, db_new_id};
@@ -793,8 +795,7 @@ pub async fn refresh_applied_kimi_accounts_if_needed<R: tauri::Runtime>(
             .map(str::to_string)
             .or_else(|| account.token_endpoint.clone())
             .unwrap_or_else(|| format!("{}{KIMI_OAUTH_TOKEN_PATH}", kimi_oauth_host()));
-        let token_endpoint = match validate_kimi_oauth_endpoint(&token_endpoint, "token_endpoint")
-        {
+        let token_endpoint = match validate_kimi_oauth_endpoint(&token_endpoint, "token_endpoint") {
             Ok(endpoint) => endpoint,
             Err(error) => {
                 // The persisted endpoint no longer matches the configured host;

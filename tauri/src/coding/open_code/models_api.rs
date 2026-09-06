@@ -346,7 +346,8 @@ pub async fn fetch_provider_models(
             // the OpenAI model-list schema, both handled by parse_anthropic_models_response.
             if let Some(api_key) = &resolved_request.api_key {
                 if !api_key.is_empty() {
-                    req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+                    req_builder =
+                        req_builder.header("Authorization", format!("Bearer {}", api_key));
                     req_builder = req_builder.header("anthropic-version", "2023-06-01");
                 }
             }

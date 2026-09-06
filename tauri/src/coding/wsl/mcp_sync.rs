@@ -171,7 +171,10 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                     all_errors.push(format!("OpenCode/Codex/Grok/Gemini CLI/Pi: {}", msg));
                     let _ = app.emit(
                         "wsl-sync-warning",
-                        format!("OpenCode/Codex/Grok/Gemini CLI/Pi 配置同步部分失败：{}", msg),
+                        format!(
+                            "OpenCode/Codex/Grok/Gemini CLI/Pi 配置同步部分失败：{}",
+                            msg
+                        ),
                     );
                 }
 
@@ -363,7 +366,8 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "geminicli-settings"
             | "pi-mcp"
             | "omp-mcp"
-            | "hermes-config" | "dsh-mcp"
+            | "hermes-config"
+            | "dsh-mcp"
     )
 }
 
@@ -524,10 +528,7 @@ mod tests {
     fn build_standard_server_config_converts_full_path_command_to_mnt() {
         let server = make_stdio_mcp_server("C:\\Users\\x\\.fastctx\\bin\\fastctx.exe", &["-y"]);
         let config = build_standard_server_config(&server);
-        assert_eq!(
-            config["command"],
-            "/mnt/c/Users/x/.fastctx/bin/fastctx.exe"
-        );
+        assert_eq!(config["command"], "/mnt/c/Users/x/.fastctx/bin/fastctx.exe");
         // args untouched
         assert_eq!(config["args"], serde_json::json!(["-y"]));
     }

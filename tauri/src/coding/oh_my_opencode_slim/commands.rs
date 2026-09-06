@@ -534,7 +534,8 @@ pub async fn apply_config_to_file_public(
     // profile does not define one (global may only store the synthesizer there).
     let base_agents = final_json.remove("agents");
     if let Some(profile_agents) = agents_profile.agents {
-        let cleaned_profile_agents = adapter::strip_legacy_fallback_models_from_agents(profile_agents);
+        let cleaned_profile_agents =
+            adapter::strip_legacy_fallback_models_from_agents(profile_agents);
         let merged_agents =
             adapter::merge_agents_preserving_council(base_agents, cleaned_profile_agents);
         final_json.insert("agents".to_string(), merged_agents);
@@ -552,9 +553,10 @@ pub async fn apply_config_to_file_public(
     // Promote legacy council.master into agents.council while master is still present.
     let existing_agents = final_json.remove("agents");
     let existing_council = final_json.get("council").cloned();
-    if let Some(migrated_agents) =
-        adapter::migrate_legacy_council_master_into_agents(existing_agents, existing_council.as_ref())
-    {
+    if let Some(migrated_agents) = adapter::migrate_legacy_council_master_into_agents(
+        existing_agents,
+        existing_council.as_ref(),
+    ) {
         final_json.insert("agents".to_string(), migrated_agents);
     }
 

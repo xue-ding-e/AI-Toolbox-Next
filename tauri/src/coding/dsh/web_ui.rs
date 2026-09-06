@@ -101,7 +101,10 @@ fn dashboard_command(use_npx: bool, resolved_path: Option<&std::path::Path>) -> 
 }
 
 #[cfg(target_os = "windows")]
-fn launch_windows_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
+fn launch_windows_dashboard(
+    use_npx: bool,
+    resolved_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let command = dashboard_command(use_npx, resolved_path);
@@ -115,7 +118,10 @@ fn launch_windows_dashboard(use_npx: bool, resolved_path: Option<&std::path::Pat
 }
 
 #[cfg(target_os = "macos")]
-fn launch_macos_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
+fn launch_macos_dashboard(
+    use_npx: bool,
+    resolved_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     let command = dashboard_command(use_npx, resolved_path)
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
@@ -142,7 +148,10 @@ fn escape_linux_double_quoted_shell_command(command: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn launch_linux_dashboard(use_npx: bool, resolved_path: Option<&std::path::Path>) -> Result<(), String> {
+fn launch_linux_dashboard(
+    use_npx: bool,
+    resolved_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     let raw_command = dashboard_command(use_npx, resolved_path);
     let command = escape_linux_double_quoted_shell_command(&raw_command);
     let terminals = [
@@ -200,13 +209,22 @@ mod tests {
 
     #[test]
     fn build_web_url_keeps_leading_slash() {
-        assert_eq!(build_web_url(3080, Some("/sessions")), "http://127.0.0.1:3080/sessions");
+        assert_eq!(
+            build_web_url(3080, Some("/sessions")),
+            "http://127.0.0.1:3080/sessions"
+        );
     }
 
     #[test]
     fn build_web_url_adds_slash_when_missing() {
-        assert_eq!(build_web_url(3080, Some("settings")), "http://127.0.0.1:3080/settings");
-        assert_eq!(build_web_url(8080, Some("health")), "http://127.0.0.1:8080/health");
+        assert_eq!(
+            build_web_url(3080, Some("settings")),
+            "http://127.0.0.1:3080/settings"
+        );
+        assert_eq!(
+            build_web_url(8080, Some("health")),
+            "http://127.0.0.1:8080/health"
+        );
     }
 
     #[test]

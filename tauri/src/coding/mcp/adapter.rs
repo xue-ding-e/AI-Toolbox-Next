@@ -4,7 +4,9 @@
 
 use serde_json::Value;
 
-use super::types::{FavoriteMcp, McpGroup, McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto};
+use super::types::{
+    FavoriteMcp, McpGroup, McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto,
+};
 use crate::coding::db_extract_id;
 
 /// Convert database record to McpServer struct

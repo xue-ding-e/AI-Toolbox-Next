@@ -680,7 +680,14 @@ fn legacy_credential_names_are_migrated_to_fixed_file_name() {
         "updated_at": "2026-03-31T00:00:00Z",
     });
     state
-        .with_conn(|conn| db_put(conn, DbTable::KimiOfficialAccount, "account_legacy", &legacy_row))
+        .with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::KimiOfficialAccount,
+                "account_legacy",
+                &legacy_row,
+            )
+        })
         .expect("db_put legacy account");
     let credentials_dir = temp_dir.path().join("credentials");
     fs::create_dir_all(&credentials_dir).expect("create credentials dir");
@@ -690,10 +697,13 @@ fn legacy_credential_names_are_migrated_to_fixed_file_name() {
     block_on(official_accounts::migrate_legacy_credential_names(&state))
         .expect("migrate legacy credential names");
 
-    let accounts = official_accounts::list_kimi_official_accounts_with_state(&state)
-        .expect("list accounts");
+    let accounts =
+        official_accounts::list_kimi_official_accounts_with_state(&state).expect("list accounts");
     assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0].name, "kimi-code", "row must adopt the fixed name");
+    assert_eq!(
+        accounts[0].name, "kimi-code",
+        "row must adopt the fixed name"
+    );
     assert!(
         !legacy_file.exists(),
         "legacy credential file must be renamed"

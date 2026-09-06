@@ -21,6 +21,7 @@ mod types;
 mod tool_media_tests;
 
 pub use error::ProtocolConversionError;
+pub(crate) use gemini::gemini_stream_error;
 pub use kernel::{
     convert_error_response_body, convert_request_body, convert_request_body_with_context,
     convert_request_value, convert_response_body, convert_response_body_with_context,
@@ -32,4 +33,3 @@ pub use shared::lossy::{check_lossy_conversion, LossyConversionIssue};
 pub use shared::tool_schema::flatten_namespace_tool_name;
 pub(crate) use sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 pub use types::{AiProtocol, ConversionRoute};
-pub(crate) use gemini::gemini_stream_error;

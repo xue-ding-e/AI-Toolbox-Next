@@ -5,9 +5,7 @@ use toml_edit::{DocumentMut, Item};
 
 pub(crate) fn native_cli_protocol(cli_key: GatewayCliKey) -> Option<AiProtocol> {
     match cli_key {
-        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
-            Some(AiProtocol::AnthropicMessages)
-        }
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => Some(AiProtocol::AnthropicMessages),
         GatewayCliKey::Codex => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Grok => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Kimi => Some(AiProtocol::OpenAiChat),
@@ -46,7 +44,10 @@ pub(crate) fn provider_needs_gateway_proxy(
     // hasNonClaudeModelIds check on the provider card.
     if cli_key == GatewayCliKey::ClaudeDesktop {
         let settings_value = serde_json::from_str::<Value>(settings_config).unwrap_or(Value::Null);
-        if crate::coding::claude_desktop::config_writer::has_routing_models(meta, Some(&settings_value)) {
+        if crate::coding::claude_desktop::config_writer::has_routing_models(
+            meta,
+            Some(&settings_value),
+        ) {
             return true;
         }
     }

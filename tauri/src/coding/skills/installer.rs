@@ -725,7 +725,9 @@ pub async fn update_managed_skill_from_source(
             name: record.name.clone(),
             central_path: central_path.clone(),
             content_hash: current_hash,
-            source_revision: new_revision.clone().or_else(|| record.source_revision.clone()),
+            source_revision: new_revision
+                .clone()
+                .or_else(|| record.source_revision.clone()),
             updated_targets: Vec::new(),
         });
     }

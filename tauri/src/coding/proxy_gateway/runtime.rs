@@ -832,8 +832,7 @@ async fn handle_connection(
         // A stream that already delivered its terminal event succeeded; a later
         // write failure (the trailing `0\r\n\r\n` / final flush) must not attach
         // a failure category or overwrite the note — the request is a success.
-        let stream_already_succeeded =
-            response.stream_outcome == GatewayStreamOutcome::Completed;
+        let stream_already_succeeded = response.stream_outcome == GatewayStreamOutcome::Completed;
         if response.error_category.is_none() && !stream_already_succeeded {
             response.error_category = Some("client_write_failed".to_string());
         }
@@ -869,9 +868,11 @@ fn amend_health_after_stream(
     if !response.is_streaming {
         return;
     }
-    let (Some(cli_key), Some(provider_id), Some(upstream_model_id)) =
-        (response.cli_key, response.provider_id.as_deref(), response.upstream_model_id.as_deref())
-    else {
+    let (Some(cli_key), Some(provider_id), Some(upstream_model_id)) = (
+        response.cli_key,
+        response.provider_id.as_deref(),
+        response.upstream_model_id.as_deref(),
+    ) else {
         return;
     };
     let health_key = super::types::ProviderModelHealthKey {

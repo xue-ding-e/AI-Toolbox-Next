@@ -9,9 +9,9 @@ mod hermes;
 // scan/parse/snapshot helpers against fixtures.
 pub mod kimi;
 mod message_blocks;
+mod oh_my_pi;
 mod open_claw;
 mod open_code;
-mod oh_my_pi;
 mod pi;
 mod tool_normalizer;
 mod utils;

@@ -141,8 +141,7 @@ fn restore_sqlite_snapshot_and_migrate(
     // Run the risky restore + migrate, rolling back from the safety copy on any
     // failure. The safety copy is always removed afterwards (success or failure).
     let result = (|| {
-        sqlite_state
-            .with_conn(|conn| crate::db::backup::backup_to_path(conn, &safety_path))?;
+        sqlite_state.with_conn(|conn| crate::db::backup::backup_to_path(conn, &safety_path))?;
 
         let restore_and_migrate = || {
             sqlite_state.with_conn_mut(|conn| {
@@ -370,7 +369,12 @@ pub fn get_hermes_restore_dir() -> Result<PathBuf, String> {
         let local = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| get_home_dir().unwrap_or_default().join("AppData").join("Local"));
+            .unwrap_or_else(|| {
+                get_home_dir()
+                    .unwrap_or_default()
+                    .join("AppData")
+                    .join("Local")
+            });
         Ok(local.join("hermes"))
     }
     #[cfg(not(target_os = "windows"))]
@@ -1197,7 +1201,10 @@ pub async fn list_backup_file_filter_path_options(
                 let relative_path = path
                     .strip_prefix(&config_library_path)
                     .map_err(|e| {
-                        format!("Failed to get Claude Desktop config library relative path: {}", e)
+                        format!(
+                            "Failed to get Claude Desktop config library relative path: {}",
+                            e
+                        )
                     })?
                     .to_string_lossy()
                     .replace('\\', "/");
@@ -1281,9 +1288,17 @@ pub fn read_backup_meta_from_archive<R: Read + Seek>(
 }
 
 /// Runtime-file-owned CLIs: always packaged/restored under external-configs/.
-const ALWAYS_BACKUP_CLI_TOOLS: &[&str] = &["opencode", "openclaw", "pi", "oh_my_pi", "hermes", "dsh"];
+const ALWAYS_BACKUP_CLI_TOOLS: &[&str] =
+    &["opencode", "openclaw", "pi", "oh_my_pi", "hermes", "dsh"];
 /// DB-backed CLIs: gated by `backup_cli_config_files_enabled`.
-const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &["claude", "codex", "grok", "kimi", "geminicli", "claude_desktop"];
+const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &[
+    "claude",
+    "codex",
+    "grok",
+    "kimi",
+    "geminicli",
+    "claude_desktop",
+];
 
 pub fn is_always_backup_cli_tool(tool: &str) -> bool {
     ALWAYS_BACKUP_CLI_TOOLS.contains(&tool)
@@ -1296,7 +1311,10 @@ pub fn is_optional_backup_cli_tool(tool: &str) -> bool {
 /// Extract `<tool>` from `external-configs/<tool>/...`.
 pub fn external_config_tool_from_zip_entry(file_name: &str) -> Option<&str> {
     let rest = file_name.strip_prefix("external-configs/")?;
-    let tool = rest.split('/').next().filter(|segment| !segment.is_empty())?;
+    let tool = rest
+        .split('/')
+        .next()
+        .filter(|segment| !segment.is_empty())?;
     Some(tool)
 }
 
@@ -1426,25 +1444,26 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
     // hermes/dsh store their custom config directory as `config_dir`.
     const CONFIG_DIR_KEYS: &[&str] = &["config_dir"];
 
-    let clear_table = |conn: &rusqlite::Connection, table: DbTable, keys: &[&str]| -> Result<(), String> {
-        let Some(mut record) = db_get(conn, table, "common")? else {
-            return Ok(());
-        };
-        let mut changed = false;
-        for key in keys {
-            if record
-                .get(*key)
-                .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
-            {
-                record[*key] = serde_json::Value::Null;
-                changed = true;
+    let clear_table =
+        |conn: &rusqlite::Connection, table: DbTable, keys: &[&str]| -> Result<(), String> {
+            let Some(mut record) = db_get(conn, table, "common")? else {
+                return Ok(());
+            };
+            let mut changed = false;
+            for key in keys {
+                if record
+                    .get(*key)
+                    .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
+                {
+                    record[*key] = serde_json::Value::Null;
+                    changed = true;
+                }
             }
-        }
-        if changed {
-            db_put(conn, table, "common", &record)?;
-        }
-        Ok(())
-    };
+            if changed {
+                db_put(conn, table, "common", &record)?;
+            }
+            Ok(())
+        };
 
     db.with_conn(|conn| {
         clear_table(conn, DbTable::CodexCommonConfig, PATH_KEYS)?;
@@ -1733,12 +1752,15 @@ pub async fn get_custom_root_dir_path_info(
         }
         "hermes" => {
             let (config_dir, source) =
-                crate::coding::hermes::get_hermes_config_dir_from_db_async(db).await.ok()?;
+                crate::coding::hermes::get_hermes_config_dir_from_db_async(db)
+                    .await
+                    .ok()?;
             (source == "custom").then(|| config_dir.to_string_lossy().to_string())
         }
         "dsh" => {
-            let (config_dir, source) =
-                crate::coding::dsh::get_dsh_config_dir_from_db_async(db).await.ok()?;
+            let (config_dir, source) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db)
+                .await
+                .ok()?;
             (source == "custom").then(|| config_dir.to_string_lossy().to_string())
         }
         _ => None,
@@ -3281,7 +3303,8 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
 
     // Claude Desktop is DB-backed (optional) and gated by the optional CLI switch.
     if include_optional_cli_runtime {
-        if let Some((normal_config_path, config_library_path)) = get_claude_desktop_settings_paths() {
+        if let Some((normal_config_path, config_library_path)) = get_claude_desktop_settings_paths()
+        {
             add_directory_to_zip_once(
                 zip,
                 added_zip_directories,
@@ -3472,10 +3495,10 @@ mod tests {
         add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
         add_legacy_database_snapshot_to_zip, add_text_to_zip, backup_filter_option_path,
         build_backup_meta, build_db_manifest, clear_restored_cli_custom_roots,
-        external_config_tool_from_zip_entry,
-        get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
-        get_gemini_cli_prompt_backup_zip_path, is_always_backup_cli_tool, is_filesystem_root_directory,
-        is_optional_backup_cli_tool, normalize_backup_storage_path, normalize_restore_entry_name,
+        external_config_tool_from_zip_entry, get_codex_prompt_backup_zip_path,
+        get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
+        is_always_backup_cli_tool, is_filesystem_root_directory, is_optional_backup_cli_tool,
+        normalize_backup_storage_path, normalize_restore_entry_name,
         parse_post_restore_resync_wsl_modules, record_restored_external_config_wsl_module,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
         should_exclude_from_backup, should_filter_external_config_entry,
@@ -3622,8 +3645,14 @@ mod tests {
             external_config_tool_from_zip_entry("external-configs/codex/config.toml"),
             Some("codex")
         );
-        assert_eq!(external_config_tool_from_zip_entry("sqlite/ai-toolbox.db"), None);
-        assert_eq!(external_config_tool_from_zip_entry("external-configs/"), None);
+        assert_eq!(
+            external_config_tool_from_zip_entry("sqlite/ai-toolbox.db"),
+            None
+        );
+        assert_eq!(
+            external_config_tool_from_zip_entry("external-configs/"),
+            None
+        );
     }
 
     #[test]
@@ -3672,7 +3701,10 @@ mod tests {
             true,
             "external-configs/codex/config.toml"
         ));
-        assert!(!should_skip_external_config_on_restore(false, "skills/foo/SKILL.md"));
+        assert!(!should_skip_external_config_on_restore(
+            false,
+            "skills/foo/SKILL.md"
+        ));
     }
 
     #[test]
@@ -3788,9 +3820,7 @@ mod tests {
             assert!(opencode
                 .get("configPath")
                 .is_some_and(serde_json::Value::is_null));
-            assert!(kimi
-                .get("root_dir")
-                .is_some_and(serde_json::Value::is_null));
+            assert!(kimi.get("root_dir").is_some_and(serde_json::Value::is_null));
             assert_eq!(
                 kimi.get("other").and_then(|value| value.as_str()),
                 Some("preserved")
@@ -4133,21 +4163,14 @@ mod tests {
 
     #[test]
     fn should_exclude_matches_claude_desktop_local_app_data_paths() {
-        let generated_normal_config_path = backup_filter_option_path(
-            "claude_desktop",
-            "claude_desktop_config.json",
-        )
-        .expect("normal config filter path");
-        let generated_config_library_path = backup_filter_option_path(
-            "claude_desktop",
-            "configLibrary/profiles/default.json",
-        )
-        .expect("config library filter path");
+        let generated_normal_config_path =
+            backup_filter_option_path("claude_desktop", "claude_desktop_config.json")
+                .expect("normal config filter path");
+        let generated_config_library_path =
+            backup_filter_option_path("claude_desktop", "configLibrary/profiles/default.json")
+                .expect("config library filter path");
         let cases = [
-            (
-                generated_normal_config_path,
-                "claude_desktop_config.json",
-            ),
+            (generated_normal_config_path, "claude_desktop_config.json"),
             (
                 "%localappdata%/Claude/claude_desktop_config.json".to_string(),
                 "claude_desktop_config.json",
@@ -4157,8 +4180,7 @@ mod tests {
                 "configLibrary/profiles/default.json",
             ),
             (
-                "%localappdata%/Claude-3p/configLibrary/profiles/lowercase.json"
-                    .to_string(),
+                "%localappdata%/Claude-3p/configLibrary/profiles/lowercase.json".to_string(),
                 "configLibrary/profiles/lowercase.json",
             ),
         ];
@@ -4750,8 +4772,8 @@ mod tests {
         // by v9..v12 and reset the schema version.
         let snapshot_path = temp_dir.path().join("old-v8.db");
         {
-            let mut snapshot =
-                Connection::open(&snapshot_path).map_err(|error| format!("open snapshot: {error}"))?;
+            let mut snapshot = Connection::open(&snapshot_path)
+                .map_err(|error| format!("open snapshot: {error}"))?;
             crate::db::sqlite_state::initialize_connection(&mut snapshot)?;
             for table in [
                 "oh_my_pi_settings_config",
@@ -4772,8 +4794,8 @@ mod tests {
 
         // Sanity: the snapshot really lacks the OMP table.
         {
-            let snapshot =
-                Connection::open(&snapshot_path).map_err(|error| format!("reopen snapshot: {error}"))?;
+            let snapshot = Connection::open(&snapshot_path)
+                .map_err(|error| format!("reopen snapshot: {error}"))?;
             assert_eq!(migrations::get_user_version(&snapshot)?, 8);
             let count: i64 = snapshot
                 .query_row(

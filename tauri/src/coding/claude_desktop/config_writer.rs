@@ -462,7 +462,10 @@ fn desktop_routes_from_settings(settings_config: &Value) -> Option<Map<String, V
             .map(str::trim)
             .filter(|label| !label.is_empty())
         {
-            route.insert("labelOverride".to_string(), Value::String(label.to_string()));
+            route.insert(
+                "labelOverride".to_string(),
+                Value::String(label.to_string()),
+            );
         }
         route.insert("supports1m".to_string(), Value::Bool(false));
         routes.insert(route_id.to_string(), Value::Object(route));
@@ -969,7 +972,10 @@ mod tests {
             profile["inferenceGatewayBaseUrl"],
             json!("http://127.0.0.1:37123/claude-desktop")
         );
-        assert_eq!(profile["inferenceGatewayApiKey"], json!("ai-toolbox-gateway"));
+        assert_eq!(
+            profile["inferenceGatewayApiKey"],
+            json!("ai-toolbox-gateway")
+        );
         assert_eq!(meta_path["appliedId"], json!(PROFILE_ID));
 
         // Restore switches back to official (1p) and removes the profile.
@@ -1090,6 +1096,9 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "claude-sonnet-5")
             .expect("sonnet spec");
-        assert!(sonnet.tier_alias.is_none(), "invalid tier alias must be dropped");
+        assert!(
+            sonnet.tier_alias.is_none(),
+            "invalid tier alias must be dropped"
+        );
     }
 }

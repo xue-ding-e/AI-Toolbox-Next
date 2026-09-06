@@ -1096,7 +1096,8 @@ fn resolve_kimi_path_without_db() -> (PathBuf, String) {
         }
     }
     (
-        kimi::commands::get_kimi_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.kimi-code")),
+        kimi::commands::get_kimi_default_root_dir()
+            .unwrap_or_else(|_| PathBuf::from("~/.kimi-code")),
         "default".to_string(),
     )
 }
@@ -1193,7 +1194,9 @@ async fn resolve_oh_my_pi_runtime_location_uncached_async(
     Ok(build_runtime_location(path, source))
 }
 
-fn normalize_stored_oh_my_pi_root_dir(db: &crate::db::SqliteDbState) -> Result<Option<String>, String> {
+fn normalize_stored_oh_my_pi_root_dir(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<String>, String> {
     // 先只做 DB 读取(normalize_omp_root_dir 里 contains_omp_runtime_layout 会对
     // root / root/agent 各做最多 5 次 is_file/is_dir,必须在连接闭包外进行,
     // 避免在 SQLite 锁持有的同时做文件 I/O)。
@@ -1201,9 +1204,11 @@ fn normalize_stored_oh_my_pi_root_dir(db: &crate::db::SqliteDbState) -> Result<O
         let Some(record) = db_get(conn, DbTable::OhMyPiSettingsConfig, "common")? else {
             return Ok(None);
         };
-        Ok(crate::coding::oh_my_pi::adapter::settings_from_db_value(record)
-            .root_dir
-            .filter(|path| !path.trim().is_empty()))
+        Ok(
+            crate::coding::oh_my_pi::adapter::settings_from_db_value(record)
+                .root_dir
+                .filter(|path| !path.trim().is_empty()),
+        )
     })?;
 
     let Some(root_dir) = stored_root_dir else {
@@ -1473,7 +1478,10 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
             if let Some(wsl) = location.wsl {
                 build_windows_unc_path(
                     &wsl.distro,
-                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.kimi-code/skills"),
+                    &expand_home_from_user_root(
+                        wsl.linux_user_root.as_deref(),
+                        "~/.kimi-code/skills",
+                    ),
                 )
             } else {
                 location.host_path.join("skills")
@@ -1947,7 +1955,8 @@ fn resolve_omp_path_without_db() -> (PathBuf, String) {
         }
     }
 
-    if let Some(shell_path) = shell_env::get_env_from_shell_config(oh_my_pi::constants::OMP_ENV_KEY) {
+    if let Some(shell_path) = shell_env::get_env_from_shell_config(oh_my_pi::constants::OMP_ENV_KEY)
+    {
         if !shell_path.trim().is_empty() {
             return (PathBuf::from(shell_path), "shell".to_string());
         }

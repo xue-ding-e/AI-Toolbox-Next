@@ -158,7 +158,10 @@ fn session_meta_from_json(meta_path: &Path) -> Option<SessionMeta> {
 /// The session's working directory derived from its metadata `cwd`, which
 /// points at `<session dir>/outputs`; strip that suffix.
 fn claude_desktop_cwd(cwd: Option<&Value>) -> Option<String> {
-    let cwd = cwd.and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty())?;
+    let cwd = cwd
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
     let path = Path::new(cwd);
     let is_outputs_dir = path.file_name().and_then(|name| name.to_str()) == Some(OUTPUTS_SUFFIX);
     let dir = if is_outputs_dir {
@@ -220,9 +223,7 @@ mod tests {
     use std::fs;
 
     fn setup_session(root: &Path, uuid: &str, cli_session_id: &str) {
-        let space = root
-            .join("abc123")
-            .join("00000000");
+        let space = root.join("abc123").join("00000000");
         fs::create_dir_all(&space).expect("create space dir");
         let meta = space.join(format!("local_{uuid}.json"));
         fs::write(
@@ -258,7 +259,11 @@ mod tests {
     #[test]
     fn scan_sessions_reads_desktop_metadata_and_transcript() {
         let dir = tempfile::tempdir().expect("tempdir");
-        setup_session(dir.path(), "local_a4a41914", "e711a4d4-28ae-4788-b1cf-aec1d6631e80");
+        setup_session(
+            dir.path(),
+            "local_a4a41914",
+            "e711a4d4-28ae-4788-b1cf-aec1d6631e80",
+        );
 
         let sessions = scan_sessions(dir.path());
         assert_eq!(sessions.len(), 1);
@@ -270,7 +275,9 @@ mod tests {
         assert_eq!(session.project_dir.as_deref(), Some("D:\\Projects\\app"));
         assert_eq!(session.created_at, Some(1786723202667));
         assert_eq!(session.last_active_at, Some(1786756920221));
-        assert!(session.source_path.ends_with("e711a4d4-28ae-4788-b1cf-aec1d6631e80.jsonl"));
+        assert!(session
+            .source_path
+            .ends_with("e711a4d4-28ae-4788-b1cf-aec1d6631e80.jsonl"));
     }
 
     #[test]
@@ -296,7 +303,11 @@ mod tests {
     #[test]
     fn load_messages_uses_claude_code_reader() {
         let dir = tempfile::tempdir().expect("tempdir");
-        setup_session(dir.path(), "local_a4a41914", "e711a4d4-28ae-4788-b1cf-aec1d6631e80");
+        setup_session(
+            dir.path(),
+            "local_a4a41914",
+            "e711a4d4-28ae-4788-b1cf-aec1d6631e80",
+        );
         let sessions = scan_sessions(dir.path());
         let source = Path::new(&sessions[0].source_path);
         let messages = load_messages(source).expect("load transcript");

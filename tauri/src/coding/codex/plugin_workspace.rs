@@ -136,13 +136,19 @@ fn marketplace_cache_id(url: &str) -> String {
         .trim_end_matches(".git")
         .trim_end_matches(".json")
         .trim_matches(|c| c == '?' || c == '#' || c == '&');
-    let base = if stripped.is_empty() { "marketplace" } else { stripped };
+    let base = if stripped.is_empty() {
+        "marketplace"
+    } else {
+        stripped
+    };
     let sanitized: String = base
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' {
-            c
-        } else {
-            '-'
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
         })
         .collect::<String>()
         .trim_matches('-')
@@ -286,9 +292,7 @@ async fn register_workspace_root_path(
     save_workspace_root_paths(db, &workspace_root_paths).await
 }
 
-async fn resolve_proxy_for_git(
-    db: &crate::db::SqliteDbState,
-) -> (http_client::ProxyMode, String) {
+async fn resolve_proxy_for_git(db: &crate::db::SqliteDbState) -> (http_client::ProxyMode, String) {
     http_client::get_proxy_from_settings(db)
         .await
         .unwrap_or((http_client::ProxyMode::System, String::new()))
@@ -372,7 +376,16 @@ fn run_wsl_git(
     let mut argv: Vec<String> = vec!["--exec".to_string(), "env".to_string()];
     match proxy {
         (http_client::ProxyMode::Direct, _) => {
-            for var in ["-u", "HTTP_PROXY", "-u", "HTTPS_PROXY", "-u", "http_proxy", "-u", "https_proxy"] {
+            for var in [
+                "-u",
+                "HTTP_PROXY",
+                "-u",
+                "HTTPS_PROXY",
+                "-u",
+                "http_proxy",
+                "-u",
+                "https_proxy",
+            ] {
                 argv.push(var.to_string());
             }
             argv.push("GIT_TERMINAL_PROMPT=0".to_string());
@@ -497,7 +510,9 @@ async fn download_marketplace_json(
 ) -> Result<(), String> {
     let client = http_client::client_with_timeout(db, JSON_DOWNLOAD_TIMEOUT_SECS)
         .await
-        .map_err(|error| format!("Failed to create HTTP client for marketplace download: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to create HTTP client for marketplace download: {error}")
+        })?;
     let response = client
         .get(url)
         .send()

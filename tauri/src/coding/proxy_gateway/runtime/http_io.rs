@@ -157,7 +157,8 @@ fn render_stream_error_event(
                 _ => "500",
             };
             let payload = crate::coding::proxy_gateway::transformer::gemini_stream_error(
-                gemini_code, message,
+                gemini_code,
+                message,
             );
             format!(
                 "data: {}\n\n",
@@ -638,15 +639,12 @@ async fn write_streaming_body(
                 // EOF instead: the terminal detector decides Completed vs
                 // Incomplete from what was actually delivered.
                 if is_demotable_stream_body_error(&error) {
-                    log::warn!(
-                        "demoting upstream body decode error to clean stream EOF: {error}"
-                    );
+                    log::warn!("demoting upstream body decode error to clean stream EOF: {error}");
                     demoted_body_decode_error = true;
                     // Keep the raw reason in the summary note so these rows stay
                     // distinguishable from a plain empty stream in request logs.
-                    response.note = format!(
-                        "upstream body decode error demoted to clean stream EOF: {error}"
-                    );
+                    response.note =
+                        format!("upstream body decode error demoted to clean stream EOF: {error}");
                     break;
                 }
                 upstream_stream_error = true;
@@ -682,8 +680,7 @@ async fn write_streaming_body(
             None => usage_collector.observe_chunk(&chunk),
         }
         let new_terminal = usage_collector.terminal_kind();
-        let terminal_in_chunk =
-            new_terminal.is_some() && terminal_before.is_none();
+        let terminal_in_chunk = new_terminal.is_some() && terminal_before.is_none();
         append_body_snapshot(response, &chunk, settings);
         let chunk_header = format!("{:X}\r\n", chunk.len());
         if let Err(error) = stream.write_all(chunk_header.as_bytes()).await {
@@ -1010,7 +1007,11 @@ mod tests {
         let chat = render_stream_error_event(Some(AiProtocol::OpenAiChat), "x", "boom");
         assert_eq!(chat, generic);
 
-        let gemini = render_stream_error_event(Some(AiProtocol::GeminiNative), "stream_idle_timeout", "boom");
+        let gemini = render_stream_error_event(
+            Some(AiProtocol::GeminiNative),
+            "stream_idle_timeout",
+            "boom",
+        );
         let text = String::from_utf8_lossy(&gemini);
         assert!(text.starts_with("data: "));
         // Gemini error envelope: numeric code + message + status, not the
@@ -1069,10 +1070,7 @@ mod tests {
         DebugHttpResponse {
             status_code: 200,
             status_text: "OK".to_string(),
-            headers: vec![(
-                "Content-Type".to_string(),
-                "text/event-stream".to_string(),
-            )],
+            headers: vec![("Content-Type".to_string(), "text/event-stream".to_string())],
             body: Vec::new(),
             body_stream: Some(Box::pin(futures_util::stream::iter(chunks))),
             response_body_bytes: 0,

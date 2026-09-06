@@ -100,8 +100,7 @@ fn build_cordis_config(server: &McpServer) -> Result<Value, String> {
                 config.insert("url".to_string(), url.clone());
             }
             if let Some(headers) = obj.get("headers") {
-                if headers.is_object()
-                    && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
+                if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
                 {
                     config.insert("headers".to_string(), headers.clone());
                 }
@@ -139,10 +138,7 @@ fn is_any_dsh_mcp_entry(entry: &Value) -> bool {
 ///
 /// Finds an existing insert row with matching `serverName` and updates it, or
 /// appends a new top-level `- insert:` op. Preserves all other plugin rows.
-pub(crate) fn sync_server_to_cordis(
-    config_path: &Path,
-    server: &McpServer,
-) -> Result<(), String> {
+pub(crate) fn sync_server_to_cordis(config_path: &Path, server: &McpServer) -> Result<(), String> {
     let mut array = read_cordis_array(config_path)?;
 
     let new_config = build_cordis_config(server)?;
@@ -248,7 +244,8 @@ pub(crate) fn import_servers_from_cordis(config_path: &Path) -> Result<Vec<McpSe
             };
             let transport = config.get("transport").and_then(|v| v.as_str());
 
-            if let Some(server) = build_mcp_server_from_cordis(server_name, transport, config, now) {
+            if let Some(server) = build_mcp_server_from_cordis(server_name, transport, config, now)
+            {
                 servers.push(server);
             }
         }
@@ -318,8 +315,7 @@ fn build_mcp_server_from_cordis(
                 unified.insert("url".to_string(), url.clone());
             }
             if let Some(headers) = config.get("headers") {
-                if headers.is_object()
-                    && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
+                if headers.is_object() && !headers.as_object().map(|o| o.is_empty()).unwrap_or(true)
                 {
                     unified.insert("headers".to_string(), headers.clone());
                 }
@@ -486,9 +482,7 @@ fn set_entry_disabled(entry: &mut Value, disabled: bool) {
 /// Set `config.<field>` on a patch entry, preserving other config fields.
 fn set_entry_config_field(entry: &mut Value, field: &str, value: Value) {
     if let Some(obj) = entry.as_object_mut() {
-        let config = obj
-            .entry("config".to_string())
-            .or_insert_with(|| json!({}));
+        let config = obj.entry("config".to_string()).or_insert_with(|| json!({}));
         if let Some(config_obj) = config.as_object_mut() {
             config_obj.insert(field.to_string(), value);
         }
@@ -550,7 +544,8 @@ mod tests {
 
     #[test]
     fn test_sync_adds_new_insert_op() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -570,7 +565,8 @@ mod tests {
 
     #[test]
     fn test_sync_updates_existing_preserves_other_rows() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -611,7 +607,8 @@ mod tests {
 
     #[test]
     fn test_remove_only_deletes_matching_server() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -635,7 +632,12 @@ mod tests {
         // a is gone, b + other survive
         let names: Vec<&str> = insert_list
             .iter()
-            .map(|e| e.get("config").and_then(|c| c.get("serverName")).and_then(|s| s.as_str()).unwrap_or(""))
+            .map(|e| {
+                e.get("config")
+                    .and_then(|c| c.get("serverName"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+            })
             .collect();
         assert!(names.contains(&"b"));
         assert!(!names.contains(&"a"));
@@ -645,7 +647,8 @@ mod tests {
 
     #[test]
     fn test_remove_removes_empty_insert_op() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -667,7 +670,8 @@ mod tests {
 
     #[test]
     fn test_remove_missing_is_noop() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -689,7 +693,8 @@ mod tests {
 
     #[test]
     fn test_import_extracts_only_dsh_mcp_entries() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -726,7 +731,8 @@ mod tests {
 
     #[test]
     fn test_sync_http_server() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -743,7 +749,8 @@ mod tests {
 
     #[test]
     fn test_sync_then_import_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
 
@@ -762,50 +769,66 @@ mod tests {
     #[test]
     fn test_get_plugin_disabled_state_missing_file() {
         let path = std::path::Path::new("/nonexistent/cordis_test.yml");
-        assert_eq!(get_plugin_disabled_state(path, "agent-instructions").unwrap(), None);
+        assert_eq!(
+            get_plugin_disabled_state(path, "agent-instructions").unwrap(),
+            None
+        );
     }
 
     #[test]
     fn test_get_plugin_disabled_state_not_present() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         atomic_write_bytes(&path, b"[]").unwrap();
 
-        assert_eq!(get_plugin_disabled_state(&path, "agent-instructions").unwrap(), None);
+        assert_eq!(
+            get_plugin_disabled_state(&path, "agent-instructions").unwrap(),
+            None
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_get_plugin_disabled_state_explicit_true() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- id: agent-instructions\n  disabled: true\n";
         atomic_write_bytes(&path, yaml.as_bytes()).unwrap();
 
-        assert_eq!(get_plugin_disabled_state(&path, "agent-instructions").unwrap(), Some(true));
+        assert_eq!(
+            get_plugin_disabled_state(&path, "agent-instructions").unwrap(),
+            Some(true)
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_get_plugin_disabled_state_explicit_false() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- id: agent-instructions\n  disabled: false\n";
         atomic_write_bytes(&path, yaml.as_bytes()).unwrap();
 
-        assert_eq!(get_plugin_disabled_state(&path, "agent-instructions").unwrap(), Some(false));
+        assert_eq!(
+            get_plugin_disabled_state(&path, "agent-instructions").unwrap(),
+            Some(false)
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_set_plugin_disabled_appends_new_entry() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         atomic_write_bytes(&path, b"[]").unwrap();
@@ -820,7 +843,8 @@ mod tests {
 
     #[test]
     fn test_set_plugin_disabled_updates_existing() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- id: agent-instructions\n  disabled: true\n- id: other\n  disabled: true\n";
@@ -828,16 +852,23 @@ mod tests {
 
         set_plugin_disabled(&path, "agent-instructions", false).unwrap();
 
-        assert_eq!(get_plugin_disabled_state(&path, "agent-instructions").unwrap(), Some(false));
+        assert_eq!(
+            get_plugin_disabled_state(&path, "agent-instructions").unwrap(),
+            Some(false)
+        );
         // other entry preserved
-        assert_eq!(get_plugin_disabled_state(&path, "other").unwrap(), Some(true));
+        assert_eq!(
+            get_plugin_disabled_state(&path, "other").unwrap(),
+            Some(true)
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_set_plugin_config_field_appends_new_entry() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         atomic_write_bytes(&path, b"[]").unwrap();
@@ -855,7 +886,8 @@ mod tests {
 
     #[test]
     fn test_set_plugin_config_field_updates_existing_preserves_other_fields() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- id: agent-instructions\n  disabled: false\n  config:\n    maxBytes: 65536\n- id: other\n  disabled: true\n";
@@ -878,7 +910,8 @@ mod tests {
 
     #[test]
     fn test_set_plugin_config_field_merges_into_existing_config() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- id: agent-instructions\n  config:\n    otherKey: keep-me\n";
@@ -896,7 +929,8 @@ mod tests {
 
     #[test]
     fn test_set_plugin_config_field_updates_insert_list_entry() {
-        let dir = std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cordis.patch.yml");
         let yaml = "- insert:\n    - id: agent-instructions\n      disabled: true\n    - id: other\n      disabled: true\n";

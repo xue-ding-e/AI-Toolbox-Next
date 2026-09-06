@@ -65,9 +65,7 @@ pub fn start(app: AppHandle) {
             let cron = match parse_cron(&schedule) {
                 Ok(cron) => cron,
                 Err(error) => {
-                    log::debug!(
-                        "skills auto-update has invalid schedule '{schedule}': {error}"
-                    );
+                    log::debug!("skills auto-update has invalid schedule '{schedule}': {error}");
                     continue;
                 }
             };

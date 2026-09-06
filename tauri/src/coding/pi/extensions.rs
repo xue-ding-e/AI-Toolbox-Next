@@ -182,7 +182,9 @@ fn build_pi_spawn_error(error: &std::io::Error, local_program_label: Option<&str
         } else {
             format!("{base_message}. {}", local_cli_missing_hint("pi"))
         };
-        if manual_hint.is_empty() { message } else {
+        if manual_hint.is_empty() {
+            message
+        } else {
             format!("{message} {manual_hint}")
         }
     } else if !manual_hint.is_empty() {
@@ -283,10 +285,7 @@ async fn run_pi_command_preferring_no_approve(
             let output = run_pi_command(runtime_location, &fallback_args, offline).await?;
             Ok((
                 output,
-                fallback_args
-                    .iter()
-                    .map(|arg| (*arg).to_string())
-                    .collect(),
+                fallback_args.iter().map(|arg| (*arg).to_string()).collect(),
             ))
         }
         Err(error) => Err(error),
@@ -515,10 +514,7 @@ fn is_version_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-async fn fetch_npm_latest_version(
-    client: &reqwest::Client,
-    package_name: &str,
-) -> Option<String> {
+async fn fetch_npm_latest_version(client: &reqwest::Client, package_name: &str) -> Option<String> {
     let package_url = format!(
         "{}/{}",
         NPM_REGISTRY_BASE_URL,
@@ -607,8 +603,9 @@ async fn enrich_npm_update_availability(
             if pinned_version.is_some() {
                 return extension;
             }
-            let Some(latest_version) =
-                latest_by_package.get(&package_name.to_ascii_lowercase()).cloned()
+            let Some(latest_version) = latest_by_package
+                .get(&package_name.to_ascii_lowercase())
+                .cloned()
             else {
                 return extension;
             };

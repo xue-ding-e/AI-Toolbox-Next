@@ -20,7 +20,8 @@ use super::constants::CODEX_LOCAL_PROVIDER_ID;
 use super::types::{CodexOfficialAccount, CodexOfficialAccountContent, CodexProvider};
 use crate::coding::db_id::db_new_id;
 use crate::db::helpers::{
-    db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_field, db_update_applied_status,
+    db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_field,
+    db_update_applied_status,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;

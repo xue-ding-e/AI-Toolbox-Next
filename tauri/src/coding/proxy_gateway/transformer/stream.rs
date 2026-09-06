@@ -1,8 +1,8 @@
 use super::gemini::{
     gemini_finish_to_openai_finish, gemini_stream_error, gemini_usage_to_llm, llm_usage_to_gemini,
 };
-use super::llm::Usage;
 use super::kernel::ConversionContext;
+use super::llm::Usage;
 use super::llm::{TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
 use super::openai::codex_tools::{
     custom_tool_input_from_chat_arguments, is_custom_tool_chat_name,
@@ -875,8 +875,10 @@ impl SourceStreamState {
                     .unwrap_or_default()
                     .to_string();
                 {
-                    let state = self.responses_tool_by_item.entry(key.clone()).or_insert_with(
-                        || SourceToolState {
+                    let state = self
+                        .responses_tool_by_item
+                        .entry(key.clone())
+                        .or_insert_with(|| SourceToolState {
                             index: value
                                 .get("output_index")
                                 .and_then(Value::as_u64)
@@ -890,8 +892,7 @@ impl SourceStreamState {
                                 TOOL_TYPE_FUNCTION.to_string()
                             },
                             ..Default::default()
-                        },
-                    );
+                        });
                     if state.arguments_done {
                         return Vec::new();
                     }
@@ -1387,7 +1388,8 @@ fn merge_anthropic_stream_usage(start: Option<&Value>, delta: &Value) -> Value {
                 | "cache_creation"
         );
         if is_input_like {
-            if !merged_object.contains_key(key) || merged_object.get(key).is_some_and(Value::is_null)
+            if !merged_object.contains_key(key)
+                || merged_object.get(key).is_some_and(Value::is_null)
             {
                 merged_object.insert(key.clone(), value.clone());
             }

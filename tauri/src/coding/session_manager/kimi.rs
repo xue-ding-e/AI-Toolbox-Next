@@ -125,7 +125,13 @@ fn parse_timestamp(value: Option<&Value>) -> Option<i64> {
         value
             .as_str()
             .and_then(|raw| raw.parse::<i64>().ok())
-            .map(|num| if num < 1_000_000_000_000 { num * 1000 } else { num })
+            .map(|num| {
+                if num < 1_000_000_000_000 {
+                    num * 1000
+                } else {
+                    num
+                }
+            })
     })
 }
 
@@ -460,7 +466,10 @@ mod tests {
         for malicious in ["../escaped", "a/../../escaped", "/absolute", ""] {
             let snapshot = serde_json::json!({ "files": [] });
             let result = import_native_snapshot(&root, malicious, &snapshot);
-            assert!(result.is_err(), "must reject unsafe session id: {malicious}");
+            assert!(
+                result.is_err(),
+                "must reject unsafe session id: {malicious}"
+            );
             assert!(!temp.path().join("escaped").exists());
             assert!(!temp.path().join("absolute").exists());
         }

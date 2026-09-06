@@ -10,8 +10,7 @@ use croner::Cron;
 
 /// Parse a 5-field cron expression, returning a friendly error otherwise.
 pub(crate) fn parse_cron(spec: &str) -> Result<Cron, String> {
-    Cron::from_str(spec.trim())
-        .map_err(|e| format!("Invalid cron expression '{spec}': {e}"))
+    Cron::from_str(spec.trim()).map_err(|e| format!("Invalid cron expression '{spec}': {e}"))
 }
 
 /// Compute the next `count` trigger times (strictly after now) in local time.
@@ -55,7 +54,11 @@ mod tests {
             .map(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap())
             .collect();
         for (i, dt) in parsed.iter().enumerate() {
-            assert!(dt > &now.naive_local(), "occurrence {} must be in the future", i);
+            assert!(
+                dt > &now.naive_local(),
+                "occurrence {} must be in the future",
+                i
+            );
             if i > 0 {
                 assert!(
                     dt > &parsed[i - 1],

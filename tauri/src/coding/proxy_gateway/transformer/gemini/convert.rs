@@ -1134,11 +1134,8 @@ pub fn gemini_response_to_llm(body: Value) -> Response {
 
 pub fn llm_response_to_gemini(response: Response) -> Value {
     if let Some(error) = response.error.as_ref() {
-        let code = error
-            .code
-            .as_ref()
-            .map(|code| json!(code))
-            .or_else(|| {
+        let code =
+            error.code.as_ref().map(|code| json!(code)).or_else(|| {
                 (!error.error_type.is_empty()).then(|| json!(error.error_type.clone()))
             });
         let kind = (!error.error_type.is_empty()).then(|| error.error_type.clone());
@@ -1231,7 +1228,10 @@ pub(crate) fn llm_usage_to_gemini(usage: Option<&Usage>) -> Value {
     })
 }
 
-pub(crate) fn gemini_finish_to_openai_finish(reason: Option<&str>, has_tool: bool) -> Option<String> {
+pub(crate) fn gemini_finish_to_openai_finish(
+    reason: Option<&str>,
+    has_tool: bool,
+) -> Option<String> {
     let reason = reason.filter(|reason| !reason.trim().is_empty())?;
     match reason {
         "MAX_TOKENS" => Some("length".to_string()),

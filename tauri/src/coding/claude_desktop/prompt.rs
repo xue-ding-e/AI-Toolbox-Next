@@ -39,13 +39,17 @@ fn desktop_prompt_order() -> Result<OrderSpec, String> {
     ]))
 }
 
-fn list_prompts_from_sqlite(sqlite_state: &SqliteDbState) -> Result<Vec<ClaudeDesktopPromptConfig>, String> {
+fn list_prompts_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<ClaudeDesktopPromptConfig>, String> {
     let order = desktop_prompt_order()?;
     sqlite_state.with_conn(|conn| {
-        Ok(db_list(conn, DbTable::ClaudeDesktopPromptConfig, Some(&order))?
-            .into_iter()
-            .map(adapter::from_db_value_prompt)
-            .collect())
+        Ok(
+            db_list(conn, DbTable::ClaudeDesktopPromptConfig, Some(&order))?
+                .into_iter()
+                .map(adapter::from_db_value_prompt)
+                .collect(),
+        )
     })
 }
 
@@ -54,10 +58,8 @@ fn get_prompt_from_sqlite(
     config_id: &str,
 ) -> Result<Option<ClaudeDesktopPromptConfig>, String> {
     sqlite_state.with_conn(|conn| {
-        Ok(
-            db_get(conn, DbTable::ClaudeDesktopPromptConfig, config_id)?
-                .map(adapter::from_db_value_prompt),
-        )
+        Ok(db_get(conn, DbTable::ClaudeDesktopPromptConfig, config_id)?
+            .map(adapter::from_db_value_prompt))
     })
 }
 
@@ -84,9 +86,7 @@ fn delete_prompt_from_sqlite(sqlite_state: &SqliteDbState, config_id: &str) -> R
 
 async fn get_local_prompt_config() -> Result<Option<ClaudeDesktopPromptConfig>, String> {
     let prompt_path = get_claude_desktop_prompt_file_path()?;
-    let Some(prompt_content) =
-        read_prompt_content_file(&prompt_path, "Claude Desktop")?
-    else {
+    let Some(prompt_content) = read_prompt_content_file(&prompt_path, "Claude Desktop")? else {
         return Ok(None);
     };
 

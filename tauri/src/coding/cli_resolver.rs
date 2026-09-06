@@ -70,7 +70,8 @@ pub fn manual_cli_path_configured(command_name: &str) -> bool {
 /// Human-readable note to append when a configured manual CLI path exists but
 /// cannot be used, guiding the user back to the tab's "More Options".
 pub fn manual_cli_config_hint(command_name: &str) -> String {
-    if manual_cli_path_configured(command_name) && manual_cli_override_path(command_name).is_none() {
+    if manual_cli_path_configured(command_name) && manual_cli_override_path(command_name).is_none()
+    {
         format!(
             "检测到你已在“更多选项”中手动指定了 `{command_name}` 的 CLI 路径，但该路径当前不存在或不可用；请到对应 tab 的“更多选项”中确认路径是否正确。"
         )
@@ -124,7 +125,10 @@ pub fn cli_resolved_on_path(command_name: &str) -> bool {
 }
 
 /// Resolve a local CLI program by name, checking PATH first then extra candidate dirs.
-pub fn resolve_named_cli_program(command_name: &str, candidate_paths: Vec<PathBuf>) -> LocalCliProgram {
+pub fn resolve_named_cli_program(
+    command_name: &str,
+    candidate_paths: Vec<PathBuf>,
+) -> LocalCliProgram {
     resolve_local_cli_program(command_name, candidate_paths)
 }
 
@@ -197,7 +201,11 @@ fn default_npm_global_candidates(command_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(home_dir) = dirs::home_dir() {
-        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), command_name);
+        push_command_candidate(
+            &mut candidates,
+            home_dir.join(".local").join("bin"),
+            command_name,
+        );
     }
 
     push_command_candidate(&mut candidates, "/opt/homebrew/bin", command_name);
@@ -213,7 +221,8 @@ fn default_npm_global_candidates(command_name: &str) -> Vec<PathBuf> {
 /// `cli_resolved_on_path` (PATH-only) so a CLI installed via a version manager is
 /// detected even when the GUI host lacks that PATH.
 pub fn resolve_local_cli_by_name(command_name: &str) -> Option<LocalCliProgram> {
-    let program = resolve_named_cli_program(command_name, default_npm_global_candidates(command_name));
+    let program =
+        resolve_named_cli_program(command_name, default_npm_global_candidates(command_name));
     (program.path.as_os_str() != OsStr::new(command_name)).then_some(program)
 }
 
@@ -999,10 +1008,7 @@ fn collect_mise_data_dirs(
 }
 
 /// Collect asdf data directories. Order: `$ASDF_DATA_DIR` → `~/.asdf`.
-fn collect_asdf_data_dirs(
-    asdf_data_dir: Option<&Path>,
-    home_dir: Option<&Path>,
-) -> Vec<PathBuf> {
+fn collect_asdf_data_dirs(asdf_data_dir: Option<&Path>, home_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(asdf_data_dir) = asdf_data_dir {
         push_unique_path(&mut roots, asdf_data_dir.to_path_buf());
@@ -1204,8 +1210,11 @@ mod tests {
         #[cfg(target_os = "windows")]
         let script_path = test_dir.path().join("hanging.ps1");
         #[cfg(target_os = "windows")]
-        fs::write(&script_path, "Start-Sleep -Seconds 5\nWrite-Output 'too late'\n")
-            .expect("write hanging PowerShell script");
+        fs::write(
+            &script_path,
+            "Start-Sleep -Seconds 5\nWrite-Output 'too late'\n",
+        )
+        .expect("write hanging PowerShell script");
 
         #[cfg(not(target_os = "windows"))]
         let script_path = test_dir.path().join("hanging.sh");
@@ -1395,12 +1404,7 @@ mod tests {
         fs::create_dir_all(&node_bin).expect("failed to create mise node bin dir");
 
         let mut candidates = Vec::new();
-        super::append_mise_asdf_candidates_with_roots(
-            &mut candidates,
-            "pi",
-            &[mise_root],
-            &[],
-        );
+        super::append_mise_asdf_candidates_with_roots(&mut candidates, "pi", &[mise_root], &[]);
 
         assert!(candidates.contains(&shims_dir.join("pi")));
         assert!(candidates.contains(&node_bin.join("pi")));
@@ -1421,12 +1425,7 @@ mod tests {
         fs::create_dir_all(&node_bin).expect("failed to create asdf node bin dir");
 
         let mut candidates = Vec::new();
-        super::append_mise_asdf_candidates_with_roots(
-            &mut candidates,
-            "pi",
-            &[],
-            &[asdf_root],
-        );
+        super::append_mise_asdf_candidates_with_roots(&mut candidates, "pi", &[], &[asdf_root]);
 
         assert!(candidates.contains(&shims_dir.join("pi")));
         assert!(candidates.contains(&node_bin.join("pi")));
@@ -1475,23 +1474,13 @@ mod tests {
 
         // No mise shims yet -> nothing injected (even with a data root listed).
         let mut dirs = Vec::new();
-        super::append_mise_asdf_runtime_dirs(
-            &mut dirs,
-            Some(&home_dir),
-            &[mise_root.clone()],
-            &[],
-        );
+        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir), &[mise_root.clone()], &[]);
         assert!(dirs.is_empty());
 
         // With shims present -> shims + manager bin dirs injected.
         fs::create_dir_all(&mise_shims).expect("failed to create mise shims dir");
         fs::create_dir_all(&local_bin).expect("failed to create local bin dir");
-        super::append_mise_asdf_runtime_dirs(
-            &mut dirs,
-            Some(&home_dir),
-            &[mise_root],
-            &[],
-        );
+        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir), &[mise_root], &[]);
 
         assert!(dirs.contains(&mise_shims));
         assert!(dirs.contains(&local_bin));
@@ -1506,22 +1495,12 @@ mod tests {
         let local_bin = home_dir.join(".local").join("bin");
 
         let mut dirs = Vec::new();
-        super::append_mise_asdf_runtime_dirs(
-            &mut dirs,
-            Some(&home_dir),
-            &[],
-            &[asdf_root.clone()],
-        );
+        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir), &[], &[asdf_root.clone()]);
         assert!(dirs.is_empty());
 
         fs::create_dir_all(&asdf_shims).expect("failed to create asdf shims dir");
         fs::create_dir_all(&local_bin).expect("failed to create local bin dir");
-        super::append_mise_asdf_runtime_dirs(
-            &mut dirs,
-            Some(&home_dir),
-            &[],
-            &[asdf_root],
-        );
+        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir), &[], &[asdf_root]);
 
         assert!(dirs.contains(&asdf_shims));
         assert!(dirs.contains(&local_bin));
@@ -1554,12 +1533,7 @@ mod tests {
         assert!(candidates.contains(&node_bin.join("pi")));
 
         let mut dirs = Vec::new();
-        super::append_mise_asdf_runtime_dirs(
-            &mut dirs,
-            Some(&home_dir),
-            &[custom_root],
-            &[],
-        );
+        super::append_mise_asdf_runtime_dirs(&mut dirs, Some(&home_dir), &[custom_root], &[]);
         assert!(dirs.contains(&shims));
         assert!(dirs.contains(&local_bin));
     }
