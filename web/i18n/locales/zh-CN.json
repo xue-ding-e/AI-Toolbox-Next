@@ -1240,7 +1240,18 @@
     "terminalWt": "Windows Terminal",
     "terminalGitBash": "Git Bash",
     "disable": "禁用",
-    "share": "分享"
+    "share": "分享",
+    "providerSort": {
+      "label": "排序",
+      "custom": "默认",
+      "recent": "最近使用",
+      "created": "按创建时间",
+      "name": "按名称"
+    },
+    "providerSearch": {
+      "placeholder": "搜索供应商",
+      "noMatch": "未找到匹配的供应商"
+    }
   },
   "sessionManager": {
     "title": "会话管理",

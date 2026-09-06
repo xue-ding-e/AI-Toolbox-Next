@@ -671,6 +671,15 @@ pub async fn apply_pi_default_provider_internal<R: Runtime>(
     object_mut(&mut settings)?.insert("defaultProvider".to_string(), json!(provider_key));
     write_json_object(&settings_path, &settings)?;
     emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            "pi",
+            provider_key,
+        )
+    {
+        log::warn!("Failed to record provider last-used for pi:{provider_key}: {error}");
+    }
     Ok(())
 }
 

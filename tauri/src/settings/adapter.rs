@@ -3,7 +3,6 @@ use super::types::{
     BackupCustomEntry, BackupFileFilterRule, S3Config, SessionContentFilter, SessionDetailFilters,
     SessionRoleFilter, WebDAVConfig,
 };
-use std::collections::HashMap;
 /**
  * Settings Adapter Layer
  *
@@ -11,6 +10,7 @@ use std::collections::HashMap;
  * This layer ensures backward compatibility and eliminates version conflicts.
  */
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 /// Convert database JSON Value to AppSettings with fault tolerance
 /// Missing fields will use default values, never panics
@@ -91,6 +91,8 @@ pub fn from_db_value(value: Value) -> AppSettings {
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
         cli_manual_paths: get_string_map(&value, "cli_manual_paths"),
         session_detail_filters: get_session_detail_filters(&value),
+        provider_sort_modes: get_string_map(&value, "provider_sort_modes"),
+        provider_last_used: get_string_map(&value, "provider_last_used"),
     }
 }
 

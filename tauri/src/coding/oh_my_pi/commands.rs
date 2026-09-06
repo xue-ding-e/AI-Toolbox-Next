@@ -20,8 +20,9 @@ use crate::db::SqliteDbState;
 use tauri::{Emitter, Runtime};
 
 /// OMP 思考级别白名单(OMP 支持 `auto`,比 Pi 多一个)。
-const OMP_THINKING_LEVEL_KEYS: [&str; 8] =
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"];
+const OMP_THINKING_LEVEL_KEYS: [&str; 8] = [
+    "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto",
+];
 const OMP_MODEL_ROLE_KEY: &str = "default";
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -58,7 +59,9 @@ pub fn get_omp_root_path_info_from_db(db: &SqliteDbState) -> Result<OmpPathInfo,
     })
 }
 
-pub async fn get_omp_root_path_info_from_db_async(db: &SqliteDbState) -> Result<OmpPathInfo, String> {
+pub async fn get_omp_root_path_info_from_db_async(
+    db: &SqliteDbState,
+) -> Result<OmpPathInfo, String> {
     let location = runtime_location::get_oh_my_pi_runtime_location_async(db).await?;
     Ok(OmpPathInfo {
         path: location.host_path.to_string_lossy().to_string(),
@@ -101,15 +104,21 @@ pub fn get_omp_prompt_path_from_root(root_dir: &Path) -> PathBuf {
 }
 
 pub async fn get_omp_config_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
-    Ok(get_omp_config_path_from_root(&get_omp_root_dir_from_db_async(db).await?))
+    Ok(get_omp_config_path_from_root(
+        &get_omp_root_dir_from_db_async(db).await?,
+    ))
 }
 
 pub async fn get_omp_models_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
-    Ok(get_omp_models_path_from_root(&get_omp_root_dir_from_db_async(db).await?))
+    Ok(get_omp_models_path_from_root(
+        &get_omp_root_dir_from_db_async(db).await?,
+    ))
 }
 
 pub async fn get_omp_mcp_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
-    Ok(get_omp_mcp_path_from_root(&get_omp_root_dir_from_db_async(db).await?))
+    Ok(get_omp_mcp_path_from_root(
+        &get_omp_root_dir_from_db_async(db).await?,
+    ))
 }
 
 pub fn get_omp_mcp_path_from_db(db: &SqliteDbState) -> Result<PathBuf, String> {
@@ -119,7 +128,9 @@ pub fn get_omp_mcp_path_from_db(db: &SqliteDbState) -> Result<PathBuf, String> {
 }
 
 pub async fn get_omp_prompt_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
-    Ok(get_omp_prompt_path_from_root(&get_omp_root_dir_from_db_async(db).await?))
+    Ok(get_omp_prompt_path_from_root(
+        &get_omp_root_dir_from_db_async(db).await?,
+    ))
 }
 
 fn read_yaml_object_or_empty(path: &Path) -> Result<Value, String> {
@@ -272,17 +283,19 @@ fn normalize_omp_provider_for_omptype(provider: &mut Value) {
 }
 
 /// OMP ThinkingControlModeSchema 允许的取值。
-const OMP_THINKING_MODES: [&str; 5] =
-    ["effort", "budget", "google-level", "anthropic-adaptive", "anthropic-budget-effort"];
+const OMP_THINKING_MODES: [&str; 5] = [
+    "effort",
+    "budget",
+    "google-level",
+    "anthropic-adaptive",
+    "anthropic-budget-effort",
+];
 
 /// OMP `thinking` schema 里 mode 是必填字段。若模型带 `thinking` 块但缺
 /// `mode`(旧数据或用户手写 JSON),按 provider `api` 推断一个合理值(镜像上游
 /// `inferThinkingControlMode`);api 缺失/未知时回退 effort。
 fn add_omp_thinking_mode(model_obj: &mut Map<String, Value>, provider_api: Option<&str>) {
-    let Some(thinking) = model_obj
-        .get_mut("thinking")
-        .and_then(Value::as_object_mut)
-    else {
+    let Some(thinking) = model_obj.get_mut("thinking").and_then(Value::as_object_mut) else {
         return;
     };
     if thinking.contains_key("mode") {
@@ -467,7 +480,10 @@ fn build_provider_views(settings: &Value, models: &Value) -> Vec<OmpRuntimeProvi
                 .map(str::to_string)
                 .or_else(|| {
                     models_provider.as_ref().and_then(|value| {
-                        value.get("name").and_then(Value::as_str).map(str::to_string)
+                        value
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
                     })
                 })
                 .unwrap_or_else(|| provider_key.clone()),
@@ -577,8 +593,13 @@ pub async fn save_omp_settings_config(
     let data = adapter::settings_to_db_value(root_dir.as_deref());
     db.with_conn(|conn| db_put(conn, DbTable::OhMyPiSettingsConfig, "common", &data))?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "oh_my_pi").await?;
-    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "oh_my_pi", previous_skills_path)
-        .await;
+    resync_all_skills_if_tool_path_changed(
+        app.clone(),
+        state.inner(),
+        "oh_my_pi",
+        previous_skills_path,
+    )
+    .await;
     emit_config_changed(&app, "window");
     Ok(())
 }
@@ -640,7 +661,10 @@ async fn update_default_selection(
         .cloned()
         .unwrap_or_default();
     if let (Some(provider), Some(model)) = (next_provider, next_model) {
-        roles.insert(OMP_MODEL_ROLE_KEY.to_string(), Value::String(format!("{provider}/{model}")));
+        roles.insert(
+            OMP_MODEL_ROLE_KEY.to_string(),
+            Value::String(format!("{provider}/{model}")),
+        );
     } else {
         roles.remove(OMP_MODEL_ROLE_KEY);
     }
@@ -671,9 +695,9 @@ pub async fn save_omp_model_settings(
     input: OmpModelSettingsInput,
 ) -> Result<OmpRuntimeConfig, String> {
     let db = state.db();
-    let current = default_selection_from_settings(
-        &read_yaml_object_or_empty(&get_omp_config_path_async(&db).await?)?,
-    );
+    let current = default_selection_from_settings(&read_yaml_object_or_empty(
+        &get_omp_config_path_async(&db).await?,
+    )?);
     let provider_key = input
         .default_provider
         .as_deref()
@@ -740,9 +764,9 @@ pub async fn apply_omp_default_model_internal<R: Runtime>(
         return Err("Model id is required".to_string());
     }
 
-    let current = default_selection_from_settings(
-        &read_yaml_object_or_empty(&get_omp_config_path_async(db).await?)?,
-    );
+    let current = default_selection_from_settings(&read_yaml_object_or_empty(
+        &get_omp_config_path_async(db).await?,
+    )?);
     update_default_selection(
         db,
         Some(provider_key),
@@ -752,6 +776,15 @@ pub async fn apply_omp_default_model_internal<R: Runtime>(
     )
     .await?;
     emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            "omp",
+            provider_key,
+        )
+    {
+        log::warn!("Failed to record provider last-used for omp:{provider_key}: {error}");
+    }
     Ok(())
 }
 
@@ -1146,10 +1179,7 @@ mod tests {
 
         normalize_omp_provider_for_omptype(&mut provider);
 
-        assert_eq!(
-            provider["models"][0],
-            json!({ "id": "a" })
-        );
+        assert_eq!(provider["models"][0], json!({ "id": "a" }));
         assert_eq!(
             provider["models"][1],
             json!({
@@ -1168,10 +1198,7 @@ mod tests {
             ]
         });
         normalize_omp_provider_for_omptype(&mut provider);
-        assert_eq!(
-            provider["models"][0]["thinking"]["mode"],
-            json!("effort")
-        );
+        assert_eq!(provider["models"][0]["thinking"]["mode"], json!("effort"));
 
         // openai-responses thinking may carry an explicit mode; must be preserved.
         let mut provider = json!({
@@ -1181,10 +1208,7 @@ mod tests {
             ]
         });
         normalize_omp_provider_for_omptype(&mut provider);
-        assert_eq!(
-            provider["models"][0]["thinking"]["mode"],
-            json!("budget")
-        );
+        assert_eq!(provider["models"][0]["thinking"]["mode"], json!("budget"));
 
         // google api defaults to google-level.
         let mut provider = json!({
@@ -1220,10 +1244,7 @@ mod tests {
             ]
         });
         normalize_omp_provider_for_omptype(&mut provider);
-        assert_eq!(
-            provider["models"][0]["thinking"]["mode"],
-            json!("effort")
-        );
+        assert_eq!(provider["models"][0]["thinking"]["mode"], json!("effort"));
 
         // No thinking block -> nothing added.
         let mut provider = json!({
@@ -1259,11 +1280,19 @@ mod tests {
     fn global_thinking_level_accepts_full_vocabulary_and_rejects_unknown() {
         // defaultThinkingLevel 是全局设置:合法值 = off/auto + EffortSchema
         // 词表 minimal..max;与"当前选中模型支持哪些 effort"无关。
-        for level in ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"] {
-            assert!(is_valid_global_thinking_level(level), "expected {level} valid");
+        for level in [
+            "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto",
+        ] {
+            assert!(
+                is_valid_global_thinking_level(level),
+                "expected {level} valid"
+            );
         }
         for level in ["none", "ultra", "", "HIGH"] {
-            assert!(!is_valid_global_thinking_level(level), "expected {level:?} invalid");
+            assert!(
+                !is_valid_global_thinking_level(level),
+                "expected {level:?} invalid"
+            );
         }
     }
 
@@ -1293,10 +1322,13 @@ mod tests {
         });
 
         let other = build_other_settings(&settings);
-        assert_eq!(other, json!({
-            "theme": {"dark": true},
-            "compaction.enabled": false
-        }));
+        assert_eq!(
+            other,
+            json!({
+                "theme": {"dark": true},
+                "compaction.enabled": false
+            })
+        );
     }
 
     #[test]

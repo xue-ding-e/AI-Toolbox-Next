@@ -518,7 +518,22 @@ pub async fn select_grok_provider_internal_with_sync<R: tauri::Runtime>(
         let _ = app.emit("config-changed", if from_tray { "tray" } else { "window" });
         emit_grok_sync(app);
     }
+    record_last_used_best_effort(state, "grok", id);
     Ok(())
+}
+
+/// Best-effort "recently used" marker for provider list sorting. Failures must
+/// never break the provider apply flow itself.
+fn record_last_used_best_effort(state: &SqliteDbState, module: &str, provider_id: &str) {
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            state,
+            module,
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for {module}:{provider_id}: {error}");
+    }
 }
 
 pub async fn select_grok_provider_internal_without_events<R: tauri::Runtime>(

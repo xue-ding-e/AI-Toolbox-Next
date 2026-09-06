@@ -1240,7 +1240,18 @@
     "terminalWt": "Windows Terminal",
     "terminalGitBash": "Git Bash",
     "disable": "Disable",
-    "share": "Share"
+    "share": "Share",
+    "providerSort": {
+      "label": "Sort",
+      "custom": "Default",
+      "recent": "Recently used",
+      "created": "By creation time",
+      "name": "By name"
+    },
+    "providerSearch": {
+      "placeholder": "Search providers",
+      "noMatch": "No matching providers"
+    }
   },
   "sessionManager": {
     "title": "Session Manager",

@@ -485,8 +485,7 @@ async fn read_codex_settings_from_disk(
         // later lost (manual edit, partial migration, cross-replica sync) the
         // leftover field makes Codex CLI refuse to load config.toml with
         // "Model provider `ai-toolbox-gateway` not found".
-        heal_dangling_codex_model_provider(&config_path, &raw)?
-            .or(Some(raw))
+        heal_dangling_codex_model_provider(&config_path, &raw)?.or(Some(raw))
     } else {
         None
     };
@@ -533,9 +532,8 @@ fn heal_dangling_codex_model_provider(
 
     document.as_table_mut().remove("model_provider");
     let healed = document.to_string();
-    fs::write(config_path, &healed).map_err(|e| {
-        format!("Failed to heal dangling model_provider in config.toml: {e}")
-    })?;
+    fs::write(config_path, &healed)
+        .map_err(|e| format!("Failed to heal dangling model_provider in config.toml: {e}"))?;
     log::warn!(
         "Codex config.toml had dangling model_provider = \"{}\" with no matching [model_providers.{}] table; removed it to restore Codex loadability.",
         provider_id,
@@ -3766,7 +3764,23 @@ async fn apply_config_internal_with_events<R: tauri::Runtime>(
         let _ = app.emit("wsl-sync-request-codex", ());
     }
 
+    record_last_used_best_effort(db, "codex", provider_id);
+
     Ok(())
+}
+
+/// Best-effort "recently used" marker for provider list sorting. Failures must
+/// never break the provider apply flow itself.
+fn record_last_used_best_effort(db: &crate::db::SqliteDbState, module: &str, provider_id: &str) {
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            module,
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for {module}:{provider_id}: {error}");
+    }
 }
 
 // ============================================================================
@@ -4505,7 +4519,9 @@ approval_policy = "never"
             .collect();
         assert_eq!(efforts_a, vec!["max", "ultra"]);
         assert_eq!(
-            entry_a.get("default_reasoning_level").and_then(|v| v.as_str()),
+            entry_a
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
             Some("max")
         );
 
@@ -4517,9 +4533,14 @@ approval_policy = "never"
             .iter()
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
-        assert_eq!(efforts_b, vec!["low", "medium", "high", "xhigh", "max", "ultra"]);
         assert_eq!(
-            entry_b.get("default_reasoning_level").and_then(|v| v.as_str()),
+            efforts_b,
+            vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(
+            entry_b
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
             Some("medium")
         );
 
@@ -4534,7 +4555,9 @@ approval_policy = "never"
             .collect();
         assert_eq!(efforts_c, vec!["low", "high"]);
         assert_eq!(
-            entry_c.get("default_reasoning_level").and_then(|v| v.as_str()),
+            entry_c
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
             Some("high")
         );
     }
@@ -5013,7 +5036,9 @@ wire_api = "responses"
         );
         // No explicit user default → template default "high" is still canonical → kept.
         assert_eq!(
-            entry.get("default_reasoning_level").and_then(|v| v.as_str()),
+            entry
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
             Some("high")
         );
     }
@@ -6074,10 +6099,7 @@ command = "node"
         let doc: DocumentMut = on_disk.parse().unwrap();
         assert!(doc.get("model_provider").is_none());
         // Runtime-owned sections must be preserved verbatim.
-        assert_eq!(
-            doc["mcp_servers"]["keep"]["command"].as_str(),
-            Some("node")
-        );
+        assert_eq!(doc["mcp_servers"]["keep"]["command"].as_str(), Some("node"));
     }
 
     #[test]
@@ -6122,8 +6144,8 @@ base_url = "http://127.0.0.1:37123/openai/v1"
 "#;
         std::fs::write(&config_path, original).unwrap();
 
-        let healed = heal_dangling_codex_model_provider(&config_path, original)
-            .expect("heal check");
+        let healed =
+            heal_dangling_codex_model_provider(&config_path, original).expect("heal check");
         assert!(healed.is_none(), "valid config must not be rewritten");
 
         let on_disk = std::fs::read_to_string(&config_path).unwrap();
@@ -6139,8 +6161,8 @@ approval_policy = "never"
 "#;
         std::fs::write(&config_path, original).unwrap();
 
-        let healed = heal_dangling_codex_model_provider(&config_path, original)
-            .expect("heal check");
+        let healed =
+            heal_dangling_codex_model_provider(&config_path, original).expect("heal check");
         assert!(healed.is_none());
         let on_disk = std::fs::read_to_string(&config_path).unwrap();
         assert_eq!(on_disk, original);

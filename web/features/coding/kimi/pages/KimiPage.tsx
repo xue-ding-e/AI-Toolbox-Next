@@ -109,6 +109,15 @@ import type {
 import { KIMI_LOCAL_PROVIDER_ID } from '@/types/kimi';
 import type { GatewayCliTakeoverStatus } from '@/services';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import {
+  PROVIDER_SORT_MODES,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 import KimiCommonConfigModal from '../components/KimiCommonConfigModal';
 import KimiDeviceAuthModal from '../components/KimiDeviceAuthModal';
 import KimiPluginsPanel from '../components/KimiPluginsPanel';
@@ -365,10 +374,31 @@ const KimiPage: React.FC = () => {
     }
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('kimi');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass sort_index, so dragging would
+  // write a stale custom order — dnd is only enabled in custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providers, providerKeyword, (provider) => [
+          provider.name,
+          provider.notes ?? '',
+          provider.websiteUrl ?? '',
+        ]),
+        sortMode,
+        { name: (provider) => provider.name, createdAt: (provider) => provider.createdAt },
+        (provider) => lastUsedAt(provider.id),
+      ),
+    [providers, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleApplyProvider = async (provider: KimiProvider) => {
     try {
       await selectKimiProvider(provider.id);
       message.success(t('kimi.applySuccess'));
+      noteProviderUsed(provider.id);
       await loadConfig(true);
       await refreshTrayMenu();
     } catch (error) {
@@ -705,7 +735,13 @@ const KimiPage: React.FC = () => {
                 </Space>
               ),
               extra: (
-                <Space size={4}>
+                <Space size={4} wrap>
+                  <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                  <ProviderSortDropdown
+                    mode={sortMode}
+                    modes={PROVIDER_SORT_MODES}
+                    onChange={setSortMode}
+                  />
                   <Button
                     type="link"
                     size="small"
@@ -773,38 +809,40 @@ const KimiPage: React.FC = () => {
 
                   {providers.length === 0 ? (
                     <Empty description={t('kimi.emptyText')} style={{ marginTop: 40 }} />
+                  ) : visibleProviders.length === 0 ? (
+                    <ProviderSearchEmpty />
                   ) : (
                     <DndContext
-                      sensors={sensors}
-                      collisionDetection={closestCenter}
-                      onDragEnd={(event) => void handleDragEnd(event)}
-                      modifiers={[restrictToVerticalAxis]}
-                    >
-                      <SortableContext
-                        items={providers.map((provider) => provider.id)}
-                        strategy={verticalListSortingStrategy}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                          {providers.map((provider) => (
-                            <KimiProviderCard
-                              key={provider.id}
-                              provider={provider}
-                              isApplied={provider.id === appliedProviderId}
-                              gatewayTakeoverActive={gatewayTakeoverActive}
-                              gatewayStatus={gatewayCliStatus}
-                              onGatewayStatusChange={setGatewayCliStatus}
-                              onEdit={handleEditProvider}
-                              onDelete={(value) => void handleDeleteProvider(value)}
-                              onApply={(value) => void handleApplyProvider(value)}
-                              onToggleDisabled={handleToggleDisabled}
-                              onTest={handleTestProvider}
-                              onCopy={handleCopyProvider}
-                              connectivityStatus={connectivityStatuses[provider.id]}
-                            />
-                          ))}
-                        </div>
-                      </SortableContext>
-                    </DndContext>
+                          sensors={providerDragDisabled ? [] : sensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={(event) => void handleDragEnd(event)}
+                          modifiers={[restrictToVerticalAxis]}
+                        >
+                          <SortableContext
+                            items={providers.map((provider) => provider.id)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                              {visibleProviders.map((provider) => (
+                                <KimiProviderCard
+                                  key={provider.id}
+                                  provider={provider}
+                                  isApplied={provider.id === appliedProviderId}
+                                  gatewayTakeoverActive={gatewayTakeoverActive}
+                                  gatewayStatus={gatewayCliStatus}
+                                  onGatewayStatusChange={setGatewayCliStatus}
+                                  onEdit={handleEditProvider}
+                                  onDelete={(value) => void handleDeleteProvider(value)}
+                                  onApply={(value) => void handleApplyProvider(value)}
+                                  onToggleDisabled={handleToggleDisabled}
+                                  onTest={handleTestProvider}
+                                  onCopy={handleCopyProvider}
+                                  connectivityStatus={connectivityStatuses[provider.id]}
+                                />
+                              ))}
+                            </div>
+                          </SortableContext>
+                        </DndContext>
                   )}
 
                   {officialAccounts.length > 0 ? (

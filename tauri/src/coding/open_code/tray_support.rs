@@ -216,6 +216,19 @@ pub async fn apply_opencode_model<R: Runtime>(
     // Save config from tray (will emit "tray" event)
     super::commands::apply_config_internal(app.state(), app, config, true).await?;
 
+    // Only switching the main model counts as "using" the provider.
+    if model_type == "main" {
+        if let Err(error) =
+            crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+                &app.state(),
+                "opencode",
+                provider_id,
+            )
+        {
+            log::warn!("Failed to record provider last-used for opencode:{provider_id}: {error}");
+        }
+    }
+
     Ok(())
 }
 

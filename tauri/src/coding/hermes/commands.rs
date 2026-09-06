@@ -46,7 +46,12 @@ fn default_hermes_config_dir() -> Result<PathBuf, String> {
             .map(|value| value.to_string_lossy().trim().to_string())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| get_home_dir().unwrap_or_default().join("AppData").join("Local"));
+            .unwrap_or_else(|| {
+                get_home_dir()
+                    .unwrap_or_default()
+                    .join("AppData")
+                    .join("Local")
+            });
         Ok(local.join("hermes"))
     }
     #[cfg(not(target_os = "windows"))]
@@ -455,8 +460,12 @@ fn backup_hermes_config<R: Runtime>(
         .map_err(|error| format!("Failed to resolve app data dir: {error}"))?
         .join("backups")
         .join("hermes");
-    fs::create_dir_all(&backup_dir)
-        .map_err(|error| format!("Failed to create backup dir {}: {error}", backup_dir.display()))?;
+    fs::create_dir_all(&backup_dir).map_err(|error| {
+        format!(
+            "Failed to create backup dir {}: {error}",
+            backup_dir.display()
+        )
+    })?;
 
     let stamp = Local::now().format("%Y%m%d_%H%M%S");
     let base = format!("config_{stamp}");
@@ -487,7 +496,11 @@ fn prune_hermes_config_backups(dir: &Path) -> Result<(), String> {
     if entries.len() <= HERMES_CONFIG_BACKUP_RETAIN {
         return Ok(());
     }
-    entries.sort_by_key(|path| path.metadata().and_then(|metadata| metadata.modified()).ok());
+    entries.sort_by_key(|path| {
+        path.metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+    });
     let remove_count = entries.len() - HERMES_CONFIG_BACKUP_RETAIN;
     for stale in entries.iter().take(remove_count) {
         if let Err(error) = fs::remove_file(stale) {
@@ -622,12 +635,7 @@ fn apply_string_field(object: &mut Map<String, Value>, key: &str, value: Option<
     }
 }
 
-fn apply_number_field(
-    object: &mut Map<String, Value>,
-    key: &str,
-    value: Option<u64>,
-    clear: bool,
-) {
+fn apply_number_field(object: &mut Map<String, Value>, key: &str, value: Option<u64>, clear: bool) {
     if clear {
         object.remove(key);
         return;
@@ -1102,9 +1110,7 @@ pub async fn delete_hermes_runtime_provider(
         .cloned()
         .unwrap_or_default();
     let original_len = providers.len();
-    providers.retain(|provider| {
-        provider.get("name").and_then(Value::as_str) != Some(provider_key)
-    });
+    providers.retain(|provider| provider.get("name").and_then(Value::as_str) != Some(provider_key));
     if providers.len() == original_len {
         // Nothing matched — leave the file untouched.
         drop(_guard);
@@ -1200,6 +1206,15 @@ pub async fn apply_hermes_model_internal<R: Runtime>(
     write_yaml_sections_with_backup(app, &config_path, &[("model", model_section)])?;
     drop(_guard);
     emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            "hermes",
+            provider_key,
+        )
+    {
+        log::warn!("Failed to record provider last-used for hermes:{provider_key}: {error}");
+    }
     Ok(())
 }
 
@@ -1424,7 +1439,10 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<HermesProm
     }))
 }
 
-async fn write_prompt_content_to_file(db: &SqliteDbState, content: Option<&str>) -> Result<(), String> {
+async fn write_prompt_content_to_file(
+    db: &SqliteDbState,
+    content: Option<&str>,
+) -> Result<(), String> {
     let path = get_hermes_prompt_path_async(db).await?;
     write_prompt_content_file(&path, content, "Hermes")
 }
@@ -1862,7 +1880,13 @@ model:
         let raw = "model:\r\n  default: gpt-4\r\nagent:\r\n  max_turns: 10\r\n";
         let new_model = json!({ "default": "claude" });
         let result = replace_yaml_section(raw, "model", &new_model).unwrap();
-        assert_eq!(result.lines().filter(|line| line.trim() == "model:").count(), 1);
+        assert_eq!(
+            result
+                .lines()
+                .filter(|line| line.trim() == "model:")
+                .count(),
+            1
+        );
         assert!(result.contains("claude"));
         assert!(result.contains("max_turns"));
     }
@@ -1912,7 +1936,10 @@ model:
             "custom_providers": [ { "name": "deepseek", "api_key": "sk" } ],
             "providers": { "deepseek": { "name": "deepseek" } }
         });
-        assert!(!is_dict_only_provider(config.as_object().unwrap(), "deepseek"));
+        assert!(!is_dict_only_provider(
+            config.as_object().unwrap(),
+            "deepseek"
+        ));
     }
 
     #[test]
@@ -1942,7 +1969,10 @@ model:
             "providers": { "anthropic": { "base_url": "https://api.anthropic.com" } }
         });
         let builtin_views = build_provider_views(&builtin_config);
-        let anthropic = builtin_views.iter().find(|v| v.provider_key == "anthropic").unwrap();
+        let anthropic = builtin_views
+            .iter()
+            .find(|v| v.provider_key == "anthropic")
+            .unwrap();
         assert_eq!(anthropic.display_name, "Anthropic");
     }
 

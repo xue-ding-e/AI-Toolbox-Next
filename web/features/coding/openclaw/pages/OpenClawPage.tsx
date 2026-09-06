@@ -132,6 +132,15 @@ import {
   type OpenClawFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import {
+  PROVIDER_SORT_MODES_BASIC,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import { extractOpenClawProviderFromCcSwitch } from '../utils/importMapping';
@@ -417,6 +426,27 @@ const OpenClawPage: React.FC = () => {
     if (!config?.models?.providers) return [];
     return Object.entries(config.models.providers);
   }, [config]);
+
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('openclaw');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass the config file order, so
+  // dragging would write a stale custom order — dnd is only enabled in
+  // custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviderEntries = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providerEntries, providerKeyword, ([providerId, providerConfig]) => [
+          providerId,
+          providerConfig.baseUrl ?? '',
+          ...(providerConfig.models ?? []).flatMap((model) => [model.id, model.name ?? '']),
+        ]),
+        sortMode,
+        { name: ([providerId]) => providerId },
+        ([providerId]) => lastUsedAt(providerId),
+      ),
+    [providerEntries, providerKeyword, sortMode, lastUsedAt],
+  );
 
   const handleAddProvider = () => {
     setEditingProvider(null);
@@ -1496,6 +1526,7 @@ const OpenClawPage: React.FC = () => {
                         defaults={agentsDefaults}
                         config={config}
                         onSaved={handleSectionSaved}
+                        onProviderUsed={noteProviderUsed}
                       />
                     ),
                   },
@@ -1523,7 +1554,13 @@ const OpenClawPage: React.FC = () => {
                       </Text>
                     ),
                     extra: (
-                      <Space size={4}>
+                      <Space size={4} wrap>
+                        <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                        <ProviderSortDropdown
+                          mode={sortMode}
+                          modes={PROVIDER_SORT_MODES_BASIC}
+                          onChange={setSortMode}
+                        />
                         <Button
                           type="link"
                           size="small"
@@ -1553,9 +1590,11 @@ const OpenClawPage: React.FC = () => {
                       <Spin spinning={loading}>
                         {providerEntries.length === 0 ? (
                           <Empty description={t('openclaw.providers.emptyText')} />
+                        ) : visibleProviderEntries.length === 0 ? (
+                          <ProviderSearchEmpty />
                         ) : (
                           <DndContext
-                            sensors={sensors}
+                            sensors={providerDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             modifiers={[restrictToVerticalAxis]}
                             onDragEnd={handleProviderDragEnd}
@@ -1564,12 +1603,12 @@ const OpenClawPage: React.FC = () => {
                               items={providerEntries.map(([id]) => id)}
                               strategy={verticalListSortingStrategy}
                             >
-                              {providerEntries.map(([providerId, providerConfig]) => (
+                              {visibleProviderEntries.map(([providerId, providerConfig]) => (
                                 <OpenClawProviderCard
                                   key={providerId}
                                   providerId={providerId}
                                   config={providerConfig}
-                                  draggable
+                                  draggable={!providerDragDisabled}
                                   sortableId={providerId}
                                   modelsDraggable
                                   onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}

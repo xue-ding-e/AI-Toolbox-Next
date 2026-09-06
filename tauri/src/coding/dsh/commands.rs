@@ -957,6 +957,15 @@ pub async fn apply_dsh_model_internal<R: Runtime>(
 
     write_yaml_object(&config_path, &config)?;
     emit_config_changed(app, if from_tray { "tray" } else { "window" });
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            "dsh",
+            provider_key,
+        )
+    {
+        log::warn!("Failed to record provider last-used for dsh:{provider_key}: {error}");
+    }
     Ok(())
 }
 
@@ -1283,9 +1292,7 @@ pub async fn disable_dsh_prompt_config(
     get_dsh_prompt_from_sqlite(&db, &config_id)?
         .ok_or_else(|| format!("Prompt config '{config_id}' not found"))?;
     let now = Local::now().to_rfc3339();
-    db.with_conn_mut(|conn| {
-        db_update_applied_status(conn, DbTable::DshPromptConfig, None, &now)
-    })?;
+    db.with_conn_mut(|conn| db_update_applied_status(conn, DbTable::DshPromptConfig, None, &now))?;
     write_prompt_content_to_file(&db, Some("")).await?;
     emit_config_changed(&app, "window");
     Ok(())

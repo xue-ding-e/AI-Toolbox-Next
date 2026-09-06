@@ -125,6 +125,15 @@ import {
   sanitizeOpenCodeAgentModelReferences,
 } from '@/features/coding/opencode/utils/openCodeAgentConfig';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import {
+  PROVIDER_SORT_MODES_BASIC,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 
 import styles from './OpenCodePage.module.less';
 
@@ -884,6 +893,26 @@ const OpenCodePage: React.FC = () => {
     () => (config?.provider ? Object.entries(config.provider) : []),
     [config?.provider],
   );
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('opencode');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass the config file order, so
+  // dragging would write a stale custom order — dnd is only enabled in
+  // custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviderEntries = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providerEntries, providerKeyword, ([providerId, provider]) => [
+          providerId,
+          provider.options?.baseURL ?? '',
+          ...Object.keys(provider.models ?? {}),
+        ]),
+        sortMode,
+        { name: ([providerId]) => providerId },
+        ([providerId]) => lastUsedAt(providerId),
+      ),
+    [providerEntries, providerKeyword, sortMode, lastUsedAt],
+  );
   const existingProviderIds = React.useMemo(
     () => providerEntries.map(([id]) => id),
     [providerEntries],
@@ -1270,6 +1299,7 @@ const OpenCodePage: React.FC = () => {
       ...config,
       model: unifiedModelId,
     });
+    noteProviderUsed(providerId);
     await refreshTrayMenu();
 
     message.success(t('opencode.model.setAsPrimarySuccess', { name: provider.models[modelId]?.name || modelId }));
@@ -2260,7 +2290,13 @@ const OpenCodePage: React.FC = () => {
                       <Text strong><DatabaseOutlined style={{ marginRight: 8 }} />{t('opencode.provider.title')}</Text>
                     ),
                     extra: (
-                      <Space size={4}>
+                      <Space size={4} wrap>
+                        <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                        <ProviderSortDropdown
+                          mode={sortMode}
+                          modes={PROVIDER_SORT_MODES_BASIC}
+                          onChange={setSortMode}
+                        />
                         <Button
                           type="link"
                           size="small"
@@ -2292,9 +2328,11 @@ const OpenCodePage: React.FC = () => {
                       <Spin spinning={loading}>
                         {providerEntries.length === 0 ? (
                           <Empty description={t('opencode.emptyText')} style={{ marginTop: 40 }} />
+                        ) : visibleProviderEntries.length === 0 ? (
+                          <ProviderSearchEmpty />
                         ) : (
                           <DndContext
-                            sensors={sensors}
+                            sensors={providerDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             modifiers={[restrictToVerticalAxis]}
                             onDragEnd={handleProviderDragEnd}
@@ -2303,7 +2341,7 @@ const OpenCodePage: React.FC = () => {
                               items={providerEntries.map(([id]) => id)}
                               strategy={verticalListSortingStrategy}
                             >
-                              {providerEntries.map(([providerId, provider]) => {
+                              {visibleProviderEntries.map(([providerId, provider]) => {
                                 const providerNpm = provider.npm || '@ai-sdk/openai-compatible';
                                 const isBatchDeleteMode = batchDeleteProviderId === providerId;
                                 const selectedModelIds = selectedModelIdsByProvider[providerId] ?? [];
@@ -2345,7 +2383,7 @@ const OpenCodePage: React.FC = () => {
                                       output: m.output,
                                       status: m.status,
                                     }))}
-                                    draggable
+                                    draggable={!providerDragDisabled}
                                     sortableId={providerId}
                                     onEdit={() => handleEditProvider(providerId)}
                                     onCopy={() => handleCopyProvider(providerId)}

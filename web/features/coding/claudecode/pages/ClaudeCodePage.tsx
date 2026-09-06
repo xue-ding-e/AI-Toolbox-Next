@@ -81,6 +81,15 @@ import ProviderConnectivityTestModal, {
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
+  PROVIDER_SORT_MODES,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
+import {
   deleteFavoriteProvider,
   listFavoriteProviders,
   upsertFavoriteProvider,
@@ -481,10 +490,31 @@ const ClaudeCodePage: React.FC = () => {
     saveCommonConfig: saveClaudeCommonConfig,
   });
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('claudecode');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass sort_index, so dragging would
+  // write a stale custom order — dnd is only enabled in custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providers, providerKeyword, (provider) => [
+          provider.name,
+          provider.notes ?? '',
+          provider.websiteUrl ?? '',
+        ]),
+        sortMode,
+        { name: (provider) => provider.name, createdAt: (provider) => provider.createdAt },
+        (provider) => lastUsedAt(provider.id),
+      ),
+    [providers, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSelectProvider = async (provider: ClaudeCodeProvider) => {
     try {
       await applyClaudeConfig(provider.id);
       message.success(t('claudecode.apply.success'));
+      noteProviderUsed(provider.id);
       await loadConfig();
     } catch (error) {
       console.error('Failed to select provider:', error);
@@ -1264,7 +1294,13 @@ const ClaudeCodePage: React.FC = () => {
                   </Space>
                 ),
                 extra: (
-                  <Space size={4}>
+                  <Space size={4} wrap>
+                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                    <ProviderSortDropdown
+                      mode={sortMode}
+                      modes={PROVIDER_SORT_MODES}
+                      onChange={setSortMode}
+                    />
                     <Button
                       type="link"
                       size="small"
@@ -1321,19 +1357,21 @@ const ClaudeCodePage: React.FC = () => {
 
                     {providers.length === 0 ? (
                       <Empty description={t('claudecode.emptyText')} style={{ marginTop: 40 }} />
+                    ) : visibleProviders.length === 0 ? (
+                      <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        modifiers={[restrictToVerticalAxis]}
-                        onDragEnd={handleDragEnd}
-                      >
-                        <SortableContext
-                          items={providers.map((p) => p.id)}
-                          strategy={verticalListSortingStrategy}
-                        >
-                          <div>
-                            {providers.map((provider) => (
+                            sensors={providerDragDisabled ? [] : sensors}
+                            collisionDetection={closestCenter}
+                            modifiers={[restrictToVerticalAxis]}
+                            onDragEnd={handleDragEnd}
+                          >
+                            <SortableContext
+                              items={providers.map((p) => p.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              <div>
+                                {visibleProviders.map((provider) => (
                               <ClaudeProviderCard
                                 key={provider.id}
                                 provider={provider}
@@ -1353,10 +1391,10 @@ const ClaudeCodePage: React.FC = () => {
                                   await loadConfig();
                                 }}
                               />
-                            ))}
-                          </div>
-                        </SortableContext>
-                      </DndContext>
+                                ))}
+                              </div>
+                            </SortableContext>
+                          </DndContext>
                     )}
 
                     <div style={{ marginTop: 12 }}>

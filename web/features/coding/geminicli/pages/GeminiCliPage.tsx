@@ -53,6 +53,15 @@ import {
 } from '@/features/coding/shared/gateway';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import {
+  PROVIDER_SORT_MODES,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { useSettingsStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -457,10 +466,31 @@ const GeminiCliPage: React.FC = () => {
     });
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('geminicli');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass sort_index, so dragging would
+  // write a stale custom order — dnd is only enabled in custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providers, providerKeyword, (provider) => [
+          provider.name,
+          provider.notes ?? '',
+          provider.websiteUrl ?? '',
+        ]),
+        sortMode,
+        { name: (provider) => provider.name, createdAt: (provider) => provider.createdAt },
+        (provider) => lastUsedAt(provider.id),
+      ),
+    [providers, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSelectProvider = async (provider: GeminiCliProvider) => {
     try {
       await selectGeminiCliProvider(provider.id);
       message.success(t('geminicli.apply.success'));
+      noteProviderUsed(provider.id);
       await loadConfig();
       await refreshTrayMenu();
     } catch (error) {
@@ -820,7 +850,13 @@ const GeminiCliPage: React.FC = () => {
                   </Space>
                 ),
                 extra: (
-                  <Space size={4}>
+                  <Space size={4} wrap>
+                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                    <ProviderSortDropdown
+                      mode={sortMode}
+                      modes={PROVIDER_SORT_MODES}
+                      onChange={setSortMode}
+                    />
                     <Button
                       type="link"
                       size="small"
@@ -864,19 +900,21 @@ const GeminiCliPage: React.FC = () => {
 
                     {providers.length === 0 ? (
                       <Empty description={t('geminicli.emptyText')} style={{ marginTop: 40 }} />
+                    ) : visibleProviders.length === 0 ? (
+                      <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragEnd={handleDragEnd}
-                        modifiers={[restrictToVerticalAxis]}
-                      >
-                        <SortableContext
-                          items={providers.map((provider) => provider.id)}
-                          strategy={verticalListSortingStrategy}
-                        >
-                          <div>
-                            {providers.map((provider) => (
+                            sensors={providerDragDisabled ? [] : sensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handleDragEnd}
+                            modifiers={[restrictToVerticalAxis]}
+                          >
+                            <SortableContext
+                              items={providers.map((provider) => provider.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              <div>
+                                {visibleProviders.map((provider) => (
                               <GeminiCliProviderCard
                                 key={provider.id}
                                 provider={provider}
@@ -903,10 +941,10 @@ const GeminiCliPage: React.FC = () => {
                                   await loadConfig();
                                 }}
                               />
-                            ))}
-                          </div>
-                        </SortableContext>
-                      </DndContext>
+                                ))}
+                              </div>
+                            </SortableContext>
+                          </DndContext>
                     )}
 
                     {ccSwitchAvailable && (

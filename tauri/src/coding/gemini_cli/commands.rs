@@ -1531,7 +1531,22 @@ async fn apply_config_internal_with_events<R: tauri::Runtime>(
     if emit_sync_request {
         emit_sync_requests(app);
     }
+    record_last_used_best_effort(db, "geminicli", provider_id);
     Ok(())
+}
+
+/// Best-effort "recently used" marker for provider list sorting. Failures must
+/// never break the provider apply flow itself.
+fn record_last_used_best_effort(db: &crate::db::SqliteDbState, module: &str, provider_id: &str) {
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            module,
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for {module}:{provider_id}: {error}");
+    }
 }
 
 #[tauri::command]

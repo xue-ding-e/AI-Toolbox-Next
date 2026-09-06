@@ -60,6 +60,15 @@ import {
 import { claudeDesktopPromptApi } from '@/services/claudeDesktopPromptApi';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import {
+  PROVIDER_SORT_MODES,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 import { useRefreshStore, useSettingsStore } from '@/stores';
 import {
   engageProxyGatewayFailover,
@@ -508,10 +517,31 @@ const ClaudeDesktopPage: React.FC = () => {
     }
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('claudedesktop');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass sort_index, so dragging would
+  // write a stale custom order — dnd is only enabled in custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providers, providerKeyword, (provider) => [
+          provider.name,
+          provider.notes ?? '',
+          provider.websiteUrl ?? '',
+        ]),
+        sortMode,
+        { name: (provider) => provider.name, createdAt: (provider) => provider.createdAt },
+        (provider) => lastUsedAt(provider.id),
+      ),
+    [providers, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSelectProvider = async (provider: ClaudeDesktopProvider) => {
     try {
       await applyClaudeDesktopProvider(provider.id);
       message.success(t('claudecode.apply.success'));
+      noteProviderUsed(provider.id);
       await loadConfig();
       await refreshTrayMenu();
     } catch (error) {
@@ -964,7 +994,13 @@ const ClaudeDesktopPage: React.FC = () => {
                   </Space>
                 ),
                 extra: (
-                  <Space size={4}>
+                  <Space size={4} wrap>
+                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                    <ProviderSortDropdown
+                      mode={sortMode}
+                      modes={PROVIDER_SORT_MODES}
+                      onChange={setSortMode}
+                    />
                     <Button
                       type="link"
                       size="small"
@@ -1005,9 +1041,11 @@ const ClaudeDesktopPage: React.FC = () => {
                         description="尚未配置供应商，点击上方“新增供应商”或从下方导入"
                         style={{ marginTop: 40 }}
                       />
+                    ) : visibleProviders.length === 0 ? (
+                      <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                        sensors={sensors}
+                        sensors={providerDragDisabled ? [] : sensors}
                         collisionDetection={closestCenter}
                         modifiers={[restrictToVerticalAxis]}
                         onDragEnd={handleDragEnd}
@@ -1017,7 +1055,7 @@ const ClaudeDesktopPage: React.FC = () => {
                           strategy={verticalListSortingStrategy}
                         >
                           <div>
-                            {providers.map((provider) => (
+                            {visibleProviders.map((provider) => (
                               <ClaudeDesktopProviderCard
                                 key={provider.id}
                                 provider={provider}

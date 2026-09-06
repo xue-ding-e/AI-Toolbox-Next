@@ -11,6 +11,8 @@ interface Props {
   defaults: OpenClawAgentsDefaults | null;
   config: OpenClawConfig | null;
   onSaved: () => void;
+  /** Notified with the provider part of `model.primary` after a successful save. */
+  onProviderUsed?: (providerId: string) => void;
 }
 
 export interface AgentsDefaultsCardRef {
@@ -44,7 +46,7 @@ const parseThinkingLevel = (value: unknown): string | undefined => {
   return (OPENCLAW_THINKING_LEVELS as readonly string[]).includes(trimmed) ? trimmed : undefined;
 };
 
-const AgentsDefaultsCard = React.forwardRef<AgentsDefaultsCardRef, Props>(({ defaults, config, onSaved }, ref) => {
+const AgentsDefaultsCard = React.forwardRef<AgentsDefaultsCardRef, Props>(({ defaults, config, onSaved, onProviderUsed }, ref) => {
   const { t } = useTranslation();
 
   // Local editable state
@@ -141,12 +143,19 @@ const AgentsDefaultsCard = React.forwardRef<AgentsDefaultsCardRef, Props>(({ def
     try {
       const newDefaults = buildDefaults(overrides);
       await setOpenClawAgentsDefaults(newDefaults);
+      // `model.primary` is "providerId/modelId"; empty or bare-model values
+      // carry no provider and are skipped.
+      const primary = newDefaults.model?.primary ?? '';
+      const separatorIndex = primary.lastIndexOf('/');
+      if (separatorIndex > 0) {
+        onProviderUsed?.(primary.slice(0, separatorIndex));
+      }
       onSaved();
     } catch (error) {
       console.error('Failed to save agents defaults:', error);
       message.error(t('common.error'));
     }
-  }, [buildDefaults, onSaved, t]);
+  }, [buildDefaults, onSaved, onProviderUsed, t]);
 
   // Select changes save immediately
   const handlePrimaryModelChange = (value: string | undefined) => {

@@ -451,7 +451,22 @@ pub async fn select_kimi_provider_internal_with_sync<R: tauri::Runtime>(
         let _ = app.emit("config-changed", if from_tray { "tray" } else { "window" });
         emit_kimi_sync(app);
     }
+    record_last_used_best_effort(state, "kimi", id);
     Ok(())
+}
+
+/// Best-effort "recently used" marker for provider list sorting. Failures must
+/// never break the provider apply flow itself.
+fn record_last_used_best_effort(state: &SqliteDbState, module: &str, provider_id: &str) {
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            state,
+            module,
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for {module}:{provider_id}: {error}");
+    }
 }
 
 pub async fn select_kimi_model_internal<R: tauri::Runtime>(
@@ -1146,11 +1161,9 @@ async fn has_local_kimi_credentials(db: &SqliteDbState) -> bool {
     let Ok(root_dir) = get_kimi_root_dir_from_db_async(db).await else {
         return false;
     };
-    crate::coding::file_io::blocking_probe_with_timeout(move || {
-        dir_has_json_credentials(&root_dir)
-    })
-    .await
-    .unwrap_or(false)
+    crate::coding::file_io::blocking_probe_with_timeout(move || dir_has_json_credentials(&root_dir))
+        .await
+        .unwrap_or(false)
 }
 
 fn dir_has_json_credentials(root_dir: &Path) -> bool {
@@ -1735,9 +1748,9 @@ fn project_provider_models(
     if category == "official" {
         if let Some(key) = default_model_key.as_deref() {
             let has_entry = models.iter().any(|model| {
-                ["key", "model"]
-                    .iter()
-                    .any(|field| model.get(field).and_then(Value::as_str).map(str::trim) == Some(key))
+                ["key", "model"].iter().any(|field| {
+                    model.get(field).and_then(Value::as_str).map(str::trim) == Some(key)
+                })
             });
             if !has_entry {
                 models.push(json!({
@@ -2494,7 +2507,10 @@ model = "old"
             text.contains("default_model = \"kimi-code/kimi-for-coding\""),
             "text: {text}"
         );
-        assert!(text.contains("[models.\"kimi-code/kimi-for-coding\"]"), "text: {text}");
+        assert!(
+            text.contains("[models.\"kimi-code/kimi-for-coding\"]"),
+            "text: {text}"
+        );
         assert!(text.contains("model = \"kimi-for-coding\""));
         assert!(text.contains("provider = \"managed:kimi-code\""));
         assert!(text.contains("display_name = \"K2.7 Coding\""));

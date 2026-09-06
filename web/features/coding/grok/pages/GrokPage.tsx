@@ -107,6 +107,15 @@ import ProviderConnectivityTestModal, {
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import { SessionManagerPanel, type SessionSourceMode } from '@/features/coding/shared/sessionManager';
 import {
+  PROVIDER_SORT_MODES,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
+import {
   deleteFavoriteProvider,
   listFavoriteProviders,
   upsertFavoriteProvider,
@@ -498,10 +507,31 @@ const GrokPage: React.FC = () => {
     saveCommonConfig: saveGrokCommonConfig,
   });
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('grok');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  // Search and non-custom sort modes bypass sort_index, so dragging would
+  // write a stale custom order — dnd is only enabled in custom mode.
+  const providerDragDisabled = sortMode !== 'custom' || providerKeyword.trim() !== '';
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(providers, providerKeyword, (provider) => [
+          provider.name,
+          provider.notes ?? '',
+          provider.websiteUrl ?? '',
+        ]),
+        sortMode,
+        { name: (provider) => provider.name, createdAt: (provider) => provider.createdAt },
+        (provider) => lastUsedAt(provider.id),
+      ),
+    [providers, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSelectProvider = async (provider: GrokProvider) => {
     try {
       await selectGrokProvider(provider.id);
       message.success(t('grok.apply.success'));
+      noteProviderUsed(provider.id);
       await loadConfig();
       await refreshTrayMenu();
     } catch (error) {
@@ -1766,7 +1796,13 @@ const GrokPage: React.FC = () => {
                   </Space>
                 ),
                 extra: (
-                  <Space size={4}>
+                  <Space size={4} wrap>
+                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                    <ProviderSortDropdown
+                      mode={sortMode}
+                      modes={PROVIDER_SORT_MODES}
+                      onChange={setSortMode}
+                    />
                     <Button
                       type="link"
                       size="small"
@@ -1823,19 +1859,21 @@ const GrokPage: React.FC = () => {
 
                     {providers.length === 0 ? (
                       <Empty description={t('grok.emptyText')} style={{ marginTop: 40 }} />
+                    ) : visibleProviders.length === 0 ? (
+                      <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragEnd={handleDragEnd}
-                        modifiers={[restrictToVerticalAxis]}
-                      >
-                        <SortableContext
-                          items={providers.map((p) => p.id)}
-                          strategy={verticalListSortingStrategy}
-                        >
-                          <div>
-                            {providers.map((provider) => (
+                            sensors={providerDragDisabled ? [] : sensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handleDragEnd}
+                            modifiers={[restrictToVerticalAxis]}
+                          >
+                            <SortableContext
+                              items={providers.map((p) => p.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              <div>
+                                {visibleProviders.map((provider) => (
                               <GrokProviderCard
                                 key={provider.id}
                                 provider={provider}
@@ -1893,10 +1931,10 @@ const GrokPage: React.FC = () => {
                                   await loadConfig();
                                 }}
                               />
-                            ))}
-                          </div>
-                        </SortableContext>
-                      </DndContext>
+                                ))}
+                              </div>
+                            </SortableContext>
+                          </DndContext>
                     )}
 
                     <div style={{ marginTop: 12 }}>

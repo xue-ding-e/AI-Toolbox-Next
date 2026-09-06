@@ -77,6 +77,15 @@ import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryCon
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
+  PROVIDER_SORT_MODES_BASIC,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
+import {
   fetchRemotePresetModels,
   hasAllApiHubExtension,
   refreshTrayMenu,
@@ -1298,6 +1307,23 @@ const PiPage: React.FC = () => {
     }
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('pi');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(piProviders, providerKeyword, (provider) => [
+          provider.providerKey,
+          provider.displayName,
+          ...(provider.modelIds ?? []),
+        ]),
+        sortMode,
+        { name: (provider) => provider.displayName || provider.providerKey },
+        (provider) => lastUsedAt(provider.providerKey),
+      ),
+    [piProviders, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSetPrimaryModel = async (provider: PiRuntimeProviderView, modelId: string) => {
     const nextModel = getProviderModelRecords(provider.modelsProvider).find(
       (entry) => entry.id === modelId,
@@ -1313,6 +1339,7 @@ const PiPage: React.FC = () => {
         defaultModel: modelId,
         defaultThinkingLevel: nextThinkingLevel,
       });
+      noteProviderUsed(provider.providerKey);
       setRuntimeConfig(nextConfig);
       setOtherSettings(nextConfig.otherSettings || {});
       modelForm.setFieldsValue({
@@ -2000,9 +2027,16 @@ const PiPage: React.FC = () => {
                   ),
                   extra: (
                     <Space onClick={(event) => event.stopPropagation()}>
+                      <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                      <ProviderSortDropdown
+                        mode={sortMode}
+                        modes={PROVIDER_SORT_MODES_BASIC}
+                        onChange={setSortMode}
+                      />
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<ThunderboltOutlined />}
                         loading={batchTestingProviders}
                         onClick={handleBatchTestProviders}
@@ -2012,6 +2046,7 @@ const PiPage: React.FC = () => {
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<PlusOutlined />}
                         onClick={() => openProviderModal()}
                       >
@@ -2023,7 +2058,11 @@ const PiPage: React.FC = () => {
                     <div>
                       {runtimeConfig?.providers.length ? (
                         <div className={styles.providerList}>
-                          {runtimeConfig.providers.map(renderProvider)}
+                          {visibleProviders.length ? (
+                            visibleProviders.map(renderProvider)
+                          ) : (
+                            <ProviderSearchEmpty />
+                          )}
                         </div>
                       ) : (
                         <Empty description={t('pi.provider.emptyText')} />

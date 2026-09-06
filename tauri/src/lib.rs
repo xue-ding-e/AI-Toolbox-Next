@@ -475,9 +475,7 @@ fn parse_wayland_workaround_level_record(raw: &str, current_app_version: &str) -
     if record.app_version != current_app_version {
         return 0;
     }
-    record
-        .level
-        .min(WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL)
+    record.level.min(WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1907,6 +1905,9 @@ pub fn run() {
             settings::save_settings,
             settings::get_session_detail_filters,
             settings::save_session_detail_filters,
+            settings::get_provider_list_state,
+            settings::save_provider_sort_mode,
+            settings::record_provider_last_used,
             settings::probe_manual_cli_version,
             settings::set_manual_cli_path,
             settings::detect_manual_cli_path,

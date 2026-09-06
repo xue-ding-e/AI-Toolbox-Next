@@ -61,8 +61,8 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
     let backup_dir = app_data_dir.join("backups").join("openclaw");
 
-    let mut new_value = serde_json::to_value(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let mut new_value =
+        serde_json::to_value(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
     roundtrip::migrate_legacy_timeout(&mut new_value);
 
     let mut document = roundtrip::OpenClawConfigDocument::load(config_path)?;
@@ -333,10 +333,38 @@ pub async fn set_openclaw_agents_defaults<R: tauri::Runtime>(
         defaults: None,
         extra: std::collections::HashMap::new(),
     });
+    let applied_model_primary = defaults
+        .model
+        .as_ref()
+        .map(|model| model.primary.clone())
+        .unwrap_or_default();
     agents.defaults = Some(defaults);
     config.agents = Some(agents);
 
-    apply_config_internal(state, &app, config, false).await
+    apply_config_internal(state.clone(), &app, config, false).await?;
+    record_model_last_used(&state, &applied_model_primary);
+    Ok(())
+}
+
+/// Record the "recently used" marker for the provider part of an OpenClaw
+/// `model.primary` value (`providerId/modelId`). Best-effort: failures must
+/// never break the config save flow itself.
+pub fn record_model_last_used(state: &SqliteDbState, model_primary: &str) {
+    let Some((provider_id, _)) = model_primary.rsplit_once('/') else {
+        return;
+    };
+    if provider_id.is_empty() {
+        return;
+    }
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            state,
+            "openclaw",
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for openclaw:{provider_id}: {error}");
+    }
 }
 
 // ============================================================================
@@ -493,16 +521,15 @@ async fn read_openclaw_gateway_port(
     // 该路径可解析为 WSL Direct 的 UNC,不可达时会长时间阻塞 async 运行时;
     // 走 `file_io` 的 spawn_blocking + 超时读取(见 coding/AGENTS.md)。
     // 保持原容错契约:任何读取/解析失败(含超时)都视为无端口可解析。
-    let content =
-        match crate::coding::file_io::read_optional_text_file_with_timeout(
-            std::path::PathBuf::from(&config_path_str),
-            "openclaw gateway port",
-        )
-        .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) | Err(_) => return Ok(None),
-        };
+    let content = match crate::coding::file_io::read_optional_text_file_with_timeout(
+        std::path::PathBuf::from(&config_path_str),
+        "openclaw gateway port",
+    )
+    .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) | Err(_) => return Ok(None),
+    };
     let Ok(value) = json5::from_str::<serde_json::Value>(&content) else {
         return Ok(None);
     };

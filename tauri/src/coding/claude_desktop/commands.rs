@@ -299,8 +299,12 @@ pub async fn toggle_claude_desktop_provider_disabled(
 ) -> Result<(), String> {
     let db = state.db();
 
-    let provider = get_provider_from_sqlite(db, &provider_id)?
-        .ok_or_else(|| format!("Claude Desktop provider with ID '{}' not found", provider_id))?;
+    let provider = get_provider_from_sqlite(db, &provider_id)?.ok_or_else(|| {
+        format!(
+            "Claude Desktop provider with ID '{}' not found",
+            provider_id
+        )
+    })?;
     let is_applied = provider.is_applied;
     let now = Local::now().to_rfc3339();
     let content = ClaudeDesktopProviderContent {
@@ -422,6 +426,7 @@ pub async fn select_claude_desktop_provider(
     }
 
     let _ = app.emit("config-changed", "window");
+    record_last_used_best_effort(&db, "claudedesktop", &id);
     Ok(())
 }
 
@@ -532,9 +537,7 @@ fn gateway_origin_from_settings(db: &SqliteDbState) -> Result<String, String> {
 }
 
 /// Whether the local gateway has taken over the Claude Desktop config files.
-fn claude_desktop_gateway_takeover_active<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> bool {
+fn claude_desktop_gateway_takeover_active<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     app.path()
         .app_data_dir()
         .map(ProxyGatewayPaths::new)
@@ -635,7 +638,23 @@ async fn apply_config_internal_with_events<R: Runtime>(
         let _ = app.emit("config-changed", payload);
     }
 
+    record_last_used_best_effort(db, "claudedesktop", provider_id);
+
     Ok(())
+}
+
+/// Best-effort "recently used" marker for provider list sorting. Failures must
+/// never break the provider apply flow itself.
+fn record_last_used_best_effort(db: &SqliteDbState, module: &str, provider_id: &str) {
+    if let Err(error) =
+        crate::settings::provider_list_state::record_provider_last_used_in_sqlite_state(
+            db,
+            module,
+            provider_id,
+        )
+    {
+        log::warn!("Failed to record provider last-used for {module}:{provider_id}: {error}");
+    }
 }
 
 // ============================================================================
@@ -885,7 +904,8 @@ mod tests {
     fn official_restore_settings_rejects_providers_with_credentials() {
         // A custom provider carrying base url + token must NOT be treated as an
         // official restore target, even if category were "official".
-        let with_creds = r#"{"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"sk"}}"#;
+        let with_creds =
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"sk"}}"#;
         assert!(!official_restore_settings(with_creds));
 
         // Only base url present is still a credential -> not official restore.

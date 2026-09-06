@@ -75,6 +75,15 @@ import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryCon
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
+  PROVIDER_SORT_MODES_BASIC,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
+import {
   fetchRemotePresetModels,
   hasAllApiHubExtension,
   refreshTrayMenu,
@@ -1082,6 +1091,23 @@ const DshPage: React.FC = () => {
     }
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('dsh');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(dshProviders, providerKeyword, (provider) => [
+          provider.providerKey,
+          provider.displayName,
+          ...(provider.modelIds ?? []),
+        ]),
+        sortMode,
+        { name: (provider) => provider.displayName || provider.providerKey },
+        (provider) => lastUsedAt(provider.providerKey),
+      ),
+    [dshProviders, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSetPrimaryModel = async (provider: DshRuntimeProviderView, modelId: string) => {
     setSaving(true);
     try {
@@ -1090,6 +1116,7 @@ const DshPage: React.FC = () => {
         model: modelId,
         reasoningEffort: runtimeConfig?.modelSettings.reasoningEffort ?? '',
       });
+      noteProviderUsed(provider.providerKey);
       setRuntimeConfig(nextConfig);
       setOtherSettings(nextConfig.otherSettings || {});
       modelForm.setFieldsValue({
@@ -1900,9 +1927,16 @@ const DshPage: React.FC = () => {
                   ),
                   extra: (
                     <Space onClick={(event) => event.stopPropagation()}>
+                      <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                      <ProviderSortDropdown
+                        mode={sortMode}
+                        modes={PROVIDER_SORT_MODES_BASIC}
+                        onChange={setSortMode}
+                      />
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<ThunderboltOutlined />}
                         loading={batchTestingProviders}
                         onClick={handleBatchTestProviders}
@@ -1912,6 +1946,7 @@ const DshPage: React.FC = () => {
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<PlusOutlined />}
                         onClick={() => openProviderModal()}
                       >
@@ -1923,7 +1958,11 @@ const DshPage: React.FC = () => {
                     <div>
                       {runtimeConfig?.providers.length ? (
                         <div className={styles.providerList}>
-                          {runtimeConfig.providers.map(renderProvider)}
+                          {visibleProviders.length ? (
+                            visibleProviders.map(renderProvider)
+                          ) : (
+                            <ProviderSearchEmpty />
+                          )}
                         </div>
                       ) : (
                         <Empty description={t('dsh.provider.emptyText', { defaultValue: '暂无供应商' })} />

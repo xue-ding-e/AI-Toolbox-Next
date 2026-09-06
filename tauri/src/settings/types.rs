@@ -107,7 +107,10 @@ pub struct SessionRoleFilter {
 
 impl Default for SessionRoleFilter {
     fn default() -> Self {
-        Self { user: true, assistant: true }
+        Self {
+            user: true,
+            assistant: true,
+        }
     }
 }
 
@@ -122,7 +125,12 @@ pub struct SessionContentFilter {
 
 impl Default for SessionContentFilter {
     fn default() -> Self {
-        Self { text: true, thinking: true, tool_call: true, command: true }
+        Self {
+            text: true,
+            thinking: true,
+            tool_call: true,
+            command: true,
+        }
     }
 }
 
@@ -214,6 +222,23 @@ pub struct AppSettings {
     /// Session-detail filter chip visibility, persisted across app restarts.
     /// `None` means "no saved preference yet" (frontend defaults to all visible).
     pub session_detail_filters: Option<SessionDetailFilters>,
+    /// Provider list sort mode per coding module (e.g. "kimi" -> "recent").
+    /// Mode values: "custom" (drag order), "recent", "created", "name".
+    pub provider_sort_modes: HashMap<String, String>,
+    /// Last-used timestamp (RFC3339) per provider, keyed by "<module_key>:<provider_id>".
+    /// Module keys follow the favorite-provider source convention
+    /// (opencode/claudecode/claudedesktop/codex/grok/geminicli/kimi/openclaw/pi/omp/hermes/dsh).
+    pub provider_last_used: HashMap<String, String>,
+}
+
+/// Combined read model for the provider list UI: per-module sort preference and
+/// the last-used timestamp map consumed by the "recently used" sort mode.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderListState {
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub sort_modes: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub last_used: HashMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -273,6 +298,8 @@ impl Default for AppSettings {
             backup_file_filter_rules: default_backup_file_filter_rules(),
             cli_manual_paths: HashMap::new(),
             session_detail_filters: None,
+            provider_sort_modes: HashMap::new(),
+            provider_last_used: HashMap::new(),
         }
     }
 }

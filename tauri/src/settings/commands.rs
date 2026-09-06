@@ -46,6 +46,45 @@ pub async fn save_session_detail_filters(
     store::save_session_detail_filters_to_sqlite_state(&sqlite_state, &filters)
 }
 
+/// Read the provider list UI state: per-module sort modes + last-used map.
+#[tauri::command]
+pub async fn get_provider_list_state(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+) -> Result<super::types::ProviderListState, String> {
+    super::provider_list_state::get_provider_list_state(&sqlite_state)
+}
+
+/// Persist one module's provider list sort mode.
+#[tauri::command]
+pub async fn save_provider_sort_mode(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    module: String,
+    mode: String,
+) -> Result<(), String> {
+    super::provider_list_state::save_provider_sort_mode_in_sqlite_state(
+        &sqlite_state,
+        &module,
+        &mode,
+    )
+}
+
+/// Record that a provider was just applied/selected. Frontend fallback for
+/// module paths where only the frontend knows the provider id (e.g. "set as
+/// default model" actions in file-based tabs); DB-backed apply flows record
+/// directly inside their backend apply functions.
+#[tauri::command]
+pub async fn record_provider_last_used(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    module: String,
+    provider_id: String,
+) -> Result<(), String> {
+    super::provider_list_state::record_provider_last_used_in_sqlite_state(
+        &sqlite_state,
+        &module,
+        &provider_id,
+    )
+}
+
 /// Normalize a backup custom entry path for portable storage and display.
 #[tauri::command]
 pub fn normalize_backup_custom_entry_path(path: String) -> String {
@@ -95,9 +134,7 @@ pub async fn set_manual_cli_path(
     if trimmed.is_empty() {
         settings.cli_manual_paths.remove(&command_name);
     } else {
-        settings
-            .cli_manual_paths
-            .insert(command_name, trimmed);
+        settings.cli_manual_paths.insert(command_name, trimmed);
     }
     store::save_settings_to_sqlite_state(&sqlite_state, &settings)?;
 

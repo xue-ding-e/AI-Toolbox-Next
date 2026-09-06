@@ -50,6 +50,15 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import {
+  PROVIDER_SORT_MODES_BASIC,
+  ProviderSearchEmpty,
+  ProviderSearchInput,
+  ProviderSortDropdown,
+  filterProviderItems,
+  sortProviderItems,
+  useProviderListSort,
+} from '@/features/coding/shared/providerList';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
@@ -726,6 +735,23 @@ const HermesPage: React.FC = () => {
     }
   };
 
+  const { sortMode, setSortMode, lastUsedAt, noteProviderUsed } = useProviderListSort('hermes');
+  const [providerKeyword, setProviderKeyword] = React.useState('');
+  const visibleProviders = React.useMemo(
+    () =>
+      sortProviderItems(
+        filterProviderItems(hermesProviders, providerKeyword, (provider) => [
+          provider.providerKey,
+          provider.displayName,
+          ...(provider.modelIds ?? []),
+        ]),
+        sortMode,
+        { name: (provider) => provider.displayName || provider.providerKey },
+        (provider) => lastUsedAt(provider.providerKey),
+      ),
+    [hermesProviders, providerKeyword, sortMode, lastUsedAt],
+  );
+
   const handleSetDefaultModel = async (provider: HermesRuntimeProviderView, modelId: string) => {
     setSaving(true);
     try {
@@ -733,6 +759,7 @@ const HermesPage: React.FC = () => {
         defaultProvider: provider.providerKey,
         defaultModel: modelId,
       });
+      noteProviderUsed(provider.providerKey);
       setRuntimeConfig(nextConfig);
       setOtherSettings(nextConfig.otherSettings || {});
       modelForm.setFieldsValue({
@@ -1535,9 +1562,16 @@ const HermesPage: React.FC = () => {
                   ),
                   extra: (
                     <Space onClick={(event) => event.stopPropagation()}>
+                      <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
+                      <ProviderSortDropdown
+                        mode={sortMode}
+                        modes={PROVIDER_SORT_MODES_BASIC}
+                        onChange={setSortMode}
+                      />
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<ThunderboltOutlined />}
                         loading={batchTestingProviders}
                         onClick={handleBatchTestProviders}
@@ -1547,6 +1581,7 @@ const HermesPage: React.FC = () => {
                       <Button
                         type="link"
                         size="small"
+                        style={{ fontSize: 12 }}
                         icon={<PlusOutlined />}
                         onClick={() => setProviderModal({})}
                       >
@@ -1559,7 +1594,11 @@ const HermesPage: React.FC = () => {
                       {runtimeConfig?.providers.length
                         ? (
                             <div className={styles.providerList}>
-                              {runtimeConfig.providers.map(renderProvider)}
+                              {visibleProviders.length ? (
+                                visibleProviders.map(renderProvider)
+                              ) : (
+                                <ProviderSearchEmpty />
+                              )}
                             </div>
                           )
                         : <Empty description={t('hermes.provider.emptyText', { defaultValue: 'No providers configured.' })} />}

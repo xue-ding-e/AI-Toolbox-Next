@@ -138,7 +138,10 @@ pub async fn apply_openclaw_model<R: Runtime>(
     agents.defaults = Some(defaults);
     config.agents = Some(agents);
 
-    super::commands::apply_config_internal(app.state(), app, config, true).await
+    let applied_item_id = item_id.to_string();
+    super::commands::apply_config_internal(app.state(), app, config, true).await?;
+    super::commands::record_model_last_used(&app.state(), &applied_item_id);
+    Ok(())
 }
 
 /// Check if OpenClaw should be shown in tray menu

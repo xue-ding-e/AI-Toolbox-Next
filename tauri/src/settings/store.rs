@@ -1,11 +1,14 @@
 use serde_json::Value;
 
-use super::{adapter, types::{AppSettings, SessionDetailFilters}};
+use super::{
+    adapter,
+    types::{AppSettings, SessionDetailFilters},
+};
 use crate::db::helpers::{db_get, db_patch_fields, db_put};
 use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
 
-const SETTINGS_ID: &str = "app";
+pub const SETTINGS_ID: &str = "app";
 
 pub fn load_settings_from_sqlite_state(
     sqlite_state: &SqliteDbState,
@@ -71,7 +74,8 @@ pub fn save_session_detail_filters_to_sqlite_state(
     sqlite_state: &SqliteDbState,
     filters: &SessionDetailFilters,
 ) -> Result<(), String> {
-    let value = serde_json::to_value(filters).map_err(|error| format!("serialize filters: {error}"))?;
+    let value =
+        serde_json::to_value(filters).map_err(|error| format!("serialize filters: {error}"))?;
     sqlite_state.with_conn(|conn| {
         let updated = db_patch_fields(
             conn,
@@ -94,9 +98,7 @@ pub fn save_session_detail_filters_to_sqlite_state(
 
 pub fn load_settings_from_sqlite_conn(conn: &rusqlite::Connection) -> Result<AppSettings, String> {
     let record = db_get(conn, DbTable::Settings, SETTINGS_ID)?;
-    let settings = record
-        .map(adapter::from_db_value)
-        .unwrap_or_default();
+    let settings = record.map(adapter::from_db_value).unwrap_or_default();
     sync_manual_cli_overrides(&settings);
     Ok(settings)
 }
@@ -195,7 +197,8 @@ mod tests {
                 command: false,
             },
         };
-        save_session_detail_filters_to_sqlite_state(&sqlite_state, &filters).expect("create filters");
+        save_session_detail_filters_to_sqlite_state(&sqlite_state, &filters)
+            .expect("create filters");
         assert_eq!(
             get_session_detail_filters_from_sqlite_state(&sqlite_state).expect("read saved"),
             Some(filters.clone())
@@ -204,12 +207,10 @@ mod tests {
         // Patching must not clobber other settings fields.
         let mut patched = filters;
         patched.role_filter.user = true;
-        save_session_detail_filters_to_sqlite_state(&sqlite_state, &patched).expect("patch filters");
+        save_session_detail_filters_to_sqlite_state(&sqlite_state, &patched)
+            .expect("patch filters");
         let loaded = load_settings_from_sqlite_state(&sqlite_state).expect("load settings");
-        assert_eq!(
-            loaded.session_detail_filters,
-            Some(patched)
-        );
+        assert_eq!(loaded.session_detail_filters, Some(patched));
         // Other settings survive the nested patch.
         assert_eq!(loaded.theme, "system");
     }
