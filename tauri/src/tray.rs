@@ -1589,7 +1589,6 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
 
     menu.append(&show_item).map_err(|e| e.to_string())?;
-    menu.append(&lightweight_item).map_err(|e| e.to_string())?;
     append_separator(&menu)?;
 
     // Add Skills section if enabled
@@ -1795,6 +1794,10 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
         append_separator(&menu)?;
     }
+    // Lightweight mode and quit form the bottom group (cc-switch style),
+    // with a separator between the toggle and the exit action.
+    menu.append(&lightweight_item).map_err(|e| e.to_string())?;
+    append_separator(&menu)?;
     menu.append(&quit_item).map_err(|e| e.to_string())?;
 
     // Update tray menu
