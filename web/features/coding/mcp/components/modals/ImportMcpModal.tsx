@@ -15,6 +15,9 @@ interface ImportMcpModalProps {
   onSuccess: () => void;
 }
 
+/** Synthetic tool_key for the CC Switch scan group (mirrors backend CC_SWITCH_MCP_TOOL_KEY). */
+const CC_SWITCH_TOOL_KEY = 'cc_switch';
+
 export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
   open,
   onClose,
@@ -25,6 +28,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
   const { tools } = useMcpTools();
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectedTools, setSelectedTools] = React.useState<string[]>([]);
+  const [followCcSwitchMarks, setFollowCcSwitchMarks] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
@@ -188,6 +192,21 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
     return `${server.server_type}:${config.url}`;
   };
 
+  const toolDisplayName = (toolKey: string): string =>
+    tools.find((tool) => tool.key === toolKey)?.display_name ?? toolKey;
+
+  /** Server name tag plus small agent-mark badges for CC Switch sources. */
+  const renderServerTag = (server: McpDiscoveredServer) => (
+    <span key={server.name} className={styles.serverTagGroup}>
+      <Tag className={styles.serverTag}>{server.name}</Tag>
+      {(server.source_enabled_tools ?? []).map((toolKey) => (
+        <span key={toolKey} className={styles.serverMarkTag}>
+          {toolDisplayName(toolKey)}
+        </span>
+      ))}
+    </span>
+  );
+
   // Detect potential duplicates using command fingerprints:
   // 1. Scan servers whose command fingerprint matches an existing server in the store
   // 2. Scan servers across multiple selected tools that share the same command fingerprint
@@ -241,7 +260,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
     try {
       for (const toolKey of selected) {
         try {
-          const result = await mcpApi.importMcpFromTool(toolKey, selectedTools);
+          const result = await mcpApi.importMcpFromTool(toolKey, selectedTools, followCcSwitchMarks);
           totalImported += result.servers_imported;
           totalSkipped += result.servers_skipped;
           if (result.servers_duplicated?.length > 0) {
@@ -410,9 +429,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                             <span className={styles.toolPath}>{tool.mcp_config_path}</span>
                           </div>
                           <div className={styles.serverList}>
-                            {servers.map((s) => (
-                              <Tag key={s.name} className={styles.serverTag}>{s.name}</Tag>
-                            ))}
+                            {servers.map((s) => renderServerTag(s))}
                           </div>
                         </div>
                       </div>
@@ -431,9 +448,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                           <span className={styles.toolPath}>{t('mcp.pluginSource')}</span>
                         </div>
                         <div className={styles.serverList}>
-                          {group.servers.map((s) => (
-                            <Tag key={s.name} className={styles.serverTag}>{s.name}</Tag>
-                          ))}
+                          {group.servers.map((s) => renderServerTag(s))}
                         </div>
                       </div>
                     </div>
@@ -441,6 +456,23 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                 </div>
 
                 <div className={addMcpStyles.toolsSection}>
+                  {selected.has(CC_SWITCH_TOOL_KEY) && (
+                    <div className={styles.followMarksRow}>
+                      <Checkbox
+                        checked={followCcSwitchMarks}
+                        onChange={(e) => setFollowCcSwitchMarks(e.target.checked)}
+                      >
+                        {t('mcp.followCcSwitchMarks')}
+                      </Checkbox>
+                      <div className={styles.followMarksHint}>
+                        {t(
+                          followCcSwitchMarks
+                            ? 'mcp.followCcSwitchMarksHintOn'
+                            : 'mcp.followCcSwitchMarksHintOff'
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <div className={addMcpStyles.toolsLabel}>{t('mcp.enabledTools')}</div>
                   <div className={addMcpStyles.toolsHint}>{t('mcp.enabledToolsHint')}</div>
                   <div className={addMcpStyles.toolsGrid}>

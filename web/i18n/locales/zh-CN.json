@@ -3538,7 +3538,10 @@
       "noMatch": "无匹配标签"
     },
     "limitAddMoreToPreferredTools": "添加更多仅显示常用工具",
-    "limitAddMoreToPreferredToolsHint": "开启后，Skill 卡片上的添加更多菜单只显示上方已勾选的常用工具；关闭后显示所有已安装工具。"
+    "limitAddMoreToPreferredToolsHint": "开启后，Skill 卡片上的添加更多菜单只显示上方已勾选的常用工具；关闭后显示所有已安装工具。",
+    "followCcSwitchMarks": "遵循 CC Switch 标记",
+    "followCcSwitchMarksHintOn": "CC Switch 来源的 skill 将按其标记的 agent 同步（未标记的不会同步到任何工具）；下方勾选仅作用于其他来源。",
+    "followCcSwitchMarksHintOff": "CC Switch 来源的 skill 将按下方勾选同步。"
   },
   "mcp": {
     "title": "MCP 管理",
@@ -3890,7 +3893,10 @@
       "previewGroups": "分组：{{count}}",
       "previewMatched": "匹配服务器：{{count}}",
       "previewChanged": "需要变更：{{count}}"
-    }
+    },
+    "followCcSwitchMarks": "遵循 CC Switch 标记",
+    "followCcSwitchMarksHintOn": "CC Switch 来源的 server 将按其标记的 agent 同步（未标记的不会同步到任何工具）；下方勾选仅作用于其他来源。",
+    "followCcSwitchMarksHintOff": "CC Switch 来源的 server 将按下方勾选同步。"
   },
   "pi": {
     "rootPathSource": {

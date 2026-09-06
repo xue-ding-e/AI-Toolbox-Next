@@ -481,6 +481,10 @@ pub struct OnboardingVariant {
     pub link_target: Option<String>,
     /// Tools that have the same skill name but different content (conflicting versions)
     pub conflicting_tools: Vec<String>,
+    /// AI Toolbox tool keys marked enabled at the source. Only set for the
+    /// CC Switch source (`tool = "cc_switch"`), matched by directory name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_enabled_tools: Vec<String>,
 }
 
 /// Internal struct for install operations
@@ -539,6 +543,8 @@ pub struct DetectedSkill {
     pub path: std::path::PathBuf,
     pub is_link: bool,
     pub link_target: Option<std::path::PathBuf>,
+    /// AI Toolbox tool keys marked enabled at the source (CC Switch only).
+    pub source_enabled_tools: Vec<String>,
 }
 
 /// DTO for custom tool

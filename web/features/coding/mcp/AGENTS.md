@@ -49,6 +49,7 @@ sequenceDiagram
 - JSON 导入既要支持 `{ mcpServers: { name: config } }` / `{ name: config }` 这类带 server 名称的映射，也要兼容用户从工具里复制出来的裸单 server 配置对象。裸对象没有名称时可以使用稳定默认名，再交给重复名处理流程。
 - 组工具模式只是分组视图里的前端批量控制模式，未分组不参与启用时的统一和组级工具控制；卡片工具列表仍展示，但卡片内工具添加/移除入口应只读禁用，点击时提示用户到分组标题后操作。MCP 工具开关是 toggle 语义，批量添加/移除前必须先按 `enabled_tools` 过滤目标 server，不能对整组无脑 toggle。
 - `preferred_tools` 是添加/导入 MCP 时的默认同步目标；“添加更多仅显示常用工具”只限制普通 MCP 卡片 `+` 菜单的候选工具，不自动移除已启用工具，也不收窄批量添加或分组工具模式这类管理入口。
+- `ImportMcpModal` 的 CC Switch 分组会为每个 server 渲染 `source_enabled_tools` agent 徽标（key→display_name 从 `useMcpTools` 查，徽标是轻量 span，不复用 antd Tag），并提供“遵循 CC Switch 标记”开关（默认开，仅勾选 CC Switch 分组时出现）：开启时 CC Switch 源的同步目标来自 CCS 标记（`mcp_import_from_tool` 的 `followCcSwitchMarks` 参数，全未标记的 server 不同步到任何工具），弹窗勾选只作用于其他来源；关闭时 CC Switch 源同样使用下方勾选集合。
 - MCP 管理页可能出现几百个 server，平铺和分组展开都应使用 shared `management/VirtualGrid` 这类可视区渲染；拖拽排序模式保持完整列表渲染，避免虚拟化与 dnd-kit 排序语义冲突。
 - 拖拽排序模式也是完整列表渲染，「每行展示自动」(`gridColumnSetting === 'auto'`) 时不要另写一套私有列数或固定 2 列布局；要复用 `shared/management/useAutoGridColumns` 让排序分支与浏览（`VirtualGrid`）分支用同一套容器宽度 → 列数公式，避免同一行卡片数在两种模式间漂移。`.list` 的 `--management-grid-columns` CSS 回退值也要选接近宽屏 auto 结果的常数（`repeat(3, minmax(0,1fr))`），避免 `ResizeObserver` 首个回调前首帧跳列。
 - MCP 管理页、列表、分组和卡片的主交互面应保持轻量原生控件风格，不要重新把 AntD `Button/Input/Segmented/Dropdown/Tooltip/Collapse/Empty/Spin/Tag/Checkbox` 引回这些高频列表 surface；复杂 modal 表单可另行按 modal 规则处理。

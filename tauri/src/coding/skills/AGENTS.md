@@ -178,7 +178,8 @@ Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从
 5. **扫描额外第三方 skills 目录（EXTRA_SKILL_SOURCES）**
    - 当前包含 CC Switch：`key = "cc_switch"`，`~/.cc-switch/skills`
    - 目录存在则按与工具 skills 目录相同规则扫描；无独立「从 CCS 导入」按钮
-   - 不读 CCS `skill_repos` 表（仅 Git 书签）；无磁盘目录的 DB 元数据行不导入
+   - CC Switch 来源的目录会按目录名（大小写不敏感）匹配 CCS DB `skills` 表的 `directory` 列，读取 `enabled_*` 6 列（claude/codex/gemini/grokbuild/opencode/hermes → AI Toolbox 的 `claude_code`/`codex`/`gemini_cli`/`grok`/`opencode`/`hermes`）填充 `DetectedSkill.source_enabled_tools` 并透传到 `OnboardingVariant`；缺列或 NULL 按未标记处理，兼容 CCS 老库 schema。磁盘目录仍是发现事实源，DB 只做标记注解；无磁盘目录的 DB 元数据行不导入
+   - 不读 CCS `skill_repos` 表（仅 Git 书签）
 
 6. **扫描 Claude Code 插件 skills/**
    - 合成 tool key `plugin::{plugin_id}`，`force_copy: true`

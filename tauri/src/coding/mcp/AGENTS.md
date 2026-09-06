@@ -52,7 +52,8 @@ sequenceDiagram
 - Pi 的 MCP 目标不是 Pi 原生能力，而是 `pi-mcp-adapter` 扩展读取的 `<Pi runtime root>/mcp.json`。同步时仍以中心 MCP 存储为 source of truth，只把标准 JSON `mcpServers` 写入该派生配置文件。
 - Oh My Pi 原生读取 `<OMP runtime root>/mcp.json`,根字段为 `mcpServers`。同步目标路径必须消费 OMP 独立 custom root,不能退回 Pi root 或固定 `~/.omp/agent`;AI Toolbox 首次创建文件时写入官方 `$schema` URL,并保留已有的 `disabledServers` / `enabledServers` 等顶层字段。
 - Antigravity 2.0 的远程 HTTP MCP 字段是 `serverUrl`，不是 Gemini/Qwen 的 `httpUrl`，也不是通用 `url`。中心存储仍统一用 `server_config.url`，只在同步到 Antigravity 配置和从 Antigravity 配置扫描时做字段转换；扫描时要兼容历史写出的 `httpUrl`，避免丢用户已有配置。
-- 「导入现有 MCP」扫描除已安装工具配置与 Claude 插件 `.mcp.json` 外，还会只读扫描 CC Switch `~/.cc-switch/cc-switch.db` 的 `mcp_servers` 表。发现结果使用合成 `tool_key = "cc_switch"` / 显示名 `CC Switch`（前端走 pluginGroups 同款分组，无独立按钮）。`mcp_import_from_tool("cc_switch")` 必须单独分支再读该表并 upsert；不要把 CCS 当 runtime tool，也不要写回 CCS。同步目标仍是弹窗勾选的 `enabledTools`，不用 CCS 的 `enabled_*` 列。
+- 「导入现有 MCP」扫描除已安装工具配置与 Claude 插件 `.mcp.json` 外，还会只读扫描 CC Switch `~/.cc-switch/cc-switch.db` 的 `mcp_servers` 表。发现结果使用合成 `tool_key = "cc_switch"` / 显示名 `CC Switch`（前端走 pluginGroups 同款分组，无独立按钮）。`mcp_import_from_tool("cc_switch")` 必须单独分支再读该表并 upsert；不要把 CCS 当 runtime tool，也不要写回 CCS。
+- CCS `mcp_servers` 的 `enabled_*` 列（claude/codex/gemini/grokbuild/opencode/hermes → AI Toolbox 的 `claude_code`/`codex`/`gemini_cli`/`grok`/`opencode`/`hermes`）是该 server 的 per-agent 启用标记；读取用按列名 get，缺列或 NULL 一律按未标记处理，兼容 CCS 老库 schema。`mcp_import_from_tool` 默认 `followCcSwitchMarks=true`：CCS 源每个 server 的同步目标 = 标记映射结果 ∩ 已安装工具；全未标记 → 导入但 `enabled_tools` 为空、不同步到任何工具。开关关闭时才回退到弹窗统一勾选的 `enabledTools`。扫描结果经 `McpDiscoveredServerDto.source_enabled_tools` 透出，前端用它在 CC Switch 分组渲染 agent 徽标。
 
 ## 跨模块依赖
 

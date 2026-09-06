@@ -105,6 +105,8 @@ export interface McpDiscoveredServer {
   tool_name: string;
   server_type: string;
   server_config: StdioConfig | HttpConfig;
+  /** Tool keys marked enabled at the source; only set for the CC Switch source. */
+  source_enabled_tools?: string[];
 }
 
 export interface McpScanResult {

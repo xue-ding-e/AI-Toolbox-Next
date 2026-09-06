@@ -3541,7 +3541,10 @@
       "noMatch": "No matching tags"
     },
     "limitAddMoreToPreferredTools": "Add More Only Shows Preferred Tools",
-    "limitAddMoreToPreferredToolsHint": "When enabled, the add-more menu on Skill cards only shows the preferred tools checked above; when disabled, it shows all installed tools."
+    "limitAddMoreToPreferredToolsHint": "When enabled, the add-more menu on Skill cards only shows the preferred tools checked above; when disabled, it shows all installed tools.",
+    "followCcSwitchMarks": "Follow CC Switch marks",
+    "followCcSwitchMarksHintOn": "Skills from CC Switch sync to the agents marked there (unmarked ones sync to no tool); the selection below applies to other sources only.",
+    "followCcSwitchMarksHintOff": "Skills from CC Switch sync to the tools selected below."
   },
   "mcp": {
     "title": "MCP Management",
@@ -3893,7 +3896,10 @@
       "previewGroups": "Groups: {{count}}",
       "previewMatched": "Matched servers: {{count}}",
       "previewChanged": "Changes needed: {{count}}"
-    }
+    },
+    "followCcSwitchMarks": "Follow CC Switch marks",
+    "followCcSwitchMarksHintOn": "Servers from CC Switch sync to the agents marked there (unmarked ones sync to no tool); the selection below applies to other sources only.",
+    "followCcSwitchMarksHintOff": "Servers from CC Switch sync to the tools selected below."
   },
   "pi": {
     "rootPathSource": {

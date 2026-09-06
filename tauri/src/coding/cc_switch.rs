@@ -37,6 +37,36 @@ pub struct CcSwitchMcpCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub tags: Vec<String>,
+    /// AI Toolbox tool keys marked enabled in CCS (`enabled_*` columns),
+    /// used as per-server sync targets on import.
+    #[serde(default)]
+    pub enabled_tools: Vec<String>,
+}
+
+/// CC Switch `mcp_servers.enabled_*` columns mapped to AI Toolbox runtime tool
+/// keys. CC Switch intentionally has no MCP flag for Claude Desktop / OpenClaw / Pi.
+const CC_SWITCH_ENABLED_TOOL_COLUMNS: &[(&str, &str)] = &[
+    ("enabled_claude", "claude_code"),
+    ("enabled_codex", "codex"),
+    ("enabled_gemini", "gemini_cli"),
+    ("enabled_grokbuild", "grok"),
+    ("enabled_opencode", "opencode"),
+    ("enabled_hermes", "hermes"),
+];
+
+/// Read enabled marker columns by name; missing column (older CCS schema) or
+/// NULL counts as disabled.
+fn read_enabled_tool_keys(row: &rusqlite::Row<'_>) -> Vec<String> {
+    CC_SWITCH_ENABLED_TOOL_COLUMNS
+        .iter()
+        .filter(|(column, _)| {
+            row.get::<_, Option<bool>>(*column)
+                .ok()
+                .flatten()
+                .unwrap_or(false)
+        })
+        .map(|(_, tool_key)| tool_key.to_string())
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -577,31 +607,30 @@ pub fn parse_cc_switch_mcp_config(config: &Value) -> Option<(String, Value)> {
     Some((server_type, Value::Object(obj)))
 }
 
-fn list_mcp_from_db(path: &Path) -> Result<Vec<CcSwitchMcpCandidate>, String> {
-    let conn = open_readonly_db(path)?;
+fn read_mcp_candidates_from_conn(conn: &Connection) -> Result<Vec<CcSwitchMcpCandidate>, String> {
     let mut stmt = conn
-        .prepare(
-            "SELECT id, name, server_config, description, tags
-             FROM mcp_servers
-             ORDER BY name ASC, id ASC",
-        )
+        .prepare("SELECT * FROM mcp_servers ORDER BY name ASC, id ASC")
         .map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
 
     let rows = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4).unwrap_or_else(|_| "[]".to_string()),
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("name")?,
+                row.get::<_, String>("server_config")?,
+                row.get::<_, Option<String>>("description")?,
+                row.get::<_, Option<String>>("tags")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "[]".to_string()),
+                read_enabled_tool_keys(row),
             ))
         })
         .map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
 
     let mut out = Vec::new();
     for row in rows {
-        let (id, name, server_config_str, description, tags_raw) =
+        let (id, name, server_config_str, description, tags_raw, enabled_tools) =
             row.map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
         let name = name.trim().to_string();
         let name = if name.is_empty() {
@@ -629,7 +658,62 @@ fn list_mcp_from_db(path: &Path) -> Result<Vec<CcSwitchMcpCandidate>, String> {
             server_config,
             description,
             tags: parse_tags_json(&tags_raw),
+            enabled_tools,
         });
+    }
+    Ok(out)
+}
+
+fn list_mcp_from_db(path: &Path) -> Result<Vec<CcSwitchMcpCandidate>, String> {
+    let conn = open_readonly_db(path)?;
+    read_mcp_candidates_from_conn(&conn)
+}
+
+/// Map CC Switch skill directory names (inside `~/.cc-switch/skills`) to the
+/// AI Toolbox tool keys marked enabled for that skill in the CCS `skills` table.
+/// The DB is metadata only — directories missing on disk are never imported.
+/// Missing column (older CCS schema) or NULL counts as disabled.
+pub fn list_cc_switch_skill_enabled_map(
+    db_path: Option<&Path>,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let path = match db_path {
+        Some(p) => p.to_path_buf(),
+        None => match default_cc_switch_db_path() {
+            Some(p) => p,
+            None => return Ok(std::collections::HashMap::new()),
+        },
+    };
+    if !path.is_file() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let conn = open_readonly_db(&path)?;
+    read_skill_enabled_map_from_conn(&conn)
+}
+
+fn read_skill_enabled_map_from_conn(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let mut stmt = conn
+        .prepare("SELECT * FROM skills")
+        .map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>("directory").unwrap_or_default(),
+                read_enabled_tool_keys(row),
+            ))
+        })
+        .map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
+
+    let mut out = std::collections::HashMap::new();
+    for row in rows {
+        let (directory, enabled_tools) = row.map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
+        let directory = directory.trim().to_ascii_lowercase();
+        if directory.is_empty() || enabled_tools.is_empty() {
+            continue;
+        }
+        out.insert(directory, enabled_tools);
     }
     Ok(out)
 }
@@ -1110,5 +1194,138 @@ command = "npx"
         );
         assert!(parse_tags_json("not-json").is_empty());
         assert!(parse_tags_json("[]").is_empty());
+    }
+
+    #[test]
+    fn mcp_candidates_read_enabled_markers_as_tool_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                server_config TEXT NOT NULL,
+                description TEXT,
+                homepage TEXT,
+                docs TEXT,
+                tags TEXT NOT NULL DEFAULT '[]',
+                enabled_claude INTEGER NOT NULL DEFAULT 0,
+                enabled_codex INTEGER NOT NULL DEFAULT 0,
+                enabled_gemini INTEGER NOT NULL DEFAULT 0,
+                enabled_grokbuild INTEGER NOT NULL DEFAULT 0,
+                enabled_opencode INTEGER NOT NULL DEFAULT 0,
+                enabled_hermes INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers (id, name, server_config, enabled_claude, enabled_opencode)
+             VALUES ('s1', 'Shared', '{\"command\":\"echo\"}', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let candidates = read_mcp_candidates_from_conn(&conn).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].enabled_tools,
+            vec!["claude_code".to_string(), "opencode".to_string()]
+        );
+    }
+
+    #[test]
+    fn mcp_candidates_tolerate_missing_enabled_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                server_config TEXT NOT NULL,
+                description TEXT,
+                tags TEXT NOT NULL DEFAULT '[]'
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers (id, name, server_config) VALUES ('s1', 'Legacy', '{\"command\":\"echo\"}')",
+            [],
+        )
+        .unwrap();
+
+        let candidates = read_mcp_candidates_from_conn(&conn).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].enabled_tools.is_empty());
+    }
+
+    #[test]
+    fn skill_enabled_map_reads_markers_by_directory() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                directory TEXT NOT NULL,
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_branch TEXT,
+                readme_url TEXT,
+                enabled_claude INTEGER NOT NULL DEFAULT 0,
+                enabled_codex INTEGER NOT NULL DEFAULT 0,
+                enabled_gemini INTEGER NOT NULL DEFAULT 0,
+                enabled_grokbuild INTEGER NOT NULL DEFAULT 0,
+                enabled_opencode INTEGER NOT NULL DEFAULT 0,
+                enabled_hermes INTEGER NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL,
+                content_hash TEXT,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO skills (id, name, directory, installed_at, enabled_claude, enabled_grokbuild)
+             VALUES ('r/s:alpha', 'alpha', 'alpha', 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO skills (id, name, directory, installed_at) VALUES ('r/s:beta', 'beta', 'beta', 1)",
+            [],
+        )
+        .unwrap();
+
+        let map = read_skill_enabled_map_from_conn(&conn).unwrap();
+
+        assert_eq!(
+            map.get("alpha"),
+            Some(&vec!["claude_code".to_string(), "grok".to_string()])
+        );
+        // No marker at all -> directory absent from the map (import with no sync).
+        assert!(!map.contains_key("beta"));
+    }
+
+    #[test]
+    fn skill_enabled_map_tolerates_missing_enabled_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                installed_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO skills (id, name, directory, installed_at) VALUES ('r/s:x', 'x', 'x', 1)",
+            [],
+        )
+        .unwrap();
+
+        let map = read_skill_enabled_map_from_conn(&conn).unwrap();
+        assert!(map.is_empty());
     }
 }

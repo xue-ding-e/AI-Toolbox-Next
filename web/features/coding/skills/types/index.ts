@@ -134,6 +134,8 @@ export interface OnboardingVariant {
   is_link: boolean;
   link_target: string | null;
   conflicting_tools: string[];
+  /** Tool keys marked enabled at the source; only set for the CC Switch source. */
+  source_enabled_tools?: string[];
 }
 
 export interface OnboardingGroup {

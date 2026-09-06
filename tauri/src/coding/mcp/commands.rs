@@ -817,9 +817,10 @@ pub async fn mcp_save_group<R: Runtime>(
     let group_note = normalize_optional_text(note);
 
     let existing_groups = mcp_store::get_mcp_groups(&state).await?;
-    if let Some(duplicate) = existing_groups.iter().find(|group| {
-        group.name == group_name && Some(group.id.as_str()) != groupId.as_deref()
-    }) {
+    if let Some(duplicate) = existing_groups
+        .iter()
+        .find(|group| group.name == group_name && Some(group.id.as_str()) != groupId.as_deref())
+    {
         return Err(format!("Group name already exists: {}", duplicate.name));
     }
 
@@ -1080,6 +1081,11 @@ async fn mcp_sync_all_internal<R: Runtime>(
 /// Import MCP servers from a tool's config file
 /// After import, automatically sync to specified tools (or preferred tools if not specified)
 /// If a server with the same name exists but has different config, create with suffix
+///
+/// For the CC Switch source with `followCcSwitchMarks` (default true), each server's
+/// sync targets come from the CCS `enabled_*` markers instead of the shared
+/// `enabledTools` selection. Servers with no marker are imported without any tool
+/// enabled.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn mcp_import_from_tool<R: Runtime>(
@@ -1087,62 +1093,65 @@ pub async fn mcp_import_from_tool<R: Runtime>(
     state: State<'_, SqliteDbState>,
     toolKey: String,
     enabledTools: Option<Vec<String>>,
+    followCcSwitchMarks: Option<bool>,
 ) -> Result<McpImportResultDto, String> {
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
 
+    let is_cc_switch_source = toolKey == crate::coding::cc_switch::CC_SWITCH_MCP_TOOL_KEY;
+    let follow_cc_switch_marks = is_cc_switch_source && followCcSwitchMarks.unwrap_or(true);
+
     // Resolve imported servers: CC Switch DB / plugin .mcp.json / standard tool config
-    let (imported_servers, source_display_name) =
-        if toolKey == crate::coding::cc_switch::CC_SWITCH_MCP_TOOL_KEY {
-            let candidates = crate::coding::cc_switch::list_cc_switch_mcp_servers(None)?;
-            let now = now_ms();
-            let servers = candidates
-                .into_iter()
-                .map(|c| McpServer {
-                    id: String::new(),
-                    name: c.name,
-                    server_type: c.server_type,
-                    server_config: c.server_config,
-                    enabled_tools: vec![],
-                    sync_details: None,
-                    description: c.description,
-                    user_group: None,
-                    user_note: None,
-                    tags: c.tags,
-                    timeout: None,
-                    sort_index: 0,
-                    management_enabled: true,
-                    disabled_previous_tools: Vec::new(),
-                    created_at: now,
-                    updated_at: now,
-                })
-                .collect::<Vec<_>>();
-            (
-                servers,
-                crate::coding::cc_switch::CC_SWITCH_MCP_TOOL_NAME.to_string(),
-            )
-        } else if let Some(plugin_id) = toolKey.strip_prefix("plugin::") {
-            // Plugin source: find the plugin and read its .mcp.json
-            let plugins =
-                crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
-            let plugin = plugins
-                .iter()
-                .find(|p| p.plugin_id == plugin_id)
-                .ok_or_else(|| format!("Plugin not found: {}", plugin_id))?;
-            let mcp_json_path = plugin.install_path.join(".mcp.json");
-            let servers = import_servers_from_plugin_mcp_json(&mcp_json_path)?;
-            (servers, format!("Plugin: {}", plugin.display_name))
-        } else {
-            // Standard tool source
-            let tool = runtime_tool_by_key(&toolKey, &custom_tools)
-                .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
-            let servers = import_servers_from_tool_async(&state.db(), &tool).await?;
-            (
-                servers,
-                super::mcp_tool_display_name(&tool.key, &tool.display_name),
-            )
-        };
+    let (imported_servers, source_display_name) = if is_cc_switch_source {
+        let candidates = crate::coding::cc_switch::list_cc_switch_mcp_servers(None)?;
+        let now = now_ms();
+        let servers = candidates
+            .into_iter()
+            .map(|c| McpServer {
+                id: String::new(),
+                name: c.name,
+                server_type: c.server_type,
+                server_config: c.server_config,
+                enabled_tools: c.enabled_tools,
+                sync_details: None,
+                description: c.description,
+                user_group: None,
+                user_note: None,
+                tags: c.tags,
+                timeout: None,
+                sort_index: 0,
+                management_enabled: true,
+                disabled_previous_tools: Vec::new(),
+                created_at: now,
+                updated_at: now,
+            })
+            .collect::<Vec<_>>();
+        (
+            servers,
+            crate::coding::cc_switch::CC_SWITCH_MCP_TOOL_NAME.to_string(),
+        )
+    } else if let Some(plugin_id) = toolKey.strip_prefix("plugin::") {
+        // Plugin source: find the plugin and read its .mcp.json
+        let plugins =
+            crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
+        let plugin = plugins
+            .iter()
+            .find(|p| p.plugin_id == plugin_id)
+            .ok_or_else(|| format!("Plugin not found: {}", plugin_id))?;
+        let mcp_json_path = plugin.install_path.join(".mcp.json");
+        let servers = import_servers_from_plugin_mcp_json(&mcp_json_path)?;
+        (servers, format!("Plugin: {}", plugin.display_name))
+    } else {
+        // Standard tool source
+        let tool = runtime_tool_by_key(&toolKey, &custom_tools)
+            .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
+        let servers = import_servers_from_tool_async(&state.db(), &tool).await?;
+        (
+            servers,
+            super::mcp_tool_display_name(&tool.key, &tool.display_name),
+        )
+    };
 
     // Get target tools for sync: use enabledTools if provided, otherwise use preferred tools or all installed MCP tools
     let target_tools: Vec<String> = if let Some(enabled) = enabledTools {
@@ -1213,15 +1222,30 @@ pub async fn mcp_import_from_tool<R: Runtime>(
             }
         }
 
-        // Enable the target tools
-        server.enabled_tools = target_tools.clone();
+        // Resolve sync targets for this server: CC Switch per-server markers
+        // (kept only for installed tools), or the shared selection otherwise.
+        if follow_cc_switch_marks {
+            let mut installed_marks = Vec::new();
+            for tool_key in &server.enabled_tools {
+                let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) else {
+                    continue;
+                };
+                if is_tool_installed_with_db_async(&state.db(), &tool).await {
+                    installed_marks.push(tool_key.clone());
+                }
+            }
+            server.enabled_tools = installed_marks;
+        } else {
+            // Enable the target tools
+            server.enabled_tools = target_tools.clone();
+        }
 
         match mcp_store::upsert_mcp_server(&state, &server).await {
             Ok(server_id) => {
                 servers_imported += 1;
 
                 // Sync to each enabled tool
-                for tool_key in &target_tools {
+                for tool_key in &server.enabled_tools {
                     if let Some(target_tool) = runtime_tool_by_key(tool_key, &custom_tools) {
                         match sync_server_to_tool_async(&state.db(), &server, &target_tool).await {
                             Ok(detail) => {
@@ -1361,6 +1385,7 @@ async fn mcp_scan_servers_inner(state: &SqliteDbState) -> Result<McpScanResultDt
                             tool_name: super::mcp_tool_display_name(&tool.key, &tool.display_name),
                             server_type: server.server_type,
                             server_config: server.server_config,
+                            source_enabled_tools: Vec::new(),
                         });
                     }
                 }
@@ -1394,6 +1419,7 @@ async fn mcp_scan_servers_inner(state: &SqliteDbState) -> Result<McpScanResultDt
                             tool_name: tool_name.clone(),
                             server_type: server.server_type,
                             server_config: server.server_config,
+                            source_enabled_tools: Vec::new(),
                         });
                     }
                 }
@@ -1420,6 +1446,7 @@ async fn mcp_scan_servers_inner(state: &SqliteDbState) -> Result<McpScanResultDt
                         tool_name: tool_name.clone(),
                         server_type: c.server_type,
                         server_config: c.server_config,
+                        source_enabled_tools: c.enabled_tools,
                     });
                 }
                 if servers.len() > before {

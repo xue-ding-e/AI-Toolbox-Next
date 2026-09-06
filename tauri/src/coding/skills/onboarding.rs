@@ -63,12 +63,23 @@ pub async fn build_onboarding_plan(
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime
     tokio::task::spawn_blocking(move || {
+        // CC Switch per-skill enable markers (directory name -> tool keys).
+        // Missing/legacy DB just yields an empty map; disk directories stay the
+        // discovery source, the DB only annotates them.
+        let cc_switch_enabled =
+            crate::coding::cc_switch::list_cc_switch_skill_enabled_map(None).unwrap_or_default();
         let filter_ctx = FilterContext {
             exclude_root: Some(&central),
             managed_targets: Some(&managed_targets),
             managed_names: Some(&managed_names),
         };
-        build_onboarding_plan_in_home(&home, &filter_ctx, &custom_tools, &claude_plugins)
+        build_onboarding_plan_in_home(
+            &home,
+            &filter_ctx,
+            &custom_tools,
+            &claude_plugins,
+            &cc_switch_enabled,
+        )
     })
     .await
     .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
@@ -79,6 +90,7 @@ fn build_onboarding_plan_in_home(
     filter_ctx: &FilterContext<'_>,
     custom_tools: &[super::types::CustomTool],
     claude_plugins: &[PluginInfo],
+    cc_switch_enabled: &HashMap<String, Vec<String>>,
 ) -> Result<OnboardingPlan> {
     // Get all adapters (built-in + custom)
     let adapters = get_all_tool_adapters(custom_tools);
@@ -118,6 +130,22 @@ fn build_onboarding_plan_in_home(
                 };
                 scanned += 1;
                 let detected = scan_runtime_tool_dir(&adapter, &dir)?;
+                // Attach per-skill enable markers for CC Switch, matched by
+                // directory name against the CCS DB (case-insensitive).
+                let detected = if source.key == "cc_switch" {
+                    detected
+                        .into_iter()
+                        .map(|mut skill| {
+                            skill.source_enabled_tools = cc_switch_enabled
+                                .get(&skill.name.to_ascii_lowercase())
+                                .cloned()
+                                .unwrap_or_default();
+                            skill
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    detected
+                };
                 all_detected.extend(filter_detected(detected, filter_ctx));
             }
         }
@@ -159,6 +187,7 @@ fn build_onboarding_plan_in_home(
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string()),
             conflicting_tools: Vec::new(), // Will be calculated later
+            source_enabled_tools: skill.source_enabled_tools.clone(),
         });
     }
 
@@ -321,6 +350,7 @@ fn scan_runtime_tool_dir(
             path,
             is_link,
             link_target,
+            source_enabled_tools: Vec::new(),
         });
     }
 

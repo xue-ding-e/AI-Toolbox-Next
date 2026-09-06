@@ -220,6 +220,10 @@ pub struct McpDiscoveredServerDto {
     pub tool_name: String,
     pub server_type: String,
     pub server_config: Value,
+    /// AI Toolbox tool keys marked enabled at the source. Only set for the
+    /// CC Switch source (`tool_key = "cc_switch"`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_enabled_tools: Vec<String>,
 }
 
 /// Scan result for discovered MCP servers

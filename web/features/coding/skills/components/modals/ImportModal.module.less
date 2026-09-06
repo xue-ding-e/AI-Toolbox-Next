@@ -70,8 +70,40 @@
 .variantTool {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+.markGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.markTag {
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.followMarksRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.followMarksHint {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  padding-left: 24px;
 }
 
 .variant {

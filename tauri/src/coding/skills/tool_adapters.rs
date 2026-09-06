@@ -328,6 +328,7 @@ pub fn scan_tool_dir(
             path,
             is_link,
             link_target,
+            source_enabled_tools: Vec::new(),
         });
     }
 
