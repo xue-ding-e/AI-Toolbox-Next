@@ -19,7 +19,7 @@ import { ImageButton } from '@/features/coding/image';
 import { GatewayButton } from '@/features/coding/gateway';
 import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
 import { PAGE_ROUTES } from '@/app/routeConfig';
-import { getRouteChrome, matchRouteEntry, shouldShowRouteAppHeader } from '@/app/routeMatching';
+import { getRouteChrome, matchRouteEntry, resolveInitialTabPath, shouldShowRouteAppHeader } from '@/app/routeMatching';
 import styles from './styles.module.less';
 
 import OpencodeIcon from '@/assets/opencode.svg';
@@ -47,7 +47,7 @@ const MainLayout: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { setCurrentModule, setCurrentSubTab } = useAppStore();
+  const { setCurrentModule, setCurrentSubTab, currentSubTab } = useAppStore();
   const { visibleTabs } = useSettingsStore();
   const { resolvedTheme } = useThemeStore();
   const { config, status, loadError } = useWSLSync();
@@ -127,9 +127,12 @@ const MainLayout: React.FC = () => {
     if (isStandalonePage) return;
     const isOnVisibleTab = subTabs.some((tab) => location.pathname.startsWith(tab.path));
     if (!isOnVisibleTab) {
-      navigate(subTabs[0].path, { replace: true });
+      // Cold boot (window rebuild or app restart): prefer the last active
+      // coding tab persisted by appStore over the first visible tab.
+      const restoredPath = resolveInitialTabPath(location.pathname, PAGE_ROUTES, subTabs, currentSubTab);
+      navigate(restoredPath ?? subTabs[0].path, { replace: true });
     }
-  }, [isStandalonePage, location.pathname, navigate, routeChrome, subTabs, visibleTabs]);
+  }, [currentSubTab, isStandalonePage, location.pathname, navigate, routeChrome, subTabs, visibleTabs]);
 
   React.useEffect(() => {
     if (!isImagePage || isImageVisible) {

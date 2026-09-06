@@ -7,11 +7,66 @@ import {
   getRouteScrollKey,
   matchRouteEntry,
   normalizeRouteChrome,
+  resolveInitialTabPath,
   shouldShowRouteAppHeader,
 } from '../../app/routeMatching.ts';
 import type { RouteEntry } from '../../app/routeConfig.ts';
 
 const TestComponent = (() => null) as ComponentType;
+
+const RESTORE_ROUTES: RouteEntry[] = [
+  { path: '/coding/opencode', component: TestComponent },
+  { path: '/coding/codex', component: TestComponent },
+  { path: '/coding/codex/sessions/detail', component: TestComponent, chrome: { mode: 'secondary' } },
+  { path: '/settings', component: TestComponent },
+];
+
+const RESTORE_SUB_TABS = [
+  { key: 'opencode', path: '/coding/opencode' },
+  { key: 'codex', path: '/coding/codex' },
+];
+
+test('resolveInitialTabPath restores the saved tab on the /index.html cold boot', () => {
+  assert.equal(
+    resolveInitialTabPath('/index.html', RESTORE_ROUTES, RESTORE_SUB_TABS, 'codex'),
+    '/coding/codex',
+  );
+});
+
+test('resolveInitialTabPath restores the saved tab on the bare root path', () => {
+  assert.equal(
+    resolveInitialTabPath('/', RESTORE_ROUTES, RESTORE_SUB_TABS, 'codex'),
+    '/coding/codex',
+  );
+});
+
+test('resolveInitialTabPath ignores the saved tab once a route is matched', () => {
+  // Hidden-tab redirects land on a real route pathname and must keep the
+  // first-visible-tab fallback instead of bouncing back to the saved tab.
+  assert.equal(
+    resolveInitialTabPath('/coding/opencode', RESTORE_ROUTES, RESTORE_SUB_TABS, 'codex'),
+    null,
+  );
+  assert.equal(
+    resolveInitialTabPath('/coding/codex/sessions/detail', RESTORE_ROUTES, RESTORE_SUB_TABS, 'codex'),
+    null,
+  );
+});
+
+test('resolveInitialTabPath falls back when the saved tab is missing or hidden', () => {
+  assert.equal(
+    resolveInitialTabPath('/index.html', RESTORE_ROUTES, RESTORE_SUB_TABS, 'removed_tab'),
+    null,
+  );
+  assert.equal(
+    resolveInitialTabPath('/index.html', RESTORE_ROUTES, RESTORE_SUB_TABS, ''),
+    null,
+  );
+  assert.equal(
+    resolveInitialTabPath('/index.html', RESTORE_ROUTES, RESTORE_SUB_TABS, undefined),
+    null,
+  );
+});
 
 test('matchRouteEntry returns the longest route match', () => {
   const routes: RouteEntry[] = [
