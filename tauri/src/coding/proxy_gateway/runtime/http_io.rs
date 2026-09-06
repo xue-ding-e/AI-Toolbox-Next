@@ -714,6 +714,27 @@ async fn write_streaming_body(
         terminal_kind_delivered = usage_collector.terminal_kind();
     }
 
+    // Flattened-SSE fallback (issue #318, 2026-09 regression). Some Codex
+    // mirror relays concatenate every SSE event onto one whitespace-separated
+    // line with no `\n\n` delimiters, so `take_sse_block` never forms a block
+    // and the 256 KiB bounded `SseUsageCollector` window can drop a terminal
+    // `response.completed` whose `event:` prefix was flushed before its large
+    // JSON completed across the overflow boundary. When body snapshotting is
+    // on, re-scan the full forwarded body here as a last resort: the terminal
+    // is always the final event of a Responses stream, so a whole-body scan
+    // reliably finds it where the bounded streaming collector could not.
+    if write_result.is_ok()
+        && terminal_kind_delivered.is_none()
+        && !response.body.is_empty()
+        && is_sse
+    {
+        if let Some(kind) =
+            crate::coding::proxy_gateway::usage_parser::sse_block_classify_terminal(&response.body)
+        {
+            terminal_kind_delivered = Some(kind);
+        }
+    }
+
     // A `Failed` terminal event (upstream `error` / `response.failed` /
     // `response.completed`+`status=failed` / non-null error envelope) ends the
     // stream properly but is a failure; without this the summary row would

@@ -169,18 +169,41 @@ impl SseUsageCollector {
             // An upstream that omits SSE blank-line delimiters makes the
             // outbound pipeline buffer the whole body and emit it as one
             // oversized final chunk. Scanning it in place is what keeps the
-            // terminal verdict and usage for those streams.
+            // terminal verdict and usage for those streams. Flush the residual
+            // up to its last complete event first, so an event left
+            // half-buffered by earlier chunks is not silently split between
+            // the two in-place scans.
             let residual = std::mem::take(&mut self.buffer);
-            self.observe_bytes(cli_key, &residual);
+            let boundary = flattened_flush_boundary(&residual);
+            self.observe_bytes(cli_key, &residual[..boundary]);
+            self.buffer = residual[boundary..].to_vec();
             self.observe_bytes(cli_key, chunk);
             return;
         }
         if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
-            // Overflow: classify what the buffer already holds before dropping
-            // it — the residual can still contain a terminal event that
+            // Overflow: observe what the buffer holds before it would be
+            // dropped — the residual can still contain a terminal event that
             // trailing events would otherwise push out of the bounded window.
+            // Cut only after the last complete event: complete events
+            // (including a terminal that already arrived) are observed
+            // immediately, while an event whose JSON is still incomplete stays
+            // buffered so later chunks complete it instead of the flush
+            // splitting it into two unparseable halves. Without this alignment
+            // a flush landing inside `response.completed`'s JSON loses both
+            // the verdict and the usage (issue #318, 2026-09 regression).
             let residual = std::mem::take(&mut self.buffer);
-            self.observe_bytes(cli_key, &residual);
+            let boundary = flattened_flush_boundary(&residual);
+            self.observe_bytes(cli_key, &residual[..boundary]);
+            self.buffer = residual[boundary..].to_vec();
+            if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
+                // Degenerate stream: the retained incomplete tail alone fills
+                // the window (no complete event to align to, or one gigantic
+                // event). Drop it with an in-place observation to stay bounded
+                // — the same tradeoff the oversized-chunk branch already
+                // accepts — then buffer `chunk` normally.
+                let held = std::mem::take(&mut self.buffer);
+                self.observe_bytes(cli_key, &held);
+            }
         }
         self.buffer.extend_from_slice(chunk);
         while let Some(block) = take_sse_block(&mut self.buffer) {
@@ -436,24 +459,69 @@ fn classify_sse_event_fields(event_name: Option<&str>, data: &str) -> Option<Sse
         return Some(SseTerminalKind::Failed);
     }
 
-    // Top-level / nested `status` string for non-Responses envelopes.
-    if let Some(kind) = value
-        .get("status")
-        .and_then(Value::as_str)
-        .and_then(classify_response_status)
-    {
-        return Some(kind);
-    }
-    if let Some(kind) = value
-        .get("response")
-        .and_then(|r| r.get("status"))
-        .and_then(Value::as_str)
-        .and_then(classify_response_status)
-    {
-        return Some(kind);
+    // Responses-API delta/part events (e.g. `response.reasoning_summary_part.done`,
+    // `response.output_text.delta`) carry an item-level `status` field — e.g.
+    // `"status":"incomplete"` meaning "this reasoning part is not the final one" —
+    // which is NOT a stream-terminal signal. All genuine Responses terminal
+    // envelopes (`response.completed` / `response.incomplete` /
+    // `response.failed` / `response.cancelled`) are already handled above, so any
+    // remaining `response.*` event is a delta whose `status` must be ignored.
+    // Without this guard the delta's `status:"incomplete"` prematurely locks the
+    // verdict to Incomplete before the real `response.completed` arrives, marking a
+    // healthy 200 stream as an error (issue #318, 2026-09 regression).
+    if !is_responses_delta_event(event_name, &value) {
+        if let Some(kind) = value
+            .get("status")
+            .and_then(Value::as_str)
+            .and_then(classify_response_status)
+        {
+            return Some(kind);
+        }
+        if let Some(kind) = value
+            .get("response")
+            .and_then(|r| r.get("status"))
+            .and_then(Value::as_str)
+            .and_then(classify_response_status)
+        {
+            return Some(kind);
+        }
     }
 
     None
+}
+
+/// Whether an SSE event is a Responses-API delta/part event whose top-level
+/// `status` field is item-level (not a stream terminal). All Responses terminal
+/// envelopes (`response.completed` / `response.incomplete` / `response.failed` /
+/// `response.cancelled`) are classified earlier in
+/// [`classify_sse_event_fields`], so a `response.`-prefixed event reaching the
+/// `status` fallback is by construction a non-terminal delta whose `status`
+/// (e.g. `"incomplete"` on `response.reasoning_summary_part.done`) must not be
+/// treated as a stream outcome.
+fn is_responses_delta_event(event_name: Option<&str>, value: &Value) -> bool {
+    let name = event_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| value.get("type").and_then(Value::as_str).map(str::trim))
+        .filter(|name| !name.is_empty());
+    match name {
+        // `response.`-prefixed events other than the four terminal envelopes are
+        // deltas/parts. The terminal envelopes never reach this function (they
+        // return earlier), but list them explicitly so future event names under
+        // `response.` cannot accidentally re-open the path.
+        Some(name) => {
+            name.starts_with("response.")
+                && !matches!(
+                    name,
+                    "response.completed"
+                        | "response.incomplete"
+                        | "response.failed"
+                        | "response.cancelled"
+                        | "response.canceled"
+                )
+        }
+        None => false,
+    }
 }
 
 /// Map an SSE `event:` / JSON `type` name to a terminal kind. `response.completed`
@@ -549,6 +617,49 @@ fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, 
             }
         };
     }
+}
+
+/// Byte offset up to which an overflow flush may cut a buffered flattened-SSE
+/// stream: the end of the last complete event JSON value. Everything after it
+/// belongs to an event whose JSON is still incomplete, so it must stay buffered
+/// until later chunks complete it — a flush cut anywhere else would split an
+/// event into two unparseable halves and lose its usage and terminal verdict
+/// (issue #318: a flush landing inside `response.completed`'s JSON lost both).
+/// Events that fail to parse (a partial JSON left over from an earlier cut, or
+/// a `data:`-shaped sequence inside a JSON string) are skipped while scanning,
+/// mirroring [`for_each_flattened_sse_field`]; skipping can only cost the one
+/// broken event, never the alignment of the ones after it. Returns 0 when the
+/// buffer holds no complete event, meaning nothing can be flushed safely.
+fn flattened_flush_boundary(buffer: &[u8]) -> usize {
+    let text = String::from_utf8_lossy(buffer);
+    let bytes = text.as_bytes();
+    let mut boundary = 0usize;
+    let mut cursor = 0usize;
+    while let Some((index, token)) = find_sse_field_token(&text, cursor) {
+        let mut value_start = index + token.len();
+        if bytes.get(value_start) == Some(&b' ') {
+            value_start += 1;
+        }
+        if token == "event:" {
+            // Event names never contain whitespace in any supported protocol.
+            cursor = bytes[value_start..]
+                .iter()
+                .position(u8::is_ascii_whitespace)
+                .map_or(text.len(), |offset| value_start + offset);
+            continue;
+        }
+        let mut json_stream =
+            serde_json::Deserializer::from_str(&text[value_start..]).into_iter::<Value>();
+        cursor = match json_stream.next() {
+            Some(Ok(_value)) => {
+                let json_end = value_start + json_stream.byte_offset();
+                boundary = json_end;
+                json_end
+            }
+            _ => value_start,
+        };
+    }
+    boundary
 }
 
 pub fn from_response_body(cli_key: GatewayCliKey, body: &[u8]) -> TokenUsage {
@@ -1794,5 +1905,118 @@ data: [DONE]
             ),
             None
         );
+    }
+
+    /// Regression for issue #318 (2026-09-06): a `response.reasoning_summary_part.done`
+    /// delta carries an item-level `"status":"incomplete"` (meaning "this reasoning
+    /// part is not the final one"). That top-level `status` must NOT be treated as
+    /// a stream-terminal Incomplete, otherwise a healthy stream is misclassified
+    /// before the real `response.completed` arrives.
+    #[test]
+    fn sse_block_classify_terminal_ignores_responses_delta_status_incomplete() {
+        let delta = b"event: response.reasoning_summary_part.done data: {\"type\":\"response.reasoning_summary_part.done\",\"status\":\"incomplete\",\"item_id\":\"rs_x\",\"output_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"hi\"}}";
+        assert_eq!(
+            sse_block_classify_terminal(delta),
+            None,
+            "delta item-level status:incomplete must not be a terminal"
+        );
+        // Same delta without the `event:` field (JSON `type` fallback path).
+        let delta_no_event =
+            b"data: {\"type\":\"response.reasoning_summary_part.done\",\"status\":\"incomplete\"}";
+        assert_eq!(
+            sse_block_classify_terminal(delta_no_event),
+            None,
+            "JSON-only delta item-level status:incomplete must not be a terminal"
+        );
+        // A genuine top-level `status:incomplete` on a non-Responses envelope is
+        // still recognized (the guard is scoped to `response.*` deltas only).
+        assert_eq!(
+            sse_block_classify_terminal(b"data: {\"status\":\"incomplete\"}\n\n"),
+            Some(SseTerminalKind::Incomplete)
+        );
+    }
+
+    /// End-to-end guard: a delimiter-free stream larger than the bounded window
+    /// whose terminal event straddles the 256 KiB overflow boundary (its JSON
+    /// is ~97 KiB, so the overflow flush lands inside it) must still yield
+    /// Success and its full usage. The aligned overflow flush
+    /// ([`flattened_flush_boundary`]) retains the incomplete terminal JSON and
+    /// buffers later chunks until it completes, so the collector itself
+    /// recovers the verdict without help — `write_streaming_body`'s snapshot
+    /// re-scan remains as a defensive backstop for degenerate streams whose
+    /// incomplete tail alone would fill the window.
+    #[test]
+    fn oversized_completed_json_straddling_overflow_boundary_yields_success() {
+        let delta = "event: response.custom_tool_call_input.delta data: {\"type\":\"response.custom_tool_call_input.delta\",\"delta\":\"x\",\"item_id\":\"ctc_1\"} ";
+        let mut body = String::new();
+        // Start the terminal near 184 KiB (like the real krill relay bodies),
+        // and make its JSON ~97 KiB (padding inside a string field) so it
+        // straddles the 256 KiB overflow boundary — the exact failure shape.
+        while body.len() < 184 * 1024 {
+            body.push_str(delta);
+        }
+        let padding = "x".repeat(97 * 1024);
+        body.push_str("event: response.completed data: ");
+        body.push_str(&format!(
+            "{{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_1\",\"status\":\"completed\",\"note\":\"{padding}\",\"usage\":{{\"input_tokens\":100,\"output_tokens\":50,\"total_tokens\":150}}}},\"sequence_number\":9}}"
+        ));
+        let bytes = body.into_bytes();
+
+        // The whole-body flattened scan reliably finds the terminal.
+        assert_eq!(
+            sse_block_classify_terminal(&bytes),
+            Some(SseTerminalKind::Success)
+        );
+
+        // The bounded chunked collector recovers the verdict too: the overflow
+        // flush cuts after the last complete event and keeps the incomplete
+        // terminal JSON buffered until the trailing chunks finish it.
+        let mut collector = SseUsageCollector::with_provider_type(None);
+        for chunk in bytes.chunks(64 * 1024) {
+            collector.observe_chunk(chunk);
+        }
+        collector.drain_terminal();
+        assert_eq!(
+            collector.terminal_kind(),
+            Some(SseTerminalKind::Success),
+            "aligned overflow flush must preserve the straddling terminal event"
+        );
+
+        // Usage rides in the same terminal JSON, so it must survive as well.
+        let mut collector = SseUsageCollector::with_provider_type(None);
+        for chunk in bytes.chunks(64 * 1024) {
+            collector.push_chunk(GatewayCliKey::Codex, chunk);
+        }
+        let usage = collector.finish(GatewayCliKey::Codex);
+        assert_eq!(
+            usage.total_tokens(),
+            Some(150),
+            "usage inside the straddling terminal JSON must be recovered"
+        );
+    }
+
+    /// The overflow flush must cut after the last complete event JSON, so a
+    /// complete terminal is observed immediately while an incomplete trailing
+    /// event stays buffered; a `data:` sequence inside a JSON string without
+    /// leading whitespace is not a field token and must not become a cut point.
+    #[test]
+    fn flattened_flush_boundary_cuts_after_last_complete_event() {
+        let buffer =
+            b"event: a data: {\"x\":1} event: b data: {\"y\":2} event: response.completed data: {";
+        let complete_prefix = "event: a data: {\"x\":1} event: b data: {\"y\":2}";
+        assert_eq!(flattened_flush_boundary(buffer), complete_prefix.len());
+
+        let tricky = b"event: a data: {\"s\":\"nodata: here\"} event: b data: {";
+        let tricky_complete = "event: a data: {\"s\":\"nodata: here\"}";
+        assert_eq!(
+            flattened_flush_boundary(tricky),
+            tricky_complete.len(),
+            "boundary must skip the in-string non-whitespace-prefixed data: token"
+        );
+
+        // No complete event at all: nothing can be flushed safely.
+        assert_eq!(flattened_flush_boundary(b"{\"just\":\"json bytes\"}"), 0);
+        assert_eq!(flattened_flush_boundary(b"event: a data: {\"cut"), 0);
+        assert_eq!(flattened_flush_boundary(b""), 0);
     }
 }
