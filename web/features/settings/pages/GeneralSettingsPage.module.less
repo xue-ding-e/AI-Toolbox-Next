@@ -155,3 +155,25 @@
   gap: 6px;
   align-items: center;
 }
+
+.keepAwakeRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+
+  :global(.ant-switch) {
+    flex-shrink: 0;
+  }
+}
+
+.keepAwakeContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.keepAwakeHint {
+  display: block;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}

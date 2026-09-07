@@ -5,6 +5,7 @@ import {
   saveSettings,
   saveManualCliPath,
   setAutoLaunch,
+  setKeepAwake,
   type AppSettings,
   type ProxyMode,
   type WebDAVConfig,
@@ -16,6 +17,7 @@ import {
   normalizeSidebarHiddenByPage,
 } from '@/services';
 import { setCodexPreserveOfficialAuthOnSwitch as setCodexPreserveOfficialAuthOnSwitchApi } from '@/services/codexApi';
+import { createKeepAwakeSettingsSlice, type KeepAwakeSettingsState } from './keepAwakeSettings';
 import { buildLaunchOnStartupSettings } from './settingsStoreUtils';
 
 // Re-export types for convenience (using camelCase for frontend)
@@ -38,7 +40,7 @@ export interface S3ConfigFE {
   publicDomain: string;
 }
 
-interface SettingsState {
+interface SettingsState extends KeepAwakeSettingsState {
   // Loading state
   isLoading: boolean;
   isInitialized: boolean;
@@ -200,6 +202,7 @@ const defaultS3: S3ConfigFE = {
 };
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
+  ...createKeepAwakeSettingsSlice(set, { getSettings, saveSettings, setKeepAwake }),
   isLoading: false,
   isInitialized: false,
   backupType: 'local',
@@ -256,6 +259,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         startMinimized: settings.start_minimized ?? false,
         startLightweight: settings.start_lightweight ?? false,
         lightweightOnClose: settings.lightweight_on_close ?? false,
+        keepComputerAwake: settings.keep_computer_awake ?? false,
         proxyMode: settings.proxy_mode ?? 'system',
         proxyUrl: settings.proxy_url || '',
         autoBackupEnabled: settings.auto_backup_enabled ?? false,

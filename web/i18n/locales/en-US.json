@@ -488,6 +488,7 @@
       "tabVisibility": "Tab Visibility",
       "language": "Language",
       "theme": "Theme",
+      "appearance": "Appearance",
       "window": "Window",
       "about": "About App",
       "proxy": "Network Proxy",
@@ -1030,7 +1031,10 @@
       "startMinimized": "Start Minimized to Tray",
       "minimizeToTrayOnClose": "Minimize to Tray on Close",
       "startLightweight": "Start in lightweight mode",
-      "lightweightOnClose": "Enter lightweight mode on close"
+      "lightweightOnClose": "Enter lightweight mode on close",
+      "keepComputerAwake": "Keep computer running",
+      "keepComputerAwakeDesc": "Prevents the system from sleeping due to idle. Manual sleep / lid close still works.",
+      "keepComputerAwakeFailed": "Could not apply the keep-awake setting: {{error}}"
     },
     "tabVisibility": {
       "hint": "Choose which modules to display in the top tab bar. Drag to reorder coding tabs.",

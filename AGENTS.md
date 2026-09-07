@@ -407,6 +407,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
   This includes Tauri commands, startup tasks spawned by `tauri::async_runtime::spawn`, event listeners, background sync tasks, and any helper that may be reached from those paths.
 - If a sync Rust helper needs database-backed or other async-derived data, do not hide the async query inside the sync helper. Provide a parallel `*_async` function and make async call sites use it directly.
 - When reviewing a sync helper that internally queries the database with `block_on`, treat it as **sync-boundary only**. Before reusing it, first verify whether the caller may run under Tokio/Tauri async runtime.
+- Thread-affine OS resources must be created and released on the same owning thread. A `Mutex` or separate `spawn_blocking` calls only provide synchronization, not thread affinity. For example, Windows `SetThreadExecutionState` requests must stay on one dedicated worker for both startup restore and later IPC changes; async callers should await a channel response instead of moving the guard across runtime threads.
 - For path/config resolution utilities, prefer this rule:
   sync callers use `*_sync` or pure sync helpers; async callers use `*_async`; do not mix them.
 - If you fix a high-value engineering pitfall that is likely to recur, you should also update this `AGENTS.md` in the same task so the rule becomes part of repo workflow guidance.

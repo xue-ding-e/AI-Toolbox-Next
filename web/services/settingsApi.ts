@@ -131,6 +131,7 @@ export interface AppSettings {
   start_minimized: boolean;
   start_lightweight: boolean;
   lightweight_on_close: boolean;
+  keep_computer_awake: boolean;
   proxy_mode: ProxyMode;
   proxy_url: string;
   theme: string;
@@ -187,6 +188,7 @@ export const defaultSettings: AppSettings = {
   start_minimized: false,
   start_lightweight: false,
   lightweight_on_close: false,
+  keep_computer_awake: false,
   proxy_mode: 'system',
   proxy_url: '',
   theme: 'system',
@@ -327,6 +329,13 @@ export const openAppDataDir = async (): Promise<void> => {
  */
 export const setAutoLaunch = async (enabled: boolean): Promise<void> => {
   await invoke('set_auto_launch', { enabled });
+};
+
+/**
+ * Keep the computer awake (prevent idle sleep). Off = restore normal behavior.
+ */
+export const setKeepAwake = async (enabled: boolean): Promise<void> => {
+  await invoke('set_keep_awake', { enabled });
 };
 
 /**

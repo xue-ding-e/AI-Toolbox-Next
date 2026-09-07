@@ -34,6 +34,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         start_minimized: get_bool(&value, "start_minimized", false),
         start_lightweight: get_bool(&value, "start_lightweight", false),
         lightweight_on_close: get_bool(&value, "lightweight_on_close", false),
+        keep_computer_awake: get_bool(&value, "keep_computer_awake", false),
         proxy_mode: get_proxy_mode(&value),
         proxy_url: get_str(&value, "proxy_url", ""),
         theme: get_str(&value, "theme", "system"),

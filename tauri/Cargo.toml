@@ -55,6 +55,7 @@ futures-util = "0.3.31"
 regex = "1.12.2"
 dirs = "5.0.1"
 auto-launch = "0.5.0"
+keepawake = "0.6"
 log = "0.4"
 simplelog = "0.12"
 indexmap = { version = "2.13.0", features = ["serde"] }

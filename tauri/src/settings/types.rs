@@ -170,6 +170,10 @@ pub struct AppSettings {
     /// of just hiding it when the user closes the window (default: false).
     /// Only effective while minimize_to_tray_on_close is true.
     pub lightweight_on_close: bool,
+    /// Keep the computer awake (prevent idle sleep) while the app is running
+    /// (default: false). Only inhibits idle sleep; manual sleep / lid close
+    /// still works.
+    pub keep_computer_awake: bool,
     /// Proxy mode for network requests: "direct", "custom", or "system" (default: "system")
     pub proxy_mode: String,
     /// Proxy URL for network requests (e.g., http://user:pass@proxy.com:8080 or socks5://proxy.com:1080)
@@ -260,6 +264,7 @@ impl Default for AppSettings {
             start_minimized: false,
             start_lightweight: false,
             lightweight_on_close: false,
+            keep_computer_awake: false,
             proxy_mode: "system".to_string(),
             proxy_url: String::new(),
             theme: "system".to_string(),

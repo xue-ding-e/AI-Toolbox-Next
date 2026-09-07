@@ -488,6 +488,7 @@
       "tabVisibility": "模块显示",
       "language": "语言设置",
       "theme": "主题设置",
+      "appearance": "外观",
       "window": "窗口设置",
       "about": "关于应用",
       "proxy": "网络代理",
@@ -1030,7 +1031,10 @@
       "startMinimized": "启动时最小化到托盘",
       "minimizeToTrayOnClose": "关闭时最小化到托盘",
       "startLightweight": "启动后进入轻量模式",
-      "lightweightOnClose": "关闭窗口时进入轻量模式"
+      "lightweightOnClose": "关闭窗口时进入轻量模式",
+      "keepComputerAwake": "保持电脑运行",
+      "keepComputerAwakeDesc": "打开后阻止系统因空闲进入休眠（仍可手动睡眠/合盖休眠）",
+      "keepComputerAwakeFailed": "未能应用保持电脑运行设置：{{error}}"
     },
     "tabVisibility": {
       "hint": "选择在顶部标签栏中显示的模块，拖拽调整编码工具排序",

@@ -155,6 +155,32 @@ mod tests {
     }
 
     #[test]
+    fn keep_awake_preference_round_trips_and_old_records_default_to_disabled() {
+        let sqlite_state = SqliteDbState::in_memory_for_test().expect("sqlite");
+        sqlite_state
+            .with_conn(|conn| {
+                db_put(
+                    conn,
+                    DbTable::Settings,
+                    SETTINGS_ID,
+                    &serde_json::json!({ "theme": "dark" }),
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let mut settings = load_settings_from_sqlite_state(&sqlite_state).unwrap();
+        assert!(!settings.keep_computer_awake);
+        for enabled in [true, false] {
+            settings.keep_computer_awake = enabled;
+            save_settings_to_sqlite_state(&sqlite_state, &settings).unwrap();
+            settings = load_settings_from_sqlite_state(&sqlite_state).unwrap();
+            assert_eq!(settings.keep_computer_awake, enabled);
+            assert_eq!(settings.theme, "dark");
+        }
+    }
+
+    #[test]
     fn sqlite_last_auto_backup_time_update_creates_or_patches_settings() {
         let sqlite_state = SqliteDbState::in_memory_for_test().expect("sqlite");
 

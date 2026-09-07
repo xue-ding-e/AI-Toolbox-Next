@@ -168,6 +168,14 @@ pub fn get_auto_launch_status() -> Result<bool, String> {
         .map_err(|e| format!("Failed to check auto launch status: {}", e))
 }
 
+/// Keep the computer awake (prevent idle sleep). Off = restore normal behavior.
+#[tauri::command]
+pub async fn set_keep_awake(enabled: bool) -> Result<(), String> {
+    crate::keep_awake::set_keep_awake(enabled)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Restart the application
 #[tauri::command]
 pub fn restart_app() -> Result<(), String> {

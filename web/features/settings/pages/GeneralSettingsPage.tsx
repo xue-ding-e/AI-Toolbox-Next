@@ -6,7 +6,6 @@ import {
   CloudDownloadOutlined,
   GithubOutlined,
   SyncOutlined,
-  GlobalOutlined,
   DesktopOutlined,
   InfoCircleOutlined,
   ApiOutlined,
@@ -182,11 +181,15 @@ const GeneralSettingsPage: React.FC = () => {
     startMinimized,
     startLightweight,
     lightweightOnClose,
+    keepComputerAwake,
+    keepComputerAwakeUpdating,
+    keepComputerAwakeError,
     setLaunchOnStartup,
     setMinimizeToTrayOnClose,
     setStartMinimized,
     setStartLightweight,
     setLightweightOnClose,
+    setKeepComputerAwake,
     proxyMode,
     setProxyMode,
     proxyUrl,
@@ -201,6 +204,13 @@ const GeneralSettingsPage: React.FC = () => {
   } = useSettingsStore();
 
   const isWindows = React.useMemo(() => platform() === 'windows', []);
+
+  const handleKeepComputerAwakeChange = (enabled: boolean) => {
+    void setKeepComputerAwake(enabled).catch((error) => {
+      // The store retains the error for the inline, accessible failure message.
+      console.error('Failed to update keep-awake setting:', error);
+    });
+  };
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
   const [webdavRestoreModalOpen, setWebdavRestoreModalOpen] = React.useState(false);
@@ -744,37 +754,34 @@ const GeneralSettingsPage: React.FC = () => {
             title={<CardTitle icon={<AppstoreOutlined style={{ color: '#1890ff' }} />} title={t('settings.cards.general')} />}
             className={styles.card}
           >
-            {/* Language Settings */}
-            <SectionTitle icon={<GlobalOutlined style={{ color: '#1890ff' }} />} title={t('settings.cards.language')} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text>{t('settings.currentLanguage')}:</Text>
-              <Select
-                value={language}
-                onChange={handleLanguageChange}
-                options={languages.map((lang) => ({
-                  value: lang.value,
-                  label: lang.label,
-                }))}
-                style={{ width: 160 }}
-              />
-            </div>
-
-            <Divider />
-
-            {/* Theme Settings */}
-            <SectionTitle icon={<BulbOutlined style={{ color: '#faad14' }} />} title={t('settings.cards.theme')} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text>{t('settings.currentTheme')}:</Text>
-              <Select
-                value={themeMode}
-                onChange={(value: ThemeMode) => setThemeMode(value)}
-                options={[
-                  { value: 'light', label: t('theme.light') },
-                  { value: 'dark', label: t('theme.dark') },
-                  { value: 'system', label: t('theme.system') },
-                ]}
-                style={{ width: 160 }}
-              />
+            {/* Appearance (Language + Theme) */}
+            <SectionTitle icon={<BulbOutlined style={{ color: '#faad14' }} />} title={t('settings.cards.appearance')} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.currentLanguage')}:</Text>
+                <Select
+                  value={language}
+                  onChange={handleLanguageChange}
+                  options={languages.map((lang) => ({
+                    value: lang.value,
+                    label: lang.label,
+                  }))}
+                  style={{ width: 160 }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.currentTheme')}:</Text>
+                <Select
+                  value={themeMode}
+                  onChange={(value: ThemeMode) => setThemeMode(value)}
+                  options={[
+                    { value: 'light', label: t('theme.light') },
+                    { value: 'dark', label: t('theme.dark') },
+                    { value: 'system', label: t('theme.system') },
+                  ]}
+                  style={{ width: 160 }}
+                />
+              </div>
             </div>
 
             <Divider />
@@ -817,6 +824,27 @@ const GeneralSettingsPage: React.FC = () => {
                   checked={lightweightOnClose}
                   disabled={!minimizeToTrayOnClose}
                   onChange={setLightweightOnClose}
+                />
+              </div>
+              <div className={styles.keepAwakeRow}>
+                <div className={styles.keepAwakeContent}>
+                  <Text>{t('settings.window.keepComputerAwake')}</Text>
+                  <Text type="secondary" className={styles.keepAwakeHint}>
+                    {t('settings.window.keepComputerAwakeDesc')}
+                  </Text>
+                  {keepComputerAwakeError && (
+                    <Text type="danger" className={styles.keepAwakeHint} role="alert" id="keep-awake-error">
+                      {t('settings.window.keepComputerAwakeFailed', { error: keepComputerAwakeError })}
+                    </Text>
+                  )}
+                </div>
+                <Switch
+                  checked={keepComputerAwake}
+                  loading={keepComputerAwakeUpdating}
+                  disabled={keepComputerAwakeUpdating}
+                  aria-label={t('settings.window.keepComputerAwake')}
+                  aria-describedby={keepComputerAwakeError ? 'keep-awake-error' : undefined}
+                  onChange={handleKeepComputerAwakeChange}
                 />
               </div>
             </div>

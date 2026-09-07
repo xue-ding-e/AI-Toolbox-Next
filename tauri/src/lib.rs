@@ -25,6 +25,7 @@ pub mod auto_launch;
 pub mod coding;
 pub mod db;
 pub mod http_client;
+pub mod keep_awake;
 pub mod lightweight;
 pub mod settings;
 pub mod single_instance;
@@ -1168,6 +1169,11 @@ pub fn run() {
                             if settings.launch_on_startup {
                                 let _ = auto_launch::enable_auto_launch();
                             }
+                            if settings.keep_computer_awake {
+                                if let Err(error) = keep_awake::set_keep_awake(true).await {
+                                    warn!("Failed to restore keep awake at startup: {error}");
+                                }
+                            }
                             (settings.start_minimized, settings.start_lightweight)
                         }
                         Err(error) => {
@@ -1926,6 +1932,7 @@ pub fn run() {
             settings::list_backup_file_filter_path_options,
             settings::set_auto_launch,
             settings::get_auto_launch_status,
+            settings::set_keep_awake,
             settings::restart_app,
             settings::test_proxy_connection,
             // Proxy Gateway

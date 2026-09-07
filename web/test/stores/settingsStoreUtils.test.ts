@@ -38,6 +38,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     start_minimized: false,
     start_lightweight: false,
     lightweight_on_close: false,
+    keep_computer_awake: false,
     proxy_mode: 'system',
     proxy_url: '',
     theme: 'system',
