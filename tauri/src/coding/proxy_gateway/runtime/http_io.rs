@@ -596,6 +596,7 @@ async fn write_streaming_body(
     let is_sse = response_is_sse(&response.headers);
 
     let mut write_result: std::io::Result<()> = Ok(());
+    let mut client_write_failed = false;
     let mut terminal_kind_delivered: Option<SseTerminalKind> = None;
     let mut idle_timeout_hit = false;
     let mut upstream_stream_error = false;
@@ -668,71 +669,34 @@ async fn write_streaming_body(
         response.response_body_bytes = response
             .response_body_bytes
             .saturating_add(chunk.len() as u64);
-        // Track whether this chunk carries a terminal event. Mark it delivered
-        // only after the write succeeds, so a BrokenPipe on the terminal chunk
-        // itself does not count as "delivered".
-        let terminal_before = usage_collector.terminal_kind();
-        match response.cli_key {
-            Some(cli_key) => usage_collector.push_chunk(cli_key, &chunk),
-            // Without a cli identity there is no usage to merge, but terminal
-            // tracking still drives the stream verdict and the client-facing
-            // error event, so keep ingesting blocks.
-            None => usage_collector.observe_chunk(&chunk),
-        }
-        let new_terminal = usage_collector.terminal_kind();
-        let terminal_in_chunk = new_terminal.is_some() && terminal_before.is_none();
         append_body_snapshot(response, &chunk, settings);
         let chunk_header = format!("{:X}\r\n", chunk.len());
-        if let Err(error) = stream.write_all(chunk_header.as_bytes()).await {
+        let chunk_write_result: std::io::Result<()> = async {
+            stream.write_all(chunk_header.as_bytes()).await?;
+            stream.write_all(&chunk).await?;
+            stream.write_all(b"\r\n").await?;
+            stream.flush().await
+        }
+        .await;
+        if chunk_write_result.is_err() {
+            usage_collector.drain_terminal();
+            terminal_kind_delivered = usage_collector.terminal_kind();
+        }
+        match response.cli_key {
+            Some(cli_key) => usage_collector.push_chunk(cli_key, &chunk),
+            None => usage_collector.observe_chunk(&chunk),
+        }
+        if let Err(error) = chunk_write_result {
+            client_write_failed = true;
             write_result = Err(error);
             break;
         }
-        if let Err(error) = stream.write_all(&chunk).await {
-            write_result = Err(error);
-            break;
-        }
-        if let Err(error) = stream.write_all(b"\r\n").await {
-            write_result = Err(error);
-            break;
-        }
-        if let Err(error) = stream.flush().await {
-            write_result = Err(error);
-            break;
-        }
-        if terminal_in_chunk {
-            terminal_kind_delivered = new_terminal;
-        }
-    }
-
-    // Drain any terminal marker that arrived in the final SSE event without a
-    // trailing blank-line separator. Its bytes were already written to the
-    // client inside an earlier chunk, so when every write succeeded it still
-    // counts as delivered. Skip on write failure: those bytes may not have
-    // reached the client.
-    if write_result.is_ok() && terminal_kind_delivered.is_none() {
-        usage_collector.drain_terminal();
         terminal_kind_delivered = usage_collector.terminal_kind();
     }
 
-    // Flattened-SSE fallback (issue #318, 2026-09 regression). Some Codex
-    // mirror relays concatenate every SSE event onto one whitespace-separated
-    // line with no `\n\n` delimiters, so `take_sse_block` never forms a block
-    // and the 256 KiB bounded `SseUsageCollector` window can drop a terminal
-    // `response.completed` whose `event:` prefix was flushed before its large
-    // JSON completed across the overflow boundary. When body snapshotting is
-    // on, re-scan the full forwarded body here as a last resort: the terminal
-    // is always the final event of a Responses stream, so a whole-body scan
-    // reliably finds it where the bounded streaming collector could not.
-    if write_result.is_ok()
-        && terminal_kind_delivered.is_none()
-        && !response.body.is_empty()
-        && is_sse
-    {
-        if let Some(kind) =
-            crate::coding::proxy_gateway::usage_parser::sse_block_classify_terminal(&response.body)
-        {
-            terminal_kind_delivered = Some(kind);
-        }
+    if !client_write_failed && terminal_kind_delivered.is_none() {
+        usage_collector.drain_terminal();
+        terminal_kind_delivered = usage_collector.terminal_kind();
     }
 
     // A `Failed` terminal event (upstream `error` / `response.failed` /
@@ -1150,14 +1114,120 @@ mod tests {
     async fn run_stream_test(
         chunks: Vec<Result<Vec<u8>, String>>,
     ) -> (DebugHttpResponse, std::io::Result<()>, String) {
+        run_stream_test_with_settings(chunks, ProxyGatewaySettings::default()).await
+    }
+
+    async fn run_stream_test_with_settings(
+        chunks: Vec<Result<Vec<u8>, String>>,
+        settings: ProxyGatewaySettings,
+    ) -> (DebugHttpResponse, std::io::Result<()>, String) {
         let (mut client, reader) = connect_write_pair().await;
         let mut response = test_streaming_response(chunks);
-        let settings = ProxyGatewaySettings::default();
         let result =
             write_streaming_body(&mut client, &mut response, Instant::now(), &settings).await;
         drop(client);
         let received = String::from_utf8_lossy(&reader.await.unwrap()).to_string();
         (response, result, received)
+    }
+
+    #[tokio::test]
+    async fn large_flattened_terminal_reaches_client_independently_of_body_logging() {
+        let padding = "x".repeat(540 * 1024);
+        let body = format!(
+            "event: response.reasoning_summary_part.done data: {{\"type\":\"response.reasoning_summary_part.done\",\"status\":\"incomplete\"}} event: response.completed data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_large\",\"status\":\"completed\",\"note\":\"{padding}\",\"usage\":{{\"input_tokens\":120,\"output_tokens\":40}}}}}}"
+        );
+        for store_body in [false, true] {
+            for chunk_size in [1024, 65536, 300000] {
+                let chunks: Vec<_> = body
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .map(|chunk| Ok(chunk.to_vec()))
+                    .collect();
+                let mut expected_wire = String::new();
+                for chunk in body.as_bytes().chunks(chunk_size) {
+                    expected_wire.push_str(&format!(
+                        "{:X}\r\n{}\r\n",
+                        chunk.len(),
+                        std::str::from_utf8(chunk).unwrap()
+                    ));
+                }
+                expected_wire.push_str("0\r\n\r\n");
+                let settings = ProxyGatewaySettings {
+                    store_response_body: store_body,
+                    log_max_body_size_kb: 1,
+                    ..ProxyGatewaySettings::default()
+                };
+                let (response, result, received) =
+                    run_stream_test_with_settings(chunks, settings).await;
+                assert!(result.is_ok());
+                assert_eq!(
+                    response.stream_outcome,
+                    GatewayStreamOutcome::Completed,
+                    "store_body={store_body}, chunk_size={chunk_size}"
+                );
+                assert_eq!(response.token_usage.input_tokens, Some(120));
+                assert_eq!(response.token_usage.output_tokens, Some(40));
+                assert_eq!(received, expected_wire);
+                assert!(response.body.len() <= 1024);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_in_failed_write_is_not_counted_as_delivered() {
+        for delimiter in ["", "\n\n"] {
+            let (mut client, reader) = connect_write_pair().await;
+            client.shutdown().await.unwrap();
+            let terminal = format!(
+                "event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\",\"usage\":{{\"input_tokens\":100,\"output_tokens\":50}}}}}}{delimiter}"
+            );
+            let mut response = test_streaming_response(vec![Ok(terminal.into_bytes())]);
+            let result = write_streaming_body(
+                &mut client,
+                &mut response,
+                Instant::now(),
+                &ProxyGatewaySettings::default(),
+            )
+            .await;
+            drop(client);
+            assert!(result.is_err());
+            assert_ne!(response.stream_outcome, GatewayStreamOutcome::Completed);
+            assert_eq!(response.token_usage.total_tokens(), Some(150));
+            assert!(reader.await.unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn charged_200_stream_keeps_real_non_success_terminal_outcomes() {
+        for (status, expected) in [
+            ("failed", GatewayStreamOutcome::Failed),
+            ("incomplete", GatewayStreamOutcome::Incomplete),
+            ("canceled", GatewayStreamOutcome::Canceled),
+        ] {
+            let terminal = format!(
+                "event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"{status}\",\"usage\":{{\"input_tokens\":100,\"output_tokens\":50}}}}}}\n\n"
+            );
+            let (response, result, received) =
+                run_stream_test(vec![Ok(terminal.into_bytes())]).await;
+            assert!(result.is_ok());
+            assert_eq!(response.status_code, 200);
+            assert_eq!(response.stream_outcome, expected);
+            assert_eq!(response.token_usage.total_tokens(), Some(150));
+            assert!(received.contains(status));
+        }
+    }
+
+    #[tokio::test]
+    async fn late_transport_error_does_not_erase_delivered_terminal_tail() {
+        let (response, result, received) = run_stream_test(vec![
+            Ok(b"event: response.completed data: {\"type\":\"response.completed\"}".to_vec()),
+            Err("upstream transport failed after completion".to_string()),
+        ])
+        .await;
+        assert!(result.is_err());
+        assert_eq!(response.stream_outcome, GatewayStreamOutcome::Completed);
+        assert!(received.contains("response.completed"));
+        assert!(!received.contains("response.failed"));
     }
 
     #[tokio::test]

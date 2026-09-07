@@ -46,6 +46,13 @@ pub struct DeepLinkState {
 }
 
 impl DeepLinkState {
+    pub(crate) fn mark_frontend_not_ready(&self) -> bool {
+        self.queue
+            .lock()
+            .map(|mut guard| std::mem::replace(&mut guard.frontend_ready, false))
+            .unwrap_or(false)
+    }
+
     fn store_if_frontend_not_ready(&self, request: DeepLinkImportRequest) {
         if let Ok(mut guard) = self.queue.lock() {
             if !guard.frontend_ready {
@@ -55,7 +62,7 @@ impl DeepLinkState {
     }
 
     /// Mark the frontend listener as ready and drain the cold-start pending slot.
-    fn mark_frontend_ready(&self) -> Option<DeepLinkImportRequest> {
+    pub(crate) fn mark_frontend_ready(&self) -> Option<DeepLinkImportRequest> {
         self.queue.lock().ok().and_then(|mut guard| {
             guard.frontend_ready = true;
             guard.pending.take()
@@ -229,5 +236,33 @@ mod tests {
             state.mark_frontend_ready().is_none(),
             "hot links are delivered by live event only and must not replay"
         );
+    }
+
+    #[test]
+    fn rebuilt_frontend_receives_links_queued_while_window_was_absent() {
+        let state = DeepLinkState::default();
+        assert!(state.mark_frontend_ready().is_none());
+        assert!(state.mark_frontend_not_ready());
+        state.store_if_frontend_not_ready(sample_request("WhileAbsent"));
+        state.store_if_frontend_not_ready(sample_request("WhileRebuilding"));
+
+        assert_eq!(state.mark_frontend_ready().unwrap().name, "WhileRebuilding");
+        assert!(state.mark_frontend_ready().is_none());
+        state.store_if_frontend_not_ready(sample_request("HotAfterRebuild"));
+        assert!(state.mark_frontend_ready().is_none());
+    }
+
+    #[test]
+    fn failed_window_destroy_can_restore_live_delivery() {
+        let state = DeepLinkState::default();
+        assert!(!state.mark_frontend_not_ready());
+        state.mark_frontend_ready();
+        let was_ready = state.mark_frontend_not_ready();
+        assert!(was_ready);
+        if was_ready {
+            state.mark_frontend_ready();
+        }
+        state.store_if_frontend_not_ready(sample_request("Live"));
+        assert!(state.mark_frontend_ready().is_none());
     }
 }

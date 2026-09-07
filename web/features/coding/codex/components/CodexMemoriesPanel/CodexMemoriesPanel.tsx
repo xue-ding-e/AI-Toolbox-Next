@@ -40,6 +40,7 @@ import type {
   CodexMemoriesListResult,
   CodexMemoriesSourceMode,
 } from '@/types/codex';
+import { resolveMemoriesSourceMode } from './memoriesSource';
 import styles from './CodexMemoriesPanel.module.less';
 
 const { Text } = Typography;
@@ -107,6 +108,7 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
   const [listResult, setListResult] = React.useState<CodexMemoriesListResult | null>(null);
   const [currentDir, setCurrentDir] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const listRequestIdRef = React.useRef(0);
 
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null);
   const [fileContent, setFileContent] = React.useState<string | null>(null);
@@ -123,48 +125,74 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
   const [newFileModalOpen, setNewFileModalOpen] = React.useState(false);
   const [newFileName, setNewFileName] = React.useState('');
 
+  const navigationContextRef = React.useRef({ sourceMode, currentDir, selectedFilePath });
+  React.useLayoutEffect(() => {
+    navigationContextRef.current = { sourceMode, currentDir, selectedFilePath };
+  }, [sourceMode, currentDir, selectedFilePath]);
+
   const sourceOptions = listResult?.availableSources ?? [];
-  const hasLocalSource = sourceOptions.some((option) => option.source === 'local');
-  const hasWslSource = sourceOptions.some((option) => option.source === 'wsl');
-  const effectiveSourceMode: CodexMemoriesSourceMode =
-    sourceMode === 'local' && !hasLocalSource && hasWslSource ? 'wsl' : sourceMode;
+  const hasLocalSource =
+    listResult === null || sourceOptions.some((option) => option.source === 'local');
+  const hasWslSource =
+    listResult === null || sourceOptions.some((option) => option.source === 'wsl');
   const sourceUnavailable = Boolean(listResult?.unavailable);
 
   const loadList = React.useCallback(
     async (mode: CodexMemoriesSourceMode, dir: string, silent = false) => {
+      const isCurrentList = () =>
+        navigationContextRef.current.sourceMode === mode &&
+        navigationContextRef.current.currentDir === dir;
+      if (!isCurrentList()) {
+        return;
+      }
+      const requestId = ++listRequestIdRef.current;
       if (!silent) {
         setLoading(true);
       }
       try {
         const result = await listCodexMemories(mode, dir);
+        if (requestId !== listRequestIdRef.current || !isCurrentList()) {
+          return;
+        }
         setListResult(result);
+        const resolvedMode = resolveMemoriesSourceMode(mode, result.availableSources);
+        if (resolvedMode !== mode) {
+          rememberedMemoriesSourceMode = resolvedMode;
+          setSourceMode(resolvedMode);
+          setCurrentDir('');
+        }
       } catch (error) {
+        if (requestId !== listRequestIdRef.current || !isCurrentList()) {
+          return;
+        }
         setListResult(null);
         console.error('Failed to list Codex memories:', error);
         message.error(error instanceof Error ? error.message : String(error));
       } finally {
-        setLoading(false);
+        if (requestId === listRequestIdRef.current && isCurrentList()) {
+          setLoading(false);
+        }
       }
     },
     [message]
   );
 
   React.useEffect(() => {
-    loadList(effectiveSourceMode, currentDir);
-  }, [effectiveSourceMode, currentDir, refreshToken, loadList]);
+    loadList(sourceMode, currentDir);
+  }, [sourceMode, currentDir, refreshToken, loadList]);
 
   // Reset selection when the source or directory actually changes, but keep
   // the browsing position across page-driven refreshToken bumps.
-  const navigationKeyRef = React.useRef(`${effectiveSourceMode}|${currentDir}`);
+  const navigationKeyRef = React.useRef(`${sourceMode}|${currentDir}`);
   React.useEffect(() => {
-    const navigationKey = `${effectiveSourceMode}|${currentDir}`;
+    const navigationKey = `${sourceMode}|${currentDir}`;
     if (navigationKeyRef.current === navigationKey) {
       return;
     }
     navigationKeyRef.current = navigationKey;
     setSelectedFilePath(null);
     setSelectedRowKeys([]);
-  }, [effectiveSourceMode, currentDir]);
+  }, [sourceMode, currentDir]);
 
   React.useEffect(() => {
     if (!selectedFilePath) {
@@ -174,7 +202,7 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
     }
     let cancelled = false;
     setFileLoading(true);
-    readCodexMemoryFile(effectiveSourceMode, selectedFilePath)
+    readCodexMemoryFile(sourceMode, selectedFilePath)
       .then((content) => {
         if (!cancelled) {
           setFileContent(content.content);
@@ -196,9 +224,13 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
     return () => {
       cancelled = true;
     };
-  }, [selectedFilePath, effectiveSourceMode, message]);
+  }, [selectedFilePath, sourceMode, message]);
 
   const handleSourceModeChange = (mode: CodexMemoriesSourceMode) => {
+    if (mode === sourceMode && currentDir === '') {
+      return;
+    }
+    listRequestIdRef.current += 1;
     rememberedMemoriesSourceMode = mode;
     setSourceMode(mode);
     setCurrentDir('');
@@ -219,11 +251,17 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
     }
     setSaving(true);
     try {
-      await writeCodexMemoryFile(effectiveSourceMode, selectedFilePath, editValue);
+      await writeCodexMemoryFile(sourceMode, selectedFilePath, editValue);
       message.success(t('codex.memories.messages.saveSuccess'));
-      setEditing(false);
-      setFileContent(editValue);
-      await loadList(effectiveSourceMode, currentDir, true);
+      const currentSelection = navigationContextRef.current;
+      if (
+        currentSelection.sourceMode === sourceMode &&
+        currentSelection.selectedFilePath === selectedFilePath
+      ) {
+        setEditing(false);
+        setFileContent(editValue);
+      }
+      await loadList(sourceMode, currentDir, true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -238,11 +276,11 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
     }
     const relativePath = currentDir ? `${currentDir}/${trimmedName}` : trimmedName;
     try {
-      await writeCodexMemoryFile(effectiveSourceMode, relativePath, '');
+      await writeCodexMemoryFile(sourceMode, relativePath, '', { createNew: true });
       message.success(t('codex.memories.messages.createSuccess'));
       setNewFileModalOpen(false);
       setNewFileName('');
-      await loadList(effectiveSourceMode, currentDir, true);
+      await loadList(sourceMode, currentDir, true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : String(error));
     }
@@ -258,15 +296,19 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
       return;
     }
     try {
-      await renameCodexMemoryEntry(effectiveSourceMode, renameTarget.path, trimmedName);
+      await renameCodexMemoryEntry(sourceMode, renameTarget.path, trimmedName);
       message.success(t('codex.memories.messages.renameSuccess'));
       setRenameTarget(null);
-      if (selectedFilePath === renameTarget.path) {
+      const currentSelection = navigationContextRef.current;
+      if (
+        currentSelection.sourceMode === sourceMode &&
+        currentSelection.selectedFilePath === renameTarget.path
+      ) {
         const parentDir = renameTarget.path.split('/').slice(0, -1).join('/');
         setSelectedFilePath(null);
         setCurrentDir(parentDir);
       }
-      await loadList(effectiveSourceMode, currentDir, true);
+      await loadList(sourceMode, currentDir, true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : String(error));
     }
@@ -277,13 +319,22 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
       return;
     }
     try {
-      await deleteCodexMemoryEntries(effectiveSourceMode, relativePaths);
+      await deleteCodexMemoryEntries(sourceMode, relativePaths);
       message.success(t('codex.memories.messages.deleteSuccess'));
-      if (selectedFilePath && relativePaths.includes(selectedFilePath)) {
-        setSelectedFilePath(null);
+      const currentSelection = navigationContextRef.current;
+      if (
+        currentSelection.sourceMode === sourceMode &&
+        currentSelection.currentDir === currentDir
+      ) {
+        if (
+          currentSelection.selectedFilePath &&
+          relativePaths.includes(currentSelection.selectedFilePath)
+        ) {
+          setSelectedFilePath(null);
+        }
+        setSelectedRowKeys([]);
       }
-      setSelectedRowKeys([]);
-      await loadList(effectiveSourceMode, currentDir, true);
+      await loadList(sourceMode, currentDir, true);
     } catch (error) {
       message.error(error instanceof Error ? error.message : String(error));
     }
@@ -298,12 +349,14 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
-          await clearCodexMemories(effectiveSourceMode);
+          await clearCodexMemories(sourceMode);
           message.success(t('codex.memories.messages.clearSuccess'));
-          setSelectedFilePath(null);
-          setSelectedRowKeys([]);
-          setCurrentDir('');
-          await loadList(effectiveSourceMode, '', true);
+          if (navigationContextRef.current.sourceMode === sourceMode) {
+            setSelectedFilePath(null);
+            setSelectedRowKeys([]);
+            setCurrentDir('');
+          }
+          await loadList(sourceMode, '', true);
         } catch (error) {
           message.error(error instanceof Error ? error.message : String(error));
         }
@@ -313,7 +366,7 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
 
   const handleOpenFolder = async () => {
     try {
-      await revealCodexMemoriesFolder(effectiveSourceMode);
+      await revealCodexMemoriesFolder(sourceMode);
     } catch (error) {
       message.error(error instanceof Error ? error.message : String(error));
     }
@@ -437,8 +490,8 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
           <button
             type="button"
             role="tab"
-            aria-selected={effectiveSourceMode === 'local'}
-            className={`${styles.sourceSegmentButton}${effectiveSourceMode === 'local' ? ` ${styles.sourceSegmentButtonActive}` : ''}`}
+            aria-selected={sourceMode === 'local'}
+            className={`${styles.sourceSegmentButton}${sourceMode === 'local' ? ` ${styles.sourceSegmentButtonActive}` : ''}`}
             disabled={!hasLocalSource || loading}
             onClick={() => handleSourceModeChange('local')}
           >
@@ -447,8 +500,8 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
           <button
             type="button"
             role="tab"
-            aria-selected={effectiveSourceMode === 'wsl'}
-            className={`${styles.sourceSegmentButton}${effectiveSourceMode === 'wsl' ? ` ${styles.sourceSegmentButtonActive}` : ''}`}
+            aria-selected={sourceMode === 'wsl'}
+            className={`${styles.sourceSegmentButton}${sourceMode === 'wsl' ? ` ${styles.sourceSegmentButtonActive}` : ''}`}
             disabled={!hasWslSource || loading}
             onClick={() => handleSourceModeChange('wsl')}
           >
@@ -513,7 +566,7 @@ const CodexMemoriesPanel: React.FC<CodexMemoriesPanelProps> = ({ refreshToken })
         <Button
           size="small"
           icon={<RedoOutlined />}
-          onClick={() => loadList(effectiveSourceMode, currentDir)}
+          onClick={() => loadList(sourceMode, currentDir)}
         />
       </div>
 

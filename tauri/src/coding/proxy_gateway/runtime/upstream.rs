@@ -5558,6 +5558,10 @@ fn wrap_pipeline_outbound_sse_stream(
     pipeline: Pipeline,
     pipeline_context: PipelineContext,
 ) -> DebugBodyStream {
+    if !pipeline.needs_outbound_stream(&pipeline_context) {
+        return stream;
+    }
+
     struct State {
         inner: DebugBodyStream,
         pipeline: Pipeline,
@@ -5600,25 +5604,28 @@ fn wrap_pipeline_outbound_sse_stream(
                             }
                         }
                     }
-                    Some(Err(error)) => return Some((Err(error), state)),
-                    None => {
+                    Some(Err(error)) => {
                         state.finished = true;
-                        if !state.utf8_remainder.is_empty() {
-                            state
-                                .buffer
-                                .push_str(&String::from_utf8_lossy(&state.utf8_remainder));
-                            state.utf8_remainder.clear();
-                        }
-                        let tail = std::mem::take(&mut state.buffer);
-                        if !tail.is_empty() {
-                            match rewrite_sse_block_with_outbound_stream(
-                                &tail,
-                                &state.pipeline,
-                                &mut state.pipeline_context,
-                            ) {
-                                Ok(bytes) => state.pending.push_back(Ok(bytes)),
-                                Err(error) => state.pending.push_back(Err(error)),
-                            }
+                        state.pending.push_back(Err(error));
+                    }
+                    None => state.finished = true,
+                }
+                if state.finished {
+                    if !state.utf8_remainder.is_empty() {
+                        state
+                            .buffer
+                            .push_str(&String::from_utf8_lossy(&state.utf8_remainder));
+                        state.utf8_remainder.clear();
+                    }
+                    let tail = std::mem::take(&mut state.buffer);
+                    if !tail.is_empty() {
+                        match rewrite_sse_block_with_outbound_stream(
+                            &tail,
+                            &state.pipeline,
+                            &mut state.pipeline_context,
+                        ) {
+                            Ok(bytes) => state.pending.push_front(Ok(bytes)),
+                            Err(error) => state.pending.push_front(Err(error)),
                         }
                     }
                 }
@@ -5769,6 +5776,10 @@ struct OutboundAdapterCompatMiddleware {
 }
 
 impl Middleware for OutboundAdapterCompatMiddleware {
+    fn needs_outbound_stream(&self, _ctx: &PipelineContext) -> bool {
+        false
+    }
+
     fn on_outbound_body(&self, body: &mut Value, _ctx: &PipelineContext) -> Result<(), String> {
         if self.skip {
             return Ok(());
@@ -11320,6 +11331,55 @@ data: {data}\r\n\r\n"
             block.as_bytes(),
             "no-op reverse middleware must preserve the complete SSE block byte-for-byte"
         );
+    }
+
+    #[tokio::test]
+    async fn reverse_sse_noop_forwards_partial_chunk_before_eof() {
+        for protocol in [
+            AiProtocol::OpenAiResponses,
+            AiProtocol::OpenAiChat,
+            AiProtocol::AnthropicMessages,
+        ] {
+            let pipeline = build_provider_pipeline(None, None, protocol, true);
+            let context = build_pipeline_context(None, protocol);
+            let first_chunk =
+                b"event: response.created data: {\"type\":\"response.created\"}".to_vec();
+            let stream: DebugBodyStream = Box::pin(
+                futures_util::stream::iter(vec![Ok::<Vec<u8>, String>(first_chunk.clone())])
+                    .chain(futures_util::stream::pending()),
+            );
+            let mut output = wrap_pipeline_outbound_sse_stream(stream, pipeline, context);
+            let first = tokio::time::timeout(Duration::from_millis(250), output.next())
+                .await
+                .expect("no-op reverse middleware must not wait for a delimiter or EOF")
+                .unwrap()
+                .unwrap();
+            assert_eq!(first, first_chunk);
+        }
+    }
+
+    #[tokio::test]
+    async fn reverse_sse_flushes_complete_tail_before_transport_error() {
+        let pipeline = build_provider_pipeline(None, None, AiProtocol::AnthropicMessages, true);
+        let context = PipelineContext {
+            target_protocol: Some(AiProtocol::AnthropicMessages),
+            billing_cch: Some("abc".to_string()),
+            ..PipelineContext::default()
+        };
+        let tail = b"event: message_stop\ndata: {\"type\":\"message_stop\",\"system\":\"x-anthropic-billing-header: cc_version=2.1.42;\"}";
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(tail.to_vec()),
+            Err("error decoding response body".to_string()),
+        ]));
+        let mut output = wrap_pipeline_outbound_sse_stream(stream, pipeline, context);
+        let first = String::from_utf8(output.next().await.unwrap().unwrap()).unwrap();
+        assert!(first.contains("message_stop"));
+        assert!(first.contains("cch=abc"));
+        assert_eq!(
+            output.next().await.unwrap().unwrap_err(),
+            "error decoding response body"
+        );
+        assert!(output.next().await.is_none());
     }
 
     #[tokio::test]

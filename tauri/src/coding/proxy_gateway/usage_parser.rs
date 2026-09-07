@@ -2,6 +2,7 @@ use super::types::GatewayCliKey;
 use serde_json::Value;
 
 const MAX_SSE_USAGE_BUFFER_BYTES: usize = 256 * 1024;
+const MAX_SSE_EVENT_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TokenUsage {
@@ -64,9 +65,11 @@ pub fn stable_usage_request_id(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SseUsageCollector {
     buffer: Vec<u8>,
+    next_flattened_scan_at: usize,
+    discarding_oversized_block: bool,
     usage: TokenUsage,
     provider_type: Option<String>,
     /// The protocol-level terminal event kind observed in any SSE block pushed
@@ -100,10 +103,18 @@ pub enum SseTerminalKind {
     Canceled,
 }
 
+impl Default for SseUsageCollector {
+    fn default() -> Self {
+        Self::with_provider_type(None)
+    }
+}
+
 impl SseUsageCollector {
     pub fn with_provider_type(provider_type: Option<&str>) -> Self {
         Self {
             buffer: Vec::new(),
+            next_flattened_scan_at: MAX_SSE_USAGE_BUFFER_BYTES,
+            discarding_oversized_block: false,
             usage: TokenUsage::default(),
             provider_type: provider_type
                 .map(str::trim)
@@ -118,7 +129,7 @@ impl SseUsageCollector {
     }
 
     pub fn finish(mut self, cli_key: GatewayCliKey) -> TokenUsage {
-        if !self.buffer.is_empty() {
+        if !self.buffer.is_empty() && !self.discarding_oversized_block {
             let block = std::mem::take(&mut self.buffer);
             self.observe_block(&block);
             if let Some(value) = parse_sse_data_block(&block) {
@@ -159,59 +170,68 @@ impl SseUsageCollector {
         self.ingest_chunk(None, chunk);
     }
 
-    /// Shared ingest path for [`push_chunk`] / [`observe_chunk`]. Chunks that
-    /// fit the bounded residual buffer are appended and split into blocks as
-    /// before; anything that would overflow (or an oversized chunk) is observed
-    /// in place instead of being silently dropped, so a terminal event is never
-    /// lost just because a stream arrived in huge pieces.
-    fn ingest_chunk(&mut self, cli_key: Option<GatewayCliKey>, chunk: &[u8]) {
-        if chunk.len() > MAX_SSE_USAGE_BUFFER_BYTES {
-            // An upstream that omits SSE blank-line delimiters makes the
-            // outbound pipeline buffer the whole body and emit it as one
-            // oversized final chunk. Scanning it in place is what keeps the
-            // terminal verdict and usage for those streams. Flush the residual
-            // up to its last complete event first, so an event left
-            // half-buffered by earlier chunks is not silently split between
-            // the two in-place scans.
-            let residual = std::mem::take(&mut self.buffer);
-            let boundary = flattened_flush_boundary(&residual);
-            self.observe_bytes(cli_key, &residual[..boundary]);
-            self.buffer = residual[boundary..].to_vec();
-            self.observe_bytes(cli_key, chunk);
+    fn ingest_chunk(&mut self, cli_key: Option<GatewayCliKey>, mut chunk: &[u8]) {
+        let oversized_chunk = chunk.len() > MAX_SSE_USAGE_BUFFER_BYTES;
+        while !chunk.is_empty() {
+            let append_len = chunk
+                .len()
+                .min(MAX_SSE_USAGE_BUFFER_BYTES)
+                .min(MAX_SSE_EVENT_BUFFER_BYTES - self.buffer.len());
+            let mut search_from = self.buffer.len().saturating_sub(3);
+            self.buffer.extend_from_slice(&chunk[..append_len]);
+            chunk = &chunk[append_len..];
+
+            while let Some((position, delimiter_len)) =
+                find_sse_block_delimiter(&self.buffer[search_from..])
+            {
+                let block_end = search_from + position;
+                let remainder = self.buffer.split_off(block_end + delimiter_len);
+                let mut block = std::mem::replace(&mut self.buffer, remainder);
+                block.truncate(block_end);
+                if !self.discarding_oversized_block {
+                    self.observe_block(&block);
+                    if let Some(cli_key) = cli_key {
+                        self.merge_block_usage(cli_key, &block);
+                    }
+                }
+                self.discarding_oversized_block = false;
+                self.next_flattened_scan_at = MAX_SSE_USAGE_BUFFER_BYTES;
+                search_from = 0;
+            }
+
+            if self.discarding_oversized_block {
+                let keep_from = self.buffer.len().saturating_sub(3);
+                self.buffer.drain(..keep_from);
+                continue;
+            }
+
+            if self.buffer.len() >= self.next_flattened_scan_at {
+                self.flush_complete_flattened_events(cli_key);
+                if self.buffer.len() >= MAX_SSE_EVENT_BUFFER_BYTES {
+                    let keep_from = self.buffer.len().saturating_sub(3);
+                    self.buffer.drain(..keep_from);
+                    self.discarding_oversized_block = true;
+                }
+                self.next_flattened_scan_at = self
+                    .buffer
+                    .len()
+                    .saturating_add(MAX_SSE_USAGE_BUFFER_BYTES)
+                    .min(MAX_SSE_EVENT_BUFFER_BYTES);
+            }
+        }
+        if oversized_chunk && !self.discarding_oversized_block {
+            self.flush_complete_flattened_events(cli_key);
+        }
+    }
+
+    fn flush_complete_flattened_events(&mut self, cli_key: Option<GatewayCliKey>) {
+        let boundary = flattened_flush_boundary(&self.buffer);
+        if boundary == 0 {
             return;
         }
-        if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
-            // Overflow: observe what the buffer holds before it would be
-            // dropped — the residual can still contain a terminal event that
-            // trailing events would otherwise push out of the bounded window.
-            // Cut only after the last complete event: complete events
-            // (including a terminal that already arrived) are observed
-            // immediately, while an event whose JSON is still incomplete stays
-            // buffered so later chunks complete it instead of the flush
-            // splitting it into two unparseable halves. Without this alignment
-            // a flush landing inside `response.completed`'s JSON loses both
-            // the verdict and the usage (issue #318, 2026-09 regression).
-            let residual = std::mem::take(&mut self.buffer);
-            let boundary = flattened_flush_boundary(&residual);
-            self.observe_bytes(cli_key, &residual[..boundary]);
-            self.buffer = residual[boundary..].to_vec();
-            if self.buffer.len().saturating_add(chunk.len()) > MAX_SSE_USAGE_BUFFER_BYTES {
-                // Degenerate stream: the retained incomplete tail alone fills
-                // the window (no complete event to align to, or one gigantic
-                // event). Drop it with an in-place observation to stay bounded
-                // — the same tradeoff the oversized-chunk branch already
-                // accepts — then buffer `chunk` normally.
-                let held = std::mem::take(&mut self.buffer);
-                self.observe_bytes(cli_key, &held);
-            }
-        }
-        self.buffer.extend_from_slice(chunk);
-        while let Some(block) = take_sse_block(&mut self.buffer) {
-            self.observe_block(&block);
-            if let (Some(cli_key), Some(value)) = (cli_key, parse_sse_data_block(&block)) {
-                self.merge_event(cli_key, &value);
-            }
-        }
+        let remainder = self.buffer.split_off(boundary);
+        let complete = std::mem::replace(&mut self.buffer, remainder);
+        self.observe_bytes(cli_key, &complete);
     }
 
     /// Observe terminal + usage for bytes that bypass the bounded residual
@@ -223,8 +243,8 @@ impl SseUsageCollector {
         while let Some((position, delimiter_len)) = find_sse_block_delimiter(rest) {
             let block = &rest[..position];
             self.observe_block(block);
-            if let (Some(cli_key), Some(value)) = (cli_key, parse_sse_data_block(block)) {
-                self.merge_event(cli_key, &value);
+            if let Some(cli_key) = cli_key {
+                self.merge_block_usage(cli_key, block);
             }
             rest = &rest[position + delimiter_len..];
         }
@@ -236,6 +256,14 @@ impl SseUsageCollector {
         }
         if self.terminal_kind.is_none() {
             self.terminal_kind = sse_block_classify_terminal(rest);
+        }
+    }
+
+    fn merge_block_usage(&mut self, cli_key: GatewayCliKey, bytes: &[u8]) {
+        if let Some(value) = parse_sse_data_block(bytes) {
+            self.merge_event(cli_key, &value);
+        } else {
+            self.merge_flattened_usage(cli_key, bytes);
         }
     }
 
@@ -267,7 +295,8 @@ impl SseUsageCollector {
     /// it on EOF. Does not consume the buffer — `finish` still merges any usage
     /// carried by that trailing block.
     pub fn drain_terminal(&mut self) {
-        if self.buffer.is_empty() || self.terminal_kind.is_some() {
+        if self.buffer.is_empty() || self.terminal_kind.is_some() || self.discarding_oversized_block
+        {
             return;
         }
         if let Some(kind) = sse_block_classify_terminal(&self.buffer) {
@@ -616,6 +645,7 @@ fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, 
                 }
                 json_end
             }
+            Some(Err(error)) if error.is_eof() => break,
             _ => {
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with("[DONE]") && visit(current_event.as_deref(), "[DONE]") {
@@ -634,11 +664,6 @@ fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, 
 /// until later chunks complete it — a flush cut anywhere else would split an
 /// event into two unparseable halves and lose its usage and terminal verdict
 /// (issue #318: a flush landing inside `response.completed`'s JSON lost both).
-/// Events that fail to parse (a partial JSON left over from an earlier cut, or
-/// a `data:`-shaped sequence inside a JSON string) are skipped while scanning,
-/// mirroring [`for_each_flattened_sse_field`]; skipping can only cost the one
-/// broken event, never the alignment of the ones after it. Returns 0 when the
-/// buffer holds no complete event, meaning nothing can be flushed safely.
 fn flattened_flush_boundary(buffer: &[u8]) -> usize {
     // Operate on a UTF-8 string whose byte offsets stay aligned with the
     // original buffer. `String::from_utf8_lossy` would replace invalid bytes
@@ -676,6 +701,12 @@ fn flattened_flush_boundary(buffer: &[u8]) -> usize {
                 let json_end = value_start + json_stream.byte_offset();
                 boundary = json_end;
                 json_end
+            }
+            Some(Err(error)) if error.is_eof() => break,
+            _ if text[value_start..].trim_start().starts_with("[DONE]") => {
+                let leading = text[value_start..].len() - text[value_start..].trim_start().len();
+                boundary = value_start + leading + "[DONE]".len();
+                boundary
             }
             _ => value_start,
         };
@@ -1065,6 +1096,7 @@ fn max_option(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
+#[cfg(test)]
 fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let (position, delimiter_len) = find_sse_block_delimiter(buffer)?;
     let block = buffer[..position].to_vec();
@@ -1073,8 +1105,7 @@ fn take_sse_block(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
 }
 
 /// Locate the physically earliest SSE block delimiter (`\n\n` or `\r\n\r\n`)
-/// and return its position plus length. Mirrors the delimiter choice of
-/// [`take_sse_block`] for callers that split a borrowed slice in place.
+/// and return its position plus length.
 fn find_sse_block_delimiter(bytes: &[u8]) -> Option<(usize, usize)> {
     let lf = bytes
         .windows(2)
@@ -1366,18 +1397,18 @@ data: [DONE]
         let mut collector = SseUsageCollector::default();
         collector.push_chunk(
             GatewayCliKey::Claude,
-            &vec![b'a'; MAX_SSE_USAGE_BUFFER_BYTES + 1],
+            &vec![b'a'; MAX_SSE_EVENT_BUFFER_BYTES + 1],
         );
-        assert!(collector.buffer.is_empty());
-
+        assert!(collector.buffer.len() <= 3);
+        assert!(collector.discarding_oversized_block);
+        collector.drain_terminal();
+        assert_eq!(collector.terminal_kind(), None);
         collector.push_chunk(
             GatewayCliKey::Claude,
-            &vec![b'a'; MAX_SSE_USAGE_BUFFER_BYTES - 1],
+            b"\n\ndata: {\"type\":\"message_stop\"}\n\n",
         );
-        assert_eq!(collector.buffer.len(), MAX_SSE_USAGE_BUFFER_BYTES - 1);
-
-        collector.push_chunk(GatewayCliKey::Claude, b"aa");
-        assert_eq!(collector.buffer.len(), 2);
+        assert!(!collector.discarding_oversized_block);
+        assert_eq!(collector.terminal_kind(), Some(SseTerminalKind::Success));
     }
 
     #[test]
@@ -1648,6 +1679,64 @@ data: [DONE]
             sse_block_classify_terminal(text.as_bytes()),
             Some(SseTerminalKind::Incomplete)
         );
+    }
+
+    #[test]
+    fn large_terminal_event_survives_every_network_chunk_size() {
+        let padding = "中文".repeat(90_000);
+        let body = format!(
+            "event: response.created data: {{\"type\":\"response.created\"}} event: response.completed data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_large\",\"status\":\"completed\",\"note\":\"{padding}\",\"usage\":{{\"input_tokens\":120,\"output_tokens\":40}}}}}}"
+        );
+        for chunk_size in [1024, 65536, 262144, 300000, body.len()] {
+            let mut collector = SseUsageCollector::default();
+            for chunk in body.as_bytes().chunks(chunk_size) {
+                collector.push_chunk(GatewayCliKey::Codex, chunk);
+            }
+            collector.drain_terminal();
+            assert_eq!(
+                collector.terminal_kind(),
+                Some(SseTerminalKind::Success),
+                "chunk size {chunk_size}"
+            );
+            let usage = collector.finish(GatewayCliKey::Codex);
+            assert_eq!(usage.input_tokens, Some(120), "chunk size {chunk_size}");
+            assert_eq!(usage.output_tokens, Some(40), "chunk size {chunk_size}");
+        }
+    }
+
+    #[test]
+    fn flattened_events_with_a_final_blank_line_keep_usage() {
+        for delimiter in ["\n\n", "\r\n\r\n"] {
+            let body = format!(
+                "event: response.created data: {{\"type\":\"response.created\"}} event: response.completed data: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\",\"usage\":{{\"input_tokens\":120,\"output_tokens\":40}}}}}}{delimiter}"
+            );
+            for chunk_size in [1, 13, body.len()] {
+                let mut collector = SseUsageCollector::default();
+                for chunk in body.as_bytes().chunks(chunk_size) {
+                    collector.push_chunk(GatewayCliKey::Codex, chunk);
+                }
+                assert_eq!(collector.terminal_kind(), Some(SseTerminalKind::Success));
+                let usage = collector.finish(GatewayCliKey::Codex);
+                assert_eq!(usage.input_tokens, Some(120), "chunk size {chunk_size}");
+                assert_eq!(usage.output_tokens, Some(40), "chunk size {chunk_size}");
+            }
+        }
+    }
+
+    #[test]
+    fn partial_flattened_json_does_not_classify_quoted_field_tokens() {
+        let partial = b"event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"quoted event: error data: {} unfinished";
+        assert_eq!(sse_block_classify_terminal(partial), None);
+        assert_eq!(flattened_flush_boundary(partial), 0);
+        let mut collector = SseUsageCollector::default();
+        collector.observe_chunk(partial);
+        collector.drain_terminal();
+        assert_eq!(collector.terminal_kind(), None);
+        collector.observe_chunk(
+            b"\"} event: response.completed data: {\"type\":\"response.completed\"}",
+        );
+        collector.drain_terminal();
+        assert_eq!(collector.terminal_kind(), Some(SseTerminalKind::Success));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Spin } from 'antd';
 import { RouterProvider } from 'react-router-dom';
+import { emit } from '@tauri-apps/api/event';
 import { router } from './routes';
 import { Providers } from './providers';
 import { getStartupRecovery } from '@/services';
@@ -13,6 +14,15 @@ type RecoveryState =
 
 function App() {
   const [state, setState] = React.useState<RecoveryState>({ status: 'loading' });
+
+  React.useEffect(() => {
+    const sendReady = () => {
+      emit('frontend-ready').catch(() => {});
+    };
+    sendReady();
+    const timer = window.setTimeout(sendReady, 1000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;

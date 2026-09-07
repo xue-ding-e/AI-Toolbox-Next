@@ -3986,8 +3986,30 @@ pub async fn apply_codex_prompt_config(
     apply_prompt_config_internal(state, &app, &config_id, false).await
 }
 
-/// Disable the applied Codex prompt: clear every applied flag and empty the
-/// prompt file, while keeping the DB record so it can be re-applied later.
+fn disable_prompt_config_at_root(
+    db: &SqliteDbState,
+    config_id: &str,
+    root: &Path,
+) -> Result<(), String> {
+    get_codex_prompt_from_sqlite(db, config_id)?
+        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    for file_name in runtime_location::CODEX_PROMPT_FILE_NAMES {
+        let prompt_path = root.join(file_name);
+        if prompt_path.try_exists().map_err(|error| {
+            format!(
+                "Failed to inspect Codex prompt file ({}): {error}",
+                prompt_path.display()
+            )
+        })? {
+            write_prompt_content_file(&prompt_path, Some(""), "Codex")?;
+        }
+    }
+
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| db_update_applied_status(conn, DbTable::CodexPromptConfig, None, &now))
+}
+
 #[tauri::command]
 pub async fn disable_codex_prompt_config(
     state: tauri::State<'_, SqliteDbState>,
@@ -3995,14 +4017,8 @@ pub async fn disable_codex_prompt_config(
     config_id: String,
 ) -> Result<(), String> {
     let db = state.db();
-    get_codex_prompt_from_sqlite(db, &config_id)?
-        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
-
-    let now = Local::now().to_rfc3339();
-    db.with_conn_mut(|conn| {
-        db_update_applied_status(conn, DbTable::CodexPromptConfig, None, &now)
-    })?;
-    write_prompt_content_to_file(Some(&db), Some("")).await?;
+    let root = get_codex_config_dir_from_db_async(db).await?;
+    disable_prompt_config_at_root(db, &config_id, &root)?;
 
     let _ = app.emit("config-changed", "window");
     emit_prompt_sync_requests(&app);
@@ -4205,6 +4221,55 @@ mod tests {
             root_dir: PathBuf::from(root),
             source,
             distro: (source == CodexHistoryRuntimeSource::Wsl).then(|| "Ubuntu".to_string()),
+        }
+    }
+
+    #[test]
+    fn disabling_prompt_clears_fallback_files_and_keeps_saved_content() {
+        for file_names in [
+            vec!["AGENTS.md"],
+            vec!["AGENTS.override.md"],
+            vec!["AGENTS.md", "AGENTS.override.md"],
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let database = crate::db::SqliteDbState::in_memory_for_test().unwrap();
+            let saved = super::CodexPromptConfigContent {
+                name: "Saved prompt".to_string(),
+                content: "saved instructions".to_string(),
+                is_applied: true,
+                sort_index: Some(0),
+                created_at: "2026-09-06T00:00:00Z".to_string(),
+                updated_at: "2026-09-06T00:00:00Z".to_string(),
+            };
+            super::put_codex_prompt_to_sqlite(&database, "prompt", &saved).unwrap();
+            for file_name in &file_names {
+                std::fs::write(root.join(file_name), "runtime instructions").unwrap();
+            }
+
+            super::disable_prompt_config_at_root(&database, "prompt", root).unwrap();
+
+            for file_name in &file_names {
+                assert_eq!(std::fs::read_to_string(root.join(file_name)).unwrap(), "");
+            }
+            let active_path = super::runtime_location::resolve_codex_prompt_file_path(root);
+            assert!(super::read_prompt_content_file(&active_path, "Codex")
+                .unwrap()
+                .is_none());
+            let stored = super::get_codex_prompt_from_sqlite(&database, "prompt")
+                .unwrap()
+                .unwrap();
+            assert!(!stored.is_applied);
+            assert_eq!(stored.content, saved.content);
+            super::write_prompt_content_file(&active_path, Some(&stored.content), "Codex").unwrap();
+            assert_eq!(
+                super::read_prompt_content_file(
+                    &super::runtime_location::resolve_codex_prompt_file_path(root),
+                    "Codex",
+                )
+                .unwrap(),
+                Some(saved.content),
+            );
         }
     }
 

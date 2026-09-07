@@ -125,17 +125,17 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResul
 }
 
 /// Whether the running executable is managed by Scoop (Windows package manager).
-///
-/// Scoop installs apps under `<scoop root>\apps\<app>\<version>\`, so checking
-/// for the `\scoop\apps\` path segment is sufficient in practice. This covers
-/// both per-user (`~\scoop\apps\...`) and global (`<SCOOP_GLOBAL>\apps\...`)
-/// installs regardless of the custom Scoop root.
 #[allow(unreachable_code)]
 pub fn is_scoop_install() -> bool {
     #[cfg(target_os = "windows")]
     {
         if let Ok(exe_path) = std::env::current_exe() {
-            return is_scoop_install_path(&exe_path.to_string_lossy());
+            let roots: Vec<String> = ["SCOOP", "SCOOP_GLOBAL"]
+                .into_iter()
+                .filter_map(|name| std::env::var_os(name))
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            return is_scoop_install_path(&exe_path.to_string_lossy(), &roots);
         }
         return false;
     }
@@ -144,8 +144,26 @@ pub fn is_scoop_install() -> bool {
 }
 
 /// Pure path check for Scoop-managed executables (case-insensitive).
-fn is_scoop_install_path(exe_path: &str) -> bool {
-    exe_path.to_lowercase().contains("\\scoop\\apps\\")
+#[cfg(any(target_os = "windows", test))]
+fn is_scoop_install_path(exe_path: &str, roots: &[String]) -> bool {
+    let normalize = |path: &str| {
+        let normalized = path.replace('/', "\\").to_lowercase();
+        let normalized = if let Some(suffix) = normalized.strip_prefix(r"\\?\unc\") {
+            format!(r"\\{suffix}")
+        } else {
+            normalized
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&normalized)
+                .to_string()
+        };
+        normalized.trim_end_matches('\\').to_string()
+    };
+    let normalized_exe = normalize(exe_path);
+    normalized_exe.contains("\\scoop\\apps\\")
+        || roots
+            .iter()
+            .filter(|root| !root.trim().is_empty())
+            .any(|root| normalized_exe.starts_with(&format!("{}\\apps\\", normalize(root))))
 }
 
 /// Detect current platform string for matching latest.json
@@ -293,6 +311,11 @@ async fn run_updater_download(app: &tauri::AppHandle) -> Result<bool, String> {
 /// proxy settings.
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
+    if is_scoop_install() {
+        return Err(
+            "Scoop-managed installations must be updated with scoop update ai-toolbox".to_string(),
+        );
+    }
     // Snapshot proxy-related env vars so we can always restore them, regardless
     // of whether we touched them (no-op restore in recovery mode).
     let old_http_proxy = std::env::var("HTTP_PROXY").ok();
@@ -383,31 +406,62 @@ mod tests {
     #[test]
     fn detects_per_user_scoop_install() {
         assert!(is_scoop_install_path(
-            "C:\\Users\\foo\\scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+            "C:\\Users\\foo\\scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe",
+            &[],
         ));
     }
 
     #[test]
     fn detects_global_and_verbatim_paths_case_insensitively() {
         assert!(is_scoop_install_path(
-            "C:\\Program Files\\Scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+            "C:\\Program Files\\Scoop\\apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe",
+            &[],
         ));
         assert!(is_scoop_install_path(
-            "\\\\?\\D:\\Scoop\\Apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe"
+            "\\\\?\\D:\\Scoop\\Apps\\ai-toolbox\\1.1.4\\ai-toolbox.exe",
+            &[],
         ));
     }
 
     #[test]
     fn rejects_non_scoop_paths() {
         assert!(!is_scoop_install_path(
-            "C:\\Program Files\\AI Toolbox\\ai-toolbox.exe"
+            "C:\\Program Files\\AI Toolbox\\ai-toolbox.exe",
+            &[],
         ));
         assert!(!is_scoop_install_path(
-            "C:\\Users\\foo\\AppData\\Local\\AI Toolbox\\ai-toolbox.exe"
+            "C:\\Users\\foo\\AppData\\Local\\AI Toolbox\\ai-toolbox.exe",
+            &[],
         ));
         // "scoopless\apps" must not match "\scoop\apps\"
         assert!(!is_scoop_install_path(
-            "C:\\Users\\foo\\scoopless\\apps\\ai-toolbox\\ai-toolbox.exe"
+            "C:\\Users\\foo\\scoopless\\apps\\ai-toolbox\\ai-toolbox.exe",
+            &[],
+        ));
+    }
+
+    #[test]
+    fn detects_custom_scoop_roots_without_matching_adjacent_directories() {
+        let roots = vec![r"D:\Tools\".to_string(), "E:/Global Packages".to_string()];
+        assert!(is_scoop_install_path(
+            r"\\?\D:\Tools\apps\ai-toolbox\current\ai-toolbox.exe",
+            &roots
+        ));
+        assert!(is_scoop_install_path(
+            "E:/Global Packages/apps/ai-toolbox/1.1.4/ai-toolbox.exe",
+            &roots
+        ));
+        assert!(!is_scoop_install_path(
+            r"D:\Tools-old\apps\ai-toolbox\ai-toolbox.exe",
+            &roots
+        ));
+        assert!(!is_scoop_install_path(
+            r"D:\Tools\apps-backup\ai-toolbox.exe",
+            &roots
+        ));
+        assert!(is_scoop_install_path(
+            r"\\?\UNC\server\tools\apps\ai-toolbox\current\ai-toolbox.exe",
+            &[r"\\server\tools".to_string()],
         ));
     }
 }

@@ -16,6 +16,10 @@ pub(super) enum ErrorDecision {
 }
 
 pub(super) trait Middleware: Send + Sync {
+    fn needs_outbound_stream(&self, _ctx: &PipelineContext) -> bool {
+        true
+    }
+
     fn on_inbound_request(
         &self,
         _body: &mut Value,
@@ -66,6 +70,14 @@ const BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
 pub(super) struct BillingHeaderCchMiddleware;
 
 impl Middleware for BillingHeaderCchMiddleware {
+    fn needs_outbound_stream(&self, ctx: &PipelineContext) -> bool {
+        ctx.target_protocol == Some(AiProtocol::AnthropicMessages)
+            && ctx
+                .billing_cch
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+    }
+
     fn on_inbound_request(
         &self,
         body: &mut Value,
@@ -149,6 +161,10 @@ impl EnsureMaxTokensMiddleware {
 }
 
 impl Middleware for EnsureMaxTokensMiddleware {
+    fn needs_outbound_stream(&self, _ctx: &PipelineContext) -> bool {
+        false
+    }
+
     fn on_outbound_body(&self, body: &mut Value, ctx: &PipelineContext) -> Result<(), String> {
         if self.default_max_tokens <= 0 {
             return Ok(());

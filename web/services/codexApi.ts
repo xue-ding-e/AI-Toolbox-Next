@@ -391,9 +391,15 @@ export const readCodexMemoryFile = async (
 export const writeCodexMemoryFile = async (
   sourceMode: CodexMemoriesSourceMode,
   relativePath: string,
-  content: string
+  content: string,
+  options?: { createNew?: boolean },
 ): Promise<void> => {
-  await invoke('write_codex_memory_file', { sourceMode, relativePath, content });
+  await invoke('write_codex_memory_file', {
+    sourceMode,
+    relativePath,
+    content,
+    createNew: options?.createNew ?? false,
+  });
 };
 
 export const renameCodexMemoryEntry = async (

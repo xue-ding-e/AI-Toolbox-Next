@@ -2,7 +2,7 @@ import React from 'react';
 import { ConfigProvider, Spin, App, theme as antdTheme, Button, Modal, Typography, Space } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import { emit, listen } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import UpdateProgressModal from '@/components/common/UpdateProgressModal';
 import DeepLinkImportDialog from '@/features/shared/deepLink/DeepLinkImportDialog';
@@ -268,27 +268,6 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
       colorPrimary: '#1890ff',
     },
   }), [resolvedTheme]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    const sendReady = () => {
-      emit('frontend-ready').catch(() => {});
-    };
-
-    // Emit twice to avoid missing the backend listener during early startup.
-    sendReady();
-    const timer = window.setTimeout(() => {
-      if (!cancelled) {
-        sendReady();
-      }
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, []);
 
   // Initialize app, settings and theme on mount
   React.useEffect(() => {

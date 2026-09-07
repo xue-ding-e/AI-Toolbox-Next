@@ -14,6 +14,7 @@
 //! WSL UNC / network roots can block `fs` calls for a long time.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -221,9 +222,9 @@ fn validate_entry_name(entry_name: &str) -> Result<String, String> {
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
         return Err(format!("Invalid memory entry name: {entry_name}"));
     }
-    if trimmed.contains('/') || trimmed.contains('\\') {
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains(':') {
         return Err(format!(
-            "Memory entry name must not contain path separators: {entry_name}"
+            "Memory entry name must not contain path separators or colons: {entry_name}"
         ));
     }
     if trimmed.starts_with('.') {
@@ -284,8 +285,18 @@ fn list_memories_blocking(
     let components = validate_relative_components(relative_path)?;
     let target = resolve_scoped_memory_path(memories_root, &components)?;
 
-    let metadata = fs::symlink_metadata(&target)
-        .map_err(|error| format!("Memory path not accessible ({}): {error}", target.display()))?;
+    let metadata = match fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && components.is_empty() => {
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Memory path not accessible ({}): {error}",
+                target.display()
+            ));
+        }
+    };
     if metadata.file_type().is_symlink() {
         return Err(format!(
             "Memory paths must not traverse symlinks: {}",
@@ -400,6 +411,7 @@ fn write_memory_file_blocking(
     memories_root: &Path,
     relative_path: &str,
     content: &str,
+    create_new: bool,
 ) -> Result<(), String> {
     let components = validate_relative_components(relative_path)?;
     if components.is_empty() {
@@ -423,12 +435,19 @@ fn write_memory_file_blocking(
         })?;
     }
 
-    fs::write(&target, content).map_err(|error| {
-        format!(
-            "Failed to write memory file ({}): {error}",
-            target.display()
-        )
-    })?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(!create_new)
+        .truncate(!create_new)
+        .create_new(create_new)
+        .open(&target)
+        .and_then(|mut file| file.write_all(content.as_bytes()))
+        .map_err(|error| {
+            format!(
+                "Failed to write memory file ({}): {error}",
+                target.display()
+            )
+        })?;
     Ok(())
 }
 
@@ -699,6 +718,7 @@ pub async fn write_codex_memory_file(
     source_mode: Option<String>,
     relative_path: String,
     content: String,
+    create_new: Option<bool>,
 ) -> Result<(), String> {
     let db = state.db();
     let parsed_mode = CodexMemoriesSourceMode::parse(source_mode.as_deref())?;
@@ -708,7 +728,12 @@ pub async fn write_codex_memory_file(
     let display_root = memories_root.to_string_lossy().to_string();
 
     run_memories_fs_operation("write Codex memory file", &display_root, move || {
-        write_memory_file_blocking(&memories_root, &relative_path, &content)
+        write_memory_file_blocking(
+            &memories_root,
+            &relative_path,
+            &content,
+            create_new.unwrap_or(false),
+        )
     })
     .await
 }
@@ -873,6 +898,8 @@ mod tests {
         assert!(validate_entry_name("..").is_err());
         assert!(validate_entry_name("a/b").is_err());
         assert!(validate_entry_name("a\\b").is_err());
+        assert!(validate_entry_name("C:outside.md").is_err());
+        assert!(validate_entry_name("file.md:stream").is_err());
         assert!(validate_entry_name(".git").is_err());
         assert_eq!(validate_entry_name(" note-1.md ").unwrap(), "note-1.md");
     }
@@ -904,10 +931,13 @@ mod tests {
     }
 
     #[test]
-    fn list_reports_missing_directory_as_error() {
+    fn list_missing_root_is_empty_without_creating_it() {
         let temp_dir = tempfile::tempdir().unwrap();
         let missing = temp_dir.path().join("memories");
-        assert!(list_memories_blocking(&missing, "").is_err());
+        assert!(list_memories_blocking(&missing, "").unwrap().is_empty());
+        assert!(!missing.exists());
+        assert!(list_memories_blocking(&missing, "nested").is_err());
+        assert!(list_memories_blocking(temp_dir.path(), "missing").is_err());
     }
 
     #[test]
@@ -915,13 +945,13 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let root = temp_dir.path();
 
-        write_memory_file_blocking(root, "extensions/ad_hoc/notes/note.md", "hello").unwrap();
+        write_memory_file_blocking(root, "extensions/ad_hoc/notes/note.md", "hello", true).unwrap();
         let content = read_memory_file_blocking(root, "extensions/ad_hoc/notes/note.md").unwrap();
         assert_eq!(content.content, "hello");
         assert_eq!(content.size, 5);
         assert!(content.modified_at_ms.unwrap() > 0);
 
-        write_memory_file_blocking(root, "MEMORY.md", "long-term").unwrap();
+        write_memory_file_blocking(root, "MEMORY.md", "long-term", false).unwrap();
         assert_eq!(
             read_memory_file_blocking(root, "MEMORY.md")
                 .unwrap()
@@ -936,12 +966,37 @@ mod tests {
     }
 
     #[test]
+    fn creating_an_existing_memory_file_preserves_its_content() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root = temp_dir.path().join("memories");
+        write_memory_file_blocking(&root, "notes/note.md", "original", true).unwrap();
+
+        assert!(write_memory_file_blocking(&root, "notes/note.md", "", true).is_err());
+        assert_eq!(
+            read_memory_file_blocking(&root, "notes/note.md")
+                .unwrap()
+                .content,
+            "original"
+        );
+
+        write_memory_file_blocking(&root, "notes/note.md", "edited", false).unwrap();
+        assert_eq!(
+            read_memory_file_blocking(&root, "notes/note.md")
+                .unwrap()
+                .content,
+            "edited"
+        );
+    }
+
+    #[test]
     fn write_refuses_hidden_and_escape_paths() {
         let temp_dir = tempfile::tempdir().unwrap();
         let root = temp_dir.path();
-        assert!(write_memory_file_blocking(root, "../escape.md", "x").is_err());
-        assert!(write_memory_file_blocking(root, ".git/config", "x").is_err());
-        assert!(write_memory_file_blocking(root, "", "x").is_err());
+        for create_new in [false, true] {
+            assert!(write_memory_file_blocking(root, "../escape.md", "x", create_new).is_err());
+            assert!(write_memory_file_blocking(root, ".git/config", "x", create_new).is_err());
+            assert!(write_memory_file_blocking(root, "", "x", create_new).is_err());
+        }
     }
 
     #[test]
@@ -954,6 +1009,8 @@ mod tests {
         rename_memory_entry_blocking(root, "a.md", "b.md").unwrap_err();
         rename_memory_entry_blocking(root, "a.md", "sub/c.md").unwrap_err();
         rename_memory_entry_blocking(root, "a.md", ".hidden").unwrap_err();
+        rename_memory_entry_blocking(root, "a.md", "C:outside.md").unwrap_err();
+        assert_eq!(fs::read_to_string(root.join("a.md")).unwrap(), "a");
         rename_memory_entry_blocking(root, "a.md", "renamed.md").unwrap();
         assert!(root.join("renamed.md").exists());
         assert!(!root.join("a.md").exists());

@@ -395,7 +395,10 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 - 官方 Codex 上游可能被强制流式。客户端非流时 runtime 聚合 Responses SSE 为 Responses JSON，再按需要做 response conversion。
 - 聚合必须等待 terminal event；缺 terminal event 按连接错误进入 retry/failover。
-- 2026-08 起，部分 Codex 镜像中转站会把上游事件连同中转注入的 `codex.rate_limits` / `codex.response.metadata` / `codex.event.balance` 自定义事件重排成单行空格分隔的退化 SSE（全程无 `\n\n` 边界）。客户端（Codex Desktop）可容错解析、上游扣费正常，但网关终态判定与 usage 提取必须走扁平扫描兜底（见架构主文档「退化扁平 SSE 帧的终态判定」），否则完整 200 响应会被误标 `stream_incomplete` 且丢 token 统计。中转站首包后 idle 停流触发的 `stream_idle_timeout` 是真实失败，不要归入该兼容项。
+- issue #318 的部分 Codex 镜像中转站导出体包含无 `\n\n` 的单行空格分隔 SSE，以及 `codex.rate_limits` / `codex.response.metadata` / `codex.event.balance` 自定义事件；不能凭 HTTP 200、非零 usage 或上游扣费推断成功。`response.reasoning_summary_part.done` 等中间事件里的 item `status=incomplete` 不能提前结束流，但真实 failed/canceled/error 必须保留。
+- 无实际 reverse 改写时，出站 pipeline 直接按原 chunk 透传，不等待 SSE 分隔符或 EOF，避免把持续上游数据误计为空闲。需要 CCH 回填的 Anthropic reverse 路径仍按帧改写，遇到 transport error 要先冲刷已读尾部。真正上游停流的 `stream_idle_timeout` 不属于这项兼容。
+- 终态/usage collector 按完整事件跨任意网络分片拼接，约 256 KiB 扫描并释放完成事件，单个未完成事件的硬上限为 16 MiB；未闭合 JSON 中的伪 `event:` / `data:` 不得被当成新事件。终态只从实际送达的字节确认，关闭正文日志或截断日志不能改变判定；详见架构主文档的 #318 专项边界。标准分隔符包住的退化扁平事件也必须走 usage fallback，不能只补 terminal 而丢计费数据。
+- 回归：`usage_parser.rs::large_terminal_event_survives_every_network_chunk_size` / `partial_flattened_json_does_not_classify_quoted_field_tokens`，`runtime/http_io.rs::large_flattened_terminal_reaches_client_independently_of_body_logging` / `charged_200_stream_keeps_real_non_success_terminal_outcomes`，以及 `runtime/upstream.rs` 的 `reverse_sse_*`。补充回归：`flattened_events_with_a_final_blank_line_keep_usage`、`terminal_in_failed_write_is_not_counted_as_delivered`。
 - 同一批中转站的 chunked framing 也可能不规范（终止 chunk 缺失、chunk size 行异常、连接提前断开），触发 hyper body 解码层在流中途报错（reqwest 路径统一显示 `error decoding response body`；header-preserving/hyper-util 路径显示 `error reading a body from connection` / `connection closed before message completed`）。`runtime/http_io.rs::is_demotable_stream_body_error()` 会把这类错误 demote 成干净流 EOF，不再注入合成 error event 破坏客户端已收到的流；成败仍按终态事件是否送达判定。这不是 provider 专属规则，对所有上游生效；见架构主文档「流中途 body 解码错误 demote 为干净 EOF」。
 
 源码：

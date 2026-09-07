@@ -109,6 +109,13 @@ fn show_and_focus_main_window<R: Runtime>(
 /// (tray, gateway, schedulers) running. Idempotent: entering again while the
 /// window is already absent just re-asserts the flag.
 pub fn enter_lightweight_mode<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let previous_mode = LIGHTWEIGHT_MODE.swap(true, Ordering::AcqRel);
+    let deeplink_state = app.try_state::<crate::coding::deeplink::DeepLinkState>();
+    let frontend_was_ready = deeplink_state
+        .as_ref()
+        .map(|state| state.mark_frontend_not_ready())
+        .unwrap_or(false);
+
     if let Some(window) = app.get_webview_window("main") {
         store_saved_geometry(capture_window_geometry(&window));
 
@@ -118,12 +125,17 @@ pub fn enter_lightweight_mode<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(
             let _ = app.set_activation_policy(ActivationPolicy::Accessory);
         }
 
-        window
-            .destroy()
-            .map_err(|e| format!("Failed to destroy main window: {e}"))?;
+        if let Err(error) = window.destroy() {
+            LIGHTWEIGHT_MODE.store(previous_mode, Ordering::Release);
+            if frontend_was_ready {
+                if let Some(state) = deeplink_state {
+                    state.mark_frontend_ready();
+                }
+            }
+            return Err(format!("Failed to destroy main window: {error}"));
+        }
     }
 
-    LIGHTWEIGHT_MODE.store(true, Ordering::Release);
     refresh_tray_menus_async(app);
     log::info!("Entered lightweight mode");
     Ok(())

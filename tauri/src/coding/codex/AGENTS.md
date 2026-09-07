@@ -54,6 +54,7 @@ sequenceDiagram
 - WSL 自动同步是事件驱动，不是“数据库写成功就等于已经同步到 WSL”。
 - 删除 prompt 配置只删 SQLite 记录，不改写/清空当前 active prompt 文件。产品语义是“删除已保存的提示词记录”，不是“清空本地 runtime 提示词”；Claude Code / OpenCode / Grok / Gemini / Pi 统一此规则。若用户要改本地生效内容，应通过编辑/应用其他 prompt 或直接改 active prompt 文件。
 - Codex prompt 同步必须按一组文件镜像：`AGENTS.md` 与 `AGENTS.override.md` 存在就同步，不存在就清理远端同名文件。不能只同步 active 文件，否则从 override 切回默认时远端会继续读取旧 override。
+- 禁用已应用 prompt 必须清空当前 root 下两种已存在的 prompt 文件，再清除 DB applied 标记并发同步事件，保留数据库内容和已有文件名供重新应用；只清空 active override 会让旧 `AGENTS.md` 按上游回退规则重新生效。
 - 普通“新建 provider”和“复制已应用 provider”都属于创建新记录，默认不应自动应用；不要因为源 provider 当前已应用，就把新记录写成 `is_applied = true`。
 - `save_codex_local_config` 里的 `__local__` 不是普通新增 provider，而是把当前生效的本地运行时配置正式收编入库；在这个产品语义下，它保持 `is_applied = true` 是合理的，不要把这条链路误修成“保存但取消应用”。
 - `save_codex_local_config` 收编 `__local__` 时仍要保留 provider `meta`，包括 Gateway 计费配置里的 `costMultiplier` / `pricingModelSource`；不要只保存 settings/common 而把表单提交的 meta 丢成 `None`。
@@ -75,6 +76,7 @@ sequenceDiagram
 - memories 管理（`codex/memories.rs`，issue #296）是 `<codex_root>/memories/` 的通用文件浏览器：不同 Codex 版本的 memories 目录结构不同（`MEMORY.md`、`memory_summary.md`、`raw_memories.md`、`rollout_summaries/`、`skills/`、`extensions/ad_hoc/notes/`、`.git` 工作区），后端与 UI 都不能硬编码文件名白名单。
 - memories 的 local/wsl 来源复用历史同步的 `resolve_codex_history_source_candidates`（为此已把该函数与 `CodexHistorySourceCandidate`/`CodexHistoryRuntimeSource` 放宽为 `pub(super)`）：当前 root 是 WSL Direct 时只有 WSL 来源；本机 root 时 WSL 来源要求 WSL sync 配置已启用且能解析 distro home。memories 不属于 WSL 自动同步与 `config-changed` 事件范围，面板直接经 UNC 读写所选来源，不发光同步事件。
 - `list_codex_memories` 在请求的来源不存在时不报错：返回 `unavailable=true` + 完整 `availableSources` + 空列表，让前端能自动切换到可用来源（WSL-only 环境首次加载 `local` 必须能降级到 `wsl`，否则 UI 死锁在禁用态）。其余写操作对不可用来源直接报错，由 UI 禁用入口兜底。
+- 来源存在但 `memories/` 尚未生成时，根目录列表返回空列表且不创建磁盘目录，保留 `availableSources`；只有缺失的子目录仍报错。新建文件必须经 `create_new` 原子创建，重名不得截断旧内容；编辑保存沿用覆盖语义。重命名的单文件名也必须拒绝冒号，避免 Windows 盘符相对路径逃出 memories root。
 - 所有 memories 相对路径必须通过 scope 校验：拒绝 `..`、绝对路径/盘符/冒号、`.` 开头隐藏组件与 symlink 穿越（对齐 Codex 自身 `resolve_scoped_path` 语义）；盘符与分隔符要显式拒绝，否则非 Windows 平台会把 `C:\x` 当普通文件名放行。文件 I/O 必须在 `spawn_blocking` + 超时内执行，错误文案带实际路径并提示 WSL/网络路径排查方向。
 - `clear_codex_memories` 对齐上游 `clear_memory_roots_contents`：清空 `memories/` 与 `memories_extensions/` 全部内容、保留目录本身、拒绝 symlink root；但刻意保留 `.git/` 等隐藏顶层条目，避免破坏 consolidation 基线导致 Codex 重建整个 workspace 历史。这是与上游 clear（连 `.git` 一起删）的有意偏差。
 - memory 文件读取有 2 MiB 上限；`rollout_summaries/`、`raw_memories.md`、`MEMORY.md`、`memory_summary.md` 是 Codex 内部 DB/consolidation 的重建产物，手动删除后可能被重写——UI 有提示文案，后端不做 DB 级清理（私有 schema，跨版本不稳定）。

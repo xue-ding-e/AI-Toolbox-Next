@@ -78,7 +78,7 @@ fn strip_verbatim_prefix(path: &Path) -> PathBuf {
         Component::Prefix(prefix) => match prefix.kind() {
             std::path::Prefix::VerbatimDisk(letter) => {
                 let rest: PathBuf = components.collect();
-                let mut result = PathBuf::from(format!("{letter}:"));
+                let mut result = PathBuf::from(format!("{}:", char::from(letter)));
                 result.push(rest);
                 result
             }
@@ -1207,6 +1207,33 @@ mod tests {
             sanitize_provider_id_for_filename("my/provider:1"),
             "my_provider_1"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn launch_cwd_preserves_disk_and_unc_prefixes() {
+        for (input, expected) in [
+            (r"\\?\C:\Users\tester\project", r"C:\Users\tester\project"),
+            (r"\\?\D:\GitHub\ai-toolbox", r"D:\GitHub\ai-toolbox"),
+            (r"\\?\UNC\server\share\project", r"\\server\share\project"),
+            (r"D:\project", r"D:\project"),
+        ] {
+            assert_eq!(
+                super::strip_verbatim_prefix(std::path::Path::new(input)),
+                std::path::PathBuf::from(expected)
+            );
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let resolved = super::resolve_launch_cwd(Some(directory.path().display().to_string()))
+            .unwrap()
+            .unwrap();
+        assert!(resolved.is_absolute());
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            directory.path().canonicalize().unwrap()
+        );
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
     }
 
     #[test]

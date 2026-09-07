@@ -76,6 +76,22 @@ test('sortProviderItems does not mutate the input array', () => {
   assert.deepEqual(items, copy);
 });
 
+test('timestamp sorting compares instants across UTC and local offsets', () => {
+  const providers: Item[] = [
+    { id: 'older', name: 'Older', createdAt: '2026-09-06T10:00:00+08:00' },
+    { id: 'newer', name: 'Newer', createdAt: '2026-09-06T02:01:00.000Z' },
+    { id: 'same', name: 'Same', createdAt: '2026-09-05T19:01:00-07:00' },
+    { id: 'invalid', name: 'Invalid', createdAt: 'invalid' },
+    { id: 'missing', name: 'Missing' },
+  ];
+  for (const mode of ['created', 'recent'] as const) {
+    assert.deepEqual(
+      sortProviderItems(providers, mode, accessors, accessors.createdAt).map((item) => item.id),
+      ['newer', 'same', 'older', 'invalid', 'missing'],
+    );
+  }
+});
+
 test('isProviderSortMode rejects unknown mode values', () => {
   for (const mode of PROVIDER_SORT_MODES) {
     assert.ok(isProviderSortMode(mode));

@@ -18,6 +18,7 @@
 
 ## Gotchas
 
+- 前端监听器的 ready 状态只属于当前 WebView 生命周期；进入轻量模式时后端先重置 ready，窗口重建后重新挂监听器再调用 `mark_deeplink_frontend_ready`。重建期间链接沿用 latest-wins 待处理槽，不得因旧窗口曾 ready 而丢弃，也不能重放已送达的普通热链接。
 - `URLSearchParams` 与 Rust `url::Url::query_pairs()` 都遵循 `application/x-www-form-urlencoded`（`+` 即空格），两侧编码语义兼容；不要换用手写的 `encodeURIComponent` 拼接，容易在保留字符上分叉。
 - `homepage` 只在 `http(s)://` 开头时写入链接；后端 parser 对非 http/https 直接报 `InvalidUrl`，生成端过滤可以让接收方导入永不因主页字段失败。
 - Claude 源的 `model` 提取走 `getClaudeConfiguredModelIds` 的 fallback 链（`ANTHROPIC_MODEL` → sonnet → opus → fable → haiku → legacy reasoning），并剥离 Claude 专属的 `[1M]` 上下文后缀。只读 `ANTHROPIC_MODEL` 是踩过的坑：很多 provider 只配角色模型不配默认模型，跨工具导入会得到空 model。

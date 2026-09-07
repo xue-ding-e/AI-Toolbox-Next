@@ -52,22 +52,17 @@ export function sortProviderItems<T>(
   }
   const sorted = [...items];
   if (mode === 'name') {
-    sorted.sort((a, b) => accessors.name(a).localeCompare(accessors.name(b)));
+    sorted.sort((left, right) => accessors.name(left).localeCompare(accessors.name(right)));
     return sorted;
   }
   const timestampOf =
     mode === 'recent' ? lastUsedAt : accessors.createdAt ? accessors.createdAt : undefined;
-  sorted.sort((a, b) => {
-    const timeA = timestampOf?.(a);
-    const timeB = timestampOf?.(b);
-    if (timeA && timeB) {
-      // RFC3339 timestamps compare correctly as strings when timezone offsets
-      // are consistent; app-side writers always use the same Local::now format.
-      return timeB.localeCompare(timeA);
-    }
-    if (timeA) return -1;
-    if (timeB) return 1;
-    return 0;
+  sorted.sort((left, right) => {
+    const leftTime = Date.parse(timestampOf?.(left) ?? '');
+    const rightTime = Date.parse(timestampOf?.(right) ?? '');
+    if (Number.isNaN(leftTime)) return Number.isNaN(rightTime) ? 0 : 1;
+    if (Number.isNaN(rightTime)) return -1;
+    return rightTime - leftTime;
   });
   return sorted;
 }

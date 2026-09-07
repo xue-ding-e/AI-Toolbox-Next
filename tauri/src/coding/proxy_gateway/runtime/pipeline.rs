@@ -49,6 +49,12 @@ impl std::fmt::Debug for Pipeline {
 }
 
 impl Pipeline {
+    pub(super) fn needs_outbound_stream(&self, ctx: &PipelineContext) -> bool {
+        self.middleware
+            .iter()
+            .any(|middleware| middleware.needs_outbound_stream(ctx))
+    }
+
     #[allow(dead_code)]
     pub(super) fn new(middleware: Vec<Arc<dyn Middleware>>) -> Self {
         Self {

@@ -639,6 +639,12 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
         let start = std::time::Instant::now();
 
         loop {
+            if lightweight::is_lightweight_mode() {
+                info!(
+                    "Main window released in lightweight mode; stopping startup webview watchdog"
+                );
+                return;
+            }
             if *ready_rx.borrow() {
                 info!("frontend-ready received; WebKitGTK webview auto-downgrade not needed");
                 return;
@@ -1848,6 +1854,11 @@ pub fn run() {
                 }
 
                 let app_handle = window.app_handle().clone();
+
+                if app_handle.try_state::<SqliteDbState>().is_none() {
+                    startup_recovery::exit_app(app_handle);
+                    return;
+                }
 
                 // Check tray-on-close settings with default values.
                 let (minimize_to_tray, lightweight_on_close) = app_handle

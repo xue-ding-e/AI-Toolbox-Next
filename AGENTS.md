@@ -376,7 +376,12 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - Use `thiserror` for custom errors
 - Return `Result<T, String>` for Tauri commands
 - Use `?` operator for error propagation
-- Startup database compatibility errors must not fall through to `panic!`. In particular, when SQLite `user_version` is newer than the current `TARGET_SCHEMA_VERSION`, show a clear blocking error dialog and exit instead of trying to downgrade or crashing.
+- Startup database compatibility errors must not fall through to `panic!`. When SQLite `user_version` is newer than `TARGET_SCHEMA_VERSION`, enter the DB-free recovery screen instead of trying to downgrade or crashing. Its native close button must exit, not hide to a tray that this startup branch never creates.
+- `frontend-ready` 属于 `web/app/App.tsx` 的公共启动握手，必须覆盖正常和 recovery 两种分支，不依赖数据库初始化；Linux watchdog 遇到主动进入轻量模式应停止，不能把主动释放 WebView 当成白屏重启。
+
+#### Package-Managed Updates
+
+- Scoop 安装识别必须同时支持默认 `scoop/apps` 布局和 `SCOOP` / `SCOOP_GLOBAL` 自定义根目录，按路径分隔边界匹配；此类安装既不下发内置安装器 payload，也不得通过 `install_update` 绕过检查执行 NSIS 升级。
 
 #### HTTP / TLS Compatibility
 
@@ -964,6 +969,7 @@ Lightweight mode (modeled after cc-switch) destroys the main WebView window to r
 - **ExitRequested semantics**: the run loop prevents exit only when `code.is_none() && is_lightweight_mode()` (Tauri reports "no alive window" after `destroy()` as an automatic `ExitRequested` with no code). Do NOT widen this to all `code: None` events — `minimize_to_tray_on_close=false` still means "close window exits the app".
 - Settings: `start_lightweight` (destroy the never-shown window at startup; no geometry is saved for invisible windows) and `lightweight_on_close` (CloseRequested destroys instead of hiding; only effective while `minimize_to_tray_on_close` is true, mirrored by the frontend `disabled` state). The tray `CheckMenuItem` checked state follows `is_lightweight_mode()` via full menu rebuilds.
 - Window geometry is kept in memory (`SAVED_GEOMETRY`, logical units converted from physical pixels) for the lightweight-mode lifetime only; app restart intentionally falls back to the default 1200×800 centered window (no window-state plugin).
+- Entering lightweight mode must set its exit-guard flag and reset deep-link frontend readiness before destroying the window. Restore both flags if destruction fails; after a successful rebuild the newly attached frontend listener drains the pending link once. Backend event-listener readiness never survives WebView destruction.
 - The last active coding tab IS restored on both window rebuild (lightweight-mode exit) and app restart: `AppSettings.current_sub_tab` is persisted on every tab click (`appStore.setCurrentSubTab`) and consumed by MainLayout's redirect effect via `resolveInitialTabPath` in `web/app/routeMatching.ts`. Even though `currentSubTab` looks write-only inside `appStore`, it is load-bearing — do not remove it. Cold-boot detection is route-based ("pathname matches no entry in `PAGE_ROUTES`"), because the main window always boots at `/index.html` (`WebviewUrl::default()` = `App("index.html")`), NOT `/`; gating restore on `location.pathname === '/'` silently never fires (this bug shipped once). A saved key that is hidden or no longer visible falls back to the first visible tab.
 
 ---
