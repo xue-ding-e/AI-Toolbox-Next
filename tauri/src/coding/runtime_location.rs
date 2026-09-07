@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
 
@@ -7,12 +7,12 @@ use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
 use crate::coding::{
-    claude_code, codex, gemini_cli, grok, kimi, oh_my_pi, open_claw, open_code, pi,
+    claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, open_claw, open_code, pi,
 };
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 9] = [
+const MODULE_KEYS: [&str; 11] = [
     "opencode",
     "claude",
     "codex",
@@ -22,6 +22,8 @@ const MODULE_KEYS: [&str; 9] = [
     "geminicli",
     "pi",
     "oh_my_pi",
+    "hermes",
+    "dsh",
 ];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
@@ -201,6 +203,8 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
         "pi" => Some("pi"),
         "oh_my_pi" | "omp" => Some("oh_my_pi"),
+        "hermes" => Some("hermes"),
+        "dsh" => Some("dsh"),
         _ => None,
     }
 }
@@ -308,6 +312,18 @@ pub async fn refresh_runtime_location_cache_for_module_async(
             set_cached_runtime_location("oh_my_pi", location.clone());
             Ok(location)
         }
+        Some("hermes") => {
+            let (path, source) = hermes::get_hermes_config_dir_from_db_async(db).await?;
+            let location = build_runtime_location(path, source);
+            set_cached_runtime_location("hermes", location.clone());
+            Ok(location)
+        }
+        Some("dsh") => {
+            let (path, source) = dsh::get_dsh_config_dir_from_db_async(db).await?;
+            let location = build_runtime_location(path, source);
+            set_cached_runtime_location("dsh", location.clone());
+            Ok(location)
+        }
         Some(_) | None => Err(format!("Unsupported runtime module: {}", module)),
     }
 }
@@ -383,6 +399,17 @@ pub async fn get_wsl_direct_status_map_async(
     }
 
     Ok(statuses)
+}
+
+pub async fn get_wsl_direct_modules_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<HashSet<String>, String> {
+    Ok(get_wsl_direct_status_map_async(db)
+        .await?
+        .into_iter()
+        .filter(|status| status.is_wsl_direct)
+        .map(|status| status.module)
+        .collect())
 }
 
 pub fn get_wsl_direct_status_for_module(
@@ -1530,6 +1557,11 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
         "gemini_cli" => get_gemini_cli_runtime_location_sync(db)
             .ok()
             .map(|location| get_gemini_cli_skills_path_from_location(&location)),
+        "hermes" => Some(
+            get_cached_or_fallback_runtime_location("hermes")
+                .host_path
+                .join("skills"),
+        ),
         _ => None,
     }
 }
@@ -1643,6 +1675,10 @@ pub async fn get_tool_skills_path_async(
             .await
             .ok()
             .map(|location| get_gemini_cli_skills_path_from_location(&location)),
+        "hermes" => get_cached_or_refresh_runtime_location_async(db, "hermes")
+            .await
+            .ok()
+            .map(|location| location.host_path.join("skills")),
         _ => None,
     }
 }
@@ -1819,6 +1855,8 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "geminicli" => resolve_gemini_cli_path_without_db(),
         "pi" => resolve_pi_path_without_db(),
         "oh_my_pi" => resolve_omp_path_without_db(),
+        "hermes" => hermes::commands::resolve_hermes_path_without_db(),
+        "dsh" => dsh::commands::resolve_dsh_path_without_db(),
         _ => (PathBuf::new(), "default".to_string()),
     }
 }

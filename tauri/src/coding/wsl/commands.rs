@@ -282,12 +282,19 @@ pub(super) async fn do_full_sync(
     module: Option<&str>,
     skip_modules: Option<&[String]>,
 ) -> SyncResult {
-    let direct_modules: std::collections::HashSet<String> = config
-        .module_statuses
-        .iter()
-        .filter(|status| status.is_wsl_direct)
-        .map(|status| status.module.clone())
-        .collect();
+    // In particular, enabling sync receives a frontend config snapshot that
+    // may predate a root-directory change. Resolve Direct status on the backend.
+    let direct_modules = match runtime_location::get_wsl_direct_modules_async(state.db()).await {
+        Ok(modules) => modules,
+        Err(error) => {
+            return SyncResult {
+                success: false,
+                synced_files: vec![],
+                skipped_files: vec![],
+                errors: vec![error],
+            };
+        }
+    };
     let merged_skip_modules = merge_skip_modules(skip_modules, &direct_modules);
 
     // Get effective distro (auto-resolve if configured one doesn't exist)

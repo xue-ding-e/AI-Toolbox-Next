@@ -29,3 +29,5 @@ mod skills_tool_adapters;
 mod tools_builtin;
 #[path = "coding/tools/path_utils.rs"]
 mod tools_path_utils;
+#[path = "coding/wsl/direct_status.rs"]
+mod wsl_direct_status;

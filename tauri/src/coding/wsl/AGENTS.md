@@ -39,6 +39,8 @@ sequenceDiagram
 - 不要把 WSL 自动同步理解成“保存数据库就自动发生”。真正触发点是事件监听器。
 - 恢复期间不能同时依赖启动同步、业务事件同步和恢复收尾同步。三条链路并发会让旧文件、半完成配置和新配置互相覆盖；恢复专用入口应抑制中间事件，启动同步应识别 restore flag，最终只保留恢复收尾的一次串行同步。
 - `moduleStatuses.is_wsl_direct=true` 的模块，在 WSL 设置页里应视为“已直接运行在 WSL”，手动 WSL 同步要跳过这些模块，而不是继续把 Windows 本地映射强塞过去。
+- full sync 必须从后端当前 `runtime_location` 读取 Direct 跳过集合，不能信任传入 `config.module_statuses` 的 UI 快照；首次启用同步尤其可能携带目录切换前的旧状态。MCP 使用相同集合过滤映射，不再维护逐工具的布尔参数列表。
+- dsh/Hermes 的自定义目录也允许 UNC；两者必须出现在 `module_statuses` 中，并在保存/清除目录后刷新缓存和通知设置页。issue #331 的失败链路是“UNC 文件存在 → 漏掉 Direct 跳过 → 转成 //wsl.localhost/... → Linux cp cannot stat”，不是文件缺失或发行版特例。
 - WSL Direct 判断不要从页面上的 `source=custom` 反推。`custom`、`env`、`shell`、`default` 与是否 WSL Direct 是两个独立维度。
 - 对 Skills，WSL 自动同步的源目录仍然是中央仓库 `central_repo_path`，不是工具当前运行时 skills 目录。当前运行时目录只决定目标写到哪里。
 - 对内置工具，如果当前运行时路径是 Windows 本机路径而不是 WSL UNC，WSL 侧目标仍应回退到各自默认 Linux 目录；不要误判成“没有 WSL 目标”。
@@ -49,7 +51,7 @@ sequenceDiagram
 - 写入到 `known_marketplaces.json` / `installed_plugins.json` 的 `installLocation` / `installPath` **必须是真实绝对 Linux 路径**，不能保留 `~/.claude/...`。Claude CLI 2.1.126+ 在 WSL 里校验 marketplace 时不会展开 JSON 字段值里的 `~`，留 `~` 会被判定 corrupted。读写文件路径仍可保留 `~`(`read_wsl_file` / `write_wsl_file` 通过 bash `$HOME` 展开)；只有当字符串作为字段**值**落到 JSON 里时，才必须先用 `sync::get_wsl_user_home(distro)` 解析真实 home，再传给重写逻辑。这条规则同样适用于以后任何"路径作为字段值落到工具配置里"的同步链路。
 - 删除类业务操作不能只依赖后续 `wsl-sync-request-*`。普通文件同步遇到本机源文件不存在会跳过，不会删除 WSL 目标；如果业务语义是“清除当前运行时文件”，必须在本地状态落库前显式删除对应 WSL 目标，或让同步链路明确支持该删除语义。
 - Skills WSL 同步对工具目录链接的删除/覆盖必须先做**归属校验**：`sync::inspect_wsl_path_kind` 判断路径是 missing / 受管 symlink（readlink 目标位于 `~/.ai-toolbox/skills` 下）/ 真实目录或外部 symlink；只有受管 symlink 才允许删除（`remove_wsl_managed_symlink`）或重建，真实目录与外部 symlink 一律保留并 warn，检查失败 fail-safe 到 Foreign。不要在 skills_sync 里对工具目录直接 `rm -rf`，否则用户手工放在工具 skills 目录里的真实内容会被误删（P0）。中央仓库目录（`~/.ai-toolbox/skills/<name>`）本身是 app 私有，可按原语义删除。
-- WSL skills 同步的运行时目标解析（`get_wsl_tool_skills_dir_with_db`）与 WSL Direct 跳过集合（skipped_tool_keys）必须覆盖 runtime_location 全部 8 个模块（claude/codex/grok/opencode/openclaw/pi/oh_my_pi/geminicli）；新增可配置运行时根的工具时必须同步补这两处，否则 WSL Direct 场景会向默认目录重复建链或把链接建错位置。
+- WSL Skills 目标解析直接查询 `runtime_location::get_tool_skills_path_async`，未提供运行时 Skills 路径时回退工具默认目录；Direct 跳过集合只转换 `claude`/`geminicli` 两个工具别名，不再维护另一份模块白名单。Hermes 必须覆盖 `<root>/skills`；dsh 没有独立 Skills 目录，不为它新增目标。新增可配置运行时根的工具时必须同时核对目标路径与跳过规则。
 - Gateway 代理接管后的 WSL 地址改写只能发生在同步到 WSL 的目标副本上，不能反向写回 Windows runtime 文件；也不能对文件内容全局替换 `127.0.0.1` / `localhost`。判断必须同时依赖 Gateway manifest、目标文件 kind、managed fields 和字段内 sentinel，只允许改写 Claude `env.ANTHROPIC_BASE_URL`、Codex gateway provider `base_url`、Gemini `.env` 的 `GOOGLE_GEMINI_BASE_URL` 这类 AI Toolbox Gateway 托管字段，避免误伤用户自己配置的本地服务地址。
 - Codex prompt 映射不要硬编码 active 文件名。同步 `codex-prompt` 时要镜像 `AGENTS.md` 与 `AGENTS.override.md` 两个已知文件：本机存在就同步到 WSL 同名目标，本机不存在就清理 WSL 同名目标，避免远端保留 stale override。
 - Codex `config.toml` 可能通过顶层 `model_catalog_json = "ai-toolbox-codex-model-catalog.json"` 引用 AI Toolbox 生成的模型映射文件。同步 `codex-config` 时必须连带镜像这个同目录 companion JSON；但只处理 AI Toolbox 自有文件名，不要接管用户自定义的外部 catalog 路径。
@@ -77,6 +79,7 @@ sequenceDiagram
 
 ## 最小验证
 
+- `cargo test --test coding wsl_direct_status` 验证保存配置目录后的前端状态 payload 与后端跳过集合一致；`cargo test --lib coding::wsl::mcp_sync::tests` 验证 Direct 模块跳过、本机模块保留以及 MCP 文件边界。
 - 至少验证：启用 WSL sync 后首次全量同步会执行。
 - 至少验证：某个工具保存后发出 `wsl-sync-request-*` 时，在开启自动同步和关闭自动同步两种状态下行为不同。
 - 至少验证：WSL Direct 模块在 WSL 设置页被置灰，并在手动同步时进入 `skipModules`。

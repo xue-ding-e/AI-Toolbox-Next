@@ -6,6 +6,7 @@
 
 use log::info;
 use serde_json::Value;
+use std::collections::HashSet;
 use tauri::{AppHandle, Emitter};
 
 use super::adapter;
@@ -62,34 +63,7 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
             return Ok(());
         }
     };
-    let direct_statuses = runtime_location::get_wsl_direct_status_map_async(&state.db()).await?;
-    let skip_claude = direct_statuses
-        .iter()
-        .any(|status| status.module == "claude" && status.is_wsl_direct);
-    let skip_opencode = direct_statuses
-        .iter()
-        .any(|status| status.module == "opencode" && status.is_wsl_direct);
-    let skip_codex = direct_statuses
-        .iter()
-        .any(|status| status.module == "codex" && status.is_wsl_direct);
-    let skip_grok = direct_statuses
-        .iter()
-        .any(|status| status.module == "grok" && status.is_wsl_direct);
-    let skip_geminicli = direct_statuses
-        .iter()
-        .any(|status| status.module == "geminicli" && status.is_wsl_direct);
-    let skip_pi = direct_statuses
-        .iter()
-        .any(|status| status.module == "pi" && status.is_wsl_direct);
-    let skip_omp = direct_statuses
-        .iter()
-        .any(|status| status.module == "oh_my_pi" && status.is_wsl_direct);
-    let skip_hermes = direct_statuses
-        .iter()
-        .any(|status| status.module == "hermes" && status.is_wsl_direct);
-    let skip_dsh = direct_statuses
-        .iter()
-        .any(|status| status.module == "dsh" && status.is_wsl_direct);
+    let direct_modules = runtime_location::get_wsl_direct_modules_async(state.db()).await?;
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -114,7 +88,7 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if !skip_claude {
+    if !direct_modules.contains("claude") {
         if let Err(e) = sync_mcp_to_wsl_claude(state, &distro, &claude_servers).await {
             log::warn!("Skipped claude.json MCP sync: {}", e);
             all_errors.push(format!("Claude Code: {}", e));
@@ -144,23 +118,7 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
     // 2. OpenCode/Codex/Grok/Gemini CLI/Pi: sync config files via file mappings
     match get_file_mappings(state).await {
         Ok(file_mappings) => {
-            let mcp_mappings: Vec<_> = file_mappings
-                .into_iter()
-                .filter(|m| m.enabled && is_mapped_mcp_config_file(&m.id))
-                .filter(|m| {
-                    !should_skip_mapped_mcp_config_file_for_wsl_direct(
-                        &m.module,
-                        skip_opencode,
-                        skip_codex,
-                        skip_grok,
-                        skip_geminicli,
-                        skip_pi,
-                        skip_omp,
-                        skip_hermes,
-                        skip_dsh,
-                    )
-                })
-                .collect();
+            let mcp_mappings = filter_mcp_file_mappings(file_mappings, &direct_modules);
 
             if !mcp_mappings.is_empty() {
                 let resolved = resolve_dynamic_paths_with_db(&state.db(), mcp_mappings).await;
@@ -371,25 +329,15 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
     )
 }
 
-fn should_skip_mapped_mcp_config_file_for_wsl_direct(
-    module: &str,
-    skip_opencode: bool,
-    skip_codex: bool,
-    skip_grok: bool,
-    skip_geminicli: bool,
-    skip_pi: bool,
-    skip_omp: bool,
-    skip_hermes: bool,
-    skip_dsh: bool,
-) -> bool {
-    (module == "opencode" && skip_opencode)
-        || (module == "codex" && skip_codex)
-        || (module == "grok" && skip_grok)
-        || (module == "geminicli" && skip_geminicli)
-        || (module == "pi" && skip_pi)
-        || (module == "oh_my_pi" && skip_omp)
-        || (module == "hermes" && skip_hermes)
-        || (module == "dsh" && skip_dsh)
+fn filter_mcp_file_mappings(
+    mappings: Vec<FileMapping>,
+    direct_modules: &HashSet<String>,
+) -> Vec<FileMapping> {
+    mappings
+        .into_iter()
+        .filter(|mapping| mapping.enabled && is_mapped_mcp_config_file(&mapping.id))
+        .filter(|mapping| !direct_modules.contains(&mapping.module))
+        .collect()
 }
 
 /// Strip cmd /c from WSL MCP config file after sync.
@@ -445,9 +393,10 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_standard_server_config, is_mapped_mcp_config_file,
-        should_skip_mapped_mcp_config_file_for_wsl_direct,
+        build_standard_server_config, filter_mcp_file_mappings, is_mapped_mcp_config_file,
     };
+    use crate::coding::wsl::wsl_get_default_mappings;
+    use std::collections::HashSet;
 
     #[test]
     fn recognizes_gemini_cli_settings_as_mcp_config_file() {
@@ -474,30 +423,39 @@ mod tests {
     }
 
     #[test]
-    fn skips_pi_mcp_file_mapping_when_pi_is_wsl_direct() {
-        assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, true, false, false, false,
-        ));
-        assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "pi", false, false, false, false, false, false, false, false,
-        ));
-        assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "codex", false, false, false, false, true, false, false, false,
-        ));
-        assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "oh_my_pi", false, false, false, false, false, true, false, false,
-        ));
+    fn skips_direct_mcp_mappings_and_preserves_local_modules() {
+        for module in ["pi", "oh_my_pi", "grok", "hermes", "dsh"] {
+            let direct_modules = HashSet::from([module.to_string()]);
+            let mappings = filter_mcp_file_mappings(wsl_get_default_mappings(), &direct_modules);
+            assert!(mappings.iter().all(|mapping| mapping.module != module));
+            assert!(mappings.iter().any(|mapping| mapping.id == "codex-config"));
+        }
     }
 
     #[test]
-    fn skips_grok_mcp_file_mapping_when_grok_is_wsl_direct() {
-        assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, true, false, false, false, false, false,
-        ));
-        assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
-            "grok", false, false, false, false, false, false, false, false,
-        ));
-        assert!(is_mapped_mcp_config_file("grok-config"));
+    fn local_hermes_and_dsh_sync_only_enabled_mcp_files() {
+        let mut mappings = wsl_get_default_mappings();
+        let selected = filter_mcp_file_mappings(mappings.clone(), &HashSet::new());
+        for id in ["hermes-config", "dsh-mcp"] {
+            assert!(selected.iter().any(|mapping| mapping.id == id));
+        }
+        for id in [
+            "hermes-prompt",
+            "dsh-config",
+            "dsh-credentials",
+            "dsh-prompt",
+        ] {
+            assert!(selected.iter().all(|mapping| mapping.id != id));
+        }
+
+        mappings
+            .iter_mut()
+            .find(|mapping| mapping.id == "dsh-mcp")
+            .unwrap()
+            .enabled = false;
+        let selected = filter_mcp_file_mappings(mappings, &HashSet::new());
+        assert!(selected.iter().all(|mapping| mapping.id != "dsh-mcp"));
+        assert!(selected.iter().any(|mapping| mapping.id == "hermes-config"));
     }
 
     fn make_stdio_mcp_server(command: &str, args: &[&str]) -> crate::coding::mcp::types::McpServer {

@@ -169,8 +169,8 @@ pub fn resolve_mcp_config_path_with_db(
             crate::coding::runtime_location::get_tool_mcp_config_path_sync(db, &tool.key)
                 .or_else(|| resolve_mcp_config_path(tool))
         }
-        // Hermes/dsh are not registered in runtime_location; their config dir is
-        // resolved via their own DB-priority logic (custom > env > shell > default).
+        // Hermes/dsh's file operations and runtime_location's Direct status use
+        // these same DB-priority resolvers (custom > env > shell > default).
         // Without this branch, MCP sync would ignore a user-customized config dir.
         "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
             .ok()

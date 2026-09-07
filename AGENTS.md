@@ -1050,10 +1050,11 @@ let proxy_url = http_client::get_proxy_from_settings(&state).await?;
 
 ## Tab / Page-Key Allowlist Rules
 
-Several places hardcode a list of tab or page/module keys. Adding a new tab without updating every such list causes the new tab's feature to **silently fail** (no error, no log): the stored value is dropped on read, or the new module is force-pushed into a skip set. This has recurred twice and is a cross-module rule.
+Several places hardcode a list of tab or page/module keys. Adding a new tab without updating every such list can silently drop stored values or force the module into the wrong sync set. This has caused repeated cross-module regressions.
 
 - Recurrence 1 (sidebar show/hide): `tauri/src/settings/adapter.rs` `get_sidebar_hidden_by_page` used a 7-key allowlist; new tabs (claudedesktop/hermes/dsh/oh_my_pi) were dropped on every `get_settings`, so the "hide sidebar" toggle reset after restart. Fix: read every boolean key in the stored map instead of an allowlist.
 - Recurrence 2 (WSL/SSH file sync): `web/features/settings/hooks/useWSLSync.ts` / `useSSHSync.ts` `TAB_TO_MODULE` only had 7 entries; new tabs mapped to `undefined`, were dropped by `.filter(Boolean)`, and were force-pushed into `skipModules` — their config files were silently never synced to the remote. Fix: map every coding tab in `TAB_TO_MODULE` and keep `ALL_CODING_MODULES`/`ALL_MODULE_KEYS` complete.
+- Recurrence 3 (issue #331, duplicate WSL sync): dsh/Hermes accepted WSL UNC config roots and resolved file mappings from them, but were absent from `runtime_location` statuses. File/MCP sync then passed `//wsl.localhost/...` to Linux `cp`. Fix: register both modules using their existing directory resolvers, refresh the cache after root saves, and derive file/MCP/Skills Direct skips from the shared backend status. First-enable sync must not trust an old frontend status snapshot.
 
 ### Authority Sources
 
@@ -1068,4 +1069,4 @@ Two distinct key sets — do not conflate:
 - A new default-visible tab must update `CURRENT_DEFAULT_VISIBLE_TABS` (full-replace migration baseline) plus `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and the frontend mirror `defaultSettings.visible_tabs` in `web/services/settingsApi.ts` (reused by `web/stores/settingsStore.ts`), plus the `visible_tabs_*` migration test expectations. Custom-order users are intentionally **not** force-inserted newly added tabs (see the comment in `adapter.rs`); they surface new tabs only through the full-replace baseline.
 - Regression tests for this class of bug must assert that a newly added key round-trips its stored value through the full read path, not just that the default is present.
 - Do not silently truncate coverage. If a list intentionally excludes some keys (e.g. a historical `PRE_*` migration baseline snapshot, or a tool that has no MCP config), leave a comment saying so.
-- Whether an unregistered `runtime_location` module is a bug depends on intent: hermes/dsh document "not yet registered, path resolution is self-contained in commands.rs, known future work" in their AGENTS.md — that is by-design, not an allowlist miss. A tab whose config dir is user-customizable to a WSL UNC path needs runtime_location; a fixed-path GUI-config tool (e.g. claudedesktop) may not.
+- A module whose effective config root can be a WSL UNC path must participate in shared runtime-location status and refresh that status after directory changes, even if its directory precedence is implemented by its own reusable resolver. Test save -> read status -> sync skip -> switch back to local as one lifecycle. Fixed-path GUI-config tools (e.g. claudedesktop) do not need registration solely because they have a tab.

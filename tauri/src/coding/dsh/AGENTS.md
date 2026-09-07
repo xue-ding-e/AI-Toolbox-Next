@@ -13,7 +13,7 @@
 - 凭据放在**独立的** `.credentials.yaml`。dsh >= 0.1.1-rc.1 使用**版本化布局**：顶层 `version: 1` 标记 + `refs:` 节点（`REF: secret`，REF 为 POSIX 环境变量名，如 `DEEPSEEK_API_KEY`）+ `records:` 节点（dsh 登录流写入的 api-key/OAuth grant 记录，key 格式 `llm-pi-ai/<providerId>`）。供应商只存 `apiKeyEnv` 引用，key 本体在 `refs:` 下。dsh 启动时会把旧扁平文档自动迁移成版本化布局。
 - 配置目录解析优先级：应用 DB `dsh_settings_config` 的 `common.config_dir`（source=`custom`）> 环境变量 `DSH_HOME`（`env`）> shell 配置（`shell`）> 平台默认（`default`）。平台默认：mac/Linux `~/.dsh`，Windows `%USERPROFILE%\.dsh`。
 - SQLite 只保存配置目录选择（`common` 记录）与全局提示词预设（`dsh_prompt_config`）；**不要**新增 `dsh_provider` 之类第二套 provider 主数据。
-- 本模块路径解析**不经过** `runtime_location`（dsh 尚未登记进该模块），而是内置在 `commands.rs`。source 语义与 `runtime_location` 对齐（`custom`/`env`/`shell`/`default`）。
+- 配置目录优先级由 `commands.rs` 的同一解析器提供给文件操作与 `runtime_location`；WSL UNC 识别、`module_statuses` 和同步跳过集合统一由 `runtime_location` 产出，不在 dsh 内复制判定。普通目录保留本机同步，UNC 目录视为已直接操作 WSL 文件。
 
 ## 核心设计决策
 
@@ -22,11 +22,12 @@
 - Other Settings 编辑器隐藏并保留托管键：`llm-pi-ai`、`agent-default-model`。
 - 凭据读写集中在 `commands.rs` 的 `CredentialsDocument`：写入**统一输出版本化布局**（盖 `version: 1` 戳、只改 `refs:` 节点、整体重写保留 `records:` 与键序）；读到旧扁平文档时按 dsh 官方迁移规则把既有条目原样收编进 `refs:` 再改写（等价于 dsh 的 boot migration，避免覆盖丢密钥）。`records:` 归 dsh 登录流所有，本模块永不写入或删除。
 - 凭据写盘使用 0600 权限（参照 pi 的 `set_credentials_file_permissions`）。`save_dsh_credential` 传空 value 相当于删除该 ref。
-- WSL/SSH 侧把 dsh 视为「配置文件路径模块」：`dsh-config`（settings.yaml）、`dsh-credentials`（.credentials.yaml）、`dsh-prompt`（AGENTS.md）三个默认文件映射，模块名 `dsh`。
+- WSL/SSH 根据配置根目录派生 `dsh-config`（settings.yaml）、`dsh-credentials`（.credentials.yaml）、`dsh-prompt`（AGENTS.md）与 `dsh-mcp`（cordis.patch.yml）四个默认文件映射，模块名 `dsh`。WSL Direct 时跳过重复文件/MCP 同步；SSH 仍允许读取 UNC 源文件后上传。
 - 文件式预览由 `read_dsh_runtime_config` 返回三个原始文件内容（`configContent` / `credentialsContent` / `promptContent`），前端按文件 Tab 展示，与 Codex 预览一致。
 
 ## Gotchas
 
+- 保存或清除配置目录后，必须先刷新 `runtime_location` 的 dsh 缓存，再发 `wsl-config-changed` 和原有配置/自动同步事件。issue #331 曾因映射能解析 UNC、状态接口却没有 dsh，导致 Linux `cp` 收到 `//wsl.localhost/...` 并报 cannot stat。只修路径字符串转换不能解决重复同步。
 - provider 视图的凭据回填顺序镜像 pi-ai 运行时解析顺序：先查 `records["llm-pi-ai/<route>"]`（api-key 记录取 `key` 字段回填；grant 或 env-only 记录仅标记已配置、不显示值），无记录才回查 `apiKeyEnv` 指向的 ref。因此经 dsh 官方 UI 登录的渠道在卡片上也能正确显示「已配置」。
 - `delete_dsh_credential` 对不存在的 ref 是幂等 no-op（不再报错）：有效凭据可能在 records 里，清空 key 的 UI 流程必须能成功返回。
 - 删除 provider 只删 `llm-pi-ai.providers.<route>`/空容器，不回滚 `agent-default-model` 默认选择；本地生效配置只在用户显式切换/应用时改写。
@@ -40,6 +41,7 @@
 
 ## 最小验证
 
+- `cargo test --test coding wsl_direct_status` 覆盖真实保存命令到 WSL 配置状态读取、UNC 两种前缀、切回本机目录和清除自定义目录后的缓存刷新；WSL MCP 过滤回归另见 `cargo test --lib coding::wsl::mcp_sync::tests`。
 - `settings.yaml` 已有 `llm-pi-ai.providers.<route>` 时，编辑该 route 后其它 provider 与未知顶层键保持不变。
 - 默认 provider 不在 `llm-pi-ai.providers` 又非内置时，view 应标记 missing，`save`/`delete` 返回明确错误。
 - 保存默认模型后，`agent-default-model` 的 `provider`/`model` 正确写入，`reasoningEffort` 空串时被删除。

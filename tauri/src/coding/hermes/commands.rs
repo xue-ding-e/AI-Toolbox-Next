@@ -14,6 +14,7 @@ use super::types::*;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::runtime_location;
 use crate::db::helpers::{
     db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_put, db_update_applied_status,
 };
@@ -81,7 +82,7 @@ fn resolve_hermes_config_dir_without_db() -> Result<PathBuf, String> {
 
 /// `(path, source)` resolution without DB. Source is one of
 /// `env` / `shell` / `default`, mirroring `runtime_location`.
-fn resolve_hermes_path_without_db() -> (PathBuf, String) {
+pub(crate) fn resolve_hermes_path_without_db() -> (PathBuf, String) {
     if let Ok(env_path) = std::env::var(HERMES_ENV_KEY) {
         if !env_path.trim().is_empty() {
             return (PathBuf::from(env_path), "env".to_string());
@@ -98,9 +99,8 @@ fn resolve_hermes_path_without_db() -> (PathBuf, String) {
 
 /// Custom config dir stored in the DB (id fixed to "common").
 ///
-/// NOTE: Hermes is not registered in `runtime_location`, so path resolution
-/// lives inside this module rather than going through the shared runtime
-/// location cache. See AGENTS.md.
+/// The shared runtime-location cache calls this resolver so WSL Direct status
+/// follows the same directory precedence as Hermes's file operations.
 pub async fn get_hermes_custom_config_dir_async(db: &SqliteDbState) -> Option<PathBuf> {
     db.with_conn(|conn| db_get(conn, DbTable::HermesSettingsConfig, "common"))
         .ok()
@@ -937,9 +937,9 @@ pub async fn get_hermes_settings_config(
 }
 
 #[tauri::command]
-pub async fn save_hermes_settings_config(
+pub async fn save_hermes_settings_config<R: Runtime>(
     state: tauri::State<'_, SqliteDbState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
     input: HermesSettingsConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
@@ -957,6 +957,8 @@ pub async fn save_hermes_settings_config(
     };
     let data = adapter::settings_to_db_value(config_dir.as_deref());
     db.with_conn(|conn| db_put(conn, DbTable::HermesSettingsConfig, "common", &data))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(db, "hermes").await?;
+    let _ = app.emit("wsl-config-changed", ());
     emit_config_changed(&app, "window");
     // The hermes skills dir is derived from the config root (<root>/skills);
     // changing the saved dir moves the runtime skills location, so ask the

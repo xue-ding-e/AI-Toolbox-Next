@@ -19,6 +19,7 @@
 ## 核心设计决策（Why）
 
 - runtime tab 的运行时路径统一收敛到 `runtime_location.rs`，避免每个模块各自判断 WSL UNC、默认路径和派生路径，导致逻辑分叉。
+- dsh/Hermes 的目录优先级解析器仍由工具模块复用，`runtime_location` 调用同一解析器登记状态并统一判断 UNC；保存目录后必须刷新缓存，再通知 WSL 设置页与自动同步。不要因路径代码位于工具模块就把它排除在 Direct 状态集合之外。
 - 托盘刷新采用全局 `config-changed` 事件，而不是每个模块各自直接操作托盘，这样主窗口和托盘入口可以共享一套刷新机制。
 - WSL 自动同步用 `lib.rs` 里的事件监听器集中触发，而不是在每个业务命令里直接调用 WSL 同步实现；这样可把“是否开启自动同步”判断统一放在监听器层。
 
@@ -72,7 +73,7 @@ sequenceDiagram
   - **Skills**：无独立按钮。`skills` onboarding 的 `EXTRA_SKILL_SOURCES` 扫 `~/.cc-switch/skills` 磁盘目录；不导 `skill_repos`。
 - 跨 WSL/SSH/备份恢复的目标端字段清理规则统一放在 `config_cleanup.rs`。平台固定规则（例如 Claude 非 Windows 目标清理 Windows-only env）和用户映射配置的 `cleanup_paths` 都只作用于目标副本或恢复后的目标数据，不能反向污染 Windows 源配置。
 - Magic Context 的 `doctor` 通过 `npx @cortexkit/magic-context@latest doctor --harness opencode|pi` 运行。本机命令解析要走 `cli_resolver.rs`，WSL Direct 要在目标 distro 内执行 `npx`，不能用 Windows home 或 Windows PATH 代表 WSL 运行环境。
-- 凡是硬编码列举 tab / page 模块 key 的清单，新增 tab 时漏改其中任何一处，都会让该新 tab 的对应功能**静默失效**（无报错无日志），已复发 2 次。WSL/SSH 同步 skip-modules 计算（前端 `useWSLSync.ts`/`useSSHSync.ts` 的 `TAB_TO_MODULE`）只映射了 7 个旧 tab，新增 tab（oh_my_pi/claudedesktop/hermes）映射成 `undefined` 被 `.filter(Boolean)` 滤掉 → 永远被推入 `skipModules` → 传给后端 `wsl_sync`/`ssh_sync` → 这些 tab 的配置文件在 WSL/SSH 同步时**永远被跳过、永不传输**。修复方式是把 `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_CODING_MODULES`/`ALL_MODULE_KEYS` 全部对齐到权威来源，并同步更新 `FileMappingModal`/`SSHFileMappingModal` 的模块下拉与 `*SyncModal` 的分页列表。权威来源有两套别混：侧栏专用 12 key（`web/services/settingsApi.ts` 的 `SIDEBAR_PAGE_KEYS`）与 visible_tabs 全量（`tauri/src/settings/adapter.rs` 的 `CURRENT_DEFAULT_VISIBLE_TABS`；自定义顺序不再强制插入新增 tab，新 tab 只经全量替换基线触达）。判断"未登记 runtime_location"是否是 bug 要看模块 AGENTS.md：hermes/dsh 已标注"尚未登记、路径内置自解析、属已知未来工作"，不是同类白名单漏 key bug。详见根 `AGENTS.md` 的「Tab / Page-Key Allowlist Rules」全文规则。
+- 硬编码 tab / module key 的清单遗漏会导致同步静默跳过，也可能让 WSL Direct 模块重复同步。`useWSLSync.ts`/`useSSHSync.ts` 的旧 `TAB_TO_MODULE` 曾漏掉新 tab，使其永远进入 `skipModules`；issue #331 则是 dsh/Hermes 映射已经读取 UNC 根目录，`runtime_location` 却未输出状态，最终把 Windows UNC 交给 Linux `cp`。新增工具要同时核对前端映射清单、统一状态、缓存刷新与后端文件/MCP/Skills 过滤，不按“路径由模块自行解析”豁免状态登记。侧栏 key 与 visible_tabs 的权威来源仍分开维护，自定义排序用户不强制插入新 tab。完整清单和历史见根 `AGENTS.md` 的「Tab / Page-Key Allowlist Rules」。
 
 ## 跨模块依赖
 

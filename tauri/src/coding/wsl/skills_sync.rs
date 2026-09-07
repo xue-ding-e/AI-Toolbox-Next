@@ -57,19 +57,12 @@ async fn get_wsl_tool_skills_dir_with_db(
     db: &crate::db::SqliteDbState,
     tool_key: &str,
 ) -> Option<String> {
-    match tool_key {
-        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
-        | "gemini_cli" => {
-            runtime_location::get_tool_skills_path_async(db, tool_key)
-                .await
-                .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
-                .map(|wsl| wsl.linux_path)
-                // Default-path Windows runtimes are still expected to sync into the
-                // tool's standard WSL skills directory.
-                .or_else(|| get_wsl_tool_skills_dir(tool_key))
-        }
-        _ => get_wsl_tool_skills_dir(tool_key),
-    }
+    runtime_location::get_tool_skills_path_async(db, tool_key)
+        .await
+        .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+        .map(|wsl| wsl.linux_path)
+        // Local Windows runtimes still sync into the tool's standard WSL directory.
+        .or_else(|| get_wsl_tool_skills_dir(tool_key))
 }
 
 /// Get all tool keys that support skills
@@ -106,21 +99,13 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
             return Ok(());
         }
     };
-    let direct_statuses = runtime_location::get_wsl_direct_status_map_async(&state.db()).await?;
-    let skipped_tool_keys: HashSet<String> = direct_statuses
+    let direct_modules = runtime_location::get_wsl_direct_modules_async(state.db()).await?;
+    let skipped_tool_keys: HashSet<String> = direct_modules
         .into_iter()
-        .filter(|status| status.is_wsl_direct)
-        .filter_map(|status| match status.module.as_str() {
-            "claude" => Some("claude_code".to_string()),
-            "codex" => Some("codex".to_string()),
-            "grok" => Some("grok".to_string()),
-            "kimi" => Some("kimi".to_string()),
-            "opencode" => Some("opencode".to_string()),
-            "openclaw" => Some("openclaw".to_string()),
-            "geminicli" => Some("gemini_cli".to_string()),
-            "pi" => Some("pi".to_string()),
-            "oh_my_pi" => Some("oh_my_pi".to_string()),
-            _ => None,
+        .map(|module| match module.as_str() {
+            "claude" => "claude_code".to_string(),
+            "geminicli" => "gemini_cli".to_string(),
+            _ => module,
         })
         .collect();
 
