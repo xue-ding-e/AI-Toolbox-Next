@@ -9,7 +9,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -27,7 +27,7 @@ const PROXY_MATCH_WINDOW_SECONDS: i64 = 10;
 #[derive(Clone, Debug)]
 struct SessionUsageRecord {
     request_id: String,
-    legacy_request_id: Option<String>,
+    legacy_request_ids: Vec<String>,
     cli_key: GatewayCliKey,
     model: String,
     usage: TokenUsage,
@@ -55,6 +55,7 @@ impl SessionUsageRecord {
 #[serde(default)]
 struct ImportedRecord {
     fingerprint: String,
+    envelope_id: Option<String>,
     matched_proxy_id: Option<String>,
 }
 
@@ -465,38 +466,73 @@ fn persist_records(
     now: i64,
 ) -> Result<(SourceState, GatewaySessionUsageImportResult), String> {
     let mut claims = HashMap::new();
+    let mut released_claims = HashSet::new();
     let mut changes = GatewaySessionUsageImportResult::default();
     db.with_conn_mut(|conn| {
         let transaction = conn.transaction().map_err(|error| error.to_string())?;
         for record in records {
             changes.parsed_records += 1;
             let fingerprint = record.fingerprint();
-            let previous = state.records.get(&record.request_id);
-            if previous.is_some_and(|previous| previous.fingerprint == fingerprint) {
-                changes.skipped_records += 1;
-                continue;
-            }
+            let previous = state.records.get(&record.request_id).cloned();
             if record.created_at > now - SESSION_SETTLE_SECONDS {
                 state.pending = true;
                 continue;
             }
-            if let Some(legacy_id) = &record.legacy_request_id {
-                // Adopt rows written by the former manual importer. Its ids
-                // were path/line hashes; the new ids survive archive moves.
-                transaction.execute(
-                    "UPDATE proxy_request_logs SET request_id = ?1
-                     WHERE request_id = ?2 AND data_source = 'session' AND app_type = ?3
-                       AND NOT EXISTS (SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
-                    params![record.request_id, legacy_id, record.cli_key.as_str()],
-                ).map_err(|error| error.to_string())?;
+            for legacy_id in &record.legacy_request_ids {
+                if legacy_id == &record.request_id {
+                    continue;
+                }
+                // Several old path/line identities can describe one response.
+                // Adopt one row, then remove its redundant snapshots atomically.
+                // A known ledger entry may already be archived; never resurrect it.
+                if previous.is_none() {
+                    transaction.execute(
+                        "UPDATE proxy_request_logs SET request_id = ?1
+                         WHERE request_id = ?2 AND data_source = 'session' AND app_type = ?3
+                           AND NOT EXISTS (SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
+                        params![record.request_id, legacy_id, record.cli_key.as_str()],
+                    ).map_err(|error| error.to_string())?;
+                }
+                changes.updated_records += transaction.execute(
+                    "DELETE FROM proxy_request_logs
+                     WHERE request_id = ?1 AND data_source = 'session' AND app_type = ?2",
+                    params![legacy_id, record.cli_key.as_str()],
+                ).map_err(|error| error.to_string())? as u64;
+            }
+            if previous.as_ref().is_some_and(|previous| {
+                previous.fingerprint == fingerprint && previous.envelope_id == record.usage.envelope_id
+            }) {
+                changes.skipped_records += 1;
+                continue;
             }
             let existing_source: Option<String> = transaction.query_row(
                 "SELECT COALESCE(data_source, 'proxy') FROM proxy_request_logs WHERE request_id = ?1",
                 [&record.request_id], |row| row.get(0),
             ).optional().map_err(|error| error.to_string())?;
-            let matched_proxy_id = previous.and_then(|item| item.matched_proxy_id.clone())
-                .or(find_matching_proxy(&transaction, &record)?).filter(|proxy_id| {
-                claimed_proxies.get(proxy_id).or_else(|| claims.get(proxy_id))
+            let previous_proxy_id = previous.as_ref().and_then(|item| item.matched_proxy_id.as_ref());
+            let mut rejected_previous_match = false;
+            let retained_proxy_id = if let Some(proxy_id) = previous_proxy_id {
+                if !super::usage_stats::request_exists(&transaction, proxy_id)? {
+                    // The proxy may already be archived. Its saved match still
+                    // prevents importing the same paid invocation a second time.
+                    Some(proxy_id.clone())
+                } else {
+                    let matched = find_matching_proxy(&transaction, &record, Some(proxy_id))?;
+                    if matched.is_none() {
+                        rejected_previous_match = true;
+                        if claimed_proxies.get(proxy_id) == Some(&record.request_id) {
+                            released_claims.insert(proxy_id.clone());
+                        }
+                    }
+                    matched
+                }
+            } else { None };
+            let matched_proxy_id = match retained_proxy_id {
+                Some(proxy_id) => Some(proxy_id),
+                None => find_matching_proxy(&transaction, &record, None)?,
+            }.filter(|proxy_id| {
+                claims.get(proxy_id).or_else(|| claimed_proxies.get(proxy_id)
+                    .filter(|_| !released_claims.contains(proxy_id)))
                     .is_none_or(|owner| owner == &record.request_id)
             });
             if existing_source.as_deref() == Some("proxy") || matched_proxy_id.is_some() {
@@ -508,7 +544,7 @@ fn persist_records(
                     changes.updated_records += 1;
                 }
                 changes.skipped_records += 1;
-            } else if previous.is_some() && existing_source.is_none() {
+            } else if previous.is_some() && existing_source.is_none() && !rejected_previous_match {
                 // A processed row was pruned into a rollup (or explicitly
                 // removed). Re-reading its transcript must not insert it again.
                 changes.skipped_records += 1;
@@ -520,13 +556,18 @@ fn persist_records(
             if let Some(proxy_id) = &matched_proxy_id {
                 claims.insert(proxy_id.clone(), record.request_id.clone());
             }
-            state.records.insert(record.request_id.clone(), ImportedRecord { fingerprint, matched_proxy_id });
+            state.records.insert(record.request_id.clone(), ImportedRecord {
+                fingerprint, envelope_id: record.usage.envelope_id.clone(), matched_proxy_id,
+            });
         }
         // The ledger and usage rows must commit together, including no-op rows
         // that are already represented by a gateway log.
         save_state(&transaction, source_id, &state)?;
         transaction.commit().map_err(|error| error.to_string())
     })?;
+    for proxy_id in released_claims {
+        claimed_proxies.remove(&proxy_id);
+    }
     claimed_proxies.extend(claims);
     Ok((state, changes))
 }
@@ -534,16 +575,18 @@ fn persist_records(
 fn find_matching_proxy(
     conn: &Connection,
     record: &SessionUsageRecord,
+    only_proxy_id: Option<&str>,
 ) -> Result<Option<String>, String> {
     if let Some(envelope_id) = &record.usage.envelope_id {
         let exact = conn
             .query_row(
                 "SELECT request_id FROM proxy_request_logs
              WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+               AND (?3 IS NULL OR request_id = ?3)
                AND (request_id = 'SESSION:' || ?2
                     OR request_id = 'SESSION:' || app_type || ':' || provider_id || ':' || ?2)
              LIMIT 1",
-                params![record.cli_key.as_str(), envelope_id],
+                params![record.cli_key.as_str(), envelope_id, only_proxy_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()
@@ -552,13 +595,17 @@ fn find_matching_proxy(
             return Ok(exact);
         }
     }
-    if record.model == "unknown" {
+    // Zero counters cannot identify an invocation. A known native envelope
+    // must never match a different known proxy envelope just by equal usage.
+    if record.model == "unknown" || record.usage.total_tokens().is_none() {
         return Ok(None);
     }
     let mut query = conn
         .prepare_cached(
             "SELECT request_id FROM proxy_request_logs
          WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+           AND (?9 IS NULL OR request_id = ?9)
+           AND (?10 IS NULL OR request_id NOT GLOB 'SESSION:*')
            AND status_code >= 200 AND status_code < 300
            AND (stream_outcome IS NULL OR stream_outcome = 'completed')
            AND (LOWER(model) = LOWER(?2) OR LOWER(request_model) = LOWER(?2))
@@ -579,6 +626,8 @@ fn find_matching_proxy(
                 record.usage.cache_creation_tokens.unwrap_or(0) as i64,
                 record.created_at,
                 PROXY_MATCH_WINDOW_SECONDS,
+                only_proxy_id,
+                record.usage.envelope_id,
             ],
             |row| row.get::<_, String>(0),
         )
@@ -674,7 +723,7 @@ fn reconcile_late_proxy_rows(
         };
         let record = SessionUsageRecord {
             request_id: id.clone(),
-            legacy_request_id: None,
+            legacy_request_ids: Vec::new(),
             cli_key,
             model,
             created_at,
@@ -684,11 +733,14 @@ fn reconcile_late_proxy_rows(
                 output_tokens: Some(output),
                 cache_read_tokens: Some(read),
                 cache_creation_tokens: Some(creation),
-                envelope_id: None,
+                envelope_id: states
+                    .get(source_id)
+                    .and_then(|state| state.records.get(&id))
+                    .and_then(|record| record.envelope_id.clone()),
             },
             reported_cost_usd: None,
         };
-        let matched = db.with_conn(|conn| find_matching_proxy(conn, &record))?;
+        let matched = db.with_conn(|conn| find_matching_proxy(conn, &record, None))?;
         let Some(proxy_id) = matched.filter(|proxy_id| !claimed_proxies.contains_key(proxy_id))
         else {
             continue;

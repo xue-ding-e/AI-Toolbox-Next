@@ -299,7 +299,9 @@ Responses source 转 Anthropic Messages / Gemini Native 时，namespace child �
 
 只记录明确发送的 effort；原生 `none` 等字符串保留原意，boolean thinking 开关和 `budget_tokens` 不猜成 low/high。若 provider 兼容或 rectifier 删除了 effort，则该次记录为空，不能回退到客户端原字段或模型名后缀。无上游 URL/响应快照的本地 schema 拒绝也不记录该字段；实际上游错误响应不因失败而丢失 effort。此信息独立于正文保存开关，SQLite 摘要和 JSONL summary 使用同一结果。
 
-回归：`runtime/observability.rs::tests::final_effort_reads_explicit_upstream_dialects_without_inference`、`final_effort_ignores_fields_from_other_protocols`、`final_effort_round_trips_with_body_storage_disabled_and_metrics_only`，以及 `runtime.rs` 的同协议 Messages（含冲突协议字段）和 Messages → Responses 真实转发测试。更完整的指标范围见架构文档 §11.4 和 `docs/gateway-log-metrics-enhancement-plan.md`。
+Copilot 的 warmup 模型和 Chat/Responses 动态 target 在每次 attempt 的发送入口前统一解析，连接失败和本地拒绝继续使用同一份 effective provider。首包失败/空响应包装继承原 response 的 target，不能用供应商默认 API 格式覆盖。
+
+回归：`runtime/observability.rs::tests::final_effort_reads_explicit_upstream_dialects_without_inference`、`final_effort_ignores_fields_from_other_protocols`、`final_effort_round_trips_with_body_storage_disabled_and_metrics_only`，以及 `runtime.rs` 的同协议 Messages（含冲突协议字段）、Messages → Responses 真实转发和 `copilot_failed_requests_keep_effective_protocol_and_effort`（空响应、流式首包失败、连接失败）测试。更完整的指标范围见 [架构文档](gateway-protocol-conversion.md) §11.4 和 [Gateway 模块约束](../tauri/src/coding/proxy_gateway/AGENTS.md)。
 
 ## 3. 通用响应侧兼容
 

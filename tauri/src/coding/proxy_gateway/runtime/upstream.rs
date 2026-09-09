@@ -952,12 +952,19 @@ async fn forward_to_upstream(
                 retry_count = retry_count.saturating_add(1);
             }
 
+            // Resolve once per attempt so forwarding and every failure path
+            // share the actual model and protocol, including Copilot warmups.
+            let upstream_model_id =
+                effective_upstream_model_id_for_request(&provider, &upstream_model_id, request)
+                    .into_owned();
+            let mut provider =
+                effective_upstream_provider_for_request(&provider, &upstream_model_id);
             match send_upstream_request(
                 context,
                 request,
                 db,
                 route,
-                &provider,
+                &mut provider,
                 &requested_model,
                 &upstream_model_id,
                 settings.thinking_rectifier_enabled,
@@ -1132,7 +1139,7 @@ async fn forward_to_upstream(
                     response.pricing_model_source =
                         Some(provider.meta.pricing_model_source.clone());
                     response.requested_model = Some(requested_model.clone());
-                    response.upstream_model_id = Some(health_key.upstream_model_id.clone());
+                    response.upstream_model_id = Some(upstream_model_id.clone());
                     response.upstream_request_body = error.upstream_request_body;
                     response.target_protocol = Some(provider.target_protocol);
                     response.upstream_response_body = error.upstream_response_body;
@@ -1190,7 +1197,7 @@ async fn send_upstream_request(
     request: &DebugHttpRequest,
     db: &SqliteDbState,
     route: &GatewayRoute,
-    provider: &UpstreamProvider,
+    provider: &mut UpstreamProvider,
     requested_model: &str,
     upstream_model_id: &str,
     thinking_rectifier_enabled: bool,
@@ -1201,12 +1208,6 @@ async fn send_upstream_request(
     streaming_idle_timeout_secs: u64,
     upstream_response_snapshot_limit: Option<usize>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
-    let effective_upstream_model_id =
-        effective_upstream_model_id_for_request(provider, upstream_model_id, request);
-    let upstream_model_id = effective_upstream_model_id.as_ref();
-    let mut effective_provider =
-        effective_upstream_provider_for_request(provider, upstream_model_id);
-    let provider = &effective_provider;
     let compact_compat = CodexResponsesCompactCompat::new(route, provider);
     let source_protocol = source_protocol_from_route(route);
     let conversion_route = compact_compat.conversion_route().or_else(|| {
@@ -1266,10 +1267,9 @@ async fn send_upstream_request(
         .await
         .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::Connection))?
     {
-        effective_provider.api_key = copilot_token;
-        effective_provider.auth_strategy = ProviderAuthStrategy::Bearer;
+        provider.api_key = copilot_token;
+        provider.auth_strategy = ProviderAuthStrategy::Bearer;
     }
-    let provider = &effective_provider;
     let headers =
         build_upstream_headers(request, provider, Some(&upstream_body)).map_err(|message| {
             GatewayForwardError {
@@ -4227,7 +4227,7 @@ fn streaming_first_chunk_failure_response(
     failure_response.pricing_model_source = Some(provider.meta.pricing_model_source.clone());
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
-    failure_response.target_protocol = Some(provider.target_protocol);
+    failure_response.target_protocol = response.target_protocol;
     failure_response.upstream_request_body = response
         .upstream_request_body
         .take()
@@ -4283,7 +4283,7 @@ fn empty_success_failure_response(
     failure_response.pricing_model_source = Some(provider.meta.pricing_model_source.clone());
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
-    failure_response.target_protocol = Some(provider.target_protocol);
+    failure_response.target_protocol = response.target_protocol;
     failure_response.upstream_request_body = response.upstream_request_body.take();
     // The gateway rewrites the upstream's real status into a synthetic 502; record
     // the original code so request detail can still surface it.

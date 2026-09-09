@@ -27,10 +27,10 @@ pub(super) struct ParsedSession {
 
 pub(super) fn revision(cli_key: GatewayCliKey) -> u32 {
     match cli_key {
-        // Keep identifiable Claude responses even when the CLI reports zero
-        // tokens. Revisit cached files once to recover previously skipped calls.
-        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => 1,
-        _ => 0,
+        // Revisit cached files to retain envelope identity in the sync ledger
+        // and repair matches that joined distinct, identifiable responses.
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => 2,
+        _ => 1,
     }
 }
 
@@ -191,7 +191,9 @@ fn collect_values(
     cli_key.as_str().hash(&mut legacy_hasher);
     path.to_string_lossy().hash(&mut legacy_hasher);
     index.hash(&mut legacy_hasher);
-    record.legacy_request_id = Some(format!("SESSION:{:016x}", legacy_hasher.finish()));
+    record
+        .legacy_request_ids
+        .push(format!("SESSION:{:016x}", legacy_hasher.finish()));
     if let Some(previous) = records.get(&record.request_id) {
         // Claude/Gemini may write several snapshots of one response. They are
         // one invocation, and partial snapshots must not erase known counters.
@@ -205,6 +207,9 @@ fn collect_values(
             .usage
             .cache_creation_tokens
             .max(previous.usage.cache_creation_tokens);
+        record
+            .legacy_request_ids
+            .extend(previous.legacy_request_ids.iter().cloned());
     }
     records.insert(record.request_id.clone(), record);
 }
@@ -311,7 +316,7 @@ pub(super) fn parse_value(
     let created_at = timestamp(value).unwrap_or(fallback_timestamp);
     Some(SessionUsageRecord {
         request_id,
-        legacy_request_id: None,
+        legacy_request_ids: Vec::new(),
         cli_key,
         model,
         usage,
@@ -421,7 +426,7 @@ fn parse_codex(path: &Path, fallback_timestamp: i64) -> Result<ParsedSession, St
                 if let Some(request_id) = &request_id {
                     parsed.records.push(SessionUsageRecord {
                         request_id: request_id.clone(),
-                        legacy_request_id: None,
+                        legacy_request_ids: Vec::new(),
                         cli_key: GatewayCliKey::Codex,
                         model: model.clone(),
                         usage,

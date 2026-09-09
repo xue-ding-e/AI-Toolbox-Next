@@ -46,9 +46,14 @@ pub(super) fn sync_database(
         result.scanned_files += 1;
         let source_id = format!("opencode:session:{session_id}");
         let mut state = states.get(&source_id).cloned().unwrap_or_default();
-        if state.modified_nanos == watermark.max(0) as u64 && !state.pending {
+        let parser_revision = parsers::revision(GatewayCliKey::OpenCode);
+        if state.parser_revision == parser_revision
+            && state.modified_nanos == watermark.max(0) as u64
+            && !state.pending
+        {
             continue;
         }
+        state.parser_revision = parser_revision;
         state.modified_nanos = watermark.max(0) as u64;
         state.pending = false;
         let mut query = source.prepare("SELECT id, data, time_created FROM message WHERE session_id = ?1 ORDER BY time_created")

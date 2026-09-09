@@ -293,6 +293,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     only_failed: readOnlyFailedPreference() ? true : null,
   }));
   const [page, setPage] = React.useState(1);
+  const [importRefreshRevision, setImportRefreshRevision] = React.useState(0);
   const [logs, setLogs] = React.useState<GatewayRequestLogItem[]>([]);
   const [total, setTotal] = React.useState(0);
   const [selectedTraceId, setSelectedTraceId] = React.useState<string | null>(null);
@@ -379,7 +380,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   React.useEffect(() => {
     void loadRequests();
     return () => { requestRevisionRef.current += 1; };
-  }, [loadRequests, refreshKey]);
+  }, [loadRequests, refreshKey, importRefreshRevision]);
 
   const applyFilters = () => {
     setFilters((current) => ({
@@ -435,8 +436,10 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         count: result.failed_files,
       }));
       setNoticeKind(result.failed_files > 0 ? 'warning' : 'success');
-      if (page === 1) await loadRequests();
-      else setPage(1);
+      // Reload from the current filters after the page reset, even if the user
+      // changed the page or filters while the import was still running.
+      setPage(1);
+      setImportRefreshRevision((revision) => revision + 1);
     } catch (importError) {
       setError(t('gateway.page.requests.importFailed', { error: formatGatewayError(importError) }));
     } finally {

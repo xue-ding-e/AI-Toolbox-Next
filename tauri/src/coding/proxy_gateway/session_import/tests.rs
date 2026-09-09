@@ -417,6 +417,122 @@ fn insert_proxy(db: &SqliteDbState, id: &str) {
 }
 
 #[test]
+fn distinct_claude_envelopes_are_not_merged_when_usage_matches() {
+    for gateway_first in [false, true] {
+        for zero_usage in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut message = claude_message("native-independent", 10);
+            let (input, output, read, creation) = if zero_usage {
+                (0_i64, 0_i64, 0_i64, 0_i64)
+            } else {
+                (100, 10, 80, 20)
+            };
+            message["message"]["usage"] = json!({
+                "input_tokens": input, "output_tokens": output,
+                "cache_read_input_tokens": read, "cache_creation_input_tokens": creation,
+            });
+            write_jsonl(&root.path().join("independent.jsonl"), &[message]);
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            let insert_gateway = || {
+                db.with_conn(|conn| {
+                    conn.execute(
+                        "INSERT INTO proxy_request_logs
+                         (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                          cache_read_tokens, cache_creation_tokens, created_at, status_code, data_source)
+                         VALUES ('SESSION:proxy-independent', 'provider', 'claude', 'usage-test-model',
+                                 ?1, ?2, ?3, ?4, ?5, 200, 'proxy')",
+                        params![input, output, read, creation, THEN],
+                    ).map_err(|error| error.to_string())?;
+                    Ok(())
+                }).unwrap();
+            };
+            if gateway_first {
+                insert_gateway();
+            }
+            run_sync(&db, GatewayCliKey::Claude, root.path());
+            if !gateway_first {
+                insert_gateway();
+            }
+            run_sync(&db, GatewayCliKey::Claude, root.path());
+            assert_eq!(
+                count(&db),
+                2,
+                "gateway_first={gateway_first}, zero_usage={zero_usage}"
+            );
+            assert_eq!(
+                usage_stats::usage_summary(&db, None, None, None)
+                    .unwrap()
+                    .total_tokens,
+                (input + output + read + creation) as u64 * 2,
+            );
+        }
+    }
+}
+
+#[test]
+fn upgraded_ledger_restores_a_native_row_with_a_conflicting_proxy_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("old-matched.jsonl");
+    write_jsonl(&file, &[claude_message("native-recoverable", 10)]);
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    run_sync(&db, GatewayCliKey::Claude, root.path());
+    let source_id = "claude:old-matched";
+    let mut state = load_states(&db).unwrap().remove(source_id).unwrap();
+    state.parser_revision -= 1;
+    let record = state.records.get_mut("SESSION:native-recoverable").unwrap();
+    record.envelope_id = None;
+    record.matched_proxy_id = Some("SESSION:other-proxy".to_string());
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_id = 'SESSION:other-proxy',
+             provider_id = 'provider', data_source = 'proxy'",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+        save_state(conn, source_id, &state)
+    })
+    .unwrap();
+
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Claude, root.path()).inserted_records,
+        1
+    );
+    assert_eq!(count(&db), 2);
+    let state = load_states(&db).unwrap().remove(source_id).unwrap();
+    let record = state.records.get("SESSION:native-recoverable").unwrap();
+    assert_eq!(record.envelope_id.as_deref(), Some("native-recoverable"));
+    assert_eq!(record.matched_proxy_id, None);
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Claude, root.path()).parsed_records,
+        0
+    );
+}
+
+#[test]
+fn final_usage_rechecks_an_earlier_heuristic_proxy_match() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("session-final.jsonl");
+    write_jsonl(&file, &[gemini_message("native-final", 10)]);
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    insert_proxy(&db, "proxy-without-an-envelope");
+    run_sync(&db, GatewayCliKey::Gemini, root.path());
+    assert_eq!(count(&db), 1);
+
+    write_jsonl(&file, &[gemini_message("native-final", 30)]);
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Gemini, root.path()).inserted_records,
+        1
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None).unwrap();
+    assert_eq!(summary.total_requests, 2);
+    assert_eq!(summary.total_output_tokens, 50);
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Gemini, root.path()).inserted_records,
+        0
+    );
+}
+
+#[test]
 fn gateway_and_session_usage_converge_in_either_arrival_order() {
     for gateway_first in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -571,6 +687,58 @@ fn legacy_manual_import_is_adopted_without_duplicate_usage() {
             .total_tokens,
         110
     );
+}
+
+#[test]
+fn legacy_snapshot_rows_converge_when_the_canonical_record_already_exists() {
+    use std::hash::{Hash, Hasher};
+    for canonical_exists in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("session-legacy.jsonl");
+        let messages = [10, 20].map(|output| {
+            json!({
+                "id": "response-one", "model": "gemini-test", "timestamp": THEN,
+                "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": output}
+            })
+        });
+        write_jsonl(&file, &messages);
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        if canonical_exists {
+            run_sync(&db, GatewayCliKey::Gemini, root.path());
+        }
+        for (index, output) in [10, 20].into_iter().enumerate() {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            "gemini".hash(&mut hasher);
+            file.to_string_lossy().hash(&mut hasher);
+            index.hash(&mut hasher);
+            let legacy_id = format!("SESSION:{:016x}", hasher.finish());
+            db.with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, created_at, status_code, data_source)
+                     VALUES (?1, 'session', 'gemini', 'gemini-test', 100, ?2, ?3, 200, 'session')",
+                    params![legacy_id, output, THEN],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+        }
+        // An unchanged invocation can be revisited after another append or a
+        // parser upgrade, while both legacy and canonical rows are present.
+        writeln!(fs::OpenOptions::new().append(true).open(&file).unwrap()).unwrap();
+        run_sync(&db, GatewayCliKey::Gemini, root.path());
+        assert_eq!(count(&db), 1, "canonical_exists={canonical_exists}");
+        assert_eq!(
+            usage_stats::usage_summary(&db, None, None, None)
+                .unwrap()
+                .total_tokens,
+            120,
+            "canonical_exists={canonical_exists}"
+        );
+        run_sync(&db, GatewayCliKey::Gemini, root.path());
+        assert_eq!(count(&db), 1);
+    }
 }
 
 #[test]

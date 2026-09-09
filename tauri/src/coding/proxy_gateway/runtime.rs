@@ -1878,6 +1878,74 @@ base_url = "https://openai.example.com/v1"
     }
 
     #[test]
+    fn copilot_failed_requests_keep_effective_protocol_and_effort() {
+        for failure in ["empty", "stream", "connection"] {
+            let (base_url, captured_rx) = match failure {
+                "empty" => start_test_upstream_with_response(
+                    200,
+                    "OK",
+                    br#"{"id":"resp_empty","object":"response","model":"gpt-5.4","status":"completed","output":[]}"#,
+                ),
+                "stream" => start_test_streaming_upstream_with_body(
+                    b"event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"failed upstream\"}}}\n\n",
+                ),
+                _ => {
+                    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                    let base_url = format!("http://{}", listener.local_addr().unwrap());
+                    let (tx, rx) = mpsc::channel();
+                    thread::spawn(move || {
+                        let (mut stream, _) = listener.accept().unwrap();
+                        tx.send(read_test_http_request(&mut stream)).unwrap();
+                        // Close after reading the request, without returning HTTP headers.
+                    });
+                    (base_url, rx)
+                }
+            };
+            let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Copilot dynamic target", "category": "custom",
+                    "settings_config": json!({"env": {
+                        "ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_AUTH_TOKEN": "test-copilot-token"
+                    }}).to_string(),
+                    "extra_settings_config": "{}", "is_applied": true, "is_disabled": false,
+                    "meta": {"providerType": "github_copilot", "apiFormat": "openai_chat"}
+                }),
+            );
+            let log_dir = tempfile::tempdir().unwrap();
+            let context = GatewayRuntimeContext::new(
+                ProxyGatewaySettings {
+                    max_retry_count: 0,
+                    ..ProxyGatewaySettings::default()
+                },
+                Some(db),
+                Some(ProxyGatewayPaths::new(log_dir.path())),
+            );
+            let body = serde_json::to_vec(&json!({
+                "model": "gpt-5.4", "max_tokens": 128, "stream": failure == "stream",
+                "output_config": {"effort": "high"},
+                "messages": [{"role": "user", "content": "say hi"}]
+            }))
+            .unwrap();
+            let request = debug_request("POST", "/anthropic/v1/messages", &body);
+            let response = tauri::async_runtime::block_on(route_request(&request, &context));
+            let captured = captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(
+                captured.starts_with("POST /responses HTTP/1.1"),
+                "{failure}: {captured}"
+            );
+            assert_eq!(response.status_code, 502, "{failure}");
+            assert_eq!(
+                response.target_protocol,
+                Some(super::super::transformer::AiProtocol::OpenAiResponses),
+                "{failure}"
+            );
+            assert_logged_effort(&request, &response, &context, "high");
+        }
+    }
+
+    #[test]
     fn route_request_preserves_upstream_response_body_for_converted_response() {
         let upstream_body = br#"{"id":"resp_test","object":"response","created_at":1764561600,"model":"gpt-5","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"converted hello","annotations":[]}],"status":"completed"}],"status":"completed","usage":{"input_tokens":8,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":10}}"#;
         let (base_url, captured_rx) = start_test_upstream_with_response(200, "OK", upstream_body);
