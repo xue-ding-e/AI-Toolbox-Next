@@ -56,13 +56,15 @@ const testStream = run({
   execArgv: ['--import', typeScriptExtensionRegisterUrl],
 });
 
-testStream.compose(spec).pipe(process.stdout);
-
-const summary = await new Promise((resolve, reject) => {
-  testStream.once('test:summary', resolve);
-  testStream.once('error', reject);
+// Node emits per-file summaries before the final run summary. A passing first
+// file must not hide a failure reported by another worker later in the run.
+testStream.on('test:fail', () => {
+  process.exitCode = 1;
 });
 
-if (summary.success === false) {
-  process.exitCode = 1;
-}
+testStream.compose(spec).pipe(process.stdout);
+
+await new Promise((resolve, reject) => {
+  testStream.once('end', resolve);
+  testStream.once('error', reject);
+});

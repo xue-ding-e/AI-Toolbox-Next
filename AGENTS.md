@@ -225,6 +225,7 @@ cd tauri && cargo test test_name
 
 - 对跨模块、跨层、会影响“保存/应用/同步/恢复/导入导出/配置落盘”的**大功能迭代**，不要只跑针对性测试；在交付前必须补跑当前仓库可用的全量测试集合。
 - 当前仓库前端测试统一通过 `pnpm test` 执行；该脚本会发现并运行 `web/test/**` 下的 `.test.ts` / `.spec.ts` 文件。
+- `node:test.run()` 会先发送各文件的 `test:summary`，不能用第一个 summary 决定整套测试成败。测试入口必须等事件流结束，并让任何 `test:fail` 设置非零退出码；用“首文件成功、后续文件失败”的子进程回归验证，避免本地和 CI 假通过。
 - 前端测试文件必须放在 `web/test/` 下，并镜像对应功能目录结构；不要把 `.test.ts` 文件继续与实现文件并排放在 `web/features/**`、`web/components/**` 等源码目录里。
   - 例如：`web/features/coding/opencode/components/foo.ts` 对应测试应放在 `web/test/features/coding/opencode/components/foo.test.ts`
 - Rust 测试保持分层约定：
