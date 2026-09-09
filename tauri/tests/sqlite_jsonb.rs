@@ -99,6 +99,192 @@ fn jsonb_probe_and_schema_migration_create_all_tables() {
 }
 
 #[test]
+fn v17_migration_preserves_existing_request_logs_and_nullable_effort() {
+    let mut conn = test_conn();
+    conn.execute_batch(
+        "ALTER TABLE proxy_request_logs DROP COLUMN reasoning_effort;
+         INSERT INTO proxy_request_logs
+             (request_id, provider_id, app_type, model, input_tokens, created_at)
+         VALUES ('legacy-log', 'provider-a', 'codex', 'gpt-5', 120, 1780000000);",
+    )
+    .expect("seed v16 request log schema");
+    migrations::set_user_version(&conn, 16).expect("set v16 schema version");
+
+    migrations::run_all(&mut conn).expect("upgrade v16");
+    migrations::run_all(&mut conn).expect("reopen upgraded schema");
+    assert_eq!(
+        migrations::get_user_version(&conn).unwrap(),
+        TARGET_SCHEMA_VERSION
+    );
+    let legacy: (String, i64, Option<String>) = conn.query_row(
+        "SELECT model, input_tokens, reasoning_effort FROM proxy_request_logs WHERE request_id = 'legacy-log'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).expect("read legacy log after upgrade");
+    assert_eq!(legacy, ("gpt-5".to_string(), 120, None));
+    conn.execute(
+        "UPDATE proxy_request_logs SET reasoning_effort = 'high' WHERE request_id = 'legacy-log'",
+        [],
+    )
+    .expect("write new effort metadata");
+    // Existing-column migrations must also tolerate a restored version marker.
+    migrations::set_user_version(&conn, 16).unwrap();
+    migrations::run_all(&mut conn).expect("repeat additive migration");
+    let effort: String = conn
+        .query_row(
+            "SELECT reasoning_effort FROM proxy_request_logs WHERE request_id = 'legacy-log'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(effort, "high");
+}
+
+#[test]
+fn session_usage_migrations_preserve_rollups_and_ledger_on_repeat() {
+    let mut conn = test_conn();
+    conn.execute_batch(
+        "DROP TABLE gateway_session_usage_state;
+         ALTER TABLE usage_daily_rollups DROP COLUMN latency_sample_count;
+         INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, avg_latency_ms)
+         VALUES ('2026-09-01', 'claude', 'provider-a', 'model-a', 4, 300),
+                ('2026-09-01', 'claude', 'session', 'model-a', 2, 0);",
+    ).unwrap();
+    migrations::set_user_version(&conn, 17).unwrap();
+    migrations::run_all(&mut conn).unwrap();
+    let rows = conn
+        .prepare(
+            "SELECT provider_id, request_count, avg_latency_ms, latency_sample_count
+         FROM usage_daily_rollups ORDER BY provider_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("provider-a".into(), 4, 300, 4),
+            ("session".into(), 2, 0, 0)
+        ]
+    );
+    conn.execute(
+        "INSERT INTO gateway_session_usage_state (id, data, created_at, updated_at)
+         VALUES ('claude:session-a', jsonb(?1), '2026-09-08', '2026-09-08')",
+        [r#"{"records":{"SESSION:message-a":{"fingerprint":"kept"}}}"#],
+    )
+    .unwrap();
+    migrations::set_user_version(&conn, 17).unwrap();
+    migrations::run_all(&mut conn).unwrap();
+    let fingerprint: String = conn.query_row(
+        "SELECT json_extract(data, '$.records.\"SESSION:message-a\".fingerprint') FROM gateway_session_usage_state",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(fingerprint, "kept");
+}
+
+#[test]
+fn already_migrated_v18_without_latency_samples_is_repaired_with_backup() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let db_path = temp_dir.path().join("ai-toolbox.db");
+    {
+        let db = SqliteDbState::open(db_path.clone()).unwrap();
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "ALTER TABLE usage_daily_rollups DROP COLUMN latency_sample_count;
+                 INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, avg_latency_ms, total_cost_usd)
+                 VALUES ('2026-09-01', 'claude', 'provider-a', 'model-a', 4, 300, '0.012345'),
+                        ('2026-09-01', 'claude', 'session', 'model-a', 2, 0, '0.006789');
+                 INSERT INTO gateway_session_usage_state (id, data, created_at, updated_at)
+                 VALUES ('existing-session', jsonb('{}'), '2026-09-01', '2026-09-01');",
+            ).map_err(|error| error.to_string())?;
+            migrations::set_user_version(conn, 18)
+        }).unwrap();
+    }
+    // This database has already applied v18. Do not lower its version marker:
+    // a new migration must cover the exact state seen by the running app.
+    let db = SqliteDbState::open(db_path).unwrap();
+    db.with_conn(|conn| {
+        let proxy_samples: i64 = conn.query_row(
+            "SELECT latency_sample_count FROM usage_daily_rollups WHERE provider_id = 'provider-a'",
+            [], |row| row.get(0),
+        ).map_err(|error| error.to_string())?;
+        let session_samples: i64 = conn.query_row(
+            "SELECT latency_sample_count FROM usage_daily_rollups WHERE provider_id = 'session'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!((proxy_samples, session_samples), (4, 0));
+        let state_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM gateway_session_usage_state",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state_count, 1);
+        Ok(())
+    })
+    .unwrap();
+    let backups = fs::read_dir(temp_dir.path().join(SQLITE_MIGRATION_BACKUP_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(backups.len(), 1);
+    let backup = Connection::open(&backups[0]).unwrap();
+    assert_eq!(migrations::get_user_version(&backup).unwrap(), 18);
+    assert!(backup
+        .prepare("SELECT latency_sample_count FROM usage_daily_rollups")
+        .is_err());
+    let old_costs: String = backup
+        .query_row(
+            "SELECT total_cost_usd FROM usage_daily_rollups WHERE provider_id = 'provider-a'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(old_costs, "0.012345");
+}
+
+#[test]
+fn already_migrated_v18_with_latency_samples_preserves_existing_measurements() {
+    let mut conn = test_conn();
+    conn.execute_batch(
+        "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, avg_latency_ms, latency_sample_count)
+         VALUES ('2026-09-01', 'claude', 'provider-a', 'model-a', 4, 350, 2),
+                ('2026-09-01', 'claude', 'session', 'model-a', 2, 0, 0);",
+    ).unwrap();
+    migrations::set_user_version(&conn, 18).unwrap();
+    migrations::run_all(&mut conn).unwrap();
+    let samples: (i64, i64) = conn.query_row(
+        "SELECT avg_latency_ms, latency_sample_count FROM usage_daily_rollups WHERE provider_id = 'provider-a'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    assert_eq!(samples, (350, 2));
+    assert_eq!(
+        migrations::get_user_version(&conn).unwrap(),
+        TARGET_SCHEMA_VERSION
+    );
+    migrations::run_all(&mut conn).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT latency_sample_count FROM usage_daily_rollups WHERE provider_id = 'session'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn schema_migration_rejects_future_user_version() {
     let mut conn = Connection::open_in_memory().expect("open in-memory sqlite");
     migrations::set_user_version(&conn, TARGET_SCHEMA_VERSION + 1).expect("set user version");

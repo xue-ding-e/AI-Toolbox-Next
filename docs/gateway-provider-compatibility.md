@@ -285,6 +285,22 @@ Responses source 转 Anthropic Messages / Gemini Native 时，namespace child �
 - `codex_failover_main_session_ignores_auto_review_model`
 - `codex_single_auto_review_preserves_requested_model`
 
+### 2.8 最终思考强度的日志观测（issue #332）
+
+`runtime/observability.rs::final_upstream_reasoning_effort()` 读取最终 attempt 的请求体快照；不改写出站 body，也不反向使用客户端原始值。根据响应携带的实际 `target_protocol` 选择对应字段，再对非空字符串 trim/lowercase；不能将其它协议遗留字段当作实际出站 effort：
+
+| 目标协议 | 出站字段 |
+|---|---|
+| OpenAI Chat | 优先 `reasoning_effort`，回退该协议的 OpenRouter 方言 `reasoning.effort` |
+| OpenAI Responses | 仅 `reasoning.effort` |
+| Anthropic Messages | 仅 `output_config.effort` |
+| Gemini Native | `generationConfig.thinkingConfig.thinkingLevel`，或对应 snake_case 表示 |
+| 未知 | 不推断，返回空值 |
+
+只记录明确发送的 effort；原生 `none` 等字符串保留原意，boolean thinking 开关和 `budget_tokens` 不猜成 low/high。若 provider 兼容或 rectifier 删除了 effort，则该次记录为空，不能回退到客户端原字段或模型名后缀。无上游 URL/响应快照的本地 schema 拒绝也不记录该字段；实际上游错误响应不因失败而丢失 effort。此信息独立于正文保存开关，SQLite 摘要和 JSONL summary 使用同一结果。
+
+回归：`runtime/observability.rs::tests::final_effort_reads_explicit_upstream_dialects_without_inference`、`final_effort_ignores_fields_from_other_protocols`、`final_effort_round_trips_with_body_storage_disabled_and_metrics_only`，以及 `runtime.rs` 的同协议 Messages（含冲突协议字段）和 Messages → Responses 真实转发测试。更完整的指标范围见架构文档 §11.4 和 `docs/gateway-log-metrics-enhancement-plan.md`。
+
 ## 3. 通用响应侧兼容
 
 响应事实源是 `runtime/upstream.rs::build_gateway_response()`。

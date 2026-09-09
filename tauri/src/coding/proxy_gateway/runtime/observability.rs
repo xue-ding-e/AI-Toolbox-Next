@@ -3,17 +3,83 @@ use super::routes::split_request_target;
 use super::GatewayRuntimeContext;
 use crate::coding::proxy_gateway::paths::ProxyGatewayPaths;
 use crate::coding::proxy_gateway::request_log;
+use crate::coding::proxy_gateway::transformer::AiProtocol;
 use crate::coding::proxy_gateway::types::{
-    GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayStreamOutcome,
+    GatewayCliKey, GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayStreamOutcome,
     GatewayUsageRecordedEvent, ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::usage_parser::stable_usage_request_id;
 use crate::coding::proxy_gateway::usage_stats::{self, RecordRequestSummaryOutcome};
 use chrono::{DateTime, Utc};
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 static TRACE_RUN_ID: OnceLock<String> = OnceLock::new();
+
+/// Arrival times in the trailing minute. This is independent of persisted usage,
+/// which records completion time and can also contain imported session records.
+#[derive(Default)]
+pub(super) struct RequestRateWindow {
+    arrivals: VecDeque<(Instant, GatewayCliKey)>,
+}
+
+impl RequestRateWindow {
+    pub(super) fn record(&mut self, now: Instant, cli_key: GatewayCliKey) {
+        self.expire(now);
+        self.arrivals.push_back((now, cli_key));
+    }
+
+    pub(super) fn counts_by_cli(&mut self, now: Instant) -> HashMap<GatewayCliKey, u64> {
+        self.expire(now);
+        let mut counts = HashMap::new();
+        for (_, cli_key) in &self.arrivals {
+            *counts.entry(*cli_key).or_default() += 1;
+        }
+        counts
+    }
+
+    #[cfg(test)]
+    fn count(&mut self, now: Instant) -> u64 {
+        self.counts_by_cli(now).values().sum()
+    }
+
+    fn expire(&mut self, now: Instant) {
+        while self
+            .arrivals
+            .front()
+            .is_some_and(|(arrival, _)| now.duration_since(*arrival) >= Duration::from_secs(60))
+        {
+            self.arrivals.pop_front();
+        }
+    }
+}
+
+fn final_upstream_reasoning_effort(response: &DebugHttpResponse) -> Option<String> {
+    // A local schema failure can retain the original client body without sending it.
+    if response.error_category.as_deref() == Some("request_schema")
+        && response.upstream_url.is_none()
+        && response.upstream_response_body.is_none()
+    {
+        return None;
+    }
+    let body: Value = serde_json::from_slice(response.upstream_request_body.as_deref()?).ok()?;
+    let effort_paths: &[&str] = match response.target_protocol? {
+        AiProtocol::OpenAiChat => &["/reasoning_effort", "/reasoning/effort"],
+        AiProtocol::OpenAiResponses => &["/reasoning/effort"],
+        AiProtocol::AnthropicMessages => &["/output_config/effort"],
+        AiProtocol::GeminiNative => &[
+            "/generationConfig/thinkingConfig/thinkingLevel",
+            "/generation_config/thinking_config/thinking_level",
+        ],
+    };
+    effort_paths.iter().find_map(|path| {
+        let effort = body.pointer(path)?.as_str()?.trim();
+        (!effort.is_empty()).then(|| effort.to_ascii_lowercase())
+    })
+}
 
 pub(super) fn record_gateway_observability(
     request: &DebugHttpRequest,
@@ -71,6 +137,7 @@ pub(super) fn record_gateway_observability(
         let mut detail = GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
                 trace_id,
+                data_source: None,
                 started_at,
                 ended_at,
                 cli_key: response.cli_key,
@@ -84,6 +151,7 @@ pub(super) fn record_gateway_observability(
                 pricing_model_source: response.pricing_model_source.clone(),
                 requested_model: response.requested_model.clone(),
                 upstream_model_id: response.upstream_model_id.clone(),
+                reasoning_effort: final_upstream_reasoning_effort(response),
                 upstream_url: response.upstream_url.clone(),
                 status_code: Some(response.status_code),
                 upstream_status_code: response.upstream_status_code,
@@ -316,7 +384,11 @@ fn stored_body_text(
 
 #[cfg(test)]
 mod tests {
+    use super::super::http_io::json_response;
     use super::*;
+    use crate::coding::proxy_gateway::types::{GatewayCliKey, GatewayRequestLogFilters};
+    use crate::db::SqliteDbState;
+    use serde_json::json;
 
     fn request_with_id(id: u64) -> DebugHttpRequest {
         DebugHttpRequest {
@@ -325,6 +397,211 @@ mod tests {
             path: "/anthropic/v1/messages".to_string(),
             headers: Vec::new(),
             body: Vec::new(),
+        }
+    }
+
+    fn response_with_upstream_body(body: Value) -> DebugHttpResponse {
+        let mut response = json_response(200, "OK", json!({"ok": true}), "anthropic", None, "test");
+        response.cli_key = Some(GatewayCliKey::Claude);
+        response.provider_id = Some("provider-a".to_string());
+        response.requested_model = Some("client-model".to_string());
+        response.upstream_model_id = Some("upstream-model".to_string());
+        response.target_protocol = Some(AiProtocol::OpenAiResponses);
+        response.upstream_request_body = Some(serde_json::to_vec(&body).unwrap());
+        response
+    }
+
+    #[test]
+    fn request_rate_uses_a_trailing_minute_and_expires_without_new_arrivals() {
+        let mut window = RequestRateWindow::default();
+        let start = Instant::now();
+        assert_eq!(window.count(start), 0);
+        window.record(start, GatewayCliKey::Claude);
+        window.record(start, GatewayCliKey::Codex);
+        window.record(start + Duration::from_secs(30), GatewayCliKey::Claude);
+        assert_eq!(window.count(start + Duration::from_millis(59_999)), 3);
+        assert_eq!(
+            window.counts_by_cli(start + Duration::from_millis(59_999)),
+            HashMap::from([(GatewayCliKey::Claude, 2), (GatewayCliKey::Codex, 1),])
+        );
+        assert_eq!(window.count(start + Duration::from_secs(60)), 1);
+        assert_eq!(
+            window.counts_by_cli(start + Duration::from_secs(60)),
+            HashMap::from([(GatewayCliKey::Claude, 1)])
+        );
+        assert_eq!(window.count(start + Duration::from_secs(90)), 0);
+        window.record(start + Duration::from_secs(91), GatewayCliKey::Gemini);
+        assert_eq!(window.count(start + Duration::from_secs(91)), 1);
+    }
+
+    #[test]
+    fn final_effort_reads_explicit_upstream_dialects_without_inference() {
+        for (protocol, body, expected) in [
+            (
+                AiProtocol::OpenAiChat,
+                json!({"reasoning_effort": " high "}),
+                Some("high"),
+            ),
+            (
+                AiProtocol::OpenAiResponses,
+                json!({"reasoning": {"effort": "xhigh"}}),
+                Some("xhigh"),
+            ),
+            (
+                AiProtocol::AnthropicMessages,
+                json!({"output_config": {"effort": "max"}}),
+                Some("max"),
+            ),
+            (
+                AiProtocol::GeminiNative,
+                json!({"generationConfig": {"thinkingConfig": {"thinkingLevel": "HIGH"}}}),
+                Some("high"),
+            ),
+            (
+                AiProtocol::GeminiNative,
+                json!({"generation_config": {"thinking_config": {"thinking_level": "low"}}}),
+                Some("low"),
+            ),
+            (
+                AiProtocol::OpenAiChat,
+                json!({"reasoning_effort": "none"}),
+                Some("none"),
+            ),
+            (
+                AiProtocol::OpenAiChat,
+                json!({"reasoning": {"effort": "minimal"}}),
+                Some("minimal"),
+            ),
+            (
+                AiProtocol::OpenAiResponses,
+                json!({"reasoning": {"enabled": false}}),
+                None,
+            ),
+            (
+                AiProtocol::AnthropicMessages,
+                json!({"thinking": {"type": "enabled", "budget_tokens": 8192}}),
+                None,
+            ),
+            (
+                AiProtocol::OpenAiChat,
+                json!({"model": "gpt-5-high", "reasoning_effort": "  "}),
+                None,
+            ),
+            (
+                AiProtocol::OpenAiChat,
+                json!({"reasoning_effort": 1, "messages": [{"reasoning_effort": "high"}]}),
+                None,
+            ),
+        ] {
+            let mut response = response_with_upstream_body(body.clone());
+            response.target_protocol = Some(protocol);
+            assert_eq!(
+                final_upstream_reasoning_effort(&response).as_deref(),
+                expected,
+                "{body}"
+            );
+        }
+        let mut response = response_with_upstream_body(json!({"reasoning_effort": "high"}));
+        response.target_protocol = Some(AiProtocol::OpenAiChat);
+        response.error_category = Some("upstream_bad_request".to_string());
+        assert_eq!(
+            final_upstream_reasoning_effort(&response).as_deref(),
+            Some("high")
+        );
+        response.error_category = Some("request_schema".to_string());
+        assert_eq!(final_upstream_reasoning_effort(&response), None);
+        response.upstream_url = Some("https://upstream.test/v1/responses".to_string());
+        assert_eq!(
+            final_upstream_reasoning_effort(&response).as_deref(),
+            Some("high")
+        );
+        response.error_category = None;
+        response.upstream_request_body = Some(b"not json".to_vec());
+        assert_eq!(final_upstream_reasoning_effort(&response), None);
+        response.upstream_request_body = None;
+        assert_eq!(final_upstream_reasoning_effort(&response), None);
+    }
+
+    #[test]
+    fn final_effort_ignores_fields_from_other_protocols() {
+        let mut response = response_with_upstream_body(json!({
+            "reasoning_effort": "low",
+            "reasoning": { "effort": "medium" },
+            "output_config": { "effort": "max" },
+            "generationConfig": { "thinkingConfig": { "thinkingLevel": "HIGH" } }
+        }));
+        response.source_protocol = Some(AiProtocol::AnthropicMessages);
+        for (target, expected) in [
+            (AiProtocol::OpenAiChat, "low"),
+            (AiProtocol::OpenAiResponses, "medium"),
+            (AiProtocol::AnthropicMessages, "max"),
+            (AiProtocol::GeminiNative, "high"),
+        ] {
+            response.target_protocol = Some(target);
+            assert_eq!(
+                final_upstream_reasoning_effort(&response).as_deref(),
+                Some(expected)
+            );
+        }
+        response.target_protocol = None;
+        assert_eq!(final_upstream_reasoning_effort(&response), None);
+        response.target_protocol = Some(AiProtocol::OpenAiResponses);
+        response.upstream_request_body = Some(br#"{"reasoning_effort":"high"}"#.to_vec());
+        assert_eq!(final_upstream_reasoning_effort(&response), None);
+    }
+
+    #[test]
+    fn final_effort_round_trips_with_body_storage_disabled_and_metrics_only() {
+        for request_log_enabled in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = ProxyGatewayPaths::new(dir.path());
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            let settings = ProxyGatewaySettings {
+                request_log_enabled,
+                metrics_enabled: true,
+                store_request_body: false,
+                ..Default::default()
+            };
+            let context =
+                GatewayRuntimeContext::new(settings, Some(db.clone()), Some(paths.clone()));
+            let mut request = request_with_id(1);
+            request.body = br#"{"model":"client-model","reasoning_effort":"low"}"#.to_vec();
+            let response = response_with_upstream_body(
+                json!({"model": "upstream-model", "reasoning": {"effort": "high"}}),
+            );
+            let started_at = Utc::now();
+            record_gateway_observability(
+                &request,
+                &response,
+                &context,
+                started_at,
+                started_at + chrono::Duration::milliseconds(1200),
+            );
+
+            let logs = usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10)
+                .unwrap();
+            assert_eq!(logs.total, 1);
+            assert_eq!(logs.data[0].reasoning_effort.as_deref(), Some("high"));
+            let trace_id = &logs.data[0].trace_id;
+            let fallback = usage_stats::request_log_detail_from_summary(&db, trace_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(fallback.summary.reasoning_effort.as_deref(), Some("high"));
+            assert!(fallback.request_body.is_none());
+            assert!(fallback.upstream_request_body.is_none());
+            if request_log_enabled {
+                let detail = request_log::get_request_log_detail(&paths, trace_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(detail.summary.reasoning_effort.as_deref(), Some("high"));
+                assert!(detail.request_body.is_none());
+                assert!(detail.upstream_request_body.is_none());
+            } else {
+                assert!(usage_stats::request_log_location(&db, trace_id)
+                    .unwrap()
+                    .is_none());
+                assert!(!paths.request_log_root().exists());
+            }
         }
     }
 

@@ -507,6 +507,22 @@ Chat / Anthropic / Gemini 聚合同样 fail-closed：只要缺少对应协议的
 
 任一 body 含顶层非空 error、`response.failed`、`status=failed` 或嵌套 response error，都按 `UpstreamBadRequest` 进入既有 retry/failover，不能被协议转换隐藏。任一 body 明确是合法 `incomplete` / `cancelled` / `canceled`，即使 output 为空也算有协议意义的终态，不触发 `EmptyResponse`、provider health 扣分或故障转移。只有两个 body 都没有实际内容、没有合法终态且只是 completed/created 等控制信息时，才保留空响应失败。
 
+### 11.4 请求日志与指标边界（issue #332）
+
+指标采集属于 runtime observability，不进入 transformer/IR。`runtime/observability.rs` 从最终 attempt 已有的 `DebugHttpResponse.upstream_request_body` 快照，按实际 `target_protocol` 提取明确的 `reasoning_effort`，因此同协议直通、协议转换、provider 改写和 rectifier 使用同一出口；字段映射见兼容文档 §2.8。响应包装与连接失败等持有最终请求快照的路径同步保留该 provider 的目标协议；未知协议不猜测，也不从残留的其它协议字段取值。本地 schema 拒绝且没有上游 URL/响应快照时不把原始客户端字段记作最终上游参数，已收到上游错误响应时仍可记录。
+
+SQLite v17 只新增可空 `reasoning_effort`，列表和 SQLite 摘要详情回退都读取它；JSONL summary 用 serde default 兼容旧记录。关闭正文存储不影响该指标；`request_log_enabled || metrics_enabled` 继续控制 compact 摘要是否写入，只有 `request_log_enabled` 控制 JSONL 明细写入。不为这些指标增加流式 full-buffer 或改变 usage 幂等/终态判定。
+
+运行状态中的 `requests_per_minute` 和 `requests_per_minute_by_cli` 来自 runtime 内存单调时钟窗口 `(now - 60s, now]`；队列同时保留 CLI，status 一次读取各 CLI 计数并求和得到总量，使两者属于同一快照。在 `route_request_with_options` 排除本地探测后、provider 选择/重试前计数。它包含失败和仍在等待的外部请求、排除内部 provider override 连通性测试，与 Session 导入、日志开关和以结束时间写入的 `created_at` 无关；重试一次外部请求仍只计一次，停止/重启后清零。
+
+供应商 `cache_hit_rate` 在实时明细和 `usage_daily_rollups` 合并后计算：`cache_read / (fresh_input + cache_creation + cache_read)`，返回 0..1 比例；分母为零返回 `None`，零命中返回 `Some(0.0)`。前端 TPS 仅使用 output tokens；流式有首包时使用总耗时减首包等待，否则使用端到端耗时。现有 `first_token_ms` 是首个非空 chunk 写出时间，近似 TTFT，不承诺严格文字 token 计时。
+
+本地会话用量是独立的 `session_import` 采集链路，应用启动与每 60 秒同步，不依赖网关运行，也不进入 transformer 或 runtime 请求计数。Claude/Codex/Gemini/OpenCode 原生日志归一后写同一摘要表，source 为 session，缺失 HTTP 指标不推断。v18 JSONB 账本保证记录与导入状态原子提交及归档后幂等；跨源匹配优先共享 envelope，否则使用唯一、精确 token 的窄时间窗匹配。历史汇总保存有效延迟样本数，避免把本地未知延迟当零稀释网关平均值。采集格式、去重边界与验证见 `docs/gateway-log-metrics-enhancement-plan.md` 第 10 节。
+
+延迟样本列由独立 v19 迁移补齐，兼容已经标记 v18 但只创建采集账本的开发数据库，并保留已有非空样本数。历史归档失败应记录告警并重试，不得阻止当前 proxy 摘要保存或已提交 native 用量的刷新事件。
+
+回归入口：`runtime/observability.rs::tests` 的快照方言/metrics-only 往返/60 秒边界，`runtime.rs::tests` 的真实转发、转换、进行中计数、failover 和 restart，`usage_stats.rs::tests` 的列表/详情/缓存与延迟聚合，`session_import::tests` 的原生会话导入和去重，`tauri/tests/sqlite_jsonb.rs` 的 v17/v18/v19 迁移，以及前端 `gatewayFormatters.test.ts`。
+
 ## 12. 上游 URL、query 与 auth
 
 协议转换不只影响 body，也会影响上游 endpoint。相关逻辑在 `runtime/upstream.rs`。

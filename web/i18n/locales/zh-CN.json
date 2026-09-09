@@ -60,7 +60,7 @@
     "tooltip": "本机代理网关",
     "page": {
       "title": "网关",
-      "subtitle": "本机 HTTP 入口、CLI 接管状态、请求记录与模型级健康状态。",
+      "subtitle": "汇总本地会话用量与网关请求，管理 CLI 接管和运行状态。",
       "tabs": {
         "statistics": "统计",
         "requests": "请求",
@@ -74,10 +74,7 @@
         "providerUnselected": "未选择供应商",
         "summaryRequests": "请求数",
         "summaryTokens": "Token 总量",
-        "summaryCost": "成本",
-        "successRateOnly": "成功率 {{rate}}%",
-        "tokens": "输入 {{input}} / 输出 {{output}} / 缓存 {{cache}}",
-        "dbSummaryOnly": "来自数据库摘要",
+        "summaryCost": "总成本",
         "filters": {
           "all": "全部 CLI"
         },
@@ -105,10 +102,17 @@
           "tokens": "Token",
           "cost": "成本",
           "successRate": "成功率",
-          "latency": "平均耗时"
+          "latency": "平均耗时",
+          "cacheHitRate": "缓存命中率"
         },
         "empty": "暂无统计数据",
-        "loadFailed": "加载网关统计失败：{{error}}"
+        "loadFailed": "加载网关统计失败：{{error}}",
+        "cacheHitRateHint": "缓存读取 token /（非缓存输入 + 缓存写入 + 缓存读取 token），按当前筛选范围的 token 总量计算。无输入用量显示 -。",
+        "freshInput": "新增输入",
+        "cacheCreation": "缓存创建",
+        "cacheRead": "缓存命中",
+        "approximateTokens": "≈ {{value}}",
+        "modelUnavailable": "未记录模型"
       },
       "pricing": {
         "open": "定价配置",
@@ -164,8 +168,8 @@
         "empty": "暂无请求记录",
         "detailEmpty": "选择请求后查看明细",
         "loadFailed": "加载请求记录失败：{{error}}",
-        "importSessions": "导入 Session",
-        "importDone": "导入完成：新增 {{inserted}}，跳过 {{skipped}}，扫描 {{files}} 个文件",
+        "importSessions": "同步会话用量",
+        "importDone": "同步完成：新增 {{inserted}}，更新 {{updated}}，跳过 {{skipped}}；扫描 {{files}} 项，失败 {{failed}} 项",
         "importFailed": "导入 Session 用量失败：{{error}}",
         "notStored": "未保存该明细。可在网关设置中开启对应记录项。",
         "requestHeaders": "Request Headers",
@@ -232,8 +236,18 @@
           "unknown": "未识别请求"
         },
         "requestPathUnavailable": "路径未记录",
-        "notApplicable": "不适用"
-      }
+        "notApplicable": "不适用",
+        "tpsLabel": "TPS：",
+        "tpsHint": "输出 token ÷ 生成耗时。流式请求使用总耗时减去首包等待；非流式或缺少首包记录时使用总耗时。无有效输出或生成耗时显示 -。",
+        "durationHint": "首字时间（近似首包）/总耗时。首包可能是 SSE 控制事件；未记录首包时仅显示总耗时。",
+        "effortHint": "最终上游请求中明确设置的思考强度；未设置时不推断模型默认值。",
+        "localSession": "Session",
+        "localSessionHint": "来自 CLI 本地会话日志，不包含 HTTP 状态和耗时。成本优先使用 CLI 上报值，缺失时按模型价格估算。",
+        "importPartialFailure": "部分完成：新增 {{inserted}}，更新 {{updated}}，跳过 {{skipped}}；{{count}} 项未能同步，详情见应用日志。",
+        "localSessionDetailUnavailable": "本地会话用量不包含 HTTP 请求体、响应体和 Headers 明细。"
+      },
+      "requestRateHint": "RPM 表示所选 CLI 最近 60 秒进入网关的请求数，每 5 秒刷新，不受日期筛选影响；本地会话用量不计入实时网关速率。",
+      "rpm": "RPM"
     },
     "takeover": {
       "buttonTooltip": "查看或应用网关接管",

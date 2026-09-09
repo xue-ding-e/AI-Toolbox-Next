@@ -2571,7 +2571,9 @@ async fn resolve_context(
     }
 }
 
-fn resolve_opencode_data_root(location: &RuntimeLocationInfo) -> Result<PathBuf, String> {
+pub(crate) fn resolve_opencode_data_root(
+    location: &RuntimeLocationInfo,
+) -> Result<PathBuf, String> {
     if let Some(wsl) = &location.wsl {
         let linux_path =
             expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.local/share/opencode");

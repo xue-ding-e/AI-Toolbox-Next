@@ -613,6 +613,7 @@ mod tests {
         let paths = ProxyGatewayPaths::new(dir.path());
         let now = Utc::now();
         let summary = GatewayRequestLogSummary {
+            data_source: None,
             trace_id: "trace-1".to_string(),
             started_at: now,
             ended_at: now,
@@ -627,6 +628,7 @@ mod tests {
             pricing_model_source: None,
             requested_model: Some("claude".to_string()),
             upstream_model_id: Some("claude".to_string()),
+            reasoning_effort: Some("high".to_string()),
             upstream_url: Some("https://api.example.com/v1/messages".to_string()),
             status_code: Some(200),
             upstream_status_code: None,
@@ -672,6 +674,7 @@ mod tests {
             list_request_logs(&paths, ProxyGatewayRequestLogListInput { limit: Some(10) }).unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].trace_id, "trace-1");
+        assert_eq!(summaries[0].reasoning_effort.as_deref(), Some("high"));
 
         let detail = get_request_log_detail(&paths, "trace-1").unwrap().unwrap();
         assert_eq!(
@@ -693,6 +696,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(detail.summary.trace_id, "trace-1");
+        assert_eq!(detail.summary.reasoning_effort.as_deref(), Some("high"));
+
+        let mut legacy = serde_json::to_value(&record).unwrap();
+        legacy.as_object_mut().unwrap().remove("reasoning_effort");
+        let legacy: GatewayRequestLogRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.detail.summary.reasoning_effort, None);
     }
 
     fn write_dated_log_file(paths: &ProxyGatewayPaths, date: &str, contents: &str) -> PathBuf {

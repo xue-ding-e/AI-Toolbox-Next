@@ -1,4 +1,4 @@
-import type { ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
+import type { GatewayCliKey, ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
 
 export const joinClassNames = (...classNames: Array<string | false | null | undefined>) =>
   classNames.filter(Boolean).join(' ');
@@ -33,10 +33,72 @@ export const buildGatewayOrigin = (status: ProxyGatewayStatus | null) => {
 };
 
 export const formatDuration = (durationMs: number) => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return '-';
+  }
   if (durationMs < 1000) {
     return `${durationMs}ms`;
   }
-  return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+};
+
+export const formatDurationPair = (durationMs: number, firstTokenMs?: number | null) => {
+  if (firstTokenMs == null || !Number.isFinite(firstTokenMs) || firstTokenMs < 0
+    || !Number.isFinite(durationMs) || firstTokenMs > durationMs) {
+    return formatDuration(durationMs);
+  }
+  return `${(firstTokenMs / 1000).toFixed(1)}s/${(durationMs / 1000).toFixed(1)}s`;
+};
+
+interface GatewayTpsInput extends GatewayRequestDisplayInput {
+  output_tokens?: number | null;
+  duration_ms: number;
+  first_token_ms?: number | null;
+  is_streaming: boolean;
+}
+
+export const formatTps = (record: GatewayTpsInput): string | null => {
+  const { output_tokens: outputTokens, duration_ms: durationMs, first_token_ms: firstTokenMs } = record;
+  if (record.data_source === 'session' || !isGatewayRequestUsageApplicable(record) || outputTokens == null
+    || !Number.isFinite(outputTokens) || outputTokens <= 0
+    || !Number.isFinite(durationMs) || durationMs <= 0) {
+    return null;
+  }
+  let generationMs = durationMs;
+  if (record.is_streaming && firstTokenMs != null) {
+    if (!Number.isFinite(firstTokenMs) || firstTokenMs < 0 || firstTokenMs >= durationMs) {
+      return null;
+    }
+    generationMs -= firstTokenMs;
+  }
+  const tokensPerSecond = Number((outputTokens * 1000 / generationMs).toFixed(1));
+  return `${tokensPerSecond} tok/s`;
+};
+
+export const formatModelWithEffort = (modelText: string, effort?: string | null) =>
+  effort?.trim() ? `${modelText} (${effort.trim()})` : modelText;
+
+export const formatCacheHitRate = (rate?: number | null) =>
+  rate != null && Number.isFinite(rate) ? `${(rate * 100).toFixed(1)}%` : '-';
+
+export const calculateCacheHitRate = (inputTokens: number, cacheReadTokens: number, cacheCreationTokens: number) => {
+  const totalInputTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
+  return totalInputTokens > 0 ? cacheReadTokens / totalInputTokens : null;
+};
+
+export const getGatewayRequestsPerMinute = (
+  status: Pick<ProxyGatewayStatus, 'requests_per_minute' | 'requests_per_minute_by_cli'> | null | undefined,
+  cliKey?: GatewayCliKey,
+): number | null => {
+  if (!status) {
+    return null;
+  }
+  if (!cliKey) {
+    return status.requests_per_minute;
+  }
+  return status.requests_per_minute_by_cli == null
+    ? null
+    : status.requests_per_minute_by_cli[cliKey] ?? 0;
 };
 
 export const formatDateTime = (value: string | null | undefined) => {
@@ -57,11 +119,11 @@ export const formatInteger = (value: number | null | undefined) => {
   return value.toLocaleString();
 };
 
-export const formatCompactInteger = (value: number | null | undefined) => {
+export const formatCompactInteger = (value: number | null | undefined, locale?: string) => {
   if (value == null) {
     return '-';
   }
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(locale, {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value);
@@ -84,6 +146,7 @@ export type GatewayRequestDisplayKind =
   | 'unknown';
 
 export interface GatewayRequestDisplayInput {
+  data_source?: string | null;
   method?: string | null;
   path?: string | null;
   requested_model?: string | null;
@@ -224,6 +287,9 @@ export const requestDisplayTitleKey = (kind: GatewayRequestDisplayKind) => {
 export const isGatewayRequestUsageApplicable = (
   value: GatewayRequestDisplayInput | GatewayRequestDisplayKind,
 ) => {
+  if (typeof value !== 'string' && value.data_source === 'session') {
+    return true;
+  }
   const kind = typeof value === 'string' ? value : gatewayRequestDisplayKind(value);
   return kind === 'model' || kind === 'contextCompact';
 };

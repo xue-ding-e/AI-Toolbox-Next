@@ -210,7 +210,14 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 - `ProxyGatewaySettings.retryable_status_codes` 控制哪些上游 HTTP 状态码可触发同渠道重试或跨渠道 failover。默认与历史行为一致：`400-404,408,429,500-599`。输入支持逗号分隔和闭区间，且只允许 `400-599`（1xx-3xx 不会进入失败重试路径，保存时直接拒绝）。空值在保存时回退默认并 normalize 成紧凑形式；默认集合本身就用折叠区间写法，避免保存后显示从逐码列表变成区间。保存设置时必须先 normalize/validate 并成功持久化，再把规范化结果写回运行态；不能先用未校验输入改 live runtime，再在 DB 失败时留下运行态与持久化分叉。该列表只影响“是否重试/切渠道”，不改变 `classify_status_failure` 的 failure kind 与 model health 计分。连接失败、超时和 2xx 空响应不是状态码失败，继续走既有 kind 规则，不受该列表约束。
 - 上游 HTTP 400 在网关里按 `upstream_bad_request` 处理；默认在 `retryable_status_codes` 中，因此允许切换到下一个 provider。它的健康分较低，目的是处理 provider schema 差异，不要把它恢复成不可重试的 RequestSchema。用户可从配置中去掉 400 以关闭这类重试。
 - 上游 HTTP 402 Payment Required 必须按 `Auth`（provider 级）处理；默认在 `retryable_status_codes` 中，因此允许跨 provider 故障转移，不能落入默认 `RequestSchema`。`RequestSchema` 对未列入可重试码表的状态码通常意味着不重试、不切换渠道；若把 402 误判成它，网关会把余额/额度耗尽错误原样回给 CLI，由 agent 自行重试同一渠道，最终导致对话中断。401/402/403 统一走 auth 故障转移语义。
-- Session Usage 导入写入同一张 `proxy_request_logs`，`data_source='session'`。Claude 优先用 `SESSION:<message_id>` 做 request_id 幂等去重；其他 CLI 用文件/行内容派生的稳定 ID，并通过 `INSERT OR IGNORE` 保持可重复导入。
+- 本地会话用量由 `session_import` 独立采集：应用注册 SQLite 和 runtime location cache 后启动，立即同步一次、此后每 60 秒一次；页面激活和手动同步复用同一 mutex 与 blocking worker。它不依赖网关监听/接管状态，不改写 CLI 原始文件，也不采集 HTTP body/header。
+- `gateway_session_usage_state` 保存文件 mtime/size、待沉降标记、原生记录身份/指纹与已匹配 proxy 身份。未变化文件跳过，变化 JSONL 按行重读并合并最终 usage；这不是字节 offset tailer。记录更新与账本在同一事务提交；旧手动导入的 path/line hash 行在同步该源文件时迁入新身份，历史已归档/删除的身份不重新插入。
+- Claude 按 message ID 合并局部/最终 usage；Codex 优先 last_token_usage、累积 high-water 只作回退，并去除重复计数 lane 与可证实的父会话 replay；sessions/archived_sessions 共用线程身份，父记录不可读时延后子记录。Gemini 同时支持 JSON 与 JSONL，rewind 不能撤销已发生用量。OpenCode 兼容 legacy message JSON 与只读 SQLite/WAL，不能用主库文件 mtime 代替 message 水位，也不能修改 CLI 原库。
+- Claude 日志有真实 assistant、模型和消息 ID，且明确记录 usage 计数时，即使四类 token 全为 0，也要按消息 ID 计入请求/模型统计；不能用正 token 数作为真实调用存在的唯一证据。零用量的 `<synthetic>`、user 记录、空 usage 对象仍排除，不据此推测真实 Token 或费用。解析规则改变后用每 CLI 的 parser_revision 使旧文件状态失效并重扫，保留既有导入账本，不能只更新 parser 后继续按相同 mtime/size 跳过旧文件。
+- `data_source='session'` 使用保留 provider ID `session`，不猜测历史供应商。费用复用模型定价的 Decimal 计算，CLI 有正数自报费用时优先保留；未命中定价仍为零，不表示官方账单上的免费调用。Grok/Kimi 只保留可识别的通用 usage 兼容，Claude Desktop 仅 local-agent-mode-sessions；不能把这些入口宣称为各 CLI 全原生格式或 Desktop 所有聊天记录的覆盖。
+- 跨源去重优先使用共享 envelope ID；否则要求同 CLI、模型、四类 token 完全相同、时间差在 10 秒内且 proxy 候选唯一，并持久化一对一占用。native 先落库、最终 usage 更新和 proxy 同时到达时，要在事务内删除已被 proxy 代表的 native 行。每轮同步还复核最近一小时的 native 行，以覆盖 proxy 较晚落库；缺少共有 ID 或已归档的历史明细不能保证跨源全量去重，不采用宽时间窗按接管状态删除本地用量。
+- 非网关历史也按 log_retention_days 归档；rollup 与裁剪原子提交，账本保留。native 没有真实 HTTP 状态/耗时，DTO 来源与详情空值要保持可识别；平均延迟只累加 proxy 的测量值，v19 rollup 的 latency_sample_count 保存有效样本数，无样本返回 None。unknown 模型的本地用量仍须进入统计，不能被普通无模型 HTTP 探测的过滤规则误删。
+- v18 最早只创建采集账本，已有数据库可能标记 v18 却没有 latency_sample_count；必须由独立 v19 迁移补齐该列，不能只修改 v18 函数。已有非空样本数不重置。归档失败只能告警并重试，不能经 `?` 阻止新 proxy 摘要写入，也不能阻止已提交 native 用量的结果返回与刷新事件；proxy 侧失败尝试也按维护间隔限频。
 - 代理请求摘要和 Session Usage 导入成功写入 `proxy_request_logs` 后应发出 `usage-log-recorded` 事件，供前端静默刷新统计和请求列表。该事件只是“有新 usage 落库”的通知，不是统计数据源，也不要用它承载费用重算或历史 rollup 语义。
 - 模型定价匹配需要先做 ID 归一化再查表：剥离聚合商命名空间、`[1M]` 上下文标记、Bedrock/Vertex `-vN` 版本、日期/effort 后缀，并把 Claude 点号版本归一成短横线版本。部分渠道会把 `max` effort 拼进模型 ID，因此允许在完整 ID 没有精确定价时剥离 `-max` 回退基础模型；但所有候选必须先按原始完整 ID 做精确查询，使 `qwen3.7-max`、`qwen3-max`、`gpt-5.1-codex-max` 等具有独立价格的正式模型自动优先命中，不能维护易过期的手工排除名单。前缀匹配只能用于明确的模型族和足够具体的 ID，避免 `gpt-5` 这类短 base 误命中 `gpt-5-mini`/`gpt-5-pro` 变体。
 - 每个 CLI 可以通过 `ProxyGatewaySettings.app_configs` 覆盖首包超时、流式 idle timeout、非流式 timeout、单 provider 重试、全局重试和重试间隔；运行时必须用 `effective_app_config(cli_key)` 读取，不能只看全局字段。
@@ -218,7 +225,13 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 - 统计页数据源拆分 (`DataSourceBreakdown`) 来自 `proxy_request_logs.data_source`，空值归并为 `proxy`，Session Usage 导入当前统一写 `session`；它只反映已落库的请求摘要分布，不要当成网关健康指标。
 - 新增可接管 CLI 时，`usage_stats.rs` 的 `cli_key_from_app_type` 和 `load_provider_names` 必须同步注册：前者漏注册会让该 CLI 已落库的 `proxy_request_logs` 行在请求列表/统计查询里被静默丢弃（`let Some(...) else { return Ok(None) }`，无报错无日志），后者漏注册会让 provider 名称无法解析。Kimi 集成时两处都漏过：请求实际已落库但页面一直看不到（2026-08 实测）。
 
+- 请求指标（issue #332）：`reasoning_effort` 从最终 attempt 的 `DebugHttpResponse.upstream_request_body` 按 `target_protocol` 选择对应 effort 字段，不能跨协议字段回退，也不能从原始客户端请求、模型后缀或 thinking budget 反推；未知目标协议返回 `None`。最终响应及连接失败等有请求快照的路径都必须携带实际 provider 的目标协议；该快照不依赖 `store_request_body`。SQLite v17、列表、SQLite 详情回退和 JSONL 必须一致，旧数据为 `None`。本地 schema 拒绝且没有上游发送/响应证据时不提取；实际收到上游错误响应时仍保留该次参数。
+- `requests_per_minute` 与 `requests_per_minute_by_cli` 来自同一 runtime 单调时钟滑动窗口；队列保留每个请求的到达时间和 CLI，status 从一次窗口读取的 CLI 计数求和得到总量，不能分别读取形成不同快照。统计 `(now - 60s, now]` 内进入转发流程的外部请求，到达时计一次。排除本地探测、未匹配路由和带 provider override 的应用内连通性测试；包含成功、失败、进行中和转发的模型列表请求。重试/failover 不重复计数，日志/metrics 开关、Session 导入和 usage 幂等键均不影响它。start/stop/restart/status 统一由 manager 返回，停止/重启后清零，禁止改成查询以结束时间落库的 `created_at`。
+- 供应商缓存命中率是输入 token 加权比例：`SUM(cache_read_tokens) / SUM(input_tokens + cache_creation_tokens + cache_read_tokens)`；存储的 input 已经是 fresh，不能再次扣缓存，output 不进分母。实时明细和 daily rollup 都要累加后再算，不能平均每行百分比；无输入用量返回 `None`，有输入但无读取命中返回 `Some(0.0)`。
 ## 最小验证
+
+- 修改以上指标时覆盖：v16 旧行升级、正文关闭与 metrics-only 读写往返、同协议和转换请求的最终 effort、等待上游时的计数、重试不重复、60 秒边界、重启清零，以及明细/rollup 混合、CLI/时间过滤和无数据/零命中。
+- 修改本地采集时覆盖原生文件 -> SQLite -> 列表/统计往返、局部/最终用量更新、重启幂等、旧手动导入身份兼容、proxy/native 两种到达顺序、一对一去重、pending 无文件变化重查、父会话 replay、大 JSONL、只读 OpenCode WAL、账本失败回滚，以及 native-only / mixed 延迟归档前后语义。v18/v19 升级须保留旧汇总和新账本，重复升级不能清空它们；补测已标记 v18 的缺列库、完整 v18 库和归档失败仍能保存新请求/返回导入成功。
 
 - 修改 CLI 接管/恢复逻辑后至少跑 `cd tauri && cargo test`，并覆盖三类 CLI 文件写入、恢复、重新接管不覆盖原始备份、停止保护。
 - 修改请求转发、请求日志、SQLite 使用摘要或模型健康后至少跑 `cd tauri && cargo test`，并覆盖本地文件 round trip、fallback 路由和失败健康状态更新。

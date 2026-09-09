@@ -2,18 +2,15 @@ import React from 'react';
 import { DatePicker, Empty, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  Activity,
   AlertCircle,
   BarChart3,
   CalendarDays,
   Clock,
-  Coins,
   DollarSign,
   Gauge,
   RefreshCw,
   Server,
   Terminal,
-  Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -38,19 +35,22 @@ import {
   type GatewayProviderStats,
   type GatewayUsageSummary,
   type GatewayUsageTrendPoint,
+  type ProxyGatewayStatus,
 } from '@/services';
 import {
+  formatCacheHitRate,
   formatCompactInteger,
   formatDuration,
   formatGatewayError,
   formatInteger,
   formatUsd,
+  getGatewayRequestsPerMinute,
   resolveGatewayUsageRange,
   type GatewayUsageRangePreset,
   type GatewayUsageRangeSelection,
 } from '../utils/gatewayFormatters';
 import ModelPricingModal from './ModelPricingModal';
-import StatTile from './StatTile';
+import GatewayUsageOverview from './GatewayUsageOverview';
 import styles from './GatewayStatisticsView.module.less';
 
 const { RangePicker } = DatePicker;
@@ -61,6 +61,7 @@ type TrendSeriesKey = 'input' | 'output' | 'cache' | 'cost';
 
 interface GatewayStatisticsViewProps {
   refreshKey?: number;
+  gatewayStatus?: ProxyGatewayStatus | null;
 }
 
 interface StatisticsState {
@@ -144,6 +145,9 @@ const providerDisplayName = (
   if (providerName) {
     return providerName;
   }
+  if (providerId === 'session') {
+    return t('gateway.page.requests.localSession');
+  }
   if (providerId === 'unknown') {
     return t('gateway.page.statistics.providerUnselected');
   }
@@ -156,7 +160,7 @@ const providerDisplayMeta = (
   providerId: string,
 ) => {
   const cliLabel = t(`settings.gateway.cli.${cliKey}`);
-  if (providerId === 'unknown') {
+  if (providerId === 'unknown' || providerId === 'session') {
     return cliLabel;
   }
   return `${cliLabel} · ${providerId}`;
@@ -173,7 +177,7 @@ const trendLegendDataKey = (payload: unknown): TrendSeriesKey | null => {
   return isTrendSeriesKey(dataKey) ? dataKey : null;
 };
 
-const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKey = 0 }) => {
+const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKey = 0, gatewayStatus }) => {
   const { t } = useTranslation();
   const [cliFilter, setCliFilter] = React.useState<GatewayCliFilter>('all');
   const [range, setRange] = React.useState<GatewayUsageRangeSelection>({ preset: 'today' });
@@ -184,10 +188,12 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
   const [state, setState] = React.useState<StatisticsState>(emptyState);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const statisticsRequestIdRef = React.useRef(0);
 
   const effectiveCliKey = toCliKey(cliFilter);
 
   const loadStatistics = React.useCallback(async () => {
+    const requestId = ++statisticsRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -214,16 +220,30 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           effectiveCliKey,
         ),
       ]);
-      setState({ summary, trends, providerStats, modelStats });
+      if (requestId === statisticsRequestIdRef.current) {
+        setState({ summary, trends, providerStats, modelStats });
+      }
     } catch (loadError) {
-      setError(t('gateway.page.statistics.loadFailed', { error: formatGatewayError(loadError) }));
+      if (requestId === statisticsRequestIdRef.current) {
+        setError(t('gateway.page.statistics.loadFailed', { error: formatGatewayError(loadError) }));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === statisticsRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [effectiveCliKey, range, t]);
 
   React.useEffect(() => {
+    // A new filter must not display the previous filter's totals while loading.
+    setState(emptyState);
+  }, [effectiveCliKey, range]);
+
+  React.useEffect(() => {
     void loadStatistics();
+    return () => {
+      statisticsRequestIdRef.current += 1;
+    };
   }, [loadStatistics, refreshKey]);
 
   React.useEffect(() => {
@@ -236,10 +256,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
     return () => window.clearInterval(timer);
   }, [loadStatistics, refreshIntervalMs]);
 
-  const summary = state.summary;
-  const successRate = summary?.success_rate ?? 0;
-  const totalCacheTokens =
-    (summary?.total_cache_read_tokens ?? 0) + (summary?.total_cache_creation_tokens ?? 0);
+  const requestRate = getGatewayRequestsPerMinute(gatewayStatus, effectiveCliKey);
   const chartRows = chartData(state.trends);
 
   const handleTrendLegendClick = React.useCallback((payload: unknown) => {
@@ -276,7 +293,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'provider_name',
       render: (_, record) => (
         <div className={styles.tableMainCell}>
-          <strong>{providerDisplayName(t, record.provider_id, record.provider_name)}</strong>
+          <strong title={providerDisplayName(t, record.provider_id, record.provider_name)}>{providerDisplayName(t, record.provider_id, record.provider_name)}</strong>
           <small>{providerDisplayMeta(t, record.cli_key, record.provider_id)}</small>
         </div>
       ),
@@ -296,6 +313,13 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       render: (value: number) => formatCompactInteger(value),
     },
     {
+      title: <span title={t('gateway.page.statistics.cacheHitRateHint')}>{t('gateway.page.statistics.columns.cacheHitRate')}</span>,
+      dataIndex: 'cache_hit_rate',
+      width: 120,
+      align: 'right',
+      render: (value: number | null) => formatCacheHitRate(value),
+    },
+    {
       title: t('gateway.page.statistics.columns.cost'),
       dataIndex: 'total_cost_usd',
       width: 120,
@@ -307,7 +331,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'success_rate',
       width: 110,
       align: 'right',
-      render: (value: number) => (
+      render: (value: number, record) => record.provider_id === 'session' ? '-' : (
         <span style={{ color: statusColor(value) }}>{value.toFixed(1)}%</span>
       ),
     },
@@ -316,7 +340,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'avg_latency_ms',
       width: 110,
       align: 'right',
-      render: (value: number) => formatDuration(value),
+      render: (value: number | null) => value == null ? '-' : formatDuration(value),
     },
   ];
 
@@ -326,7 +350,9 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'model',
       render: (value: string, record) => (
         <div className={styles.tableMainCell}>
-          <strong>{value}</strong>
+          <strong title={value === 'unknown' ? undefined : value}>
+            {value === 'unknown' ? t('gateway.page.statistics.modelUnavailable') : value}
+          </strong>
           <small>{t(`settings.gateway.cli.${record.cli_key}`)}</small>
         </div>
       ),
@@ -357,7 +383,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'avg_latency_ms',
       width: 110,
       align: 'right',
-      render: (value: number) => formatDuration(value),
+      render: (value: number | null) => value == null ? '-' : formatDuration(value),
     },
   ];
 
@@ -461,36 +487,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
         </div>
       </div>
 
-      <div className={styles.statGrid}>
-        <StatTile
-          icon={<Activity size={15} />}
-          label={t('gateway.page.statistics.summaryRequests')}
-          value={formatInteger(summary?.total_requests ?? 0)}
-          meta={t('gateway.page.statistics.successRateOnly', { rate: successRate.toFixed(1) })}
-          tone="traffic"
-          visual="curve"
-        />
-        <StatTile
-          icon={<Zap size={15} />}
-          label={t('gateway.page.statistics.summaryTokens')}
-          value={formatCompactInteger(summary?.total_tokens ?? 0)}
-          meta={t('gateway.page.statistics.tokens', {
-            input: formatCompactInteger(summary?.total_input_tokens ?? 0),
-            output: formatCompactInteger(summary?.total_output_tokens ?? 0),
-            cache: formatCompactInteger(totalCacheTokens),
-          })}
-          tone="info"
-          visual="stack"
-        />
-        <StatTile
-          icon={<Coins size={15} />}
-          label={t('gateway.page.statistics.summaryCost')}
-          value={formatUsd(summary?.total_cost_usd ?? '0', 2)}
-          meta={t('gateway.page.statistics.dbSummaryOnly')}
-          tone="warning"
-          visual="coins"
-        />
-      </div>
+      <GatewayUsageOverview summary={state.summary} requestsPerMinute={requestRate} />
 
       <section className={styles.chartPanel}>
         <div className={styles.panelHeader}>
@@ -631,16 +628,18 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           <Table
             rowKey={(record) => `${record.cli_key}:${record.provider_id}`}
             size="small"
+            tableLayout="fixed"
             columns={providerColumns}
             dataSource={state.providerStats}
             loading={loading}
             pagination={false}
-            scroll={{ x: 760 }}
+            scroll={{ x: 880 }}
           />
         ) : (
           <Table
             rowKey={(record) => `${record.cli_key}:${record.model}`}
             size="small"
+            tableLayout="fixed"
             columns={modelColumns}
             dataSource={state.modelStats}
             loading={loading}

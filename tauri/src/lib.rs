@@ -1116,6 +1116,9 @@ pub fn run() {
                 // Shared official-account OAuth refresh: startup pass + per-tool intervals.
                 coding::auth_refresh::start(app_handle.clone());
 
+                // Local CLI usage is independent of gateway startup/takeover.
+                coding::proxy_gateway::session_import::start(app_handle.clone());
+
                 // Scheduled skills auto-update: startup pass + configurable interval.
                 coding::skills::auto_update::start(app_handle.clone());
 

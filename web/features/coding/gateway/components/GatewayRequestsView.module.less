@@ -28,6 +28,11 @@
   color: var(--color-status-success);
 }
 
+.inlineWarning {
+  border-color: color-mix(in srgb, var(--color-status-warning) 30%, var(--color-border));
+  color: var(--color-status-warning);
+}
+
 .requestGrid {
   display: block;
   min-width: 0;
@@ -225,6 +230,34 @@
   small {
     color: var(--color-text-tertiary);
     font-size: 11px;
+  }
+}
+
+.modelTitle {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.modelEffort {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.tokenCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  small {
+    color: var(--color-text-tertiary);
+    font-size: 10px;
   }
 }
 

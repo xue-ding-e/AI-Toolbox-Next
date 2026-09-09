@@ -148,12 +148,6 @@
   }
 }
 
-.statGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
 .chartPanel,
 .dataPanel {
   min-width: 0;
@@ -291,12 +285,6 @@
   }
 }
 
-@media (max-width: 900px) {
-  .statGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 720px) {
   .filterBar {
     align-items: stretch;
@@ -330,10 +318,6 @@
 
   .refreshButton {
     margin-left: 0;
-  }
-
-  .statGrid {
-    grid-template-columns: 1fr;
   }
 
   .chartBody {

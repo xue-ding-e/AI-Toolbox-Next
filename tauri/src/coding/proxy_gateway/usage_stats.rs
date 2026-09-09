@@ -70,6 +70,10 @@ struct StatsAccumulator {
     total_tokens: u64,
     total_cost_usd: Decimal,
     latency_weighted_sum: f64,
+    latency_sample_count: u64,
+    input_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
 }
 
 #[derive(Default)]
@@ -129,15 +133,15 @@ struct ModelPricing {
 }
 
 #[derive(Debug, Clone, Default)]
-struct CostBreakdown {
-    input_cost_usd: Decimal,
-    output_cost_usd: Decimal,
-    cache_read_cost_usd: Decimal,
-    cache_creation_cost_usd: Decimal,
+pub(super) struct CostBreakdown {
+    pub(super) input_cost_usd: Decimal,
+    pub(super) output_cost_usd: Decimal,
+    pub(super) cache_read_cost_usd: Decimal,
+    pub(super) cache_creation_cost_usd: Decimal,
 }
 
 impl CostBreakdown {
-    fn total(&self) -> Decimal {
+    pub(super) fn total(&self) -> Decimal {
         self.input_cost_usd
             + self.output_cost_usd
             + self.cache_read_cost_usd
@@ -154,6 +158,28 @@ impl CostBreakdown {
 }
 
 impl StatsAccumulator {
+    fn add_input_usage(
+        &mut self,
+        input_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+    ) {
+        self.input_tokens = self.input_tokens.saturating_add(input_tokens);
+        self.cache_read_tokens = self.cache_read_tokens.saturating_add(cache_read_tokens);
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(cache_creation_tokens);
+    }
+
+    fn cache_hit_rate(&self) -> Option<f64> {
+        // Stored input_tokens are already fresh, cache-exclusive input.
+        let total_input = self
+            .input_tokens
+            .saturating_add(self.cache_read_tokens)
+            .saturating_add(self.cache_creation_tokens);
+        (total_input > 0).then(|| self.cache_read_tokens as f64 / total_input as f64)
+    }
+
     fn add(
         &mut self,
         request_count: u64,
@@ -161,22 +187,24 @@ impl StatsAccumulator {
         total_tokens: u64,
         total_cost_usd: Decimal,
         latency_weighted_sum: f64,
+        latency_sample_count: u64,
     ) {
         self.request_count = self.request_count.saturating_add(request_count);
         self.success_count = self.success_count.saturating_add(success_count);
         self.total_tokens = self.total_tokens.saturating_add(total_tokens);
         self.total_cost_usd += total_cost_usd;
         self.latency_weighted_sum += latency_weighted_sum;
+        self.latency_sample_count = self
+            .latency_sample_count
+            .saturating_add(latency_sample_count);
     }
 
-    fn avg_latency_ms(&self) -> u64 {
-        if self.request_count == 0 {
-            0
-        } else {
-            (self.latency_weighted_sum / self.request_count as f64)
+    fn avg_latency_ms(&self) -> Option<u64> {
+        (self.latency_sample_count > 0).then(|| {
+            (self.latency_weighted_sum / self.latency_sample_count as f64)
                 .max(0.0)
                 .round() as u64
-        }
+        })
     }
 }
 
@@ -206,7 +234,10 @@ pub fn record_request_summary(
     };
 
     db.with_conn(|conn| {
-        maybe_rollup_and_prune(conn, i64::from(settings.log_retention_days))?;
+        if let Err(error) = maybe_rollup_and_prune(conn, i64::from(settings.log_retention_days)) {
+            // Retention is maintenance, not a prerequisite for recording usage.
+            log::warn!("Gateway history maintenance failed; recording current usage: {error}");
+        }
         let provider_id = summary
             .provider_id
             .as_deref()
@@ -339,7 +370,7 @@ pub fn record_request_summary(
                 status_code, error_message, session_id, provider_type, is_streaming,
                 cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
                 detail_offset, route_name, method, path, upstream_status_code,
-                stream_outcome, error_category, attempt_count, total_attempt_count
+                stream_outcome, error_category, attempt_count, total_attempt_count, reasoning_effort
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
@@ -347,7 +378,7 @@ pub fn record_request_summary(
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?22,
                 ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30, ?31,
-                ?32, ?33, ?34, ?35
+                ?32, ?33, ?34, ?35, ?36
             )"
         );
         let affected_rows = conn
@@ -389,6 +420,7 @@ pub fn record_request_summary(
                     summary.error_category,
                     i64::from(summary.attempt_count.max(1)),
                     i64::from(summary.total_attempt_count.max(1)),
+                    summary.reasoning_effort,
                 ],
             )
             .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -660,9 +692,10 @@ pub fn request_logs(
         let sql = format!(
             "SELECT request_id, provider_id, app_type, model, request_model,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    total_cost_usd, latency_ms, first_token_ms, duration_ms,
+                    total_cost_usd, latency_ms, first_token_ms, COALESCE(duration_ms, latency_ms, 0),
                     status_code, error_message, created_at, is_streaming,
-                    route_name, method, path, stream_outcome
+                    route_name, method, path, stream_outcome, reasoning_effort,
+                    COALESCE(data_source, 'proxy')
              FROM proxy_request_logs l
              {where_clause}
              ORDER BY created_at DESC
@@ -683,6 +716,7 @@ pub fn request_logs(
                 let cache_read_tokens = row.get::<_, i64>(7)?.max(0) as u64;
                 let cache_creation_tokens = row.get::<_, i64>(8)?.max(0) as u64;
                 Ok(Some(GatewayRequestLogItem {
+                    data_source: row.get(22)?,
                     trace_id: row.get(0)?,
                     cli_key,
                     route_name: row.get(17)?,
@@ -691,6 +725,7 @@ pub fn request_logs(
                     provider_id: provider_id.clone(),
                     provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
                     upstream_model_id: row.get(3)?,
+                    reasoning_effort: row.get(21)?,
                     requested_model: row.get(4)?,
                     status_code: row.get::<_, i64>(13)?.max(0) as u16,
                     success: {
@@ -891,7 +926,11 @@ pub fn provider_stats(
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
                         COALESCE(SUM(CASE WHEN (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400)) THEN 1 ELSE 0 END), 0),
-                        COALESCE(AVG(latency_ms), 0)
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0),
+                        COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(cache_read_tokens), 0),
+                        COALESCE(SUM(cache_creation_tokens), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END), 0)
                  FROM proxy_request_logs l
                  {where_clause}
                  GROUP BY app_type, provider_id
@@ -904,7 +943,7 @@ pub fn provider_stats(
                 let provider_id: String = row.get(1)?;
                 let request_count = row.get::<_, i64>(2)?.max(0) as u64;
                 let success_count = row.get::<_, i64>(5)?.max(0) as u64;
-                let avg_latency_ms = row.get::<_, f64>(6)?.max(0.0);
+                let latency_weighted_sum = row.get::<_, f64>(6)?.max(0.0);
                 Ok((
                     app_type,
                     provider_id,
@@ -912,7 +951,11 @@ pub fn provider_stats(
                     row.get::<_, i64>(3)?.max(0) as u64,
                     row_decimal(row, 4)?,
                     success_count,
-                    avg_latency_ms * request_count as f64,
+                    latency_weighted_sum,
+                    row.get::<_, i64>(7)?.max(0) as u64,
+                    row.get::<_, i64>(8)?.max(0) as u64,
+                    row.get::<_, i64>(9)?.max(0) as u64,
+                    row.get::<_, i64>(10)?.max(0) as u64,
                 ))
             })
             .map_err(|error| format!("Failed to query provider stats: {error}"))?;
@@ -925,17 +968,21 @@ pub fn provider_stats(
                 total_cost,
                 success_count,
                 latency_weighted_sum,
+                input_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                latency_sample_count,
             ) = row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
-            stats_map
-                .entry((app_type, provider_id))
-                .or_default()
-                .add(
+            let item = stats_map.entry((app_type, provider_id)).or_default();
+            item.add(
                     request_count,
                     success_count,
                     total_tokens,
                     total_cost,
                     latency_weighted_sum,
+                    latency_sample_count,
                 );
+            item.add_input_usage(input_tokens, cache_read_tokens, cache_creation_tokens);
         }
         merge_rollup_provider_stats(conn, &mut stats_map, start_date, end_date, cli_key)?;
         let mut items = stats_map
@@ -953,6 +1000,7 @@ pub fn provider_stats(
                     total_cost_usd: format_decimal_cost(item.total_cost_usd),
                     success_rate: percent(item.success_count, item.request_count),
                     avg_latency_ms: item.avg_latency_ms(),
+                    cache_hit_rate: item.cache_hit_rate(),
                 })
             })
             .collect::<Vec<_>>();
@@ -980,7 +1028,8 @@ pub fn model_stats(
                         COUNT(*),
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
-                        COALESCE(AVG(latency_ms), 0)
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END), 0)
                  FROM proxy_request_logs l
                  {where_clause}
                  GROUP BY app_type, stats_model
@@ -991,24 +1040,25 @@ pub fn model_stats(
             .query_map(refs.as_slice(), |row| {
                 let app_type: String = row.get(0)?;
                 let request_count = row.get::<_, i64>(2)?.max(0) as u64;
-                let avg_latency_ms = row.get::<_, f64>(5)?.max(0.0);
+                let latency_weighted_sum = row.get::<_, f64>(5)?.max(0.0);
                 Ok((
                     app_type,
                     row.get::<_, String>(1)?,
                     request_count,
                     row.get::<_, i64>(3)?.max(0) as u64,
                     row_decimal(row, 4)?,
-                    avg_latency_ms * request_count as f64,
+                    latency_weighted_sum,
+                    row.get::<_, i64>(6)?.max(0) as u64,
                 ))
             })
             .map_err(|error| format!("Failed to query model stats: {error}"))?;
         for row in rows {
-            let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum) =
+            let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum, latency_sample_count) =
                 row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
             stats_map
                 .entry((app_type, model))
                 .or_default()
-                .add(request_count, 0, total_tokens, total_cost, latency_weighted_sum);
+                .add(request_count, 0, total_tokens, total_cost, latency_weighted_sum, latency_sample_count);
         }
         merge_rollup_model_stats(conn, &mut stats_map, start_date, end_date, cli_key)?;
         let mut items = stats_map
@@ -1145,7 +1195,11 @@ fn merge_rollup_provider_stats(
                     COALESCE(SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
-                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+                    COALESCE(SUM(r.avg_latency_ms * COALESCE(r.latency_sample_count, r.request_count)), 0),
+                    COALESCE(SUM(r.input_tokens), 0),
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(r.cache_creation_tokens), 0),
+                    COALESCE(SUM(COALESCE(r.latency_sample_count, r.request_count)), 0)
              FROM usage_daily_rollups r
              {where_clause}
              GROUP BY r.app_type, r.provider_id"
@@ -1161,6 +1215,10 @@ fn merge_rollup_provider_stats(
                 row_decimal(row, 4)?,
                 row.get::<_, i64>(5)?.max(0) as u64,
                 row.get::<_, f64>(6)?.max(0.0),
+                row.get::<_, i64>(7)?.max(0) as u64,
+                row.get::<_, i64>(8)?.max(0) as u64,
+                row.get::<_, i64>(9)?.max(0) as u64,
+                row.get::<_, i64>(10)?.max(0) as u64,
             ))
         })
         .map_err(|error| format!("Failed to query gateway provider rollups: {error}"))?;
@@ -1173,14 +1231,21 @@ fn merge_rollup_provider_stats(
             total_cost,
             success_count,
             latency_weighted_sum,
+            input_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            latency_sample_count,
         ) = row.map_err(|error| format!("Failed to read provider rollup row: {error}"))?;
-        stats_map.entry((app_type, provider_id)).or_default().add(
+        let item = stats_map.entry((app_type, provider_id)).or_default();
+        item.add(
             request_count,
             success_count,
             total_tokens,
             total_cost,
             latency_weighted_sum,
+            latency_sample_count,
         );
+        item.add_input_usage(input_tokens, cache_read_tokens, cache_creation_tokens);
     }
     Ok(())
 }
@@ -1206,7 +1271,8 @@ fn merge_rollup_model_stats(
                     COALESCE(SUM(r.request_count), 0),
                     COALESCE(SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
-                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+                    COALESCE(SUM(r.avg_latency_ms * COALESCE(r.latency_sample_count, r.request_count)), 0),
+                    COALESCE(SUM(COALESCE(r.latency_sample_count, r.request_count)), 0)
              FROM usage_daily_rollups r
              {where_clause}
              GROUP BY r.app_type, r.model"
@@ -1221,18 +1287,27 @@ fn merge_rollup_model_stats(
                 row.get::<_, i64>(3)?.max(0) as u64,
                 row_decimal(row, 4)?,
                 row.get::<_, f64>(5)?.max(0.0),
+                row.get::<_, i64>(6)?.max(0) as u64,
             ))
         })
         .map_err(|error| format!("Failed to query gateway model rollups: {error}"))?;
     for row in rows {
-        let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum) =
-            row.map_err(|error| format!("Failed to read model rollup row: {error}"))?;
+        let (
+            app_type,
+            model,
+            request_count,
+            total_tokens,
+            total_cost,
+            latency_weighted_sum,
+            latency_sample_count,
+        ) = row.map_err(|error| format!("Failed to read model rollup row: {error}"))?;
         stats_map.entry((app_type, model)).or_default().add(
             request_count,
             0,
             total_tokens,
             total_cost,
             latency_weighted_sum,
+            latency_sample_count,
         );
     }
     Ok(())
@@ -1282,7 +1357,7 @@ fn row_to_summary_accumulator(row: &rusqlite::Row<'_>) -> rusqlite::Result<Summa
     })
 }
 
-fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
+pub(super) fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
     if retain_days <= 0 {
         return Ok(());
     }
@@ -1300,12 +1375,15 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
 
     let usage_condition = usage_applicable_detail_condition("l", true);
     let rollup_model_expr = rollup_detail_model_expression("l");
-    conn.execute(
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("Failed to start usage rollup transaction: {error}"))?;
+    transaction.execute(
         &format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
             (date, app_type, provider_id, model, request_count, success_count,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-             total_cost_usd, avg_latency_ms)
+             total_cost_usd, avg_latency_ms, latency_sample_count)
          SELECT
             agg.d, agg.app_type, agg.provider_id, agg.rollup_model,
             COALESCE(old.request_count, 0) + agg.request_count,
@@ -1315,11 +1393,12 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
             COALESCE(old.cache_read_tokens, 0) + agg.cache_read_tokens,
             COALESCE(old.cache_creation_tokens, 0) + agg.cache_creation_tokens,
             CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + agg.total_cost AS TEXT),
-            CASE WHEN COALESCE(old.request_count, 0) + agg.request_count > 0
-                THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
-                      + agg.avg_latency_ms * agg.request_count)
-                     / (COALESCE(old.request_count, 0) + agg.request_count)
-                ELSE 0 END
+            CASE WHEN COALESCE(old.latency_sample_count, old.request_count, 0) + agg.latency_sample_count > 0
+                THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.latency_sample_count, old.request_count, 0)
+                      + agg.latency_sum)
+                     / (COALESCE(old.latency_sample_count, old.request_count, 0) + agg.latency_sample_count)
+                ELSE 0 END,
+            COALESCE(old.latency_sample_count, old.request_count, 0) + agg.latency_sample_count
          FROM (
             SELECT date(l.created_at, 'unixepoch', 'localtime') AS d,
                    l.app_type,
@@ -1332,7 +1411,8 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
                    COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens,
                    COALESCE(SUM(l.cache_creation_tokens), 0) AS cache_creation_tokens,
                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) AS total_cost,
-                   COALESCE(AVG(l.latency_ms), 0) AS avg_latency_ms
+                   COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0) * 1.0 AS latency_sum,
+                   SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END) AS latency_sample_count
             FROM proxy_request_logs l
             WHERE l.created_at < ?1
               AND {usage_condition}
@@ -1347,12 +1427,15 @@ fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
         [cutoff],
     )
     .map_err(|error| format!("Failed to roll up gateway logs: {error}"))?;
-    conn.execute(
-        "DELETE FROM proxy_request_logs WHERE created_at < ?1",
-        [cutoff],
-    )
-    .map_err(|error| format!("Failed to prune gateway logs: {error}"))?;
-    Ok(())
+    transaction
+        .execute(
+            "DELETE FROM proxy_request_logs WHERE created_at < ?1",
+            [cutoff],
+        )
+        .map_err(|error| format!("Failed to prune gateway logs: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Failed to commit usage rollup: {error}"))
 }
 
 fn maybe_rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
@@ -1369,9 +1452,11 @@ fn maybe_rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), Str
     if !should_run {
         return Ok(());
     }
-    rollup_and_prune(conn, retain_days)?;
+    let result = rollup_and_prune(conn, retain_days);
+    // Failed attempts are throttled too, so one maintenance failure does not
+    // repeat on every live request. The next interval retries it.
     *last_run = Some(Instant::now());
-    Ok(())
+    result
 }
 
 fn local_midnight_cutoff(retain_days: i64) -> Result<i64, String> {
@@ -1407,6 +1492,7 @@ fn build_detail_where(
         );
     }
     if let Some(status_code) = filters.status_code {
+        conditions.push("COALESCE(l.data_source, 'proxy') = 'proxy'".to_string());
         push_condition(
             &mut conditions,
             params,
@@ -1584,12 +1670,20 @@ fn build_rollup_where(
         conditions.push(format!("{prefix}app_type = ?{}", params.len() + 1));
         params.push(Box::new(cli_key.as_str().to_string()));
     }
-    conditions.push(valid_model_sql_condition(alias));
+    // Native imports have a reserved provider identity even when their
+    // transcript does not record a model name. Rollups retain that identity.
+    conditions.push(format!(
+        "({} OR {prefix}provider_id = 'session')",
+        valid_model_sql_condition(alias)
+    ));
     format_where_clause(conditions)
 }
 
 fn usage_applicable_detail_condition(alias: &str, include_compact: bool) -> String {
-    let valid_model = valid_detail_model_sql_condition(alias);
+    let valid_model = format!(
+        "({} OR {alias}.data_source = 'session')",
+        valid_detail_model_sql_condition(alias)
+    );
     if include_compact {
         format!(
             "({valid_model} OR {})",
@@ -1610,7 +1704,7 @@ fn valid_detail_model_sql_condition(alias: &str) -> String {
 
 fn model_stats_detail_model_expression(alias: &str) -> String {
     format!(
-        "CASE WHEN {} THEN {alias}.model ELSE {alias}.request_model END",
+        "CASE WHEN {} THEN {alias}.model ELSE COALESCE({alias}.request_model, 'unknown') END",
         valid_model_column_sql_condition(Some(alias), "model")
     )
 }
@@ -1619,6 +1713,7 @@ fn rollup_detail_model_expression(alias: &str) -> String {
     format!(
         "CASE WHEN {} THEN {alias}.model \
          WHEN {} THEN {alias}.request_model \
+         WHEN {alias}.data_source = 'session' THEN 'unknown' \
          ELSE '{COMPACT_ROLLUP_MODEL}' END",
         valid_model_column_sql_condition(Some(alias), "model"),
         valid_model_column_sql_condition(Some(alias), "request_model")
@@ -1820,8 +1915,29 @@ fn token_cost(tokens: u64, cost_per_million: Decimal) -> Decimal {
     Decimal::from(tokens) * cost_per_million / Decimal::from(1_000_000_u64)
 }
 
-fn format_decimal_cost(value: Decimal) -> String {
+pub(super) fn format_decimal_cost(value: Decimal) -> String {
     format!("{:.6}", value.round_dp(6))
+}
+
+pub(super) fn calculate_session_costs(
+    conn: &Connection,
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+) -> CostBreakdown {
+    find_model_pricing(conn, model)
+        .map(|pricing| {
+            calculate_cost(
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                &pricing,
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn parse_decimal_or_default(value: &str, default: Decimal) -> Decimal {
@@ -2172,11 +2288,12 @@ pub fn request_log_detail_from_summary(
         conn.query_row(
             "SELECT request_id, provider_id, app_type, model, request_model,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    latency_ms, first_token_ms, duration_ms, status_code, error_message,
+                    latency_ms, first_token_ms, COALESCE(duration_ms, latency_ms, 0), status_code, error_message,
                     created_at, is_streaming, total_cost_usd, provider_type,
                     cost_multiplier, pricing_model_source, detail_file, detail_offset,
                     route_name, method, path, upstream_status_code,
-                    stream_outcome, error_category, attempt_count, total_attempt_count
+                    stream_outcome, error_category, attempt_count, total_attempt_count, reasoning_effort,
+                    COALESCE(data_source, 'proxy')
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -2192,6 +2309,7 @@ pub fn request_log_detail_from_summary(
                 let ended_at = timestamp_to_utc(row.get(14)?);
                 let started_at = ended_at - Duration::milliseconds(duration_ms as i64);
                 let status_code = row.get::<_, i64>(12)?.max(0) as u16;
+                let is_session = row.get::<_, String>(31)? == "session";
                 let stream_outcome = row
                     .get::<_, Option<String>>(26)?
                     .filter(|value| !value.trim().is_empty())
@@ -2206,6 +2324,7 @@ pub fn request_log_detail_from_summary(
                     .saturating_add(cache_creation_tokens);
                 Ok(GatewayRequestLogDetail {
                     summary: GatewayRequestLogSummary {
+                        data_source: Some(row.get(31)?),
                         trace_id: row.get(0)?,
                         started_at,
                         ended_at,
@@ -2229,8 +2348,9 @@ pub fn request_log_detail_from_summary(
                         pricing_model_source: row.get(19)?,
                         requested_model: row.get(4)?,
                         upstream_model_id: Some(row.get(3)?),
+                        reasoning_effort: row.get(30)?,
                         upstream_url: None,
-                        status_code: Some(status_code),
+                        status_code: (!is_session).then_some(status_code),
                         upstream_status_code: row
                             .get::<_, Option<i64>>(25)?
                             .map(|value| value.max(0) as u16),
@@ -2463,6 +2583,7 @@ mod tests {
         };
         GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
+                data_source: None,
                 trace_id: trace_id.to_string(),
                 started_at: ended_at - Duration::milliseconds(1200),
                 ended_at,
@@ -2477,6 +2598,7 @@ mod tests {
                 pricing_model_source: None,
                 requested_model: Some("claude-sonnet-4-5".to_string()),
                 upstream_model_id: Some("anthropic/claude-sonnet-4-5".to_string()),
+                reasoning_effort: None,
                 upstream_url: Some("https://example.test/v1/messages".to_string()),
                 status_code: Some(status_code),
                 upstream_status_code: None,
@@ -2539,7 +2661,8 @@ mod tests {
     fn record_request_summary_stores_only_compact_fields() {
         let db = test_db();
         insert_provider(&db, "provider-alpha", "Alpha Provider");
-        let detail = make_detail("trace-summary", "provider-alpha", 200, 10, 20);
+        let mut detail = make_detail("trace-summary", "provider-alpha", 200, 10, 20);
+        detail.summary.reasoning_effort = Some("high".to_string());
 
         record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
             .expect("record summary");
@@ -2597,6 +2720,7 @@ mod tests {
         );
         assert_eq!(logs.data[0].provider_id, "provider-alpha");
         assert_eq!(logs.data[0].total_tokens, 30);
+        assert_eq!(logs.data[0].reasoning_effort.as_deref(), Some("high"));
         assert!(logs.data[0].success);
         assert_eq!(logs.data[0].route_name.as_deref(), Some("claude_messages"));
         assert_eq!(logs.data[0].method.as_deref(), Some("POST"));
@@ -2763,6 +2887,7 @@ mod tests {
         detail.summary.total_tokens = Some(35);
         detail.summary.cost_multiplier = Some("1.75".to_string());
         detail.summary.pricing_model_source = Some("requested".to_string());
+        detail.summary.reasoning_effort = Some("xhigh".to_string());
 
         record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
             .expect("record summary");
@@ -2777,6 +2902,7 @@ mod tests {
         assert_eq!(fallback.summary.cache_read_tokens, Some(3));
         assert_eq!(fallback.summary.cache_creation_tokens, Some(2));
         assert_eq!(fallback.summary.total_tokens, Some(35));
+        assert_eq!(fallback.summary.reasoning_effort.as_deref(), Some("xhigh"));
         assert_eq!(fallback.summary.cost_multiplier.as_deref(), Some("1.75"));
         assert_eq!(
             fallback.summary.pricing_model_source.as_deref(),
@@ -3665,6 +3791,241 @@ mod tests {
     }
 
     #[test]
+    fn provider_cache_hit_rate_distinguishes_zero_missing_and_full_input_usage() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings {
+            log_retention_days: 0,
+            ..Default::default()
+        };
+        for (provider_id, input, creation, read, expected) in [
+            ("mixed", 100, 20, 80, Some(0.4)),
+            ("no-cache", 100, 0, 0, Some(0.0)),
+            ("no-input", 0, 0, 0, None),
+            ("all-cache", 0, 0, 100, Some(1.0)),
+        ] {
+            let mut detail = make_detail(provider_id, provider_id, 200, input, 10_000);
+            detail.summary.cache_creation_tokens = Some(creation);
+            detail.summary.cache_read_tokens = Some(read);
+            record_request_summary(&db, &settings, &detail).expect("record cache usage");
+            let rows = provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).unwrap();
+            let row = rows
+                .iter()
+                .find(|row| row.provider_id == provider_id)
+                .unwrap();
+            assert_eq!(row.cache_hit_rate, expected, "{provider_id}");
+        }
+    }
+
+    #[test]
+    fn provider_cache_hit_rate_weights_detail_and_rollup_tokens_and_respects_filters() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings {
+            log_retention_days: 0,
+            ..Default::default()
+        };
+        insert_rollup(&db); // 40 fresh + 2 creation + 5 read, four requests on May 18.
+        for (trace_id, input, read, cli_key, provider_id) in [
+            (
+                "cache-mixed",
+                100,
+                80,
+                GatewayCliKey::Claude,
+                "provider-alpha",
+            ),
+            (
+                "cache-miss",
+                800,
+                0,
+                GatewayCliKey::Claude,
+                "provider-alpha",
+            ),
+            ("other-cli", 0, 1000, GatewayCliKey::Codex, "provider-alpha"),
+            (
+                "other-provider",
+                0,
+                1000,
+                GatewayCliKey::Claude,
+                "provider-beta",
+            ),
+        ] {
+            let mut detail =
+                make_detail_for_cli(cli_key, trace_id, provider_id, 200, input, 50_000);
+            detail.summary.cache_read_tokens = Some(read);
+            detail.summary.cache_creation_tokens =
+                Some(if trace_id == "cache-mixed" { 20 } else { 0 });
+            record_request_summary(&db, &settings, &detail).unwrap();
+        }
+        let all_rows = provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).unwrap();
+        let alpha = all_rows
+            .iter()
+            .find(|row| row.provider_id == "provider-alpha")
+            .unwrap();
+        assert_eq!(alpha.request_count, 6);
+        assert_eq!(alpha.cache_hit_rate, Some(85.0 / 1047.0));
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 5, 20, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let end = Utc
+            .with_ymd_and_hms(2026, 5, 20, 23, 59, 59)
+            .unwrap()
+            .timestamp();
+        let filtered =
+            provider_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude)).unwrap();
+        let alpha = filtered
+            .iter()
+            .find(|row| row.provider_id == "provider-alpha")
+            .unwrap();
+        assert_eq!(alpha.request_count, 2);
+        assert_eq!(alpha.cache_hit_rate, Some(0.08));
+        let codex =
+            provider_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Codex)).unwrap();
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].cache_hit_rate, Some(1.0));
+
+        db.with_conn(|conn| rollup_and_prune(conn, 30))
+            .expect("roll older details into history");
+        let rolled = provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).unwrap();
+        let alpha = rolled
+            .iter()
+            .find(|row| row.provider_id == "provider-alpha")
+            .unwrap();
+        assert_eq!(alpha.request_count, 6);
+        assert_eq!(alpha.cache_hit_rate, Some(85.0 / 1047.0));
+    }
+
+    #[test]
+    fn native_usage_does_not_dilute_http_latency_before_or_after_rollup() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings {
+            log_retention_days: 0,
+            ..Default::default()
+        };
+        for (id, provider_id, latency) in [
+            ("http-one", "provider-alpha", 201),
+            ("http-two", "provider-alpha", 400),
+            ("native-one", "session", 0),
+        ] {
+            let mut detail = make_detail(id, provider_id, 200, 10, 20);
+            detail.summary.duration_ms = latency;
+            detail.summary.ended_at = Utc::now() - Duration::days(400);
+            detail.summary.started_at =
+                detail.summary.ended_at - Duration::milliseconds(latency as i64);
+            record_request_summary(&db, &settings, &detail).unwrap();
+        }
+        set_request_data_source(&db, "native-one", "session");
+        for archived in [false, true] {
+            if archived {
+                db.with_conn(|conn| rollup_and_prune(conn, 30)).unwrap();
+            }
+            let models = model_stats(&db, None, None, None).unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].request_count, 3);
+            assert_eq!(models[0].avg_latency_ms, Some(301));
+            let providers = provider_stats(&db, None, None, None).unwrap();
+            assert_eq!(
+                providers
+                    .iter()
+                    .find(|row| row.provider_id == "session")
+                    .unwrap()
+                    .avg_latency_ms,
+                None
+            );
+        }
+        let mut live = make_detail("http-live", "provider-alpha", 200, 10, 20);
+        live.summary.ended_at = Utc::now();
+        live.summary.duration_ms = 600;
+        record_request_summary(&db, &settings, &live).unwrap();
+        assert_eq!(
+            model_stats(&db, None, None, None).unwrap()[0].avg_latency_ms,
+            Some(400)
+        );
+    }
+
+    #[test]
+    fn maintenance_failure_does_not_drop_a_new_proxy_summary() {
+        let db = test_db();
+        let mut old_detail = make_detail("old-before-maintenance", "provider-alpha", 200, 10, 20);
+        old_detail.summary.ended_at = Utc::now() - Duration::days(400);
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings {
+                log_retention_days: 0,
+                ..Default::default()
+            },
+            &old_detail,
+        )
+        .unwrap();
+        db.with_conn(|conn| {
+            conn.execute_batch("ALTER TABLE usage_daily_rollups DROP COLUMN latency_sample_count")
+                .map_err(|error| error.to_string())?;
+            assert!(rollup_and_prune(conn, 30).is_err());
+            Ok(())
+        })
+        .unwrap();
+        let current_detail = make_detail(
+            "current-after-maintenance-failure",
+            "provider-alpha",
+            200,
+            30,
+            40,
+        );
+        let result = record_request_summary(
+            &db,
+            &ProxyGatewaySettings {
+                log_retention_days: 30,
+                ..Default::default()
+            },
+            &current_detail,
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            RecordRequestSummaryOutcome::Written { .. }
+        ));
+        let logs = request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10).unwrap();
+        assert_eq!(logs.total, 2);
+        assert!(logs.data.iter().any(
+            |row| row.trace_id == "current-after-maintenance-failure" && row.total_tokens == 70
+        ));
+    }
+
+    #[test]
+    fn rollup_and_prune_are_atomic_when_deleting_details_fails() {
+        let db = test_db();
+        let settings = ProxyGatewaySettings {
+            log_retention_days: 0,
+            ..Default::default()
+        };
+        let mut detail = make_detail("atomic-rollup", "provider-alpha", 200, 10, 20);
+        detail.summary.ended_at = Utc::now() - Duration::days(400);
+        record_request_summary(&db, &settings, &detail).unwrap();
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER reject_prune BEFORE DELETE ON proxy_request_logs
+                BEGIN SELECT RAISE(ABORT, 'simulated prune failure'); END;",
+            )
+            .map_err(|error| error.to_string())?;
+            assert!(rollup_and_prune(conn, 30).is_err());
+            let rolled: i64 = conn
+                .query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(rolled, 0);
+            conn.execute_batch("DROP TRIGGER reject_prune")
+                .map_err(|error| error.to_string())?;
+            rollup_and_prune(conn, 30)
+        })
+        .unwrap();
+        assert_eq!(
+            usage_summary(&db, None, None, None).unwrap().total_requests,
+            1
+        );
+    }
+
+    #[test]
     fn rollups_are_included_in_usage_breakdowns_and_trends() {
         let db = test_db();
         insert_provider(&db, "provider-alpha", "Alpha Provider");
@@ -3696,14 +4057,14 @@ mod tests {
         assert_eq!(provider_rows[0].request_count, 4);
         assert_eq!(provider_rows[0].total_tokens, 59);
         assert_eq!(provider_rows[0].success_rate, 75.0);
-        assert_eq!(provider_rows[0].avg_latency_ms, 300);
+        assert_eq!(provider_rows[0].avg_latency_ms, Some(300));
 
         let model_rows = model_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
             .expect("model stats");
         assert_eq!(model_rows.len(), 1);
         assert_eq!(model_rows[0].request_count, 4);
         assert_eq!(model_rows[0].total_tokens, 59);
-        assert_eq!(model_rows[0].avg_latency_ms, 300);
+        assert_eq!(model_rows[0].avg_latency_ms, Some(300));
 
         let trend_rows =
             usage_trends(&db, Some(start), Some(end), Some(GatewayCliKey::Claude)).expect("trends");

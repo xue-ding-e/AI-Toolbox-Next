@@ -351,6 +351,8 @@ pub struct ProxyGatewayStatus {
     pub listen_host: String,
     pub listen_port: Option<u16>,
     pub active_connections: u32,
+    pub requests_per_minute: u64,
+    pub requests_per_minute_by_cli: HashMap<GatewayCliKey, u64>,
     pub last_error: Option<String>,
 }
 
@@ -362,6 +364,8 @@ impl ProxyGatewayStatus {
             listen_host: settings.listen_host.clone(),
             listen_port: None,
             active_connections: 0,
+            requests_per_minute: 0,
+            requests_per_minute_by_cli: HashMap::new(),
             last_error,
         }
     }
@@ -600,6 +604,7 @@ pub struct GatewayPaginatedRequestLogs {
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogItem {
     pub trace_id: String,
+    pub data_source: String,
     pub cli_key: GatewayCliKey,
     pub route_name: Option<String>,
     pub method: Option<String>,
@@ -608,6 +613,7 @@ pub struct GatewayRequestLogItem {
     pub provider_name: Option<String>,
     pub requested_model: Option<String>,
     pub upstream_model_id: String,
+    pub reasoning_effort: Option<String>,
     pub status_code: u16,
     pub success: bool,
     pub error_message: Option<String>,
@@ -666,7 +672,9 @@ pub struct GatewayProviderStats {
     pub total_tokens: u64,
     pub total_cost_usd: String,
     pub success_rate: f32,
-    pub avg_latency_ms: u64,
+    pub avg_latency_ms: Option<u64>,
+    /// Token-weighted input cache hit ratio (0..=1); None when input usage is absent.
+    pub cache_hit_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -677,13 +685,15 @@ pub struct GatewayModelStats {
     pub request_count: u64,
     pub total_tokens: u64,
     pub total_cost_usd: String,
-    pub avg_latency_ms: u64,
+    pub avg_latency_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogSummary {
     pub trace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_source: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub cli_key: Option<GatewayCliKey>,
@@ -700,6 +710,9 @@ pub struct GatewayRequestLogSummary {
     pub pricing_model_source: Option<String>,
     pub requested_model: Option<String>,
     pub upstream_model_id: Option<String>,
+    /// Explicit effort from the final upstream attempt, independent of body storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub upstream_url: Option<String>,
     pub status_code: Option<u16>,
     /// Original HTTP status the upstream returned before the gateway rewrote a
@@ -878,6 +891,7 @@ pub enum GatewaySessionImportCli {
     Grok,
     Kimi,
     Gemini,
+    OpenCode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -915,7 +929,9 @@ pub struct GatewaySessionUsageImportResult {
     pub scanned_files: u64,
     pub parsed_records: u64,
     pub inserted_records: u64,
+    pub updated_records: u64,
     pub skipped_records: u64,
+    pub failed_files: u64,
 }
 
 impl GatewaySessionUsageImportResult {
@@ -923,7 +939,9 @@ impl GatewaySessionUsageImportResult {
         self.scanned_files = self.scanned_files.saturating_add(other.scanned_files);
         self.parsed_records = self.parsed_records.saturating_add(other.parsed_records);
         self.inserted_records = self.inserted_records.saturating_add(other.inserted_records);
+        self.updated_records = self.updated_records.saturating_add(other.updated_records);
         self.skipped_records = self.skipped_records.saturating_add(other.skipped_records);
+        self.failed_files = self.failed_files.saturating_add(other.failed_files);
     }
 }
 

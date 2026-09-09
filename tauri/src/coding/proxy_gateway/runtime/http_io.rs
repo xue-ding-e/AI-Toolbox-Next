@@ -264,6 +264,8 @@ pub(super) struct DebugHttpResponse {
     pub(super) requested_model: Option<String>,
     pub(super) upstream_model_id: Option<String>,
     pub(super) upstream_request_body: Option<Vec<u8>>,
+    /// Protocol of the final upstream attempt, independent of the client protocol.
+    pub(super) target_protocol: Option<AiProtocol>,
     pub(super) upstream_response_body: Option<Vec<u8>>,
     pub(super) upstream_response_body_bytes: u64,
     pub(super) upstream_response_body_stream_snapshot: Option<SharedBodySnapshot>,
@@ -471,6 +473,7 @@ pub(super) fn json_response(
         failover: false,
         note: note.to_string(),
         source_protocol: None,
+        target_protocol: None,
         stream_outcome: GatewayStreamOutcome::NotStreaming,
     }
 }
@@ -513,6 +516,7 @@ pub(super) fn empty_response(
         failover: false,
         note: note.to_string(),
         source_protocol: None,
+        target_protocol: None,
         stream_outcome: GatewayStreamOutcome::NotStreaming,
     }
 }
@@ -1083,6 +1087,7 @@ mod tests {
             provider_attempts: Vec::new(),
             failover: false,
             source_protocol: Some(AiProtocol::OpenAiResponses),
+            target_protocol: Some(AiProtocol::OpenAiResponses),
             stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: "streaming forwarded to provider id=provider-1 name=Provider One".to_string(),
         }

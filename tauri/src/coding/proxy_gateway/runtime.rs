@@ -338,14 +338,19 @@ impl ProxyGatewayManager {
 
     pub fn status(&self) -> ProxyGatewayStatus {
         match &self.runtime {
-            Some(runtime) => ProxyGatewayStatus {
-                running: true,
-                base_url: Some(runtime.base_url.clone()),
-                listen_host: runtime.listen_host.clone(),
-                listen_port: Some(runtime.listen_port),
-                active_connections: runtime.active_connections.load(Ordering::SeqCst),
-                last_error: None,
-            },
+            Some(runtime) => {
+                let requests_per_minute_by_cli = runtime.context.request_counts_by_cli();
+                ProxyGatewayStatus {
+                    running: true,
+                    base_url: Some(runtime.base_url.clone()),
+                    listen_host: runtime.listen_host.clone(),
+                    listen_port: Some(runtime.listen_port),
+                    active_connections: runtime.active_connections.load(Ordering::SeqCst),
+                    requests_per_minute: requests_per_minute_by_cli.values().sum(),
+                    requests_per_minute_by_cli,
+                    last_error: None,
+                }
+            }
             None => ProxyGatewayStatus::stopped(&self.last_settings, self.last_error.clone()),
         }
     }
@@ -506,6 +511,7 @@ struct GatewayRuntimeContext {
     paths: Option<ProxyGatewayPaths>,
     settings: Arc<RwLock<ProxyGatewaySettings>>,
     active_connections: Arc<AtomicU32>,
+    request_rate: Arc<Mutex<observability::RequestRateWindow>>,
     health_registry: Option<Arc<Mutex<ModelHealthRegistry>>>,
     health_path: Option<PathBuf>,
     app_handle: Option<AppHandle>,
@@ -572,6 +578,7 @@ impl GatewayRuntimeContext {
             paths,
             settings: Arc::new(RwLock::new(settings)),
             active_connections: Arc::new(AtomicU32::new(0)),
+            request_rate: Arc::new(Mutex::new(observability::RequestRateWindow::default())),
             health_registry,
             health_path,
             app_handle: None,
@@ -583,6 +590,24 @@ impl GatewayRuntimeContext {
     fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
         self.app_handle = Some(app_handle);
         self
+    }
+
+    fn record_request_arrival(&self, cli_key: GatewayCliKey) {
+        if let Ok(mut window) = self.request_rate.lock() {
+            window.record(Instant::now(), cli_key);
+        }
+    }
+
+    fn request_counts_by_cli(&self) -> HashMap<GatewayCliKey, u64> {
+        self.request_rate
+            .lock()
+            .map(|mut window| window.counts_by_cli(Instant::now()))
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    fn requests_per_minute(&self) -> u64 {
+        self.request_counts_by_cli().values().sum()
     }
 
     fn settings_snapshot(&self) -> ProxyGatewaySettings {
@@ -1223,6 +1248,25 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
             .to_string()
     }
 
+    fn assert_logged_effort(
+        request: &DebugHttpRequest,
+        response: &http_io::DebugHttpResponse,
+        context: &GatewayRuntimeContext,
+        expected: &str,
+    ) {
+        let now = Utc::now();
+        observability::record_gateway_observability(request, response, context, now, now);
+        let logs = super::super::usage_stats::request_logs(
+            context.db.as_ref().unwrap(),
+            &super::super::types::GatewayRequestLogFilters::default(),
+            0,
+            10,
+        )
+        .unwrap();
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data[0].reasoning_effort.as_deref(), Some(expected));
+    }
+
     fn write_gateway_manifest(
         paths: &ProxyGatewayPaths,
         cli_key: GatewayCliKey,
@@ -1249,6 +1293,7 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
         let status = manager.status();
         assert!(!status.running);
         assert_eq!(status.base_url, None);
+        assert_eq!(status.requests_per_minute, 0);
     }
 
     #[test]
@@ -1302,6 +1347,16 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
             )
             .expect("start gateway");
 
+        send_gateway_message_request(port);
+        assert_eq!(manager.status().requests_per_minute, 1);
+        assert_eq!(
+            manager
+                .status()
+                .requests_per_minute_by_cli
+                .get(&GatewayCliKey::Claude),
+            Some(&1)
+        );
+
         // Seed a cooling health snapshot that ordinary start would reload.
         let mut seeded = ModelHealthRegistry::new(ProxyGatewaySettings::default());
         let cooling_key = ProviderModelHealthKey {
@@ -1323,6 +1378,8 @@ data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}
             .expect("restart gateway");
 
         assert!(restarted.running);
+        assert_eq!(restarted.requests_per_minute, 0);
+        assert!(restarted.requests_per_minute_by_cli.is_empty());
         assert_eq!(restarted.listen_port, Some(port));
         assert_eq!(manager.health_check().status_code, Some(200));
         assert!(
@@ -1656,10 +1713,119 @@ base_url = "https://openai.example.com/v1"
     }
 
     #[test]
+    fn request_rate_counts_external_arrivals_but_not_local_probes_or_imported_usage() {
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings {
+                request_log_enabled: false,
+                metrics_enabled: false,
+                ..Default::default()
+            },
+            Some(db.clone()),
+            None,
+        );
+        db.with_conn(|conn| conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model, created_at, data_source)
+             VALUES ('imported-session', 'provider-a', 'codex', 'gpt-5', ?1, 'session')",
+            [Utc::now().timestamp()],
+        ).map_err(|error| error.to_string())).unwrap();
+        assert_eq!(context.requests_per_minute(), 0);
+        for (method, path) in [
+            ("GET", "/health"),
+            ("HEAD", "/anthropic"),
+            ("GET", "/openai/v1"),
+            ("HEAD", "/grok/v1"),
+            ("GET", "/kimi/v1"),
+            ("HEAD", "/gemini/v1beta"),
+            ("GET", "/claude-desktop/api/hello"),
+            ("HEAD", "/anthropic/api/hello"),
+            ("GET", "/not-a-gateway-route"),
+        ] {
+            tauri::async_runtime::block_on(route_request(
+                &debug_request(method, path, b""),
+                &context,
+            ));
+        }
+        assert_eq!(context.requests_per_minute(), 0);
+        let request = debug_request(
+            "POST",
+            "/anthropic/v1/messages",
+            br#"{"model":"claude-sonnet-4-6","messages":[]}"#,
+        );
+        // Both fail before a provider can be selected, but they are real arrivals.
+        tauri::async_runtime::block_on(route_request(&request, &context));
+        tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(context.requests_per_minute(), 2);
+        tauri::async_runtime::block_on(route_request(
+            &debug_request("GET", "/openai/v1/models", b""),
+            &context,
+        ));
+        assert_eq!(context.requests_per_minute(), 3);
+        assert_eq!(
+            context.request_counts_by_cli(),
+            HashMap::from([(GatewayCliKey::Claude, 2), (GatewayCliKey::Codex, 1),])
+        );
+    }
+
+    #[test]
+    fn request_rate_includes_requests_waiting_for_an_upstream_response() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let upstream_thread = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_test_http_request(&mut stream);
+            arrived_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").unwrap();
+        });
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        insert_claude_provider(
+            &db,
+            json!({
+                "name": "Waiting Upstream", "category": "custom",
+                "settings_config": json!({"env": {"ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_AUTH_TOKEN": "test-key"}}).to_string(),
+                "extra_settings_config": "{}", "is_applied": true, "is_disabled": false,
+            }),
+        );
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings {
+                request_log_enabled: false,
+                metrics_enabled: false,
+                ..Default::default()
+            },
+            Some(db),
+            None,
+        );
+        let request_context = context.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            route_request(
+                &debug_request(
+                    "POST",
+                    "/anthropic/v1/messages",
+                    br#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}"#,
+                ),
+                &request_context,
+            )
+            .await
+        });
+        arrived_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("request reached upstream");
+        assert_eq!(context.requests_per_minute(), 1);
+        release_tx.send(()).unwrap();
+        let response = tauri::async_runtime::block_on(task).unwrap();
+        assert_eq!(response.status_code, 200);
+        assert_eq!(context.requests_per_minute(), 1);
+        upstream_thread.join().unwrap();
+    }
+
+    #[test]
     fn route_request_forwards_to_applied_claude_provider() {
         let (base_url, captured_rx) = start_test_upstream();
         let body =
-            br#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"say hi"}]}"#;
+            br#"{"model":"claude-sonnet-4-6","reasoning_effort":"low","output_config":{"effort":"high"},"messages":[{"role":"user","content":"say hi"}]}"#;
         let request = debug_request("POST", "/anthropic/v1/messages?debug=1", body);
 
         let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
@@ -1685,7 +1851,12 @@ base_url = "https://openai.example.com/v1"
             );
         });
 
-        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let log_dir = tempfile::tempdir().unwrap();
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings::default(),
+            Some(db),
+            Some(ProxyGatewayPaths::new(log_dir.path())),
+        );
         let response = tauri::async_runtime::block_on(route_request(&request, &context));
         assert_eq!(response.status_code, 200);
         assert_eq!(response.body, br#"{"ok":true}"#);
@@ -1703,13 +1874,14 @@ base_url = "https://openai.example.com/v1"
         assert!(!captured_lower.contains("authorization: bearer gateway"));
         assert!(captured.contains(r#""model":"provider-sonnet""#));
         assert!(captured.contains(r#""content":"say hi""#));
+        assert_logged_effort(&request, &response, &context, "high");
     }
 
     #[test]
     fn route_request_preserves_upstream_response_body_for_converted_response() {
-        let upstream_body = br#"{"id":"resp_test","object":"response","created_at":1764561600,"model":"gpt-4o","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"converted hello","annotations":[]}],"status":"completed"}],"status":"completed","usage":{"input_tokens":8,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":10}}"#;
+        let upstream_body = br#"{"id":"resp_test","object":"response","created_at":1764561600,"model":"gpt-5","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"converted hello","annotations":[]}],"status":"completed"}],"status":"completed","usage":{"input_tokens":8,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":10}}"#;
         let (base_url, captured_rx) = start_test_upstream_with_response(200, "OK", upstream_body);
-        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":128,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":128,"output_config":{"effort":"high"},"messages":[{"role":"user","content":"say hi"}]}"#;
         let request = debug_request("POST", "/anthropic/v1/messages", body);
 
         let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
@@ -1719,7 +1891,7 @@ base_url = "https://openai.example.com/v1"
                     "ANTHROPIC_BASE_URL": base_url,
                     "OPENAI_API_KEY": "provider-key"
                 },
-                "sonnetModel": "gpt-4o"
+                "sonnetModel": "gpt-5"
             })
             .to_string();
             insert_claude_provider(
@@ -1738,7 +1910,12 @@ base_url = "https://openai.example.com/v1"
             );
         });
 
-        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let log_dir = tempfile::tempdir().unwrap();
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings::default(),
+            Some(db),
+            Some(ProxyGatewayPaths::new(log_dir.path())),
+        );
         let response = tauri::async_runtime::block_on(route_request(&request, &context));
         assert_eq!(response.status_code, 200);
         let response_value: Value = serde_json::from_slice(&response.body).unwrap();
@@ -1765,7 +1942,14 @@ base_url = "https://openai.example.com/v1"
         let captured_lower = captured.to_ascii_lowercase();
         assert!(captured.starts_with("POST /v1/responses HTTP/1.1"));
         assert!(captured_lower.contains("authorization: bearer provider-key"));
-        assert!(captured.contains(r#""model":"gpt-4o""#));
+        assert!(captured.contains(r#""model":"gpt-5""#));
+        let upstream_request: Value =
+            serde_json::from_slice(response.upstream_request_body.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            upstream_request.pointer("/reasoning/effort"),
+            Some(&json!("high"))
+        );
+        assert_logged_effort(&request, &response, &context, "high");
     }
 
     #[test]
@@ -2396,6 +2580,7 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
         assert!(response.failover);
         assert_eq!(response.attempt_count, 2);
         assert_eq!(response.provider_attempt_count, 1);
+        assert_eq!(context.requests_per_minute(), 1);
 
         let first_captured = first_rx
             .recv_timeout(Duration::from_secs(2))
@@ -2616,6 +2801,7 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
         assert_eq!(response.status_code, 429);
         assert_eq!(response.error_category.as_deref(), Some("rate_limit"));
         assert_eq!(context.health_items().unwrap_or_default().len(), 0);
+        assert_eq!(context.requests_per_minute(), 0);
 
         let captured = captured_rx
             .recv_timeout(Duration::from_secs(2))

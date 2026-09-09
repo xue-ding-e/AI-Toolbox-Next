@@ -1,496 +1,715 @@
 use super::types::{
     GatewayCliKey, GatewaySessionImportCli, GatewaySessionUsageImportInput,
-    GatewaySessionUsageImportResult,
+    GatewaySessionUsageImportResult, GatewayUsageRecordedEvent,
 };
-use super::usage_parser::{from_response_body, TokenUsage};
+use super::usage_parser::TokenUsage;
+use super::usage_stats::{calculate_session_costs, format_decimal_cost};
 use crate::db::SqliteDbState;
 use chrono::Utc;
-use rusqlite::params;
-use serde_json::Value;
-use std::collections::hash_map::DefaultHasher;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{Duration, UNIX_EPOCH};
+use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
 
-const MAX_IMPORT_FILE_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_SCAN_FILES_PER_CLI: usize = 20_000;
+mod open_code;
+mod parsers;
 
+const SYNC_INTERVAL: Duration = Duration::from_secs(60);
+const SESSION_SETTLE_SECONDS: i64 = 3;
+const PROXY_MATCH_WINDOW_SECONDS: i64 = 10;
+
+#[derive(Clone, Debug)]
 struct SessionUsageRecord {
     request_id: String,
+    legacy_request_id: Option<String>,
     cli_key: GatewayCliKey,
-    provider_id: String,
     model: String,
-    request_model: Option<String>,
     usage: TokenUsage,
-    status_code: u16,
     created_at: i64,
-    session_id: Option<String>,
+    session_id: String,
+    reported_cost_usd: Option<String>,
+}
+
+impl SessionUsageRecord {
+    fn fingerprint(&self) -> String {
+        let value = serde_json::json!([
+            self.model,
+            self.created_at,
+            self.usage.input_tokens.unwrap_or(0),
+            self.usage.output_tokens.unwrap_or(0),
+            self.usage.cache_read_tokens.unwrap_or(0),
+            self.usage.cache_creation_tokens.unwrap_or(0),
+            self.reported_cost_usd
+        ]);
+        format!("{:x}", Sha256::digest(value.to_string().as_bytes()))
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct ImportedRecord {
+    fingerprint: String,
+    matched_proxy_id: Option<String>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct SourceState {
+    parser_revision: u32,
+    modified_nanos: u64,
+    size: u64,
+    pending: bool,
+    records: BTreeMap<String, ImportedRecord>,
+    codex_snapshots: Vec<parsers::CodexSnapshot>,
+}
+
+fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 pub async fn import_session_usage(
     db: SqliteDbState,
     input: GatewaySessionUsageImportInput,
 ) -> Result<GatewaySessionUsageImportResult, String> {
-    tauri::async_runtime::spawn_blocking(move || import_session_usage_blocking(&db, input))
-        .await
-        .map_err(|error| format!("Failed to import gateway session usage: {error}"))?
+    // Manual sync, page activation and the background timer share one writer.
+    let guard = sync_mutex().lock().await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let sources = import_cli_keys(input.cli_key)
+            .into_iter()
+            .flat_map(|cli_key| {
+                default_session_roots(&db, cli_key)
+                    .into_iter()
+                    .map(move |root| (cli_key, root))
+            })
+            .collect::<Vec<_>>();
+        sync_sources(&db, &sources, Utc::now().timestamp())
+    })
+    .await
+    .map_err(|error| format!("Failed to sync local session usage: {error}"))?;
+    drop(guard);
+    result
 }
 
-fn import_session_usage_blocking(
-    db: &SqliteDbState,
-    input: GatewaySessionUsageImportInput,
-) -> Result<GatewaySessionUsageImportResult, String> {
-    let cli_keys = match input.cli_key {
+pub fn start(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(SYNC_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let Some(db) = app.try_state::<SqliteDbState>() else {
+                return;
+            };
+            match import_session_usage(db.db().clone(), GatewaySessionUsageImportInput::default())
+                .await
+            {
+                Ok(result) => notify_usage_changed(&app, &result),
+                Err(error) => log::warn!("Local session usage sync failed: {error}"),
+            }
+        }
+    });
+}
+
+pub(super) fn notify_usage_changed(
+    app: &tauri::AppHandle,
+    result: &GatewaySessionUsageImportResult,
+) {
+    let changed = result
+        .inserted_records
+        .saturating_add(result.updated_records);
+    if changed == 0 {
+        return;
+    }
+    let payload = GatewayUsageRecordedEvent {
+        cli_key: None,
+        trace_id: None,
+        data_source: "session".to_string(),
+        inserted_records: changed,
+    };
+    if let Err(error) = app.emit("usage-log-recorded", payload) {
+        log::warn!("Failed to emit local session usage update: {error}");
+    }
+}
+
+fn import_cli_keys(selection: GatewaySessionImportCli) -> Vec<GatewayCliKey> {
+    match selection {
         GatewaySessionImportCli::All => vec![
             GatewayCliKey::Claude,
+            GatewayCliKey::ClaudeDesktop,
             GatewayCliKey::Codex,
             GatewayCliKey::Grok,
             GatewayCliKey::Kimi,
             GatewayCliKey::Gemini,
+            GatewayCliKey::OpenCode,
         ],
         GatewaySessionImportCli::Claude => vec![GatewayCliKey::Claude],
-        // Claude Desktop has no CLI-style session log import; routed to an empty
-        // scan so it compiles exhaustively but stays a no-op.
         GatewaySessionImportCli::ClaudeDesktop => vec![GatewayCliKey::ClaudeDesktop],
         GatewaySessionImportCli::Codex => vec![GatewayCliKey::Codex],
         GatewaySessionImportCli::Grok => vec![GatewayCliKey::Grok],
         GatewaySessionImportCli::Kimi => vec![GatewayCliKey::Kimi],
         GatewaySessionImportCli::Gemini => vec![GatewayCliKey::Gemini],
-    };
-    let mut total = GatewaySessionUsageImportResult::default();
-    for cli_key in cli_keys {
-        let result = import_cli_session_usage(db, cli_key)?;
-        total.merge(result);
+        GatewaySessionImportCli::OpenCode => vec![GatewayCliKey::OpenCode],
     }
-    Ok(total)
-}
-
-fn import_cli_session_usage(
-    db: &SqliteDbState,
-    cli_key: GatewayCliKey,
-) -> Result<GatewaySessionUsageImportResult, String> {
-    let roots = default_session_roots(db, cli_key);
-    let mut result = GatewaySessionUsageImportResult {
-        scanned_files: 0,
-        parsed_records: 0,
-        inserted_records: 0,
-        skipped_records: 0,
-    };
-    for root in roots {
-        if !root.exists() {
-            continue;
-        }
-        for file_path in session_files(&root) {
-            if result.scanned_files as usize >= MAX_SCAN_FILES_PER_CLI {
-                break;
-            }
-            result.scanned_files = result.scanned_files.saturating_add(1);
-            let records = match parse_session_file(cli_key, &file_path) {
-                Ok(records) => records,
-                Err(error) => {
-                    log::warn!(
-                        "Skipping unreadable session file {}: {error}",
-                        file_path.display()
-                    );
-                    result.skipped_records = result.skipped_records.saturating_add(1);
-                    continue;
-                }
-            };
-            result.parsed_records = result.parsed_records.saturating_add(records.len() as u64);
-            for record in records {
-                if insert_session_usage_record(db, &record)? {
-                    result.inserted_records = result.inserted_records.saturating_add(1);
-                } else {
-                    result.skipped_records = result.skipped_records.saturating_add(1);
-                }
-            }
-        }
-    }
-    Ok(result)
 }
 
 fn default_session_roots(db: &SqliteDbState, cli_key: GatewayCliKey) -> Vec<PathBuf> {
-    // Prefer runtime_location-derived roots so custom/WSL Direct paths are honored.
-    // Hardcoded home paths remain fallbacks when runtime location is unavailable.
+    use crate::coding::runtime_location::*;
+    let location = match cli_key {
+        GatewayCliKey::Claude => get_claude_runtime_location_sync(db).ok(),
+        GatewayCliKey::Codex => get_codex_runtime_location_sync(db).ok(),
+        GatewayCliKey::Grok => get_grok_runtime_location_sync(db).ok(),
+        GatewayCliKey::Kimi => get_kimi_runtime_location_sync(db).ok(),
+        GatewayCliKey::Gemini => get_gemini_cli_runtime_location_sync(db).ok(),
+        GatewayCliKey::OpenCode => get_opencode_runtime_location_sync(db).ok(),
+        GatewayCliKey::ClaudeDesktop => None,
+    };
     let mut roots = Vec::new();
-    let push_unique = |roots: &mut Vec<PathBuf>, path: PathBuf| {
-        if !roots.iter().any(|root| root == &path) {
-            roots.push(path);
+    let (home_name, suffix) = match cli_key {
+        GatewayCliKey::Claude => (".claude", "projects"),
+        GatewayCliKey::Codex => (".codex", "sessions"),
+        GatewayCliKey::Grok => (".grok", "sessions"),
+        GatewayCliKey::Kimi => (".kimi-code", "sessions"),
+        GatewayCliKey::Gemini => (".gemini", "tmp"),
+        GatewayCliKey::OpenCode => {
+            if let Some(location) = location {
+                if let Ok(root) =
+                    crate::coding::session_manager::resolve_opencode_data_root(&location)
+                {
+                    roots.push(root);
+                }
+            }
+            return roots;
+        }
+        GatewayCliKey::ClaudeDesktop => {
+            if let Ok(paths) =
+                crate::coding::claude_desktop::config_writer::current_platform_paths()
+            {
+                if let Some(root) = paths.config_library_path.parent() {
+                    roots.push(root.join("local-agent-mode-sessions"));
+                }
+            }
+            return roots;
         }
     };
-    match cli_key {
-        GatewayCliKey::Claude => {
-            if let Ok(location) =
-                crate::coding::runtime_location::get_claude_runtime_location_sync(db)
-            {
-                push_unique(&mut roots, location.host_path.join("projects"));
-            }
-            if let Some(home) = dirs::home_dir() {
-                push_unique(&mut roots, home.join(".claude").join("projects"));
-            }
+    if let Some(location) = location {
+        roots.push(location.host_path.join(suffix));
+    }
+    if let Some(home) = dirs::home_dir() {
+        let default = home.join(home_name).join(suffix);
+        if !roots.contains(&default) {
+            roots.push(default);
         }
-        GatewayCliKey::Codex => {
-            if let Ok(location) =
-                crate::coding::runtime_location::get_codex_runtime_location_sync(db)
-            {
-                push_unique(&mut roots, location.host_path.join("sessions"));
-            }
-            if let Some(home) = dirs::home_dir() {
-                push_unique(&mut roots, home.join(".codex").join("sessions"));
-            }
-        }
-        GatewayCliKey::Grok => {
-            if let Ok(location) =
-                crate::coding::runtime_location::get_grok_runtime_location_sync(db)
-            {
-                push_unique(&mut roots, location.host_path.join("sessions"));
-            }
-            if let Some(home) = dirs::home_dir() {
-                push_unique(&mut roots, home.join(".grok").join("sessions"));
-            }
-        }
-        GatewayCliKey::Kimi => {
-            if let Ok(location) =
-                crate::coding::runtime_location::get_kimi_runtime_location_sync(db)
-            {
-                push_unique(&mut roots, location.host_path.join("sessions"));
-            }
-            if let Some(home) = dirs::home_dir() {
-                push_unique(&mut roots, home.join(".kimi-code").join("sessions"));
-            }
-        }
-        GatewayCliKey::Gemini => {
-            if let Ok(location) =
-                crate::coding::runtime_location::get_gemini_cli_runtime_location_sync(db)
-            {
-                push_unique(&mut roots, location.host_path.join("tmp"));
-            }
-            if let Some(home) = dirs::home_dir() {
-                push_unique(&mut roots, home.join(".gemini").join("tmp"));
-            }
-        }
-        // Claude Desktop has no CLI-style session log roots to scan.
-        GatewayCliKey::ClaudeDesktop | GatewayCliKey::OpenCode => {}
+    }
+    if cli_key == GatewayCliKey::Codex {
+        let archives = roots
+            .iter()
+            .filter_map(|root| root.parent().map(|parent| parent.join("archived_sessions")))
+            .collect::<Vec<_>>();
+        roots.extend(archives);
     }
     roots
 }
 
-fn session_files(root: &Path) -> Vec<PathBuf> {
-    let mut files = WalkDir::new(root)
+fn source_identity(cli_key: GatewayCliKey, path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    if stem.starts_with("agent-") {
+        if let Some(parent_session) = path
+            .ancestors()
+            .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "subagents"))
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+        {
+            return format!("{parent_session}:{stem}");
+        }
+    }
+    if cli_key == GatewayCliKey::Codex && stem.len() >= 36 {
+        if let Some(suffix) = stem.get(stem.len() - 36..) {
+            if uuid::Uuid::parse_str(suffix).is_ok() {
+                return suffix.to_string();
+            }
+        }
+    }
+    if matches!(
+        stem,
+        "chat_history" | "context" | "wire" | "messages" | "transcript"
+    ) {
+        let parent = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown");
+        return format!("{parent}:{stem}");
+    }
+    stem.to_string()
+}
+
+fn session_files(cli_key: GatewayCliKey, root: &Path) -> Vec<PathBuf> {
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    WalkDir::new(root)
         .follow_links(false)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .filter_map(|entry| {
             let path = entry.into_path();
-            let extension = path.extension().and_then(|value| value.to_str())?;
-            matches!(extension, "json" | "jsonl").then_some(path)
-        })
-        .filter(|path| {
-            fs::metadata(path)
-                .map(|metadata| metadata.len() <= MAX_IMPORT_FILE_BYTES)
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    files
-}
-
-fn parse_session_file(
-    cli_key: GatewayCliKey,
-    file_path: &Path,
-) -> Result<Vec<SessionUsageRecord>, String> {
-    let content = fs::read_to_string(file_path).map_err(|error| {
-        format!(
-            "Failed to read {} session file {}: {}",
-            cli_key.as_str(),
-            file_path.display(),
-            error
-        )
-    })?;
-    if file_path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
-        let mut records = Vec::new();
-        for (index, line) in content.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Ok(value) = serde_json::from_str::<Value>(line) {
-                if let Some(record) = session_usage_record(cli_key, file_path, index, &value) {
-                    records.push(record);
+            let name = path.file_name()?.to_str()?;
+            let extension = path.extension()?.to_str()?;
+            let accepted = match cli_key {
+                GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => extension == "jsonl",
+                GatewayCliKey::Codex => extension == "jsonl" && name.starts_with("rollout-"),
+                GatewayCliKey::Gemini => {
+                    matches!(extension, "json" | "jsonl") && name.starts_with("session-")
                 }
-            }
-        }
-        return Ok(records);
-    }
-    let Ok(value) = serde_json::from_str::<Value>(&content) else {
-        return Ok(Vec::new());
-    };
-    Ok(parse_json_session_values(cli_key, file_path, &value))
-}
-
-fn parse_json_session_values(
-    cli_key: GatewayCliKey,
-    file_path: &Path,
-    value: &Value,
-) -> Vec<SessionUsageRecord> {
-    if let Some(items) = value.as_array() {
-        return items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| session_usage_record(cli_key, file_path, index, item))
-            .collect();
-    }
-    for path in ["/messages", "/turns", "/entries", "/records"] {
-        if let Some(items) = value.pointer(path).and_then(Value::as_array) {
-            return items
-                .iter()
-                .enumerate()
-                .filter_map(|(index, item)| session_usage_record(cli_key, file_path, index, item))
-                .collect();
-        }
-    }
-    session_usage_record(cli_key, file_path, 0, value)
-        .into_iter()
+                GatewayCliKey::Grok => name == "chat_history.jsonl",
+                GatewayCliKey::Kimi => extension == "jsonl",
+                GatewayCliKey::OpenCode => {
+                    extension == "json"
+                        && path.strip_prefix(root).ok().is_some_and(|relative| {
+                            relative.starts_with(Path::new("storage").join("message"))
+                        })
+                }
+            };
+            accepted.then_some(path)
+        })
         .collect()
 }
 
-fn session_usage_record(
-    cli_key: GatewayCliKey,
-    file_path: &Path,
-    index: usize,
-    value: &Value,
-) -> Option<SessionUsageRecord> {
-    let usage_value = usage_candidate(value)?;
-    let usage = from_response_body(cli_key, &serde_json::to_vec(usage_value).ok()?);
-    usage.total_tokens()?;
-    let message_id = first_string_at_paths(
-        value,
-        &[
-            "/message/id",
-            "/message_id",
-            "/messageId",
-            "/id",
-            "/uuid",
-            "/request_id",
-        ],
-    );
-    let request_id = if cli_key == GatewayCliKey::Claude {
-        message_id
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| format!("SESSION:{value}"))
-            .unwrap_or_else(|| stable_session_id(cli_key, file_path, index))
-    } else {
-        stable_session_id(cli_key, file_path, index)
-    };
-    Some(SessionUsageRecord {
-        request_id,
-        cli_key,
-        provider_id: "session".to_string(),
-        model: model_from_value(value).unwrap_or_else(|| "unknown".to_string()),
-        request_model: model_from_value(value),
-        usage,
-        status_code: 200,
-        created_at: timestamp_from_value(value).unwrap_or_else(|| Utc::now().timestamp()),
-        session_id: session_id_from_path(file_path).or(message_id),
+fn modified_nanos(metadata: &fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn load_states(db: &SqliteDbState) -> Result<HashMap<String, SourceState>, String> {
+    db.with_conn(|conn| {
+        let mut statement = conn
+            .prepare("SELECT id, json(data) FROM gateway_session_usage_state")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut states = HashMap::new();
+        for row in rows {
+            let (id, value) = row.map_err(|error| error.to_string())?;
+            states.insert(
+                id,
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("Invalid session sync state: {error}"))?,
+            );
+        }
+        Ok(states)
     })
 }
 
-fn usage_candidate(value: &Value) -> Option<&Value> {
-    if value.get("usage").is_some()
-        || value.get("usageMetadata").is_some()
-        || value.pointer("/message/usage").is_some()
-        || value.pointer("/response/usage").is_some()
-    {
-        return Some(value);
-    }
-    for path in ["/response", "/message", "/payload", "/data"] {
-        if let Some(candidate) = value.pointer(path) {
-            if candidate.get("usage").is_some() || candidate.get("usageMetadata").is_some() {
-                return Some(candidate);
+fn save_state(conn: &Connection, source_id: &str, state: &SourceState) -> Result<(), String> {
+    let json = serde_json::to_string(state).map_err(|error| error.to_string())?;
+    let timestamp = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO gateway_session_usage_state (id, data, created_at, updated_at)
+         VALUES (?1, jsonb(?2), ?3, ?3)
+         ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+        params![source_id, json, timestamp],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn sync_sources(
+    db: &SqliteDbState,
+    sources: &[(GatewayCliKey, PathBuf)],
+    now: i64,
+) -> Result<GatewaySessionUsageImportResult, String> {
+    let mut states = load_states(db)?;
+    let mut claimed_proxies = states
+        .values()
+        .flat_map(|state| state.records.iter())
+        .filter_map(|(id, state)| {
+            state
+                .matched_proxy_id
+                .as_ref()
+                .map(|proxy_id| (proxy_id.clone(), id.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut files = sources
+        .iter()
+        .flat_map(|(cli_key, root)| {
+            session_files(*cli_key, root)
+                .into_iter()
+                .map(move |path| (*cli_key, path))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.1.file_name().cmp(&right.1.file_name()));
+    files.dedup();
+    let codex_files = files
+        .iter()
+        .filter(|(cli_key, _)| *cli_key == GatewayCliKey::Codex)
+        .map(|(_, path)| (source_identity(GatewayCliKey::Codex, path), path.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut result = GatewaySessionUsageImportResult::default();
+    for (cli_key, path) in files {
+        result.scanned_files += 1;
+        let source_id = format!("{}:{}", cli_key.as_str(), source_identity(cli_key, &path));
+        let old_state = states.get(&source_id).cloned().unwrap_or_default();
+        let processed = (|| {
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            let stamp = modified_nanos(&metadata);
+            let parser_revision = parsers::revision(cli_key);
+            if old_state.parser_revision == parser_revision
+                && old_state.modified_nanos == stamp
+                && old_state.size == metadata.len()
+                && !old_state.pending
+            {
+                return Ok(None);
+            }
+            let fallback = (stamp / 1_000_000_000) as i64;
+            let mut parsed = parsers::parse_file(cli_key, &path, fallback)?;
+            if let Some(parent_id) = &parsed.parent_thread_id {
+                let parent = if let Some(parent_path) = codex_files.get(parent_id) {
+                    parsers::parse_file(GatewayCliKey::Codex, parent_path, fallback)?.snapshots
+                } else if let Some(state) = states.get(&format!("codex:{parent_id}")) {
+                    state.codex_snapshots.clone()
+                } else {
+                    return Err(format!(
+                        "Parent Codex rollout {parent_id} is unavailable; deferred child usage"
+                    ));
+                };
+                parsers::exclude_codex_replay(&mut parsed, &parent);
+            }
+            let next_state = SourceState {
+                parser_revision,
+                modified_nanos: stamp,
+                size: metadata.len(),
+                pending: false,
+                records: old_state.records.clone(),
+                codex_snapshots: parsed.snapshots,
+            };
+            persist_records(
+                db,
+                &source_id,
+                next_state,
+                parsed.records,
+                &mut claimed_proxies,
+                now,
+            )
+            .map(Some)
+        })();
+        match processed {
+            Ok(Some((state, changes))) => {
+                states.insert(source_id, state);
+                result.merge(changes);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                result.failed_files += 1;
+                log::warn!("Skipping local session usage {}: {error}", path.display());
             }
         }
     }
-    None
+    for (cli_key, root) in sources {
+        if *cli_key == GatewayCliKey::OpenCode {
+            match open_code::sync_database(
+                db,
+                &root.join("opencode.db"),
+                &mut states,
+                &mut claimed_proxies,
+                now,
+            ) {
+                Ok(changes) => result.merge(changes),
+                Err(error) => {
+                    result.failed_files += 1;
+                    log::warn!("OpenCode session usage sync failed: {error}");
+                }
+            }
+        }
+    }
+    result.updated_records +=
+        reconcile_late_proxy_rows(db, &mut states, &mut claimed_proxies, now)?;
+    // Backfills can add old rows after the proxy writer's pruning throttle has
+    // run. Archive them now, even when the gateway itself has never started.
+    let maintenance = super::settings::load_settings_from_sqlite_state(db).and_then(|settings| {
+        db.with_conn(|conn| {
+            super::usage_stats::rollup_and_prune(conn, i64::from(settings.log_retention_days))
+        })
+    });
+    if let Err(error) = maintenance {
+        // Imported usage and its ledger have committed. Keep the successful
+        // result/event even when retention maintenance must retry later.
+        log::warn!("Local usage saved, but history maintenance failed: {error}");
+    }
+    Ok(result)
 }
 
-fn insert_session_usage_record(
+fn persist_records(
     db: &SqliteDbState,
+    source_id: &str,
+    mut state: SourceState,
+    records: Vec<SessionUsageRecord>,
+    claimed_proxies: &mut HashMap<String, String>,
+    now: i64,
+) -> Result<(SourceState, GatewaySessionUsageImportResult), String> {
+    let mut claims = HashMap::new();
+    let mut changes = GatewaySessionUsageImportResult::default();
+    db.with_conn_mut(|conn| {
+        let transaction = conn.transaction().map_err(|error| error.to_string())?;
+        for record in records {
+            changes.parsed_records += 1;
+            let fingerprint = record.fingerprint();
+            let previous = state.records.get(&record.request_id);
+            if previous.is_some_and(|previous| previous.fingerprint == fingerprint) {
+                changes.skipped_records += 1;
+                continue;
+            }
+            if record.created_at > now - SESSION_SETTLE_SECONDS {
+                state.pending = true;
+                continue;
+            }
+            if let Some(legacy_id) = &record.legacy_request_id {
+                // Adopt rows written by the former manual importer. Its ids
+                // were path/line hashes; the new ids survive archive moves.
+                transaction.execute(
+                    "UPDATE proxy_request_logs SET request_id = ?1
+                     WHERE request_id = ?2 AND data_source = 'session' AND app_type = ?3
+                       AND NOT EXISTS (SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
+                    params![record.request_id, legacy_id, record.cli_key.as_str()],
+                ).map_err(|error| error.to_string())?;
+            }
+            let existing_source: Option<String> = transaction.query_row(
+                "SELECT COALESCE(data_source, 'proxy') FROM proxy_request_logs WHERE request_id = ?1",
+                [&record.request_id], |row| row.get(0),
+            ).optional().map_err(|error| error.to_string())?;
+            let matched_proxy_id = previous.and_then(|item| item.matched_proxy_id.clone())
+                .or(find_matching_proxy(&transaction, &record)?).filter(|proxy_id| {
+                claimed_proxies.get(proxy_id).or_else(|| claims.get(proxy_id))
+                    .is_none_or(|owner| owner == &record.request_id)
+            });
+            if existing_source.as_deref() == Some("proxy") || matched_proxy_id.is_some() {
+                if existing_source.as_deref() == Some("session") {
+                    transaction.execute(
+                        "DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'session'",
+                        [&record.request_id],
+                    ).map_err(|error| error.to_string())?;
+                    changes.updated_records += 1;
+                }
+                changes.skipped_records += 1;
+            } else if previous.is_some() && existing_source.is_none() {
+                // A processed row was pruned into a rollup (or explicitly
+                // removed). Re-reading its transcript must not insert it again.
+                changes.skipped_records += 1;
+            } else {
+                write_record(&transaction, &record)?;
+                if existing_source.is_some() { changes.updated_records += 1; }
+                else { changes.inserted_records += 1; }
+            }
+            if let Some(proxy_id) = &matched_proxy_id {
+                claims.insert(proxy_id.clone(), record.request_id.clone());
+            }
+            state.records.insert(record.request_id.clone(), ImportedRecord { fingerprint, matched_proxy_id });
+        }
+        // The ledger and usage rows must commit together, including no-op rows
+        // that are already represented by a gateway log.
+        save_state(&transaction, source_id, &state)?;
+        transaction.commit().map_err(|error| error.to_string())
+    })?;
+    claimed_proxies.extend(claims);
+    Ok((state, changes))
+}
+
+fn find_matching_proxy(
+    conn: &Connection,
     record: &SessionUsageRecord,
-) -> Result<bool, String> {
-    let input_tokens = record.usage.input_tokens.unwrap_or(0) as i64;
-    let output_tokens = record.usage.output_tokens.unwrap_or(0) as i64;
-    let cache_read_tokens = record.usage.cache_read_tokens.unwrap_or(0) as i64;
-    let cache_creation_tokens = record.usage.cache_creation_tokens.unwrap_or(0) as i64;
-    db.with_conn(|conn| {
-        let changed = conn
-            .execute(
-                "INSERT OR IGNORE INTO proxy_request_logs (
-                    request_id, provider_id, app_type, model, request_model,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
-                    total_cost_usd, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, session_id, provider_type, is_streaming,
-                    cost_multiplier, created_at, data_source
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5,
-                    ?6, ?7, ?8, ?9,
-                    '0', '0', '0', '0',
-                    '0', 0, NULL, 0,
-                    ?10, NULL, ?11, 'session', 0,
-                    '1.0', ?12, 'session'
-                )",
-                params![
-                    record.request_id,
-                    record.provider_id,
-                    record.cli_key.as_str(),
-                    record.model,
-                    record.request_model,
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cache_creation_tokens,
-                    i64::from(record.status_code),
-                    record.session_id,
-                    record.created_at,
-                ],
+) -> Result<Option<String>, String> {
+    if let Some(envelope_id) = &record.usage.envelope_id {
+        let exact = conn
+            .query_row(
+                "SELECT request_id FROM proxy_request_logs
+             WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+               AND (request_id = 'SESSION:' || ?2
+                    OR request_id = 'SESSION:' || app_type || ':' || provider_id || ':' || ?2)
+             LIMIT 1",
+                params![record.cli_key.as_str(), envelope_id],
+                |row| row.get::<_, String>(0),
             )
-            .map_err(|error| format!("Failed to insert gateway session usage: {error}"))?;
-        Ok(changed > 0)
-    })
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if exact.is_some() {
+            return Ok(exact);
+        }
+    }
+    if record.model == "unknown" {
+        return Ok(None);
+    }
+    let mut query = conn
+        .prepare_cached(
+            "SELECT request_id FROM proxy_request_logs
+         WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+           AND status_code >= 200 AND status_code < 300
+           AND (stream_outcome IS NULL OR stream_outcome = 'completed')
+           AND (LOWER(model) = LOWER(?2) OR LOWER(request_model) = LOWER(?2))
+           AND input_tokens = ?3 AND output_tokens = ?4
+           AND cache_read_tokens = ?5 AND cache_creation_tokens = ?6
+           AND created_at BETWEEN ?7 - ?8 AND ?7 + ?8
+         LIMIT 2",
+        )
+        .map_err(|error| error.to_string())?;
+    let matches = query
+        .query_map(
+            params![
+                record.cli_key.as_str(),
+                record.model,
+                record.usage.input_tokens.unwrap_or(0) as i64,
+                record.usage.output_tokens.unwrap_or(0) as i64,
+                record.usage.cache_read_tokens.unwrap_or(0) as i64,
+                record.usage.cache_creation_tokens.unwrap_or(0) as i64,
+                record.created_at,
+                PROXY_MATCH_WINDOW_SECONDS,
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok((matches.len() == 1).then(|| matches[0].clone()))
 }
 
-fn stable_session_id(cli_key: GatewayCliKey, file_path: &Path, index: usize) -> String {
-    let mut hasher = DefaultHasher::new();
-    cli_key.as_str().hash(&mut hasher);
-    file_path.to_string_lossy().hash(&mut hasher);
-    index.hash(&mut hasher);
-    format!("SESSION:{:016x}", hasher.finish())
+fn write_record(conn: &Connection, record: &SessionUsageRecord) -> Result<(), String> {
+    let input = record.usage.input_tokens.unwrap_or(0);
+    let output = record.usage.output_tokens.unwrap_or(0);
+    let read = record.usage.cache_read_tokens.unwrap_or(0);
+    let creation = record.usage.cache_creation_tokens.unwrap_or(0);
+    let costs = calculate_session_costs(conn, &record.model, input, output, read, creation);
+    let total = record
+        .reported_cost_usd
+        .clone()
+        .unwrap_or_else(|| format_decimal_cost(costs.total()));
+    conn.execute(
+        "INSERT INTO proxy_request_logs (
+            request_id, provider_id, app_type, model, request_model,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+            latency_ms, first_token_ms, duration_ms, status_code, error_message,
+            session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source
+         ) VALUES (
+            ?1, 'session', ?2, ?3, ?3, ?4, ?5, ?6, ?7,
+            ?8, ?9, ?10, ?11, ?12, 0, NULL, 0, 200, NULL, ?13, 'session', 0, '1.0', ?14, 'session'
+         ) ON CONFLICT(request_id) DO UPDATE SET
+            model = excluded.model, request_model = excluded.request_model,
+            input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
+            cache_read_tokens = excluded.cache_read_tokens, cache_creation_tokens = excluded.cache_creation_tokens,
+            input_cost_usd = excluded.input_cost_usd, output_cost_usd = excluded.output_cost_usd,
+            cache_read_cost_usd = excluded.cache_read_cost_usd, cache_creation_cost_usd = excluded.cache_creation_cost_usd,
+            total_cost_usd = excluded.total_cost_usd, session_id = excluded.session_id, created_at = excluded.created_at
+         WHERE proxy_request_logs.data_source = 'session'",
+        params![record.request_id, record.cli_key.as_str(), record.model, input as i64, output as i64, read as i64, creation as i64,
+            format_decimal_cost(costs.input_cost_usd), format_decimal_cost(costs.output_cost_usd),
+            format_decimal_cost(costs.cache_read_cost_usd), format_decimal_cost(costs.cache_creation_cost_usd),
+            total, record.session_id, record.created_at],
+    ).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
-fn session_id_from_path(file_path: &Path) -> Option<String> {
-    file_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn model_from_value(value: &Value) -> Option<String> {
-    first_string_at_paths(
-        value,
-        &[
-            "/model",
-            "/request/model",
-            "/response/model",
-            "/message/model",
-            "/metadata/model",
-        ],
-    )
-}
-
-fn timestamp_from_value(value: &Value) -> Option<i64> {
-    for path in [
-        "/created_at",
-        "/createdAt",
-        "/timestamp",
-        "/time",
-        "/message/created_at",
-    ] {
-        let Some(value) = value.pointer(path) else {
+fn reconcile_late_proxy_rows(
+    db: &SqliteDbState,
+    states: &mut HashMap<String, SourceState>,
+    claimed_proxies: &mut HashMap<String, String>,
+    now: i64,
+) -> Result<u64, String> {
+    let owners = states
+        .iter()
+        .flat_map(|(source_id, state)| {
+            state
+                .records
+                .keys()
+                .map(move |id| (id.clone(), source_id.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    let rows = db.with_conn(|conn| {
+        let mut query = conn.prepare(
+            "SELECT request_id, app_type, model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, created_at, session_id
+             FROM proxy_request_logs WHERE data_source = 'session' AND created_at >= ?1",
+        ).map_err(|error| error.to_string())?;
+        let rows = query
+            .query_map([now - 3600], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?.max(0) as u64,
+                    row.get::<_, i64>(4)?.max(0) as u64,
+                    row.get::<_, i64>(5)?.max(0) as u64,
+                    row.get::<_, i64>(6)?.max(0) as u64,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
+    })?;
+    let mut changed = 0;
+    for (id, cli, model, input, output, read, creation, created_at, session_id) in rows {
+        let Some(source_id) = owners.get(&id) else {
             continue;
         };
-        if let Some(timestamp) = value.as_i64() {
-            return Some(if timestamp > 10_000_000_000 {
-                timestamp / 1000
-            } else {
-                timestamp
-            });
-        }
-        if let Some(text) = value.as_str() {
-            if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(text) {
-                return Some(timestamp.timestamp());
-            }
-        }
+        let Ok(cli_key) = serde_json::from_value::<GatewayCliKey>(serde_json::Value::String(cli))
+        else {
+            continue;
+        };
+        let record = SessionUsageRecord {
+            request_id: id.clone(),
+            legacy_request_id: None,
+            cli_key,
+            model,
+            created_at,
+            session_id: session_id.unwrap_or_default(),
+            usage: TokenUsage {
+                input_tokens: Some(input),
+                output_tokens: Some(output),
+                cache_read_tokens: Some(read),
+                cache_creation_tokens: Some(creation),
+                envelope_id: None,
+            },
+            reported_cost_usd: None,
+        };
+        let matched = db.with_conn(|conn| find_matching_proxy(conn, &record))?;
+        let Some(proxy_id) = matched.filter(|proxy_id| !claimed_proxies.contains_key(proxy_id))
+        else {
+            continue;
+        };
+        let Some(mut state) = states.get(source_id).cloned() else {
+            continue;
+        };
+        state.records.get_mut(&id).unwrap().matched_proxy_id = Some(proxy_id.clone());
+        db.with_conn_mut(|conn| {
+            let transaction = conn.transaction().map_err(|error| error.to_string())?;
+            transaction.execute("DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'session'", [&id])
+                .map_err(|error| error.to_string())?;
+            save_state(&transaction, source_id, &state)?;
+            transaction.commit().map_err(|error| error.to_string())
+        })?;
+        states.insert(source_id.clone(), state);
+        claimed_proxies.insert(proxy_id, id);
+        changed += 1;
     }
-    None
-}
-
-fn first_string_at_paths(value: &Value, paths: &[&str]) -> Option<String> {
-    paths
-        .iter()
-        .find_map(|path| value.pointer(path).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    Ok(changed)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn claude_import_uses_message_id_for_request_id() {
-        let root = tempfile::tempdir().unwrap();
-        let file_path = root.path().join("session.jsonl");
-        let mut file = fs::File::create(&file_path).unwrap();
-        writeln!(
-            file,
-            "{}",
-            serde_json::json!({
-                "message": {
-                    "id": "msg_123",
-                    "model": "claude-sonnet-4-5",
-                    "usage": {
-                        "input_tokens": 10,
-                        "output_tokens": 20,
-                        "cache_read_input_tokens": 3
-                    }
-                }
-            })
-        )
-        .unwrap();
-
-        let records = parse_session_file(GatewayCliKey::Claude, &file_path).unwrap();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].request_id, "SESSION:msg_123");
-        assert_eq!(records[0].usage.cache_read_tokens, Some(3));
-    }
-
-    #[test]
-    fn insert_session_usage_record_is_idempotent_for_duplicate_request_id() {
-        // INSERT OR IGNORE on the PRIMARY KEY (request_id) is the only guard
-        // against double-counting usage when the same session is imported twice.
-        let db = SqliteDbState::in_memory_for_test().expect("sqlite");
-        let root = tempfile::tempdir().unwrap();
-        let file_path = root.path().join("session.jsonl");
-        let mut file = fs::File::create(&file_path).unwrap();
-        writeln!(
-            file,
-            "{}",
-            serde_json::json!({
-                "message": {
-                    "id": "msg_dup",
-                    "model": "claude-sonnet-4-5",
-                    "usage": {"input_tokens": 10, "output_tokens": 20}
-                }
-            })
-        )
-        .unwrap();
-
-        let records = parse_session_file(GatewayCliKey::Claude, &file_path).unwrap();
-        let record = &records[0];
-
-        let first = insert_session_usage_record(&db, record).unwrap();
-        assert!(first, "first insert should report a row change");
-        let second = insert_session_usage_record(&db, record).unwrap();
-        assert!(
-            !second,
-            "duplicate insert must be ignored so usage is not double-counted"
-        );
-    }
-}
+mod tests;

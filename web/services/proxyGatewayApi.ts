@@ -90,6 +90,8 @@ export interface ProxyGatewayStatus {
   listen_host: string;
   listen_port: number | null;
   active_connections: number;
+  requests_per_minute: number;
+  requests_per_minute_by_cli: Partial<Record<GatewayCliKey, number>>;
   last_error: string | null;
 }
 
@@ -203,6 +205,7 @@ export interface GatewayPaginatedRequestLogs {
 
 export interface GatewayRequestLogItem {
   trace_id: string;
+  data_source: string;
   cli_key: GatewayCliKey;
   route_name?: string | null;
   method?: string | null;
@@ -211,6 +214,7 @@ export interface GatewayRequestLogItem {
   provider_name: string | null;
   requested_model: string | null;
   upstream_model_id: string;
+  reasoning_effort: string | null;
   status_code: number;
   success: boolean;
   error_message: string | null;
@@ -263,7 +267,8 @@ export interface GatewayProviderStats {
   total_tokens: number;
   total_cost_usd: string;
   success_rate: number;
-  avg_latency_ms: number;
+  avg_latency_ms: number | null;
+  cache_hit_rate: number | null;
 }
 
 export interface GatewayModelStats {
@@ -272,11 +277,12 @@ export interface GatewayModelStats {
   request_count: number;
   total_tokens: number;
   total_cost_usd: string;
-  avg_latency_ms: number;
+  avg_latency_ms: number | null;
 }
 
 export interface GatewayRequestLogSummary {
   trace_id: string;
+  data_source?: string | null;
   started_at: string;
   ended_at: string;
   cli_key: GatewayCliKey | null;
@@ -287,6 +293,7 @@ export interface GatewayRequestLogSummary {
   provider_name: string | null;
   requested_model: string | null;
   upstream_model_id: string | null;
+  reasoning_effort?: string | null;
   upstream_url: string | null;
   status_code: number | null;
   upstream_status_code: number | null;
@@ -348,7 +355,7 @@ export interface GatewayModelHealthItem {
   last_error_category: string | null;
 }
 
-export type GatewaySessionImportCli = 'all' | 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini';
+export type GatewaySessionImportCli = 'all' | GatewayCliKey;
 
 export interface GatewaySessionUsageImportInput {
   cli_key: GatewaySessionImportCli;
@@ -358,7 +365,9 @@ export interface GatewaySessionUsageImportResult {
   scanned_files: number;
   parsed_records: number;
   inserted_records: number;
+  updated_records: number;
   skipped_records: number;
+  failed_files: number;
 }
 
 export interface DataSourceBreakdownInput {

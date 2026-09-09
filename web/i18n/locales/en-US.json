@@ -60,7 +60,7 @@
     "tooltip": "Local proxy gateway",
     "page": {
       "title": "Gateway",
-      "subtitle": "Local HTTP entrypoint, CLI takeover state, request records, and model-level health.",
+      "subtitle": "Track local session usage and gateway requests, and manage CLI routing and gateway status.",
       "tabs": {
         "statistics": "Stats",
         "requests": "Requests",
@@ -74,10 +74,7 @@
         "providerUnselected": "No provider selected",
         "summaryRequests": "Requests",
         "summaryTokens": "Total tokens",
-        "summaryCost": "Cost",
-        "successRateOnly": "{{rate}}% success",
-        "tokens": "In {{input}} / out {{output}} / cache {{cache}}",
-        "dbSummaryOnly": "From DB summaries",
+        "summaryCost": "Total cost",
         "filters": {
           "all": "All CLIs"
         },
@@ -105,10 +102,17 @@
           "tokens": "Tokens",
           "cost": "Cost",
           "successRate": "Success",
-          "latency": "Avg latency"
+          "latency": "Avg latency",
+          "cacheHitRate": "Cache hit rate"
         },
         "empty": "No statistics yet",
-        "loadFailed": "Failed to load gateway statistics: {{error}}"
+        "loadFailed": "Failed to load gateway statistics: {{error}}",
+        "cacheHitRateHint": "Cache-read tokens / (fresh input + cache-write + cache-read tokens), weighted by token totals in the selected range. No input usage is shown as -.",
+        "freshInput": "Fresh input",
+        "cacheCreation": "Cache creation",
+        "cacheRead": "Cache read",
+        "approximateTokens": "≈ {{value}}",
+        "modelUnavailable": "Model not recorded"
       },
       "pricing": {
         "open": "Pricing config",
@@ -164,8 +168,8 @@
         "empty": "No request records",
         "detailEmpty": "Select a request to view details",
         "loadFailed": "Failed to load request records: {{error}}",
-        "importSessions": "Import Sessions",
-        "importDone": "Import complete: {{inserted}} inserted, {{skipped}} skipped, {{files}} files scanned",
+        "importSessions": "Sync session usage",
+        "importDone": "Sync complete: {{inserted}} added, {{updated}} updated, {{skipped}} skipped; {{files}} scanned, {{failed}} failed",
         "importFailed": "Failed to import session usage: {{error}}",
         "notStored": "This detail was not stored. Enable the matching log item in gateway settings.",
         "requestHeaders": "Request Headers",
@@ -232,8 +236,18 @@
           "unknown": "Unrecognized request"
         },
         "requestPathUnavailable": "Path not recorded",
-        "notApplicable": "Not applicable"
-      }
+        "notApplicable": "Not applicable",
+        "tpsLabel": "TPS:",
+        "tpsHint": "Output tokens divided by generation time. Streaming uses total time minus first-chunk latency; non-streaming or missing first-chunk timing uses total time. Unavailable output or generation time is shown as -.",
+        "durationHint": "First-token latency (approximated by the first chunk) / total duration. The first chunk may be an SSE control event. Only total duration is shown when first-chunk timing is unavailable.",
+        "effortHint": "Explicit reasoning effort in the final upstream request. Model defaults are not inferred.",
+        "localSession": "Session",
+        "localSessionHint": "From local CLI session logs, without HTTP status or latency. Cost uses the CLI-reported value when available, otherwise model pricing.",
+        "importPartialFailure": "Partially synced: {{inserted}} added, {{updated}} updated, {{skipped}} skipped; {{count}} items failed. See the application log for details.",
+        "localSessionDetailUnavailable": "Local session usage does not include HTTP request bodies, response bodies, or headers."
+      },
+      "requestRateHint": "RPM counts requests entering the gateway for the selected CLI in the last 60 seconds. It refreshes every 5 seconds, is independent of the date filter, and excludes local session imports.",
+      "rpm": "RPM"
     },
     "takeover": {
       "buttonTooltip": "View or apply gateway takeover",

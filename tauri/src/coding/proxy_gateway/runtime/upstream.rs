@@ -762,6 +762,12 @@ pub(super) async fn route_request_with_options(
         return response;
     }
 
+    // Count external arrivals once, before provider selection/retries and completion.
+    // Local probes return above; in-app connectivity tests use a provider override.
+    if options.provider_override_id.is_none() {
+        context.record_request_arrival(route.cli_key);
+    }
+
     let Some(db) = context.db.as_ref() else {
         return json_response(
             503,
@@ -1128,6 +1134,7 @@ async fn forward_to_upstream(
                     response.requested_model = Some(requested_model.clone());
                     response.upstream_model_id = Some(health_key.upstream_model_id.clone());
                     response.upstream_request_body = error.upstream_request_body;
+                    response.target_protocol = Some(provider.target_protocol);
                     response.upstream_response_body = error.upstream_response_body;
                     response.upstream_response_body_bytes = error.upstream_response_body_bytes;
                     response.error_category = Some(category.to_string());
@@ -1870,6 +1877,7 @@ async fn build_gateway_response(
             requested_model: None,
             upstream_model_id: None,
             upstream_request_body: Some(upstream_body_snapshot),
+            target_protocol: Some(provider.target_protocol),
             upstream_response_body: Some(upstream_response_body),
             upstream_response_body_bytes,
             upstream_response_body_stream_snapshot: None,
@@ -1965,6 +1973,7 @@ async fn build_gateway_response(
             requested_model: None,
             upstream_model_id: None,
             upstream_request_body: Some(upstream_body_snapshot),
+            target_protocol: Some(provider.target_protocol),
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
             upstream_response_body_stream_snapshot,
@@ -2117,6 +2126,7 @@ async fn build_gateway_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: Some(upstream_body_snapshot),
+        target_protocol: Some(provider.target_protocol),
         upstream_response_body: stored_upstream_response_body,
         upstream_response_body_bytes: stored_upstream_response_body_bytes,
         upstream_response_body_stream_snapshot: None,
@@ -4145,6 +4155,7 @@ fn buffered_gateway_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: Some(upstream_body_snapshot),
+        target_protocol: Some(provider.target_protocol),
         upstream_response_body,
         upstream_response_body_bytes,
         upstream_response_body_stream_snapshot: None,
@@ -4216,6 +4227,7 @@ fn streaming_first_chunk_failure_response(
     failure_response.pricing_model_source = Some(provider.meta.pricing_model_source.clone());
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
+    failure_response.target_protocol = Some(provider.target_protocol);
     failure_response.upstream_request_body = response
         .upstream_request_body
         .take()
@@ -4271,6 +4283,7 @@ fn empty_success_failure_response(
     failure_response.pricing_model_source = Some(provider.meta.pricing_model_source.clone());
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
+    failure_response.target_protocol = Some(provider.target_protocol);
     failure_response.upstream_request_body = response.upstream_request_body.take();
     // The gateway rewrites the upstream's real status into a synthetic 502; record
     // the original code so request detail can still surface it.
@@ -4325,6 +4338,7 @@ fn local_request_schema_failure_response(
     response.requested_model = Some(requested_model.to_string());
     response.upstream_model_id = Some(upstream_model_id.to_string());
     response.upstream_request_body = error.upstream_request_body;
+    response.target_protocol = Some(provider.target_protocol);
     response.upstream_response_body = error.upstream_response_body;
     response.upstream_response_body_bytes = error.upstream_response_body_bytes;
     response.error_category = Some("request_schema".to_string());
@@ -12861,6 +12875,7 @@ data: {data}\r\n\r\n"
             provider_attempts: Vec::new(),
             failover: false,
             source_protocol: None,
+            target_protocol: None,
             stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         }
@@ -15119,6 +15134,7 @@ data: {data}\r\n\r\n"
             provider_attempts: Vec::new(),
             failover: false,
             source_protocol: None,
+            target_protocol: None,
             stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         };
@@ -15179,6 +15195,7 @@ data: {data}\r\n\r\n"
             provider_attempts: Vec::new(),
             failover: false,
             source_protocol: None,
+            target_protocol: None,
             stream_outcome: GatewayStreamOutcome::NotStreaming,
             note: String::new(),
         };

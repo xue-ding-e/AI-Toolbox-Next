@@ -16,11 +16,13 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import GatewaySettingsPanel from '@/features/settings/pages/GatewaySettingsPanel';
 import {
   checkProxyGatewayHealth,
   getProxyGatewaySettings,
   getProxyGatewayStatus,
+  importProxyGatewaySessionUsage,
   preflightStopProxyGateway,
   restartProxyGateway,
   startProxyGateway,
@@ -59,6 +61,7 @@ const GatewayPage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const { isActive } = useKeepAlive();
   const activeTab = resolveGatewayTabFromPath(location.pathname);
   const [status, setStatus] = React.useState<ProxyGatewayStatus | null>(null);
   const [busyAction, setBusyAction] = React.useState<GatewayAction | null>('load');
@@ -70,6 +73,15 @@ const GatewayPage: React.FC = () => {
   });
   const settingsDraftRef = React.useRef<ProxyGatewaySettings | null>(null);
   const usageRefreshTimerRef = React.useRef<number | null>(null);
+  const statusRevisionRef = React.useRef(0);
+  const [statusRefreshKey, setStatusRefreshKey] = React.useState(0);
+  const [documentVisible, setDocumentVisible] = React.useState(() => document.visibilityState !== 'hidden');
+
+  const handleStatusChange = React.useCallback((nextStatus: ProxyGatewayStatus) => {
+    // An authoritative command result must not be overwritten by an older poll.
+    statusRevisionRef.current += 1;
+    setStatus(nextStatus);
+  }, []);
 
   React.useEffect(() => {
     if (location.pathname === '/gateway') {
@@ -82,10 +94,11 @@ const GatewayPage: React.FC = () => {
 
     const loadGatewayState = async () => {
       setBusyAction('load');
+      const revision = statusRevisionRef.current;
       try {
         const nextStatus = await getProxyGatewayStatus();
-        if (!disposed) {
-          setStatus(nextStatus);
+        if (!disposed && revision === statusRevisionRef.current) {
+          handleStatusChange(nextStatus);
         }
       } catch (error) {
         if (!disposed) {
@@ -106,7 +119,75 @@ const GatewayPage: React.FC = () => {
     return () => {
       disposed = true;
     };
-  }, [t]);
+  }, [handleStatusChange, t]);
+
+  React.useEffect(() => {
+    const onVisibilityChange = () => {
+      statusRevisionRef.current += 1;
+      setDocumentVisible(document.visibilityState !== 'hidden');
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isActive || !documentVisible || busyAction) {
+      return undefined;
+    }
+    let disposed = false;
+    let refreshing = false;
+    const isPageVisible = () => document.visibilityState !== 'hidden';
+    const refreshStatus = async () => {
+      if (disposed || refreshing || !isPageVisible()) {
+        return;
+      }
+      refreshing = true;
+      const revision = statusRevisionRef.current;
+      try {
+        const nextStatus = await getProxyGatewayStatus();
+        if (!disposed && revision === statusRevisionRef.current && isPageVisible()) {
+          setStatus(nextStatus);
+        }
+      } catch {
+        // Keep the last known status on a transient refresh failure.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const timer = status?.running
+      ? window.setInterval(() => void refreshStatus(), 5000)
+      : null;
+    void refreshStatus();
+    return () => {
+      disposed = true;
+      if (timer !== null) {
+        window.clearInterval(timer);
+      }
+    };
+  }, [busyAction, documentVisible, isActive, status?.running, statusRefreshKey]);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen('gateway-running-changed', () => {
+      if (!disposed) {
+        statusRevisionRef.current += 1;
+        setStatusRefreshKey((current) => current + 1);
+      }
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+      } else {
+        unlisten = dispose;
+      }
+    }).catch(() => {
+      // Status still refreshes when the page becomes visible.
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   React.useEffect(() => {
     if (notice?.kind !== 'success') {
@@ -156,6 +237,22 @@ const GatewayPage: React.FC = () => {
     }, 300);
   }, [bumpUsageRefreshKeys]);
 
+  React.useEffect(() => {
+    if (!isActive || !documentVisible) {
+      return undefined;
+    }
+    let disposed = false;
+    void importProxyGatewaySessionUsage({ cli_key: 'all' }).then(() => {
+      if (!disposed) {
+        scheduleUsageRefresh();
+      }
+    }).catch((error) => {
+      // The background scheduler will retry; manual sync exposes the error.
+      console.warn('Failed to refresh local session usage', error);
+    });
+    return () => { disposed = true; };
+  }, [documentVisible, isActive, scheduleUsageRefresh]);
+
   React.useEffect(() => () => {
     if (usageRefreshTimerRef.current !== null) {
       window.clearTimeout(usageRefreshTimerRef.current);
@@ -203,6 +300,7 @@ const GatewayPage: React.FC = () => {
   }, []);
 
   const handleStart = async () => {
+    statusRevisionRef.current += 1;
     setBusyAction('start');
     try {
       const settings = settingsDraftRef.current
@@ -213,7 +311,7 @@ const GatewayPage: React.FC = () => {
         enabled_on_startup: false,
       });
       const nextStatus = await startProxyGateway(nextSettings);
-      setStatus(nextStatus);
+      handleStatusChange(nextStatus);
       bumpTabRefreshKey(activeTab);
       setNotice({ kind: 'success', text: t('settings.gateway.notice.started') });
     } catch (error) {
@@ -222,7 +320,7 @@ const GatewayPage: React.FC = () => {
         text: t('settings.gateway.notice.startFailed', { error: formatGatewayError(error) }),
       });
       try {
-        setStatus(await getProxyGatewayStatus());
+        handleStatusChange(await getProxyGatewayStatus());
       } catch {
         // Best effort refresh only.
       }
@@ -232,6 +330,7 @@ const GatewayPage: React.FC = () => {
   };
 
   const handleStop = async () => {
+    statusRevisionRef.current += 1;
     setBusyAction('stop');
     try {
       const preflight = await preflightStopProxyGateway();
@@ -246,7 +345,7 @@ const GatewayPage: React.FC = () => {
         return;
       }
       const nextStatus = await stopProxyGateway();
-      setStatus(nextStatus);
+      handleStatusChange(nextStatus);
       bumpTabRefreshKey(activeTab);
       setNotice({ kind: 'success', text: t('settings.gateway.notice.stopped') });
     } catch (error) {
@@ -260,10 +359,11 @@ const GatewayPage: React.FC = () => {
   };
 
   const handleRestart = async () => {
+    statusRevisionRef.current += 1;
     setBusyAction('restart');
     try {
       const nextStatus = await restartProxyGateway();
-      setStatus(nextStatus);
+      handleStatusChange(nextStatus);
       bumpTabRefreshKey(activeTab);
       setNotice({ kind: 'success', text: t('settings.gateway.notice.restarted') });
     } catch (error) {
@@ -271,7 +371,7 @@ const GatewayPage: React.FC = () => {
       let nextStatus: ProxyGatewayStatus | null = null;
       try {
         nextStatus = await getProxyGatewayStatus();
-        setStatus(nextStatus);
+        handleStatusChange(nextStatus);
       } catch {
         // Best effort refresh only.
       }
@@ -452,13 +552,18 @@ const GatewayPage: React.FC = () => {
         </div>
       ) : null}
 
-      {activeTab === 'statistics' ? <GatewayStatisticsView refreshKey={tabRefreshKeys.statistics} /> : null}
+      {activeTab === 'statistics' ? (
+        <GatewayStatisticsView
+          refreshKey={tabRefreshKeys.statistics}
+          gatewayStatus={status}
+        />
+      ) : null}
       {activeTab === 'requests' ? <GatewayRequestsView refreshKey={tabRefreshKeys.requests} /> : null}
       {activeTab === 'settings' ? (
         <GatewaySettingsPanel
           key={`settings-${tabRefreshKeys.settings}`}
           showTitleBlock={false}
-          onStatusChange={setStatus}
+          onStatusChange={handleStatusChange}
           onDraftSettingsChange={handleSettingsDraftChange}
         />
       ) : null}

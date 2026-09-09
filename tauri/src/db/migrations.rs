@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 16;
+pub const TARGET_SCHEMA_VERSION: i32 = 19;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -55,6 +55,15 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 16 {
         run_migration_step(conn, 16, migrate_v16)?;
+    }
+    if current_version < 17 {
+        run_migration_step(conn, 17, migrate_v17)?;
+    }
+    if current_version < 18 {
+        run_migration_step(conn, 18, migrate_v18)?;
+    }
+    if current_version < 19 {
+        run_migration_step(conn, 19, migrate_v19)?;
     }
 
     Ok(())
@@ -357,6 +366,36 @@ fn migrate_v16(conn: &Connection) -> Result<(), String> {
         DbTable::KimiOfficialAccount,
         &JsonFieldPath::new("provider_id")?,
     )
+}
+
+fn migrate_v17(conn: &Connection) -> Result<(), String> {
+    // Final upstream effort is compact metadata; legacy and session rows stay NULL.
+    add_column_if_missing(conn, "proxy_request_logs", "reasoning_effort", "TEXT")
+}
+
+fn migrate_v18(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::GatewaySessionUsageState)
+}
+
+fn migrate_v19(conn: &Connection) -> Result<(), String> {
+    // Early v18 databases already have the session ledger but not this column.
+    // A new version is required: extending an applied migration cannot repair them.
+    add_column_if_missing(
+        conn,
+        "usage_daily_rollups",
+        "latency_sample_count",
+        "INTEGER",
+    )?;
+    // Legacy imports always used the reserved provider id `session` and did
+    // not measure HTTP latency. Preserve existing proxy averages on upgrade.
+    conn.execute(
+        "UPDATE usage_daily_rollups SET latency_sample_count =
+             CASE WHEN provider_id = 'session' THEN 0 ELSE request_count END
+         WHERE latency_sample_count IS NULL",
+        [],
+    )
+    .map_err(|error| format!("Failed to migrate usage latency samples: {error}"))?;
+    Ok(())
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

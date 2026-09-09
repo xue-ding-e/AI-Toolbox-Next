@@ -35,8 +35,11 @@ import {
   formatCompactInteger,
   formatDateTime,
   formatDuration,
+  formatDurationPair,
   formatGatewayError,
   formatInteger,
+  formatModelWithEffort,
+  formatTps,
   formatUsd,
   isGatewayRequestUsageApplicable,
   joinClassNames,
@@ -151,6 +154,9 @@ const providerDisplayName = (
   if (providerName) {
     return providerName;
   }
+  if (providerId === 'session') {
+    return t('gateway.page.requests.localSession');
+  }
   if (!providerId || providerId === 'unknown') {
     return t('gateway.page.requests.providerUnselected');
   }
@@ -163,7 +169,7 @@ const providerDisplayMeta = (
   providerId?: string | null,
 ) => {
   const cliLabel = t(`settings.gateway.cli.${cliKey}`);
-  if (!providerId || providerId === 'unknown') {
+  if (!providerId || providerId === 'unknown' || providerId === 'session') {
     return cliLabel;
   }
   return `${cliLabel} · ${providerId}`;
@@ -298,6 +304,9 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const [exportingDetail, setExportingDetail] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const [noticeKind, setNoticeKind] = React.useState<'success' | 'warning'>('success');
+  const requestRevisionRef = React.useRef(0);
+  const detailRevisionRef = React.useRef(0);
   const selectedTraceIdRef = React.useRef<string | null>(null);
   const exportNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -316,30 +325,36 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   );
 
   const closeDetail = React.useCallback(() => {
+    detailRevisionRef.current += 1;
     selectedTraceIdRef.current = null;
     setSelectedTraceId(null);
     setDetail(null);
   }, []);
 
   const loadRequests = React.useCallback(async () => {
+    const revision = ++requestRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
       const result = await listProxyGatewayRequestLogs(filters, Math.max(page - 1, 0), PAGE_SIZE);
+      if (revision !== requestRevisionRef.current) return;
       setLogs(result.data);
       setTotal(result.total);
       if (!result.data.some((log) => log.trace_id === selectedTraceIdRef.current)) {
         closeDetail();
       }
     } catch (loadError) {
-      setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(loadError) }));
+      if (revision === requestRevisionRef.current) {
+        setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(loadError) }));
+      }
     } finally {
-      setLoading(false);
+      if (revision === requestRevisionRef.current) setLoading(false);
     }
   }, [closeDetail, filters, page, t]);
 
   const loadDetail = React.useCallback(
     async (traceId: string) => {
+      const revision = ++detailRevisionRef.current;
       selectedTraceIdRef.current = traceId;
       setSelectedTraceId(traceId);
       setDetail(null);
@@ -347,12 +362,15 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       setError(null);
       try {
         const nextDetail = await getProxyGatewayRequestLogDetail(traceId);
+        if (revision !== detailRevisionRef.current) return;
         setDetail(nextDetail);
         setActiveDetailTab('record');
       } catch (detailError) {
-        setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(detailError) }));
+        if (revision === detailRevisionRef.current) {
+          setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(detailError) }));
+        }
       } finally {
-        setDetailLoading(false);
+        if (revision === detailRevisionRef.current) setDetailLoading(false);
       }
     },
     [t],
@@ -360,6 +378,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
 
   React.useEffect(() => {
     void loadRequests();
+    return () => { requestRevisionRef.current += 1; };
   }, [loadRequests, refreshKey]);
 
   const applyFilters = () => {
@@ -405,13 +424,19 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setNotice(null);
     try {
       const result = await importProxyGatewaySessionUsage({ cli_key: 'all' });
-      setNotice(t('gateway.page.requests.importDone', {
+      setNotice(t(result.failed_files > 0
+        ? 'gateway.page.requests.importPartialFailure'
+        : 'gateway.page.requests.importDone', {
         inserted: formatInteger(result.inserted_records),
+        updated: formatInteger(result.updated_records),
         skipped: formatInteger(result.skipped_records),
         files: formatInteger(result.scanned_files),
+        failed: formatInteger(result.failed_files),
+        count: result.failed_files,
       }));
-      setPage(1);
-      await loadRequests();
+      setNoticeKind(result.failed_files > 0 ? 'warning' : 'success');
+      if (page === 1) await loadRequests();
+      else setPage(1);
     } catch (importError) {
       setError(t('gateway.page.requests.importFailed', { error: formatGatewayError(importError) }));
     } finally {
@@ -444,6 +469,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     try {
       await exportProxyGatewayRequestLogDetail(detail.trace_id, exportPath);
       const exportDoneNotice = t('gateway.page.requests.exportDone');
+      setNoticeKind('success');
       setNotice(exportDoneNotice);
       exportNoticeTimerRef.current = setTimeout(() => {
         setNotice((currentNotice) => (currentNotice === exportDoneNotice ? null : currentNotice));
@@ -474,11 +500,17 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       );
     }
 
+    const detailEmptyMessage = detail.data_source === 'session'
+      ? t('gateway.page.requests.localSessionDetailUnavailable')
+      : t('gateway.page.requests.notStored');
+
     if (activeDetailTab === 'record') {
       const attemptCounts = normalizeAttemptCounts(detail);
       const providerAttempts = detail.provider_attempts ?? [];
       const requestDisplay = deriveGatewayRequestDisplay(detail);
-      const requestDisplayTitle = requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
+      const requestDisplayTitle = detail.data_source === 'session' && !requestDisplay.modelApplicable
+        ? t('gateway.page.requests.localSession')
+        : requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
       return (
         <div className={styles.detailGrid}>
           <span>{t('gateway.page.requests.fields.traceId')}</span>
@@ -492,9 +524,15 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <span>{t('gateway.page.requests.fields.provider')}</span>
           <strong>{providerDisplayName(t, detail.provider_id, detail.provider_name)}</strong>
           <span>{t('gateway.page.requests.fields.model')}</span>
-          <strong>{requestDisplay.modelApplicable ? requestDisplay.modelText : t('gateway.page.requests.notApplicable')}</strong>
+          <strong>{requestDisplay.modelApplicable
+            ? formatModelWithEffort(requestDisplay.modelText, detail.reasoning_effort)
+            : detail.data_source === 'session'
+              ? t('gateway.page.statistics.modelUnavailable')
+              : t('gateway.page.requests.notApplicable')}</strong>
           <span>{t('gateway.page.requests.fields.status')}</span>
-          <strong>{detail.status_code ?? '-'}</strong>
+          <strong title={detail.data_source === 'session' ? t('gateway.page.requests.localSessionHint') : undefined}>
+            {detail.data_source === 'session' ? '-' : detail.status_code ?? '-'}
+          </strong>
           {detail.upstream_status_code != null && (
             <>
               <span>{t('gateway.page.requests.fields.upstreamStatus')}</span>
@@ -502,15 +540,17 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             </>
           )}
           <span>{t('gateway.page.requests.fields.duration')}</span>
-          <strong>{formatDuration(detail.duration_ms)}</strong>
-          <span>{t('gateway.page.requests.fields.firstToken')}</span>
+          <strong>{detail.data_source === 'session' ? '-' : formatDuration(detail.duration_ms)}</strong>
+          <span title={t('gateway.page.requests.durationHint')}>{t('gateway.page.requests.fields.firstToken')}</span>
           <strong>{detail.first_token_ms != null ? formatDuration(detail.first_token_ms) : '-'}</strong>
           <span>{t('gateway.page.requests.fields.streaming')}</span>
-          <strong>{detail.is_streaming ? t('common.yes') : t('common.no')}</strong>
+          <strong>{detail.data_source === 'session' ? '-' : detail.is_streaming ? t('common.yes') : t('common.no')}</strong>
           <span>{t('gateway.page.requests.fields.tokens')}</span>
           <strong>{isGatewayRequestUsageApplicable(detail) ? tokenBreakdownText(t, detail) : '-'}</strong>
+          <span title={t('gateway.page.requests.tpsHint')}>{t('gateway.page.requests.tpsLabel')}</span>
+          <strong>{formatTps(detail) ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.attempts')}</span>
-          <strong>{attemptCounts.current} / {attemptCounts.total}</strong>
+          <strong>{detail.data_source === 'session' ? '-' : [attemptCounts.current, attemptCounts.total].join(' / ')}</strong>
           {providerAttempts.length > 0 && (
             <>
               <span>{t('gateway.page.requests.fields.attemptTimeline')}</span>
@@ -552,13 +592,13 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         return (
           <div className={styles.detailStack}>
             <span className={styles.detailSubtitle}>{t('gateway.page.requests.receivedBody')}</span>
-            <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />
+            <CollapsiblePre content={detail.request_body} fallback={detailEmptyMessage} />
             <span className={styles.detailSubtitle}>{t('gateway.page.requests.upstreamBody')}</span>
-            <CollapsiblePre content={detail.upstream_request_body} fallback={t('gateway.page.requests.notStored')} />
+            <CollapsiblePre content={detail.upstream_request_body} fallback={detailEmptyMessage} />
           </div>
         );
       }
-      return <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />;
+      return <CollapsiblePre content={detail.request_body} fallback={detailEmptyMessage} />;
     }
 
     if (activeDetailTab === 'headers') {
@@ -567,12 +607,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.requestHeaders')}</span>
           <CollapsiblePre
             content={stringifyDetailValue(detail.request_headers) || null}
-            fallback={t('gateway.page.requests.notStored')}
+            fallback={detailEmptyMessage}
           />
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.responseHeaders')}</span>
           <CollapsiblePre
             content={stringifyDetailValue(detail.response_headers) || null}
-            fallback={t('gateway.page.requests.notStored')}
+            fallback={detailEmptyMessage}
           />
         </div>
       );
@@ -583,14 +623,14 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       return (
         <div className={styles.detailStack}>
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.upstreamResponseBody')}</span>
-          <CollapsiblePre content={detail.upstream_response_body} fallback={t('gateway.page.requests.notStored')} />
+          <CollapsiblePre content={detail.upstream_response_body} fallback={detailEmptyMessage} />
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.clientResponseBody')}</span>
-          <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />
+          <CollapsiblePre content={detail.response_body} fallback={detailEmptyMessage} />
         </div>
       );
     }
 
-    return <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />;
+    return <CollapsiblePre content={detail.response_body} fallback={detailEmptyMessage} />;
   };
 
   const columns: ColumnsType<GatewayRequestLogItem> = [
@@ -605,7 +645,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'provider_name',
       render: (_, record) => (
         <div className={styles.tableMainCell}>
-          <strong>{providerDisplayName(t, record.provider_id, record.provider_name)}</strong>
+          <strong title={providerDisplayName(t, record.provider_id, record.provider_name)}>{providerDisplayName(t, record.provider_id, record.provider_name)}</strong>
           <small>{providerDisplayMeta(t, record.cli_key, record.provider_id)}</small>
         </div>
       ),
@@ -617,12 +657,21 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         <div className={styles.tableMainCell}>
           {(() => {
             const requestDisplay = deriveGatewayRequestDisplay(record);
-            const requestDisplayTitle = requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
+            const requestDisplayTitle = record.data_source === 'session' && !requestDisplay.modelApplicable
+              ? t('gateway.page.requests.localSession')
+              : requestDisplay.titleKey ? t(requestDisplay.titleKey) : requestDisplay.modelText;
             return (
               <>
-                <strong>{requestDisplayTitle}</strong>
+                <div className={styles.modelTitle} title={formatModelWithEffort(requestDisplayTitle, record.reasoning_effort)}>
+                  <strong>{requestDisplayTitle}</strong>
+                  {requestDisplay.modelApplicable && record.reasoning_effort ? (
+                    <span className={styles.modelEffort} title={t('gateway.page.requests.effortHint')}>
+                      ({record.reasoning_effort})
+                    </span>
+                  ) : null}
+                </div>
                 <small>
-                  {requestDisplay.kind === 'model'
+                  {requestDisplay.kind === 'model' || record.data_source === 'session'
                     ? t('gateway.page.requests.tokensShort', {
                         input: formatCompactInteger(record.input_tokens),
                         output: formatCompactInteger(record.output_tokens),
@@ -641,7 +690,9 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'status_code',
       width: 90,
       align: 'right',
-      render: (value: number, record) => (
+      render: (value: number, record) => record.data_source === 'session' ? (
+        <span title={t('gateway.page.requests.localSessionHint')}>-</span>
+      ) : (
         <span className={record.success ? styles.statusCodeSuccess : styles.statusCodeError}>
           {value}
         </span>
@@ -652,8 +703,14 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'total_tokens',
       width: 110,
       align: 'right',
-      render: (value: number, record) =>
-        isGatewayRequestUsageApplicable(record) ? formatCompactInteger(value) : '-',
+      render: (value: number, record) => isGatewayRequestUsageApplicable(record) ? (
+        <div className={styles.tokenCell}>
+          <span>{formatCompactInteger(value)}</span>
+          <small title={t('gateway.page.requests.tpsHint')}>
+            {formatTps(record) ?? '-'}
+          </small>
+        </div>
+      ) : '-',
     },
     {
       title: t('gateway.page.requests.columns.cost'),
@@ -661,14 +718,14 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       width: 110,
       align: 'right',
       render: (value: string, record) =>
-        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 2) : '-',
+        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 6) : '-',
     },
     {
-      title: t('gateway.page.requests.columns.duration'),
+      title: <span title={t('gateway.page.requests.durationHint')}>{t('gateway.page.requests.columns.duration')}</span>,
       dataIndex: 'duration_ms',
-      width: 100,
+      width: 130,
       align: 'right',
-      render: (value: number) => formatDuration(value),
+      render: (value: number, record) => record.data_source === 'session' ? '-' : formatDurationPair(value, record.first_token_ms),
     },
   ];
 
@@ -681,8 +738,8 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         </div>
       ) : null}
       {notice ? (
-        <div className={styles.inlineNotice} role="status" aria-live="polite">
-          <Check size={14} aria-hidden="true" />
+        <div className={joinClassNames(styles.inlineNotice, noticeKind === 'warning' && styles.inlineWarning)} role="status" aria-live="polite">
+          {noticeKind === 'warning' ? <AlertCircle size={14} aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}
           <span>{notice}</span>
         </div>
       ) : null}
@@ -837,11 +894,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         <Table
           rowKey="trace_id"
           size="small"
+          tableLayout="fixed"
           columns={columns}
           dataSource={logs}
           loading={loading}
           pagination={false}
-          scroll={{ x: 900 }}
+          scroll={{ x: 960 }}
           locale={{
             emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('gateway.page.requests.empty')} />,
           }}
