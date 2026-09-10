@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
+import { ManagementCheckbox } from '@/features/coding/shared/management';
 import SdkTag from '@/components/common/SdkTag';
 import ModelItem from '@/components/common/ModelItem';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
@@ -85,6 +86,14 @@ interface ProviderCardProps {
 
   /** Short tag shown beside the model-section title (e.g. "内置 · 适配器默认模型"). */
   modelSourceTag?: string;
+
+  /** When true, the card enters provider-level selection mode: the drag handle
+   *  is replaced by a checkbox so the parent can batch-select providers. */
+  selectable?: boolean;
+  /** Whether this provider is currently selected (only meaningful in selectable mode). */
+  selected?: boolean;
+  /** Toggle provider selection. */
+  onSelectChange?: (checked: boolean) => void;
 }
 
 /**
@@ -117,6 +126,9 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   connectivityStatus,
   i18nPrefix = 'settings',
   modelSourceTag,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
 
@@ -315,7 +327,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
       <Card
         style={{
           marginBottom: 12,
-          borderColor: 'var(--color-border-card)',
+          borderColor: selectable && selected ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
           boxShadow: 'var(--shadow-card-sm)',
           transition: 'box-shadow 0.16s ease',
         }}
@@ -330,7 +342,15 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          {draggable && (
+          {selectable ? (
+            <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+              <ManagementCheckbox
+                checked={selected}
+                ariaLabel={t('common.batch.selectItem')}
+                onChange={onSelectChange ?? (() => {})}
+              />
+            </div>
+          ) : draggable && (
             <div
               {...attributes}
               {...listeners}

@@ -43,6 +43,7 @@ import {
   providerNeedsGatewayProxy,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
+import { ManagementCheckbox } from '@/features/coding/shared/management';
 
 const { Text } = Typography;
 
@@ -67,6 +68,9 @@ interface GeminiCliProviderCardProps {
   gatewayTakeoverActive?: boolean;
   gatewayStatus?: GatewayCliTakeoverStatus | null;
   onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void | Promise<void>;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
 }
 
 const parseSettingsConfig = (rawConfig: string): GeminiCliSettingsConfig => {
@@ -123,6 +127,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   gatewayTakeoverActive = false,
   gatewayStatus = null,
   onGatewayStatusChange,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -206,11 +213,13 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const showApplyAction = !gatewayProxyActive && !isApplied && !isLocalProvider;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
-  const cardBorderColor = isGatewayPrimary
-    ? 'var(--color-status-success)'
-    : showRuntimeApplied
-      ? 'var(--ant-color-primary)'
-      : 'var(--color-border-card)';
+  const cardBorderColor = selectable && selected
+    ? 'var(--ant-color-primary)'
+    : isGatewayPrimary
+      ? 'var(--color-status-success)'
+      : showRuntimeApplied
+        ? 'var(--ant-color-primary)'
+        : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
     : showRuntimeApplied
@@ -573,18 +582,29 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
-            <div
-              {...attributes}
-              {...listeners}
-              style={{
-                cursor: isDragging ? 'grabbing' : 'grab',
-                color: 'var(--color-text-tertiary)',
-                padding: '4px 0',
-                touchAction: 'none',
-              }}
-            >
-              <HolderOutlined />
-            </div>
+            {selectable ? (
+              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                <ManagementCheckbox
+                  checked={selected}
+                  ariaLabel={t('common.batch.selectItem')}
+                  onChange={onSelectChange ?? (() => {})}
+                  style={{ width: 13, height: 13 }}
+                />
+              </div>
+            ) : (
+              <div
+                {...attributes}
+                {...listeners}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                  color: 'var(--color-text-tertiary)',
+                  padding: '4px 0',
+                  touchAction: 'none',
+                }}
+              >
+                <HolderOutlined />
+              </div>
+            )}
             <Space direction="vertical" size={4} style={{ width: '100%', minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <ProviderNameLink

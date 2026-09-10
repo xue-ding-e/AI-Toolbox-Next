@@ -28,6 +28,7 @@ import {
   EnvironmentOutlined,
   ToolOutlined,
   GlobalOutlined,
+  CheckSquareOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -134,11 +135,14 @@ import {
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES_BASIC,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
@@ -715,6 +719,63 @@ const OpenClawPage: React.FC = () => {
       });
     }
   };
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      if (!config) return false;
+      const defaultProviderId = agentsDefaults?.model?.primary?.split('/')[0];
+      const currentProviders = config.models?.providers ?? {};
+      const deletableIds = ids.filter(
+        (id) => id !== defaultProviderId && currentProviders[id],
+      );
+      if (deletableIds.length === 0) return false;
+      try {
+        await backupProvidersBeforeDelete(
+          deletableIds,
+          (id) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('openclaw', id),
+            buildOpenClawFavoriteProviderConfig(id, currentProviders[id]),
+          ),
+          (id) => t('common.batch.backupFailed', { name: id }),
+        );
+        const newProviders = { ...(config.models?.providers || {}) };
+        for (const id of deletableIds) {
+          delete newProviders[id];
+        }
+        await saveOpenClawConfig({
+          ...config,
+          models: { ...(config.models || {}), providers: newProviders },
+        });
+        await loadFavoriteProviders();
+        await loadConfig();
+        await loadSectionData();
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig();
+        await loadFavoriteProviders();
+        return false;
+      }
+    },
+    [config, agentsDefaults, loadFavoriteProviders, loadConfig, loadSectionData, refreshTrayMenu, t],
+  );
+
+  // Selectable ids exclude providers that can't be deleted (e.g. the default model's provider).
+  const batchSelectableIds = React.useMemo(
+    () =>
+      visibleProviderEntries
+        .filter(([providerId]) => agentsDefaults?.model?.primary?.split('/')[0] !== providerId)
+        .map(([providerId]) => providerId),
+    [visibleProviderEntries, agentsDefaults],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
 
   const handleProviderSubmit = async (values: ProviderFormValues) => {
     try {
@@ -1555,6 +1616,37 @@ const OpenClawPage: React.FC = () => {
                     ),
                     extra: (
                       <Space size={4} wrap>
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (providerBatch.selectionMode) {
+                              providerBatch.exitSelection();
+                            } else {
+                              providerBatch.enterSelection();
+                            }
+                          }}
+                        >
+                          <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                          <span>
+                            {providerBatch.selectionMode
+                              ? t('common.batch.exit')
+                              : t('common.batch.manage')}
+                          </span>
+                        </Button>
+                        {providerBatch.selectionMode && (
+                          <ProviderBatchToolbar
+                            hasSelection={providerBatch.hasSelection}
+                            visibleCount={batchSelectableIds.length}
+                            isAllSelected={providerBatch.isAllSelected}
+                            indeterminate={providerBatch.indeterminate}
+                            onSelectAll={providerBatch.selectAllFiltered}
+                            onBatchDelete={providerBatch.batchDelete}
+                            disabled={loading}
+                          />
+                        )}
                         <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                         <ProviderSortDropdown
                           mode={sortMode}
@@ -1594,7 +1686,7 @@ const OpenClawPage: React.FC = () => {
                           <ProviderSearchEmpty />
                         ) : (
                           <DndContext
-                            sensors={providerDragDisabled ? [] : sensors}
+                            sensors={providerBatchDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             modifiers={[restrictToVerticalAxis]}
                             onDragEnd={handleProviderDragEnd}
@@ -1608,7 +1700,7 @@ const OpenClawPage: React.FC = () => {
                                   key={providerId}
                                   providerId={providerId}
                                   config={providerConfig}
-                                  draggable={!providerDragDisabled}
+                                  draggable={!providerBatchDragDisabled}
                                   sortableId={providerId}
                                   modelsDraggable
                                   onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
@@ -1618,6 +1710,11 @@ const OpenClawPage: React.FC = () => {
                                     agentsDefaults?.model?.primary?.split('/')[0] === providerId
                                       ? t('openclaw.providers.deleteDisabledDefault', { defaultValue: '该渠道已设为默认，不可删除' })
                                       : undefined
+                                  }
+                                  selectable={providerBatch.selectionMode && providerBatch.isSelectable(providerId)}
+                                  selected={providerBatch.selectedIds.has(providerId)}
+                                  onSelectChange={(checked) =>
+                                    providerBatch.toggleSelect(providerId, checked)
                                   }
                                   onAddModel={() => handleAddModel(providerId)}
                                   onEditModel={(model) => handleEditModel(providerId, model)}

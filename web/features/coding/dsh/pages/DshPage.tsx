@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import {
   ApiOutlined,
+  CheckSquareOutlined,
   CloudDownloadOutlined,
   CloudSyncOutlined,
   DatabaseOutlined,
@@ -76,11 +77,14 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES_BASIC,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import {
@@ -110,6 +114,11 @@ import {
   buildDshProviderFromAllApiHub,
   extractDshProviderFromCcSwitch,
 } from '../utils/importMapping';
+import {
+  buildDshProviderDeletionPlan,
+  canDeleteDshProvider,
+  credentialRefFromProviderKey,
+} from '../utils/providerDeletion';
 import {
   checkDshAgentInstructions,
   deleteDshCredential,
@@ -175,14 +184,6 @@ const asRecord = (value: unknown): Record<string, unknown> => (
 /// Raw dsh provider dict from `llm-pi-ai.providers.<route>`; `{}` when absent.
 const providerRawConfig = (provider: DshRuntimeProviderView): Record<string, unknown> =>
   provider.provider ?? {};
-
-/// Derive the `.credentials.yaml` ref name (env-var style) from a provider key,
-/// e.g. `deepseek` -> `DEEPSEEK_API_KEY`. The add-provider form no longer asks
-/// for an explicit env-var name; this keeps the stored secret resolvable.
-const credentialRefFromProviderKey = (providerKey: string): string => {
-  const normalized = providerKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-  return normalized.endsWith('_API_KEY') ? normalized : `${normalized}_API_KEY`;
-};
 
 const getStringField = (value: Record<string, unknown>, key: string): string => {
   const fieldValue = value[key];
@@ -1400,6 +1401,58 @@ const DshPage: React.FC = () => {
     }
   };
 
+  const handleBatchDeleteProviders = React.useCallback(
+    async (providerKeys: string[]): Promise<boolean> => {
+      if (!runtimeConfig) return false;
+      const deletionPlan = buildDshProviderDeletionPlan(runtimeConfig.providers, providerKeys);
+      if (deletionPlan.length === 0) return false;
+      setSaving(true);
+      try {
+        await backupProvidersBeforeDelete(
+          deletionPlan,
+          ({ provider, credential }) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('dsh', provider.providerKey),
+            buildDshFavoriteProviderConfig(provider.providerKey, provider.provider ?? {}, credential),
+          ),
+          ({ provider }) => t('common.batch.backupFailed', { name: provider.displayName || provider.providerKey }),
+        );
+        let nextConfig = runtimeConfig;
+        for (const target of deletionPlan) {
+          if (target.deleteCredential) {
+            nextConfig = await deleteDshCredential(target.credentialRef);
+          }
+          if (target.provider.provider) {
+            nextConfig = await deleteDshRuntimeProvider(target.provider.providerKey);
+          }
+          clearBatchDeleteState(target.provider.providerKey);
+        }
+        setRuntimeConfig(nextConfig);
+        setOtherSettings(nextConfig.otherSettings || {});
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete dsh providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig(true);
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [runtimeConfig, loadConfig, clearBatchDeleteState, t],
+  );
+
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canDeleteDshProvider).map((provider) => provider.providerKey),
+    [visibleProviders],
+  );
+
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+
   const handleOtherSettingsBlur = async (value: unknown, isValid: boolean) => {
     if (!isValid || !otherSettingsValid) {
       message.error(t('dsh.invalidJson', { defaultValue: 'JSON 格式不正确' }));
@@ -1676,6 +1729,11 @@ const DshPage: React.FC = () => {
           : undefined}
         deleteConfirm={false}
         deleteDisabledReason={deleteDisabledReason}
+        selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.providerKey)}
+        selected={providerBatch.selectedIds.has(provider.providerKey)}
+        onSelectChange={(checked) =>
+          providerBatch.toggleSelect(provider.providerKey, checked)
+        }
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         modelSourceTag={modelSourceTag}
         extraActions={
@@ -1927,6 +1985,37 @@ const DshPage: React.FC = () => {
                   ),
                   extra: (
                     <Space onClick={(event) => event.stopPropagation()}>
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (providerBatch.selectionMode) {
+                            providerBatch.exitSelection();
+                          } else {
+                            providerBatch.enterSelection();
+                          }
+                        }}
+                      >
+                        <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                        <span>
+                          {providerBatch.selectionMode
+                            ? t('common.batch.exit')
+                            : t('common.batch.manage')}
+                        </span>
+                      </Button>
+                      {providerBatch.selectionMode && (
+                        <ProviderBatchToolbar
+                          hasSelection={providerBatch.hasSelection}
+                          visibleCount={batchSelectableIds.length}
+                          isAllSelected={providerBatch.isAllSelected}
+                          indeterminate={providerBatch.indeterminate}
+                          onSelectAll={providerBatch.selectAllFiltered}
+                          onBatchDelete={providerBatch.batchDelete}
+                          disabled={loading}
+                        />
+                      )}
                       <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                       <ProviderSortDropdown
                         mode={sortMode}

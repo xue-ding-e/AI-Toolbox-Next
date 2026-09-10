@@ -433,6 +433,8 @@ interface ManagementCheckboxProps {
   ariaLabel: string;
   onChange: (checked: boolean) => void;
   onClick?: (event: React.MouseEvent<HTMLInputElement>) => void;
+  /** Optional inline style override (e.g. smaller size for a compact toolbar). */
+  style?: React.CSSProperties;
 }
 
 export const ManagementCheckbox: React.FC<ManagementCheckboxProps> = ({
@@ -442,6 +444,7 @@ export const ManagementCheckbox: React.FC<ManagementCheckboxProps> = ({
   ariaLabel,
   onChange,
   onClick,
+  style,
 }) => {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -456,6 +459,7 @@ export const ManagementCheckbox: React.FC<ManagementCheckboxProps> = ({
       ref={inputRef}
       type="checkbox"
       className={styles.checkbox}
+      style={style}
       checked={checked}
       disabled={disabled}
       aria-label={ariaLabel}

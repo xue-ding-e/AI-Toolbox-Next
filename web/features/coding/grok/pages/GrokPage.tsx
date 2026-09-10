@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, MessageOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, MessageOutlined, CheckSquareOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -108,11 +108,14 @@ import ProviderConnectivityTestModal, {
 import { SessionManagerPanel, type SessionSourceMode } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import {
@@ -526,6 +529,56 @@ const GrokPage: React.FC = () => {
       ),
     [providers, providerKeyword, sortMode, lastUsedAt],
   );
+
+  const canBatchDeleteProvider = React.useCallback(
+    (provider: GrokProvider) => provider.id !== GROK_LOCAL_PROVIDER_ID
+      && (officialAccountsByProviderId[provider.id]?.length ?? 0) === 0,
+    [officialAccountsByProviderId],
+  );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const providersToDelete = providers.filter(
+        (provider) => ids.includes(provider.id) && canBatchDeleteProvider(provider),
+      );
+      if (providersToDelete.length === 0) return false;
+      try {
+        await backupProvidersBeforeDelete(
+          providersToDelete,
+          (provider) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('grok', provider.id),
+            buildGrokFavoriteProviderConfig(provider),
+          ),
+          (provider) => t('common.batch.backupFailed', { name: provider.name }),
+        );
+        for (const provider of providersToDelete) {
+          await deleteGrokProvider(provider.id);
+        }
+        await loadFavoriteProviders();
+        await loadConfig();
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete grok providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig();
+        await loadFavoriteProviders();
+        return false;
+      }
+    },
+    [providers, canBatchDeleteProvider, loadFavoriteProviders, loadConfig, t],
+  );
+  // Selectable ids exclude local provider (no delete path / not a managed preset).
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canBatchDeleteProvider).map((provider) => provider.id),
+    [visibleProviders, canBatchDeleteProvider],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
 
   const handleSelectProvider = async (provider: GrokProvider) => {
     try {
@@ -1797,6 +1850,37 @@ const GrokPage: React.FC = () => {
                 ),
                 extra: (
                   <Space size={4} wrap>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (providerBatch.selectionMode) {
+                          providerBatch.exitSelection();
+                        } else {
+                          providerBatch.enterSelection();
+                        }
+                      }}
+                    >
+                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                      <span>
+                        {providerBatch.selectionMode
+                          ? t('common.batch.exit')
+                          : t('common.batch.manage')}
+                      </span>
+                    </Button>
+                    {providerBatch.selectionMode && (
+                      <ProviderBatchToolbar
+                        hasSelection={providerBatch.hasSelection}
+                        visibleCount={batchSelectableIds.length}
+                        isAllSelected={providerBatch.isAllSelected}
+                        indeterminate={providerBatch.indeterminate}
+                        onSelectAll={providerBatch.selectAllFiltered}
+                        onBatchDelete={providerBatch.batchDelete}
+                        disabled={loading}
+                      />
+                    )}
                     <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                     <ProviderSortDropdown
                       mode={sortMode}
@@ -1863,7 +1947,7 @@ const GrokPage: React.FC = () => {
                       <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                            sensors={providerDragDisabled ? [] : sensors}
+                            sensors={providerBatchDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             onDragEnd={handleDragEnd}
                             modifiers={[restrictToVerticalAxis]}
@@ -1930,6 +2014,11 @@ const GrokPage: React.FC = () => {
                                   setGatewayCliStatus(status);
                                   await loadConfig();
                                 }}
+                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                                selected={providerBatch.selectedIds.has(provider.id)}
+                                onSelectChange={(checked) =>
+                                  providerBatch.toggleSelect(provider.id, checked)
+                                }
                               />
                                 ))}
                               </div>

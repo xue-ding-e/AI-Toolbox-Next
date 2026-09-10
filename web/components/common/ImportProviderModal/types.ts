@@ -5,6 +5,10 @@ export interface ImportProviderModalProps {
   onClose: () => void;
   /** Callback when providers are imported successfully */
   onImport: (providers: OpenCodeFavoriteProvider[]) => void;
+  /** Overwrite a single already-imported provider's config with the favorite
+   *  source's version. Only rendered when provided; otherwise existing items
+   *  stay disabled (legacy behavior). */
+  onOverwrite?: (provider: OpenCodeFavoriteProvider) => void | Promise<void>;
   /** Provider IDs that already exist in current config */
   existingProviderIds: string[];
   /** Optional title override */

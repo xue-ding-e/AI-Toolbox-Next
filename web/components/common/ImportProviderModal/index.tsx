@@ -15,6 +15,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
   open,
   onClose,
   onImport,
+  onOverwrite,
   existingProviderIds,
   title,
   emptyDescription,
@@ -125,6 +126,22 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
     onImport(selectedProviders);
   };
 
+  // Overwrite a single already-imported provider with the favorite source's config
+  const handleOverwriteClick = (provider: OpenCodeFavoriteProvider) => {
+    Modal.confirm({
+      title: t('common.provider.overwriteConfirmTitle'),
+      content: t('common.provider.overwriteConfirmContent', {
+        name: provider.providerConfig.name || provider.providerId,
+      }),
+      okText: t('common.provider.overwrite'),
+      okType: 'danger',
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        await onOverwrite?.(provider);
+      },
+    });
+  };
+
   // Count of importable providers (selected and not existing)
   const importableCount = Array.from(selectedIds).filter(
     (id) => !existingProviderIds.includes(id)
@@ -202,6 +219,19 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                       </Text>
                       {isExisting && (
                         <Tag className={styles.existsTag}>{t(`${i18nPrefix}.provider.providerExists`)}</Tag>
+                      )}
+                      {isExisting && onOverwrite && (
+                        <Button
+                          type="link"
+                          size="small"
+                          className={styles.overwriteBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOverwriteClick(provider);
+                          }}
+                        >
+                          {t('common.provider.overwrite')}
+                        </Button>
                       )}
                     </div>
                     <Popconfirm

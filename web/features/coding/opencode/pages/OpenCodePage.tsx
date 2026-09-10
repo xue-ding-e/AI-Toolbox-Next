@@ -21,6 +21,7 @@ import {
   ThunderboltOutlined,
   FileTextOutlined,
   MessageOutlined,
+  CheckSquareOutlined,
 } from '@ant-design/icons';
 
 import { useTranslation } from 'react-i18next';
@@ -122,16 +123,23 @@ import {
 } from '@/features/coding/opencode/utils/openCodeOtherConfig';
 import {
   getConfiguredOpenCodeAgentModelIds,
-  sanitizeOpenCodeAgentModelReferences,
 } from '@/features/coding/opencode/utils/openCodeAgentConfig';
+import {
+  canDeleteOpenCodeProvider,
+  overwriteOpenCodeProvider,
+  sanitizeOpenCodeModelReferences,
+} from '@/features/coding/opencode/utils/providerMutations';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES_BASIC,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 
@@ -848,22 +856,6 @@ const OpenCodePage: React.FC = () => {
     }
   };
 
-  const sanitizeOpenCodeModelReferences = React.useCallback((
-    currentConfig: OpenCodeConfig,
-    removedUnifiedModelIds: string[],
-  ): OpenCodeConfig => {
-    if (removedUnifiedModelIds.length === 0) {
-      return currentConfig;
-    }
-
-    const removedModelIdSet = new Set(removedUnifiedModelIds);
-    return sanitizeOpenCodeAgentModelReferences({
-      ...currentConfig,
-      model: currentConfig.model && removedModelIdSet.has(currentConfig.model) ? undefined : currentConfig.model,
-      small_model: currentConfig.small_model && removedModelIdSet.has(currentConfig.small_model) ? undefined : currentConfig.small_model,
-    }, removedModelIdSet);
-  }, []);
-
   const clearBatchDeleteState = React.useCallback((providerId?: string) => {
     if (providerId) {
       setSelectedModelIdsByProvider((previousState) => {
@@ -917,6 +909,64 @@ const OpenCodePage: React.FC = () => {
     () => providerEntries.map(([id]) => id),
     [providerEntries],
   );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      if (!config) return false;
+      const deletableIds = ids.filter((id) => canDeleteOpenCodeProvider(config, id));
+      if (deletableIds.length === 0) return false;
+      try {
+        await backupProvidersBeforeDelete(
+          deletableIds,
+          (id) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('opencode', id),
+            config.provider[id],
+          ),
+          (id) => t('common.batch.backupFailed', { name: config.provider[id].name || id }),
+        );
+        const removedUnifiedModelIds: string[] = [];
+        const newProviders = { ...config.provider };
+        for (const id of deletableIds) {
+          for (const modelId of Object.keys(newProviders[id].models ?? {})) {
+            removedUnifiedModelIds.push(buildUnifiedModelId(id, modelId));
+          }
+          delete newProviders[id];
+        }
+        const nextDisabledProviders = (config.disabled_providers ?? []).filter(
+          (id) => !deletableIds.includes(id),
+        );
+        const nextConfig = sanitizeOpenCodeModelReferences({
+          ...config,
+          provider: newProviders,
+          disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
+        }, removedUnifiedModelIds);
+        await doSaveConfig(nextConfig);
+        for (const id of deletableIds) {
+          clearBatchDeleteState(id);
+        }
+        await refreshTrayMenu();
+        incrementOpenCodeConfigRefresh();
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        return false;
+      }
+    },
+    [config, doSaveConfig, clearBatchDeleteState, refreshTrayMenu, incrementOpenCodeConfigRefresh, t],
+  );
+
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviderEntries
+      .filter(([id]) => config && canDeleteOpenCodeProvider(config, id))
+      .map(([id]) => id),
+    [visibleProviderEntries, config],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
   const existingFavoriteProviderIds = React.useMemo(
     () => existingProviderIds.map((providerId) => buildFavoriteProviderStorageKey('opencode', providerId)),
     [existingProviderIds],
@@ -1096,7 +1146,7 @@ const OpenCodePage: React.FC = () => {
   };
 
   const handleDeleteProvider = async (providerId: string) => {
-    if (!config) return;
+    if (!config || !canDeleteOpenCodeProvider(config, providerId)) return;
     const provider = config.provider[providerId];
     if (!provider) return;
 
@@ -1541,6 +1591,40 @@ const OpenCodePage: React.FC = () => {
     // Refresh tray menu and model list after importing
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
+  };
+
+  const handleOverwriteProvider = async (provider: OpenCodeFavoriteProvider) => {
+    if (!config) return;
+    const rawProviderId = extractFavoriteProviderRawId('opencode', provider.providerId);
+    try {
+      await overwriteOpenCodeProvider({
+        config,
+        providerId: rawProviderId,
+        provider: provider.providerConfig,
+        saveConfig: async (nextConfig) => {
+          await saveOpenCodeConfig(nextConfig);
+          setConfig(nextConfig);
+        },
+        backupPreviousProvider: (previousProvider) => upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('opencode', rawProviderId),
+          previousProvider,
+        ),
+        onBackupError: (error) => {
+          console.error('Failed to back up previous provider after overwrite:', error);
+          message.warning(t('opencode.provider.overwriteBackupFailed'));
+        },
+      });
+      setImportModalOpen(false);
+      message.success(t('opencode.provider.overwriteSuccess', {
+        name: provider.providerConfig.name || rawProviderId,
+      }));
+      await refreshTrayMenu();
+      incrementOpenCodeConfigRefresh();
+    } catch (error) {
+      console.error('Failed to overwrite provider:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   };
 
   const handleImportAllApiHubProviders = async (providers: OpenCodeAllApiHubProvider[]) => {
@@ -2291,6 +2375,37 @@ const OpenCodePage: React.FC = () => {
                     ),
                     extra: (
                       <Space size={4} wrap>
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (providerBatch.selectionMode) {
+                              providerBatch.exitSelection();
+                            } else {
+                              providerBatch.enterSelection();
+                            }
+                          }}
+                        >
+                          <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                          <span>
+                            {providerBatch.selectionMode
+                              ? t('common.batch.exit')
+                              : t('common.batch.manage')}
+                          </span>
+                        </Button>
+                        {providerBatch.selectionMode && (
+                          <ProviderBatchToolbar
+                            hasSelection={providerBatch.hasSelection}
+                            visibleCount={batchSelectableIds.length}
+                            isAllSelected={providerBatch.isAllSelected}
+                            indeterminate={providerBatch.indeterminate}
+                            onSelectAll={providerBatch.selectAllFiltered}
+                            onBatchDelete={providerBatch.batchDelete}
+                            disabled={loading}
+                          />
+                        )}
                         <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                         <ProviderSortDropdown
                           mode={sortMode}
@@ -2332,7 +2447,7 @@ const OpenCodePage: React.FC = () => {
                           <ProviderSearchEmpty />
                         ) : (
                           <DndContext
-                            sensors={providerDragDisabled ? [] : sensors}
+                            sensors={providerBatchDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             modifiers={[restrictToVerticalAxis]}
                             onDragEnd={handleProviderDragEnd}
@@ -2383,12 +2498,17 @@ const OpenCodePage: React.FC = () => {
                                       output: m.output,
                                       status: m.status,
                                     }))}
-                                    draggable={!providerDragDisabled}
+                                    draggable={!providerBatchDragDisabled}
                                     sortableId={providerId}
                                     onEdit={() => handleEditProvider(providerId)}
                                     onCopy={() => handleCopyProvider(providerId)}
                                     onDelete={() => handleDeleteProvider(providerId)}
                                     deleteDisabledReason={deleteDisabledReason}
+                                    selectable={providerBatch.selectionMode && providerBatch.isSelectable(providerId)}
+                                    selected={providerBatch.selectedIds.has(providerId)}
+                                    onSelectChange={(checked) =>
+                                      providerBatch.toggleSelect(providerId, checked)
+                                    }
                                     isDisabled={disabledProviderIds.has(providerId)}
                                     onToggleDisabled={() => handleToggleProviderDisabled(providerId)}
                                     connectivityStatus={connectivityStatuses[providerId]}
@@ -2729,6 +2849,7 @@ const OpenCodePage: React.FC = () => {
               open={importModalOpen}
               onClose={() => setImportModalOpen(false)}
               onImport={handleImportProviders}
+              onOverwrite={handleOverwriteProvider}
               existingProviderIds={existingFavoriteProviderIds}
               providerFilter={(provider) => isFavoriteProviderForSource('opencode', provider)}
             />

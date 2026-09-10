@@ -27,6 +27,7 @@ import ProxyTag from '@/components/common/ProxyTag';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
+import { ManagementCheckbox } from '@/features/coding/shared/management';
 import {
   canApplyProviderWithGatewayProxy,
   firstGatewayApiFormat,
@@ -70,6 +71,9 @@ interface ClaudeDesktopProviderCardProps {
   gatewayTakeoverActive?: boolean;
   gatewayStatus?: GatewayCliTakeoverStatus | null;
   onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void | Promise<void>;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
 }
 
 const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
@@ -85,6 +89,9 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
   gatewayTakeoverActive = false,
   gatewayStatus = null,
   onGatewayStatusChange,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -284,11 +291,13 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
       : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
         ? 140
         : 40;
-  const cardBorderColor = isGatewayPrimary
-    ? 'var(--color-status-success)'
-    : showRuntimeApplied
-      ? 'var(--ant-color-primary)'
-      : 'var(--color-border-card)';
+  const cardBorderColor = selectable && selected
+    ? 'var(--ant-color-primary)'
+    : isGatewayPrimary
+      ? 'var(--color-status-success)'
+      : showRuntimeApplied
+        ? 'var(--ant-color-primary)'
+        : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
     : showRuntimeApplied
@@ -380,18 +389,28 @@ const ClaudeDesktopProviderCard: React.FC<ClaudeDesktopProviderCardProps> = ({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <div
-              {...attributes}
-              {...listeners}
-              style={{
-                cursor: isDragging ? 'grabbing' : 'grab',
-                color: '#999',
-                padding: '4px 0',
-                touchAction: 'none',
-              }}
-            >
-              <HolderOutlined />
-            </div>
+            {selectable ? (
+              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                <ManagementCheckbox
+                  checked={selected}
+                  ariaLabel={t('common.batch.selectItem')}
+                  onChange={onSelectChange ?? (() => {})}
+                />
+              </div>
+            ) : (
+              <div
+                {...attributes}
+                {...listeners}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                  color: '#999',
+                  padding: '4px 0',
+                  touchAction: 'none',
+                }}
+              >
+                <HolderOutlined />
+              </div>
+            )}
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <ProviderConnectivityStatus item={connectivityStatus} />

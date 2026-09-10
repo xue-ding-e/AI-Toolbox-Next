@@ -1269,6 +1269,22 @@
     "providerSearch": {
       "placeholder": "Search providers",
       "noMatch": "No matching providers"
+    },
+    "batch": {
+      "manage": "Multi",
+      "exit": "Exit",
+      "selectAll": "Select all",
+      "delete": "Delete",
+      "deleteConfirmTitle": "Confirm delete selected providers",
+      "deleteConfirmContent": "Will delete {{count}} selected providers. Continue?",
+      "noneSelected": "None selected",
+      "selectItem": "Select this provider",
+      "backupFailed": "Could not back up provider {{name}}. Batch deletion was cancelled."
+    },
+    "provider": {
+      "overwrite": "Overwrite",
+      "overwriteConfirmTitle": "Confirm overwrite",
+      "overwriteConfirmContent": "This will overwrite provider \"{{name}}\" with the imported config. Continue?"
     }
   },
   "sessionManager": {
@@ -1519,7 +1535,9 @@
       "deselectAllProviders": "Deselect All",
       "importSuccess": "Successfully imported {{count}} provider(s)",
       "confirmDeleteFavorite": "Remove from favorite providers?",
-      "favoriteDeleted": "Removed from favorites"
+      "favoriteDeleted": "Removed from favorites",
+      "overwriteSuccess": "Overwrote \"{{name}}\"",
+      "overwriteBackupFailed": "The provider was overwritten, but the previous configuration could not be backed up."
     },
     "model": {
       "title": "Model List",

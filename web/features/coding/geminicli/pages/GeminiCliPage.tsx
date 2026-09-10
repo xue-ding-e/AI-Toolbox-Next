@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Collapse, Descriptions, Empty, Modal, Space, Spin, Typography, message } from 'antd';
 import {
   AppstoreOutlined,
+  CheckSquareOutlined,
   CopyOutlined,
   DatabaseOutlined,
   EditOutlined,
@@ -55,11 +56,13 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
@@ -486,6 +489,47 @@ const GeminiCliPage: React.FC = () => {
     [providers, providerKeyword, sortMode, lastUsedAt],
   );
 
+  const canBatchDeleteProvider = React.useCallback(
+    (provider: GeminiCliProvider) => provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID
+      && (officialAccountsByProviderId[provider.id]?.length ?? 0) === 0,
+    [officialAccountsByProviderId],
+  );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const providersToDelete = providers.filter(
+        (provider) => ids.includes(provider.id) && canBatchDeleteProvider(provider),
+      );
+      if (providersToDelete.length === 0) return false;
+      try {
+        for (const provider of providersToDelete) {
+          await deleteGeminiCliProvider(provider.id);
+        }
+        await loadConfig();
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete Gemini CLI providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig();
+        return false;
+      }
+    },
+    [providers, canBatchDeleteProvider, loadConfig, t],
+  );
+
+  // Selectable ids exclude `__local__` (no delete path / not a managed preset).
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canBatchDeleteProvider).map((provider) => provider.id),
+    [visibleProviders, canBatchDeleteProvider],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
+
   const handleSelectProvider = async (provider: GeminiCliProvider) => {
     try {
       await selectGeminiCliProvider(provider.id);
@@ -851,6 +895,37 @@ const GeminiCliPage: React.FC = () => {
                 ),
                 extra: (
                   <Space size={4} wrap>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (providerBatch.selectionMode) {
+                          providerBatch.exitSelection();
+                        } else {
+                          providerBatch.enterSelection();
+                        }
+                      }}
+                    >
+                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                      <span>
+                        {providerBatch.selectionMode
+                          ? t('common.batch.exit')
+                          : t('common.batch.manage')}
+                      </span>
+                    </Button>
+                    {providerBatch.selectionMode && (
+                      <ProviderBatchToolbar
+                        hasSelection={providerBatch.hasSelection}
+                        visibleCount={batchSelectableIds.length}
+                        isAllSelected={providerBatch.isAllSelected}
+                        indeterminate={providerBatch.indeterminate}
+                        onSelectAll={providerBatch.selectAllFiltered}
+                        onBatchDelete={providerBatch.batchDelete}
+                        disabled={loading}
+                      />
+                    )}
                     <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                     <ProviderSortDropdown
                       mode={sortMode}
@@ -904,7 +979,7 @@ const GeminiCliPage: React.FC = () => {
                       <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                            sensors={providerDragDisabled ? [] : sensors}
+                            sensors={providerBatchDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             onDragEnd={handleDragEnd}
                             modifiers={[restrictToVerticalAxis]}
@@ -925,6 +1000,11 @@ const GeminiCliPage: React.FC = () => {
                                 onShare={handleShareProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                                selected={providerBatch.selectedIds.has(provider.id)}
+                                onSelectChange={(checked) =>
+                                  providerBatch.toggleSelect(provider.id, checked)
+                                }
                                 officialAccounts={officialAccountsByProviderId[provider.id] || []}
                                 onOfficialAccountLogin={handleStartOfficialAccountOauth}
                                 onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}

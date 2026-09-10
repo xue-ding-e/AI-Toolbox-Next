@@ -33,6 +33,12 @@ interface Props {
   connectivityStatus?: ProviderConnectivityStatusItem;
   /** 当该渠道承载主模型(agents.defaults.model.primary)时，删除按钮置灰并显示此提示 */
   deleteDisabledReason?: string;
+  /** Provider-level batch selection mode (swaps drag handle for a checkbox). */
+  selectable?: boolean;
+  /** Whether this provider is currently selected (only meaningful when selectable). */
+  selected?: boolean;
+  /** Toggle provider selection. */
+  onSelectChange?: (checked: boolean) => void;
 }
 
 const toProviderDisplayData = (id: string, config: OpenClawProviderConfig): ProviderDisplayData => ({
@@ -70,6 +76,9 @@ const OpenClawProviderCard: React.FC<Props> = ({
   onToggleBatchDeleteMode,
   onBatchDeleteModels,
   deleteDisabledReason,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
 
@@ -101,6 +110,9 @@ const OpenClawProviderCard: React.FC<Props> = ({
       onEdit={onEdit}
       onDelete={onDelete}
       deleteDisabledReason={deleteDisabledReason}
+      selectable={selectable}
+      selected={selected}
+      onSelectChange={onSelectChange}
       onAddModel={onAddModel}
       onEditModel={(modelId) => {
         const model = modelMap.get(modelId);

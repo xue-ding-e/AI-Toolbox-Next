@@ -52,6 +52,7 @@ import {
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import { ManagementCheckbox } from '@/features/coding/shared/management';
 import type { ModelDisplayData, ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import ModelItem from '@/components/common/ModelItem';
 import {
@@ -102,6 +103,9 @@ interface GrokProviderCardProps {
   gatewayTakeoverActive?: boolean;
   gatewayStatus?: GatewayCliTakeoverStatus | null;
   onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void | Promise<void>;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
 }
 
 const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
@@ -138,6 +142,9 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
   gatewayTakeoverActive = false,
   gatewayStatus = null,
   onGatewayStatusChange,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -331,11 +338,13 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
     }
     onToggleDisabled(provider, !checked);
   };
-  const cardBorderColor = isGatewayPrimary
-    ? 'var(--color-status-success)'
-    : showRuntimeApplied
-      ? 'var(--ant-color-primary)'
-      : 'var(--color-border-card)';
+  const cardBorderColor = selectable && selected
+    ? 'var(--ant-color-primary)'
+    : isGatewayPrimary
+      ? 'var(--color-status-success)'
+      : showRuntimeApplied
+        ? 'var(--ant-color-primary)'
+        : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
     : showRuntimeApplied
@@ -709,19 +718,29 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            {/* 拖拽手柄 */}
-            <div
-              {...attributes}
-              {...listeners}
-              style={{
-                cursor: isDragging ? 'grabbing' : 'grab',
-                color: 'var(--color-text-tertiary)',
-                padding: '4px 0',
-                touchAction: 'none',
-              }}
-            >
-              <HolderOutlined />
-            </div>
+            {selectable ? (
+              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                <ManagementCheckbox
+                  checked={selected}
+                  ariaLabel={t('common.batch.selectItem')}
+                  onChange={onSelectChange ?? (() => {})}
+                  style={{ width: 13, height: 13 }}
+                />
+              </div>
+            ) : (
+              <div
+                {...attributes}
+                {...listeners}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                  color: 'var(--color-text-tertiary)',
+                  padding: '4px 0',
+                  touchAction: 'none',
+                }}
+              >
+                <HolderOutlined />
+              </div>
+            )}
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
               {/* Provider name and status */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

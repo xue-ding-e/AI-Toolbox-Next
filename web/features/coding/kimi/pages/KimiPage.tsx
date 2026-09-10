@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/sortable';
 import {
   AppstoreOutlined,
+  CheckSquareOutlined,
   DatabaseOutlined,
   EditOutlined,
   EllipsisOutlined,
@@ -111,11 +112,13 @@ import type { GatewayCliTakeoverStatus } from '@/services';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import {
   PROVIDER_SORT_MODES,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import KimiCommonConfigModal from '../components/KimiCommonConfigModal';
@@ -124,6 +127,7 @@ import KimiPluginsPanel from '../components/KimiPluginsPanel';
 import KimiProviderCard from '../components/KimiProviderCard';
 import KimiProviderFormModal from '../components/KimiProviderFormModal';
 import { extractKimiBaseUrl, KIMI_OFFICIAL_DEFAULT_MODEL_KEY } from '../utils/settingsConfig';
+import { canDeleteKimiProvider } from '../utils/providerDeletion';
 import {
   buildKimiProviderSavePlan,
   shouldReengageKimiGatewayOnSave,
@@ -393,6 +397,41 @@ const KimiPage: React.FC = () => {
       ),
     [providers, providerKeyword, sortMode, lastUsedAt],
   );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const providersToDelete = providers.filter(
+        (provider) => ids.includes(provider.id) && canDeleteKimiProvider(provider, officialAccounts),
+      );
+      if (providersToDelete.length === 0) return false;
+      try {
+        for (const provider of providersToDelete) {
+          await deleteKimiProvider(provider.id);
+        }
+        await loadConfig(true);
+        await refreshTrayMenu();
+        message.success(t('kimi.deleteSuccess'));
+        return true;
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig(true);
+        await refreshTrayMenu();
+        return false;
+      }
+    },
+    [providers, officialAccounts, loadConfig, t],
+  );
+
+  // Selectable ids exclude the local provider (no delete path / not a managed preset).
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter((provider) => canDeleteKimiProvider(provider, officialAccounts)).map((provider) => provider.id),
+    [visibleProviders, officialAccounts],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
 
   const handleApplyProvider = async (provider: KimiProvider) => {
     try {
@@ -736,6 +775,37 @@ const KimiPage: React.FC = () => {
               ),
               extra: (
                 <Space size={4} wrap>
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (providerBatch.selectionMode) {
+                        providerBatch.exitSelection();
+                      } else {
+                        providerBatch.enterSelection();
+                      }
+                    }}
+                  >
+                    <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                    <span>
+                      {providerBatch.selectionMode
+                        ? t('common.batch.exit')
+                        : t('common.batch.manage')}
+                    </span>
+                  </Button>
+                  {providerBatch.selectionMode && (
+                    <ProviderBatchToolbar
+                      hasSelection={providerBatch.hasSelection}
+                      visibleCount={batchSelectableIds.length}
+                      isAllSelected={providerBatch.isAllSelected}
+                      indeterminate={providerBatch.indeterminate}
+                      onSelectAll={providerBatch.selectAllFiltered}
+                      onBatchDelete={providerBatch.batchDelete}
+                      disabled={loading}
+                    />
+                  )}
                   <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                   <ProviderSortDropdown
                     mode={sortMode}
@@ -813,7 +883,7 @@ const KimiPage: React.FC = () => {
                     <ProviderSearchEmpty />
                   ) : (
                     <DndContext
-                          sensors={providerDragDisabled ? [] : sensors}
+                          sensors={providerBatchDragDisabled ? [] : sensors}
                           collisionDetection={closestCenter}
                           onDragEnd={(event) => void handleDragEnd(event)}
                           modifiers={[restrictToVerticalAxis]}
@@ -838,6 +908,11 @@ const KimiPage: React.FC = () => {
                                   onTest={handleTestProvider}
                                   onCopy={handleCopyProvider}
                                   connectivityStatus={connectivityStatuses[provider.id]}
+                                  selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                                  selected={providerBatch.selectedIds.has(provider.id)}
+                                  onSelectChange={(checked) =>
+                                    providerBatch.toggleSelect(provider.id, checked)
+                                  }
                                 />
                               ))}
                             </div>

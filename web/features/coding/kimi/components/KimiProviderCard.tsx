@@ -42,6 +42,7 @@ import {
   providerNeedsGatewayProxy,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
+import { ManagementCheckbox } from '@/features/coding/shared/management';
 import styles from './KimiProviderCard.module.less';
 
 const { Text } = Typography;
@@ -59,6 +60,9 @@ interface KimiProviderCardProps {
   onTest?: (provider: KimiProvider) => void;
   onCopy?: (provider: KimiProvider) => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
 }
 
 const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
@@ -74,6 +78,9 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
   onTest,
   onCopy,
   connectivityStatus,
+  selectable = false,
+  selected = false,
+  onSelectChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -322,11 +329,13 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
         ]),
   ];
 
-  const cardBorderColor = isGatewayPrimary
-    ? 'var(--color-status-success)'
-    : showRuntimeApplied
-      ? 'var(--ant-color-primary)'
-      : 'var(--color-border-card)';
+  const cardBorderColor = selectable && selected
+    ? 'var(--ant-color-primary)'
+    : isGatewayPrimary
+      ? 'var(--color-status-success)'
+      : showRuntimeApplied
+        ? 'var(--ant-color-primary)'
+        : 'var(--color-border-card)';
   const cardBackground = isGatewayPrimary
     ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
     : showRuntimeApplied
@@ -352,23 +361,34 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Drag Handle */}
-          <div
-            {...attributes}
-            {...listeners}
-            className={styles.dragHandle}
-            style={{
-              cursor: 'grab',
-              display: 'flex',
-              alignItems: 'center',
-              color: 'var(--color-text-tertiary)',
-              padding: '4px 2px',
-              borderRadius: 4,
-              flexShrink: 0,
-            }}
-          >
-            <HolderOutlined style={{ fontSize: 14 }} />
-          </div>
+          {/* Drag Handle / Selection Checkbox */}
+          {selectable ? (
+            <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+              <ManagementCheckbox
+                checked={selected}
+                ariaLabel={t('common.batch.selectItem')}
+                onChange={onSelectChange ?? (() => {})}
+                style={{ width: 13, height: 13 }}
+              />
+            </div>
+          ) : (
+            <div
+              {...attributes}
+              {...listeners}
+              className={styles.dragHandle}
+              style={{
+                cursor: 'grab',
+                display: 'flex',
+                alignItems: 'center',
+                color: 'var(--color-text-tertiary)',
+                padding: '4px 2px',
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+            >
+              <HolderOutlined style={{ fontSize: 14 }} />
+            </div>
+          )}
 
           {/* Provider Info */}
           <div style={{ flex: 1, minWidth: 0 }}>

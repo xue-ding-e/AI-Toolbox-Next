@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, MessageOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, MessageOutlined, CheckSquareOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -82,11 +82,14 @@ import ProviderConnectivityTestModal, {
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import {
@@ -509,6 +512,55 @@ const ClaudeCodePage: React.FC = () => {
       ),
     [providers, providerKeyword, sortMode, lastUsedAt],
   );
+
+  const canBatchDeleteProvider = React.useCallback(
+    (provider: ClaudeCodeProvider) => provider.id !== '__local__',
+    [],
+  );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const providersToDelete = providers.filter(
+        (provider) => ids.includes(provider.id) && canBatchDeleteProvider(provider),
+      );
+      if (providersToDelete.length === 0) return false;
+      try {
+        await backupProvidersBeforeDelete(
+          providersToDelete,
+          (provider) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('claudecode', provider.id),
+            buildClaudeFavoriteProviderConfig(provider),
+          ),
+          (provider) => t('common.batch.backupFailed', { name: provider.name }),
+        );
+        for (const provider of providersToDelete) {
+          await deleteClaudeProvider(provider.id);
+        }
+        await loadFavoriteProviders();
+        await loadConfig();
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete claudecode providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig();
+        await loadFavoriteProviders();
+        return false;
+      }
+    },
+    [providers, canBatchDeleteProvider, loadFavoriteProviders, loadConfig, t],
+  );
+  // Selectable ids exclude `__local__` (no delete path / not a managed preset).
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canBatchDeleteProvider).map((provider) => provider.id),
+    [visibleProviders, canBatchDeleteProvider],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
 
   const handleSelectProvider = async (provider: ClaudeCodeProvider) => {
     try {
@@ -1295,6 +1347,37 @@ const ClaudeCodePage: React.FC = () => {
                 ),
                 extra: (
                   <Space size={4} wrap>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (providerBatch.selectionMode) {
+                          providerBatch.exitSelection();
+                        } else {
+                          providerBatch.enterSelection();
+                        }
+                      }}
+                    >
+                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                      <span>
+                        {providerBatch.selectionMode
+                          ? t('common.batch.exit')
+                          : t('common.batch.manage')}
+                      </span>
+                    </Button>
+                    {providerBatch.selectionMode && (
+                      <ProviderBatchToolbar
+                        hasSelection={providerBatch.hasSelection}
+                        visibleCount={batchSelectableIds.length}
+                        isAllSelected={providerBatch.isAllSelected}
+                        indeterminate={providerBatch.indeterminate}
+                        onSelectAll={providerBatch.selectAllFiltered}
+                        onBatchDelete={providerBatch.batchDelete}
+                        disabled={loading}
+                      />
+                    )}
                     <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                     <ProviderSortDropdown
                       mode={sortMode}
@@ -1361,7 +1444,7 @@ const ClaudeCodePage: React.FC = () => {
                       <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                            sensors={providerDragDisabled ? [] : sensors}
+                            sensors={providerBatchDragDisabled ? [] : sensors}
                             collisionDetection={closestCenter}
                             modifiers={[restrictToVerticalAxis]}
                             onDragEnd={handleDragEnd}
@@ -1383,6 +1466,11 @@ const ClaudeCodePage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                                selected={providerBatch.selectedIds.has(provider.id)}
+                                onSelectChange={(checked) =>
+                                  providerBatch.toggleSelect(provider.id, checked)
+                                }
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}

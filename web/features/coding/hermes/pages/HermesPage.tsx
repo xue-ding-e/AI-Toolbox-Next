@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import {
   ApiOutlined,
+  CheckSquareOutlined,
   CloudDownloadOutlined,
   DatabaseOutlined,
   DeleteOutlined,
@@ -52,11 +53,14 @@ import SectionSidebarLayout, {
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES_BASIC,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
@@ -615,6 +619,59 @@ const HermesPage: React.FC = () => {
     });
   };
 
+  const canBatchDeleteProvider = React.useCallback(
+    (provider: HermesRuntimeProviderView) => !provider.isReadOnly && !provider.isDefault,
+    [],
+  );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (providerKeys: string[]): Promise<boolean> => {
+      if (!runtimeConfig) return false;
+      const providersToDelete = hermesProviders.filter(
+        (provider) => providerKeys.includes(provider.providerKey) && canBatchDeleteProvider(provider),
+      );
+      if (providersToDelete.length === 0) return false;
+      setSaving(true);
+      try {
+        await backupProvidersBeforeDelete(
+          providersToDelete,
+          (provider) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('hermes', provider.providerKey),
+            buildHermesFavoriteProviderConfig(provider.providerKey, provider.provider ?? {}),
+          ),
+          (provider) => t('common.batch.backupFailed', { name: provider.displayName || provider.providerKey }),
+        );
+        let nextConfig: HermesRuntimeConfig | null = null;
+        for (const provider of providersToDelete) {
+          nextConfig = await deleteHermesRuntimeProvider(provider.providerKey);
+        }
+        if (nextConfig) {
+          setRuntimeConfig(nextConfig);
+          setOtherSettings(nextConfig.otherSettings || {});
+        }
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        const readOnlyRemaining = nextConfig?.providers.filter(
+          (provider) => providerKeys.includes(provider.providerKey) && provider.isReadOnly,
+        ) ?? [];
+        if (readOnlyRemaining.length > 0) {
+          message.info(t('hermes.provider.readOnlyRemains', {
+            name: readOnlyRemaining.map((provider) => provider.displayName || provider.providerKey).join(', '),
+          }));
+        }
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete Hermes providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig(true);
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [hermesProviders, runtimeConfig, canBatchDeleteProvider, loadConfig, t],
+  );
+
   const handleSaveModel = async (values: ModelFormValues) => {
     if (!modelModal) {
       return;
@@ -751,6 +808,15 @@ const HermesPage: React.FC = () => {
       ),
     [hermesProviders, providerKeyword, sortMode, lastUsedAt],
   );
+
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canBatchDeleteProvider).map((provider) => provider.providerKey),
+    [visibleProviders, canBatchDeleteProvider],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
 
   const handleSetDefaultModel = async (provider: HermesRuntimeProviderView, modelId: string) => {
     setSaving(true);
@@ -1325,6 +1391,9 @@ const HermesPage: React.FC = () => {
         onDelete={isReadOnly ? undefined : () => handleDeleteProvider(provider)}
         deleteConfirm={false}
         deleteDisabledReason={deleteDisabledReason}
+        selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.providerKey)}
+        selected={providerBatch.selectedIds.has(provider.providerKey)}
+        onSelectChange={(checked) => providerBatch.toggleSelect(provider.providerKey, checked)}
         connectivityStatus={connectivityStatuses[provider.providerKey]}
         extraActions={
           <>
@@ -1561,7 +1630,38 @@ const HermesPage: React.FC = () => {
                     </Space>
                   ),
                   extra: (
-                    <Space onClick={(event) => event.stopPropagation()}>
+                    <Space size={4} wrap onClick={(event) => event.stopPropagation()}>
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (providerBatch.selectionMode) {
+                            providerBatch.exitSelection();
+                          } else {
+                            providerBatch.enterSelection();
+                          }
+                        }}
+                      >
+                        <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                        <span>
+                          {providerBatch.selectionMode
+                            ? t('common.batch.exit')
+                            : t('common.batch.manage')}
+                        </span>
+                      </Button>
+                      {providerBatch.selectionMode && (
+                        <ProviderBatchToolbar
+                          hasSelection={providerBatch.hasSelection}
+                          visibleCount={batchSelectableIds.length}
+                          isAllSelected={providerBatch.isAllSelected}
+                          indeterminate={providerBatch.indeterminate}
+                          onSelectAll={providerBatch.selectAllFiltered}
+                          onBatchDelete={providerBatch.batchDelete}
+                          disabled={loading}
+                        />
+                      )}
                       <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                       <ProviderSortDropdown
                         mode={sortMode}

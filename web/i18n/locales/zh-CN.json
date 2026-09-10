@@ -1269,6 +1269,22 @@
     "providerSearch": {
       "placeholder": "搜索供应商",
       "noMatch": "未找到匹配的供应商"
+    },
+    "batch": {
+      "manage": "多选",
+      "exit": "退出",
+      "selectAll": "全选",
+      "delete": "删除",
+      "deleteConfirmTitle": "确认删除选中供应商",
+      "deleteConfirmContent": "将删除选中的 {{count}} 个供应商，确定？",
+      "noneSelected": "未选择",
+      "selectItem": "选择此供应商",
+      "backupFailed": "未能备份供应商 {{name}}，本次批量删除已取消。"
+    },
+    "provider": {
+      "overwrite": "覆盖更新",
+      "overwriteConfirmTitle": "确认覆盖",
+      "overwriteConfirmContent": "将用导入的配置覆盖当前 \"{{name}}\" 供应商，确定？"
     }
   },
   "sessionManager": {
@@ -1516,7 +1532,9 @@
       "deselectAllProviders": "取消全选",
       "importSuccess": "成功导入 {{count}} 个供应商",
       "confirmDeleteFavorite": "确定要从常用供应商中删除吗？",
-      "favoriteDeleted": "已从常用供应商中删除"
+      "favoriteDeleted": "已从常用供应商中删除",
+      "overwriteSuccess": "已覆盖更新 \"{{name}}\"",
+      "overwriteBackupFailed": "覆盖更新已成功，但旧配置备份失败。"
     },
     "model": {
       "title": "模型列表",

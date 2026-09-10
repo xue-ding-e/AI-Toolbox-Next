@@ -14,6 +14,7 @@ import {
   MessageOutlined,
   EyeOutlined,
   EllipsisOutlined,
+  CheckSquareOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -62,11 +63,14 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES,
+  backupProvidersBeforeDelete,
+  ProviderBatchToolbar,
   ProviderSearchEmpty,
   ProviderSearchInput,
   ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
+  useProviderBatchSelection,
   useProviderListSort,
 } from '@/features/coding/shared/providerList';
 import { useRefreshStore, useSettingsStore } from '@/stores';
@@ -537,6 +541,53 @@ const ClaudeDesktopPage: React.FC = () => {
     [providers, providerKeyword, sortMode, lastUsedAt],
   );
 
+  const canBatchDeleteProvider = React.useCallback(
+    (provider: ClaudeDesktopProvider) => Boolean(provider.id),
+    [],
+  );
+
+  const handleBatchDeleteProviders = React.useCallback(
+    async (ids: string[]): Promise<boolean> => {
+      const providersToDelete = providers.filter(
+        (provider) => ids.includes(provider.id) && canBatchDeleteProvider(provider),
+      );
+      if (providersToDelete.length === 0) return false;
+      try {
+        await backupProvidersBeforeDelete(
+          providersToDelete,
+          (provider) => upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('claudedesktop', provider.id),
+            buildDesktopFavoriteProviderConfig(provider),
+          ),
+          (provider) => t('common.batch.backupFailed', { name: provider.name }),
+        );
+        for (const provider of providersToDelete) {
+          await deleteClaudeDesktopProvider(provider.id);
+        }
+        await loadConfig();
+        await refreshTrayMenu();
+        message.success(t('common.success'));
+        return true;
+      } catch (error) {
+        console.error('Failed to batch delete claudedesktop providers:', error);
+        message.error(error instanceof Error ? error.message : String(error));
+        await loadConfig();
+        return false;
+      }
+    },
+    [providers, canBatchDeleteProvider, loadConfig, t],
+  );
+  // All visible providers are deletable in Claude Desktop (no __local__ preset).
+  const batchSelectableIds = React.useMemo(
+    () => visibleProviders.filter(canBatchDeleteProvider).map((provider) => provider.id),
+    [visibleProviders, canBatchDeleteProvider],
+  );
+  const providerBatch = useProviderBatchSelection({
+    allIds: batchSelectableIds,
+    onBatchDelete: handleBatchDeleteProviders,
+  });
+  const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
+
   const handleSelectProvider = async (provider: ClaudeDesktopProvider) => {
     try {
       await applyClaudeDesktopProvider(provider.id);
@@ -995,6 +1046,37 @@ const ClaudeDesktopPage: React.FC = () => {
                 ),
                 extra: (
                   <Space size={4} wrap>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (providerBatch.selectionMode) {
+                          providerBatch.exitSelection();
+                        } else {
+                          providerBatch.enterSelection();
+                        }
+                      }}
+                    >
+                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
+                      <span>
+                        {providerBatch.selectionMode
+                          ? t('common.batch.exit')
+                          : t('common.batch.manage')}
+                      </span>
+                    </Button>
+                    {providerBatch.selectionMode && (
+                      <ProviderBatchToolbar
+                        hasSelection={providerBatch.hasSelection}
+                        visibleCount={batchSelectableIds.length}
+                        isAllSelected={providerBatch.isAllSelected}
+                        indeterminate={providerBatch.indeterminate}
+                        onSelectAll={providerBatch.selectAllFiltered}
+                        onBatchDelete={providerBatch.batchDelete}
+                        disabled={loading}
+                      />
+                    )}
                     <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
                     <ProviderSortDropdown
                       mode={sortMode}
@@ -1045,7 +1127,7 @@ const ClaudeDesktopPage: React.FC = () => {
                       <ProviderSearchEmpty />
                     ) : (
                       <DndContext
-                        sensors={providerDragDisabled ? [] : sensors}
+                        sensors={providerBatchDragDisabled ? [] : sensors}
                         collisionDetection={closestCenter}
                         modifiers={[restrictToVerticalAxis]}
                         onDragEnd={handleDragEnd}
@@ -1066,6 +1148,11 @@ const ClaudeDesktopPage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                                selected={providerBatch.selectedIds.has(provider.id)}
+                                onSelectChange={(checked) =>
+                                  providerBatch.toggleSelect(provider.id, checked)
+                                }
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}
                                 onGatewayStatusChange={async (status) => {
