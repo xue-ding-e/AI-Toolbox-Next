@@ -31,6 +31,7 @@
 - provider 视图的凭据回填顺序镜像 pi-ai 运行时解析顺序：先查 `records["llm-pi-ai/<route>"]`（api-key 记录取 `key` 字段回填；grant 或 env-only 记录仅标记已配置、不显示值），无记录才回查 `apiKeyEnv` 指向的 ref。因此经 dsh 官方 UI 登录的渠道在卡片上也能正确显示「已配置」。
 - `delete_dsh_credential` 对不存在的 ref 是幂等 no-op（不再报错）：有效凭据可能在 records 里，清空 key 的 UI 流程必须能成功返回。
 - 删除 provider 只删 `llm-pi-ai.providers.<route>`/空容器，不回滚 `agent-default-model` 默认选择；本地生效配置只在用户显式切换/应用时改写。
+- 前端批量删除应先排除默认/内置渠道，并从删除前的完整 runtime view 构建计划和收藏凭据快照。一个 `apiKeyEnv` 可被多个渠道共享：仍有未删除渠道引用时保留 ref，全部删除时只删一次；各被删渠道的收藏都要保留原密钥，不能用删除上一渠道后返回的 `credentialExists` 决定下一份备份。回归见 `web/test/features/coding/dsh/utils/providerDeletion.test.ts`。
 - 删除 prompt 预设只删 SQLite 记录，不改写/清空当前运行时 `AGENTS.md`。
 - `settings.yaml` 允许未知 top-level 与 provider 未知字段；读写必须 preserve unknown fields。
 - 保存 Other Settings 时不要把托管键（`llm-pi-ai`、`agent-default-model`）带回文件。

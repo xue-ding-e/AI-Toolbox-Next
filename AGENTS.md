@@ -429,6 +429,12 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - In Codex `config.toml`, explicitly preserve runtime-owned sections such as `mcp_servers`, `features`, and `plugins` during provider/common-config rewrites. These sections are not the same thing as AI Toolbox-managed provider/common config.
 - In Codex `auth.json`, do not full-overwrite runtime-owned OAuth fields when switching providers. AI Toolbox may manage `OPENAI_API_KEY`, but fields such as `auth_mode`, `tokens`, and `last_refresh` belong to Codex runtime login state and must be preserved unless the task explicitly migrates or clears them.
 
+#### Batch Mutation Rules
+
+- 批量修改或删除必须沿用单项操作的保护条件；默认项、已应用项、只读项和关联记录限制不能因为入口是“全选”而被绕过。选择控件、全选集合和实际执行应消费同一资格判断，确认弹窗打开后资格变化也要在执行前重新核对。
+- 依赖备份的批量删除必须先完成整批备份，再执行任何删除；备份失败应中止并明确提示失败项目。部分删除失败后重新读取真实状态，只清理已删除或不再可操作的选择，不能把失败当成功退出并清空未处理项。
+- 覆盖配置时不能在目标保存成功前改写唯一的导入来源。主保存失败与保存成功后的辅助备份失败应分别呈现，不能丢失源配置或把已经完成的保存报告成整体失败。
+
 ### Modal Implementation Notes
 
 弹窗、分区、横向字段和卡片视觉规范统一写在根目录 `DESIGN.md`。这里仅保留会影响实现正确性的工程规则。

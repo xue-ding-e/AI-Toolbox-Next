@@ -29,6 +29,7 @@
 - 删除 prompt preset 只删 SQLite 记录，不改写/清空当前 runtime prompt 文件。产品语义是“删除已保存的提示词记录”，不是“清空本地 runtime 提示词”。
 - 内置 provider 即使没有写入 `auth.json` 或 `models.json`，也可能通过环境变量或 Pi `/login` 可用；不要显示为 missing。
 - `auth.json` OAuth token 是 Pi runtime-owned。AI Toolbox 可以识别和保留，但首版不编辑 token、不发起 `/login`。
+- 前端 runtime view 的 `credential` 保持 `unknown`，收藏备份必须复用页面 `upsertPiFavoriteProvider` 的对象归一化，保留合法 API key/OAuth 对象及未知字段。批量入口不能把 `unknown` 直接传给仅接收 record 的配置构造函数，也不要用类型断言跳过运行时形态检查。
 - `models.json` 允许 unknown top-level 和 provider/model unknown fields。读写必须 preserve unknown fields。
 - Fetch Models 前端用 `findPresetModelById` 补全能力时必须保留上游返回的 model id 原文（含大小写）。preset 匹配是大小写不敏感的，只能拿 context/cost/reasoning/input 等元数据，不能把 `minimax-m3` 改写成 preset 的 `MiniMax-M3`；实现位于 `web/features/coding/pi/utils/piFetchedModels.ts`。
 - Pi 原生不支持 MCP；只有安装 `pi-mcp-adapter` 后才会读取 `<runtime-root>/mcp.json`。MCP 页面可以把 Pi 作为同步目标，但不要把它误认为 Pi provider/native config。

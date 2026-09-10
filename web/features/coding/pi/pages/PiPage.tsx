@@ -1344,12 +1344,11 @@ const PiPage: React.FC = () => {
       try {
         await backupProvidersBeforeDelete(
           providersToDelete,
-          (provider) => upsertFavoriteProvider(
-            buildFavoriteProviderStorageKey('pi', provider.providerKey),
-            buildPiFavoriteProviderConfig(
-              provider.providerKey, provider.displayName, provider.modelsProvider ?? {},
-              provider.credential ? asRecord(provider.credential) : undefined,
-            ),
+          (provider) => upsertPiFavoriteProvider(
+            provider.providerKey,
+            provider.modelsProvider ?? {},
+            provider.credential,
+            provider.displayName,
           ),
           (provider) => t('common.batch.backupFailed', { name: provider.displayName || provider.providerKey }),
         );
@@ -1379,7 +1378,7 @@ const PiPage: React.FC = () => {
         setSaving(false);
       }
     },
-    [piProviders, canBatchDeleteProvider, loadConfig, clearBatchDeleteState, t],
+    [piProviders, canBatchDeleteProvider, upsertPiFavoriteProvider, loadConfig, clearBatchDeleteState, t],
   );
 
   const batchSelectableIds = React.useMemo(

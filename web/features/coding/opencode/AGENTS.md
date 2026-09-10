@@ -53,6 +53,8 @@ sequenceDiagram
 - OpenCode v1 模型配置中的 `limit` 整体可选，但一旦存在，必须同时包含 `context` 和 `output`；新增、编辑和保存模型时必须保证两个字段要么同时为空、要么同时有值，不能生成只有单侧限制的配置。
 - `favorite provider` 页内列表的语义是“使用过的供应商”和诊断缓存，不是“当前配置中的 provider 列表”；删除当前 provider 前后保留它是可能的预期行为。
 - 改模型刷新或 provider 导入时，不要忘了托盘刷新和 favorite provider 辅助状态更新。
+- 覆盖收藏供应商时，模型引用清理只针对“旧模型 ID 减去新模型 ID”；保留的主模型、小模型及 Agent model/variant 必须原样保留，包括带 `/` 的上游模型 ID。替换与删除共用 `utils/providerMutations.ts` 的引用清理，不能把旧模型全集当成已删除集合。
+- 收藏覆盖先保存目标运行时配置，成功后才把旧供应商保存为收藏备份；保存失败时导入来源必须保持不变。后续备份失败只提示“覆盖成功但旧配置备份失败”，不能把已完成的覆盖报告成保存失败。回归覆盖失败后重试和保存后的再次读取。
 - “其他配置”是 OpenCode 顶层配置的补充 JSON 编辑面。`disabled_providers` 虽然也被 provider 卡片开关消费，但没有独立表单字段，不能从“其他配置”中过滤掉；保存时也要允许用户通过删除该字段来清空禁用列表。
 - Agent 设置页管理 `agent` 和 `default_agent`，这两个字段必须从“其他配置”编辑面隐藏，但保存其他配置时要原样保留。Agent 模型、Variant、权限、Prompt、`options` 和未知字段必须无损往返；删除模型引用时只清理对应 Agent 的 `model` / `variant`，不能顺手删除其他高级字段。
 - OpenCode 内置 Agent 名单应以当前官方 Agents 文档和实际运行时为准，不能只依赖可能滞后的 config schema `properties`。当前内置 Subagent 包括 `general`、`explore`、`scout`；schema 仍允许通过 `additionalProperties` 配置未显式枚举的内置 Agent。
@@ -91,3 +93,4 @@ sequenceDiagram
 - 至少验证：切换自定义配置路径后页面能重新读取新文件内容。
 - 至少验证：保存配置、应用 prompt、导入 provider 后托盘仍同步刷新。
 - 改 Agent 配置时至少验证：内置 Agent 模型覆盖、自定义 Agent、未知字段往返、删除 Provider/模型后的引用清理，以及 `agent` 与插件 `agents` 不混用。
+- 覆盖供应商和默认供应商删除保护运行 `web/test/features/coding/opencode/utils/providerMutations.test.ts`。

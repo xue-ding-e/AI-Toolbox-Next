@@ -16,6 +16,8 @@
 
 ## 关键设计决策与 Why
 
+- 批量删除资格以 `utils/providerDeletion.ts` 的 `canDeleteKimiProvider` 为前端共用判断：临时本地项、已应用项和仍绑定官方账号的项不能进入选择集合。后端仍是最终守卫；其拒绝或中途失败必须刷新列表、保留未处理选择。旅程测试中的内存后端也必须拒绝删除 applied provider，不能用允许删除的假实现掩盖真实拒绝路径。
+
 - **保存决策由页面态 `editingProvider` 决定，不是表单回传值**：`KimiProviderFormModal` 提交的 `KimiProviderFormData` 不含 `id`；曾因 `handleSaveProvider` 依赖 `values.id` 导致编辑永远走新建分支（点确认就多一条未应用记录，原 applied 状态丢失，代理按钮随之消失）。决策逻辑已抽到 `utils/providerSaveFlow.ts` 的 `buildKimiProviderSavePlan`（`adopt_local` / `update` / `create`）和 `shouldReengageKimiGatewayOnSave`，修改保存链路先看这两个纯函数和 `web/test/features/coding/kimi/kimiProviderJourney.test.ts` 的旅程用例。
 - **`gatewayCliStatus` 必须随 `loadConfig` 刷新**：代理按钮可见性依赖 `can_takeover`，而它随 provider 行（可代理候选）变化。曾因只在 `GatewayFailoverButton` 挂载时加载一次，provider 修复后前端仍缓存旧的 error/can_takeover=false，按钮一直不出现。`loadConfig` 里统一 `getProxyGatewayCliStatus('kimi')` 刷新（独立 catch，不阻塞主列表）。
 - **网关接管期间凡重写 live `config.toml` 的保存都必须先恢复直连再重接管**：后端 `ensure_kimi_gateway_direct` 会拒绝接管期间的直连保存；前端统一走 `saveProviderWithGatewayReengage`（restore → save → re-engage）。覆盖范围由 `shouldReengageKimiGatewayOnSave` 判定：已应用 provider 编辑与 `__local__` 收编（两者 `isApplied=true`，都会重投影 live 文件）需要 re-engage；未应用记录的 create/update 只动 DB 行，不需要。
@@ -31,4 +33,3 @@
 - **官方账号「应用/删除」入口在 `KimiPage` 供应商区账号行内**：Device auth 登录成功只入库账号（`is_applied=false`），真正激活必须走 `applyKimiOfficialAccount`（后端 `apply_kimi_official_account`，接管期间会被 `ensure_kimi_gateway_direct` 拒绝并把错误透出）；已应用账号显示 `kimi.account.applied` Tag、删除按钮禁用（后端也拒绝删除已应用账号），未应用账号显示「应用」按钮。账号行操作后统一 `loadConfig(true)` + `refreshTrayMenu()`。曾缺失该入口导致登录后无法激活账号（P1 已修）。
 - **Device auth 状态文案必须本地化**：后端状态串（`waiting`/`completed`/`failed`/`expired`/`cancelled`）经 `DEVICE_AUTH_STATUS_TEXT_KEYS` 映射到 `kimi.provider.deviceAuthStatusValue.*`，未知状态回退原串；轮询间隔尊重后端 `pollIntervalSeconds`（下限 3s），`onCompleted` 经 ref 稳定化，避免父组件重渲染重挂事件监听/重置轮询。
 - **`defaultModelKey` Select 不带 `allowClear`**：清空后 `buildKimiSettingsConfig` 会回填第一个模型 key（后端投影本身就回退首条），清空没有运行时意义，保留清除入口只会造成「有意清空被静默还原」的误导。
-

@@ -105,6 +105,9 @@ class InMemoryKimiProviderStore {
   }
 
   remove(id: string): void {
+    if (this.providers.find((provider) => provider.id === id)?.isApplied) {
+      throw new Error('The applied Kimi provider cannot be deleted');
+    }
     this.providers = this.providers.filter((provider) => provider.id !== id);
   }
 }
@@ -201,18 +204,19 @@ test('journey: applying another provider moves the applied flag', () => {
   assert.equal(providers.find((provider) => provider.id !== second.id)?.isApplied, false);
 });
 
-test('journey: deleting the applied provider leaves the other one intact', () => {
+test('journey: deletion protects the applied provider and permits removing an unused one', () => {
   const store = new InMemoryKimiProviderStore();
   store.localCategory = 'custom';
   const adopted = store.adoptLocal(localConfigValues);
   const second = store.create({ ...localConfigValues, name: 'Second' });
   store.apply(second.id);
 
-  store.remove(second.id);
+  assert.throws(() => store.remove(second.id), /applied Kimi provider cannot be deleted/);
+  store.remove(adopted.id);
   const providers = store.list();
   assert.equal(providers.length, 1);
-  assert.equal(providers[0].id, adopted.id);
-  assert.equal(store.appliedId(), '', 'backend clears applied when the applied row is deleted');
+  assert.equal(providers[0].id, second.id);
+  assert.equal(store.appliedId(), second.id);
 });
 
 test('journey: editing with a cleared meta must not resurrect stale billing headers', () => {
