@@ -718,6 +718,12 @@ pub struct GatewayPaginatedRequestLogs {
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogItem {
     #[serde(default)]
+    pub transport: GatewayRequestTransport,
+    #[serde(default)]
+    pub request_kind: GatewayRequestKind,
+    #[serde(default)]
+    pub stream_outcome: Option<GatewayStreamOutcome>,
+    #[serde(default)]
     pub usage_metadata: Option<SessionUsageMetadata>,
     #[serde(default)]
     pub extra_tokens: u64,
@@ -809,6 +815,10 @@ pub struct GatewayModelStats {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogSummary {
+    #[serde(default)]
+    pub transport: GatewayRequestTransport,
+    #[serde(default)]
+    pub request_kind: GatewayRequestKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_metadata: Option<SessionUsageMetadata>,
     pub trace_id: String,
@@ -948,6 +958,8 @@ pub struct GatewayProviderAttempt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogDetail {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub websocket: Option<GatewayWebSocketMetadata>,
     #[serde(flatten)]
     pub summary: GatewayRequestLogSummary,
     pub request_headers: Option<BTreeMap<String, String>>,
@@ -968,6 +980,73 @@ pub struct GatewayRequestLogRecord {
     pub schema_version: u32,
     #[serde(flatten)]
     pub detail: GatewayRequestLogDetail,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayRequestTransport {
+    #[default]
+    Http,
+    Websocket,
+}
+
+impl GatewayRequestTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Websocket => "websocket",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "websocket" => Self::Websocket,
+            _ => Self::Http,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayRequestKind {
+    #[default]
+    Request,
+    WebsocketHandshake,
+    WebsocketWarmup,
+}
+
+impl GatewayRequestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::WebsocketHandshake => "websocket_handshake",
+            Self::WebsocketWarmup => "websocket_warmup",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "websocket_handshake" => Self::WebsocketHandshake,
+            "websocket_warmup" => Self::WebsocketWarmup,
+            _ => Self::Request,
+        }
+    }
+}
+
+/// Connection metadata belongs in JSONL detail, never in the compact usage store.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayWebSocketMetadata {
+    pub connection_id: String,
+    pub response_id: Option<String>,
+    pub stream_id: Option<String>,
+    pub previous_response_id: Option<String>,
+    pub event_type: Option<String>,
+    pub handshake_status: u16,
+    pub upstream_handshake_status: Option<u16>,
+    pub error_status: Option<u16>,
+    pub fallback_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handshake_attempts: Vec<GatewayProviderAttempt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

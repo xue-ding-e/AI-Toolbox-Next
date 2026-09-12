@@ -207,6 +207,9 @@ export interface GatewayPaginatedRequestLogs {
 }
 
 export interface GatewayRequestLogItem {
+  transport?: 'http' | 'websocket';
+  request_kind?: 'request' | 'websocket_handshake' | 'websocket_warmup';
+  stream_outcome?: 'completed' | 'failed' | 'incomplete' | 'canceled' | null;
   usage_metadata?: SessionUsageMetadata | null;
   extra_tokens?: number;
   trace_id: string;
@@ -286,6 +289,9 @@ export interface GatewayModelStats {
 }
 
 export interface GatewayRequestLogSummary {
+  transport?: 'http' | 'websocket';
+  request_kind?: 'request' | 'websocket_handshake' | 'websocket_warmup';
+  stream_outcome?: 'completed' | 'failed' | 'incomplete' | 'canceled' | null;
   usage_metadata?: SessionUsageMetadata | null;
   trace_id: string;
   data_source?: string | null;
@@ -334,6 +340,18 @@ export interface GatewayProviderAttempt {
 }
 
 export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
+  websocket?: {
+    connection_id: string;
+    response_id: string | null;
+    stream_id: string | null;
+    previous_response_id: string | null;
+    event_type: string | null;
+    handshake_status: number;
+    upstream_handshake_status: number | null;
+    error_status: number | null;
+    fallback_reason: string | null;
+    handshake_attempts?: GatewayProviderAttempt[];
+  } | null;
   request_headers: Record<string, string> | null;
   request_body: string | null;
   upstream_request_body: string | null;

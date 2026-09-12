@@ -146,6 +146,7 @@ fn codex_config_managed_fields_for_provider(provider_id: &str) -> Vec<String> {
     vec![
         format!("model_providers.{provider_id}.base_url"),
         format!("model_providers.{provider_id}.wire_api"),
+        format!("model_providers.{provider_id}.supports_websockets"),
         format!("model_providers.{provider_id}.experimental_bearer_token"),
     ]
 }
@@ -2341,6 +2342,9 @@ fn patch_codex_config(
 
     provider_table["base_url"] = value(gateway_endpoint);
     provider_table["wire_api"] = value("responses");
+    // This describes the local gateway transport, not the upstream protocol.
+    // Unsupported upstreams reject the upgrade with 426 before Codex sends a turn.
+    provider_table["supports_websockets"] = value(true);
     if provider_table.get("requires_openai_auth").is_none() {
         provider_table["requires_openai_auth"] = value(true);
     }
@@ -2378,6 +2382,7 @@ fn remove_codex_gateway_managed_provider(
         Some(provider_table) => {
             provider_table.remove("base_url");
             provider_table.remove("wire_api");
+            provider_table.remove("supports_websockets");
             provider_table.remove("experimental_bearer_token");
             provider_table.remove("requires_openai_auth");
             provider_table.is_empty()
@@ -3099,6 +3104,7 @@ mod tests {
         opus_model: Option<&str>,
     ) -> UpstreamProvider {
         UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Claude,
             id: "provider-1".to_string(),
             name: "Provider 1".to_string(),
@@ -3474,6 +3480,35 @@ mod tests {
         restore_claude_settings(&settings_path, Some("{}")).unwrap();
         let restored = read_json_file(&settings_path).unwrap();
         assert!(restored.pointer("/env/ANTHROPIC_REASONING_MODEL").is_none());
+    }
+
+    #[test]
+    fn codex_takeover_enables_websocket_and_restores_original_capability() {
+        for original in [None, Some(false), Some(true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.toml");
+            let capability = original
+                .map(|value| format!("supports_websockets = {value}\n"))
+                .unwrap_or_default();
+            let backup = format!("model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://upstream.example/v1\"\n{capability}");
+            write_text_file(&path, &backup).unwrap();
+            patch_codex_config(&path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
+            let patched = parse_toml_file(&path).unwrap();
+            assert_eq!(
+                patched["model_providers"]["custom"]["supports_websockets"].as_bool(),
+                Some(true)
+            );
+            assert!(codex_config_managed_fields_for_provider("custom")
+                .contains(&"model_providers.custom.supports_websockets".to_string()));
+            restore_codex_config(&path, Some(&backup)).unwrap();
+            let restored = parse_toml_file(&path).unwrap();
+            assert_eq!(
+                restored["model_providers"]["custom"]
+                    .get("supports_websockets")
+                    .and_then(Item::as_bool),
+                original
+            );
+        }
     }
 
     #[test]

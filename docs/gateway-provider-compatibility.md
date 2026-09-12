@@ -1105,6 +1105,28 @@ inferred provider：
 - Anthropic Vertex -> `/publishers/anthropic/models/{model}:rawPredict` 或 `:streamRawPredict`。
 - Copilot -> 按本次 dynamic target 选择 `/chat/completions`、`/responses` 或 `/responses/compact`。
 
+### 7.1 Codex 同协议 Responses WebSocket
+
+传输与逐轮统计边界见架构主文档 §16.1；本节只约束实际上游 wire 行为。
+
+| 条件 | 握手行为 |
+|---|---|
+| effective target 是 Chat / Anthropic / Gemini，或 Copilot 按模型动态选协议 | 本地 `426`，不尝试上游 WS；由 Codex 发 HTTP 请求进入原转换链路 |
+| 原始 Codex provider 表的 `supports_websockets=false` | 本地 `426`；网关接管时写入本地表的 true 不覆盖此上游判断 |
+| Responses provider 的能力为 true 或未配置 | 使用实际 URL/认证发起上游握手，有效 `101` 后才升级下游 |
+| 上游返回非升级的 2xx/3xx，或 `404/405/426/501` | 返回 `426`，详情保留实际上游状态；重定向在 HTTP 路径处理 |
+| 上游返回 `401/403/429` 等真实错误 | 保留实际错误，不伪装成“不支持 WS”；沿用 retryable status / provider retry / total retry 设置，预算耗尽保留最后实际失败 |
+| 上游 `101` 的 Accept key、Upgrade/Connection、extensions/subprotocol 不合法 | `502`，不向下游写出 `101` |
+
+- 路径和 query 复用既有 `build_provider_target_url`；普通 Responses Base URL、`##` RawURL 和 `is_full_url` 语义一致。HTTP(S) 用于升级请求，详情以 WS(S) URL 标识传输。
+- 认证和 provider 自定义 Headers 先走 `build_upstream_headers`。随后由 WS 层重新生成 Connection/Upgrade、Sec-WebSocket-Key/Version，移除客户端 Sec-WebSocket-*、body framing、Host/Accept 等冲突字段；不请求压缩扩展或 subprotocol。客户端/provider 已给出的 OpenAI-Beta 保留，缺省才注入 `responses_websockets=2026-02-06`。
+- 使用专门的全局 HTTP client builder，显式 rustls、HTTP/1.1、无重定向、无总响应超时，保留用户的 direct/system/custom proxy。连接首包、逐轮 idle、写入/flush 和服务停止分别控制生命周期，不能套用普通 HTTP 的 30 秒整次请求超时。
+- 每个 `response.create` 的 model 改写复用 single/failover 规则、`[1M]` 清理及同协议 provider pipeline；去掉 HTTP 专属 `stream/background`，保留 `type/generate/stream_id/previous_response_id/event_id`。xAI native Responses namespace 恢复表按轮隔离。首版不做 WS 内协议转换、provider 切换或生成重放。
+- 握手时没有模型，只能过滤 provider 级冷却；不能用猜测模型跳过渠道或更新模型健康。每轮生成的健康判定基于实际上游模型和已送达终态；合法 Incomplete/Canceled、客户端取消和预热不当作上游模型故障。
+- `response.failed` / error event 仍以 WS 事件送给客户端，业务行的 HTTP status 保持空值，详情单独保留事件 error status。握手尝试只记录在连接 metadata；业务请求的尝试数不被它放大。
+
+关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_enables_websocket_and_restores_original_capability`。
+
 ## 8. 维护流程
 
 新增或调整 provider/channel 兼容时，按以下步骤：

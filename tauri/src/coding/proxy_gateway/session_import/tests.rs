@@ -11,6 +11,9 @@ use std::io::Write;
 #[path = "native_tests.rs"]
 mod native_tests;
 
+#[path = "websocket_tests.rs"]
+mod websocket_tests;
+
 const NOW: i64 = 1_800_000_100;
 const THEN: i64 = NOW - 60;
 const PARENT: &str = "11111111-1111-4111-8111-111111111111";

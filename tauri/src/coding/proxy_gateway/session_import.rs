@@ -859,6 +859,7 @@ fn find_matching_proxy(
             .query_row(
                 "SELECT request_id FROM proxy_request_logs
              WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+               AND request_kind = 'request'
                AND (?3 IS NULL OR request_id = ?3)
                AND (request_id = 'SESSION:' || ?2
                     OR request_id = 'SESSION:' || app_type || ':' || provider_id || ':' || ?2)
@@ -884,10 +885,10 @@ fn find_matching_proxy(
         .prepare_cached(
             "SELECT request_id FROM proxy_request_logs
          WHERE COALESCE(data_source, 'proxy') = 'proxy' AND app_type = ?1
+           AND request_kind = 'request'
            AND (?9 IS NULL OR request_id = ?9)
            AND (?10 IS NULL OR request_id NOT GLOB 'SESSION:*')
-           AND status_code >= 200 AND status_code < 300
-           AND (stream_outcome IS NULL OR stream_outcome = 'completed')
+           AND (stream_outcome = 'completed' OR (stream_outcome IS NULL AND status_code >= 200 AND status_code < 300))
            AND (LOWER(model) = LOWER(?2) OR LOWER(request_model) = LOWER(?2))
            AND input_tokens = ?3 AND output_tokens = ?4
            AND cache_read_tokens = ?5 AND cache_creation_tokens = ?6

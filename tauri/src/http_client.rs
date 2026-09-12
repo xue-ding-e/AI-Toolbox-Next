@@ -123,6 +123,13 @@ pub async fn client_streaming_no_compression(db_state: &SqliteDbState) -> Result
     build_client(proxy_mode, &proxy_url, None, true)
 }
 
+/// WebSocket upgrades use the same proxy/TLS policy, without redirects or a
+/// total request timeout that could cut off the upgraded connection.
+pub async fn client_websocket_handshake(db_state: &SqliteDbState) -> Result<Client, String> {
+    let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
+    build_client_for_transport(proxy_mode, &proxy_url, None, true, true)
+}
+
 /// Build an HTTP client with explicit proxy URL.
 ///
 /// This is an internal function. Business code should use `client()` or `client_with_timeout()`.
@@ -146,9 +153,30 @@ fn build_client(
     timeout_secs: Option<u64>,
     disable_content_decoding: bool,
 ) -> Result<Client, String> {
+    build_client_for_transport(
+        proxy_mode,
+        proxy_url,
+        timeout_secs,
+        disable_content_decoding,
+        false,
+    )
+}
+
+fn build_client_for_transport(
+    proxy_mode: ProxyMode,
+    proxy_url: &str,
+    timeout_secs: Option<u64>,
+    disable_content_decoding: bool,
+    websocket_upgrade: bool,
+) -> Result<Client, String> {
     let mut builder = Client::builder()
         .use_rustls_tls()
         .http1_title_case_headers();
+    if websocket_upgrade {
+        builder = builder
+            .http1_only()
+            .redirect(reqwest::redirect::Policy::none());
+    }
     if let Some(timeout_secs) = timeout_secs {
         builder = builder.timeout(Duration::from_secs(timeout_secs));
     } else {

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 20;
+pub const TARGET_SCHEMA_VERSION: i32 = 21;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -67,6 +67,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 20 {
         run_migration_step(conn, 20, migrate_v20)?;
+    }
+    if current_version < 21 {
+        run_migration_step(conn, 21, migrate_v21)?;
     }
 
     Ok(())
@@ -418,6 +421,21 @@ fn migrate_v20(conn: &Connection) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_proxy_native_match
          ON proxy_request_logs(app_type, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at);",
     ).map_err(|error| format!("Failed to index native usage reconciliation: {error}"))
+}
+
+fn migrate_v21(conn: &Connection) -> Result<(), String> {
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "transport",
+        "TEXT NOT NULL DEFAULT 'http'",
+    )?;
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "request_kind",
+        "TEXT NOT NULL DEFAULT 'request'",
+    )
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {

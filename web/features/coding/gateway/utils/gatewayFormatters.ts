@@ -149,6 +149,9 @@ export type GatewayRequestDisplayKind =
   | 'unknown';
 
 export interface GatewayRequestDisplayInput {
+  transport?: 'http' | 'websocket';
+  request_kind?: 'request' | 'websocket_handshake' | 'websocket_warmup';
+  total_tokens?: number | null;
   data_source?: string | null;
   method?: string | null;
   path?: string | null;
@@ -247,6 +250,10 @@ export const gatewayRequestDisplayKind = (
   const method = compactMethod(value.method);
   const normalizedPath = splitRequestPath(value.path);
 
+  if (value.request_kind === 'websocket_handshake') {
+    return 'connectionProbe';
+  }
+
   if (method === 'POST' && isContextCompactPath(normalizedPath)) {
     return 'contextCompact';
   }
@@ -290,11 +297,35 @@ export const requestDisplayTitleKey = (kind: GatewayRequestDisplayKind) => {
 export const isGatewayRequestUsageApplicable = (
   value: GatewayRequestDisplayInput | GatewayRequestDisplayKind,
 ) => {
+  if (typeof value !== 'string' && value.request_kind === 'websocket_handshake') {
+    return false;
+  }
+  if (typeof value !== 'string' && value.request_kind === 'websocket_warmup') {
+    return (value.total_tokens ?? 0) > 0;
+  }
   if (typeof value !== 'string' && value.data_source === 'session') {
     return true;
   }
   const kind = typeof value === 'string' ? value : gatewayRequestDisplayKind(value);
   return kind === 'model' || kind === 'contextCompact';
+};
+
+export const gatewayWebSocketStatusKey = (record: {
+  transport?: string;
+  request_kind?: string;
+  stream_outcome?: string | null;
+  status_code?: number | null;
+  success: boolean;
+}): string | null => {
+  if (record.transport !== 'websocket') return null;
+  if (record.request_kind === 'websocket_handshake') {
+    return record.status_code === 426 ? 'gateway.page.requests.websocket.fallback' : null;
+  }
+  const outcome = record.stream_outcome;
+  if (outcome && ['completed', 'failed', 'incomplete', 'canceled'].includes(outcome)) {
+    return `gateway.page.requests.websocket.${outcome}`;
+  }
+  return record.success ? 'gateway.page.requests.websocket.completed' : 'gateway.page.requests.websocket.failed';
 };
 
 export const deriveGatewayRequestDisplay = (

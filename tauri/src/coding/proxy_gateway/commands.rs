@@ -541,8 +541,10 @@ fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
     let mut summary_value = serde_json::to_value(summary).unwrap_or(Value::Null);
     let mut provider_attempts_value =
         serde_json::to_value(&detail.provider_attempts).unwrap_or(Value::Null);
+    let mut websocket_value = serde_json::to_value(&detail.websocket).unwrap_or(Value::Null);
     redact_json_value(&mut summary_value);
     redact_json_value(&mut provider_attempts_value);
+    redact_json_value(&mut websocket_value);
     serde_json::json!({
         "schema_version": 1,
         "exported_at": Utc::now().to_rfc3339(),
@@ -552,6 +554,7 @@ fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
         },
         "summary": summary_value,
         "provider_attempts": provider_attempts_value,
+        "websocket": websocket_value,
         "request": {
             "headers": redact_header_map(detail.request_headers.as_ref()),
             "body_before_conversion": redact_body(detail.request_body.as_deref()),
@@ -909,11 +912,13 @@ mod tests {
         assert_eq!(redacted, "https://example.test/search?monkey=value&alt=sse");
     }
 
-    #[test]
-    fn display_sanitization_redacts_path_and_upstream_url_queries() {
+    fn request_detail_fixture() -> GatewayRequestLogDetail {
         let now = Utc::now();
         let detail = GatewayRequestLogDetail {
+            websocket: None,
             summary: GatewayRequestLogSummary {
+                transport: Default::default(),
+                request_kind: Default::default(),
                 usage_metadata: None,
                 data_source: None,
                 trace_id: "trace-redact-display".to_string(),
@@ -966,7 +971,45 @@ mod tests {
             provider_attempts: Vec::new(),
         };
 
-        let sanitized = sanitize_request_log_detail_for_display(detail);
+        detail
+    }
+
+    #[test]
+    fn websocket_export_includes_transport_lifecycle_and_handshake_details() {
+        use super::super::types::{
+            GatewayRequestTransport, GatewayStreamOutcome, GatewayWebSocketMetadata,
+        };
+        let mut detail = request_detail_fixture();
+        detail.summary.transport = GatewayRequestTransport::Websocket;
+        detail.summary.status_code = None;
+        detail.summary.stream_outcome = Some(GatewayStreamOutcome::Completed);
+        detail.websocket = Some(GatewayWebSocketMetadata {
+            connection_id: "connection-export".to_string(),
+            response_id: Some("response-export".to_string()),
+            previous_response_id: Some("previous-export".to_string()),
+            stream_id: Some("lane-export".to_string()),
+            handshake_status: 101,
+            upstream_handshake_status: Some(101),
+            ..Default::default()
+        });
+        let exported = build_request_log_detail_export(&detail);
+        assert_eq!(exported["summary"]["transport"], "websocket");
+        assert!(exported["summary"]["status_code"].is_null());
+        assert_eq!(exported["summary"]["stream_outcome"], "completed");
+        assert_eq!(exported["websocket"]["connection_id"], "connection-export");
+        assert_eq!(exported["websocket"]["response_id"], "response-export");
+        assert_eq!(
+            exported["websocket"]["previous_response_id"],
+            "previous-export"
+        );
+        assert_eq!(exported["websocket"]["stream_id"], "lane-export");
+        assert_eq!(exported["websocket"]["handshake_status"], 101);
+        assert!(!exported.to_string().contains("key=secret"));
+    }
+
+    #[test]
+    fn display_sanitization_redacts_path_and_upstream_url_queries() {
+        let sanitized = sanitize_request_log_detail_for_display(request_detail_fixture());
 
         assert_eq!(
             sanitized.summary.path,

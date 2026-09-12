@@ -191,6 +191,18 @@ fn codex_provider_tables(root: &toml_edit::Table) -> Option<&toml_edit::Table> {
     root.get("model_providers").and_then(Item::as_table)
 }
 
+pub(crate) fn codex_supports_websockets_from_config(config_toml: &str) -> Option<bool> {
+    let document = config_toml.trim().parse::<DocumentMut>().ok()?;
+    let root = document.as_table();
+    let provider = selected_codex_provider_table(root).or_else(|| {
+        let providers = codex_provider_tables(root)?;
+        (providers.len() == 1)
+            .then(|| providers.iter().next()?.1.as_table())
+            .flatten()
+    })?;
+    provider.get("supports_websockets").and_then(Item::as_bool)
+}
+
 fn selected_codex_provider_table(root: &toml_edit::Table) -> Option<&toml_edit::Table> {
     let provider_name = root
         .get("model_provider")
@@ -255,6 +267,24 @@ fn json_bool_value(value: &Value) -> Option<bool> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn websocket_capability_uses_the_selected_provider_table() {
+        assert_eq!(codex_supports_websockets_from_config("model_provider = 'active'\n[model_providers.other]\nsupports_websockets = true\n[model_providers.active]\nsupports_websockets = false"), Some(false));
+        assert_eq!(
+            codex_supports_websockets_from_config(
+                "[model_providers.only]\nsupports_websockets = true"
+            ),
+            Some(true)
+        );
+        assert_eq!(codex_supports_websockets_from_config("[model_providers.first]\nsupports_websockets = true\n[model_providers.second]\nsupports_websockets = false"), None);
+        assert_eq!(
+            codex_supports_websockets_from_config(
+                "model_provider = 'active'\n[model_providers.active]\nwire_api = 'responses'"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn claude_openai_chat_provider_needs_gateway_proxy() {

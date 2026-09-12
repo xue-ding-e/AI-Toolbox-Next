@@ -240,11 +240,7 @@ impl ModelHealthRegistry {
     }
 
     pub fn is_model_available(&self, key: &ProviderModelHealthKey, now: DateTime<Utc>) -> bool {
-        if self
-            .provider_entries
-            .get(&ProviderHealthKey::from(key))
-            .is_some_and(|entry| is_cooling(entry, now))
-        {
+        if !self.is_provider_available(&ProviderHealthKey::from(key), now) {
             return false;
         }
 
@@ -252,6 +248,14 @@ impl ModelHealthRegistry {
             .get(key)
             .map(|entry| !is_cooling(entry, now))
             .unwrap_or(true)
+    }
+
+    /// A WebSocket handshake has no model yet, so only provider cooldown applies.
+    pub fn is_provider_available(&self, key: &ProviderHealthKey, now: DateTime<Utc>) -> bool {
+        !self
+            .provider_entries
+            .get(key)
+            .is_some_and(|entry| is_cooling(entry, now))
     }
 
     pub fn refresh_due_cooldowns(&mut self, now: DateTime<Utc>) {

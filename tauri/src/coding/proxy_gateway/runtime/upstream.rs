@@ -144,7 +144,7 @@ fn snapshot_response_stream(
 
 #[derive(Clone)]
 pub(super) struct UpstreamHeaders {
-    map: HeaderMap,
+    pub(super) map: HeaderMap,
     preserved: Vec<PreservedHeader>,
 }
 
@@ -4909,7 +4909,7 @@ fn convert_buffered_error_body(
     body
 }
 
-fn can_retry_current_provider(
+pub(super) fn can_retry_current_provider(
     failure_kind: GatewayFailureKind,
     provider_retry_count: u32,
     per_provider_retry_count: u32,
@@ -5168,6 +5168,83 @@ struct PreparedUpstreamBody {
     /// Request-scoped only: flat tool name → namespace identity for native xAI
     /// Responses passthrough restore. Empty when not applicable.
     xai_namespace_restore_map: HashMap<String, NamespacedName>,
+}
+
+/// Prepare a Responses event using the same model/provider policy as HTTP,
+/// while keeping WebSocket control fields owned by the transport.
+pub(super) fn prepare_websocket_request(
+    request: &DebugHttpRequest,
+    provider: &UpstreamProvider,
+    context: &GatewayRuntimeContext,
+    apply_failover_model_mapping: bool,
+) -> Result<(Vec<u8>, String, HashMap<String, NamespacedName>), String> {
+    let original: Value =
+        serde_json::from_slice(&request.body).map_err(|error| error.to_string())?;
+    let requested_model = original.get("model").and_then(Value::as_str).unwrap_or("");
+    if requested_model.trim().is_empty() {
+        return Err("response.create requires a model".to_string());
+    }
+    let upstream_model = resolve_upstream_model_id(
+        request,
+        requested_model,
+        provider,
+        apply_failover_model_mapping,
+        true,
+    );
+    let prepared = build_upstream_body_for_provider(
+        request,
+        requested_model,
+        &upstream_model,
+        false,
+        false,
+        GatewayCliKey::Codex,
+        Some(AiProtocol::OpenAiResponses),
+        AiProtocol::OpenAiResponses,
+        None,
+        Some(&provider.meta),
+        Some(context),
+        Some(provider),
+        false,
+        CodexResponsesCompactCompat::none(),
+    )
+    .map_err(|error| error.message)?;
+    let mut payload: Value =
+        serde_json::from_slice(&prepared.body).map_err(|error| error.to_string())?;
+    let object = payload
+        .as_object_mut()
+        .ok_or("response.create must be a JSON object")?;
+    object.remove("stream");
+    object.remove("background");
+    for key in [
+        "type",
+        "generate",
+        "stream_id",
+        "previous_response_id",
+        "event_id",
+    ] {
+        if let Some(value) = original.get(key) {
+            object.insert(key.to_string(), value.clone());
+        }
+    }
+    Ok((
+        serde_json::to_vec(&payload).map_err(|error| error.to_string())?,
+        upstream_model,
+        prepared.xai_namespace_restore_map,
+    ))
+}
+
+pub(super) fn websocket_provider_url(
+    provider: &UpstreamProvider,
+    route: &GatewayRoute,
+) -> Result<reqwest::Url, String> {
+    build_provider_target_url(
+        provider,
+        &route.forwarded_path,
+        route.query.as_deref(),
+        None,
+        true,
+        "",
+    )
 }
 
 fn build_upstream_body_for_provider(
@@ -5442,7 +5519,10 @@ fn apply_xai_responses_passthrough_if_needed(
     Ok(restore_map)
 }
 
-fn restore_xai_namespace_json_body(body: &[u8], map: &HashMap<String, NamespacedName>) -> Vec<u8> {
+pub(super) fn restore_xai_namespace_json_body(
+    body: &[u8],
+    map: &HashMap<String, NamespacedName>,
+) -> Vec<u8> {
     if map.is_empty() {
         return body.to_vec();
     }
@@ -10181,7 +10261,7 @@ fn extract_reasoning_like_text(value: &Value) -> Option<&str> {
         .filter(|text| !text.trim().is_empty())
 }
 
-fn classify_status_failure(status_code: u16) -> Option<GatewayFailureKind> {
+pub(super) fn classify_status_failure(status_code: u16) -> Option<GatewayFailureKind> {
     match status_code {
         200..=399 => None,
         400 => Some(GatewayFailureKind::UpstreamBadRequest),
@@ -10276,7 +10356,7 @@ fn should_use_header_preserving_raw(upstream_url: &reqwest::Url) -> bool {
     true
 }
 
-fn refresh_health_registry(context: &GatewayRuntimeContext) {
+pub(super) fn refresh_health_registry(context: &GatewayRuntimeContext) {
     let Some(registry) = context.health_registry.as_ref() else {
         return;
     };
@@ -10312,7 +10392,7 @@ pub(super) fn record_health_failure(
         .unwrap_or(false)
 }
 
-fn record_health_success(
+pub(super) fn record_health_success(
     context: &GatewayRuntimeContext,
     health_key: &ProviderModelHealthKey,
 ) -> bool {
@@ -10364,6 +10444,7 @@ mod tests {
 
     fn claude_provider(mapping: UpstreamModelMapping) -> UpstreamProvider {
         UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Claude,
             id: "p1".to_string(),
             name: "Provider".to_string(),
@@ -10381,6 +10462,7 @@ mod tests {
 
     fn provider_for_cli(cli_key: GatewayCliKey) -> UpstreamProvider {
         UpstreamProvider {
+            supports_websockets: None,
             cli_key,
             id: "p1".to_string(),
             name: "Provider".to_string(),
@@ -10725,6 +10807,7 @@ mod tests {
     fn conversion_route_rewrites_codex_responses_to_anthropic_messages_path() {
         let route = gateway_route(GatewayCliKey::Codex, "/v1/responses");
         let provider = UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Codex,
             id: "p1".to_string(),
             name: "Provider".to_string(),

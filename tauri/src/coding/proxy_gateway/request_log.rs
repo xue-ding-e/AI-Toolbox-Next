@@ -613,6 +613,8 @@ mod tests {
         let paths = ProxyGatewayPaths::new(dir.path());
         let now = Utc::now();
         let summary = GatewayRequestLogSummary {
+            transport: Default::default(),
+            request_kind: Default::default(),
             usage_metadata: None,
             data_source: None,
             trace_id: "trace-1".to_string(),
@@ -654,6 +656,7 @@ mod tests {
             detail_offset: None,
         };
         let record = new_request_log_record(GatewayRequestLogDetail {
+            websocket: None,
             summary,
             request_headers: Some(BTreeMap::from([(
                 "Content-Type".to_string(),

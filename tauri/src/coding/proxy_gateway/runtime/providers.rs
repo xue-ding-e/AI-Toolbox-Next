@@ -38,6 +38,7 @@ pub(crate) struct UpstreamProvider {
     pub(crate) base_url: String,
     pub(crate) api_key: String,
     pub(crate) target_protocol: AiProtocol,
+    pub(crate) supports_websockets: Option<bool>,
     pub(crate) auth_strategy: ProviderAuthStrategy,
     pub(crate) is_full_url: bool,
     pub(crate) sort_index: Option<i32>,
@@ -396,6 +397,7 @@ fn provider_from_record(
                 ..claude_model_mapping_from_settings(&settings)
             };
             Ok(Some(UpstreamProvider {
+                supports_websockets: None,
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -440,6 +442,10 @@ fn provider_from_record(
                 auth_strategy = ProviderAuthStrategy::Bearer;
             }
             Ok(Some(UpstreamProvider {
+                supports_websockets:
+                    super::super::provider_protocol::codex_supports_websockets_from_config(
+                        config_toml,
+                    ),
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -513,6 +519,7 @@ fn provider_from_record(
                 auth_strategy = ProviderAuthStrategy::Bearer;
             }
             Ok(Some(UpstreamProvider {
+                supports_websockets: None,
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -600,6 +607,7 @@ fn provider_from_record(
                 auth_strategy = ProviderAuthStrategy::Bearer;
             }
             Ok(Some(UpstreamProvider {
+                supports_websockets: None,
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -653,6 +661,7 @@ fn provider_from_record(
                 auth_strategy = ProviderAuthStrategy::Bearer;
             }
             Ok(Some(UpstreamProvider {
+                supports_websockets: None,
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -706,6 +715,7 @@ fn provider_from_record(
                 ..claude_desktop_model_mapping(&provider.meta, &settings)
             };
             Ok(Some(UpstreamProvider {
+                supports_websockets: None,
                 cli_key,
                 id: provider.id,
                 name: provider.name,
@@ -1703,6 +1713,7 @@ mod tests {
 
     fn provider(name: &str, sort_index: Option<i32>) -> UpstreamProvider {
         UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Claude,
             id: name.to_string(),
             name: name.to_string(),

@@ -24,6 +24,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2"
 
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "process"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 serde_yaml = "0.9"

@@ -28,7 +28,7 @@ impl TokenUsage {
         (total > 0).then_some(total)
     }
 
-    fn merge_max(&mut self, other: TokenUsage) {
+    pub(crate) fn merge_max(&mut self, other: TokenUsage) {
         self.input_tokens = max_option(self.input_tokens, other.input_tokens);
         self.output_tokens = max_option(self.output_tokens, other.output_tokens);
         self.cache_read_tokens = max_option(self.cache_read_tokens, other.cache_read_tokens);
@@ -411,7 +411,10 @@ pub fn sse_block_classify_terminal(block: &[u8]) -> Option<SseTerminalKind> {
 
 /// Classify one `(event_name, data)` pair using the shared terminal rules. The
 /// data is either a JSON payload span or the `[DONE]` sentinel.
-fn classify_sse_event_fields(event_name: Option<&str>, data: &str) -> Option<SseTerminalKind> {
+pub(crate) fn classify_sse_event_fields(
+    event_name: Option<&str>,
+    data: &str,
+) -> Option<SseTerminalKind> {
     if data.trim() == "[DONE]" {
         return Some(SseTerminalKind::Success);
     }

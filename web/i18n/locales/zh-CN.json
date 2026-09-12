@@ -277,6 +277,24 @@
           "allSources": "全部来源",
           "proxy": "网关",
           "overviewHint": "统计包含网关与本地用量；同一次调用优先网关。回合与累计记录保留原生粒度，未知调用数不推算，累计用量按观察时间归属。成本仅累计已报告或可按模型价格估算的部分；缺少定价不代表免费。"
+        },
+        "websocket": {
+          "transport": "传输方式",
+          "warmup": "预热",
+          "connection": "连接 ID",
+          "handshake": "握手（客户端 / 上游）",
+          "response": "响应 ID",
+          "previous": "前序响应 ID",
+          "stream": "流 ID",
+          "errorStatus": "事件错误码",
+          "fallback": "回退 HTTP",
+          "completed": "完成",
+          "failed": "失败",
+          "incomplete": "未完成",
+          "canceled": "已取消",
+          "requestHeaders": "客户端握手 Headers",
+          "responseHeaders": "网关握手 Headers",
+          "handshakeAttempts": "握手尝试"
         }
       },
       "requestRateHint": "RPM 表示所选 CLI 最近 60 秒进入网关的请求数，每 5 秒刷新，不受日期筛选影响；本地会话用量不计入实时网关速率。",

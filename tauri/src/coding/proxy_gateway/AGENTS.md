@@ -39,6 +39,12 @@
 
 ## 核心设计决策（Why）
 
+- Codex WebSocket 只在 runtime 做 Responses 同协议转发（架构文档 §16.1、兼容文档 §7.1）。必须先校验实际上游的有效 `101`，再升级下游；转换、动态协议或显式关闭 WS 的渠道在升级前 `426`。接管表的 `supports_websockets=true` 描述本机能力，上游判断仍读数据库 provider 的原始配置，恢复直连要恢复原值。
+- 一条 WS 固定一个 provider/认证身份；`previous_response_id` 是连接内状态，禁止在已升级连接里静默 failover 或重放生成。握手可复用原 retry 预算，但不能把握手尝试记成每轮生成重试；握手阶段没有实际模型，只看 provider 冷却。
+- WS 用量和请求详情按每个 `response.create` 结算，并按 `stream_id` / response ID 关联；终态送达后立刻落库，不等连接关闭。usage 解析先于下游写入，成功判定晚于写入；日志关闭/截断不能改统计，客户端写失败仍保留已经收到的 usage。
+- WS 客户端事件快照必须在写入成功之后追加，本地请求校验产生的 error event 也遵守这条规则。没有 lane/response 归属的连接级 error 要附到每个受影响 pending 轮次，保留原始事件、已送达事件、错误码和原因；不能只写一条通用断线说明而丢失真实上游错误。
+- 握手、Ping/Pong 和预热不计调用数/RPM。预热若有真实 usage 仍计 Token/费用；失败筛选、统计、native 去重和 daily rollup 必须同步使用 request kind 与业务终态，不能把 WS 的 HTTP 占位 `0` 解释成失败。连接 IDs、握手尝试及正文只在 JSONL；摘要回退与明细导出都要保留 transport 语义。停止/重启必须关闭已有 WS 并结算 pending 请求，不能只停 listener。
+
 - CLI 接管使用文件 manifest，而不是数据库状态，原因是接管必须跟随本机 runtime 文件恢复，即使数据库记录损坏或迁移，仍能根据 manifest 找到备份并回滚。
 - `OpenCode` adapter 暂不属于当前 MVP；不要把 `GatewayCliKey::OpenCode` 当成可接管 CLI 开启入口。
 - Kimi CLI 已纳入 Gateway MVP：接管文件是 `<runtime_root>/config.toml`，manifest kind 为 `kimi_config_toml`，受管字段是当前生效 provider 表（`default_model` → `[models.<key>].provider` 解析出的 key，回退 `managed:kimi-code`）的 `type/base_url/api_key`，真实模型请求通过 `/kimi/v1/chat/completions` 入站。网关候选 provider（`runtime/providers.rs` 的 `kimi_selected_provider_entry`）必须镜像同一条解析链选择 `providerConfigs` 条目：`defaultModelKey` → `modelCatalog.models[].provider` → `providerConfigs[key]`，链不完整时才回退首条；盲取首条会让多 provider 记录的候选指向错误 upstream。链不完整且存在多个 `providerConfigs` 条目时候选与 patch 目标（`managed:kimi-code`）分叉，候选加载会打 `log::warn` 便于排障。恢复直连是字段级：按 manifest managed fields 记录的 provider key 清除并按原始备份还原 `type/base_url/api_key`，清空后无残留字段的表删除（含 patch 新建的 `[providers]` 根）；备份缺失时只清受管字段，禁止整文件覆盖回滚接管窗口内的用户改动。
@@ -243,6 +249,7 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 - 供应商缓存命中率是输入 token 加权比例：`SUM(cache_read_tokens) / SUM(input_tokens + cache_creation_tokens + cache_read_tokens)`；存储的 input 已经是 fresh，不能再次扣缓存，output 不进分母。实时明细和 daily rollup 都要累加后再算，不能平均每行百分比；无输入用量返回 `None`，有输入但无读取命中返回 `Some(0.0)`。
 ## 最小验证
 
+- 修改 WS 时至少运行 `cargo test --lib websocket --jobs 2` 和 `cargo test --test sqlite_jsonb --jobs 2`：覆盖真实握手/426→HTTP 转换、同连接多轮、多路交错、重复终态、正文关闭/截断、客户端写失败仍计用量、握手重试与超时/停止、proxy/native 两种到达顺序、预热不计调用、归档前后统计和接管恢复原能力。跨层交付仍需根文档规定的全量测试集合。
 - 修改以上指标时覆盖：v16 旧行升级、正文关闭与 metrics-only 读写往返、同协议和转换请求的最终 effort、等待上游时的计数、重试不重复、60 秒边界、重启清零，以及明细/rollup 混合、CLI/时间过滤和无数据/零命中。
 - 修改本地采集时覆盖原生文件 -> SQLite -> 列表/统计往返、局部/最终用量更新、重启幂等、旧手动导入身份兼容、proxy/native 两种到达顺序、一对一去重、pending 无文件变化重查、父会话 replay、大 JSONL、只读 OpenCode WAL、账本失败回滚，以及 native-only / mixed 延迟归档前后语义。补测 21 秒落盘延迟、长请求执行区间、超过一小时的旧明细、DSH 普通恢复 marker、Grok 调用数、Hermes 累计/费用修正、Desktop 精确归档修复和旧数据不可证明时保持原值。v18/v19/v20 升级须保留旧汇总和新账本，重复升级不能清空它们；补测已标记 v18 的缺列库、完整 v18 库和归档失败仍能保存新请求/返回导入成功。
 - 成本回归覆盖带日期后缀的真实模型、精确零价保护、活跃/归档缺价补算、已知/未知费用混合、不完整分组拒绝修改、回填与账本失败回滚，以及 Desktop 补价后再退回 audit 汇总。真实数据验证在只读连接生成的副本内运行，并与使用同一价格表全新导入的结果比较，同时断言 Token 和调用数不变。

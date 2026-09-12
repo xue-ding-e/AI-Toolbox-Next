@@ -12,6 +12,7 @@ import {
   formatTps,
   formatUsd,
   gatewayRequestDisplayKind,
+  gatewayWebSocketStatusKey,
   getGatewayRequestsPerMinute,
   isGatewayRequestUsageApplicable,
   normalizeAttemptCounts,
@@ -21,6 +22,29 @@ import {
   resolveGatewayUsageRange,
   shouldShowBodyComparison,
 } from '../../../../../features/coding/gateway/utils/gatewayFormatters.ts';
+
+test('WebSocket request status uses the delivered terminal and keeps handshake fallback distinct', () => {
+  for (const outcome of ['completed', 'failed', 'incomplete', 'canceled']) {
+    assert.equal(gatewayWebSocketStatusKey({ transport: 'websocket', stream_outcome: outcome, status_code: 0, success: outcome === 'completed' }), `gateway.page.requests.websocket.${outcome}`);
+  }
+  assert.equal(gatewayWebSocketStatusKey({ transport: 'websocket', request_kind: 'websocket_handshake', status_code: 426, success: false }), 'gateway.page.requests.websocket.fallback');
+  assert.equal(gatewayWebSocketStatusKey({ transport: 'websocket', request_kind: 'websocket_handshake', status_code: 401, success: false }), null);
+  assert.equal(gatewayWebSocketStatusKey({ status_code: 200, success: true }), null);
+  assert.equal(gatewayWebSocketStatusKey({ transport: 'websocket', status_code: null, success: false }), 'gateway.page.requests.websocket.failed');
+});
+
+test('WebSocket handshake and warmup do not pretend to be ordinary model usage', () => {
+  const request = { method: 'WS', path: '/openai/v1/responses', requested_model: 'gpt-5', transport: 'websocket' as const };
+  assert.equal(gatewayRequestDisplayKind(request), 'model');
+  assert.equal(isGatewayRequestUsageApplicable(request), true);
+  const handshake = { ...request, method: 'GET', request_kind: 'websocket_handshake' as const };
+  assert.equal(gatewayRequestDisplayKind(handshake), 'connectionProbe');
+  assert.equal(isGatewayRequestUsageApplicable(handshake), false);
+  const warmup = { ...request, request_kind: 'websocket_warmup' as const };
+  assert.equal(isGatewayRequestUsageApplicable(warmup), false);
+  assert.equal(isGatewayRequestUsageApplicable({ ...warmup, total_tokens: 0 }), false);
+  assert.equal(isGatewayRequestUsageApplicable({ ...warmup, total_tokens: 12 }), true);
+});
 
 test('request presets use the statistics ranges and refresh their relative end time', () => {
   const now = new Date(2026, 8, 12, 22, 24, 0).getTime();

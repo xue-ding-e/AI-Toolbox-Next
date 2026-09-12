@@ -88,6 +88,28 @@ pub(super) fn record_gateway_observability(
     started_at: DateTime<Utc>,
     ended_at: DateTime<Utc>,
 ) {
+    record_gateway_observability_with_transport(
+        request,
+        response,
+        context,
+        started_at,
+        ended_at,
+        Default::default(),
+        Default::default(),
+        None,
+    );
+}
+
+pub(super) fn record_gateway_observability_with_transport(
+    request: &DebugHttpRequest,
+    response: &DebugHttpResponse,
+    context: &GatewayRuntimeContext,
+    started_at: DateTime<Utc>,
+    ended_at: DateTime<Utc>,
+    transport: super::super::types::GatewayRequestTransport,
+    request_kind: super::super::types::GatewayRequestKind,
+    websocket: Option<super::super::types::GatewayWebSocketMetadata>,
+) {
     let Some(paths) = context.paths.as_ref() else {
         return;
     };
@@ -135,7 +157,10 @@ pub(super) fn record_gateway_observability(
         // Build compact fields first (no body/header yet) so usage-key resolution can
         // decide skip/collision before we write expensive JSONL detail.
         let mut detail = GatewayRequestLogDetail {
+            websocket,
             summary: GatewayRequestLogSummary {
+                transport,
+                request_kind,
                 usage_metadata: None,
                 trace_id,
                 data_source: None,
@@ -154,7 +179,9 @@ pub(super) fn record_gateway_observability(
                 upstream_model_id: response.upstream_model_id.clone(),
                 reasoning_effort: final_upstream_reasoning_effort(response),
                 upstream_url: response.upstream_url.clone(),
-                status_code: Some(response.status_code),
+                status_code: (transport == super::super::types::GatewayRequestTransport::Http
+                    || request_kind == super::super::types::GatewayRequestKind::WebsocketHandshake)
+                    .then_some(response.status_code),
                 upstream_status_code: response.upstream_status_code,
                 success,
                 error_category: response.error_category.clone(),

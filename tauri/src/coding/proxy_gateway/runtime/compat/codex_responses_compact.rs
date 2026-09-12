@@ -27,7 +27,6 @@ pub(in crate::coding::proxy_gateway::runtime) struct CodexResponsesCompactCompat
 }
 
 impl CodexResponsesCompactCompat {
-    #[cfg(test)]
     pub(in crate::coding::proxy_gateway::runtime) fn none() -> Self {
         Self {
             mode: CodexResponsesCompactMode::NotCompact,
@@ -39,9 +38,7 @@ impl CodexResponsesCompactCompat {
         provider: &UpstreamProvider,
     ) -> Self {
         if !is_codex_responses_compact_route(route) {
-            return Self {
-                mode: CodexResponsesCompactMode::NotCompact,
-            };
+            return Self::none();
         }
 
         let mode = match provider.target_protocol {
@@ -354,6 +351,7 @@ mod tests {
 
     fn provider(target_protocol: AiProtocol) -> UpstreamProvider {
         UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Codex,
             id: "p1".to_string(),
             name: "Provider".to_string(),

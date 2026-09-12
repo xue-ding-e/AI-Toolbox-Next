@@ -377,7 +377,7 @@ pub fn record_request_summary(
                 status_code, error_message, session_id, provider_type, is_streaming,
                 cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
                 detail_offset, route_name, method, path, upstream_status_code,
-                stream_outcome, error_category, attempt_count, total_attempt_count, reasoning_effort
+                stream_outcome, error_category, attempt_count, total_attempt_count, reasoning_effort, transport, request_kind, usage_request_count
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
@@ -385,7 +385,7 @@ pub fn record_request_summary(
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?22,
                 ?23, ?24, ?25, 'proxy', ?26, ?27, ?28, ?29, ?30, ?31,
-                ?32, ?33, ?34, ?35, ?36
+                ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39
             )"
         );
         let affected_rows = conn
@@ -428,6 +428,9 @@ pub fn record_request_summary(
                     i64::from(summary.attempt_count.max(1)),
                     i64::from(summary.total_attempt_count.max(1)),
                     summary.reasoning_effort,
+                    summary.transport.as_str(),
+                    summary.request_kind.as_str(),
+                    i64::from(summary.request_kind == super::types::GatewayRequestKind::Request),
                 ],
             )
             .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -703,7 +706,7 @@ pub fn request_logs(
                     total_cost_usd, latency_ms, first_token_ms, COALESCE(duration_ms, latency_ms, 0),
                     status_code, error_message, created_at, is_streaming,
                     route_name, method, path, stream_outcome, reasoning_effort,
-                    COALESCE(data_source, 'proxy'), json(usage_metadata), extra_tokens
+                    COALESCE(data_source, 'proxy'), json(usage_metadata), extra_tokens, transport, request_kind
              FROM proxy_request_logs l
              {where_clause}
              ORDER BY created_at DESC
@@ -724,6 +727,9 @@ pub fn request_logs(
                 let cache_read_tokens = row.get::<_, i64>(7)?.max(0) as u64;
                 let cache_creation_tokens = row.get::<_, i64>(8)?.max(0) as u64;
                 Ok(Some(GatewayRequestLogItem {
+                    transport: super::types::GatewayRequestTransport::from_str(&row.get::<_, String>(25)?),
+                    request_kind: super::types::GatewayRequestKind::from_str(&row.get::<_, String>(26)?),
+                    stream_outcome: row.get::<_, Option<String>>(20)?.as_deref().and_then(GatewayStreamOutcome::from_str),
                     usage_metadata: row.get::<_, Option<String>>(23)?.and_then(|value| serde_json::from_str(&value).ok()),
                     extra_tokens: row.get::<_, i64>(24)?.max(0) as u64,
                     data_source: row.get(22)?,
@@ -963,11 +969,11 @@ pub fn provider_stats(
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + extra_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
                         COALESCE(SUM(CASE WHEN (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400)) THEN l.usage_request_count ELSE 0 END), 0),
-                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN l.latency_ms ELSE 0 END), 0),
                         COALESCE(SUM(input_tokens), 0),
                         COALESCE(SUM(cache_read_tokens), 0),
                         COALESCE(SUM(cache_creation_tokens), 0),
-                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END), 0)
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN 1 ELSE 0 END), 0)
                  FROM proxy_request_logs l
                  {where_clause}
                  GROUP BY app_type, provider_id
@@ -1066,8 +1072,8 @@ pub fn model_stats(
                         COALESCE(SUM(usage_request_count), 0),
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + extra_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
-                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0),
-                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END), 0)
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN l.latency_ms ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN 1 ELSE 0 END), 0)
                  FROM proxy_request_logs l
                  {where_clause}
                  GROUP BY app_type, stats_model
@@ -1497,8 +1503,8 @@ pub(super) fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<()
                    COALESCE(SUM(l.cache_creation_tokens), 0) AS cache_creation_tokens,
                    COALESCE(SUM(l.extra_tokens), 0) AS extra_tokens,
                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) AS total_cost,
-                   COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.latency_ms ELSE 0 END), 0) * 1.0 AS latency_sum,
-                   SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN 1 ELSE 0 END) AS latency_sample_count
+                   COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN l.latency_ms ELSE 0 END), 0) * 1.0 AS latency_sum,
+                   SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN 1 ELSE 0 END) AS latency_sample_count
             FROM proxy_request_logs l
             WHERE l.created_at < ?1
               AND {usage_condition}
@@ -1673,7 +1679,7 @@ fn build_detail_where(
         params.push(Box::new("failed".to_string()));
         params.push(Box::new("canceled".to_string()));
         conditions.push(format!(
-            "(l.status_code < 200 OR l.status_code >= 400 OR l.stream_outcome IN (?{param_index}, ?{}, ?{}))",
+            "((COALESCE(l.stream_outcome, '') NOT IN ('completed', 'incomplete', 'failed', 'canceled') AND (l.status_code < 200 OR l.status_code >= 400)) OR l.stream_outcome IN (?{param_index}, ?{}, ?{})) AND COALESCE(l.error_category, '') <> 'websocket_fallback'",
             param_index + 1,
             param_index + 2,
         ));
@@ -1817,14 +1823,15 @@ fn usage_applicable_detail_condition(alias: &str, include_compact: bool) -> Stri
         "({} OR {alias}.data_source = 'session')",
         valid_detail_model_sql_condition(alias)
     );
-    if include_compact {
+    let ordinary = if include_compact {
         format!(
             "({valid_model} OR {})",
             compact_request_sql_condition(alias)
         )
     } else {
         valid_model
-    }
+    };
+    format!("(({alias}.request_kind = 'request' AND {ordinary}) OR ({alias}.request_kind = 'websocket_warmup' AND ({alias}.input_tokens + {alias}.output_tokens + {alias}.cache_read_tokens + {alias}.cache_creation_tokens) > 0))")
 }
 
 fn valid_detail_model_sql_condition(alias: &str) -> String {
@@ -2460,7 +2467,7 @@ pub fn request_log_detail_from_summary(
                     cost_multiplier, pricing_model_source, detail_file, detail_offset,
                     route_name, method, path, upstream_status_code,
                     stream_outcome, error_category, attempt_count, total_attempt_count, reasoning_effort,
-                    COALESCE(data_source, 'proxy'), json(usage_metadata), extra_tokens
+                    COALESCE(data_source, 'proxy'), json(usage_metadata), extra_tokens, transport, request_kind
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -2491,7 +2498,10 @@ pub fn request_log_detail_from_summary(
                     .saturating_add(cache_creation_tokens)
                     .saturating_add(row.get::<_, i64>(33)?.max(0) as u64);
                 Ok(GatewayRequestLogDetail {
+                    websocket: None,
                     summary: GatewayRequestLogSummary {
+                        transport: super::types::GatewayRequestTransport::from_str(&row.get::<_, String>(34)?),
+                        request_kind: super::types::GatewayRequestKind::from_str(&row.get::<_, String>(35)?),
                         usage_metadata: row.get::<_, Option<String>>(32)?.and_then(|value| serde_json::from_str(&value).ok()),
                         data_source: Some(row.get(31)?),
                         trace_id: row.get(0)?,
@@ -2519,7 +2529,7 @@ pub fn request_log_detail_from_summary(
                         upstream_model_id: Some(row.get(3)?),
                         reasoning_effort: row.get(30)?,
                         upstream_url: None,
-                        status_code: (!is_session).then_some(status_code),
+                        status_code: (!is_session && status_code != 0).then_some(status_code),
                         upstream_status_code: row
                             .get::<_, Option<i64>>(25)?
                             .map(|value| value.max(0) as u16),
@@ -2752,7 +2762,10 @@ mod tests {
             GatewayCliKey::OpenCode => ("opencode", "/v1/chat/completions"),
         };
         GatewayRequestLogDetail {
+            websocket: None,
             summary: GatewayRequestLogSummary {
+                transport: Default::default(),
+                request_kind: Default::default(),
                 usage_metadata: None,
                 data_source: None,
                 trace_id: trace_id.to_string(),
@@ -2826,6 +2839,58 @@ mod tests {
         detail.summary.upstream_model_id = None;
         detail.summary.total_tokens = Some(input_tokens + output_tokens);
         detail
+    }
+
+    #[test]
+    fn websocket_warmup_and_handshake_do_not_change_request_or_latency_counts_after_rollup() {
+        use super::super::types::{GatewayRequestKind, GatewayRequestTransport};
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        let settings = ProxyGatewaySettings {
+            log_retention_days: 0,
+            ..Default::default()
+        };
+        let mut request = make_detail("ws-generation", "provider", 0, 100, 20);
+        request.summary.transport = GatewayRequestTransport::Websocket;
+        request.summary.status_code = None;
+        request.summary.is_streaming = true;
+        request.summary.stream_outcome = Some(GatewayStreamOutcome::Completed);
+        request.summary.success = true;
+        request.summary.ended_at = Utc::now() - Duration::days(400);
+        request.summary.started_at = request.summary.ended_at - Duration::milliseconds(100);
+        request.summary.first_token_ms = Some(20);
+        request.summary.duration_ms = 100;
+        record_request_summary(&db, &settings, &request).unwrap();
+        let mut warmup = request.clone();
+        warmup.summary.trace_id = "ws-warmup".to_string();
+        warmup.summary.request_kind = GatewayRequestKind::WebsocketWarmup;
+        warmup.summary.input_tokens = Some(5);
+        warmup.summary.output_tokens = Some(0);
+        warmup.summary.first_token_ms = Some(9000);
+        warmup.summary.duration_ms = 10000;
+        record_request_summary(&db, &settings, &warmup).unwrap();
+        let mut handshake = warmup.clone();
+        handshake.summary.trace_id = "ws-handshake".to_string();
+        handshake.summary.request_kind = GatewayRequestKind::WebsocketHandshake;
+        handshake.summary.status_code = Some(426);
+        handshake.summary.input_tokens = Some(0);
+        handshake.summary.stream_outcome = None;
+        handshake.summary.success = false;
+        record_request_summary(&db, &settings, &handshake).unwrap();
+        let before = usage_summary(&db, None, None, None, true).unwrap();
+        assert_eq!(before.total_requests, 1);
+        assert_eq!(before.total_tokens, 125);
+        assert_eq!(before.success_rate, 100.0);
+        assert_eq!(
+            provider_stats(&db, None, None, None, true).unwrap()[0].avg_latency_ms,
+            Some(20)
+        );
+        db.with_conn(|conn| rollup_and_prune(conn, 1)).unwrap();
+        let after = usage_summary(&db, None, None, None, true).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(
+            provider_stats(&db, None, None, None, true).unwrap()[0].avg_latency_ms,
+            Some(20)
+        );
     }
 
     #[test]
@@ -4600,6 +4665,25 @@ mod tests {
         .expect("request logs");
         assert_eq!(logs.total, 1);
         assert_eq!(logs.data[0].trace_id, "trace-legacy-429");
+        for legacy_outcome in ["", "not_streaming", "unknown"] {
+            db.with_conn(|conn| conn.execute(
+                "UPDATE proxy_request_logs SET stream_outcome = ?1 WHERE request_id = 'trace-legacy-429'",
+                [legacy_outcome],
+            ).map(|_| ()).map_err(|error| error.to_string())).unwrap();
+            let logs = request_logs(
+                &db,
+                &GatewayRequestLogFilters {
+                    only_failed: Some(true),
+                    ..Default::default()
+                },
+                0,
+                10,
+                true,
+            )
+            .unwrap();
+            assert_eq!(logs.total, 1);
+            assert!(!logs.data[0].success);
+        }
     }
 
     #[test]

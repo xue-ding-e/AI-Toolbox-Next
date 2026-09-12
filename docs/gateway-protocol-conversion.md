@@ -983,8 +983,31 @@ X-Transformer-Lossy: /path: message | /path2: message
 - OpenAI legacy Completions API。
 - OpenAI Responses `/responses/compact` 普通矩阵转换；compact 只允许通过 runtime compact compat 的专项 facade 处理。
 - Embedding、image generation、video、rerank 等非聊天协议。
-- Provider 平台 transport，例如 WebSocket executor。
+- Provider transport 不进入 transformer；Codex 同协议 Responses WebSocket 由 runtime 单独处理，见 §16.1。
 - Provider 账号登录、token exchange、model list fallback。
+
+### 16.1 Codex Responses WebSocket（issue #342）
+
+WebSocket 是 runtime 的传输方式，不扩展上述转换矩阵。`runtime/websocket.rs` 只接收 Codex 路由的 `GET + Upgrade`（`/openai/v1/responses`、`/openai/responses`）。每条下游连接独占一条上游连接，固定 provider 和认证身份；连接建立后不切换 provider，也不重放已经发送的生成请求。其他 CLI 和 `/responses/compact` 继续 HTTP/SSE。
+
+升级顺序是：读取真实候选 provider → 判断 effective target protocol → 完成并校验上游握手 → 才向 Codex 写出 `101`。实际目标不是 Responses、Copilot 这类需要按请求模型动态选协议的 provider，或上游配置明确 `supports_websockets=false` 时，在升级前返回 `426`。未配置该能力的 Responses provider 可以发起一次真实握手确认；只有上游返回有效 `101` 才启用，因此不能仅从接管后的 `wire_api="responses"` 推断支持。上游不接受升级时返回 `426`；鉴权、限流和其他真实错误保留错误语义，具体状态规则见兼容文档 §7.1。
+
+Codex 接管写入的 `supports_websockets=true` 描述本机网关能力，并纳入接管受管字段；恢复直连恢复原值或移除新建字段。已有接管配置需重新接管一次以写入该能力，单纯重启网关只重建 runtime。真实上游能力仍从数据库 provider 的原始配置读取。Codex 在握手阶段收到 `426` 后使用原有 HTTP/SSE 请求，转换请求仍进入现有 `ConversionRoute`。已经建立的 WS 内出现 error event 不再具备握手回退语义。
+
+逐轮处理遵守以下不变量：
+
+- 每个文本 `response.create` 建立独立请求记录，按 `stream_id` 隔离 FIFO 队列；通过 response ID 关联后续事件，忽略已完成 ID 的重复终态对统计的影响。`previous_response_id`、`generate:false` 和事件控制字段保留。模型映射及已证明的同协议 provider body 兼容复用 `upstream.rs`，不调用跨协议 transformer。
+- 上游事件先提取 usage，再写给客户端；只有终态成功写出后才能标记 Completed / Failed / Incomplete / Canceled。客户端写入失败时保留已收到的真实 Token，记录 Canceled；缺终态的上游 EOF 为 Incomplete。`101`、收到 usage、日志快照中存在终态都不能替代终态送达。
+- 成功轮次在终态送达后立即写 SQLite compact summary + JSONL，不等连接关闭。`transport=websocket` 的业务轮次没有 HTTP 状态码；握手失败保留真实状态及 fallback 原因。连接/response/stream/previous IDs 和握手尝试明细只放 JSONL，并进入明细导出。
+- 握手、Ping/Pong、连接复用和轮间空闲不计模型调用或 RPM。`generate:false` 标记 WebsocketWarmup，调用数为 0；无 usage 不产生用量，有真实 usage 则照实计 Token/费用。握手重试与每轮生成尝试分别记录，不能把连接建立前的重试伪装成每轮生成重试。
+- 统计、成功率、失败筛选、原生会话去重和日聚合均使用业务终态及调用计数；native Codex 缺 response ID 时仍可按已有唯一用量/时间窗口匹配已完成 WS 请求。预热不参与该匹配，已知不同 envelope 仍不得 heuristic merge。
+- SQLite v21 只为摘要增加 transport/request-kind 判别；旧行默认 HTTP 普通请求。正文、Headers、握手过程不写 SQLite。关闭日志正文、限制快照大小、metrics-only 或动态修改日志设置均不改变 usage/终态解析；JSONL 缺失时摘要回退不把内部状态占位 `0` 展示为 HTTP 状态。
+
+传输复用全局 `http_client` 的 direct/system/custom proxy 与 rustls 策略；HTTP/1.1 完成升级后由 `tokio-tungstenite` 处理帧。当前限制为每消息 16 MiB、最多 64 个待完成请求、待完成请求原始/出站 payload 共 64 MiB；事件快照还受既有日志设置和每份 16 MiB 上限约束。写入/flush 有 10 秒上限，20 秒发送 Ping、90 秒检测失联；逐轮首事件/空闲超时复用 Codex app 配置，排队时间不提前消耗下一轮首事件超时。连接空闲 50 分钟或存活 55 分钟后关闭并要求客户端重新连接。停止/重启信号关闭两端并结算未完成轮次。
+
+本地网络回归位于 `runtime/websocket/tests.rs` 和 `runtime/websocket/lifecycle_tests.rs`，覆盖真实升级、双轮复用、多路交错/重复终态、转换前 426 与后续 HTTP 转换、认证/限流、握手重试预算、代理/RawURL/query/Beta header、预热、正文关闭/截断、写入失败、缺终态、超时和停止。跨层回归还包括 `session_import/websocket_tests.rs` 的双向去重、`usage_stats.rs` 的日聚合、`commands.rs` 的导出、`cli_proxy/mod.rs` 的接管/恢复及 `tauri/tests/sqlite_jsonb.rs` 的 v20→v21 升级。
+
+2026-09-13 专项参考：cc-switch `e098279934a6041ebab35664c5fbd785df055ee0` 的 `src-tauri/src/codex_config.rs` 仍明确本机代理只提供 HTTP/SSE，没有可直接搬用的 WS 路由；AxonHub `dfbe22593ea33d62d1bc04d47a8e5d6c8b25d2bf` 的 `llm/transformer/openai/responses/websocket_executor.go` 与 `internal/server/api/responses_websocket.go` 提供握手、复用、终态和预热边界参考。本项目采用对应生命周期约束，保留一对一连接，不引入其全局 session pool、HTTP facade、数据库/channel/orchestrator。另核对 Codex `89c8bcf37d64be69e4c8286f4541c1a84ed312a4` 的 `codex-rs/core/src/client.rs`，确认握手 `UPGRADE_REQUIRED` → `FallbackToHttp`。这是 issue #342 的定点审查与实现，未执行两个参考项目的完整 baseline 增量同步，§19.4 的基线保持不变。
 
 ## 17. 主要文件索引
 
@@ -993,6 +1016,7 @@ X-Transformer-Lossy: /path: message | /path2: message
 | 文件 | 职责 |
 |---|---|
 | `tauri/src/coding/proxy_gateway/runtime/upstream.rs` | 上游请求主编排、conversion route、body/header/path、response 回转、provider compat、lossy policy |
+| `tauri/src/coding/proxy_gateway/runtime/websocket.rs` | Codex 同协议 WS 握手/回退、一对一 relay、逐轮生命周期与现有 observability 对接 |
 | `tauri/src/coding/proxy_gateway/runtime/routes.rs` | CLI 路由匹配、forwarded path、基础 URL 拼接 |
 | `tauri/src/coding/proxy_gateway/runtime/providers.rs` | provider 读取、target protocol、auth strategy、model mapping |
 | `tauri/src/coding/proxy_gateway/runtime/middleware.rs` | request-scoped middleware context 和 middleware 实现 |
@@ -1082,7 +1106,7 @@ AI Toolbox 与 AxonHub 相同的基础思想是：都使用统一中间模型，
 当前还有多项有意保留的差异，后续对照参考项目时不能误判成待同步缺口：
 
 - 合法 Responses cancellation 是协议终态，不触发 retry/failover 或 provider health 扣分；这与 AxonHub 的 terminal 解析一致，但不同于 cc-switch 当前把 cancellation 纳入错误检测的策略。
-- AxonHub 的 Responses WebSocket executor/session/pool 不属于当前本机 HTTP JSON/SSE Gateway 范围；在没有完整 transport、session 和恢复设计前，不引入半套 WebSocket。
+- Codex 同协议 Responses WebSocket 已按 §16.1 独立接入 runtime；AxonHub 的全局 executor/session/pool 和服务端 orchestrator 仍不属于本机网关范围。
 - Responses raw tool sidecar 的 `openai_responses_tool_signatures_complete` 和完整 signature 匹配，是 AI Toolbox 针对自身 request-scoped raw merge 的额外 fail-closed 门控。
 - runtime 同时检查最终客户端 body 与原始 `upstream_response_body`，是本项目跨协议转换、retry/failover 和可观测性链路所需的双重分类，不要求照搬 AxonHub 的内部响应对象。
 - **跨协议流式写回 OpenAI Responses 的 incomplete 终态事件名**：Chat / Anthropic / Gemini → Responses 时，`finish_reason=length`（及上游截断合成的 length）出站使用 **`event: response.completed` + `response.status=incomplete`**，而不是官方字面的独立 `event: response.incomplete`。这与 **cc-switch** Codex bridge（`streaming_codex_chat` / `streaming_codex_anthropic` 一律 `sse::response_completed`，incomplete 时补 `incomplete_details`）一致，目的是兼容大量**不会发 / 不依赖** `response.incomplete` 事件名的渠道与 Codex 客户端路径，并避免半截流被当成正常 completed。**入站**仍识别官方 `response.incomplete`；runtime 强制 SSE 聚合与有意义内容检测同时接受 `response.incomplete` 事件与 `status=incomplete`。AxonHub / 官方 streaming 文档以独立 incomplete 事件为 terminal 字面标准；本项目在该点优先 **cc-switch 渠道 bridge 语义**。可选增强是补齐 `incomplete_details`，不是默认改事件名。
@@ -1197,7 +1221,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - 当前实现位置为 `shared/tool_media.rs`、`openai/chat.rs`、`openai/responses/shared.rs`、`anthropic/inbound.rs` / `outbound.rs`、`gemini/convert.rs`；精确回归集中在 `transformer/tool_media_tests.rs`，覆盖并行工具结果、stringified/MCP、Anthropic 原生 block、Gemini 2/3、非法/远程 data URL、残留 base64 限幅和无媒体零差异。
 - 源码终审额外确认并修复了 Gemini Native 同一 `content.parts` 中多个并行 `functionResponse` 被覆盖的问题；现在按工具结果拆成多个统一 IR tool message，并由 `gemini_parallel_function_responses_preserve_every_tool_result` 锁定。
 - AxonHub 的统一 `llm.Request` / `llm.Response` IR、inbound -> IR -> outbound 生命周期、response/stream reverse lifecycle、Responses terminal/error 语义和 middleware 逆序原则与 AI Toolbox 当前架构一致，应继续作为主参考。
-- AxonHub 的 Responses WebSocket executor/session/pool、数据库/channel/entity、云网关账号与 orchestrator 体系不属于当前本机 HTTP JSON/SSE Gateway，不吸收半套实现。
+- 初始对齐时没有吸收 AxonHub 的 Responses WebSocket executor/session/pool；issue #342 后续专项只吸收生命周期约束并实现一对一 runtime transport，见 §16.1。数据库/channel/entity、云网关账号、全局 pool 和 orchestrator 仍不吸收。
 - AxonHub `94704784` 的 Responses `cache_write_tokens` 已吸收：IR `Usage.cache_write_tokens`、`openai_usage_to_llm` / `usage_to_responses` 双向映射、`usage_parser::openai_usage` 写入 `cache_creation_tokens`；测试 `responses_usage_roundtrip_preserves_cache_write_tokens`、`parses_responses_cache_write_tokens_as_cache_creation`。
 - AxonHub `7d095b63` 的 Responses namespace tools 展开已吸收：通用入站 `responses_tools_to_llm` 将 `type=namespace` 子 function 展成 `namespace__name`；raw fragment 带 `represented_tool_count`，出站 merge 按该计数消费结构化 tools 并恢复 namespace envelope；测试 `responses_namespace_tools_expand_into_ir_functions`。Codex→Chat 既有 `codex_tools` 路径与 xAI 同协议 flatten 保持不变。
 - AxonHub `4b8ab0d6` 空 `finish_reason` 归一化已有等价覆盖（stream 解析过滤 empty string），不重复吸收。

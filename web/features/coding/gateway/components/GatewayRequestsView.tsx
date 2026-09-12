@@ -38,6 +38,7 @@ import {
   formatDuration,
   formatDurationPair,
   formatGatewayError,
+  gatewayWebSocketStatusKey,
   formatInteger,
   formatModelWithEffort,
   formatTps,
@@ -521,6 +522,9 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     if (activeDetailTab === 'record') {
       const attemptCounts = normalizeAttemptCounts(detail);
       const providerAttempts = detail.provider_attempts ?? [];
+      const websocketStatusKey = gatewayWebSocketStatusKey(detail);
+      const handshakeAttemptsText = detail.websocket?.handshake_attempts?.map((attempt) =>
+        `${attempt.provider_name ?? attempt.provider_id ?? '-'}: ${attempt.status_code ?? '-'}`).join(' → ');
       const requestDisplay = deriveGatewayRequestDisplay(detail);
       const requestDisplayTitle = detail.data_source === 'session' && !requestDisplay.modelApplicable
         ? t('gateway.page.requests.localSession')
@@ -576,12 +580,45 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               : t('gateway.page.requests.notApplicable')}</strong>
           <span>{t('gateway.page.requests.fields.status')}</span>
           <strong title={detail.data_source === 'session' ? t('gateway.page.requests.localSessionHint') : undefined}>
-            {detail.data_source === 'session' ? '-' : detail.status_code ?? '-'}
+            {detail.data_source === 'session' ? '-' : websocketStatusKey
+              ? t(websocketStatusKey) : detail.status_code ?? '-'}
           </strong>
           {detail.upstream_status_code != null && (
             <>
               <span>{t('gateway.page.requests.fields.upstreamStatus')}</span>
               <strong>{detail.upstream_status_code}</strong>
+            </>
+          )}
+          {detail.transport === 'websocket' && (
+            <>
+              <span>{t('gateway.page.requests.websocket.transport')}</span>
+              <strong>WebSocket{detail.request_kind === 'websocket_warmup' ? ` · ${t('gateway.page.requests.websocket.warmup')}` : ''}</strong>
+              {detail.websocket && (
+                <>
+                  <span>{t('gateway.page.requests.websocket.connection')}</span>
+                  <code title={detail.websocket.connection_id}>{detail.websocket.connection_id}</code>
+                  <span>{t('gateway.page.requests.websocket.handshake')}</span>
+                  <strong>{detail.websocket.handshake_status} / {detail.websocket.upstream_handshake_status ?? '-'}</strong>
+                  {(detail.websocket.handshake_attempts?.length ?? 0) > 1 && <>
+                    <span>{t('gateway.page.requests.websocket.handshakeAttempts')}</span>
+                    <code title={handshakeAttemptsText}>{handshakeAttemptsText}</code>
+                  </>}
+                  <span>{t('gateway.page.requests.websocket.response')}</span>
+                  <code title={detail.websocket.response_id ?? undefined}>{detail.websocket.response_id ?? '-'}</code>
+                  <span>{t('gateway.page.requests.websocket.previous')}</span>
+                  <code title={detail.websocket.previous_response_id ?? undefined}>{detail.websocket.previous_response_id ?? '-'}</code>
+                  <span>{t('gateway.page.requests.websocket.stream')}</span>
+                  <code title={detail.websocket.stream_id ?? undefined}>{detail.websocket.stream_id ?? '-'}</code>
+                  {detail.websocket.error_status != null && <>
+                    <span>{t('gateway.page.requests.websocket.errorStatus')}</span>
+                    <strong>{detail.websocket.error_status}</strong>
+                  </>}
+                  {detail.websocket.fallback_reason && <>
+                    <span>{t('gateway.page.requests.websocket.fallback')}</span>
+                    <strong className={styles.detailNote}>{detail.websocket.fallback_reason}</strong>
+                  </>}
+                </>
+              )}
             </>
           )}
           <span>{t('gateway.page.requests.fields.duration')}</span>
@@ -649,12 +686,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     if (activeDetailTab === 'headers') {
       return (
         <div className={styles.detailStack}>
-          <span className={styles.detailSubtitle}>{t('gateway.page.requests.requestHeaders')}</span>
+          <span className={styles.detailSubtitle}>{t(detail.transport === 'websocket' ? 'gateway.page.requests.websocket.requestHeaders' : 'gateway.page.requests.requestHeaders')}</span>
           <CollapsiblePre
             content={stringifyDetailValue(detail.request_headers) || null}
             fallback={detailEmptyMessage}
           />
-          <span className={styles.detailSubtitle}>{t('gateway.page.requests.responseHeaders')}</span>
+          <span className={styles.detailSubtitle}>{t(detail.transport === 'websocket' ? 'gateway.page.requests.websocket.responseHeaders' : 'gateway.page.requests.responseHeaders')}</span>
           <CollapsiblePre
             content={stringifyDetailValue(detail.response_headers) || null}
             fallback={detailEmptyMessage}
@@ -691,7 +728,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       render: (_, record) => (
         <div className={styles.tableMainCell}>
           <strong title={providerDisplayName(t, record.provider_id, record.provider_name, record.usage_metadata?.native_provider)}>{providerDisplayName(t, record.provider_id, record.provider_name, record.usage_metadata?.native_provider)}</strong>
-          <small>{providerDisplayMeta(t, record.cli_key, record.provider_id)}</small>
+          <small>{record.transport === 'websocket' ? 'WS · ' : ''}{record.request_kind === 'websocket_warmup' ? `${t('gateway.page.requests.websocket.warmup')} · ` : ''}{providerDisplayMeta(t, record.cli_key, record.provider_id)}</small>
         </div>
       ),
     },
@@ -737,13 +774,20 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       dataIndex: 'status_code',
       width: 90,
       align: 'right',
-      render: (value: number, record) => record.data_source === 'session' ? (
-        <span title={t('gateway.page.requests.localSessionHint')}>-</span>
-      ) : (
-        <span className={record.success ? styles.statusCodeSuccess : styles.statusCodeError}>
-          {value}
-        </span>
-      ),
+      ellipsis: true,
+      render: (value: number, record) => {
+        if (record.data_source === 'session') {
+          return <span title={t('gateway.page.requests.localSessionHint')}>-</span>;
+        }
+        const statusKey = gatewayWebSocketStatusKey(record);
+        const statusText = statusKey ? t(statusKey) : String(value);
+        return (
+          <span title={statusText} className={record.request_kind === 'websocket_handshake' && value === 426
+            ? undefined : record.success ? styles.statusCodeSuccess : styles.statusCodeError}>
+            {statusText}
+          </span>
+        );
+      },
     },
     {
       title: t('gateway.page.requests.columns.tokens'),

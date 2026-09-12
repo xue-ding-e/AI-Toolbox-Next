@@ -12,6 +12,7 @@ mod routes;
 mod side_stores;
 mod thinking_budget;
 mod upstream;
+mod websocket;
 
 pub(crate) use self::connectivity_test::test_gateway_provider_model_connectivity;
 #[cfg(test)]
@@ -491,6 +492,7 @@ impl ProxyGatewayRuntime {
 
     fn stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
+        self.context.websocket_shutdown.send_replace(true);
         let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(100));
         if let Some(task) = self.task.take() {
             task.abort();
@@ -517,6 +519,7 @@ struct GatewayRuntimeContext {
     app_handle: Option<AppHandle>,
     provider_cache: Arc<Mutex<HashMap<GatewayCliKey, ProviderCacheEntry>>>,
     side_stores: side_stores::GatewaySideStores,
+    websocket_shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 #[derive(Clone)]
@@ -584,6 +587,7 @@ impl GatewayRuntimeContext {
             app_handle: None,
             provider_cache: Arc::new(Mutex::new(HashMap::new())),
             side_stores: side_stores::GatewaySideStores::default(),
+            websocket_shutdown: tokio::sync::watch::channel(false).0,
         }
     }
 
@@ -830,6 +834,10 @@ async fn handle_connection(
     let started_at = Utc::now();
     let started_instant = Instant::now();
     let settings = context.settings_snapshot();
+
+    if websocket::is_upgrade_request(&request) {
+        return websocket::handle_upgrade(stream, request, context).await;
+    }
 
     // Codex Desktop official-login clients may send zstd-compressed JSON bodies.
     // Decode before routing/JSON parsing so passthrough and conversion both see plain JSON.
@@ -1681,6 +1689,7 @@ base_url = "https://openai.example.com/v1"
         let body = br#"{"model":"debug"}"#;
         let request = debug_request("POST", "/anthropic/v1/messages", body);
         let provider = UpstreamProvider {
+            supports_websockets: None,
             cli_key: GatewayCliKey::Claude,
             id: "p1".to_string(),
             name: "Provider".to_string(),

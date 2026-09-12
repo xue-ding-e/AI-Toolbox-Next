@@ -299,6 +299,40 @@ fn schema_migration_rejects_future_user_version() {
 }
 
 #[test]
+fn v21_websocket_upgrade_defaults_old_logs_to_http_without_changing_usage() {
+    let mut conn = test_conn();
+    conn.execute_batch(
+        "ALTER TABLE proxy_request_logs DROP COLUMN transport;
+         ALTER TABLE proxy_request_logs DROP COLUMN request_kind;
+         INSERT INTO proxy_request_logs (request_id,provider_id,app_type,model,input_tokens,created_at,usage_request_count)
+         VALUES ('before-websocket','provider','codex','test-model',123,1780000000,2);
+         INSERT INTO usage_daily_rollups (date,app_type,provider_id,model,request_count,input_tokens,total_cost_usd,latency_sample_count)
+         VALUES ('2026-09-01','codex','provider','test-model',2,123,'0.012345',2);",
+    ).unwrap();
+    migrations::set_user_version(&conn, 20).unwrap();
+    migrations::run_all(&mut conn).unwrap();
+    migrations::run_all(&mut conn).unwrap();
+    let old_row: (String, String, i64, i64) = conn.query_row(
+        "SELECT transport,request_kind,input_tokens,usage_request_count FROM proxy_request_logs WHERE request_id='before-websocket'",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    ).unwrap();
+    assert_eq!(old_row, ("http".to_string(), "request".to_string(), 123, 2));
+    let archived: (i64, String, i64) = conn
+        .query_row(
+            "SELECT request_count,total_cost_usd,latency_sample_count FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(archived, (2, "0.012345".to_string(), 2));
+    assert_eq!(
+        migrations::get_user_version(&conn).unwrap(),
+        TARGET_SCHEMA_VERSION
+    );
+    health::quick_check(&conn).unwrap();
+}
+
+#[test]
 fn v20_usage_metadata_upgrade_preserves_logs_rollups_and_import_ledger() {
     let mut conn = test_conn();
     conn.execute_batch(
