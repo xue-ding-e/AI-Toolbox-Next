@@ -32,6 +32,8 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // Revisit cached files to retain envelope identity in the sync ledger
         // and repair matches that joined distinct, identifiable responses.
         GatewayUsageTool::Claude | GatewayUsageTool::ClaudeDesktop => 3,
+        // Reparse native cache writes so existing Codex rows can match proxy usage.
+        GatewayUsageTool::Codex => 3,
         GatewayUsageTool::Dsh => 4,
         _ => 2,
     }
@@ -42,6 +44,7 @@ struct Counters {
     input: u64,
     output: u64,
     cached: u64,
+    cache_creation: u64,
 }
 
 impl Counters {
@@ -52,6 +55,7 @@ impl Counters {
             "output_tokens",
             "cached_input_tokens",
             "cache_read_input_tokens",
+            "cache_write_input_tokens",
             "total_tokens",
         ]
         .iter()
@@ -63,6 +67,7 @@ impl Counters {
             input: number(value, &["input_tokens"]),
             output: number(value, &["output_tokens"]),
             cached: number(value, &["cached_input_tokens", "cache_read_input_tokens"]),
+            cache_creation: number(value, &["cache_write_input_tokens"]),
         })
     }
 
@@ -71,6 +76,7 @@ impl Counters {
             input: self.input.saturating_sub(previous.input),
             output: self.output.saturating_sub(previous.output),
             cached: self.cached.saturating_sub(previous.cached),
+            cache_creation: self.cache_creation.saturating_sub(previous.cache_creation),
         }
     }
 
@@ -78,14 +84,21 @@ impl Counters {
         self.input = self.input.max(next.input);
         self.output = self.output.max(next.output);
         self.cached = self.cached.max(next.cached);
+        self.cache_creation = self.cache_creation.max(next.cache_creation);
     }
 
     fn into_usage(self) -> TokenUsage {
         let cached = self.cached.min(self.input);
+        let cache_creation = self.cache_creation.min(self.input.saturating_sub(cached));
         TokenUsage {
-            input_tokens: Some(self.input.saturating_sub(cached)),
+            input_tokens: Some(
+                self.input
+                    .saturating_sub(cached)
+                    .saturating_sub(cache_creation),
+            ),
             output_tokens: Some(self.output),
             cache_read_tokens: Some(cached),
+            cache_creation_tokens: Some(cache_creation),
             ..Default::default()
         }
     }
@@ -486,6 +499,7 @@ fn counter_signature(info: &Value) -> String {
                 "input_tokens",
                 "cached_input_tokens",
                 "cache_read_input_tokens",
+                "cache_write_input_tokens",
                 "output_tokens",
                 "reasoning_output_tokens",
                 "total_tokens",

@@ -17,8 +17,38 @@ import {
   normalizeAttemptCounts,
   requestExportPrefix,
   requestLineText,
+  resolveGatewayRequestRange,
+  resolveGatewayUsageRange,
   shouldShowBodyComparison,
 } from '../../../../../features/coding/gateway/utils/gatewayFormatters.ts';
+
+test('request presets use the statistics ranges and refresh their relative end time', () => {
+  const now = new Date(2026, 8, 12, 22, 24, 0).getTime();
+  for (const preset of ['today', '1d', '7d', '14d', '30d'] as const) {
+    const expected = resolveGatewayUsageRange({ preset }, now);
+    assert.deepEqual(resolveGatewayRequestRange({ preset }, now), {
+      start_date: expected.startDate,
+      end_date: expected.endDate,
+    });
+    assert.equal(resolveGatewayRequestRange({ preset }, now + 60_000).end_date, expected.endDate + 60);
+  }
+  assert.equal(resolveGatewayRequestRange({ preset: 'today' }, now).start_date, new Date(2026, 8, 12).getTime() / 1000);
+});
+
+test('request all-time and cleared custom ranges preserve the unbounded search', () => {
+  assert.deepEqual(resolveGatewayRequestRange({ preset: 'all' }), { start_date: null, end_date: null });
+  assert.deepEqual(resolveGatewayRequestRange({ preset: 'custom', customRange: null }), { start_date: null, end_date: null });
+});
+
+test('request custom timestamps remain fixed when refreshing and keep open-ended bounds', () => {
+  const start = { toDate: () => new Date(2026, 8, 10, 9, 30) };
+  const end = { toDate: () => new Date(2026, 8, 12, 22, 24) };
+  const selection = { preset: 'custom' as const, customRange: [start, end] as [typeof start, typeof end] };
+  const expected = { start_date: start.toDate().getTime() / 1000, end_date: end.toDate().getTime() / 1000 };
+  assert.deepEqual(resolveGatewayRequestRange(selection, 0), expected);
+  assert.deepEqual(resolveGatewayRequestRange(selection, 60_000), expected);
+  assert.deepEqual(resolveGatewayRequestRange({ preset: 'custom', customRange: [start, null] }), { ...expected, end_date: null });
+});
 
 test('duration pairs preserve subsecond TTFT and long-request precision', () => {
   assert.equal(formatDurationPair(13_600, 400), '0.4s/13.6s');

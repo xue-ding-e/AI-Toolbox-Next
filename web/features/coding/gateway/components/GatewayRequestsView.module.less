@@ -64,14 +64,6 @@
   gap: 4px;
 }
 
-.filterSectionShrink {
-  display: flex;
-  min-width: 320px;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 4px;
-}
-
 .filterIcon {
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
@@ -95,9 +87,16 @@
   min-width: 78px;
 }
 
-.dateRange {
-  min-width: 0;
-  flex: 1 1 auto;
+.rangeSelect {
+  width: auto;
+  min-width: 86px;
+}
+
+.customRangePicker {
+  width: 340px;
+  min-width: min(320px, 100%);
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 
 .searchInput {

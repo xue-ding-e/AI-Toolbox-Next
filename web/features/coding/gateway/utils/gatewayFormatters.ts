@@ -1,4 +1,4 @@
-import type { GatewayCliKey, GatewayUsageTool, ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
+import type { GatewayCliKey, GatewayRequestLogFilters, GatewayUsageTool, ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
 
 export const joinClassNames = (...classNames: Array<string | false | null | undefined>) =>
   classNames.filter(Boolean).join(' ');
@@ -394,7 +394,9 @@ export const stringifyDetailValue = (value: unknown) => {
   return JSON.stringify(value, null, 2);
 };
 
-export type GatewayUsageRangePreset = 'today' | '1d' | '7d' | '14d' | '30d' | 'custom';
+export const GATEWAY_USAGE_RANGE_PRESETS = ['today', '1d', '7d', '14d', '30d', 'custom'] as const;
+
+export type GatewayUsageRangePreset = typeof GATEWAY_USAGE_RANGE_PRESETS[number];
 
 interface GatewayDateLike {
   toDate: () => Date;
@@ -403,6 +405,10 @@ interface GatewayDateLike {
 export interface GatewayUsageRangeSelection {
   preset: GatewayUsageRangePreset;
   customRange?: [GatewayDateLike | null, GatewayDateLike | null] | null;
+}
+
+export interface GatewayRequestRangeSelection extends Omit<GatewayUsageRangeSelection, 'preset'> {
+  preset: GatewayUsageRangePreset | 'all';
 }
 
 export interface ResolvedGatewayUsageRange {
@@ -447,4 +453,22 @@ export const resolveGatewayUsageRange = (
     startDate: Math.floor(startOfLocalDay(nowMs - (dayCount - 1) * DAY_MS) / 1000),
     endDate,
   };
+};
+
+export const resolveGatewayRequestRange = (
+  selection: GatewayRequestRangeSelection,
+  nowMs = Date.now(),
+): Pick<GatewayRequestLogFilters, 'start_date' | 'end_date'> => {
+  if (selection.preset === 'all') {
+    return { start_date: null, end_date: null };
+  }
+  if (selection.preset === 'custom') {
+    const [start, end] = selection.customRange ?? [];
+    return {
+      start_date: start ? Math.floor(start.toDate().getTime() / 1000) : null,
+      end_date: end ? Math.floor(end.toDate().getTime() / 1000) : null,
+    };
+  }
+  const range = resolveGatewayUsageRange({ preset: selection.preset }, nowMs);
+  return { start_date: range.startDate, end_date: range.endDate };
 };

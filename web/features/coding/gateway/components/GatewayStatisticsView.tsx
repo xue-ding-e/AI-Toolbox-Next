@@ -46,6 +46,7 @@ import {
   formatInteger,
   formatUsd,
   getGatewayRequestsPerMinute,
+  GATEWAY_USAGE_RANGE_PRESETS,
   resolveGatewayUsageRange,
   type GatewayUsageRangePreset,
   type GatewayUsageRangeSelection,
@@ -80,7 +81,6 @@ const emptyState: StatisticsState = {
 };
 
 const cliOptions: GatewayCliFilter[] = ['all', ...GATEWAY_USAGE_TOOLS];
-const rangeOptions: GatewayUsageRangePreset[] = ['today', '1d', '7d', '14d', '30d', 'custom'];
 const trendSeriesKeys: readonly TrendSeriesKey[] = ['input', 'output', 'cache', 'other', 'cost'];
 const trendCurveType = 'monotoneX' as const;
 const dateOnlyBucketPattern = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -425,7 +425,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
             className={styles.filterSelect}
             popupMatchSelectWidth={false}
             value={range.preset}
-            options={rangeOptions.map((option) => ({
+            options={GATEWAY_USAGE_RANGE_PRESETS.map((option) => ({
               value: option,
               label: t(`gateway.page.statistics.range.${option}`),
             }))}

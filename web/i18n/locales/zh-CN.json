@@ -213,7 +213,9 @@
           "providerPlaceholder": "搜索供应商",
           "modelPlaceholder": "搜索模型",
           "excludeModelList": "过滤获取模型列表",
-          "onlyFailed": "只看失败"
+          "onlyFailed": "只看失败",
+          "dateRange": "时间范围",
+          "allTime": "全部时间"
         },
         "columns": {
           "time": "时间",

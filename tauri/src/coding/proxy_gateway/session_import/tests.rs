@@ -1,6 +1,10 @@
 use super::*;
 use crate::coding::proxy_gateway::types::GatewayCliKey;
-use crate::coding::proxy_gateway::{types::GatewayRequestLogFilters, usage_stats};
+use crate::coding::proxy_gateway::{
+    pricing,
+    types::{GatewayRequestLogFilters, ModelPricing},
+    usage_stats,
+};
 use serde_json::{json, Value};
 use std::io::Write;
 
@@ -277,6 +281,255 @@ fn token_event(total: u64, input: u64, output: u64, at: i64) -> Value {
         "total_token_usage":{"input_tokens":total,"cached_input_tokens":0,"output_tokens":total / 10},
         "last_token_usage":{"input_tokens":input,"cached_input_tokens":input / 2,"output_tokens":output,"reasoning_output_tokens":output / 2}
     },"rate_limits":{"limit_id":"codex"}}})
+}
+
+fn codex_cache_write_event(input: u64, cached: u64, cache_creation: u64, output: u64) -> Value {
+    let usage = json!({
+        "input_tokens": input,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_creation,
+        "output_tokens": output,
+        "reasoning_output_tokens": 0,
+        "total_tokens": input + output,
+    });
+    json!({"type":"event_msg","timestamp":THEN,"payload":{"type":"token_count","info":{
+        "total_token_usage":usage,"last_token_usage":usage
+    },"rate_limits":{"limit_id":"codex"}}})
+}
+
+fn write_codex_cache_write_session(path: &Path, events: &[Value]) {
+    let mut records = vec![
+        json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+        json!({"type":"turn_context","payload":{"model":"gpt-6-astra"}}),
+    ];
+    records.extend_from_slice(events);
+    write_jsonl(path, &records);
+}
+
+fn insert_codex_cache_write_proxy(db: &SqliteDbState) {
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                created_at, duration_ms, status_code, stream_outcome, data_source, total_cost_usd)
+             VALUES ('codex-cache-write-proxy', 'provider', 'codex', 'gpt-6-astra',
+                3, 808, 223222, 7211, ?1, 123590, 200, 'completed', 'proxy', '0.353790')",
+            [THEN - 1],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn insert_codex_cache_write_pricing(db: &SqliteDbState) {
+    pricing::upsert_model_pricing(
+        db,
+        ModelPricing {
+            model_id: "gpt-6-astra".into(),
+            display_name: "GPT-6 Astra".into(),
+            input_cost_per_million: "10".into(),
+            output_cost_per_million: "50".into(),
+            cache_read_cost_per_million: "1".into(),
+            cache_creation_cost_per_million: "12.5".into(),
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn codex_cache_writes_round_trip_through_native_usage_and_pricing() {
+    let root = tempfile::tempdir().unwrap();
+    write_codex_cache_write_session(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[codex_cache_write_event(230436, 223222, 7211, 808)],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    insert_codex_cache_write_pricing(&db);
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Codex, root.path()).inserted_records,
+        1
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_input_tokens, 3);
+    assert_eq!(summary.total_cache_read_tokens, 223222);
+    assert_eq!(summary.total_cache_creation_tokens, 7211);
+    assert_eq!(summary.total_output_tokens, 808);
+    assert_eq!(summary.total_tokens, 231244);
+    assert_eq!(summary.total_cost_usd, "0.353790");
+    let logs =
+        usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true).unwrap();
+    assert_eq!(logs.data[0].input_tokens, 3);
+    assert_eq!(logs.data[0].cache_creation_tokens, 7211);
+    assert_eq!(logs.data[0].data_source, "session");
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
+        0
+    );
+}
+
+#[test]
+fn codex_cumulative_cache_writes_use_deltas_and_ignore_repeated_lanes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut first = codex_cache_write_event(100, 20, 60, 10);
+    first["payload"]["info"]
+        .as_object_mut()
+        .unwrap()
+        .remove("last_token_usage");
+    let mut duplicate = first.clone();
+    duplicate["payload"]["rate_limits"]["limit_id"] = json!("review");
+    let mut second = codex_cache_write_event(180, 40, 100, 30);
+    second["timestamp"] = json!(THEN + 1);
+    second["payload"]["info"]
+        .as_object_mut()
+        .unwrap()
+        .remove("last_token_usage");
+    write_codex_cache_write_session(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[first, duplicate, second],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Codex, root.path()).inserted_records,
+        2
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_input_tokens, 40);
+    assert_eq!(summary.total_cache_read_tokens, 40);
+    assert_eq!(summary.total_cache_creation_tokens, 100);
+    assert_eq!(summary.total_output_tokens, 30);
+    assert_eq!(summary.total_tokens, 210);
+}
+
+#[test]
+fn codex_cache_writes_deduplicate_in_either_arrival_order() {
+    for gateway_first in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        write_codex_cache_write_session(
+            &root.path().join(format!("rollout-{PARENT}.jsonl")),
+            &[codex_cache_write_event(230436, 223222, 7211, 808)],
+        );
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        if gateway_first {
+            insert_codex_cache_write_proxy(&db);
+        }
+        assert_eq!(
+            run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
+            1
+        );
+        if !gateway_first {
+            insert_codex_cache_write_proxy(&db);
+        }
+        run_sync(&db, GatewayCliKey::Codex, root.path());
+        let logs =
+            usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true)
+                .unwrap();
+        assert_eq!(logs.total, 1, "gateway_first={gateway_first}");
+        assert_eq!(logs.data[0].data_source, "proxy");
+        let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_tokens, 231244);
+        assert_eq!(summary.total_cost_usd, "0.353790");
+        assert_eq!(
+            run_sync(&db, GatewayCliKey::Codex, root.path()).updated_records,
+            0
+        );
+    }
+}
+
+#[test]
+fn codex_cache_write_revision_repairs_unchanged_native_rows_and_keeps_the_ledger() {
+    for with_proxy in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join(format!("rollout-{PARENT}.jsonl"));
+        let db_path = root.path().join("usage.db");
+        let db = SqliteDbState::open(db_path.clone()).unwrap();
+        insert_codex_cache_write_pricing(&db);
+        let event = codex_cache_write_event(230436, 223222, 7211, 808);
+        let mut legacy_event = event.clone();
+        for counters in ["total_token_usage", "last_token_usage"] {
+            legacy_event["payload"]["info"][counters]
+                .as_object_mut()
+                .unwrap()
+                .remove("cache_write_input_tokens");
+        }
+        write_codex_cache_write_session(&file, &[legacy_event]);
+        run_sync(&db, GatewayCliKey::Codex, root.path());
+        assert_eq!(
+            usage_stats::usage_summary(&db, None, None, None, true)
+                .unwrap()
+                .total_cost_usd,
+            "0.335762"
+        );
+        write_codex_cache_write_session(&file, &[event]);
+        let source_before = fs::read(&file).unwrap();
+        let mut states = load_states(&db).unwrap();
+        let (source_id, state) = states
+            .iter_mut()
+            .find(|(_, state)| !state.records.is_empty())
+            .unwrap();
+        // Simulate revision 2 having scanned this exact file but dropped cache writes.
+        let metadata = fs::metadata(&file).unwrap();
+        state.parser_revision = 2;
+        state.modified_nanos = modified_nanos(&metadata);
+        state.size = metadata.len();
+        state.pending = false;
+        db.with_conn(|conn| save_state(conn, source_id, state))
+            .unwrap();
+        if with_proxy {
+            insert_codex_cache_write_proxy(&db);
+        }
+
+        let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+        assert_eq!(result.failed_files, 0);
+        assert_eq!(result.inserted_records, 0);
+        assert_eq!(result.updated_records, 1);
+        assert_eq!(fs::read(&file).unwrap(), source_before);
+        let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+        assert_eq!(summary.total_requests, 1);
+        assert_eq!(summary.total_input_tokens, 3);
+        assert_eq!(summary.total_cache_creation_tokens, 7211);
+        assert_eq!(summary.total_cost_usd, "0.353790");
+        let state = load_states(&db).unwrap().remove(source_id).unwrap();
+        assert_eq!(
+            state.parser_revision,
+            parsers::revision(GatewayUsageTool::Codex)
+        );
+        assert_eq!(state.records.len(), 1);
+        assert_eq!(
+            state
+                .records
+                .values()
+                .next()
+                .unwrap()
+                .matched_proxy_id
+                .as_deref(),
+            with_proxy.then_some("codex-cache-write-proxy")
+        );
+        drop(db);
+        let db = SqliteDbState::open(db_path).unwrap();
+        assert_eq!(
+            run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
+            0
+        );
+        assert_eq!(
+            usage_stats::usage_summary(&db, None, None, None, true).unwrap(),
+            summary
+        );
+    }
+}
+
+#[test]
+fn codex_known_cache_write_mismatch_does_not_merge_independent_calls() {
+    let root = tempfile::tempdir().unwrap();
+    write_codex_cache_write_session(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[codex_cache_write_event(230436, 223222, 7210, 808)],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    insert_codex_cache_write_proxy(&db);
+    run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(count(&db), 2);
 }
 
 #[test]

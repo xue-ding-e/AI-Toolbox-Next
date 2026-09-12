@@ -42,14 +42,17 @@ import {
   formatModelWithEffort,
   formatTps,
   formatUsd,
+  GATEWAY_USAGE_RANGE_PRESETS,
   isGatewayRequestUsageApplicable,
   joinClassNames,
   normalizeAttemptCounts,
   requestExportPrefix,
   requestLineText,
+  resolveGatewayRequestRange,
   sanitizeGatewayFileNamePart,
   shouldShowBodyComparison,
   stringifyDetailValue,
+  type GatewayRequestRangeSelection,
 } from '../utils/gatewayFormatters';
 import styles from './GatewayRequestsView.module.less';
 
@@ -111,17 +114,13 @@ interface GatewayRequestsViewProps {
   refreshKey?: number;
 }
 
-interface DateLike {
-  toDate: () => Date;
-}
-
 interface RequestFilterDraft {
   cliKey: GatewayCliFilter;
   dataSource: 'all' | 'proxy' | 'session';
   statusCode: string;
   providerName: string;
   model: string;
-  dateRange: [DateLike | null, DateLike | null] | null;
+  range: GatewayRequestRangeSelection;
 }
 
 const defaultDraft: RequestFilterDraft = {
@@ -130,7 +129,7 @@ const defaultDraft: RequestFilterDraft = {
   statusCode: 'all',
   providerName: '',
   model: '',
-  dateRange: null,
+  range: { preset: 'all' },
 };
 
 const lineCountOf = (content: string) => content.split(/\r\n|\r|\n/).length;
@@ -193,15 +192,12 @@ const buildRequestDetailExportFileName = (detail: GatewayRequestLogDetail) => {
 };
 
 const buildFilters = (draft: RequestFilterDraft): GatewayRequestLogFilters => {
-  const [start, end] = draft.dateRange ?? [];
   return {
     data_source: draft.dataSource === 'all' ? null : draft.dataSource,
     cli_key: draft.cliKey === 'all' ? null : draft.cliKey,
     status_code: draft.statusCode === 'all' ? null : Number(draft.statusCode),
     provider_name: draft.providerName.trim() || null,
     model: draft.model.trim() || null,
-    start_date: start ? Math.floor(start.toDate().getTime() / 1000) : null,
-    end_date: end ? Math.floor(end.toDate().getTime() / 1000) : null,
   };
 };
 
@@ -299,6 +295,7 @@ const CollapsiblePre: React.FC<CollapsiblePreProps> = ({ content, fallback }) =>
 const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 0 }) => {
   const { t } = useTranslation();
   const [draft, setDraft] = React.useState<RequestFilterDraft>(defaultDraft);
+  const [appliedRange, setAppliedRange] = React.useState(defaultDraft.range);
   const [filters, setFilters] = React.useState<GatewayRequestLogFilters>(() => ({
     exclude_model_list: readExcludeModelListPreference() ? true : null,
     only_failed: readOnlyFailedPreference() ? true : null,
@@ -348,7 +345,8 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setLoading(true);
     setError(null);
     try {
-      const result = await listProxyGatewayRequestLogs(filters, Math.max(page - 1, 0), PAGE_SIZE);
+      const requestFilters = { ...filters, ...resolveGatewayRequestRange(appliedRange) };
+      const result = await listProxyGatewayRequestLogs(requestFilters, Math.max(page - 1, 0), PAGE_SIZE);
       if (revision !== requestRevisionRef.current) return;
       setLogs(result.data);
       setTotal(result.total);
@@ -362,7 +360,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     } finally {
       if (revision === requestRevisionRef.current) setLoading(false);
     }
-  }, [closeDetail, filters, page, t]);
+  }, [appliedRange, closeDetail, filters, page, t]);
 
   const loadDetail = React.useCallback(
     async (traceId: string) => {
@@ -394,6 +392,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   }, [loadRequests, refreshKey, importRefreshRevision]);
 
   const applyFilters = () => {
+    setAppliedRange(draft.range);
     setFilters((current) => ({
       ...buildFilters(draft),
       // Title-bar switches are independent from the search form.
@@ -405,6 +404,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
 
   const resetFilters = () => {
     setDraft(defaultDraft);
+    setAppliedRange(defaultDraft.range);
     setFilters((current) => ({
       exclude_model_list: current.exclude_model_list,
       only_failed: current.only_failed,
@@ -873,18 +873,44 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         />
         <div className={styles.filterDivider} />
 
-        <div className={styles.filterSectionShrink}>
+        <div className={styles.filterSection}>
           <CalendarDays className={styles.filterIcon} size={14} aria-hidden="true" />
+          <Select<GatewayRequestRangeSelection['preset']>
+            aria-label={t('gateway.page.requests.filters.dateRange')}
+            variant="borderless"
+            size="small"
+            className={styles.rangeSelect}
+            popupMatchSelectWidth={false}
+            value={draft.range.preset}
+            options={[
+              { value: 'all', label: t('gateway.page.requests.filters.allTime') },
+              ...GATEWAY_USAGE_RANGE_PRESETS.map((preset) => ({
+                value: preset,
+                label: t(`gateway.page.statistics.range.${preset}`),
+              })),
+            ]}
+            onChange={(preset) => setDraft((current) => ({
+              ...current,
+              range: {
+                preset,
+                customRange: preset === 'custom' ? current.range.customRange : undefined,
+              },
+            }))}
+          />
+        </div>
+        {draft.range.preset === 'custom' ? (
           <RangePicker
             showTime
             variant="borderless"
             size="small"
-            className={styles.dateRange}
-            value={draft.dateRange as never}
-            onChange={(dates) => setDraft((current) => ({ ...current, dateRange: dates as never }))}
+            className={styles.customRangePicker}
+            value={draft.range.customRange as never}
+            onChange={(dates) => setDraft((current) => ({
+              ...current,
+              range: { preset: 'custom', customRange: dates as never },
+            }))}
           />
-        </div>
-        <div className={styles.filterDivider} />
+        ) : null}
 
         <div className={styles.filterActions}>
           <button

@@ -213,7 +213,9 @@
           "providerPlaceholder": "Search provider",
           "modelPlaceholder": "Search model",
           "excludeModelList": "Hide model list requests",
-          "onlyFailed": "Failed only"
+          "onlyFailed": "Failed only",
+          "dateRange": "Date range",
+          "allTime": "All time"
         },
         "columns": {
           "time": "Time",
