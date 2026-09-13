@@ -10,6 +10,9 @@ use tokio::net::TcpListener;
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 
+#[path = "settings_tests.rs"]
+mod settings_tests;
+
 #[path = "privacy_tests.rs"]
 mod privacy_tests;
 
@@ -36,6 +39,7 @@ fn test_context(
     }))).unwrap();
     let provider_id = provider["id"].as_str().unwrap().to_string();
     let settings = ProxyGatewaySettings {
+        codex_websocket_enabled: true,
         request_log_enabled: true,
         metrics_enabled: true,
         store_headers: true,

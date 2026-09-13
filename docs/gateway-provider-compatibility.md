@@ -1111,6 +1111,7 @@ inferred provider：
 
 | 条件 | 握手行为 |
 |---|---|
+| 网关 `codex_websocket_enabled=false`（默认值，旧配置缺字段同样关闭） | 加载 provider 前本地 `426`，不发起上游 WS；在途上游握手返回后再次检查，仍关闭则不升级下游 |
 | effective target 是 Chat / Anthropic / Gemini，或 Copilot 按模型动态选协议 | 本地 `426`，不尝试上游 WS；由 Codex 发 HTTP 请求进入原转换链路 |
 | 原始 Codex provider 表的 `supports_websockets=false` | 本地 `426`；网关接管时写入本地表的 true 不覆盖此上游判断 |
 | Responses provider 的能力为 true 或未配置 | 使用实际 URL/认证发起上游握手，有效 `101` 后才升级下游 |
@@ -1125,7 +1126,9 @@ inferred provider：
 - 握手时没有模型，只能过滤 provider 级冷却；不能用猜测模型跳过渠道或更新模型健康。每轮生成的健康判定基于实际上游模型和已送达终态；合法 Incomplete/Canceled、客户端取消和预热不当作上游模型故障。
 - `response.failed` / error event 仍以 WS 事件送给客户端，业务行的 HTTP status 保持空值，详情单独保留事件 error status。握手尝试只记录在连接 metadata；业务请求的尝试数不被它放大。
 
-关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_enables_websocket_and_restores_original_capability`。
+网关总开关与 provider 的原始 `supports_websockets` 能力判断同时生效。关闭总开关后已有连接空闲时关闭，在途轮次继续按既有 usage/终态规则结算；开启不会解除 Codex 当前会话已经记住的 HTTP fallback，需要新会话或重启客户端再试。切换开关不改 CLI 接管字段，不影响 HTTP/SSE 的协议转换和数据脱敏设置。
+
+关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`runtime/websocket/settings_tests.rs`、`settings.rs::websocket_setting_defaults_to_off_and_round_trips_without_resetting_other_settings`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_enables_websocket_and_restores_original_capability`。
 
 ### 7.2 数据脱敏与渠道兼容（issue #347）
 

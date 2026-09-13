@@ -45,6 +45,8 @@ const CONNECTION_IDLE_TIMEOUT: Duration = Duration::from_secs(50 * 60);
 const CONNECTION_MAX_LIFETIME: Duration = Duration::from_secs(55 * 60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const WEBSOCKET_BETA: &str = "responses_websockets=2026-02-06";
+const WEBSOCKET_DISABLED_REASON: &str =
+    "Codex WebSocket support is disabled in gateway settings; use HTTP/SSE.";
 
 fn socket_config() -> WebSocketConfig {
     WebSocketConfig::default()
@@ -133,6 +135,9 @@ async fn connect_upstream(
     context: &GatewayRuntimeContext,
     route: &GatewayRoute,
 ) -> Result<(WebSocketStream<reqwest::Upgraded>, HeaderMap, String), HandshakeFailure> {
+    if !context.settings_snapshot().codex_websocket_enabled {
+        return Err(HandshakeFailure::local(426, WEBSOCKET_DISABLED_REASON));
+    }
     let db = context
         .db
         .as_ref()
@@ -311,6 +316,19 @@ pub(super) async fn handle_upgrade(
         )
         .await;
     };
+    if !context.settings_snapshot().codex_websocket_enabled {
+        return write_handshake_failure(
+            stream,
+            &request,
+            context,
+            &connection_id,
+            started_at,
+            started,
+            None,
+            HandshakeFailure::local(426, WEBSOCKET_DISABLED_REASON),
+        )
+        .await;
+    }
     let Some(db) = context.db.as_ref() else {
         return write_handshake_failure(
             stream,
@@ -445,6 +463,24 @@ pub(super) async fn handle_upgrade(
             });
             match connected {
                 Ok((upstream_socket, upstream_headers, upstream_url)) => {
+                    // A settings save can finish while the upstream handshake is in flight.
+                    // The client must still receive 426 before any downstream upgrade.
+                    if !context.settings_snapshot().codex_websocket_enabled {
+                        let mut failure = HandshakeFailure::local(426, WEBSOCKET_DISABLED_REASON);
+                        failure.upstream_status = Some(101);
+                        failure.attempts = attempts;
+                        return write_handshake_failure(
+                            stream,
+                            &request,
+                            context,
+                            &connection_id,
+                            started_at,
+                            started,
+                            Some(&provider),
+                            failure,
+                        )
+                        .await;
+                    }
                     for (name, value) in &upstream_headers {
                         if !matches!(
                             name.as_str(),
@@ -956,6 +992,15 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
     let mut last_upstream_frame = connected_at;
     let mut last_downstream_frame = connected_at;
     let (outcome, category, note) = loop {
+        // Keep in-flight generations and their usage intact. Once the connection
+        // is idle, close it so the next handshake observes the HTTP fallback gate.
+        if pending.lanes.is_empty() && !context.settings_snapshot().codex_websocket_enabled {
+            break (
+                GatewayStreamOutcome::Canceled,
+                "websocket_disabled",
+                WEBSOCKET_DISABLED_REASON,
+            );
+        }
         if *shutdown.borrow() {
             break (
                 GatewayStreamOutcome::Canceled,
@@ -1038,6 +1083,10 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                 }
             }
             message = downstream.next() => {
+                // The setting may change while an idle connection awaits a frame.
+                if pending.lanes.is_empty() && !context.settings_snapshot().codex_websocket_enabled {
+                    break (GatewayStreamOutcome::Canceled, "websocket_disabled", WEBSOCKET_DISABLED_REASON);
+                }
                 last_downstream_frame = Instant::now();
                 match message {
                     Some(Ok(Message::Text(text))) => {

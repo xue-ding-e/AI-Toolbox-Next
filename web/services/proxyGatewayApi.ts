@@ -52,6 +52,8 @@ export interface ProxyGatewaySettings {
   port_auto_select: boolean;
   wsl_host: string;
   enabled_cli_keys: GatewayCliKey[];
+  /** Opt in to Codex Responses WebSocket; defaults to false for existing settings. */
+  codex_websocket_enabled: boolean;
   request_log_enabled: boolean;
   request_log_level: string;
   metrics_enabled: boolean;

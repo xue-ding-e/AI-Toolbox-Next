@@ -990,9 +990,13 @@ X-Transformer-Lossy: /path: message | /path2: message
 
 WebSocket 是 runtime 的传输方式，不扩展上述转换矩阵。`runtime/websocket.rs` 只接收 Codex 路由的 `GET + Upgrade`（`/openai/v1/responses`、`/openai/responses`）。每条下游连接独占一条上游连接，固定 provider 和认证身份；连接建立后不切换 provider，也不重放已经发送的生成请求。其他 CLI 和 `/responses/compact` 继续 HTTP/SSE。
 
-升级顺序是：读取真实候选 provider → 判断 effective target protocol → 完成并校验上游握手 → 才向 Codex 写出 `101`。实际目标不是 Responses、Copilot 这类需要按请求模型动态选协议的 provider，或上游配置明确 `supports_websockets=false` 时，在升级前返回 `426`。未配置该能力的 Responses provider 可以发起一次真实握手确认；只有上游返回有效 `101` 才启用，因此不能仅从接管后的 `wire_api="responses"` 推断支持。上游不接受升级时返回 `426`；鉴权、限流和其他真实错误保留错误语义，具体状态规则见兼容文档 §7.1。
+网关设置 `codex_websocket_enabled` 默认关闭，旧配置缺少该字段也按关闭读取；开关位于“设置 → 转发与容错 → 传输方式”，沿用普通网关 settings 的 JSONB 保存和运行态更新。关闭时在加载 provider 前返回 `426`，不连接上游；上游握手返回后、下游写出 `101` 前再次检查，覆盖保存设置与握手并发的情况。
+
+开启后的升级顺序是：读取真实候选 provider → 判断 effective target protocol → 完成并校验上游握手 → 再次检查开关 → 才向 Codex 写出 `101`。实际目标不是 Responses、Copilot 这类需要按请求模型动态选协议的 provider，或上游配置明确 `supports_websockets=false` 时，在升级前返回 `426`。未配置该能力的 Responses provider 可以发起一次真实握手确认；只有上游返回有效 `101` 才启用，因此不能仅从接管后的 `wire_api="responses"` 推断支持。上游不接受升级时返回 `426`；鉴权、限流和其他真实错误保留错误语义，具体状态规则见兼容文档 §7.1。
 
 Codex 接管写入的 `supports_websockets=true` 描述本机网关能力，并纳入接管受管字段；恢复直连恢复原值或移除新建字段。已有接管配置需重新接管一次以写入该能力，单纯重启网关只重建 runtime。真实上游能力仍从数据库 provider 的原始配置读取。Codex 在握手阶段收到 `426` 后使用原有 HTTP/SSE 请求，转换请求仍进入现有 `ConversionRoute`。已经建立的 WS 内出现 error event 不再具备握手回退语义。
+
+切换开关不改写 CLI 文件，也不重启网关。关闭后已有连接等待 pending 轮次全部结算再关闭；空闲等待期间收到新帧也要重新检查开关，不能再放行一轮。关闭空闲连接本身不产生模型失败或额外调用数。开启后已回退 HTTP 的 Codex 会话可能继续使用 HTTP，需要新建会话或重启客户端重新尝试 WS。同一 provider 的不同会话可以同时使用 WS/HTTP；排障应核对实际 path、会话标识与业务终态，不能仅凭 provider 相同推断重复记账或回退。
 
 逐轮处理遵守以下不变量：
 
@@ -1005,7 +1009,7 @@ Codex 接管写入的 `supports_websockets=true` 描述本机网关能力，并�
 
 传输复用全局 `http_client` 的 direct/system/custom proxy 与 rustls 策略；HTTP/1.1 完成升级后由 `tokio-tungstenite` 处理帧。当前限制为每消息 16 MiB、最多 64 个待完成请求、待完成请求原始/出站 payload 共 64 MiB；事件快照还受既有日志设置和每份 16 MiB 上限约束。写入/flush 有 10 秒上限，20 秒发送 Ping、90 秒检测失联；逐轮首事件/空闲超时复用 Codex app 配置，排队时间不提前消耗下一轮首事件超时。连接空闲 50 分钟或存活 55 分钟后关闭并要求客户端重新连接。停止/重启信号关闭两端并结算未完成轮次。
 
-本地网络回归位于 `runtime/websocket/tests.rs` 和 `runtime/websocket/lifecycle_tests.rs`，覆盖真实升级、双轮复用、多路交错/重复终态、转换前 426 与后续 HTTP 转换、认证/限流、握手重试预算、代理/RawURL/query/Beta header、预热、正文关闭/截断、写入失败、缺终态、超时和停止。跨层回归还包括 `session_import/websocket_tests.rs` 的双向去重、`usage_stats.rs` 的日聚合、`commands.rs` 的导出、`cli_proxy/mod.rs` 的接管/恢复及 `tauri/tests/sqlite_jsonb.rs` 的 v20→v21 升级。
+本地网络回归位于 `runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs` 和 `runtime/websocket/settings_tests.rs`，覆盖真实升级、双轮复用、多路交错/重复终态、默认关闭与保存后即时生效、关闭时在途用量保留、空闲读/握手期间关闭、转换前 426 与后续 HTTP 转换、认证/限流、握手重试预算、代理/RawURL/query/Beta header、预热、正文关闭/截断、写入失败、缺终态、超时和停止。`settings.rs` 验证旧配置默认关闭、开关保存读回及相邻设置保留。跨层回归还包括 `session_import/websocket_tests.rs` 的双向去重、`usage_stats.rs` 的日聚合、`commands.rs` 的导出、`cli_proxy/mod.rs` 的接管/恢复及 `tauri/tests/sqlite_jsonb.rs` 的 v20→v21 升级。
 
 2026-09-13 专项参考：cc-switch `e098279934a6041ebab35664c5fbd785df055ee0` 的 `src-tauri/src/codex_config.rs` 仍明确本机代理只提供 HTTP/SSE，没有可直接搬用的 WS 路由；AxonHub `dfbe22593ea33d62d1bc04d47a8e5d6c8b25d2bf` 的 `llm/transformer/openai/responses/websocket_executor.go` 与 `internal/server/api/responses_websocket.go` 提供握手、复用、终态和预热边界参考。本项目采用对应生命周期约束，保留一对一连接，不引入其全局 session pool、HTTP facade、数据库/channel/orchestrator。另核对 Codex `89c8bcf37d64be69e4c8286f4541c1a84ed312a4` 的 `codex-rs/core/src/client.rs`，确认握手 `UPGRADE_REQUIRED` → `FallbackToHttp`。这是 issue #342 的定点审查与实现，未执行两个参考项目的完整 baseline 增量同步，§19.4 的基线保持不变。
 

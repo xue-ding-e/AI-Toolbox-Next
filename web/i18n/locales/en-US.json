@@ -644,7 +644,8 @@
         "timeout": "Timeouts",
         "retry": "Retry policy",
         "health": "Health management",
-        "healthHint": "Only effective in failover mode"
+        "healthHint": "Only effective in failover mode",
+        "transport": "Transport"
       },
       "status": {
         "running": "Running",
@@ -687,7 +688,8 @@
         "probeSuccess": "Probe successes",
         "lossyRejection": "Reject lossy conversions",
         "responsesEncryptedContentRectifier": "Responses encrypted-content recovery",
-        "sessionUsage": "Local session usage"
+        "sessionUsage": "Local session usage",
+        "codexWebsocket": "Codex WebSocket"
       },
       "fieldHelp": {
         "perProviderRetry": "Extra retries allowed on the same channel after it fails; after this limit, failover mode switches to the next channel and single-channel proxy returns an error.",
@@ -714,7 +716,9 @@
         "responsesEncryptedContentRectifier": "For OpenAI Responses targets, when the upstream explicitly reports encrypted_content verification or decryption failure, remove only the invalid encrypted reasoning items and retry once on the same channel.",
         "sessionUsage": "Include local CLI session usage (requests that bypassed the gateway) in statistics and request details. When off, new local session data is not collected; existing data is kept and reappears once this is turned back on.",
         "requestLog": "Save each request's detail file locally (including the Headers, request body and response parts selected below, subject to size limits and retention), used by the request detail view; when off, request details can only show summary fields.",
-        "metrics": "Write per-request token, cost and latency summaries into the local database for the statistics page and request list; summaries are recorded while either this or request logging is on."
+        "metrics": "Write per-request token, cost and latency summaries into the local database for the statistics page and request list; summaries are recorded while either this or request logging is on.",
+        "codexWebsocketDefault": "Off by default. Only for upstreams using the Responses protocol.",
+        "codexWebsocket": "When off, new connections use HTTP/SSE and existing connections close once idle. After enabling, start a new Codex session or restart the client to retry WebSocket. Requests requiring protocol conversion still use HTTP/SSE."
       },
       "perCli": {
         "firstByte": "First byte",

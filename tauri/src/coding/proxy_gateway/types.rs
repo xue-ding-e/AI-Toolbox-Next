@@ -307,6 +307,8 @@ pub struct ProxyGatewaySettings {
     /// WSL Direct CLI 访问本机网关时使用的宿主机可达地址，留空则继续使用 listen origin。
     pub wsl_host: String,
     pub enabled_cli_keys: Vec<GatewayCliKey>,
+    /// Allow Codex Responses WebSocket upgrades. HTTP/SSE remains the default transport.
+    pub codex_websocket_enabled: bool,
     pub request_log_enabled: bool,
     pub request_log_level: String,
     pub metrics_enabled: bool,
@@ -350,6 +352,7 @@ impl Default for ProxyGatewaySettings {
             port_auto_select: false,
             wsl_host: String::new(),
             enabled_cli_keys: GatewayCliKey::supported_mvp(),
+            codex_websocket_enabled: false,
             request_log_enabled: true,
             request_log_level: "summary".to_string(),
             metrics_enabled: true,

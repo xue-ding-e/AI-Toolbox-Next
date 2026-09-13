@@ -140,12 +140,13 @@ interface SwitchControlProps {
   checked: boolean;
   disabled?: boolean;
   label: string;
+  ariaLabel?: string;
   onChange: (checked: boolean) => void;
 }
 
-const SwitchControl: React.FC<SwitchControlProps> = ({ checked, disabled, label, onChange }) => (
+const SwitchControl: React.FC<SwitchControlProps> = ({ checked, disabled, label, ariaLabel, onChange }) => (
   <div className={styles.switchControl}>
-    <Switch size="small" checked={checked} disabled={disabled} onChange={onChange} />
+    <Switch size="small" checked={checked} disabled={disabled} aria-label={ariaLabel} onChange={onChange} />
     <span className={styles.switchLabel}>{label}</span>
   </div>
 );
@@ -555,6 +556,23 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
 
           <Section icon={<ArrowRightLeft size={15} aria-hidden="true" />} title={t('settings.gateway.sections.resilience')}>
             <div className={styles.fieldStack}>
+              <div className={styles.subGroup}>
+                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.transport')}</div>
+                <FieldRow
+                  label={t('settings.gateway.fields.codexWebsocket')}
+                  description={t('settings.gateway.hints.codexWebsocketDefault')}
+                  help={t('settings.gateway.hints.codexWebsocket')}
+                  wide
+                >
+                  <SwitchControl
+                    checked={draftSettings.codex_websocket_enabled}
+                    disabled={busyAction !== null}
+                    ariaLabel={t('settings.gateway.fields.codexWebsocket')}
+                    label={draftSettings.codex_websocket_enabled ? t('common.enabled') : t('common.disabled')}
+                    onChange={(checked) => updateDraftAndSave('codex_websocket_enabled', checked)}
+                  />
+                </FieldRow>
+              </div>
               <div className={styles.subGroup}>
                 <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.rectifier')}</div>
                 <FieldRow

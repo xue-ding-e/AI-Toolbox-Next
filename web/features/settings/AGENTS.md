@@ -52,6 +52,7 @@ sequenceDiagram
 - Gateway 设置页会按 `appProxyConfigKeys` 判断每 CLI 的 `app_configs` 是否为空。后续给 `AppProxyConfig` 增加字段时必须同步更新这个 key 集合，否则设置页清空超时/重试字段时可能误删相邻功能保存的配置。
 - Gateway 的“数据脱敏”分区委托 gateway 模块组件处理，使用独立 privacy 配置命令；不能放进此页普通 settings 的全量自动保存 payload。开关和规则分别更新，本地预览不启用实际流量处理，详细规则见 `web/features/coding/gateway/AGENTS.md`。
 - Gateway 设置页的 `ProxyGatewaySettings` 运行态开关必须和后端字段同步暴露；例如 `lossy_rejection_enabled` 是用户控制“有损转换是否直接 400”的开关，默认关闭，UI 放在“转发与容错 / 请求整流”里 `Thinking budget 修正` 下方。
+- Codex WebSocket 总开关位于“转发与容错 / 传输方式”，默认关闭，沿用普通网关 settings 的自动保存；保存期间禁用操作，后端保存响应作为持久化状态。说明需保留“关闭后新连接走 HTTP/SSE、已有连接空闲后关闭；开启后新建 Codex 会话或重启客户端重试”的边界，不能把开关开启描述成所有请求强制 WS，也不能通过切换开关改写 CLI 接管配置。
 - Gateway 的 Claude Thinking 整流和 OpenAI Responses `encrypted_content` 恢复是两个独立运行态开关：前者只控制 `thinking_rectifier_enabled`，后者只控制 `responses_encrypted_content_rectifier_enabled`。新增恢复策略时不能借用名称或说明仅覆盖其他协议的既有开关。
 - 本地/WebDAV restore 成功后，前端内存 store、路由可见性和模块缓存都可能与新数据库不一致；成功弹窗必须强制用户重启/刷新应用，不能提供可关闭后继续使用旧内存态的路径。
 

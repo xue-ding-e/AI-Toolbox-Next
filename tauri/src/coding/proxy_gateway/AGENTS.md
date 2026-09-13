@@ -41,6 +41,7 @@
 ## 核心设计决策（Why）
 
 - Codex WebSocket 只在 runtime 做 Responses 同协议转发（架构文档 §16.1、兼容文档 §7.1）。必须先校验实际上游的有效 `101`，再升级下游；转换、动态协议或显式关闭 WS 的渠道在升级前 `426`。接管表的 `supports_websockets=true` 描述本机能力，上游判断仍读数据库 provider 的原始配置，恢复直连要恢复原值。
+- 网关 `codex_websocket_enabled` 默认关闭，旧 settings 缺字段也关闭；这是独立于 provider capability 的运行态门控，不修改接管文件。关闭时在 provider 加载前 `426`，上游握手完成后、下游升级前再次检查。已有连接只在 pending 全部结算后关闭，空闲读被新帧唤醒时也要检查；不能中断在途 usage、额外记录模型失败或让空闲连接继续生成。开启后 Codex 已回退的旧会话需新建/重启才能重试，不能承诺自动恢复 WS。回归见 `runtime/websocket/settings_tests.rs` 与 `settings.rs`。
 - 一条 WS 固定一个 provider/认证身份；`previous_response_id` 是连接内状态，禁止在已升级连接里静默 failover 或重放生成。握手可复用原 retry 预算，但不能把握手尝试记成每轮生成重试；握手阶段没有实际模型，只看 provider 冷却。
 - WS 用量和请求详情按每个 `response.create` 结算，并按 `stream_id` / response ID 关联；终态送达后立刻落库，不等连接关闭。usage 解析先于下游写入，成功判定晚于写入；日志关闭/截断不能改统计，客户端写失败仍保留已经收到的 usage。
 - WS 客户端事件快照必须在写入成功之后追加，本地请求校验产生的 error event 也遵守这条规则。没有 lane/response 归属的连接级 error 要附到每个受影响 pending 轮次，保留原始事件、已送达事件、错误码和原因；不能只写一条通用断线说明而丢失真实上游错误。
