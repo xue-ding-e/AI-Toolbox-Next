@@ -6,6 +6,21 @@ use std::path::{Path, PathBuf};
 
 type CurrentFileReporter<'a> = &'a (dyn Fn(String) + Send + Sync);
 
+pub async fn manage_remote_skill_target(
+    session: &SshSession,
+    source: &str,
+    target: &str,
+    central_root: &str,
+    action: crate::coding::skills::remote_target::RemoteSkillTargetAction,
+) -> Result<bool, String> {
+    use crate::coding::skills::remote_target::{
+        build_remote_skill_target_command, parse_remote_skill_target_result,
+    };
+    let command = build_remote_skill_target_command(source, target, central_root, action);
+    let output = session.exec_command(&command).await?;
+    parse_remote_skill_target_result(&output)
+}
+
 fn mapping_kind(mapping: &SSHFileMapping) -> &'static str {
     if mapping.is_directory {
         "directory"
@@ -584,24 +599,6 @@ pub async fn write_remote_file(
         .await
 }
 
-/// 在远程创建符号链接
-pub async fn create_remote_symlink(
-    session: &SshSession,
-    target: &str,
-    link_path: &str,
-) -> Result<(), String> {
-    let target_expanded = target.replace("~", "$HOME");
-    let link_expanded = link_path.replace("~", "$HOME");
-
-    let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\" && ln -s \"{}\" \"{}\"",
-        link_expanded, link_expanded, target_expanded, link_expanded
-    );
-
-    session.exec_command(&command).await?;
-    Ok(())
-}
-
 /// 删除远程文件或目录
 pub async fn remove_remote_path(session: &SshSession, path: &str) -> Result<(), String> {
     // 安全检查：禁止删除空路径或根路径
@@ -632,113 +629,6 @@ pub async fn list_remote_dir(session: &SshSession, path: &str) -> Result<Vec<Str
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect())
-}
-
-/// 检查远程符号链接是否存在并指向预期的目标
-pub async fn check_remote_symlink_exists(
-    session: &SshSession,
-    link_path: &str,
-    expected_target: &str,
-) -> bool {
-    let link_expanded = link_path.replace("~", "$HOME");
-    let target_expanded = expected_target.replace("~", "$HOME");
-    let command = format!(
-        "[ -L \"{}\" ] && [ \"$(readlink \"{}\")\" = \"{}\" ] && echo yes || echo no",
-        link_expanded, link_expanded, target_expanded
-    );
-
-    match session.exec_command(&command).await {
-        Ok(output) => output.trim() == "yes",
-        Err(_) => false,
-    }
-}
-
-/// What currently sits at a remote path that the app may want to manage as a
-/// symlink into the central skills repo.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemotePathKind {
-    /// Nothing exists at the path.
-    Missing,
-    /// A symlink whose target lives under `central_prefix` (app-managed).
-    Managed,
-    /// A real file/directory, or a symlink pointing outside `central_prefix`
-    /// (user-owned; must never be removed or replaced by the app).
-    Foreign,
-}
-
-/// Inspect a remote path before the app deletes or replaces it: only symlinks
-/// whose target lives under the app-managed central dir are considered ours;
-/// everything else is user-owned and must be left alone.
-///
-/// Returns `Missing` when nothing exists, `Managed` when the path is a symlink
-/// under `central_prefix`, `Foreign` otherwise. Inspection failures fail safe
-/// to `Foreign` so the app never deletes something it cannot verify.
-pub async fn inspect_remote_path_kind(
-    session: &SshSession,
-    path: &str,
-    central_prefix: &str,
-) -> RemotePathKind {
-    let path_expanded = path.replace("~", "$HOME");
-    let central_expanded = central_prefix.replace("~", "$HOME");
-
-    // `-e` follows symlinks, so a dangling link is reported as missing by
-    // `[ -e ]`; `-L` catches it first. Output is one of:
-    //   managed:<target> | foreign:<target> | real | missing
-    let command = format!(
-        "if [ -L \"{}\" ]; then \
-             t=$(readlink \"{}\"); \
-             case \"$t\" in \
-               \"{}\"|\"{}\"/*) echo \"managed:$t\";; \
-               *) echo \"foreign:$t\";; \
-             esac; \
-         elif [ -e \"{}\" ]; then \
-             echo real; \
-         else \
-             echo missing; \
-         fi",
-        path_expanded, path_expanded, central_expanded, central_expanded, path_expanded
-    );
-
-    match session.exec_command(&command).await {
-        Ok(output) => {
-            let kind = output.trim().to_string();
-            if kind.starts_with("managed:") {
-                RemotePathKind::Managed
-            } else if kind.starts_with("foreign:") || kind == "real" {
-                RemotePathKind::Foreign
-            } else {
-                RemotePathKind::Missing
-            }
-        }
-        Err(error) => {
-            log::warn!(
-                "Failed to inspect remote path kind for '{}': {}",
-                path,
-                error
-            );
-            RemotePathKind::Foreign // fail safe: never delete what we cannot verify
-        }
-    }
-}
-
-/// Remove `path` on the remote host only when it is an app-managed symlink
-/// whose target lives under `central_prefix`. Real directories/files and
-/// foreign symlinks are never touched. Returns `true` when something was
-/// removed.
-pub async fn remove_remote_managed_symlink(
-    session: &SshSession,
-    path: &str,
-    central_prefix: &str,
-) -> Result<bool, String> {
-    match inspect_remote_path_kind(session, path, central_prefix).await {
-        RemotePathKind::Managed => {
-            let path_expanded = path.replace("~", "$HOME");
-            let command = format!("rm -f \"{}\"", path_expanded);
-            session.exec_command(&command).await?;
-            Ok(true)
-        }
-        RemotePathKind::Missing | RemotePathKind::Foreign => Ok(false),
-    }
 }
 
 #[cfg(test)]

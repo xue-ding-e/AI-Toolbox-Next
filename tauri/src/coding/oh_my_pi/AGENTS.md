@@ -28,6 +28,8 @@
 - OMP 的 `thinking.mode` 是其 schema 的必填字段(`ThinkingControlModeSchema`:effort/budget/google-level/anthropic-adaptive/anthropic-budget-effort)。生成带 `thinking` 块的模型时若缺 mode,整个 models.yml 校验失败、所有自定义 provider 被禁用。前端 `buildOmpThinkingFromPreset(variants, api)` 按 api 推断 mode(google 系→google-level、anthropic-messages/bedrock→anthropic-adaptive、其余→effort);后端 `normalize_omp_provider_for_omptype` 对旧数据/手写 JSON 缺 mode 时同样兜底补上。
 - provider `api` 的合法词表是 omp `ApiSchema` 的 9 个值(见前端 `web/features/coding/oh_my_pi/utils/ompApiOptions.ts`,镜像 oh-my-pi `models-config-schema-bundle.ts`);未知 `api` 值会让整个 models.yml 校验失败、禁用所有自定义 provider。但 omp 的 `Api` 类型对扩展开放(可注册自定义 API),因此前后端都不对 `api` 做枚举硬校验,保持字符串透传;provider 表单 Select 只提供词表选项,自定义值走原始 JSON 编辑。
 - WSL 场景下选中 `~/.omp` 目录且其 `agent` 子目录为有效运行时布局时,归一化为 `~/.omp/agent`。
+- OMP 的持久化端点与共享诊断端点分开：Anthropic 在诊断时补 `/v1`，Gemini 补版本路径，不能反写 `models.yml`。`openai-codex-responses` 诊断显式携带 apiFormat，使用 Codex 请求/终态契约；Azure、Bedrock、Gemini CLI、Vertex 及自定义 API 暂无对应诊断适配，界面禁用并说明，不能降成 Chat Completions。模型连接一致时可用模型覆盖值，不同连接混用时禁用供应商级诊断。
+- 新建供应商的默认地址由表单记录自动填值来源，API 切换只更新仍由表单自动填入的地址；用户编辑或主动清空后停止自动修改。编辑/复制现有供应商不自动填地址，重新打开新建弹窗才重置自动填值状态。
 
 ## 最小验证
 

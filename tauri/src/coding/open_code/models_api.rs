@@ -158,10 +158,18 @@ fn parse_anthropic_models_response(response_text: &str) -> Result<Vec<FetchedMod
 // Connectivity Test Types
 // ============================================================================
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectivityApiFormat {
+    OpenaiCodexResponses,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectivityTestRequest {
     pub npm: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<ConnectivityApiFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     pub base_url: String,
@@ -183,6 +191,24 @@ pub struct ConnectivityTestRequest {
     pub model_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+}
+
+impl ConnectivityTestRequest {
+    fn is_codex(&self) -> bool {
+        self.api_format == Some(ConnectivityApiFormat::OpenaiCodexResponses)
+    }
+
+    fn effective_npm(&self) -> &str {
+        if self.is_codex() {
+            "@ai-sdk/openai"
+        } else {
+            &self.npm
+        }
+    }
+
+    fn streaming(&self) -> bool {
+        self.is_codex() || self.stream.unwrap_or(true)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -624,8 +650,8 @@ fn build_default_body(
     model_id: &str,
     anthropic_user_id: Option<&str>,
 ) -> Value {
-    let stream_enabled = request.stream.unwrap_or(true);
-    match request.npm.as_str() {
+    let stream_enabled = request.streaming();
+    match request.effective_npm() {
         "@ai-sdk/google" => {
             let mut generation_config = serde_json::Map::new();
             if let Some(temperature) = request.temperature {
@@ -742,6 +768,84 @@ fn build_default_body(
     }
 }
 
+fn build_codex_connectivity_url(base_url: &str) -> String {
+    let append_path = |path: &str| {
+        let path = path.trim_end_matches('/');
+        if path.ends_with("/codex/responses") {
+            path.to_string()
+        } else if path.ends_with("/codex") {
+            format!("{path}/responses")
+        } else {
+            format!("{path}/codex/responses")
+        }
+    };
+    match reqwest::Url::parse(base_url) {
+        Ok(mut url) => {
+            url.set_path(&append_path(url.path()));
+            url.to_string()
+        }
+        Err(_) => append_path(base_url),
+    }
+}
+
+fn codex_account_id(api_key: &str) -> Option<String> {
+    use base64::Engine;
+    let payload = api_key.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let claims: Value = serde_json::from_slice(&bytes).ok()?;
+    claims
+        .get("https://api.openai.com/auth")?
+        .get("chatgpt_account_id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn codex_stream_error(text: &str) -> Option<String> {
+    let normalized = text.replace("\r\n", "\n");
+    let events: Vec<Value> = normalized
+        .split_inclusive("\n\n")
+        .filter(|frame| frame.ends_with("\n\n"))
+        .filter_map(|frame| {
+            let data = frame
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+                .collect::<Vec<_>>()
+                .join("\n");
+            serde_json::from_str(&data).ok()
+        })
+        .collect();
+    for event in &events {
+        if matches!(
+            event.get("type").and_then(Value::as_str),
+            Some("error" | "response.failed" | "response.incomplete")
+        ) || event.get("error").is_some_and(|error| !error.is_null())
+            || matches!(
+                event.pointer("/response/status").and_then(Value::as_str),
+                Some("failed" | "incomplete")
+            )
+        {
+            return Some(
+                event
+                    .pointer("/error/message")
+                    .or_else(|| event.pointer("/response/error/message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("Codex Responses stream failed")
+                    .to_string(),
+            );
+        }
+    }
+    if events
+        .iter()
+        .any(|event| event.get("type").and_then(Value::as_str) == Some("response.completed"))
+    {
+        None
+    } else {
+        Some("Codex Responses stream ended without response.completed".to_string())
+    }
+}
+
 fn enforce_prompt_and_model(npm: &str, body: &mut Value, model_id: &str, prompt: &str) {
     match npm {
         "@ai-sdk/google" => {
@@ -811,33 +915,48 @@ async fn run_connectivity_test_for_model(
     model_id: &str,
 ) -> ConnectivityTestResult {
     let start_time = Instant::now();
-    let stream_enabled = request.stream.unwrap_or(true);
-    let anthropic_user_id = if request.npm == "@ai-sdk/anthropic" {
+    let stream_enabled = request.streaming();
+    let npm = request.effective_npm();
+    let anthropic_user_id = if npm == "@ai-sdk/anthropic" {
         Some(generate_anthropic_user_id())
     } else {
         None
     };
-    let url = build_connectivity_url(
-        request.npm.as_str(),
-        request.base_url.as_str(),
-        model_id,
-        request.api_key.as_deref(),
-        stream_enabled,
-    );
+    let url = if request.is_codex() {
+        build_codex_connectivity_url(&request.base_url)
+    } else {
+        build_connectivity_url(
+            npm,
+            request.base_url.as_str(),
+            model_id,
+            request.api_key.as_deref(),
+            stream_enabled,
+        )
+    };
 
     let mut body = build_default_body(request, model_id, anthropic_user_id.as_deref());
     if let Some(custom_body) = &request.body {
         merge_json(&mut body, custom_body);
     }
-    enforce_prompt_and_model(request.npm.as_str(), &mut body, model_id, &request.prompt);
+    enforce_prompt_and_model(npm, &mut body, model_id, &request.prompt);
+    if request.is_codex() {
+        body["stream"] = json!(true);
+        body["store"] = json!(false);
+        if !body.get("instructions").is_some_and(Value::is_string) {
+            body["instructions"] = json!("You are a helpful coding assistant.");
+        }
+        for field in ["temperature", "max_tokens", "max_output_tokens"] {
+            body.as_object_mut().unwrap().remove(field);
+        }
+    }
     if let Some(user_id) = anthropic_user_id.as_deref() {
         ensure_anthropic_metadata(&mut body, user_id);
     }
 
     let mut req_builder = client.post(&url).json(&body);
 
-    let is_google = request.npm == "@ai-sdk/google";
-    let is_anthropic = request.npm == "@ai-sdk/anthropic";
+    let is_google = npm == "@ai-sdk/google";
+    let is_anthropic = npm == "@ai-sdk/anthropic";
 
     let mut request_headers = BTreeMap::new();
     if is_anthropic {
@@ -879,6 +998,16 @@ async fn run_connectivity_test_for_model(
 
     if stream_enabled && !is_google && !is_anthropic {
         request_headers.insert("Accept".to_string(), "text/event-stream".to_string());
+    }
+
+    if request.is_codex() {
+        request_headers.insert(
+            "OpenAI-Beta".to_string(),
+            "responses=experimental".to_string(),
+        );
+        if let Some(account_id) = request.api_key.as_deref().and_then(codex_account_id) {
+            request_headers.insert("ChatGPT-Account-Id".to_string(), account_id);
+        }
     }
 
     if let Some(Value::Object(obj)) = request.headers.as_ref() {
@@ -970,13 +1099,21 @@ async fn run_connectivity_test_for_model(
         parse_json_or_wrap(&body_text)
     };
 
-    if !status_code.is_success() {
+    let protocol_error = request
+        .is_codex()
+        .then(|| codex_stream_error(&body_text))
+        .flatten();
+    if !status_code.is_success() || protocol_error.is_some() {
         return ConnectivityTestResult {
             model_id: model_id.to_string(),
             status: "error".to_string(),
             first_byte_ms,
             total_ms: Some(total_ms),
-            error_message: Some(format!("API error: {}", status_code)),
+            error_message: Some(if status_code.is_success() {
+                protocol_error.unwrap()
+            } else {
+                format!("API error: {}", status_code)
+            }),
             request_url: url,
             request_headers: request_headers_value,
             request_body: request_body_value,
@@ -1043,6 +1180,100 @@ pub async fn test_provider_model_connectivity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_connectivity_endpoint_preserves_the_configured_prefix() {
+        for base in [
+            "https://example.com/backend-api",
+            "https://example.com/backend-api/codex/",
+            "https://example.com/backend-api/codex/responses",
+        ] {
+            assert_eq!(
+                build_codex_connectivity_url(base),
+                "https://example.com/backend-api/codex/responses"
+            );
+        }
+        assert_eq!(
+            build_codex_connectivity_url("https://example.com/proxy?tenant=test"),
+            "https://example.com/proxy/codex/responses?tenant=test"
+        );
+        assert!(codex_account_id("third-party-api-key").is_none());
+    }
+
+    #[test]
+    fn codex_diagnostics_parse_complete_multiline_sse_frames() {
+        assert_eq!(codex_stream_error("event: response.completed\r\ndata: {\r\ndata: \"type\": \"response.completed\",\r\ndata: \"error\": null\r\ndata: }\r\n\r\n"), None);
+        assert!(codex_stream_error("data: {\"type\":\"response.completed\"}\n").is_some());
+        assert!(codex_stream_error("data: {\"type\":\"response.incomplete\"}\n\n").is_some());
+    }
+
+    #[tokio::test]
+    async fn codex_connectivity_sends_native_requests_and_requires_a_completed_stream() {
+        use base64::Engine;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let claims =
+            json!({ "https://api.openai.com/auth": { "chatgpt_account_id": "test-account" } });
+        let token = format!(
+            "header.{}.signature",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        for (response, expected_status) in [
+            ("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n", "success"),
+            ("data: {\"type\":\"error\",\"error\":{\"message\":\"rejected\"}}\n\n", "error"),
+            ("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n", "error"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let upstream = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0u8; 4096];
+                let header_end = loop {
+                    let count = socket.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if let Some(index) = bytes.windows(4).position(|part| part == b"\r\n\r\n") { break index + 4; }
+                };
+                let headers = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+                let length: usize = headers.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(str::trim).map(str::to_string)).unwrap().parse().unwrap();
+                while bytes.len() < header_end + length {
+                    let count = socket.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                }
+                let body: Value = serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap();
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+                (headers, body)
+            });
+            let request: ConnectivityTestRequest = serde_json::from_value(json!({
+                "npm": "@ai-sdk/openai-compatible", "apiFormat": "openai-codex-responses",
+                "baseUrl": format!("http://{address}/backend-api"), "apiKey": token,
+                "prompt": "probe", "modelIds": ["test-model"], "stream": false,
+                "temperature": 1, "maxTokens": 100,
+                "headers": { "x-review": "preserved" },
+                "body": { "instructions": "Custom instructions", "store": true, "stream": false },
+            })).unwrap();
+            let client = http_client::create_client_no_proxy(5).unwrap();
+            let result = run_connectivity_test_for_model(&client, &request, "test-model").await;
+            let (headers, body) = upstream.join().unwrap();
+            assert!(headers.starts_with("POST /backend-api/codex/responses "));
+            assert!(headers.to_ascii_lowercase().contains("chatgpt-account-id: test-account"));
+            assert!(headers.to_ascii_lowercase().contains("x-review: preserved"));
+            assert_eq!(body["model"], "test-model");
+            assert_eq!(body["store"], false);
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["instructions"], "Custom instructions");
+            assert_eq!(body["input"][1]["content"][0]["text"], "probe");
+            assert!(body.get("messages").is_none());
+            assert!(body.get("temperature").is_none());
+            assert!(body.get("max_output_tokens").is_none());
+            assert_eq!(result.status, expected_status, "{:?}", result.error_message);
+        }
+    }
 
     #[test]
     fn test_build_models_url_openai_compat() {

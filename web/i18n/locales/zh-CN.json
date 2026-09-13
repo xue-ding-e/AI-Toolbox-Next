@@ -935,8 +935,8 @@
       "wslClaudeJsonSyncSkipped": "WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。（{{detail}}）",
       "openCodeCodexConfigSyncPartialFailed": "OpenCode/Codex 配置同步部分失败：{{detail}}",
       "openCodeCodexMcpSyncSkipped": "OpenCode/Codex MCP 同步已跳过：{{detail}}",
-      "skillsForeignPathKept": "技能 '{{skill}}' 在工具 '{{tool}}' 的路径 '{{path}}' 不是 AI Toolbox 管理的链接，已保留原样",
-      "skillsLinkMaintenanceFailed": "技能 '{{skill}}' 在工具 '{{tool}}' 的链接维护失败：{{detail}}",
+      "skillsForeignPathKept": "技能 '{{skill}}' 在工具 '{{tool}}' 的路径 '{{path}}' 不是 AI Toolbox 管理的同步目标，已保留原样",
+      "skillsLinkMaintenanceFailed": "技能 '{{skill}}' 在工具 '{{tool}}' 的同步目标维护失败：{{detail}}",
       "skillsSourceMissingSkipped": "技能 '{{skill}}' 的源目录不存在，已跳过同步：{{detail}}",
       "skillsRemoteDirCleanupFailed": "技能 '{{skill}}' 的远端目录清理失败：{{detail}}",
       "skillsHashWriteFailed": "技能 '{{skill}}' 的同步哈希写入失败：{{detail}}",
@@ -5235,6 +5235,11 @@
       "googleGenerativeAi": "Google AI Studio 的 Gemini 协议（generateContent）；官方默认 https://generativelanguage.googleapis.com/v1beta。",
       "googleGeminiCli": "Google Cloud Code / Gemini CLI 内部端点专用协议，仅支持 OAuth 登录认证。",
       "googleVertex": "Google Cloud Vertex AI 企业端点，认证走 GCP API Key 或 ADC，project 与 location 由环境变量解析。"
+    },
+    "diagnostics": {
+      "unsupportedApi": "暂不支持 {{api}} 的连通性测试，请使用 OMP CLI 验证。",
+      "mixedConnections": "模型使用不同的协议或地址，请使用 OMP CLI 逐个验证。",
+      "modelDiscoveryUnavailable": "此连接暂不支持获取模型，请手动添加模型。"
     }
   },
   "dsh": {

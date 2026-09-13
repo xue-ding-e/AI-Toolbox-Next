@@ -3,7 +3,7 @@ use ai_toolbox_lib::coding::tools::{
 };
 
 #[test]
-fn antigravity_cli_builtin_tool_uses_new_gemini_prefix() {
+fn antigravity_cli_uses_its_own_skills_and_shared_mcp_config() {
     let tool = builtin_tool_by_key("antigravity_cli").expect("antigravity_cli should exist");
 
     assert_eq!(tool.display_name, "Antigravity CLI");
@@ -14,7 +14,7 @@ fn antigravity_cli_builtin_tool_uses_new_gemini_prefix() {
     assert_eq!(tool.relative_detect_dir, Some("~/.gemini/antigravity-cli"));
     assert_eq!(
         tool.mcp_config_path,
-        Some("~/.gemini/antigravity-cli/mcp_config.json")
+        Some("~/.gemini/config/mcp_config.json")
     );
     assert_eq!(tool.mcp_config_format, Some("json"));
     assert_eq!(tool.mcp_field, Some("mcpServers"));

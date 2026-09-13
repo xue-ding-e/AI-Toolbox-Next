@@ -28,6 +28,7 @@ export interface ProviderConnectivityInfo {
   providerConfig: OpenCodeProvider;
   modelIds: string[];
   reasoningEffort?: string;
+  apiFormat?: 'openai-codex-responses';
 }
 
 interface ProviderConnectivityTestModalProps {
@@ -225,6 +226,7 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       providerId={connectivityInfo.providerId}
       providerName={connectivityInfo.providerName}
       providerConfig={connectivityInfo.providerConfig}
+      apiFormat={connectivityInfo.apiFormat}
       modelIds={connectivityInfo.modelIds}
       removableModelIds={removableModelIds ?? connectivityInfo.modelIds}
       diagnostics={diagnostics}

@@ -49,3 +49,15 @@ export const OMP_API_DEFAULT_BASE_URL: Partial<Record<OmpApiValue, string>> = {
   'anthropic-messages': 'https://api.anthropic.com',
   'google-generative-ai': 'https://generativelanguage.googleapis.com/v1beta',
 };
+
+/** Undefined disables autofill after a manual edit or when editing/copying a provider. */
+export function getOmpApiBaseUrlUpdate(
+  api: string | undefined,
+  currentBaseUrl: unknown,
+  previousAutomaticBaseUrl: string | undefined,
+): string | undefined {
+  if (previousAutomaticBaseUrl === undefined) return undefined;
+  const current = typeof currentBaseUrl === 'string' ? currentBaseUrl.trim() : '';
+  if (current !== previousAutomaticBaseUrl) return undefined;
+  return OMP_API_DEFAULT_BASE_URL[api as OmpApiValue] ?? '';
+}

@@ -15,6 +15,7 @@
 - 中央仓库路径迁移复制也必须执行同等源/目标重叠校验。不要允许把新中央目录选到旧仓库或某个 Skill 目录内部后递归复制，否则会产生 `foo/foo/...` 这类无限嵌套或半成品目录。
 - `skills_get_managed_skills` 会对中央仓库 source 做只读诊断，并通过 DTO `source_health/source_error` 暴露给前端。缺失、非目录、broken/self symlink 只标记为 warning 让用户手动恢复或重装，不自动删除、恢复或重同步，也不写回 `skill` 表。
 - WSL skills 同步和 SSH skills 同步都不是复用普通 file mappings；它们是独立链路，但源端仍然是中央仓库。
+- WSL/SSH 工具目标维护统一走 `remote_target`：强制复制策略与本机共用 `builtin_tool_forces_skill_copy`，其他工具仍用链接。复制副本的 `.ai-toolbox-skill-source` 标记记录远端中央源路径；只有匹配标记的副本或受管链接可更新/删除，用户真实目录和外部链接必须保留并警告。先准备同级临时副本再替换，复制失败保留旧目标；更新、取消同步、禁用及孤立清理必须走同一归属判断。
 - 对已经 `is_wsl_direct` 的内置工具，处理 WSL skills 同步时要优先判断“目标目录是否已直接在 WSL 内”，而不是只看当前 Windows 侧是否存在 UNC 显示路径。
 
 ## 一、模块概述
@@ -426,7 +427,7 @@ skills-git-cache/
 8. **重新同步 copy 类型的目标**
    - 遍历 sync_details 中所有目标
    - 跳过未安装的工具
-   - 对于 mode=copy 或 tool=cursor 的目标：
+   - 对于 mode=copy 或 `builtin_tool_forces_skill_copy` 命中的目标：
      - 重新执行 copy 操作
      - 更新 synced_at 时间戳
    - symlink/junction 自动指向新内容，无需处理
@@ -499,7 +500,7 @@ skills-git-cache/
 
 6. **选择同步模式并执行**
 
-   **Cursor 工具：**
+   **强制复制工具（Cursor / Antigravity CLI）：**
    - 强制使用 copy 模式
    - 调用 sync_dir_copy_with_overwrite
 
@@ -795,13 +796,13 @@ description: "可选的描述"
 
 - WSL 自动同步
   - 监听 `skills-changed`。
-  - 负责把中央仓库内容同步到 WSL 侧统一中央仓库 `~/.ai-toolbox/skills`，再给各工具目录建立符号链接。
+  - 负责把中央仓库内容同步到 WSL 侧统一中央仓库 `~/.ai-toolbox/skills`，再按工具策略维护受管副本或链接。孤立目标清理失败时保留中央条目，供下次同步重试。
   - 对于已经 `is_wsl_direct` 的内置工具，应跳过该工具目录的额外链接维护，避免和该工具已经直接运行在 WSL 内的目录重复写入。
   - Claude Code 本机自定义根目录只改变本机运行时 skills 目标，例如 `<custom-root>/skills`；普通 WSL 侧工具目录仍按 Claude 默认 `~/.claude/skills` 维护。只有 Claude 当前运行时本身是 WSL Direct 自定义根目录时，目标才跟随该 Linux 根目录。
 
-- SSH 自动同步
-  - 也监听 `skills-changed`，但不走 file mappings。
-  - 负责把中央仓库内容同步到 SSH 远端的统一中央仓库 `~/.ai-toolbox/skills`，再给远端工具目录建立符号链接。
+- SSH 手动同步
+  - 由手动同步、启用或切换连接触发，不走 file mappings。
+  - 负责把中央仓库内容同步到 SSH 远端的统一中央仓库 `~/.ai-toolbox/skills`，再按工具策略维护受管副本或链接。孤立目标清理失败时保留中央条目，供下次同步重试。
   - 排查 SSH 问题时，不要只看 SSH 同步设置页展示的 file mappings，因为 skills 根本不是走那条链路。
 
 - 最常见的误判

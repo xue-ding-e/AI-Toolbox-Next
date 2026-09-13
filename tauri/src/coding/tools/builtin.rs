@@ -103,16 +103,14 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
-    // Antigravity CLI - supports both Skills and MCP. Same MCP file layout as
-    // antigravity under the new ~/.gemini/antigravity-cli prefix. Its skills
-    // dir does not follow symlinks, so skills sync must always copy
-    // (see builtin_tool_forces_skill_copy).
+    // Antigravity CLI keeps its own skills directory but reads the shared
+    // Antigravity user MCP config. Skills must be copied, not linked.
     BuiltinTool {
         key: "antigravity_cli",
         display_name: "Antigravity CLI",
         relative_skills_dir: Some("~/.gemini/antigravity-cli/skills"),
         relative_detect_dir: Some("~/.gemini/antigravity-cli"),
-        mcp_config_path: Some("~/.gemini/antigravity-cli/mcp_config.json"),
+        mcp_config_path: Some("~/.gemini/config/mcp_config.json"),
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },

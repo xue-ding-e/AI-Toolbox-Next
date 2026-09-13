@@ -514,6 +514,7 @@ export const resolveOpenCodeAllApiHubProviders = async (
 
 export interface ConnectivityTestRequest {
   npm: string;
+  apiFormat?: 'openai-codex-responses';
   providerId?: string;
   baseUrl: string;
   apiKey?: string;

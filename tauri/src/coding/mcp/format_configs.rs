@@ -41,8 +41,7 @@ pub const GEMINI_LIKE_FORMAT: McpFormatConfig = McpFormatConfig {
 };
 
 /// Antigravity MCP shape:
-/// - `http` uses `serverUrl`
-/// - `sse` uses `url`
+/// - Both `http` and `sse` use `serverUrl`
 /// - `stdio` keeps `command` / `args`
 pub const ANTIGRAVITY_FORMAT: McpFormatConfig = McpFormatConfig {
     type_mappings: &[],
@@ -51,7 +50,7 @@ pub const ANTIGRAVITY_FORMAT: McpFormatConfig = McpFormatConfig {
     requires_enabled: false,
     default_tool_type: "stdio",
     supports_timeout: false,
-    remote_url_field_mappings: &[("http", "serverUrl"), ("sse", "url")],
+    remote_url_field_mappings: &[("http", "serverUrl"), ("sse", "serverUrl")],
     infer_remote_type_from_url_fields_when_type_missing: true,
 };
 

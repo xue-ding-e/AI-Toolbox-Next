@@ -223,12 +223,12 @@ const withDetail = (
 const translateSkillsWarning = (value: string, mode: SyncMode, t: TFunction): string | null => {
 	const patterns: Array<[RegExp, (...args: string[]) => string]> = [
 		[
-			/^技能 '(.+)' 在工具 '(.+)' 的路径 '(.+)' 不是 AI Toolbox 管理的链接，已保留原样$/s,
+			/^技能 '(.+)' 在工具 '(.+)' 的路径 '(.+)' 不是 AI Toolbox 管理的(?:链接|同步目标)，已保留原样$/s,
 			(skill, tool, path) =>
 				t("settings.syncMessages.skillsForeignPathKept", { skill, tool, path }),
 		],
 		[
-			/^技能 '(.+)' 在工具 '(.+)' 的链接维护失败：(.+)$/s,
+			/^技能 '(.+)' 在工具 '(.+)' 的(?:链接|同步目标)维护失败：(.+)$/s,
 			(skill, tool, detail) =>
 				withDetail("settings.syncMessages.skillsLinkMaintenanceFailed", detail, mode, t, { skill, tool }),
 		],

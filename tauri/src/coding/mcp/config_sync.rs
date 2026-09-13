@@ -709,7 +709,10 @@ fn detect_server_type_with_format_config(
             }
             return server_type;
         }
-        if server_config.get("httpUrl").is_some() || server_config.get("serverUrl").is_some() {
+        if ["httpUrl", "serverUrl", "url"]
+            .iter()
+            .any(|field| server_config.get(*field).is_some())
+        {
             return "http".to_string();
         }
     }
@@ -728,7 +731,7 @@ fn extract_remote_url_with_format_config<'a>(
         return Some(url);
     }
 
-    if server_type == "http" && preferred_field != "url" {
+    if matches!(server_type, "http" | "sse") && preferred_field != "url" {
         for fallback_field in ["httpUrl", "serverUrl", "url"] {
             if fallback_field == preferred_field {
                 continue;
@@ -1911,6 +1914,62 @@ X-Test = "yes"
         assert!(config.get("httpUrl").is_none());
         assert!(config.get("url").is_none());
         assert_eq!(config["headers"]["Authorization"], "Bearer token");
+    }
+
+    #[test]
+    fn antigravity_remote_servers_round_trip_through_runtime_files() {
+        for tool_key in ["antigravity", "antigravity_cli"] {
+            for server_type in ["http", "sse"] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("mcp_config.json");
+                let original = json!({
+                    "customSetting": true,
+                    "mcpServers": { "untouched": { "command": "example", "args": [] } }
+                });
+                std::fs::write(&path, original.to_string()).unwrap();
+                let tool =
+                    RuntimeTool::from(crate::coding::tools::builtin_tool_by_key(tool_key).unwrap());
+                let format = get_format_config(tool_key).unwrap();
+                let mut server = build_http_server();
+                server.server_type = server_type.to_string();
+
+                for url in ["https://example.com/mcp", "https://updated.example.com/mcp"] {
+                    server.server_config["url"] = json!(url);
+                    sync_server_to_path(&tool, &path, &server, true).unwrap();
+                    let written: Value =
+                        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                    assert_eq!(written["mcpServers"]["remote"]["serverUrl"], url);
+                    assert!(written["mcpServers"]["remote"].get("url").is_none());
+                    let imported =
+                        parse_mcp_servers_from_value(&written, "mcpServers", Some(format)).unwrap();
+                    let remote = imported.iter().find(|item| item.name == "remote").unwrap();
+                    assert_eq!(remote.server_type, server_type);
+                    assert_eq!(remote.server_config, server.server_config);
+                }
+
+                remove_server_from_path(&tool, &path, "remote").unwrap();
+                let remaining: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                assert_eq!(remaining, original);
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_cli_imports_legacy_remote_url_fields() {
+        let format = get_format_config("antigravity_cli").unwrap();
+        for server_type in ["http", "sse"] {
+            for field in ["url", "httpUrl", "serverUrl"] {
+                let config = json!({ "mcpServers": { "remote": {
+                    "type": server_type, (field): "https://example.com/mcp"
+                } } });
+                let imported =
+                    parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+                assert_eq!(imported.len(), 1);
+                assert_eq!(imported[0].server_type, server_type);
+                assert_eq!(imported[0].server_config["url"], "https://example.com/mcp");
+            }
+        }
     }
 
     #[test]

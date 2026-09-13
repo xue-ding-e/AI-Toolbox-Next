@@ -935,8 +935,8 @@
       "wslClaudeJsonSyncSkipped": "WSL ~/.claude.json sync skipped because the file could not be parsed. Please verify its format. ({{detail}})",
       "openCodeCodexConfigSyncPartialFailed": "OpenCode/Codex config sync partially failed: {{detail}}",
       "openCodeCodexMcpSyncSkipped": "OpenCode/Codex MCP sync skipped: {{detail}}",
-      "skillsForeignPathKept": "Path '{{path}}' of skill '{{skill}}' on tool '{{tool}}' is not an AI Toolbox-managed link; it was left untouched",
-      "skillsLinkMaintenanceFailed": "Failed to maintain the link of skill '{{skill}}' on tool '{{tool}}': {{detail}}",
+      "skillsForeignPathKept": "Path '{{path}}' of skill '{{skill}}' on tool '{{tool}}' is not managed by AI Toolbox; it was left untouched",
+      "skillsLinkMaintenanceFailed": "Failed to maintain the sync target of skill '{{skill}}' on tool '{{tool}}': {{detail}}",
       "skillsSourceMissingSkipped": "Source directory of skill '{{skill}}' does not exist; sync skipped: {{detail}}",
       "skillsRemoteDirCleanupFailed": "Failed to clean up the remote directory of skill '{{skill}}': {{detail}}",
       "skillsHashWriteFailed": "Failed to write the sync hash of skill '{{skill}}': {{detail}}",
@@ -5238,6 +5238,11 @@
       "googleGenerativeAi": "Google AI Studio Gemini protocol (generateContent); default base URL https://generativelanguage.googleapis.com/v1beta.",
       "googleGeminiCli": "Internal endpoint protocol for Google Cloud Code / Gemini CLI; OAuth sign-in only.",
       "googleVertex": "Google Cloud Vertex AI enterprise endpoint; authenticates with a GCP API key or ADC, with project and location resolved from environment variables."
+    },
+    "diagnostics": {
+      "unsupportedApi": "Connectivity testing is not available for {{api}}. Verify it with the OMP CLI.",
+      "mixedConnections": "Models use different protocols or endpoints. Verify them individually with the OMP CLI.",
+      "modelDiscoveryUnavailable": "Model discovery is not available for this connection. Add models manually."
     }
   },
   "dsh": {

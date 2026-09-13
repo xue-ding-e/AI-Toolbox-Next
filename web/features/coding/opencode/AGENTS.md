@@ -12,6 +12,7 @@
 - OpenCode Core 的 Agent 配置字段是单数 `agent`，与 OMO/OMOS 插件配置里的复数 `agents` 不同；`small_model` 仍用于标题生成等轻量内部任务，不是所有 Subagent 的统一模型。
 - 后端统一模型列表会把 models.dev 的 `experimental.modes.*` 展开为虚拟模型，并通过 `baseModelId` / `experimentalMode` 标记来源；页面里的 variant dropdown 应基于这些元数据继承 base model variants，不要靠 `-fast` 等后缀猜测。
 - `favorite provider` 列表和诊断属于辅助历史状态，不能反推为 OpenCode 当前运行时真实配置。
+- 共享连通性弹窗允许调用方传入 `apiFormat=openai-codex-responses`：该接口只接受流式诊断，温度与输出上限控件禁用；普通 OpenCode 调用不传此标记，保持原有选项与请求格式。
 
 ## 核心设计决策（Why）
 

@@ -11,6 +11,20 @@ const stubT = ((key: string, vars?: Record<string, unknown>) => {
   return `${key}?${JSON.stringify(vars)}`;
 }) as unknown as TFunction;
 
+test('copied skill targets use the same warning translations as legacy links', () => {
+  for (const mode of ['wsl', 'ssh'] as const) {
+    for (const warning of [
+      "技能 'demo' 在工具 'Antigravity CLI' 的路径 '/tmp/skills/demo' 不是 AI Toolbox 管理的链接，已保留原样",
+      "技能 'demo' 在工具 'Antigravity CLI' 的链接维护失败：Permission denied",
+    ]) {
+      assert.equal(
+        translateSyncMessage(warning.replace('链接', '同步目标'), mode, stubT),
+        translateSyncMessage(warning, mode, stubT),
+      );
+    }
+  }
+});
+
 test('skills foreign path warning is translated with skill, tool, and path', () => {
   assert.equal(
     translateSyncMessage(

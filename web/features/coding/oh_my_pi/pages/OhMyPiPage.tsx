@@ -66,11 +66,12 @@ import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
-  OMP_API_DEFAULT_BASE_URL,
+  getOmpApiBaseUrlUpdate,
   OMP_API_DESCRIPTION_I18N_KEYS,
   OMP_API_OPTIONS,
   type OmpApiValue,
 } from '../utils/ompApiOptions';
+import { getOmpDiagnostics } from '../utils/ompDiagnostics';
 import {
   buildFetchedOmpModel,
   ompApiToSdkName,
@@ -337,6 +338,8 @@ const asStringRecord = (value: unknown): Record<string, string> => {
 
 const sdkNameToOmpApi = (sdkName?: string): string => {
   switch (sdkName) {
+    case '@ai-sdk/openai':
+      return 'openai-responses';
     case '@ai-sdk/anthropic':
       return 'anthropic-messages';
     case '@ai-sdk/google':
@@ -553,6 +556,7 @@ const OhMyPiPage: React.FC = () => {
   const [modelForm] = Form.useForm();
   const [providerModal, setProviderModal] = React.useState<ProviderJsonModalState | null>(null);
   const [providerModalForm] = Form.useForm();
+  const automaticProviderBaseUrlRef = React.useRef<string | undefined>(undefined);
   const [providerConfigJson, setProviderConfigJson] = React.useState<Record<string, unknown>>({});
   const [providerHeadersJson, setProviderHeadersJson] = React.useState<Record<string, unknown>>({});
   const [providerCompatJson, setProviderCompatJson] = React.useState<Record<string, unknown>>({});
@@ -766,14 +770,15 @@ const OhMyPiPage: React.FC = () => {
       return null;
     }
     const providerConfig = provider.modelsProvider ?? {};
-    const api = getStringField(providerConfig, 'api');
+    const diagnostics = getOmpDiagnostics(providerConfig);
+    if (!diagnostics.supportsModelDiscovery) return null;
     return {
       providerId: provider.providerKey,
       name: provider.displayName,
-      baseUrl: getStringField(providerConfig, 'baseUrl'),
+      baseUrl: diagnostics.baseUrl,
       apiKey: getStringField(providerConfig, 'apiKey'),
       headers: asStringRecord(providerConfig.headers),
-      sdkName: ompApiToSdkName(api),
+      sdkName: diagnostics.npm,
       existingModelIds: getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id),
     };
   }, [fetchModelsProviderId, ompProviders]);
@@ -788,10 +793,14 @@ const OhMyPiPage: React.FC = () => {
     }
     const providerConfig = provider.modelsProvider ?? {};
     const modelIds = getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id);
+    const diagnostics = getOmpDiagnostics(providerConfig);
+    if (!diagnostics.supportsConnectivity) return null;
+    const connection = buildOmpOpenCodeProvider(provider, providerConfig);
     return {
       providerId: provider.providerKey,
       providerName: provider.displayName,
-      providerConfig: buildOmpOpenCodeProvider(provider, providerConfig),
+      providerConfig: { ...connection, npm: diagnostics.npm, options: { ...connection.options, baseURL: diagnostics.baseUrl } },
+      apiFormat: diagnostics.apiFormat,
       modelIds,
     };
   }, [connectivityProviderId, ompProviders]);
@@ -915,6 +924,7 @@ const OhMyPiPage: React.FC = () => {
   ) => {
     const isCopy = options?.copy === true;
     const isExistingProviderEdit = !!provider && !isCopy;
+    automaticProviderBaseUrlRef.current = provider ? undefined : '';
     const nextProviderConfigJson = provider?.modelsProvider
       ? asRecord(provider.modelsProvider)
       : isExistingProviderEdit
@@ -944,19 +954,15 @@ const OhMyPiPage: React.FC = () => {
   };
 
   const handleProviderApiChange = (apiValue?: string) => {
-    // 仅新建弹窗（provider 为空）且 baseUrl 未填时回填官方默认端点；
-    // 编辑/复制已有 provider 一律不覆盖，清空 api 也不清 baseUrl。
-    if (providerModal?.provider || !apiValue) {
-      return;
-    }
-    const currentBaseUrl = providerModalForm.getFieldValue('baseUrl');
-    if (typeof currentBaseUrl === 'string' && currentBaseUrl.trim()) {
-      return;
-    }
-    const defaultBaseUrl = OMP_API_DEFAULT_BASE_URL[apiValue as OmpApiValue];
-    if (defaultBaseUrl) {
-      providerModalForm.setFieldValue('baseUrl', defaultBaseUrl);
-    }
+    const nextBaseUrl = getOmpApiBaseUrlUpdate(
+      apiValue, providerModalForm.getFieldValue('baseUrl'), automaticProviderBaseUrlRef.current,
+    );
+    automaticProviderBaseUrlRef.current = nextBaseUrl;
+    if (nextBaseUrl !== undefined) providerModalForm.setFieldValue('baseUrl', nextBaseUrl);
+  };
+
+  const handleProviderBaseUrlChange = () => {
+    automaticProviderBaseUrlRef.current = undefined;
   };
 
   const handleSaveProviderModal = async () => {
@@ -1614,14 +1620,19 @@ const OhMyPiPage: React.FC = () => {
   }, [clearBatchDeleteState, connectivityProviderId, modelForm, ompProviders]);
 
   const handleBatchTestProviders = React.useCallback(async () => {
-    const targets = ompProviders.map((provider) => {
+    const eligibleProviders = ompProviders.filter(provider => getOmpDiagnostics(provider.modelsProvider ?? {}).supportsConnectivity);
+    const targets = eligibleProviders.map((provider) => {
       const providerConfig = buildOmpOpenCodeProvider(provider);
+      const diagnostics = getOmpDiagnostics(provider.modelsProvider ?? {});
+      providerConfig.npm = diagnostics.npm;
+      providerConfig.options = { ...providerConfig.options, baseURL: diagnostics.baseUrl };
       const modelIds = getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id);
       return buildProviderConnectivityBatchTarget(
         {
           providerId: provider.providerKey,
           providerName: provider.displayName,
           providerConfig,
+          apiFormat: diagnostics.apiFormat,
           modelIds,
         },
         {
@@ -1637,7 +1648,7 @@ const OhMyPiPage: React.FC = () => {
     });
 
     setConnectivityStatuses(
-      Object.fromEntries(ompProviders.map((provider) => [
+      Object.fromEntries(eligibleProviders.map((provider) => [
         provider.providerKey,
         { status: 'running' as const },
       ])),
@@ -1804,13 +1815,21 @@ const OhMyPiPage: React.FC = () => {
     const selectedModelIds = selectedModelIdsByProvider[provider.providerKey] ?? [];
     const selectedModelCount = selectedModelIds.length;
     const providerBaseUrl = getStringField(providerConfig, 'baseUrl');
+    const diagnostics = getOmpDiagnostics(providerConfig);
     const hasModelIds = getProviderModelRecords(provider.modelsProvider).length > 0;
-    const connectivityTooltip = !providerBaseUrl
+    const unsupportedReason = diagnostics.mixedConnections
+      ? t('ohMyPi.diagnostics.mixedConnections')
+      : t('ohMyPi.diagnostics.unsupportedApi', { api: diagnostics.api || t('common.notSet') });
+    const connectivityTooltip = !diagnostics.supportsConnectivity
+      ? unsupportedReason
+      : !diagnostics.baseUrl
       ? t('common.baseUrlMissing')
       : !hasModelIds
         ? t('common.modelMissing')
         : '';
-    const fetchModelsTooltip = !providerBaseUrl ? t('common.baseUrlMissing') : '';
+    const fetchModelsTooltip = !diagnostics.supportsModelDiscovery
+      ? t('ohMyPi.diagnostics.modelDiscoveryUnavailable')
+      : !diagnostics.baseUrl ? t('common.baseUrlMissing') : '';
     const providerDisplay: ProviderDisplayData = {
       id: provider.providerKey,
       name: provider.displayName,
@@ -1844,7 +1863,7 @@ const OhMyPiPage: React.FC = () => {
         selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.providerKey)}
         selected={providerBatch.selectedIds.has(provider.providerKey)}
         onSelectChange={(checked) => providerBatch.toggleSelect(provider.providerKey, checked)}
-        connectivityStatus={connectivityStatuses[provider.providerKey]}
+        connectivityStatus={diagnostics.supportsConnectivity ? connectivityStatuses[provider.providerKey] : undefined}
         extraActions={
           <Space size={0}>
             <Button
@@ -1887,7 +1906,7 @@ const OhMyPiPage: React.FC = () => {
                   type="text"
                   style={{ fontSize: 12 }}
                   onClick={() => handleOpenConnectivityTest(provider.providerKey)}
-                  disabled={!providerBaseUrl || !hasModelIds}
+                  disabled={!diagnostics.supportsConnectivity || !diagnostics.baseUrl || !hasModelIds}
                 >
                   <ApiOutlined style={{ marginRight: 4 }} />
                   {t('ohMyPi.connectivity.button')}
@@ -1901,7 +1920,7 @@ const OhMyPiPage: React.FC = () => {
                   type="text"
                   style={{ fontSize: 12 }}
                   onClick={() => handleOpenFetchModels(provider.providerKey)}
-                  disabled={!providerBaseUrl}
+                  disabled={!diagnostics.supportsModelDiscovery || !diagnostics.baseUrl}
                 >
                   <CloudDownloadOutlined style={{ marginRight: 4 }} />
                   {t('ohMyPi.fetchModels.button')}
@@ -2127,6 +2146,7 @@ const OhMyPiPage: React.FC = () => {
                         style={{ fontSize: 12 }}
                         icon={<ThunderboltOutlined />}
                         loading={batchTestingProviders}
+                        disabled={!ompProviders.some(provider => getOmpDiagnostics(provider.modelsProvider ?? {}).supportsConnectivity)}
                         onClick={handleBatchTestProviders}
                       >
                         {t('common.batchTest')}
@@ -2338,7 +2358,7 @@ const OhMyPiPage: React.FC = () => {
                   />
                 </Form.Item>
                 <Form.Item label={t('ohMyPi.provider.baseUrl')} name="baseUrl">
-                  <Input placeholder="https://api.example.com/v1" />
+                  <Input placeholder="https://api.example.com/v1" onChange={handleProviderBaseUrlChange} />
                 </Form.Item>
                 <Form.Item label={t('ohMyPi.provider.providerApiKey')} name="providerApiKey">
                   <Input.Password autoComplete="off" />

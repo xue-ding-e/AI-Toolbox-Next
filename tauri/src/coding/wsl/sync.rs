@@ -19,6 +19,27 @@ fn create_wsl_command() -> Command {
     cmd
 }
 
+pub fn manage_wsl_skill_target(
+    distro: &str,
+    source: &str,
+    target: &str,
+    central_root: &str,
+    action: crate::coding::skills::remote_target::RemoteSkillTargetAction,
+) -> Result<bool, String> {
+    use crate::coding::skills::remote_target::{
+        build_remote_skill_target_command, parse_remote_skill_target_result,
+    };
+    let command = build_remote_skill_target_command(source, target, central_root, action);
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "sh", "-c", &command])
+        .output()
+        .map_err(|error| format!("Failed to maintain WSL skill target: {error}"))?;
+    if !output.status.success() {
+        return Err(decode_wsl_output(&output.stderr).trim().to_string());
+    }
+    parse_remote_skill_target_result(&decode_wsl_output(&output.stdout))
+}
+
 /// Check if bytes look like UTF-16 LE encoding.
 ///
 /// WSL on Windows outputs UTF-16 LE for commands like `wsl --list`.
@@ -818,126 +839,6 @@ pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(),
     }
 }
 
-/// Create a symlink in WSL
-pub fn create_wsl_symlink(distro: &str, target: &str, link_path: &str) -> Result<(), String> {
-    let target_expanded = target.replace("~", "$HOME");
-    let link_expanded = link_path.replace("~", "$HOME");
-
-    let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\" && ln -s \"{}\" \"{}\"",
-        link_expanded, link_expanded, target_expanded, link_expanded
-    );
-
-    let output = create_wsl_command()
-        .args(["-d", distro, "--exec", "bash", "-c", &command])
-        .output()
-        .map_err(|e| format!("Failed to create symlink: {}", e))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = decode_wsl_output(&output.stderr);
-        Err(format!("WSL symlink failed: {}", stderr.trim()))
-    }
-}
-
-/// What currently sits at a WSL path that the app may want to manage as a
-/// symlink into the central skills repo.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WslPathKind {
-    /// Nothing exists at the path.
-    Missing,
-    /// A symlink whose target lives under `central_prefix` (app-managed).
-    Managed,
-    /// A real file/directory, or a symlink pointing outside `central_prefix`
-    /// (user-owned; must never be removed or replaced by the app).
-    Foreign,
-}
-
-/// Inspect a WSL path before the app deletes or replaces it: only symlinks
-/// whose target lives under the app-managed central dir are considered ours;
-/// everything else is user-owned and must be left alone.
-///
-/// Returns `Missing` when nothing exists, `Managed` when the path is a symlink
-/// under `central_prefix`, `Foreign` otherwise. Inspection failures fail safe
-/// to `Foreign` so the app never deletes something it cannot verify.
-pub fn inspect_wsl_path_kind(distro: &str, path: &str, central_prefix: &str) -> WslPathKind {
-    let path_expanded = path.replace("~", "$HOME");
-    let central_expanded = central_prefix.replace("~", "$HOME");
-
-    // `-e` follows symlinks, so a dangling link is reported as missing by
-    // `[ -e ]`; `-L` catches it first. Output is one of:
-    //   managed:<target> | foreign:<target> | real | missing
-    let command = format!(
-        "if [ -L \"{}\" ]; then \
-             t=$(readlink \"{}\"); \
-             case \"$t\" in \
-               \"{}\"|\"{}\"/*) echo \"managed:$t\";; \
-               *) echo \"foreign:$t\";; \
-             esac; \
-         elif [ -e \"{}\" ]; then \
-             echo real; \
-         else \
-             echo missing; \
-         fi",
-        path_expanded, path_expanded, central_expanded, central_expanded, path_expanded
-    );
-
-    let output = create_wsl_command()
-        .args(["-d", distro, "--exec", "bash", "-c", &command])
-        .output();
-    match output {
-        Ok(result) if result.status.success() => {
-            let kind = decode_wsl_output(&result.stdout).trim().to_string();
-            if kind.starts_with("managed:") {
-                WslPathKind::Managed
-            } else if kind.starts_with("foreign:") || kind == "real" {
-                WslPathKind::Foreign
-            } else {
-                WslPathKind::Missing
-            }
-        }
-        Ok(_) => {
-            log::warn!("Failed to inspect WSL path kind for '{}'", path);
-            WslPathKind::Foreign // fail safe: never delete what we cannot verify
-        }
-        Err(e) => {
-            log::warn!("Failed to run WSL path inspection for '{}': {}", path, e);
-            WslPathKind::Foreign
-        }
-    }
-}
-
-/// Remove `path` only when it is an app-managed symlink whose target lives
-/// under `central_prefix`. Real directories/files and foreign symlinks are
-/// never touched. Returns `true` when something was removed.
-pub fn remove_wsl_managed_symlink(
-    distro: &str,
-    path: &str,
-    central_prefix: &str,
-) -> Result<bool, String> {
-    match inspect_wsl_path_kind(distro, path, central_prefix) {
-        WslPathKind::Managed => {
-            let path_expanded = path.replace("~", "$HOME");
-            let command = format!("rm -f \"{}\"", path_expanded);
-            let output = create_wsl_command()
-                .args(["-d", distro, "--exec", "bash", "-c", &command])
-                .output()
-                .map_err(|e| format!("Failed to remove WSL managed symlink: {}", e))?;
-            if output.status.success() {
-                Ok(true)
-            } else {
-                let stderr = decode_wsl_output(&output.stderr);
-                Err(format!(
-                    "WSL managed symlink remove failed: {}",
-                    stderr.trim()
-                ))
-            }
-        }
-        WslPathKind::Missing | WslPathKind::Foreign => Ok(false),
-    }
-}
-
 /// Remove a file or directory in WSL
 pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
     // 安全检查：禁止删除空路径或根路径
@@ -980,25 +881,6 @@ pub fn list_wsl_dir(distro: &str, wsl_path: &str) -> Result<Vec<String>, String>
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect())
-}
-
-/// Check if a WSL symlink exists and points to the expected target
-pub fn check_wsl_symlink_exists(distro: &str, link_path: &str, expected_target: &str) -> bool {
-    let link_expanded = link_path.replace("~", "$HOME");
-    let target_expanded = expected_target.replace("~", "$HOME");
-    let command = format!(
-        "[ -L \"{}\" ] && [ \"$(readlink \"{}\")\" = \"{}\" ] && echo yes || echo no",
-        link_expanded, link_expanded, target_expanded
-    );
-
-    if let Ok(output) = create_wsl_command()
-        .args(["-d", distro, "--exec", "bash", "-c", &command])
-        .output()
-    {
-        decode_wsl_output(&output.stdout).trim() == "yes"
-    } else {
-        false
-    }
 }
 
 pub fn wsl_path_exists(distro: &str, wsl_path: &str) -> bool {

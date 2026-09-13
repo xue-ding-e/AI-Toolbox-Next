@@ -6,19 +6,23 @@ export interface ProviderConnectivityInfo {
     options?: {
       baseURL?: string;
       apiKey?: string;
+      headers?: Record<string, unknown>;
     };
   };
   modelIds: string[];
   reasoningEffort?: string;
+  apiFormat?: 'openai-codex-responses';
 }
 
 export interface ProviderConnectivityBatchTarget {
   providerId: string;
   request?: {
     npm: string;
+    apiFormat?: 'openai-codex-responses';
     providerId: string;
     baseUrl: string;
     apiKey?: string;
+    headers?: Record<string, unknown>;
     reasoningEffort?: string;
     prompt: string;
     stream: boolean;
@@ -102,9 +106,11 @@ export function buildProviderConnectivityBatchTarget(
       : {
           request: {
             npm,
+            ...(info.apiFormat ? { apiFormat: info.apiFormat } : {}),
             providerId: info.providerId,
             baseUrl,
             ...(apiKey ? { apiKey } : {}),
+            ...(providerOptions.headers ? { headers: providerOptions.headers } : {}),
             ...(info.reasoningEffort ? { reasoningEffort: info.reasoningEffort } : {}),
             prompt: options.prompt || DEFAULT_CONNECTIVITY_PROMPT,
             stream: true,

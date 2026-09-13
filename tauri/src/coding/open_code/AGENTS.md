@@ -60,6 +60,7 @@ sequenceDiagram
 - JSON Agent 和 Markdown Agent 是两个独立 Source of Truth。页面可以按 OpenCode 加载顺序聚合展示，但编辑必须写回原来源；禁止把已有 Markdown Agent 静默复制或迁移进 `opencode.json`。Markdown 保存应保留正文与未知 Frontmatter 字段，并用内容 Hash 防止覆盖外部编辑。
 - Markdown Agent 列表是 best-effort 聚合：单个不可读文件或目录遍历错误只记录 warning，不得让其他正常 Agent 全部消失。遍历 `agent/` / `agents/` 时不要跟随目录符号链接扩大读取边界。
 - 共享 `fetch_provider_models` 的 Google Native 模型列表探测使用 Gemini API `models.list` 路径。传入的 Gemini base URL 如果不以 `v1` / `v1alpha` / `v1beta` 结尾，后端应只在探测时补 `/v1beta/models`；不要要求 Gemini CLI 的 `GOOGLE_GEMINI_BASE_URL` 持久化时必须包含版本路径。
+- 共享连通性请求的可选 `apiFormat=openai-codex-responses` 由 OMP 诊断显式传入，不从 URL 猜测。它使用 `/codex/responses`、Bearer 凭据、可选 JWT account id、`instructions`、`store=false` 和强制 SSE；不发送温度/输出上限。HTTP 200 仍须收到 `response.completed` 且没有错误终态才算成功。普通 OpenCode 诊断继续按 npm 选择既有协议。
 
 ## 跨模块依赖
 

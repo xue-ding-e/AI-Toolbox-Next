@@ -23,6 +23,7 @@ interface ConnectivityTestModalProps {
   providerId: string;
   providerName: string;
   providerConfig: OpenCodeProvider;
+  apiFormat?: ConnectivityTestRequest['apiFormat'];
   modelIds: string[];
   removableModelIds?: string[];
   diagnostics?: OpenCodeDiagnosticsConfig;
@@ -51,6 +52,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   providerId,
   providerName,
   providerConfig,
+  apiFormat,
   modelIds,
   removableModelIds,
   diagnostics,
@@ -108,9 +110,9 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
     if (open && !prevOpenRef.current) {
       form.setFieldsValue({
         prompt: diagnostics?.prompt || 'say hi!',
-        temperature: diagnostics?.temperature,
-        maxTokens: diagnostics?.maxTokens ?? diagnostics?.maxOutputTokens,
-        stream: diagnostics?.stream ?? true,
+        temperature: apiFormat ? undefined : diagnostics?.temperature,
+        maxTokens: apiFormat ? undefined : diagnostics?.maxTokens ?? diagnostics?.maxOutputTokens,
+        stream: apiFormat ? true : diagnostics?.stream ?? true,
       });
 
       setHeadersJson(diagnostics?.headers || {});
@@ -130,7 +132,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       })));
     }
     prevOpenRef.current = open;
-  }, [open, diagnostics, modelIds, form, resolvedDefaultTestModelId]);
+  }, [open, diagnostics, modelIds, form, resolvedDefaultTestModelId, apiFormat]);
 
   const handleDefaultTestModelChange = React.useCallback(async (modelId?: string) => {
     setDefaultTestModelId(modelId);
@@ -220,6 +222,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       const baseRequest: ConnectivityTestRequest = {
         npm,
+        ...(apiFormat ? { apiFormat } : {}),
         providerId,
         baseUrl: providerConfig.options?.baseURL || '',
         apiKey: providerConfig.options?.apiKey,
@@ -606,7 +609,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                               name="temperature"
                               style={{ marginBottom: 0 }}
                             >
-                              <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
+                              <InputNumber disabled={!!apiFormat} min={0} max={2} step={0.1} style={{ width: '100%' }} />
                             </Form.Item>
                           </div>
                           <div className={styles.metricCard}>
@@ -617,7 +620,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                               name="maxTokens"
                               style={{ marginBottom: 0 }}
                             >
-                              <InputNumber min={1} step={100} style={{ width: '100%' }} />
+                              <InputNumber disabled={!!apiFormat} min={1} step={100} style={{ width: '100%' }} />
                             </Form.Item>
                           </div>
                           <div className={styles.metricCard}>
@@ -629,7 +632,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                               valuePropName="checked"
                               style={{ marginBottom: 0 }}
                             >
-                              <Switch />
+                              <Switch disabled={!!apiFormat} />
                             </Form.Item>
                           </div>
                         </div>

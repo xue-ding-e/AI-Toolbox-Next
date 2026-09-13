@@ -89,10 +89,16 @@ export const buildFetchedOmpModel = (
 export function ompApiToSdkName(api?: string): string {
   switch (api) {
     case 'anthropic-messages':
+    case 'bedrock-converse-stream':
       return '@ai-sdk/anthropic';
     case 'google-generative-ai':
+    case 'google-gemini-cli':
     case 'google-vertex':
       return '@ai-sdk/google';
+    case 'openai-responses':
+    case 'openai-codex-responses':
+    case 'azure-openai-responses':
+      return '@ai-sdk/openai';
     default:
       return '@ai-sdk/openai-compatible';
   }
