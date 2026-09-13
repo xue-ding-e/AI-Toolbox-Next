@@ -322,13 +322,6 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       render: (value: number | null) => formatCacheHitRate(value),
     },
     {
-      title: t('gateway.page.statistics.columns.cost'),
-      dataIndex: 'total_cost_usd',
-      width: 120,
-      align: 'right',
-      render: (value: string) => formatUsd(value, 6),
-    },
-    {
       title: t('gateway.page.statistics.columns.successRate'),
       dataIndex: 'success_rate',
       width: 110,
@@ -343,6 +336,13 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       width: 110,
       align: 'right',
       render: (value: number | null) => value == null ? '-' : formatDuration(value),
+    },
+    {
+      title: t('gateway.page.statistics.columns.cost'),
+      dataIndex: 'total_cost_usd',
+      width: 120,
+      align: 'right',
+      render: (value: string) => formatUsd(value, 6),
     },
   ];
 
@@ -374,11 +374,20 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       render: (value: number) => formatCompactInteger(value),
     },
     {
-      title: t('gateway.page.statistics.columns.cost'),
-      dataIndex: 'total_cost_usd',
+      title: <span title={t('gateway.page.statistics.cacheHitRateHint')}>{t('gateway.page.statistics.columns.cacheHitRate')}</span>,
+      dataIndex: 'cache_hit_rate',
       width: 120,
       align: 'right',
-      render: (value: string) => formatUsd(value, 6),
+      render: (value: number | null) => formatCacheHitRate(value),
+    },
+    {
+      title: t('gateway.page.statistics.columns.successRate'),
+      dataIndex: 'success_rate',
+      width: 110,
+      align: 'right',
+      render: (value: number | null) => value == null ? '-' : (
+        <span style={{ color: statusColor(value) }}>{value.toFixed(1)}%</span>
+      ),
     },
     {
       title: t('gateway.page.statistics.columns.latency'),
@@ -386,6 +395,13 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       width: 110,
       align: 'right',
       render: (value: number | null) => value == null ? '-' : formatDuration(value),
+    },
+    {
+      title: t('gateway.page.statistics.columns.cost'),
+      dataIndex: 'total_cost_usd',
+      width: 120,
+      align: 'right',
+      render: (value: string) => formatUsd(value, 6),
     },
   ];
 
@@ -660,7 +676,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
             dataSource={state.modelStats}
             loading={loading}
             pagination={false}
-            scroll={{ x: 680 }}
+            scroll={{ x: 880 }}
           />
         )}
       </section>

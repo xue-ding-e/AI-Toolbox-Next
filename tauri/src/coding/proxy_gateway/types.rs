@@ -801,7 +801,7 @@ pub struct GatewayProviderStats {
     pub cache_hit_rate: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayModelStats {
     pub cli_key: GatewayUsageTool,
@@ -809,7 +809,13 @@ pub struct GatewayModelStats {
     pub request_count: u64,
     pub total_tokens: u64,
     pub total_cost_usd: String,
+    /// HTTP success rate over gateway (proxy) requests only; imported session
+    /// rows carry placeholder status codes, so a model without proxy traffic
+    /// reports None instead of a placeholder-derived rate.
+    pub success_rate: Option<f32>,
     pub avg_latency_ms: Option<u64>,
+    /// Token-weighted input cache hit ratio (0..=1); None when input usage is absent.
+    pub cache_hit_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

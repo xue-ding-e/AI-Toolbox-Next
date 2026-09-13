@@ -78,6 +78,10 @@ struct StatsAccumulator {
     input_tokens: u64,
     cache_read_tokens: u64,
     cache_creation_tokens: u64,
+    // Success samples from rows with real HTTP semantics only; imported
+    // session rows store placeholder status codes and must not count.
+    proxy_success_count: u64,
+    proxy_request_count: u64,
 }
 
 #[derive(Default)]
@@ -185,6 +189,18 @@ impl StatsAccumulator {
             .saturating_add(self.cache_read_tokens)
             .saturating_add(self.cache_creation_tokens);
         (total_input > 0).then(|| self.cache_read_tokens as f64 / total_input as f64)
+    }
+
+    fn add_proxy_success(&mut self, proxy_success_count: u64, proxy_request_count: u64) {
+        self.proxy_success_count = self.proxy_success_count.saturating_add(proxy_success_count);
+        self.proxy_request_count = self
+            .proxy_request_count
+            .saturating_add(proxy_request_count);
+    }
+
+    fn proxy_success_rate(&self) -> Option<f32> {
+        (self.proxy_request_count > 0)
+            .then(|| percent(self.proxy_success_count, self.proxy_request_count))
     }
 
     fn add(
@@ -1073,7 +1089,14 @@ pub fn model_stats(
                         COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + extra_tokens), 0),
                         COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
                         COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN l.latency_ms ELSE 0 END), 0),
-                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN 1 ELSE 0 END), 0)
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' AND l.request_kind = 'request' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy'
+                            AND (l.stream_outcome = 'completed' OR (l.stream_outcome IS NULL AND l.status_code >= 200 AND l.status_code < 400))
+                            THEN l.usage_request_count ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN COALESCE(l.data_source, 'proxy') = 'proxy' THEN l.usage_request_count ELSE 0 END), 0),
+                        COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(cache_read_tokens), 0),
+                        COALESCE(SUM(cache_creation_tokens), 0)
                  FROM proxy_request_logs l
                  {where_clause}
                  GROUP BY app_type, stats_model
@@ -1093,16 +1116,33 @@ pub fn model_stats(
                     row_decimal(row, 4)?,
                     latency_weighted_sum,
                     row.get::<_, i64>(6)?.max(0) as u64,
+                    row.get::<_, i64>(7)?.max(0) as u64,
+                    row.get::<_, i64>(8)?.max(0) as u64,
+                    row.get::<_, i64>(9)?.max(0) as u64,
+                    row.get::<_, i64>(10)?.max(0) as u64,
+                    row.get::<_, i64>(11)?.max(0) as u64,
                 ))
             })
             .map_err(|error| format!("Failed to query model stats: {error}"))?;
         for row in rows {
-            let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum, latency_sample_count) =
-                row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
-            stats_map
-                .entry((app_type, model))
-                .or_default()
-                .add(request_count, 0, total_tokens, total_cost, latency_weighted_sum, latency_sample_count);
+            let (
+                app_type,
+                model,
+                request_count,
+                total_tokens,
+                total_cost,
+                latency_weighted_sum,
+                latency_sample_count,
+                proxy_success_count,
+                proxy_request_count,
+                input_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+            ) = row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
+            let item = stats_map.entry((app_type, model)).or_default();
+            item.add(request_count, 0, total_tokens, total_cost, latency_weighted_sum, latency_sample_count);
+            item.add_proxy_success(proxy_success_count, proxy_request_count);
+            item.add_input_usage(input_tokens, cache_read_tokens, cache_creation_tokens);
         }
         merge_rollup_model_stats(conn, &mut stats_map, start_date, end_date, cli_key, include_session)?;
         let mut items = stats_map
@@ -1115,7 +1155,9 @@ pub fn model_stats(
                     request_count: item.request_count,
                     total_tokens: item.total_tokens,
                     total_cost_usd: format_decimal_cost(item.total_cost_usd),
+                    success_rate: item.proxy_success_rate(),
                     avg_latency_ms: item.avg_latency_ms(),
+                    cache_hit_rate: item.cache_hit_rate(),
                 })
             })
             .collect::<Vec<_>>();
@@ -1352,7 +1394,12 @@ fn merge_rollup_model_stats(
                     COALESCE(SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens + r.extra_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.avg_latency_ms * COALESCE(r.latency_sample_count, r.request_count)), 0),
-                    COALESCE(SUM(COALESCE(r.latency_sample_count, r.request_count)), 0)
+                    COALESCE(SUM(COALESCE(r.latency_sample_count, r.request_count)), 0),
+                    COALESCE(SUM(CASE WHEN r.provider_id != 'session' THEN r.success_count ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN r.provider_id != 'session' THEN r.request_count ELSE 0 END), 0),
+                    COALESCE(SUM(r.input_tokens), 0),
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(r.cache_creation_tokens), 0)
              FROM usage_daily_rollups r
              {where_clause}
              GROUP BY r.app_type, r.model"
@@ -1368,6 +1415,11 @@ fn merge_rollup_model_stats(
                 row_decimal(row, 4)?,
                 row.get::<_, f64>(5)?.max(0.0),
                 row.get::<_, i64>(6)?.max(0) as u64,
+                row.get::<_, i64>(7)?.max(0) as u64,
+                row.get::<_, i64>(8)?.max(0) as u64,
+                row.get::<_, i64>(9)?.max(0) as u64,
+                row.get::<_, i64>(10)?.max(0) as u64,
+                row.get::<_, i64>(11)?.max(0) as u64,
             ))
         })
         .map_err(|error| format!("Failed to query gateway model rollups: {error}"))?;
@@ -1380,8 +1432,14 @@ fn merge_rollup_model_stats(
             total_cost,
             latency_weighted_sum,
             latency_sample_count,
+            proxy_success_count,
+            proxy_request_count,
+            input_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
         ) = row.map_err(|error| format!("Failed to read model rollup row: {error}"))?;
-        stats_map.entry((app_type, model)).or_default().add(
+        let item = stats_map.entry((app_type, model)).or_default();
+        item.add(
             request_count,
             0,
             total_tokens,
@@ -1389,6 +1447,8 @@ fn merge_rollup_model_stats(
             latency_weighted_sum,
             latency_sample_count,
         );
+        item.add_proxy_success(proxy_success_count, proxy_request_count);
+        item.add_input_usage(input_tokens, cache_read_tokens, cache_creation_tokens);
     }
     Ok(())
 }
@@ -3558,6 +3618,53 @@ mod tests {
         assert_eq!(model_rows.len(), 1);
         assert_eq!(model_rows[0].request_count, 2);
         assert_eq!(model_rows[0].total_tokens, 26);
+        assert_eq!(model_rows[0].success_rate, Some(50.0));
+        assert_eq!(model_rows[0].cache_hit_rate, Some(0.0));
+    }
+
+    #[test]
+    fn model_success_rate_ignores_session_placeholder_status() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail("trace-failed", "provider-alpha", 500, 10, 3),
+        )
+        .expect("record failed proxy request");
+        let (stored_model, stored_created_at) = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT model, created_at FROM proxy_request_logs WHERE request_id = 'trace-failed'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("read stored proxy summary");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    created_at, status_code, stream_outcome, data_source, total_cost_usd, usage_request_count)
+                 VALUES ('trace-session', 'session', 'claude', ?1,
+                    90, 3, 100, 0, ?2, 200, NULL, 'session', '0', 1)",
+                rusqlite::params![stored_model, stored_created_at],
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("insert session placeholder row");
+
+        let model_rows = model_stats(&db, None, None, Some(GatewayCliKey::Claude.into()), true)
+            .expect("model stats");
+        assert_eq!(model_rows.len(), 1);
+        assert_eq!(model_rows[0].request_count, 2);
+        // The session row stores the placeholder status 200; the success rate
+        // must come from proxy traffic only, otherwise it would read 50.0.
+        assert_eq!(model_rows[0].success_rate, Some(0.0));
+        // Session cache tokens are real usage and participate in the hit rate:
+        // cache_read 100 / (proxy input 10 + session input 90 + cache_read 100).
+        assert_eq!(model_rows[0].cache_hit_rate, Some(0.5));
     }
 
     #[test]

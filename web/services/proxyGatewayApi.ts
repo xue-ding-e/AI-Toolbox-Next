@@ -285,7 +285,9 @@ export interface GatewayModelStats {
   request_count: number;
   total_tokens: number;
   total_cost_usd: string;
+  success_rate: number | null;
   avg_latency_ms: number | null;
+  cache_hit_rate: number | null;
 }
 
 export interface GatewayRequestLogSummary {
