@@ -1,4 +1,51 @@
 import type { CodexCatalogModel } from '../../../../types/codex';
+import type { PresetModel } from '../../../../constants/presetModels';
+
+/** Canonical efforts understood by the Codex catalog generator. */
+export const CODEX_REASONING_LEVELS = [
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
+] as const;
+
+/** Fill empty mapping fields using the same preset rules for typing and import. */
+export function fillCodexCatalogModelFromPreset(
+  catalogModel: CodexCatalogModel,
+  preset?: PresetModel,
+): CodexCatalogModel {
+  if (!preset) return catalogModel;
+
+  const model = { ...catalogModel };
+  if (!model.displayName?.trim() && preset.name?.trim()) {
+    model.displayName = preset.name.trim();
+  }
+  if (!model.contextWindow && typeof preset.contextLimit === 'number' && preset.contextLimit > 0) {
+    model.contextWindow = preset.contextLimit;
+  }
+  if (!model.reasoningLevels?.length && preset.reasoning !== false) {
+    const presetVariants = Object.entries(preset.variants ?? {});
+    const declaredEfforts = new Set(
+      presetVariants
+        .filter(([, variant]) => !variant.disabled)
+        .map(([variantName, variant]) => {
+          const thinkingConfig = variant.thinkingConfig as { thinkingLevel?: unknown } | undefined;
+          const effort = variant.reasoningEffort ?? variant.effort ?? thinkingConfig?.thinkingLevel ?? variantName;
+          return typeof effort === 'string' ? effort.trim().toLowerCase() : '';
+        }),
+    );
+    const presetLevels = CODEX_REASONING_LEVELS.filter((level) => declaredEfforts.has(level));
+    // Older presets only declare reasoning support. Retain the manual form's
+    // existing defaults for those entries; explicit variants take precedence.
+    const levels = presetLevels.length > 0
+      ? presetLevels
+      : preset.reasoning === true && presetVariants.length === 0 ? ['low', 'high', 'max'] : [];
+    if (levels.length > 0) {
+      model.reasoningLevels = levels;
+      if (!model.defaultReasoningLevel) {
+        model.defaultReasoningLevel = levels.includes('high') ? 'high' : levels[levels.length - 1];
+      }
+    }
+  }
+  return model;
+}
 
 function normalizeStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
@@ -86,10 +133,8 @@ export function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexC
   return normalizedModels;
 }
 
-/** Looks up the preset context window (tokens) for a model id, or undefined
- * when no preset matches or the limit is not positive. Injected by the caller
- * so this module stays decoupled from the preset store. */
-export type CatalogContextWindowResolver = (modelId: string) => number | undefined;
+/** The caller supplies exact preset lookup without coupling merges to a store. */
+export type CodexCatalogPresetResolver = (modelId: string) => PresetModel | undefined;
 
 /**
  * Merges models imported from the provider API (FetchModelsModal) into the
@@ -108,38 +153,39 @@ export type CatalogContextWindowResolver = (modelId: string) => number | undefin
  *   user customizations (display name / context window / levels); the modal
  *   also disables checkboxes for existing ids. Rows sharing a model id but
  *   differing in displayName are kept intact.
- * - New rows only set contextWindow from the injected exact preset lookup.
- *   reasoningLevels stay unset on purpose: the generated Codex catalog keeps
- *   its default full reasoning level set for rows without an explicit one.
+ * - New rows use the same preset defaults as manually entered mapping rows.
+ *   Existing rows retain all user customizations, including intentionally
+ *   empty fields. API names are a fallback when no preset name is available.
  */
 export function importModelsIntoCatalog(
   current: CodexCatalogModel[],
-  selectedModels: Array<{ id?: string }>,
+  selectedModels: Array<{ id?: string; name?: string }>,
   removedModelIds: string[],
   orderedModelIds: string[],
-  resolveContextWindow: CatalogContextWindowResolver,
+  resolvePreset: CodexCatalogPresetResolver,
 ): CodexCatalogModel[] {
-  const removed = new Set(removedModelIds);
+  const removed = new Set(removedModelIds.map((modelId) => modelId.trim()).filter(Boolean));
   // Group current rows by model id so duplicate ids with different display
   // names survive the reorder as intact groups.
   const keptGroups = new Map<string, CodexCatalogModel[]>();
   for (const item of current) {
-    if (removed.has(item.model)) {
+    const modelId = item.model.trim();
+    if (removed.has(modelId)) {
       continue;
     }
-    const group = keptGroups.get(item.model);
+    const group = keptGroups.get(modelId);
     if (group) {
       group.push(item);
     } else {
-      keptGroups.set(item.model, [item]);
+      keptGroups.set(modelId, [item]);
     }
   }
 
-  const selectedIds = new Set(
-    selectedModels
-      .map((item) => item.id?.trim())
-      .filter((id): id is string => !!id),
-  );
+  const selectedById = new Map<string, { id?: string; name?: string }>();
+  for (const selected of selectedModels) {
+    const modelId = selected.id?.trim();
+    if (modelId) selectedById.set(modelId, selected);
+  }
 
   const rows: CodexCatalogModel[] = [];
   const placedIds = new Set<string>();
@@ -155,19 +201,20 @@ export function importModelsIntoCatalog(
       keptGroups.delete(model);
       continue;
     }
-    if (selectedIds.has(model)) {
-      const contextWindow = resolveContextWindow(model);
-      rows.push({
-        model,
-        ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
-      });
+    const selected = selectedById.get(model);
+    if (selected) {
+      const row = fillCodexCatalogModelFromPreset({ model }, resolvePreset(model));
+      if (!row.displayName && selected.name?.trim()) {
+        row.displayName = selected.name.trim();
+      }
+      rows.push(row);
     }
   }
 
   // Models unknown to this fetch (custom/pinned entries) keep their previous
   // relative order after the grouped block.
-  for (const group of keptGroups.values()) {
-    rows.push(...group);
+  for (const item of current) {
+    if (keptGroups.has(item.model.trim())) rows.push(item);
   }
 
   return rows;

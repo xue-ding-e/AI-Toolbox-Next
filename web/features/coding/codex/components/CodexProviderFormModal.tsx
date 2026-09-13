@@ -56,12 +56,16 @@ import {
 import {
   extractCodexBaseUrl,
   extractCodexModel,
-  setCodexModel,
 } from '@/utils/codexConfigUtils';
 import TomlEditor from '@/components/common/TomlEditor';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
-import { importModelsIntoCatalog, type CatalogContextWindowResolver } from '../utils/codexCatalogModels';
+import { getDefaultModelsApiType } from '@/components/common/FetchModelsModal/request';
+import {
+  fillCodexCatalogModelFromPreset,
+  importModelsIntoCatalog,
+  type CodexCatalogPresetResolver,
+} from '../utils/codexCatalogModels';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 import styles from './CodexProviderFormModal.module.less';
@@ -185,40 +189,6 @@ function getCodexEndpointCatalogModels(
     return endpointCatalogModels;
   }
   return getDerivedAnthropicCatalogModels(profileId, endpoint);
-}
-
-function applyEndpointToCodexSettingsConfig(
-  settingsConfig: string,
-  profileId: string | null | undefined,
-  endpoint: GatewayProviderEndpointProfile | undefined,
-  selectedModel?: string,
-): string {
-  if (!endpoint) {
-    return settingsConfig;
-  }
-
-  try {
-    const parsed = JSON.parse(settingsConfig || '{}') as CodexSettingsConfig;
-    const catalogModels = getCodexEndpointCatalogModels(profileId, endpoint);
-    let configText = parsed.config || '';
-    const defaultModel = selectedModel?.trim() || endpoint.model?.trim();
-    if (defaultModel) {
-      configText = setCodexModel(configText, defaultModel);
-    }
-
-    const nextSettingsConfig: CodexSettingsConfig = {
-      ...parsed,
-      config: configText.trim(),
-    };
-    if (catalogModels.length > 0) {
-      nextSettingsConfig.modelCatalog = { models: catalogModels };
-    } else {
-      delete nextSettingsConfig.modelCatalog;
-    }
-    return JSON.stringify(nextSettingsConfig);
-  } catch {
-    return settingsConfig;
-  }
 }
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
@@ -376,6 +346,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const isOfficialMode = activeProviderCategory === 'official';
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const selectedApiFormat = Form.useWatch('apiFormat', watchOptions) as CodexApiFormat | undefined;
+  const modelsSdkType = selectedApiFormat === 'anthropic_messages'
+    ? '@ai-sdk/anthropic'
+    : selectedApiFormat === 'gemini_native' ? '@ai-sdk/google' : '@ai-sdk/openai';
+  const existingCatalogModelIds = React.useMemo(
+    () => [...new Set(codexCatalogModels.map((item) => item.model.trim()).filter(Boolean))],
+    [codexCatalogModels],
+  );
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
 
@@ -437,6 +414,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   React.useEffect(() => {
     if (!open) {
       formInitializedRef.current = false;
+      setImportModelsModalOpen(false);
       return;
     }
 
@@ -514,6 +492,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setSelectedProvider(null);
     setAvailableModels([]);
     setFetchedModels([]);
+    setImportModelsModalOpen(false);
     setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
     setProcessedBaseUrl('');
     if (!provider) {
@@ -789,15 +768,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       const gatewayProfile = selectedEndpoint
         ? toGatewayProviderProfileReference('codex', submittedValues.providerProfileId || '', selectedEndpoint.id)
         : undefined;
-      const finalSettingsConfig = selectedCategory === 'official'
-        ? settingsConfig
-        : applyEndpointToCodexSettingsConfig(
-            settingsConfig,
-            submittedValues.providerProfileId,
-            selectedEndpoint,
-            submittedValues.model,
-          );
-
       const formValues: CodexProviderFormValues = {
         name: submittedValues.name,
         category: selectedCategory,
@@ -808,7 +778,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           ? submittedValues.providerProfileId
           : CUSTOM_PROVIDER_PROFILE_ID,
         providerEndpointId: selectedEndpoint?.id,
-        settingsConfig: finalSettingsConfig,
+        // Endpoint defaults initialize the form; saving always uses its current
+        // model and mappings, including user edits, imports and cleared rows.
+        settingsConfig,
         apiFormat: selectedApiFormat,
         meta: mergeModelRewritesIntoMeta(
           mergeCustomHeadersIntoMeta(
@@ -931,8 +903,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         request: {
           baseUrl,
           apiKey: apiKey || undefined,
-          apiType: 'openai_compat',
-          sdkType: '@ai-sdk/openai',
+          apiType: getDefaultModelsApiType(modelsSdkType),
+          sdkType: modelsSdkType,
         },
       });
 
@@ -950,23 +922,19 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
   };
 
-  // 「导入模型映射」：复用 FetchModelsModal 让用户从供应商接口勾选模型，
-  // 合并进映射行（已有行保留自定义，新行按 preset 精确匹配补上下文窗口）。
-  const resolveCatalogContextWindow = React.useCallback<CatalogContextWindowResolver>((modelId) => {
-    const preset = findPresetModelById(modelId);
-    return typeof preset?.contextLimit === 'number' && preset.contextLimit > 0
-      ? preset.contextLimit
-      : undefined;
-  }, []);
+  const resolveCatalogPreset = React.useCallback<CodexCatalogPresetResolver>(
+    (modelId) => findPresetModelById(modelId, modelsSdkType),
+    [modelsSdkType],
+  );
 
   const handleImportModelsSuccess = React.useCallback(({ selectedModels, removedModelIds, orderedModelIds }: FetchModelsApplyResult) => {
     setImportModelsModalOpen(false);
-    setCodexCatalogModels((prev) => importModelsIntoCatalog(prev, selectedModels, removedModelIds, orderedModelIds, resolveCatalogContextWindow));
+    setCodexCatalogModels((prev) => importModelsIntoCatalog(prev, selectedModels, removedModelIds, orderedModelIds, resolveCatalogPreset));
     setModelMappingExpanded(true);
     if (selectedModels.length > 0) {
       message.success(t('codex.provider.modelMappingImportSuccess', { count: selectedModels.length }));
     }
-  }, [resolveCatalogContextWindow, setCodexCatalogModels, t]);
+  }, [resolveCatalogPreset, setCodexCatalogModels, t]);
 
   const handleAddModelMapping = React.useCallback(() => {
     setModelMappingExpanded(true);
@@ -1250,38 +1218,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                       option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
                     }
                     onChange={(value) => {
-                      const patch: Partial<CodexCatalogModel> = { model: value };
-                      // When a model id is entered, auto-fill contextWindow and
-                      // reasoning levels from the preset (matching the preset's
-                      // contextLimit and reasoning flag) when those fields are
-                      // still empty/unset on this row.
-                      const trimmedModel = value?.trim();
-                      if (trimmedModel) {
-                        const matchedPreset = findPresetModelById(trimmedModel);
-                        if (matchedPreset) {
-                          if (
-                            (item.contextWindow === undefined || item.contextWindow === '' || item.contextWindow === 0) &&
-                            typeof matchedPreset.contextLimit === 'number' &&
-                            matchedPreset.contextLimit > 0
-                          ) {
-                            patch.contextWindow = matchedPreset.contextLimit;
-                          }
-                          if (
-                            (!item.reasoningLevels || item.reasoningLevels.length === 0) &&
-                            matchedPreset.reasoning === true
-                          ) {
-                            // Default to a conservative set: low/high/max.
-                            // Users can add medium/xhigh/ultra manually.
-                            patch.reasoningLevels = ['low', 'high', 'max'];
-                            // Default to "high" when first auto-filled, matching
-                            // the config.toml model_reasoning_effort default.
-                            if (!item.defaultReasoningLevel) {
-                              patch.defaultReasoningLevel = 'high';
-                            }
-                          }
-                        }
-                      }
-                      handleUpdateModelMapping(index, patch);
+                      handleUpdateModelMapping(index, fillCodexCatalogModelFromPreset(
+                        { ...item, model: value },
+                        resolveCatalogPreset(value),
+                      ));
                     }}
                   />
                   <Input
@@ -1549,13 +1489,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     >
       {isEdit || mode === 'manual' ? renderManualTab() : renderImportTab()}
       <FetchModelsModal
-        open={importModelsModalOpen}
+        open={open && importModelsModalOpen}
         providerId={provider?.id ?? ''}
         providerName={provider?.name ?? (form.getFieldValue('name') as string | undefined) ?? ''}
-        baseUrl={codexBaseUrl}
-        apiKey={codexApiKey || undefined}
-        sdkType="@ai-sdk/openai"
-        existingModelIds={codexCatalogModels.map((item) => item.model)}
+        baseUrl={(form.getFieldValue('baseUrl') as string | undefined) ?? codexBaseUrl}
+        apiKey={(form.getFieldValue('apiKey') as string | undefined) ?? codexApiKey}
+        sdkType={modelsSdkType}
+        existingModelIds={existingCatalogModelIds}
         priorityOwnedBy={CODEX_PRIORITY_OWNED_BY}
         onCancel={() => setImportModelsModalOpen(false)}
         onSuccess={handleImportModelsSuccess}

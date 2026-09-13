@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import type { FetchModelsModalProps, FetchedModel, ApiType, FetchModelsResponse } from './types';
 import { createFetchedModelsComparator } from './sort';
+import { buildModelsUrl, getDefaultModelsApiType } from './request';
 import styles from './index.module.less';
 
 const { Text } = Typography;
@@ -25,9 +26,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   // Default to native if supported, otherwise openai_compat
-  const [apiType, setApiType] = React.useState<ApiType>(() => {
-    return (sdkType === '@ai-sdk/google' || sdkType === '@ai-sdk/anthropic') ? 'native' : 'openai_compat';
-  });
+  const [apiType, setApiType] = React.useState<ApiType>(() => getDefaultModelsApiType(sdkType));
   const [models, setModels] = React.useState<FetchedModel[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
@@ -35,6 +34,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   const [customUrl, setCustomUrl] = React.useState('');
   const [searchText, setSearchText] = React.useState('');
   const [removeMissingModels, setRemoveMissingModels] = React.useState(false);
+  const fetchRequestIdRef = React.useRef(0);
 
   // Only show Native option for Google and Anthropic SDKs
   const supportsNative = sdkType === '@ai-sdk/google' || sdkType === '@ai-sdk/anthropic';
@@ -60,31 +60,20 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   }, [models, searchText, sortComparator]);
 
   // Calculate the default URL based on baseUrl, apiType, and sdkType
-  const calculatedUrl = React.useMemo(() => {
-    const base = baseUrl.trim().replace(/\/$/, '');
-    if (!base) {
-      return '';
-    }
+  const calculatedUrl = React.useMemo(
+    () => buildModelsUrl(baseUrl, apiType, sdkType, apiKey),
+    [baseUrl, apiType, sdkType, apiKey],
+  );
 
-    if (apiType === 'native' && sdkType === '@ai-sdk/google') {
-      // Google Native: /models with API key in URL
-      const url = `${base}/models`;
-      if (apiKey) {
-        return `${url}?key=${apiKey}`;
-      }
-      return url;
-    }
-
-    return `${base}/models`;
-  }, [baseUrl, apiType, sdkType, apiKey]);
-
-  // Update custom URL when calculated URL changes (only if not manually edited)
+  // The component stays mounted while providers and their SDKs can change.
   React.useEffect(() => {
-    setCustomUrl(calculatedUrl);
-  }, [calculatedUrl]);
+    if (open) setApiType(getDefaultModelsApiType(sdkType));
+  }, [open, providerId, sdkType]);
 
   // Reset state when modal opens
   React.useEffect(() => {
+    fetchRequestIdRef.current += 1;
+    setLoading(false);
     if (open) {
       setModels([]);
       setSelectedRowKeys([]);
@@ -95,10 +84,12 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       // Reset custom URL to calculated default
       setCustomUrl(calculatedUrl);
     }
-  }, [open, calculatedUrl]);
+    return () => { fetchRequestIdRef.current += 1; };
+  }, [open, providerId, sdkType, apiType, apiKey, calculatedUrl]);
 
   // Fetch models from provider API
   const handleFetch = async () => {
+    const requestId = ++fetchRequestIdRef.current;
     setLoading(true);
     setError(null);
 
@@ -115,6 +106,8 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
         },
       });
 
+      if (requestId !== fetchRequestIdRef.current) return;
+
       setModels(response.models);
       setFetched(true);
 
@@ -126,11 +119,12 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
         message.info(t('opencode.fetchModels.noModelsFound'));
       }
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return;
       const errorMsg = err instanceof Error ? err.message : String(err);
       setError(errorMsg);
       message.error(t('opencode.fetchModels.fetchFailed'));
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current) setLoading(false);
     }
   };
 
@@ -179,6 +173,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   ];
 
   const rowSelection = {
+    preserveSelectedRowKeys: true,
     selectedRowKeys,
     onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as string[]),
     getCheckboxProps: (record: FetchedModel) => ({
@@ -228,7 +223,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
         <Button
           key="confirm"
           type="primary"
-          disabled={!canConfirm}
+          disabled={loading || !canConfirm}
           onClick={handleConfirm}
         >
           {t('opencode.fetchModels.applyChanges', {

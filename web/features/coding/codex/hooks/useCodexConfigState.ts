@@ -19,6 +19,7 @@ import {
   normalizeCodexCatalogModalities,
   normalizeCodexCatalogModels,
   normalizeCodexCatalogReasoningLevels,
+  normalizeCodexCatalogServiceTiers,
 } from '../utils/codexCatalogModels';
 import {
   buildCodexSettingsConfig,
@@ -88,6 +89,7 @@ function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel
             ? compatibleItem.reasoningLevels
             : compatibleItem.reasoning_levels,
         ),
+        serviceTiers: normalizeCodexCatalogServiceTiers(compatibleItem.serviceTiers),
         defaultReasoningLevel:
           typeof compatibleItem.defaultReasoningLevel === 'string' && compatibleItem.defaultReasoningLevel.trim()
             ? compatibleItem.defaultReasoningLevel.trim()

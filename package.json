@@ -16,6 +16,7 @@
     "i18n:find-text": "node scripts/i18n-keys.mjs find-text",
     "i18n:find-key": "node scripts/i18n-keys.mjs find-key",
     "test:web": "node ./scripts/run-web-tests.mjs",
+    "test:codex-model-import": "node ./scripts/verify-codex-model-import.mjs",
     "test": "pnpm run test:web",
     "sync:version": "node scripts/sync-tauri-version.mjs",
     "tauri": "tauri",

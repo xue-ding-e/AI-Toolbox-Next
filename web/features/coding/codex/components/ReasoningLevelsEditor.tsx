@@ -1,23 +1,7 @@
 import { Button, Checkbox, Divider, Popover, Select, Space, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-
-/**
- * Canonical reasoning effort levels Codex understands, in ascending depth
- * order. The backend drops unknown values, so the UI only offers canonical
- * ones. Mirrors `CODEX_REASONING_LEVEL_DESCRIPTIONS` in
- * `tauri/src/coding/codex/commands.rs`.
- */
-export const CODEX_REASONING_LEVELS = [
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-  'ultra',
-] as const;
+import { CODEX_REASONING_LEVELS } from '../utils/codexCatalogModels';
 
 /**
  * Sentinel for the default-level Select: antd Select forbids empty-string
