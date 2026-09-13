@@ -32,11 +32,12 @@ import {
   type GatewayRequestLogItem,
 } from '@/services';
 import {
+  calculateCacheHitRate,
   deriveGatewayRequestDisplay,
   formatCompactInteger,
   formatDateTime,
   formatDuration,
-  formatDurationPair,
+  formatCacheHitRate,
   formatGatewayError,
   gatewayWebSocketStatusKey,
   formatInteger,
@@ -543,8 +544,6 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <strong>{providerDisplayName(t, detail.provider_id, detail.provider_name)}</strong>
           {detail.data_source === 'session' && (
             <>
-              <span>{t('gateway.page.requests.nativeUsage.granularity')}</span>
-              <strong>{t(`gateway.page.requests.nativeUsage.${detail.usage_metadata?.granularity ?? 'request'}`)}</strong>
               <span>{t('gateway.page.requests.nativeUsage.provider')}</span>
               <strong>{detail.usage_metadata?.native_provider || t('gateway.page.requests.nativeUsage.unknown')}</strong>
               <span>{t('gateway.page.requests.nativeUsage.callCount')}</span>
@@ -621,14 +620,22 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               )}
             </>
           )}
-          <span>{t('gateway.page.requests.fields.duration')}</span>
-          <strong>{detail.data_source === 'session' ? '-' : formatDuration(detail.duration_ms)}</strong>
           <span title={t('gateway.page.requests.durationHint')}>{t('gateway.page.requests.fields.firstToken')}</span>
           <strong>{detail.first_token_ms != null ? formatDuration(detail.first_token_ms) : '-'}</strong>
+          <span>{t('gateway.page.requests.fields.duration')}</span>
+          <strong>{detail.data_source === 'session' ? '-' : formatDuration(detail.duration_ms)}</strong>
           <span>{t('gateway.page.requests.fields.streaming')}</span>
           <strong>{detail.data_source === 'session' ? '-' : detail.is_streaming ? t('common.yes') : t('common.no')}</strong>
           <span>{t('gateway.page.requests.fields.tokens')}</span>
           <strong>{isGatewayRequestUsageApplicable(detail) ? tokenBreakdownText(t, detail) : '-'}</strong>
+          <span title={t('gateway.page.requests.cacheHitRateHint')}>{t('gateway.page.statistics.columns.cacheHitRate')}</span>
+          <strong>{isGatewayRequestUsageApplicable(detail)
+            ? formatCacheHitRate(calculateCacheHitRate(
+              detail.input_tokens ?? 0,
+              detail.cache_read_tokens ?? 0,
+              detail.cache_creation_tokens ?? 0,
+            ))
+            : '-'}</strong>
           <span title={t('gateway.page.requests.tpsHint')}>{t('gateway.page.requests.tpsLabel')}</span>
           <strong>{formatTps(detail) ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.attempts')}</span>
@@ -770,6 +777,64 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       ),
     },
     {
+      title: t('gateway.page.requests.columns.tokens'),
+      dataIndex: 'total_tokens',
+      width: 120,
+      align: 'right',
+      render: (value: number, record) => {
+        if (!isGatewayRequestUsageApplicable(record)) {
+          return '-';
+        }
+        const hitRate = calculateCacheHitRate(
+          record.input_tokens ?? 0,
+          record.cache_read_tokens ?? 0,
+          record.cache_creation_tokens ?? 0,
+        );
+        return (
+          <div className={styles.tokenCell}>
+            <span>{t('gateway.page.requests.tokenTotalCell', { value: formatInteger(value) })}</span>
+            <small>{hitRate == null
+              ? '-'
+              : t('gateway.page.requests.cacheHitCell', { rate: formatCacheHitRate(hitRate) })}</small>
+          </div>
+        );
+      },
+    },
+    {
+      title: <span title={t('gateway.page.requests.durationHint')}>{t('gateway.page.requests.columns.duration')}</span>,
+      dataIndex: 'duration_ms',
+      width: 140,
+      align: 'right',
+      render: (value: number, record) => {
+        if (record.data_source === 'session') {
+          return '-';
+        }
+        return (
+          <div className={styles.tokenCell}>
+            <small>{t('gateway.page.requests.durationFirstCell', {
+              value: record.first_token_ms != null ? formatDuration(record.first_token_ms) : '-',
+            })}</small>
+            <span>{t('gateway.page.requests.durationTotalCell', { value: formatDuration(value) })}</span>
+          </div>
+        );
+      },
+    },
+    {
+      title: <span title={t('gateway.page.requests.tpsHint')}>{t('gateway.page.requests.columns.tps')}</span>,
+      dataIndex: 'tps',
+      width: 90,
+      align: 'right',
+      render: (_, record) => formatTps(record) ?? '-',
+    },
+    {
+      title: t('gateway.page.requests.columns.cost'),
+      dataIndex: 'total_cost_usd',
+      width: 110,
+      align: 'right',
+      render: (value: string, record) =>
+        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 6) : '-',
+    },
+    {
       title: t('gateway.page.requests.columns.status'),
       dataIndex: 'status_code',
       width: 90,
@@ -788,37 +853,6 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           </span>
         );
       },
-    },
-    {
-      title: t('gateway.page.requests.columns.tokens'),
-      dataIndex: 'total_tokens',
-      width: 110,
-      align: 'right',
-      render: (value: number, record) => isGatewayRequestUsageApplicable(record) ? (
-        <div className={styles.tokenCell}>
-          <span>{formatCompactInteger(value)}</span>
-          <small title={record.data_source === 'session' ? t('gateway.page.requests.nativeUsage.granularityHint') : t('gateway.page.requests.tpsHint')}>
-            {record.data_source === 'session'
-              ? t(`gateway.page.requests.nativeUsage.${record.usage_metadata?.granularity ?? 'request'}`)
-              : formatTps(record) ?? '-'}
-          </small>
-        </div>
-      ) : '-',
-    },
-    {
-      title: t('gateway.page.requests.columns.cost'),
-      dataIndex: 'total_cost_usd',
-      width: 110,
-      align: 'right',
-      render: (value: string, record) =>
-        isGatewayRequestUsageApplicable(record) ? formatUsd(value, 6) : '-',
-    },
-    {
-      title: <span title={t('gateway.page.requests.durationHint')}>{t('gateway.page.requests.columns.duration')}</span>,
-      dataIndex: 'duration_ms',
-      width: 130,
-      align: 'right',
-      render: (value: number, record) => record.data_source === 'session' ? '-' : formatDurationPair(value, record.first_token_ms),
     },
   ];
 
@@ -854,67 +888,6 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
           />
         </div>
-        <div className={styles.filterDivider} />
-
-        <div className={styles.filterSection}>
-          <Select
-            aria-label={t('gateway.page.requests.nativeUsage.source')}
-            variant="borderless"
-            size="small"
-            value={draft.dataSource}
-            className={styles.statusSelect}
-            popupMatchSelectWidth={false}
-            options={[
-              { value: 'all', label: t('gateway.page.requests.nativeUsage.allSources') },
-              { value: 'proxy', label: t('gateway.page.requests.nativeUsage.proxy') },
-              { value: 'session', label: t('gateway.page.requests.localSession') },
-            ]}
-            onChange={(value) => setDraft((current) => ({ ...current, dataSource: value }))}
-          />
-        </div>
-        <div className={styles.filterDivider} />
-
-        <div className={styles.filterSection}>
-          <Select
-            variant="borderless"
-            size="small"
-            value={draft.statusCode}
-            className={styles.statusSelect}
-            popupMatchSelectWidth={false}
-            options={[
-              { value: 'all', label: t('common.all') },
-              { value: '200', label: '200' },
-              { value: '400', label: '400' },
-              { value: '401', label: '401' },
-              { value: '429', label: '429' },
-              { value: '500', label: '500' },
-            ]}
-            onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
-          />
-        </div>
-        <div className={styles.filterDivider} />
-
-        <Input
-          size="small"
-          allowClear
-          variant="borderless"
-          className={styles.searchInput}
-          placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
-          value={draft.providerName}
-          onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))}
-          onPressEnter={applyFilters}
-        />
-        <div className={styles.filterDivider} />
-        <Input
-          size="small"
-          allowClear
-          variant="borderless"
-          className={styles.searchInput}
-          placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
-          value={draft.model}
-          onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
-          onPressEnter={applyFilters}
-        />
         <div className={styles.filterDivider} />
 
         <div className={styles.filterSection}>
@@ -955,6 +928,69 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             }))}
           />
         ) : null}
+        <div className={styles.filterDivider} />
+
+        <div className={styles.filterSection}>
+          <Select
+            aria-label={t('gateway.page.requests.nativeUsage.source')}
+            variant="borderless"
+            size="small"
+            value={draft.dataSource}
+            className={styles.statusSelect}
+            popupMatchSelectWidth={false}
+            options={[
+              { value: 'all', label: t('gateway.page.requests.nativeUsage.allSources') },
+              { value: 'proxy', label: t('gateway.page.requests.nativeUsage.proxy') },
+              { value: 'session', label: t('gateway.page.requests.localSession') },
+            ]}
+            onChange={(value) => setDraft((current) => ({ ...current, dataSource: value }))}
+          />
+        </div>
+        <div className={styles.filterDivider} />
+
+        <div className={styles.filterSection}>
+          <Select
+            aria-label={t('gateway.page.requests.filters.allStatus')}
+            variant="borderless"
+            size="small"
+            value={draft.statusCode}
+            className={styles.statusSelect}
+            popupMatchSelectWidth={false}
+            options={[
+              { value: 'all', label: t('gateway.page.requests.filters.allStatus') },
+              { value: '200', label: '200' },
+              { value: '400', label: '400' },
+              { value: '401', label: '401' },
+              { value: '429', label: '429' },
+              { value: '500', label: '500' },
+            ]}
+            onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
+          />
+        </div>
+        <div className={styles.filterDivider} />
+
+        <Input
+          size="small"
+          allowClear
+          variant="borderless"
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
+          value={draft.providerName}
+          onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))}
+          onPressEnter={applyFilters}
+        />
+        <div className={styles.filterDivider} />
+        <Input
+          size="small"
+          allowClear
+          variant="borderless"
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
+          value={draft.model}
+          onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+          onPressEnter={applyFilters}
+        />
+        <div className={styles.filterDivider} />
 
         <div className={styles.filterActions}>
           <button

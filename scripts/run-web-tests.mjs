@@ -62,9 +62,32 @@ testStream.on('test:fail', () => {
   process.exitCode = 1;
 });
 
+// File-level completeness guard: test events carry the owning file, and the
+// runner has been observed (Windows, Node 22) to silently end a run with one
+// discovered file contributing zero test points while still passing. Detect
+// that class of false pass instead of trusting the aggregate summary.
+const filesWithTestEvents = new Set();
+const recordFileActivity = (event) => {
+  if (typeof event?.file === 'string') {
+    filesWithTestEvents.add(path.resolve(event.file));
+  }
+};
+for (const eventName of ['test:start', 'test:pass', 'test:fail', 'test:complete']) {
+  testStream.on(eventName, recordFileActivity);
+}
+
 testStream.compose(spec).pipe(process.stdout);
 
 await new Promise((resolve, reject) => {
   testStream.once('end', resolve);
   testStream.once('error', reject);
 });
+
+const filesWithoutTestEvents = testFiles.filter((file) => !filesWithTestEvents.has(path.resolve(file)));
+if (filesWithoutTestEvents.length > 0) {
+  console.error(
+    `Web test runner finished without running any tests from ${filesWithoutTestEvents.length} file(s): `
+    + `${filesWithoutTestEvents.join(', ')}`,
+  );
+  process.exitCode = 1;
+}

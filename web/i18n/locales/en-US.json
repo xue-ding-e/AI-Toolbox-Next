@@ -63,7 +63,7 @@
       "subtitle": "Track local session usage and gateway requests, and manage CLI routing and gateway status.",
       "tabs": {
         "statistics": "Stats",
-        "requests": "Requests",
+        "requests": "Details",
         "settings": "Settings"
       },
       "statistics": {
@@ -163,12 +163,12 @@
         "healthy": "Healthy"
       },
       "requests": {
-        "records": "Request records",
+        "records": "Request details",
         "totalCount": "{{total}} total",
         "detail": "Request detail",
-        "empty": "No request records",
+        "empty": "No request details",
         "detailEmpty": "Select a request to view details",
-        "loadFailed": "Failed to load request records: {{error}}",
+        "loadFailed": "Failed to load request details: {{error}}",
         "importSessions": "Sync session usage",
         "importDone": "Sync complete: {{inserted}} added, {{updated}} updated, {{skipped}} skipped; {{files}} scanned, {{failed}} failed",
         "importFailed": "Failed to import session usage: {{error}}",
@@ -180,7 +180,6 @@
         "lines": "{{count}} lines",
         "expand": "Expand",
         "collapse": "Collapse",
-        "tokensShort": "In {{input}} / out {{output}} / cache {{cache}}",
         "tokensValue": "In {{input}} / out {{output}} / cache read {{cacheRead}} / cache write {{cacheCreation}} / total {{total}}",
         "attemptDetail": "#{{index}} status {{status}} · {{current}}/{{total}}x · {{error}}",
         "providerUnselected": "No provider selected",
@@ -191,7 +190,7 @@
           "model": "Model",
           "status": "Status",
           "upstreamStatus": "Upstream status",
-          "duration": "Duration",
+          "duration": "Total duration",
           "firstToken": "First token",
           "streaming": "Streaming",
           "tokens": "Tokens",
@@ -215,7 +214,8 @@
           "excludeModelList": "Hide model list requests",
           "onlyFailed": "Failed only",
           "dateRange": "Date range",
-          "allTime": "All time"
+          "allTime": "All time",
+          "allStatus": "All statuses"
         },
         "columns": {
           "time": "Time",
@@ -225,7 +225,8 @@
           "tokens": "Tokens",
           "cost": "Cost",
           "duration": "Duration",
-          "request": "Request / Model"
+          "request": "Request / Model",
+          "tps": "Tokens/s"
         },
         "upstreamResponseBody": "Upstream response body (before conversion)",
         "clientResponseBody": "Client response body (after conversion)",
@@ -249,10 +250,6 @@
         "importPartialFailure": "Partially synced: {{inserted}} added, {{updated}} updated, {{skipped}} skipped; {{count}} items failed. See the application log for details.",
         "localSessionDetailUnavailable": "Local session usage does not include HTTP request bodies, response bodies, or headers.",
         "nativeUsage": {
-          "granularity": "Usage granularity",
-          "request": "Per call",
-          "turn": "Turn total",
-          "session": "Cumulative delta",
           "provider": "Native provider",
           "unknown": "Not recorded",
           "callCount": "Native model calls",
@@ -295,7 +292,13 @@
           "requestHeaders": "Client handshake headers",
           "responseHeaders": "Gateway handshake headers",
           "handshakeAttempts": "Handshake attempts"
-        }
+        },
+        "cacheHitRateHint": "Cache-read tokens / (fresh input + cache creation + cache-read tokens). Shows - when there is no input usage.",
+        "tokenTotalCell": "Total: {{value}}",
+        "cacheHitCell": "{{rate}} cache hit",
+        "durationFirstCell": "First {{value}}",
+        "durationTotalCell": "Total {{value}}",
+        "tokensShort": "In {{input}} / out {{output}} / cache {{cache}}"
       },
       "requestRateHint": "RPM counts requests entering the gateway for the selected CLI in the last 60 seconds. It refreshes every 5 seconds, is independent of the date filter, and excludes local session imports.",
       "rpm": "RPM"
@@ -645,7 +648,7 @@
         "cacheInjection": "Inject cache_control markers into target Anthropic requests to reduce repeated context cost.",
         "lossyRejection": "Off by default: detected lossy protocol conversions continue best-effort and add X-Transformer-Lossy to the response headers. When enabled, clearly irreversible conversions return a local 400 and do not affect provider health or failover.",
         "responsesEncryptedContentRectifier": "For OpenAI Responses targets, when the upstream explicitly reports encrypted_content verification or decryption failure, remove only the invalid encrypted reasoning items and retry once on the same channel.",
-        "sessionUsage": "Include local CLI session usage (requests that bypassed the gateway) in statistics and the request list. When off, new local session data is not collected; existing data is kept and reappears once this is turned back on.",
+        "sessionUsage": "Include local CLI session usage (requests that bypassed the gateway) in statistics and request details. When off, new local session data is not collected; existing data is kept and reappears once this is turned back on.",
         "requestLog": "Save each request's detail file locally (including the Headers, request body and response parts selected below, subject to size limits and retention), used by the request detail view; when off, request details can only show summary fields.",
         "metrics": "Write per-request token, cost and latency summaries into the local database for the statistics page and request list; summaries are recorded while either this or request logging is on."
       },

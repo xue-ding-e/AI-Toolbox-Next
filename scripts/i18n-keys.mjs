@@ -543,14 +543,47 @@ async function withLocaleWriteLock(rootDirectory, action) {
   try {
     return await action();
   } finally {
-    await rm(lockDirectory, { recursive: true, force: true });
+    await removeLockDirectory(lockDirectory);
+  }
+}
+
+async function removeLockDirectory(lockDirectory) {
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      await rm(lockDirectory, { recursive: true, force: true });
+      return;
+    } catch {
+      // A scanner holding the directory briefly must not fail the run, and a
+      // leftover lock would stall the next writer, so retry within budget.
+      if (Date.now() - startedAt > I18N_WRITE_LOCK_TIMEOUT_MS) {
+        return;
+      }
+      await sleep(I18N_WRITE_LOCK_RETRY_MS);
+    }
   }
 }
 
 async function writeLocaleFile(localeFile) {
   const tempPath = `${localeFile.absolutePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
-  await rename(tempPath, localeFile.absolutePath);
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      await rename(tempPath, localeFile.absolutePath);
+      return;
+    } catch (error) {
+      // Windows: Defender or the search indexer can briefly hold the target
+      // file open, which surfaces as EPERM/EACCES on rename; retry within the
+      // lock budget instead of failing a write whose content is already done.
+      const retryable = ['EPERM', 'EACCES', 'EBUSY'].includes(error?.code);
+      if (!retryable || Date.now() - startedAt > I18N_WRITE_LOCK_TIMEOUT_MS) {
+        await rm(tempPath, { force: true }).catch(() => {});
+        throw error;
+      }
+      await sleep(I18N_WRITE_LOCK_RETRY_MS);
+    }
+  }
 }
 
 function sleep(ms) {

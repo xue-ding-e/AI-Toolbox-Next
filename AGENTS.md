@@ -65,7 +65,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
 | `web/features/coding/kimi/` | Kimi Code CLI 前端页面、根目录配置、provider、官方账号、prompt 与通用配置交互 |
-| `web/features/coding/gateway/` | Gateway 前端页面、统计/请求/设置 Tab、顶部入口与 visibleTabs 可见性 |
+| `web/features/coding/gateway/` | Gateway 前端页面、统计/明细/设置 Tab、顶部入口与 visibleTabs 可见性 |
 | `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |
 | `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
 | `web/features/coding/opencode/` | OpenCode 前端页面、配置路径、provider、prompt 与模型刷新交互 |
@@ -227,6 +227,7 @@ cd tauri && cargo test test_name
 - 对跨模块、跨层、会影响“保存/应用/同步/恢复/导入导出/配置落盘”的**大功能迭代**，不要只跑针对性测试；在交付前必须补跑当前仓库可用的全量测试集合。
 - 当前仓库前端测试统一通过 `pnpm test` 执行；该脚本会发现并运行 `web/test/**` 下的 `.test.ts` / `.spec.ts` 文件。
 - `node:test.run()` 会先发送各文件的 `test:summary`，不能用第一个 summary 决定整套测试成败。测试入口必须等事件流结束，并让任何 `test:fail` 设置非零退出码；用“首文件成功、后续文件失败”的子进程回归验证，避免本地和 CI 假通过。
+- `run-web-tests.mjs` 结束时会按测试事件里的 `file` 字段校验每个发现的测试文件都产生过测试点。Node 22 + Windows 下实测出现过同一命令一次 543 个用例、一次 554 个且都 exit 0：某个测试文件被静默跳过但仍报全绿。这类守卫触发时是 runner/子进程调度问题，必须保留失败输出排查，不能靠重跑掩盖；不要移除该守卫或 `test:fail` 的退出码逻辑。
 - 前端测试文件必须放在 `web/test/` 下，并镜像对应功能目录结构；不要把 `.test.ts` 文件继续与实现文件并排放在 `web/features/**`、`web/components/**` 等源码目录里。
   - 例如：`web/features/coding/opencode/components/foo.ts` 对应测试应放在 `web/test/features/coding/opencode/components/foo.test.ts`
 - Rust 测试保持分层约定：
@@ -514,6 +515,7 @@ When implementing new components or features, test light, dark, and system theme
   - `pnpm i18n:prune --prefix <key-prefix> --write` removes high-confidence unused keys only inside the explicit prefix; do not run broad prune without a prefix.
 - Do not patch `web/i18n/locales/*.json` directly for ordinary add/update/delete work. If `scripts/i18n-keys.mjs` cannot perform the needed i18n edit, extend the script first in the same task, then use the script command and run `pnpm i18n:check`.
 - `pnpm test` includes the i18n key coverage test. If it fails, fix missing or mismatched locale keys rather than suppressing the check.
+- `scripts/i18n-keys.mjs` writes locale files through a directory lock plus temp-file `rename`. On Windows, Defender / the search indexer can briefly hold the target (or lock directory) open and fail the rename with `EPERM`/`EACCES`; the script retries those codes within the lock timeout. Do not remove that retry or replace `rename` with a direct `writeFile` (a reader in another process would observe a half-written locale). The concurrent `set-key` test in `web/test/i18n/i18nKeysScript.test.ts` prints child stderr in its assertion message; use it, not the bare exit-code diff, when diagnosing failures.
 
 ```typescript
 const { t } = useTranslation();

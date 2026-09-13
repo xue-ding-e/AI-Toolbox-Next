@@ -442,7 +442,12 @@ test('i18n key CLI serializes concurrent set-key writes', async (testContext) =>
     ])
   ));
 
-  assert.deepEqual(results.map((result) => result.exitCode), [0, 0, 0, 0]);
+  // Child stderr is essential for diagnosing load-dependent spawn/write
+  // failures on Windows; without it a bare exit-code diff is undebuggable.
+  const exitCodeSummary = results
+    .map((result, index) => `${keys[index]}: exit=${result.exitCode} stderr=${result.stderr.trim() || '(empty)'}`)
+    .join(' | ');
+  assert.deepEqual(results.map((result) => result.exitCode), [0, 0, 0, 0], exitCodeSummary);
 
   const zhCN = await readLocaleFile(fixture.rootDirectory, 'zh-CN') as {
     gateway: { proxy: Record<string, string> };

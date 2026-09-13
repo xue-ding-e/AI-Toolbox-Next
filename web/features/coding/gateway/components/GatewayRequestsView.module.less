@@ -256,6 +256,13 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 
+  span,
+  small {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   small {
     color: var(--color-text-tertiary);
     font-size: 10px;
