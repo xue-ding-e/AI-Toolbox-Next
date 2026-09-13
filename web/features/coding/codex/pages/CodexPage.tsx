@@ -312,6 +312,7 @@ const CodexPage: React.FC = () => {
   const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
   const [pluginListCollapsed, setPluginListCollapsed] = React.useState(true);
+  const [memoriesListCollapsed, setMemoriesListCollapsed] = React.useState(true);
   const [pluginPanelRefreshToken, setPluginPanelRefreshToken] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [sessionManagerRefreshNonce, setSessionManagerRefreshNonce] = React.useState(0);
@@ -1698,6 +1699,9 @@ const CodexPage: React.FC = () => {
           case 'codex-session-manager':
             setSessionManagerExpandNonce((v) => v + 1);
             break;
+          case 'codex-memories':
+            setMemoriesListCollapsed(false);
+            break;
           default:
             break;
         }
@@ -2083,7 +2087,8 @@ const CodexPage: React.FC = () => {
         >
           <Collapse
             style={{ marginBottom: 16 }}
-            defaultActiveKey={['memories']}
+            activeKey={memoriesListCollapsed ? [] : ['memories']}
+            onChange={(keys) => setMemoriesListCollapsed(!keys.includes('memories'))}
             items={[
               {
                 key: 'memories',
