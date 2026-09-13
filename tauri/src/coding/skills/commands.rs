@@ -2701,7 +2701,8 @@ async fn preflight_inventory_tool_sync(
         .await
         .map_err(|e| format_error(e))?;
     let target = tool_root.join(&skill.name);
-    let force_copy = tool.eq_ignore_ascii_case("cursor") || runtime_adapter.force_copy;
+    let force_copy =
+        crate::coding::tools::builtin_tool_forces_skill_copy(tool) || runtime_adapter.force_copy;
     validate_skill_sync_target(source_path, &target, force_copy).map_err(format_error)
 }
 

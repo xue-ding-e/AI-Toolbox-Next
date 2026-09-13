@@ -68,7 +68,7 @@ impl From<&BuiltinTool> for RuntimeTool {
             is_custom: false,
             relative_skills_dir: tool.relative_skills_dir.map(|s| s.to_string()),
             relative_detect_dir: tool.relative_detect_dir.map(|s| s.to_string()),
-            force_copy: false, // Built-in tools use default (cursor handled specially in sync logic)
+            force_copy: false, // Built-in tools default to hybrid; forced-copy keys come from builtin_tool_forces_skill_copy
             icon_url: None,
             mcp_config_path: tool.mcp_config_path.map(|s| s.to_string()),
             mcp_config_format: tool.mcp_config_format.map(|s| s.to_string()),

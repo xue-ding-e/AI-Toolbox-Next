@@ -60,7 +60,7 @@ pub fn get_format_config(tool_key: &str) -> Option<&'static McpFormatConfig> {
     match tool_key {
         "opencode" => Some(&OPENCODE_FORMAT),
         "gemini_cli" | "qwen_code" => Some(&GEMINI_LIKE_FORMAT),
-        "antigravity" => Some(&ANTIGRAVITY_FORMAT),
+        "antigravity" | "antigravity_cli" => Some(&ANTIGRAVITY_FORMAT),
         _ => None,
     }
 }

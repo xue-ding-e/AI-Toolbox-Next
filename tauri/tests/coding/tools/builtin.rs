@@ -1,4 +1,54 @@
-use ai_toolbox_lib::coding::tools::builtin_tool_by_key;
+use ai_toolbox_lib::coding::tools::{
+    builtin_tool_by_key, builtin_tool_forces_skill_copy, BUILTIN_TOOLS,
+};
+
+#[test]
+fn antigravity_cli_builtin_tool_uses_new_gemini_prefix() {
+    let tool = builtin_tool_by_key("antigravity_cli").expect("antigravity_cli should exist");
+
+    assert_eq!(tool.display_name, "Antigravity CLI");
+    assert_eq!(
+        tool.relative_skills_dir,
+        Some("~/.gemini/antigravity-cli/skills")
+    );
+    assert_eq!(tool.relative_detect_dir, Some("~/.gemini/antigravity-cli"));
+    assert_eq!(
+        tool.mcp_config_path,
+        Some("~/.gemini/antigravity-cli/mcp_config.json")
+    );
+    assert_eq!(tool.mcp_config_format, Some("json"));
+    assert_eq!(tool.mcp_field, Some("mcpServers"));
+}
+
+#[test]
+fn antigravity_legacy_entry_keeps_old_prefix() {
+    let tool = builtin_tool_by_key("antigravity").expect("antigravity should exist");
+
+    assert_eq!(
+        tool.relative_skills_dir,
+        Some("~/.gemini/antigravity/skills")
+    );
+    assert_eq!(
+        tool.mcp_config_path,
+        Some("~/.gemini/antigravity/mcp_config.json")
+    );
+}
+
+#[test]
+fn forced_skill_copy_covers_cursor_and_antigravity_cli_only() {
+    assert!(builtin_tool_forces_skill_copy("cursor"));
+    assert!(builtin_tool_forces_skill_copy("antigravity_cli"));
+    assert!(!builtin_tool_forces_skill_copy("antigravity"));
+    assert!(!builtin_tool_forces_skill_copy("claude_code"));
+
+    // Lock the list: no other built-in tool may silently opt into forced copy.
+    let forced: Vec<&'static str> = BUILTIN_TOOLS
+        .iter()
+        .map(|tool| tool.key)
+        .filter(|key| builtin_tool_forces_skill_copy(key))
+        .collect();
+    assert_eq!(forced, vec!["cursor", "antigravity_cli"]);
+}
 
 #[test]
 fn qoder_work_builtin_tool_uses_standard_mcp_servers_field() {

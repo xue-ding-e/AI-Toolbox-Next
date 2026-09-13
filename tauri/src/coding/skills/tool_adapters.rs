@@ -127,7 +127,7 @@ impl From<&ToolAdapter> for RuntimeToolAdapter {
             relative_skills_dir: adapter.relative_skills_dir.to_string(),
             relative_detect_dir: adapter.relative_detect_dir.to_string(),
             is_custom: false,
-            force_copy: false, // Built-in tools use default (cursor handled specially in sync logic)
+            force_copy: false, // Built-in tools default to hybrid; forced-copy keys come from builtin_tool_forces_skill_copy
             icon_url: None,
         }
     }

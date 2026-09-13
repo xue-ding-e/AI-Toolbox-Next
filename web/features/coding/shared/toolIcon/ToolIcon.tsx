@@ -89,6 +89,7 @@ const TOOL_ICON_RENDERERS: Record<string, ToolIconRenderer> = {
   qwen_code: Qwen.Color,
   cursor: Cursor,
   antigravity: Antigravity.Color,
+  antigravity_cli: Antigravity.Color,
   amp: Amp.Color,
   kilo_code: KiloCode,
   roo_code: RooCode,

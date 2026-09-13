@@ -827,7 +827,9 @@ pub async fn update_managed_skill_from_source(
             };
         let current_target = tool_root.join(&record.name);
         let target_path_moved = target_path_changed(&t.target_path, &current_target);
-        let force_copy = t.mode == "copy" || t.tool == "cursor" || custom_tool_force_copy;
+        let force_copy = t.mode == "copy"
+            || crate::coding::tools::builtin_tool_forces_skill_copy(&t.tool)
+            || custom_tool_force_copy;
 
         let sync_result = if target_path_moved {
             let sync_result = sync_skill_to_target(

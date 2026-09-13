@@ -42,6 +42,7 @@ sequenceDiagram
 - Hermes/dsh 的文件路径与统一 WSL Direct 状态复用各自同一个配置目录解析器；新增路径分支时必须保持两者一致，不能出现 Tools 写入 UNC、同步状态却仍显示本机的分叉。
 - Hermes Skills 路径必须走 `resolve_special_skills_path`（复用 config.yaml 同一平台根目录），不能直接用静态 `~/.hermes/skills`——Windows 上 hermes 根目录是 `%LOCALAPPDATA%\hermes`，而 `~/.hermes/skills` 会误解析到 `%USERPROFILE%\.hermes`。
 - Shared Agents 工具指向 `~/.agents/skills`（agentskills.io 公共目录），与 central_repo 默认路径重叠。`skills::commands::sync_skill_to_tool_record` 有 canonicalize 守卫：当 source 和 target 解析到同一物理路径时跳过同步（返回 mode="skip"），避免 `ensure_source_target_not_overlapping` bail。
+- 内置工具的 Skills 强制复制（不支持 symlink 的工具，当前为 Cursor、Antigravity CLI）统一由 `builtin::builtin_tool_forces_skill_copy` 判定；新增此类工具时只扩展该 helper，禁止回到各同步入口散落 `tool_key == "..."` 匹配。
 
 ## 跨模块依赖
 
