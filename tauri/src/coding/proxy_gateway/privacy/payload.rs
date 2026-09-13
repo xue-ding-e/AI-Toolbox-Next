@@ -10,8 +10,18 @@ enum Shape {
     Tool,
     Function,
     Schema,
+    GenerationConfig,
+    DocumentSource,
     Arguments,
     Business,
+}
+
+pub(super) fn is_binding_signature(key: &str, value: &Value) -> bool {
+    value.as_str().is_some_and(|signature| {
+        !signature.is_empty()
+            && (key == "signature"
+                || signature != super::super::transformer::DEFAULT_GEMINI_THOUGHT_SIGNATURE)
+    })
 }
 
 pub(super) fn transform(
@@ -99,6 +109,7 @@ fn visit(
         return visit(value, Shape::Business, text, restoring);
     }
     match value {
+        Value::String(_) if shape == Shape::Schema => Ok(false),
         Value::String(value) => transform_string(
             value,
             text,
@@ -120,8 +131,7 @@ fn visit(
                     .any(|key| {
                         object
                             .get(*key)
-                            .and_then(Value::as_str)
-                            .is_some_and(|value| !value.is_empty())
+                            .is_some_and(|value| is_binding_signature(key, value))
                     });
             let block_type = object
                 .get("type")
@@ -144,7 +154,6 @@ fn visit(
                         | "audio"
                         | "file"
                         | "input_file"
-                        | "document"
                         | "redacted_thinking"
                         | "compaction"
                 )
@@ -161,121 +170,150 @@ fn visit(
                     }
                     continue;
                 }
-                let child = match shape {
-                    Shape::Envelope => match key.as_str() {
-                        "model"
-                        | "id"
-                        | "object"
-                        | "type"
-                        | "status"
-                        | "previous_response_id"
-                        | "response_id"
-                        | "item_id"
-                        | "call_id"
-                        | "stream_id"
-                        | "event_id"
-                        | "prompt_cache_key"
-                        | "service_tier"
-                        | "store"
-                        | "include"
-                        | "usage"
-                        | "usageMetadata"
-                        | "stop"
-                        | "stop_sequences"
-                        | "finish_reason"
-                        | "generationConfig"
-                        | "safetySettings"
-                        | "tool_choice"
-                        | "parallel_tool_calls"
-                        | "reasoning" => continue,
-                        "response_format" => Shape::Schema,
-                        "text" if value.is_object() => Shape::Schema,
-                        "content" if value.is_array() => Shape::Block,
-                        "messages" | "message" | "delta" | "systemInstruction" | "content" => {
-                            Shape::Message
-                        }
-                        "input" | "output" | "item" | "content_block" | "part" | "system" => {
-                            Shape::Block
-                        }
-                        "contents" => Shape::Message,
-                        "tools" | "functions" => Shape::Tool,
-                        "response" | "choices" | "candidates" | "error" => Shape::Envelope,
-                        "arguments" => Shape::Arguments,
-                        // Metadata identities have no business-text semantics.
-                        "metadata" => {
-                            for (key, value) in value.as_object_mut().into_iter().flatten() {
-                                if !matches!(
-                                    key.as_str(),
-                                    "session_id" | "conversation_id" | "user_id"
-                                ) {
-                                    changed |= visit(value, Shape::Business, text, restoring)?;
+                let child =
+                    match shape {
+                        Shape::Envelope => match key.as_str() {
+                            "model"
+                            | "id"
+                            | "object"
+                            | "type"
+                            | "status"
+                            | "previous_response_id"
+                            | "response_id"
+                            | "item_id"
+                            | "call_id"
+                            | "stream_id"
+                            | "event_id"
+                            | "prompt_cache_key"
+                            | "service_tier"
+                            | "store"
+                            | "include"
+                            | "usage"
+                            | "usageMetadata"
+                            | "stop"
+                            | "stop_sequences"
+                            | "finish_reason"
+                            | "safetySettings"
+                            | "toolConfig"
+                            | "tool_config"
+                            | "cachedContent"
+                            | "cached_content"
+                            | "tool_choice"
+                            | "parallel_tool_calls"
+                            | "reasoning" => continue,
+                            "response_format" | "format" => Shape::Schema,
+                            "generationConfig" | "generation_config" => Shape::GenerationConfig,
+                            "text" if value.is_object() => Shape::Schema,
+                            "content" if value.is_array() => Shape::Block,
+                            "messages" | "message" | "delta" | "systemInstruction" | "content" => {
+                                Shape::Message
+                            }
+                            "input" | "output" | "item" | "content_block" | "part" | "system" => {
+                                Shape::Block
+                            }
+                            "contents" => Shape::Message,
+                            "tools" | "functions" => Shape::Tool,
+                            "response" | "choices" | "candidates" | "error" => Shape::Envelope,
+                            "arguments" => Shape::Arguments,
+                            // Metadata identities have no business-text semantics.
+                            "metadata" => {
+                                for (key, value) in value.as_object_mut().into_iter().flatten() {
+                                    if !matches!(
+                                        key.as_str(),
+                                        "session_id" | "conversation_id" | "user_id"
+                                    ) {
+                                        changed |= visit(value, Shape::Business, text, restoring)?;
+                                    }
                                 }
+                                continue;
                             }
-                            continue;
-                        }
-                        _ => Shape::Business,
-                    },
-                    Shape::Message => match key.as_str() {
-                        "id" | "role" | "name" | "tool_call_id" | "type" | "signature"
-                        | "thoughtSignature" | "thought_signature" | "encrypted_content" => {
-                            continue
-                        }
-                        "content" | "parts" => Shape::Block,
-                        "tool_calls" | "function_call" => Shape::Function,
-                        _ => Shape::Business,
-                    },
-                    Shape::Block => match key.as_str() {
-                        "id" | "type" | "role" | "name" | "call_id" | "tool_use_id"
-                        | "tool_call_id" | "status" | "signature" | "thoughtSignature"
-                        | "thought_signature" | "encrypted_content" | "source" | "inlineData"
-                        | "inline_data" | "fileData" | "file_data" | "image_url" => continue,
-                        "arguments" => Shape::Arguments,
-                        "input" | "args" | "output" => Shape::Business,
-                        "functionCall" | "functionResponse" | "tool_calls" | "function_call" => {
-                            Shape::Function
-                        }
-                        "content" | "parts" | "summary" => Shape::Block,
-                        _ => Shape::Business,
-                    },
-                    Shape::Function => match key.as_str() {
-                        "id" | "type" | "name" | "call_id" | "index" => continue,
-                        "function" => Shape::Function,
-                        "arguments" => Shape::Arguments,
-                        _ => Shape::Business,
-                    },
-                    Shape::Tool => match key.as_str() {
-                        "name" | "type" | "strict" => continue,
-                        "function" | "functionDeclarations" | "tools" => Shape::Tool,
-                        "parameters" | "input_schema" | "parametersJsonSchema" => Shape::Schema,
-                        "description" => Shape::Business,
-                        _ => continue,
-                    },
-                    Shape::Schema => match key.as_str() {
-                        "description" | "title" | "default" | "examples" | "example" | "const"
-                        | "enum" => Shape::Business,
-                        "properties" | "$defs" | "definitions" | "patternProperties" => {
-                            for value in value
-                                .as_object_mut()
-                                .into_iter()
-                                .flat_map(|object| object.values_mut())
+                            _ => Shape::Business,
+                        },
+                        Shape::Message => match key.as_str() {
+                            "id" | "role" | "name" | "tool_name" | "tool_call_id" | "type"
+                            | "signature" | "thoughtSignature" | "thought_signature"
+                            | "encrypted_content" | "images" => continue,
+                            "content" | "parts" => Shape::Block,
+                            "tool_calls" | "function_call" => Shape::Function,
+                            _ => Shape::Business,
+                        },
+                        Shape::Block => match key.as_str() {
+                            "id" | "type" | "role" | "name" | "namespace" | "call_id"
+                            | "tool_use_id" | "tool_call_id" | "status" | "signature"
+                            | "thoughtSignature" | "thought_signature" | "encrypted_content"
+                            | "inlineData" | "inline_data" | "fileData" | "file_data"
+                            | "image_url" => continue,
+                            "arguments" => Shape::Arguments,
+                            "source" if block_type == "document" => Shape::DocumentSource,
+                            "source" => continue,
+                            "tools" => Shape::Tool,
+                            "output"
+                                if value.is_array()
+                                    && matches!(
+                                        block_type.as_str(),
+                                        "function_call_output" | "custom_tool_call_output"
+                                    ) =>
                             {
-                                changed |= visit(value, Shape::Schema, text, restoring)?;
+                                Shape::Block
                             }
-                            continue;
-                        }
-                        "items"
-                        | "allOf"
-                        | "anyOf"
-                        | "oneOf"
-                        | "not"
-                        | "additionalProperties"
-                        | "schema"
-                        | "json_schema"
-                        | "format" => Shape::Schema,
-                        _ => continue,
-                    },
-                    Shape::Business | Shape::Arguments => unreachable!(),
-                };
+                            "input" | "args" | "output" => Shape::Business,
+                            "functionCall" | "functionResponse" | "tool_calls"
+                            | "function_call" => Shape::Function,
+                            "content" | "parts" | "summary" => Shape::Block,
+                            _ => Shape::Business,
+                        },
+                        Shape::Function => match key.as_str() {
+                            "id" | "type" | "name" | "namespace" | "call_id" | "index" => continue,
+                            "function" => Shape::Function,
+                            "arguments" => Shape::Arguments,
+                            "parts" => Shape::Block,
+                            _ => Shape::Business,
+                        },
+                        Shape::Tool => match key.as_str() {
+                            "name" | "type" | "strict" => continue,
+                            "function" | "functionDeclarations" | "tools" => Shape::Tool,
+                            "parameters" | "input_schema" | "parametersJsonSchema" => Shape::Schema,
+                            "description" => Shape::Business,
+                            _ => continue,
+                        },
+                        Shape::Schema => match key.as_str() {
+                            "description" | "title" | "default" | "examples" | "example"
+                            | "const" | "enum" => Shape::Business,
+                            "properties" | "$defs" | "definitions" | "patternProperties" => {
+                                for value in value
+                                    .as_object_mut()
+                                    .into_iter()
+                                    .flat_map(|object| object.values_mut())
+                                {
+                                    changed |= visit(value, Shape::Schema, text, restoring)?;
+                                }
+                                continue;
+                            }
+                            "items"
+                            | "allOf"
+                            | "anyOf"
+                            | "oneOf"
+                            | "not"
+                            | "additionalProperties"
+                            | "schema"
+                            | "json_schema"
+                            | "format" => Shape::Schema,
+                            _ => continue,
+                        },
+                        Shape::GenerationConfig => match key.as_str() {
+                            "responseSchema"
+                            | "responseJsonSchema"
+                            | "response_schema"
+                            | "response_json_schema" => Shape::Schema,
+                            _ => continue,
+                        },
+                        Shape::DocumentSource => match key.as_str() {
+                            "data" if block_type == "text" => Shape::Business,
+                            "content" if block_type == "content" => Shape::Block,
+                            _ => continue,
+                        },
+                        Shape::Business | Shape::Arguments => unreachable!(),
+                    };
                 changed |= visit(value, child, text, restoring)?;
             }
             if signed && changed {

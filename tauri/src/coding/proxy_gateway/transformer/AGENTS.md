@@ -187,6 +187,7 @@
 - `max_tokens` / `max_completion_tokens`、temperature、`top_p`、presence/frequency penalty、`seed`、`stopSequences` 支持。
 - `reasoning_effort` 输出 `thinkingConfig`，支持 none/minimal/low/medium/high/xhigh，并通过 `shared/thinking_config.rs` 做 effort ↔ budget 映射。Gemini 2.x target 输出 `thinkingBudget` 且预算上限为 24576；Gemini 3 target 输出 `thinkingLevel`，不同时输出 `thinkingBudget`，其中 `xhigh`/`max` 降级为 Gemini 支持的 `high`。
 - `thoughtSignature` 仅从 Gemini marker/heuristic 或 per-tool metadata 还原；当 Gemini target 存在 reasoning thought 或 functionCall 但没有有效 Gemini signature 时，按 AxonHub 兼容策略补 `DEFAULT_GEMINI_THOUGHT_SIGNATURE` 到第一条适用 thought/functionCall part。不能把 Anthropic/OpenAI 私有签名写入 Gemini `thoughtSignature`。
+- 默认 Gemini signature 是兼容占位，不代表真实签名绑定。runtime/隐私层需要区分它时，必须复用此模块导出的同一常量，不能复制字符串或把任意 signature 都视为可改写；策略和原值映射仍留在 runtime。
 - `response_format` json_schema/json_object 输出 `responseMimeType` / `responseJsonSchema`；不要把完整 JSON Schema 写到 Gemini SDK 旧 `responseSchema` 字段。
 - system/developer 输出 `systemInstruction`；user/assistant/tool role 映射。
 - Text 和 reasoning thought text 支持；image data URL -> `inlineData`，普通 image URL -> `fileData.fileUri`，document data URL / regular URL -> `inlineData` / `fileData`。
@@ -314,6 +315,7 @@
 - OpenAI Chat -> Gemini：
   - `delta.tool_calls[].function.arguments` 不能按碎片直接输出 Gemini `functionCall.args`。Gemini target 必须按 tool index 暂存 id/name/arguments，只有参数已是完整 JSON 时才输出 `functionCall`；若 finish reason 是 `tool_calls`，再把剩余 tool call flush，空参数输出 `{}`，仍无法解析的参数按 `{}` 兜底。
   - 这个行为对齐 AxonHub Gemini inbound stream：Gemini 客户端期望每个 streamed `functionCall` part 带完整 args object，不支持 OpenAI/Anthropic 那种 partial argument delta。
+  - finish 没有 usage 时暂存 reason，等后续 `choices:[]` usage-only 事件再发唯一 Gemini finish；正常 EOF 没有用量时保留原 reason（如 length -> MAX_TOKENS），不能改成 STOP。等待期间遇到 error 只发错误，不先提交成功终态；完成后重复 terminal/内容不再输出。回归见 `chat_stream_to_gemini_waits_for_usage_only_chunk_before_finish` 和 `chat_stream_to_gemini_without_usage_preserves_eof_reason_or_late_error`。
 - Responses -> Chat：
   - `response.created` -> Chat role delta。
   - `response.output_text.delta` -> Chat content delta。
@@ -335,7 +337,7 @@
   - function_call item/delta -> Anthropic tool_use block + input_json_delta。
   - `response.completed` 有 tool call 时 stop reason 为 `tool_use`，否则 `end_turn`。
 - Gemini -> Anthropic：
-  - Gemini stream chunks 可能发送累计文本，本模块按前缀差值输出 Anthropic `text_delta`。
+  - Gemini stream chunks 可能发送累计文本，仅严格增长且前缀匹配时取差值；相同连续文本必须保留为 delta，避免丢字或破坏占位符。普通文本与 reasoning 共用此约束，回归见 `gemini_stream_preserves_identical_deltas_and_accepts_growing_snapshots`。这是既有累计兼容规则，不能宣称可无歧义识别所有混合流。
   - Gemini `thoughtSignature` 不能转成 Anthropic `signature_delta`。
   - `functionCall` 在 finish 时输出 Anthropic tool_use block；缺 id 时使用 synthetic id。
   - blocked prompt 在 finish 时输出 refusal 文本。

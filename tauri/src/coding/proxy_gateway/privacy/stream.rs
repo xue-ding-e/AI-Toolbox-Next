@@ -186,7 +186,19 @@ impl EventRestorer {
             if self.signed_channels.len() > 1024 || self.changed_channels.len() > 1024 {
                 return Err("privacy_stream_channel_limit".into());
             }
-            let fragments = fragments(value);
+            let mut fragments = fragments(value);
+            for fragment in &mut fragments {
+                if fragment.channel.starts_with("gemini:") {
+                    if let Some(prefix) = fragment.channel.strip_suffix(":text") {
+                        let thinking_channel = format!("{prefix}:thinking");
+                        // A missing thought flag cannot turn an unfinished signed token
+                        // into public text midway through its fragments.
+                        if self.tails.contains_key(&thinking_channel) {
+                            fragment.channel = thinking_channel;
+                        }
+                    }
+                }
+            }
             let strings = fragments
                 .iter()
                 .map(|fragment| {
@@ -496,6 +508,11 @@ fn fragments(value: &Value) -> Vec<Fragment> {
                     false,
                 );
             }
+            add(
+                format!("chat:{index}:completion"),
+                format!("/choices/{position}/text"),
+                false,
+            );
             if let Some(calls) = choice
                 .pointer("/delta/tool_calls")
                 .and_then(Value::as_array)
@@ -574,9 +591,9 @@ fn fragments(value: &Value) -> Vec<Fragment> {
                 .pointer("/content/parts")
                 .and_then(Value::as_array)
             {
-                for (part, _) in parts.iter().enumerate() {
+                for (part, value) in parts.iter().enumerate() {
                     add(
-                        format!("gemini:{index}:{part}"),
+                        gemini_part_channel(index, part, value),
                         format!("/candidates/{position}/content/parts/{part}/text"),
                         false,
                     );
@@ -585,6 +602,17 @@ fn fragments(value: &Value) -> Vec<Fragment> {
         }
     }
     result
+}
+
+fn gemini_part_channel(candidate: u64, position: usize, part: &Value) -> String {
+    let kind = if part.get("functionCall").is_some() {
+        "function"
+    } else if part.get("thought").and_then(Value::as_bool) == Some(true) {
+        "thinking"
+    } else {
+        "text"
+    };
+    format!("gemini:{candidate}:{position}:{kind}")
 }
 
 fn gemini_part_paths(value: &Value) -> Vec<(String, String)> {
@@ -600,7 +628,7 @@ fn gemini_part_paths(value: &Value) -> Vec<(String, String)> {
             .get("index")
             .and_then(Value::as_u64)
             .unwrap_or(position as u64);
-        for (part, _) in candidate
+        for (part, value) in candidate
             .pointer("/content/parts")
             .and_then(Value::as_array)
             .into_iter()
@@ -608,7 +636,7 @@ fn gemini_part_paths(value: &Value) -> Vec<(String, String)> {
             .enumerate()
         {
             paths.push((
-                format!("gemini:{index}:{part}"),
+                gemini_part_channel(index, part, value),
                 format!("/candidates/{position}/content/parts/{part}"),
             ));
         }
@@ -632,7 +660,10 @@ fn signed_channels(value: &Value) -> Vec<String> {
     for (channel, pointer) in gemini_part_paths(value) {
         if value.pointer(&pointer).is_some_and(|part| {
             part.get("thought").and_then(Value::as_bool) == Some(true)
-                || part.get("thoughtSignature").is_some()
+                || ["thoughtSignature", "thought_signature"].iter().any(|key| {
+                    part.get(*key)
+                        .is_some_and(|value| super::payload::is_binding_signature(key, value))
+                })
         }) {
             channels.push(channel);
         }

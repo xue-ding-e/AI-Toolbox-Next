@@ -16,7 +16,19 @@ mod settings_tests;
 #[path = "privacy_tests.rs"]
 mod privacy_tests;
 
+#[path = "privacy_matrix_tests.rs"]
+mod privacy_matrix_tests;
+
 fn test_context(
+    upstream_url: &str,
+    protocol: &str,
+    record_body: bool,
+) -> (tempfile::TempDir, GatewayRuntimeContext, String) {
+    test_context_for_cli(GatewayCliKey::Codex, upstream_url, protocol, record_body)
+}
+
+fn test_context_for_cli(
+    cli_key: GatewayCliKey,
     upstream_url: &str,
     protocol: &str,
     record_body: bool,
@@ -32,11 +44,46 @@ fn test_context(
         )
     })
     .unwrap();
-    let provider = db.with_conn(|conn| db_create(conn, DbTable::CodexProvider, &json!({
-        "name":"WebSocket test", "category":"custom", "is_applied":true,
-        "settings_config":json!({"auth":{"OPENAI_API_KEY":"upstream-test-key"}, "config":format!("model_provider = \"custom\"\nmodel = \"test-model\"\n[model_providers.custom]\nbase_url = \"{upstream_url}\"\nwire_api = \"responses\"\nsupports_websockets = true\n")}).to_string(),
-        "meta":{"apiFormat":protocol}
-    }))).unwrap();
+    let (table, provider_settings) = match cli_key {
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => (
+            if cli_key == GatewayCliKey::Claude {
+                DbTable::ClaudeProvider
+            } else {
+                DbTable::ClaudeDesktopProvider
+            },
+            json!({"env":{"ANTHROPIC_BASE_URL":upstream_url,"ANTHROPIC_API_KEY":"upstream-test-key","ANTHROPIC_AUTH_TOKEN":"upstream-test-key"}}),
+        ),
+        GatewayCliKey::Codex => (
+            DbTable::CodexProvider,
+            json!({"auth":{"OPENAI_API_KEY":"upstream-test-key"}, "config":format!("model_provider = \"custom\"\nmodel = \"test-model\"\n[model_providers.custom]\nbase_url = \"{upstream_url}\"\nwire_api = \"responses\"\nsupports_websockets = true\n")}),
+        ),
+        GatewayCliKey::Grok => (
+            DbTable::GrokProvider,
+            json!({"auth":{"API_KEY":"upstream-test-key"},"config":format!("[models]\ndefault = \"custom\"\n[model.custom]\nmodel = \"test-model\"\nbase_url = \"{upstream_url}\"\napi_backend = \"responses\"\n")}),
+        ),
+        GatewayCliKey::Kimi => (
+            DbTable::KimiProvider,
+            json!({"auth":{"API_KEY":"upstream-test-key"},"providerConfigs":{"custom":{"type":"openai","base_url":upstream_url}},"defaultModelKey":"test-model","modelCatalog":{"models":[{"key":"test-model","model":"test-model","provider":"custom"}]}}),
+        ),
+        GatewayCliKey::Gemini => (
+            DbTable::GeminiCliProvider,
+            json!({"env":{"GOOGLE_GEMINI_BASE_URL":upstream_url,"GEMINI_API_KEY":"upstream-test-key"}}),
+        ),
+        GatewayCliKey::OpenCode => panic!("OpenCode has no gateway takeover route"),
+    };
+    let provider = db
+        .with_conn(|conn| {
+            db_create(
+                conn,
+                table,
+                &json!({
+                    "name":"WebSocket test", "category":"custom", "is_applied":true,
+                    "settings_config":provider_settings.to_string(),
+                    "meta":{"apiFormat":protocol}
+                }),
+            )
+        })
+        .unwrap();
     let provider_id = provider["id"].as_str().unwrap().to_string();
     let settings = ProxyGatewaySettings {
         codex_websocket_enabled: true,

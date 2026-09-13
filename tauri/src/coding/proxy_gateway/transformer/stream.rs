@@ -1239,7 +1239,9 @@ impl SourceStreamState {
                     .filter_map(|part| part.get("text").and_then(Value::as_str))
                     .collect::<String>();
                 if !visible_text.is_empty() {
-                    let delta = if visible_text.starts_with(&self.gemini_accumulated_text) {
+                    let delta = if visible_text.len() > self.gemini_accumulated_text.len()
+                        && visible_text.starts_with(&self.gemini_accumulated_text)
+                    {
                         visible_text[self.gemini_accumulated_text.len()..].to_string()
                     } else {
                         visible_text.clone()
@@ -1264,7 +1266,9 @@ impl SourceStreamState {
                     .filter_map(|part| part.get("text").and_then(Value::as_str))
                     .collect::<String>();
                 if !reasoning_text.is_empty() {
-                    let delta = if reasoning_text.starts_with(&self.gemini_accumulated_reasoning) {
+                    let delta = if reasoning_text.len() > self.gemini_accumulated_reasoning.len()
+                        && reasoning_text.starts_with(&self.gemini_accumulated_reasoning)
+                    {
                         reasoning_text[self.gemini_accumulated_reasoning.len()..].to_string()
                     } else {
                         reasoning_text.clone()
@@ -1756,10 +1760,10 @@ struct TargetStreamState {
     pending_gemini_reasoning_signature: Option<String>,
     pending_gemini_tool_signatures: HashMap<usize, String>,
     pending_gemini_tools: HashMap<usize, TargetGeminiToolState>,
+    pending_gemini_finish_reason: Option<String>,
     gemini_seen_reasoning: bool,
     gemini_seen_tool: bool,
     gemini_emitted_signature: bool,
-    emitted_gemini_finish: bool,
     codex_tool_context: Option<CodexToolContext>,
 }
 
@@ -1827,6 +1831,9 @@ impl TargetStreamState {
                 Some("stop".to_string())
             };
             return self.finish_responses_response(reason, None, true);
+        }
+        if target == AiProtocol::GeminiNative {
+            return self.finish_gemini_response(None, None, true);
         }
         self.write(
             target,
@@ -3072,6 +3079,9 @@ impl TargetStreamState {
     }
 
     fn write_gemini(&mut self, event: UnifiedStreamEvent) -> Vec<Vec<u8>> {
+        if self.finished {
+            return Vec::new();
+        }
         match event {
             UnifiedStreamEvent::Start { id, model } => {
                 if self.sent_start {
@@ -3128,50 +3138,65 @@ impl TargetStreamState {
                 self.flush_gemini_tool_calls(false)
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
-                if reason.as_deref() == Some("error") {
-                    return self.write_stream_error(
-                        AiProtocol::GeminiNative,
-                        "response_error".to_string(),
-                        "Response failed".to_string(),
-                    );
-                }
-                if self.emitted_gemini_finish {
-                    return Vec::new();
-                }
-                self.emitted_gemini_finish = true;
-                let mut out = Vec::new();
-                out.extend(self.flush_gemini_tool_calls(reason.as_deref() == Some("tool_calls")));
-                if self.gemini_seen_reasoning
-                    && !self.gemini_seen_tool
-                    && !self.gemini_emitted_signature
-                {
-                    let signature = self
-                        .pending_gemini_reasoning_signature
-                        .take()
-                        .unwrap_or_else(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string());
-                    out.push(self.gemini_chunk(
-                        vec![json!({
-                            "text": "",
-                            "thought": true,
-                            "thoughtSignature": signature
-                        })],
-                        None,
-                        None,
-                    ));
-                    self.gemini_emitted_signature = true;
-                }
-                out.push(self.gemini_chunk(
-                    Vec::new(),
-                    Some(match reason.as_deref() {
-                        Some("length") => "MAX_TOKENS",
-                        Some("refusal") => "SAFETY",
-                        _ => "STOP",
-                    }),
-                    unified_usage_to_gemini_metadata(usage),
-                ));
-                out
+                self.finish_gemini_response(reason, usage, false)
             }
         }
+    }
+
+    fn finish_gemini_response(
+        &mut self,
+        reason: Option<String>,
+        usage: Option<Value>,
+        force: bool,
+    ) -> Vec<Vec<u8>> {
+        if self.finished {
+            return Vec::new();
+        }
+        if reason.as_deref() == Some("error") {
+            return self.write_stream_error(
+                AiProtocol::GeminiNative,
+                "response_error".to_string(),
+                "Response failed".to_string(),
+            );
+        }
+        if reason.is_some() {
+            self.pending_gemini_finish_reason = reason;
+        }
+        let mut out = self.flush_gemini_tool_calls(
+            self.pending_gemini_finish_reason.as_deref() == Some("tool_calls"),
+        );
+        // Chat providers may send their final usage after finish_reason.
+        if usage.is_none() && !force {
+            return out;
+        }
+        self.finished = true;
+        if self.gemini_seen_reasoning && !self.gemini_seen_tool && !self.gemini_emitted_signature {
+            let signature = self
+                .pending_gemini_reasoning_signature
+                .take()
+                .unwrap_or_else(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string());
+            out.push(self.gemini_chunk(
+                vec![json!({
+                    "text": "",
+                    "thought": true,
+                    "thoughtSignature": signature
+                })],
+                None,
+                None,
+            ));
+            self.gemini_emitted_signature = true;
+        }
+        let finish_reason = match self.pending_gemini_finish_reason.take().as_deref() {
+            Some("length") => "MAX_TOKENS",
+            Some("refusal") => "SAFETY",
+            _ => "STOP",
+        };
+        out.push(self.gemini_chunk(
+            Vec::new(),
+            Some(finish_reason),
+            unified_usage_to_gemini_metadata(usage),
+        ));
+        out
     }
 
     fn flush_gemini_tool_calls(&mut self, force_all: bool) -> Vec<Vec<u8>> {

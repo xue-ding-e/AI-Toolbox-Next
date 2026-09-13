@@ -55,9 +55,10 @@
 
 供应商分享导入保留实际上游协议和 API-key/Bearer 认证语义；有匹配目标 endpoint 时保存 `gatewayProfile` 引用，不复制 profile 派生兼容快照。没有匹配 endpoint 时，只有通用协议可表达的连接才能降为 custom；依赖特殊 adapter 的 native 目标在预览阶段拒绝。OpenCode 与原生 Anthropic/Google SDK 的版本路径适配归分享配置层，不改变 runtime URL/IR/SSE 职责。入口及回归见 `coding/deeplink/importer.rs`、`tauri/tests/coding/deeplink/provider_transfer.rs` 与 [`deep-link-import.md`](deep-link-import.md)。
 
-- Claude：effective `apiFormat` -> settings `api_format/apiFormat` -> `openrouter_compat_mode=true` -> 默认 `AnthropicMessages`。
+- Claude Code / Claude Desktop：effective `apiFormat` -> settings `api_format/apiFormat` -> `openrouter_compat_mode=true` -> 默认 `AnthropicMessages`。
 - Codex：effective `apiFormat` -> settings `api_format/apiFormat` -> `config.toml` 的 `wire_api/api_format` -> base URL 是否 `/chat/completions` -> 默认 `OpenAiResponses`。
 - Grok：effective `apiFormat` -> selected model `api_backend` -> 默认 `OpenAiChat`。
+- Kimi：effective meta `apiFormat` -> 默认 `OpenAiChat`；不从接管后的客户端协议推断真实上游。
 - Gemini：effective `apiFormat` -> settings `api_format/apiFormat` -> 默认 `GeminiNative`。
 - Copilot：请求级动态特例，模型名 `gpt-<major>` 且 major >= 5 但不是 `gpt-5-mini` 时，本次请求切到 `OpenAiResponses`；其它走 `OpenAiChat`。这只改变本次 effective provider，不改 provider 记录。
 
@@ -69,15 +70,18 @@
 
 | CLI/route | 条件 | source protocol |
 |---|---|---|
-| Claude | `/v1/messages` 或 `/messages` | `AnthropicMessages` |
-| Codex | `/v1/chat/completions` 或 `/chat/completions` | `OpenAiChat` |
-| Codex | `/v1/responses`、`/responses`、`/v1/responses/compact`、`/responses/compact` | `OpenAiResponses` |
+| Claude Code / Claude Desktop | `/v1/messages` 或 `/messages` | `AnthropicMessages` |
+| Codex | `/v1/chat/completions` | `OpenAiChat` |
+| Codex | `/v1/responses`、`/v1/responses/compact` | `OpenAiResponses` |
 | Grok | `/v1/responses` | `OpenAiResponses` |
+| Kimi | `/v1/chat/completions` | `OpenAiChat` |
 | Gemini | path 包含 `:generateContent` 或 `:streamGenerateContent` | `GeminiNative` |
 
-`runtime/upstream.rs::conversion_route()` 只在 `source_protocol != provider.target_protocol` 时创建 `ConversionRoute`。同协议路径不进入 transformer。
+这里列出经过 `runtime/routes.rs` 实际可达的 forwarded path；source helper 中不带 `/v1` 的内部别名不扩大公开入口，例如 `/openai/responses` 当前不可达。`runtime/upstream.rs::conversion_route()` 只在 `source_protocol != provider.target_protocol` 时创建 `ConversionRoute`。同协议路径不进入 transformer。
 
 Grok 还有 `/grok/v1` 的本地探测路由；正式模型请求当前只接受 `/grok/v1/responses`。`/grok/v1/chat/completions` 和 `/grok/v1/responses/compact` 会在 `runtime/routes.rs::match_gateway_route()` 被拒绝，不能按 Codex 的 source path 推导规则理解成 Grok 可达接口。
+
+Claude Desktop 使用独立 `/claude-desktop` 前缀和自己的 provider 表，共用 Anthropic 入站语义。Kimi 的正式入口为 `/kimi/v1/chat/completions`；六类受支持 CLI 与所有有效模型入口的隐私覆盖见 §7.2。旧版 `/openai/v1/completions` 继续走 runtime 专用兼容，其 JSON/SSE 有效内容包含 `choices[].text`。
 
 ### 1.6 Responses streamed compaction 边界
 
@@ -952,6 +956,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - 最后一步把 OpenAI Chat body 投影为 Ollama wire format：
   - `model`
   - `messages[].role/content`
+  - `tools` 及 assistant 历史 `tool_calls`；合法 function arguments JSON 字符串解码为对象，不用空对象静默覆盖无法解析的原参数
+  - 已有消息 `name/tool_name` 保留为 Ollama `tool_name`
   - `image_url` data URL 去前缀放 `images[]`
   - 普通 URL 原样放 `images[]`
   - reasoning field -> `thinking`
@@ -966,7 +972,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 - 非流 Ollama JSON 先转 OpenAI Chat response。
 - Ollama NDJSON / x-json-stream 先转 OpenAI Chat SSE，再进入 protocol SSE conversion。
-- usage、done_reason、tool_calls、thinking 都在 Ollama adapter 中归一到 Chat 形态。
+- usage、done_reason、tool_calls、thinking 都在 Ollama adapter 中归一到 Chat 形态。工具参数对象序列化为 Chat JSON 字符串；缺少调用 ID 时生成当前响应内稳定的 `call_ollama_<index>`，流式多个调用依次分配 index。工具轮正常结束写 `finish_reason:tool_calls`，达到长度上限仍优先保留 `length`。
+- 最终用量使用 Chat `choices:[]` usage-only 事件；转换到 Gemini 时必须等 usage 或正常 EOF 后再发唯一 finish，不能把真实 token 用量丢掉。仅真实 `done` 才发送正常终态；非空 error 或缺 done 的 EOF 进入流错误，不自动补成功 `[DONE]`。
 
 测试：
 
@@ -974,6 +981,9 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - `ollama_body_compat_converts_openai_chat_request_shape`
 - `ollama_json_response_converts_to_openai_chat_response`
 - `ollama_ndjson_stream_converts_to_openai_chat_sse`
+- `runtime/websocket/privacy_matrix_tests.rs::privacy_all_cli_entries_restore_ollama_json_and_ndjson`：七入口、JSON/NDJSON、开关两态，校验出站工具定义/历史、客户端文本/工具参数与精确 token 用量
+- `privacy_ollama_stream_failures_do_not_deliver_a_success_terminal`：显式 error 与截断 EOF
+- `transformer/kernel_tests.rs::chat_stream_to_gemini_waits_for_usage_only_chunk_before_finish`：晚到用量与唯一终态
 
 ### 5.19 Custom / legacy provider
 
@@ -1134,14 +1144,17 @@ inferred provider：
 
 数据脱敏默认关闭，独立于 provider profile；没有渠道隐式默认启用。入口是网关设置页的“数据脱敏”，详细边界见 [`gateway-data-redaction.md`](gateway-data-redaction.md)。
 
+- Claude Code、Claude Desktop、Codex、Grok、Kimi、Gemini 六类当前受支持 CLI 共用 HTTP 保护入口，Codex Responses WS 逐轮接线；其他工具手动调用有效模型路由时同样执行。不依赖 User-Agent，也不能把 OpenCode 等 Session 统计支持误写成自动接管支持。
 - 出站请求先做 provider 的 body/header/path/auth 兼容，再在消息、工具参数/结果和说明文本里替换敏感值；认证 Header、模型/工具身份、关联 ID、媒体和不透明密文不按普通业务文本改写。业务对象里的 `name`/`url` 不能按裸字段名豁免。
 - SSE、JSON 和同协议 Responses WS 在既有响应兼容/namespace 回转之后还原占位符。原始历史记录仍在还原之前，不将客户端还原副本写回 provider side store。
-- 各协议的 JSON 文本工具结果统一解码并扫描业务字段；Responses namespace 内嵌工具的描述/schema 也参与处理，名称与关联 ID 不变。流式工具参数支持多层 JSON 和 Unicode 转义；完整 Anthropic 响应的 content 数组按 block 处理，媒体与 redacted thinking 保持不透明。
-- Anthropic/Gemini 签名绑定对象不能静默修改；需要替换或还原时明确拒绝。此约束只在隐私模式下生效，不改现有 thinking/encrypted-content 整流开关。
+- 各协议的 JSON 文本工具结果统一解码并扫描业务字段；Responses namespace 内嵌工具的描述/schema 也参与处理，名称、namespace、关联 ID 与 Ollama `tool_name` 不变。Gemini response schema 和 Ollama `format` 中的描述/示例参与扫描，`type/format/required` 等控制信息不改。流式工具参数支持多层 JSON 和 Unicode 转义。
+- Responses 工具结果 `output[]`、Gemini `functionResponse.parts` 和 Anthropic content 数组按 block 处理，图片/inlineData、Ollama `images[]`、redacted thinking 保持不透明；Anthropic 纯文本文档 data、title/context 仍扫描。
+- Anthropic/Gemini 真实签名绑定对象不能静默修改；需要替换或还原时明确拒绝。Gemini functionCall 的默认兼容占位签名复用 transformer 的 `DEFAULT_GEMINI_THOUGHT_SIGNATURE` 识别，不代表真实绑定，也不豁免 thinking 文本或其他签名。Gemini thought/text/function 分通道，连续相同 delta 不能被累计前缀兼容逻辑吞掉。此约束不改现有 thinking/encrypted-content 整流开关。
 - 启用隐私不改变 WS 的协议能力判定，也不会将已建立连接上的处理错误伪装成握手 426。未知正文/二进制事件和不完整占位符产生本地失败，provider 健康不扣分，已收到 usage 仍保留。
 - WS 保护状态按轮次固定；关掉开关仍需拦截受保护旧轮次的重复事件。开启时，没有待处理请求的正文事件同样不能绕过关联检查。
+- 本地 HTTP 隐私错误按入站协议格式化：OpenAI `error.message/type/code`、Anthropic 顶层 `type:error`、Gemini 数字 code/status；非法 JSON、请求签名拒绝和响应还原失败都保持客户端可解析的 envelope。
 - 完全关闭后的新请求沿用既有兼容链路；旧上游历史不会被改写。引用过期映射或其它 provider 的 `previous_response_id` 需要新建会话。
-- 回归包括 `privacy_http_converts_requests_before_redacting_and_restores_json_tools_after_conversion`、`privacy_http_sse_conversion_keeps_tool_json_usage_and_redacted_logs` 和 WebSocket privacy 往返测试。
+- 回归包括 `privacy/tests.rs`、`runtime/websocket/privacy_tests.rs`、`runtime/websocket/privacy_matrix_tests.rs`：七入口 × 四种目标协议 × 开关两态 × JSON/SSE/强制 SSE 聚合，以及本节 Ollama、legacy completion、协议错误和开启保护后的 WS 426→HTTP 往返。
 
 ## 8. 维护流程
 

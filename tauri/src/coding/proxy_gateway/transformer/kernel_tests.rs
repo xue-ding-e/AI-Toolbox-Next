@@ -5088,6 +5088,72 @@ fn chat_stream_to_responses_waits_for_usage_only_chunk_before_completed() {
 }
 
 #[test]
+fn chat_stream_to_gemini_waits_for_usage_only_chunk_before_finish() {
+    let mut kernel = StreamKernel::new(ConversionRoute::new(
+        AiProtocol::OpenAiChat,
+        AiProtocol::GeminiNative,
+    ));
+    let content = push_stream_chunk(
+        &mut kernel,
+        "data: {\"id\":\"chat_usage\",\"model\":\"model-a\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}\n\n",
+    );
+    assert_eq!(
+        sse_data_values(&content)[0]["candidates"][0]["content"]["parts"][0]["text"],
+        "hello"
+    );
+    let pending = push_stream_chunk(
+        &mut kernel,
+        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+    );
+    assert!(!pending.contains("finishReason"));
+    let completed = push_stream_chunk(
+        &mut kernel,
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":2}}}\n\n",
+    );
+    let values = sse_data_values(&completed);
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0]["candidates"][0]["finishReason"], "MAX_TOKENS");
+    assert_eq!(values[0]["usageMetadata"]["promptTokenCount"], 12);
+    assert_eq!(values[0]["usageMetadata"]["candidatesTokenCount"], 3);
+    assert_eq!(values[0]["usageMetadata"]["totalTokenCount"], 15);
+    assert_eq!(values[0]["usageMetadata"]["cachedContentTokenCount"], 2);
+    assert!(push_stream_chunk(&mut kernel, "data: [DONE]\n\n").is_empty());
+    assert!(finish_stream(&mut kernel).is_empty());
+}
+
+#[test]
+fn chat_stream_to_gemini_without_usage_preserves_eof_reason_or_late_error() {
+    for failed in [false, true] {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::GeminiNative,
+        ));
+        let pending = push_stream_chunk(
+            &mut kernel,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":\"length\"}]}\n\n",
+        );
+        assert!(!pending.contains("finishReason"));
+        let terminal = if failed {
+            push_stream_chunk(
+                &mut kernel,
+                "data: {\"error\":{\"message\":\"upstream failed\",\"code\":\"500\"}}\n\n",
+            )
+        } else {
+            finish_stream(&mut kernel)
+        };
+        let values = sse_data_values(&terminal);
+        assert_eq!(values.len(), 1);
+        if failed {
+            assert_eq!(values[0]["error"]["code"], 500);
+            assert!(!terminal.contains("finishReason"));
+        } else {
+            assert_eq!(values[0]["candidates"][0]["finishReason"], "MAX_TOKENS");
+        }
+        assert!(finish_stream(&mut kernel).is_empty());
+    }
+}
+
+#[test]
 fn chat_stream_usage_only_chunk_synthesizes_zero_reasoning_tokens() {
     let mut kernel = StreamKernel::new(ConversionRoute::new(
         AiProtocol::OpenAiChat,
@@ -5612,6 +5678,36 @@ fn gemini_function_call_finish_maps_to_tool_calls_for_chat() {
         .expect("usage chunk");
     assert_eq!(usage_chunk["usage"]["prompt_tokens"], 9);
     assert_eq!(usage_chunk["usage"]["completion_tokens"], 2);
+}
+
+#[test]
+fn gemini_stream_preserves_identical_deltas_and_accepts_growing_snapshots() {
+    for (pieces, expected) in [
+        (vec!["_", "_", "AITB", "_", "_"], "__AITB__"),
+        (vec!["ha", "ha", "!"], "haha!"),
+        (vec!["H", "He", "Hello"], "Hello"),
+    ] {
+        let mut wire = String::new();
+        for piece in pieces {
+            wire.push_str(&format!("data: {}\n\n", json!({"responseId":"gemini-repeat","candidates":[{"content":{"parts":[{"text":piece},{"text":piece,"thought":true}]}}]})));
+        }
+        wire.push_str("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n");
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
+            wire,
+        );
+        let values = sse_data_values(&output);
+        for pointer in [
+            "/choices/0/delta/content",
+            "/choices/0/delta/reasoning_content",
+        ] {
+            let text = values
+                .iter()
+                .filter_map(|value| value.pointer(pointer).and_then(Value::as_str))
+                .collect::<String>();
+            assert_eq!(text, expected, "{pointer}");
+        }
+    }
 }
 
 #[test]

@@ -707,6 +707,24 @@ pub(super) async fn route_request(
     route_request_with_options(request, context, &GatewayRequestOptions::default()).await
 }
 
+fn privacy_error_value(route: &GatewayRoute, status: u16, code: &str, message: &str) -> Value {
+    match source_protocol_from_route(route) {
+        Some(AiProtocol::AnthropicMessages) => json!({
+            "type":"error",
+            "error":{"type":if status < 500 { "invalid_request_error" } else { "api_error" },"message":message,"code":code}
+        }),
+        Some(AiProtocol::GeminiNative) => {
+            crate::coding::proxy_gateway::transformer::gemini_stream_error(
+                &status.to_string(),
+                message,
+            )
+        }
+        _ => {
+            json!({"error":{"type":if status < 500 { "invalid_request_error" } else { "server_error" },"message":message,"code":code}})
+        }
+    }
+}
+
 pub(super) async fn route_request_with_options(
     request: &DebugHttpRequest,
     context: &GatewayRuntimeContext,
@@ -799,7 +817,7 @@ pub(super) async fn route_request_with_options(
                 let mut response = json_response(
                     400,
                     "Bad Request",
-                    json!({"error":"privacy_request_blocked","message":error}),
+                    privacy_error_value(&route, 400, "privacy_request_blocked", &error),
                     route.route_name,
                     None,
                     &error,
@@ -844,9 +862,10 @@ pub(super) async fn route_request_with_options(
                     }
                     response.status_code = 502;
                     response.status_text = "Bad Gateway".into();
-                    response.body = json!({"error":"privacy_restore_failed","message":error})
-                        .to_string()
-                        .into_bytes();
+                    response.body =
+                        privacy_error_value(&route, 502, "privacy_restore_failed", &error)
+                            .to_string()
+                            .into_bytes();
                     response.response_body_bytes = response.body.len() as u64;
                     response.headers = vec![("Content-Type".into(), "application/json".into())];
                     response.error_category = Some("privacy_restore_failed".into());
@@ -2439,11 +2458,13 @@ fn ollama_chat_response_value_to_openai_chat(value: Value) -> Value {
         .and_then(Value::as_str)
         .filter(|thinking| !thinking.trim().is_empty())
         .map(str::to_string);
+    let tool_calls = ollama_tool_calls_to_openai_chat(&message, 0, false);
     let finish_reason = ollama_done_reason_to_openai(
         value
             .get("done_reason")
             .and_then(Value::as_str)
             .unwrap_or("stop"),
+        !tool_calls.is_empty(),
     );
 
     let mut openai_message = serde_json::Map::new();
@@ -2451,6 +2472,9 @@ fn ollama_chat_response_value_to_openai_chat(value: Value) -> Value {
     openai_message.insert("content".to_string(), Value::String(content));
     if let Some(thinking) = thinking {
         openai_message.insert("reasoning_content".to_string(), Value::String(thinking));
+    }
+    if !tool_calls.is_empty() {
+        openai_message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
 
     json!({
@@ -2482,9 +2506,48 @@ fn ollama_usage_value(value: &Value) -> Value {
     })
 }
 
-fn ollama_done_reason_to_openai(reason: &str) -> &'static str {
+fn ollama_tool_calls_to_openai_chat(
+    message: &Value,
+    first_index: usize,
+    streaming: bool,
+) -> Vec<Value> {
+    message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(position, call)| {
+            let function = call.get("function")?;
+            let name = function.get("name")?.as_str()?;
+            let arguments = function
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let arguments = arguments
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| arguments.to_string());
+            let index = first_index + position;
+            let id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("call_ollama_{index}"));
+            let mut call =
+                json!({"id":id,"type":"function","function":{"name":name,"arguments":arguments}});
+            if streaming {
+                call["index"] = json!(index);
+            }
+            Some(call)
+        })
+        .collect()
+}
+
+fn ollama_done_reason_to_openai(reason: &str, has_tool_calls: bool) -> &'static str {
     match reason.trim().to_ascii_lowercase().as_str() {
         "length" | "max_tokens" | "limit" => "length",
+        _ if has_tool_calls => "tool_calls",
         _ => "stop",
     }
 }
@@ -2495,6 +2558,7 @@ struct OllamaNdjsonSseState {
     pending: VecDeque<Vec<u8>>,
     sent_role: bool,
     done: bool,
+    next_tool_index: usize,
 }
 
 fn convert_ollama_ndjson_stream_to_openai_chat_sse(stream: DebugBodyStream) -> DebugBodyStream {
@@ -2505,6 +2569,7 @@ fn convert_ollama_ndjson_stream_to_openai_chat_sse(stream: DebugBodyStream) -> D
             pending: VecDeque::new(),
             sent_role: false,
             done: false,
+            next_tool_index: 0,
         },
         |mut state| async move {
             loop {
@@ -2519,7 +2584,10 @@ fn convert_ollama_ndjson_stream_to_openai_chat_sse(stream: DebugBodyStream) -> D
                     }
                     if !state.done {
                         state.done = true;
-                        return Some((Ok(b"data: [DONE]\n\n".to_vec()), state));
+                        return Some((
+                            Err("Ollama stream ended without a done event".into()),
+                            state,
+                        ));
                     }
                     return None;
                 };
@@ -2542,6 +2610,9 @@ fn convert_ollama_ndjson_stream_to_openai_chat_sse(stream: DebugBodyStream) -> D
 
 impl OllamaNdjsonSseState {
     fn push_line(&mut self, line: &[u8]) {
+        if self.done {
+            return;
+        }
         let trimmed = trim_ascii_line(line);
         if trimmed.is_empty() {
             return;
@@ -2549,6 +2620,21 @@ impl OllamaNdjsonSseState {
         let Ok(value) = serde_json::from_slice::<Value>(trimmed) else {
             return;
         };
+        if let Some(error) = value
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|error| !error.trim().is_empty())
+        {
+            self.done = true;
+            self.pending.push_back(
+                format!(
+                    "data: {}\n\n",
+                    json!({"error":{"message":error,"type":"server_error","code":"ollama_error"}})
+                )
+                .into_bytes(),
+            );
+            return;
+        }
         let model = value.get("model").and_then(Value::as_str).unwrap_or("");
         let mut delta = serde_json::Map::new();
         if !self.sent_role {
@@ -2572,7 +2658,17 @@ impl OllamaNdjsonSseState {
                 Value::String(thinking.to_string()),
             );
         }
+        let tool_calls = ollama_tool_calls_to_openai_chat(
+            value.get("message").unwrap_or(&Value::Null),
+            self.next_tool_index,
+            true,
+        );
+        self.next_tool_index += tool_calls.len();
+        if !tool_calls.is_empty() {
+            delta.insert("tool_calls".into(), Value::Array(tool_calls));
+        }
         let done = value.get("done").and_then(Value::as_bool).unwrap_or(false);
+        let emitted_delta = !delta.is_empty();
         if !delta.is_empty() || !done {
             let finish_reason = if done {
                 Some(ollama_done_reason_to_openai(
@@ -2580,6 +2676,7 @@ impl OllamaNdjsonSseState {
                         .get("done_reason")
                         .and_then(Value::as_str)
                         .unwrap_or("stop"),
+                    self.next_tool_index > 0,
                 ))
             } else {
                 None
@@ -2588,12 +2685,11 @@ impl OllamaNdjsonSseState {
                 model,
                 Value::Object(delta),
                 finish_reason,
-                None,
             ));
         }
         if done {
             self.done = true;
-            if delta_is_empty_done_without_chunk(&value) {
+            if !emitted_delta {
                 self.pending.push_back(openai_chat_sse_chunk(
                     model,
                     json!({}),
@@ -2602,8 +2698,8 @@ impl OllamaNdjsonSseState {
                             .get("done_reason")
                             .and_then(Value::as_str)
                             .unwrap_or("stop"),
+                        self.next_tool_index > 0,
                     )),
-                    None,
                 ));
             }
             if let Some(usage) = ollama_stream_usage_chunk(model, &value) {
@@ -2626,39 +2722,26 @@ fn trim_ascii_line(line: &[u8]) -> &[u8] {
     &line[start..end]
 }
 
-fn delta_is_empty_done_without_chunk(value: &Value) -> bool {
-    value
-        .pointer("/message/content")
-        .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
-        && value
-            .pointer("/message/thinking")
-            .and_then(Value::as_str)
-            .is_none_or(str::is_empty)
-}
-
 fn ollama_stream_usage_chunk(model: &str, value: &Value) -> Option<Vec<u8>> {
-    let prompt_tokens = value.get("prompt_eval_count").and_then(Value::as_u64)?;
-    let completion_tokens = value.get("eval_count").and_then(Value::as_u64).unwrap_or(0);
-    Some(openai_chat_sse_chunk(
-        model,
-        json!({}),
-        None,
-        Some(json!({
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens
-        })),
-    ))
+    value.get("prompt_eval_count").and_then(Value::as_u64)?;
+    Some(
+        format!(
+            "data: {}\n\n",
+            json!({
+                "id": "chatcmpl-ollama",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [],
+                "usage": ollama_usage_value(value)
+            })
+        )
+        .into_bytes(),
+    )
 }
 
-fn openai_chat_sse_chunk(
-    model: &str,
-    delta: Value,
-    finish_reason: Option<&str>,
-    usage: Option<Value>,
-) -> Vec<u8> {
-    let mut chunk = json!({
+fn openai_chat_sse_chunk(model: &str, delta: Value, finish_reason: Option<&str>) -> Vec<u8> {
+    let chunk = json!({
         "id": "chatcmpl-ollama",
         "object": "chat.completion.chunk",
         "created": 0,
@@ -2671,11 +2754,6 @@ fn openai_chat_sse_chunk(
             }
         ]
     });
-    if let Some(usage) = usage {
-        if let Some(object) = chunk.as_object_mut() {
-            object.insert("usage".to_string(), usage);
-        }
-    }
     let mut bytes = b"data: ".to_vec();
     bytes.extend_from_slice(
         serde_json::to_string(&chunk)
@@ -4408,14 +4486,18 @@ fn local_request_schema_failure_response(
     failover: bool,
 ) -> DebugHttpResponse {
     let message = error.message.clone();
-    let body = CodexResponsesCompactCompat::new(route, provider)
-        .request_schema_error_value(&message)
-        .unwrap_or_else(|| {
-            json!({
-                "error": "gateway_request_schema_rejected",
-                "message": message,
+    let body = if message.starts_with("privacy_") {
+        privacy_error_value(route, 400, "privacy_request_blocked", &message)
+    } else {
+        CodexResponsesCompactCompat::new(route, provider)
+            .request_schema_error_value(&message)
+            .unwrap_or_else(|| {
+                json!({
+                    "error": "gateway_request_schema_rejected",
+                    "message": message,
+                })
             })
-        });
+    };
     let mut response = json_response(
         400,
         "Bad Request",
@@ -4440,7 +4522,14 @@ fn local_request_schema_failure_response(
     response.target_protocol = Some(provider.target_protocol);
     response.upstream_response_body = error.upstream_response_body;
     response.upstream_response_body_bytes = error.upstream_response_body_bytes;
-    response.error_category = Some("request_schema".to_string());
+    response.error_category = Some(
+        if message.starts_with("privacy_") {
+            "privacy_request_blocked"
+        } else {
+            "request_schema"
+        }
+        .to_string(),
+    );
     response.attempt_count = attempt_count;
     response.provider_attempt_count = provider_attempt_count;
     response.failover = failover;
@@ -6882,6 +6971,9 @@ fn convert_openai_chat_request_to_ollama_chat(value: Value) -> Value {
     let mut ollama = serde_json::Map::new();
     ollama.insert("model".to_string(), model);
     ollama.insert("messages".to_string(), Value::Array(messages));
+    if let Some(tools) = object.remove("tools") {
+        ollama.insert("tools".to_string(), tools);
+    }
     if let Some(Value::Bool(stream)) = stream {
         ollama.insert("stream".to_string(), Value::Bool(stream));
     } else {
@@ -6917,6 +7009,27 @@ fn openai_chat_message_to_ollama_message(message: Value) -> Option<Value> {
     }
     if let Some(reasoning) = first_reasoning_field_text(&message_object) {
         ollama_message.insert("thinking".to_string(), Value::String(reasoning));
+    }
+    if let Some(Value::Array(calls)) = message_object.remove("tool_calls") {
+        let calls = calls
+            .into_iter()
+            .filter_map(|call| {
+                let mut function = call.get("function")?.clone();
+                if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                    if let Ok(arguments) = serde_json::from_str::<Value>(arguments) {
+                        function["arguments"] = arguments;
+                    }
+                }
+                Some(json!({"function":function}))
+            })
+            .collect::<Vec<_>>();
+        ollama_message.insert("tool_calls".to_string(), Value::Array(calls));
+    }
+    if let Some(name) = message_object
+        .remove("name")
+        .or_else(|| message_object.remove("tool_name"))
+    {
+        ollama_message.insert("tool_name".to_string(), name);
     }
     Some(Value::Object(ollama_message))
 }
@@ -10261,6 +10374,13 @@ fn gateway_response_status_reports_error(status: &str) -> bool {
 }
 
 fn choice_has_meaningful_content(choice: &Value) -> bool {
+    if choice
+        .get("text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty())
+    {
+        return true;
+    }
     let message = choice
         .get("message")
         .or_else(|| choice.get("delta"))

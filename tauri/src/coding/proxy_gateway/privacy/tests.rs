@@ -783,3 +783,291 @@ fn tool_stream_preserves_json_keys_and_handles_split_escapes_and_long_values() {
     assert_eq!(restored["empty"], "");
     assert_eq!(restored["nested"]["key"], "plain");
 }
+
+#[test]
+fn protocol_media_locations_keep_urls_opaque_while_redacting_neighboring_text() {
+    let image_url = "https://cdn.example/user@example.com.png";
+    for (body, image_pointer, text_pointer) in [
+        (
+            json!({"input":[{"type":"function_call_output","call_id":"call","output":[{"type":"input_text","text":"user@example.com"},{"type":"input_image","image_url":image_url}]}]}),
+            "/input/0/output/1/image_url",
+            "/input/0/output/0/text",
+        ),
+        (
+            json!({"messages":[{"role":"user","content":"user@example.com","images":[image_url]}]}),
+            "/messages/0/images/0",
+            "/messages/0/content",
+        ),
+    ] {
+        let request = request(&runtime(), "media");
+        let masked: Value = serde_json::from_slice(
+            &request
+                .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            masked.pointer(image_pointer),
+            body.pointer(image_pointer),
+            "{image_pointer}"
+        );
+        assert_ne!(
+            masked.pointer(text_pointer),
+            body.pointer(text_pointer),
+            "{text_pointer}"
+        );
+    }
+}
+
+#[test]
+fn gemini_function_response_media_bytes_are_not_business_values() {
+    let runtime = runtime();
+    let mut settings = PrivacySettings::default();
+    settings.enabled = true;
+    settings.rules.custom.push(PrivacyCustomRule {
+        id: "base64".into(),
+        name: "Base64 text".into(),
+        enabled: true,
+        kind: PrivacyRuleKind::Literal,
+        pattern: "YWJj".into(),
+        priority: 200,
+    });
+    runtime.publish(CompiledPolicy::compile(&settings).unwrap());
+    let request = request(&runtime, "gemini-media");
+    let body = json!({"contents":[{"role":"user","parts":[{"text":"YWJj"},{"functionResponse":{"name":"read_image","response":{"text":"YWJj"},"parts":[{"inlineData":{"mimeType":"image/png","data":"YWJj"}}]}}]}]});
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        masked.pointer("/contents/0/parts/1/functionResponse/parts"),
+        body.pointer("/contents/0/parts/1/functionResponse/parts")
+    );
+    assert_ne!(
+        masked.pointer("/contents/0/parts/1/functionResponse/response/text"),
+        body.pointer("/contents/0/parts/1/functionResponse/response/text")
+    );
+}
+
+#[test]
+fn schema_locations_scan_descriptions_without_rewriting_type_format_or_required_keys() {
+    let runtime = runtime();
+    let mut settings = PrivacySettings::default();
+    settings.enabled = true;
+    for pattern in ["email", "string"] {
+        settings.rules.custom.push(PrivacyCustomRule {
+            id: pattern.into(),
+            name: pattern.into(),
+            enabled: true,
+            kind: PrivacyRuleKind::Literal,
+            pattern: pattern.into(),
+            priority: 200,
+        });
+    }
+    runtime.publish(CompiledPolicy::compile(&settings).unwrap());
+    let schema = json!({"type":"object","properties":{"email":{"type":"string","format":"email","description":"email"}},"required":["email"]});
+    for (body, pointer) in [
+        (
+            json!({"response_format":{"type":"json_schema","json_schema":{"name":"email","schema":schema}}}),
+            "/response_format/json_schema/schema",
+        ),
+        (json!({"format":schema}), "/format"),
+        (
+            json!({"generationConfig":{"responseSchema":schema,"responseMimeType":"application/json"}}),
+            "/generationConfig/responseSchema",
+        ),
+    ] {
+        let request = request(&runtime, "schema");
+        let masked: Value = serde_json::from_slice(
+            &request
+                .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+                .unwrap(),
+        )
+        .unwrap();
+        let masked_schema = masked.pointer(pointer).unwrap();
+        assert_eq!(
+            masked_schema["properties"]["email"]["type"], "string",
+            "{pointer}"
+        );
+        assert_eq!(
+            masked_schema["properties"]["email"]["format"], "email",
+            "{pointer}"
+        );
+        assert_eq!(masked_schema["required"], json!(["email"]), "{pointer}");
+        assert_ne!(
+            masked_schema["properties"]["email"]["description"], "email",
+            "{pointer}"
+        );
+    }
+}
+
+#[test]
+fn responses_history_keeps_namespace_identity() {
+    let runtime = runtime();
+    let mut settings = PrivacySettings::default();
+    settings.enabled = true;
+    settings.rules.custom.push(PrivacyCustomRule {
+        id: "namespace".into(),
+        name: "Namespace word".into(),
+        enabled: true,
+        kind: PrivacyRuleKind::Literal,
+        pattern: "workspace".into(),
+        priority: 200,
+    });
+    runtime.publish(CompiledPolicy::compile(&settings).unwrap());
+    let request = request(&runtime, "namespace-identity");
+    let body = json!({"tools":[{"type":"namespace","name":"workspace","tools":[{"type":"function","name":"run","description":"workspace"}]}],"input":[{"type":"function_call","namespace":"workspace","name":"run","call_id":"call","arguments":"{}"}]});
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        masked["input"][0]["namespace"],
+        body["input"][0]["namespace"]
+    );
+    assert_ne!(
+        masked["tools"][0]["tools"][0]["description"],
+        body["tools"][0]["tools"][0]["description"]
+    );
+}
+
+#[test]
+fn ollama_tool_name_is_identity_while_tool_result_fields_are_business_text() {
+    let runtime = runtime();
+    let mut settings = PrivacySettings::default();
+    settings.enabled = true;
+    settings.rules.custom.push(PrivacyCustomRule {
+        id: "tool-name".into(),
+        name: "Tool name in business text".into(),
+        enabled: true,
+        kind: PrivacyRuleKind::Literal,
+        pattern: "write_file".into(),
+        priority: 200,
+    });
+    runtime.publish(CompiledPolicy::compile(&settings).unwrap());
+    let request = request(&runtime, "ollama-tool-identity");
+    let body = json!({"messages":[{"role":"tool","tool_name":"write_file","content":json!({"tool_name":"write_file"}).to_string()}]});
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(masked["messages"][0]["tool_name"], "write_file");
+    let content: Value =
+        serde_json::from_str(masked["messages"][0]["content"].as_str().unwrap()).unwrap();
+    assert_ne!(content["tool_name"], "write_file");
+}
+
+#[test]
+fn anthropic_plain_text_documents_are_scanned_without_touching_binary_sources() {
+    let request = request(&runtime(), "documents");
+    let body = json!({"messages":[{"role":"user","content":[{"type":"document","title":"user@example.com","source":{"type":"text","media_type":"text/plain","data":"user@example.com"}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"opaque-base64"}}]}]});
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(&serde_json::to_vec(&body).unwrap(), "p")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_ne!(
+        masked["messages"][0]["content"][0]["source"]["data"],
+        "user@example.com"
+    );
+    assert_ne!(
+        masked["messages"][0]["content"][0]["title"],
+        "user@example.com"
+    );
+    assert_eq!(
+        masked["messages"][0]["content"][1],
+        body["messages"][0]["content"][1]
+    );
+}
+
+#[tokio::test]
+async fn legacy_completion_text_restores_across_sse_fragments() {
+    let request = request(&runtime(), "completions");
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(br#"{"prompt":"user@example.com"}"#, "p")
+            .unwrap(),
+    )
+    .unwrap();
+    let token = masked["prompt"].as_str().unwrap();
+    let mut wire = token
+        .chars()
+        .map(|character| {
+            format!(
+                "data: {}\n\n",
+                json!({"choices":[{"index":0,"text":character.to_string(),"finish_reason":null}]})
+            )
+        })
+        .collect::<String>();
+    wire.push_str("data: {\"choices\":[{\"index\":0,\"text\":\"\",\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+    let output = stream::restore_sse_stream(
+        Box::pin(futures_util::stream::iter(vec![Ok(wire.into_bytes())])),
+        request,
+    )
+    .collect::<Vec<_>>()
+    .await;
+    let output = String::from_utf8(
+        output
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .concat(),
+    )
+    .unwrap();
+    let text = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .map(|value| {
+            value["choices"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect::<String>();
+    assert_eq!(text, "user@example.com");
+}
+
+#[test]
+fn gemini_thought_and_public_text_at_the_same_part_index_use_separate_channels() {
+    let request = request(&runtime(), "gemini-channel-kinds");
+    let masked: Value = serde_json::from_slice(
+        &request
+            .prepare(br#"{"input":"user@example.com"}"#, "p")
+            .unwrap(),
+    )
+    .unwrap();
+    let token = masked["input"].as_str().unwrap();
+    let mut restorer = stream::EventRestorer::new(request);
+    let thinking = json!({"candidates":[{"index":0,"content":{"parts":[{"thought":true,"text":"Plan safely","thoughtSignature":"opaque-signature"}]}}]});
+    restorer
+        .push_json(&serde_json::to_vec(&thinking).unwrap())
+        .unwrap();
+    let mut output = Vec::new();
+    for piece in token.as_bytes().chunks(3) {
+        let event = json!({"candidates":[{"index":0,"content":{"parts":[{"text":std::str::from_utf8(piece).unwrap()}]}}]});
+        output.extend(
+            restorer
+                .push_json(&serde_json::to_vec(&event).unwrap())
+                .unwrap(),
+        );
+    }
+    let text = output
+        .iter()
+        .map(|bytes| {
+            serde_json::from_slice::<Value>(bytes).unwrap()["candidates"][0]["content"]["parts"][0]
+                ["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<String>();
+    assert_eq!(text, "user@example.com");
+}

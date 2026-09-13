@@ -119,6 +119,7 @@ sequenceDiagram
 - 请求日志里 `upstream_response_body` 表示上游返回给网关、尚未转换的原始响应，`response_body` 表示网关最终返回给客户端的响应。两者都受 `store_response_body` 控制；非流式响应可以在转换前保留原始 body，流式响应只能保存 bounded snapshot，不能为了日志 full-buffer SSE。
 - 请求详情导出必须同时脱敏 JSON 字段、header 值和 URL/query 文本中的鉴权参数。尤其是 Gemini 常见 `?key=...`、`api_key` / `api-key`、`access_token`、`refresh_token`、`client_secret` / `client-secret`、`token` 这类 query 不能以明文出现在 `summary.path`、`routing.upstream_url` 或 provider attempts 中。
 - SSE/流式响应必须边读边写回客户端，不能为了日志、统计或 token 解析先 `bytes().await` 全量缓冲；统计采集只能在透传过程中维护 bounded snapshot 和 usage collector。
+- Ollama 是 runtime wire adapter，必须保留出站 tools/历史 tool_calls、把合法参数字符串解码成对象，并在 JSON/NDJSON 回转时保留工具调用和真实 usage。NDJSON 用量必须是 Chat `choices:[]` usage-only 事件，不能用无 finish 的空 delta 导致 transformer 丢用量；只接受真实 done，error/截断 EOF 不得补成功终态。Legacy Completions 的 `choices[].text` 是有效正文，空响应判定和 SSE 还原都要覆盖。
 - 网关运行态必须保持 tokio async 链路：监听使用 `tokio::net::TcpListener`，连接处理使用 `tokio::spawn`，HTTP 读写和流式 body 写回都 `.await`。不要在请求路径里重新引入 `std::thread + block_on` 或 thread-per-connection。
 - 流式 failover 只有在首个有协议意义的 chunk 到达后才算当前 provider 成功；单纯 SSE 控制事件、heartbeat、created/completed 但没有文本/工具/候选等实际内容时仍应按 empty response 失败并允许重试/故障转移。完全没有收到非空 chunk 的首包前断流仍按 timeout 处理。写回客户端时每个 chunk 读取都必须套 idle timeout，避免上游半开连接永久挂住。
 - Gateway 连通性测试的 `timeoutSecs` 是从请求开始计算的整体预算，路由/建连/首字节和后续流读取共享同一个 deadline，不能在拿到 response 后重新分配完整时长。HTTP 2xx 流也必须把 `event: response.failed`、`type: response.failed` 和嵌套 `response.error` / failure status 判为失败。
@@ -252,9 +253,12 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 ## 数据脱敏边界
 
 - 数据脱敏的长期边界见 `docs/gateway-data-redaction.md`。策略属于 runtime，不进入 transformer；必须在出站转换/兼容之后脱敏、在原始历史记录/响应回转之后还原。从原请求重建的整流正文要再次处理，重试/failover 保持同一请求映射。关闭路径不加 JSON 处理、映射或流包装。
+- 覆盖按真实路由和 `supported_mvp()` 判断，不按 User-Agent 或 Session 采集支持推断。Claude Desktop 必须与其余受支持 CLI 一起经过共用发送入口；内部不带版本的 source path 别名不能当作已开放网络路由。新增 CLI 要补 `runtime/websocket/privacy_matrix_tests.rs` 的入口集合及 JSON/SSE/强制 SSE、开关两态矩阵。
 - 隐私规则用 `proxy_gateway_settings` 的独立 `privacy` 记录和独立命令；不能塞入频繁 clone 的普通 settings，也不能复用会清 provider cache 的普通设置更新。更新串行完成校验/编译、保存、发布；规则编辑只更新 rules，开关只更新 enabled。映射只存在内存，response ID 弱引用必须受同身份/会话/provider/代次约束。
 - 工具参数可能包含多层 JSON 字符串（例如写文件的 content）。SSE/WS 必须按真实逻辑通道等待完整 JSON 字符串值，解码后用业务遍历还原，再逐层编码；不能只对原值 escape 一次，也不能漏掉 Unicode 转义的占位符。普通文本仍只缓存不完整占位符，不能为普通 `{` 等待或丢字。空 error 字段不是终态；成功必须等还原后的终态实际送达，错误仍保留已观察到的 usage。
 - Anthropic thinking / Gemini thought 的签名可能在后续分片到达，不能只检查当前 JSON 对象是否有 signature。必须记住通道的签名状态和已修改状态，禁止将修改后的文本与原签名拼接。JSON 响应还原前保留原始上游快照；请求解压/解析失败发生在映射创建之前时，隐私模式也不能记录未处理的原文正文。
+- Gemini functionCall 的默认兼容签名只复用 transformer 的同一常量识别，不当作真实签名绑定；其他签名和 thinking 文本不豁免。Gemini 通道必须区分 thought/text/function，同一 part index 的思考状态不能污染随后公开文本，未收齐的 thought 占位符也不能靠省略标记绕过检查。
+- 协议身份、Schema 控制字段和媒体不能按普通业务对象遍历：保留 namespace/tool_name、format/required、工具结果 block 中的图片/inlineData 和 Ollama images；描述/示例、工具结果文本和 Anthropic 纯文本文档仍扫描。HTTP 隐私错误必须按客户端协议提供 error envelope，保持 provider 健康中立。
 - 脱敏日志必须使用独立副本；截断/解析失败以省略说明替代，不能回退原文、不能落盘映射。日志对流式字段的扫描也要跨分片并隔离工具通道。改动至少验证 `cargo test --lib privacy`、现有 WS 生命周期和 SQLite/全量门禁。
 - 日志原值匹配必须一次选定原始文本范围并保护已有 token，不能循环 replace 新生成的字符串；单字符凭据会命中 token 自身。映射 TTL 是闲置期限，活动请求不按起始时间过期，响应到达需刷新缓存保留时间。
 - WS 旧轮次是否受保护要跟随有界 completed ID 记录，不能只看当前总开关；关闭后迟到的重复终态也不能带占位符透传。开启时的未关联正文检查必须覆盖 pending 为空的情况。

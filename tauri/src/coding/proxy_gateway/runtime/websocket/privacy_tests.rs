@@ -3,9 +3,9 @@ use crate::coding::proxy_gateway::privacy::{
     CompiledPolicy, PrivacyCustomRule, PrivacyRuleKind, PrivacySettings,
 };
 
-const SECRET: &str = "secret\"line\nvalue";
+pub(super) const SECRET: &str = "secret\"line\nvalue";
 
-fn enable_privacy(context: &GatewayRuntimeContext) {
+pub(super) fn enable_privacy(context: &GatewayRuntimeContext) {
     let mut settings = PrivacySettings::default();
     settings.enabled = true;
     settings.rules.custom.push(PrivacyCustomRule {
@@ -22,7 +22,7 @@ fn enable_privacy(context: &GatewayRuntimeContext) {
     context.settings.write().unwrap().log_max_body_size_kb = 64;
 }
 
-fn token(body: &[u8]) -> String {
+pub(super) fn token(body: &[u8]) -> String {
     let text = std::str::from_utf8(body).unwrap();
     assert!(
         !text.contains("secret"),
@@ -36,7 +36,7 @@ fn token(body: &[u8]) -> String {
         .to_string()
 }
 
-fn upstream_json(protocol: &str, token: &str) -> Value {
+pub(super) fn upstream_json(protocol: &str, token: &str) -> Value {
     match protocol {
         "openai_chat" => {
             json!({"id":"chat_privacy","model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":token,"tool_calls":[{"id":"tool_1","type":"function","function":{"name":"write_file","arguments":json!({"value":token}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":3}})
