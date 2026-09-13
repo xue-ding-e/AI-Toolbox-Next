@@ -10,6 +10,9 @@ use tokio::net::TcpListener;
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 
+#[path = "privacy_tests.rs"]
+mod privacy_tests;
+
 fn test_context(
     upstream_url: &str,
     protocol: &str,

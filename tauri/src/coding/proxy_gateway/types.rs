@@ -965,6 +965,8 @@ pub struct GatewayProviderAttempt {
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy: Option<super::privacy::PrivacyDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub websocket: Option<GatewayWebSocketMetadata>,
     #[serde(flatten)]
     pub summary: GatewayRequestLogSummary,

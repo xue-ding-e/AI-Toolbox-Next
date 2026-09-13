@@ -2558,6 +2558,7 @@ pub fn request_log_detail_from_summary(
                     .saturating_add(cache_creation_tokens)
                     .saturating_add(row.get::<_, i64>(33)?.max(0) as u64);
                 Ok(GatewayRequestLogDetail {
+                    privacy: None,
                     websocket: None,
                     summary: GatewayRequestLogSummary {
                         transport: super::types::GatewayRequestTransport::from_str(&row.get::<_, String>(34)?),
@@ -2822,6 +2823,7 @@ mod tests {
             GatewayCliKey::OpenCode => ("opencode", "/v1/chat/completions"),
         };
         GatewayRequestLogDetail {
+            privacy: None,
             websocket: None,
             summary: GatewayRequestLogSummary {
                 transport: Default::default(),

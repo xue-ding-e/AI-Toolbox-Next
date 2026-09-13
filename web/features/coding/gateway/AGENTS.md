@@ -94,6 +94,14 @@ sequenceDiagram
 - `GatewayPage.tsx` 只保留页面 shell、标题和内部 Tab 路由；统计数据加载/展示放 `components/GatewayStatisticsView.tsx`，请求列表/详情放 `components/GatewayRequestsView.tsx`，纯格式化函数放 `utils/gatewayFormatters.ts`。新增统计或请求 UI 时优先扩展对应组件，不要把业务逻辑重新写进页面 shell。
 - 样式按组件边界拆分。页面 shell、统计视图、请求视图与用量概览各自维护 CSS Module；用量概览集中在 `GatewayUsageOverview`，不把总览布局重新堆进页面 shell。
 
+## 数据脱敏边界
+
+- 数据脱敏位于设置右列“接管状态”和“日志与统计”之间，不增加顶层 Tab。独立 `gatewayPrivacyApi` 读写：总开关自动保存 enabled，规则 Modal 一次保存 rules，不得用全量旧草稿覆盖另一项。关闭仍可编辑/测试；测试文本不能持久化或发送模型。
+- 数据脱敏开关标题与辅助说明属于同一文字组，使用紧凑的 2px 间距，不能拆成各自占用 section gap 的独立行。规则摘要使用次级字号，管理入口采用带小图标的轻量文字按钮，避免普通灰边框按钮抢占开关的视觉层级。
+- 规则弹窗底部的历史说明是独立内容组，与 Tabs 内最后一行操作保留 12px 外部间距；Tabs 与说明是兄弟节点，内部列表的 gap 不会自动为它们提供间距。
+- 隐私设置与普通 settings 的保存状态独立，异步预览按 revision 丢弃过期结果。失败保持弹窗和草稿、提供行内错误；白名单输入保留正在编辑的换行，保存值才忽略空行。视觉继续使用 DESIGN.md 的紧凑横向表单、原生 Modal 和主题 token。
+- 隐私详情仅在实际命中/还原/失败时展示，来自 JSONL 的 privacy 字段；不从当前开关推测旧请求是否脱敏。日志标注独立脱敏副本，不能把脱敏副本说成客户端实际收到的原始正文。
+
 ## 最小验证
 
 - 至少验证：`visibleTabs` 包含 `gateway` 时，顶栏在 `Image` 左侧显示网关入口。

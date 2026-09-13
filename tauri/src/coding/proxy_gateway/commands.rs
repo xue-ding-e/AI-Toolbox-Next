@@ -57,6 +57,37 @@ pub async fn proxy_gateway_get_settings(
 }
 
 #[tauri::command]
+pub async fn proxy_gateway_get_privacy_settings(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+) -> Result<super::privacy::PrivacySettings, String> {
+    super::privacy::load_settings(&sqlite_state)
+}
+
+#[tauri::command]
+pub async fn proxy_gateway_update_privacy_settings(
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    update: super::privacy::PrivacySettingsUpdate,
+) -> Result<super::privacy::PrivacySettings, String> {
+    // Serialize with start/restart and other policy updates. Publish only after persistence succeeds.
+    let manager = gateway_state
+        .manager
+        .lock()
+        .map_err(|_| "Proxy gateway manager lock poisoned")?;
+    let (settings, policy) = super::privacy::update_settings(&sqlite_state, update)?;
+    manager.update_privacy_policy(policy);
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn proxy_gateway_preview_privacy(
+    rules: super::privacy::PrivacyRules,
+    text: String,
+) -> Result<super::privacy::PrivacyPreview, String> {
+    super::privacy::preview(rules, text)
+}
+
+#[tauri::command]
 pub async fn proxy_gateway_update_settings(
     gateway_state: tauri::State<'_, ProxyGatewayState>,
     sqlite_state: tauri::State<'_, SqliteDbState>,
@@ -555,6 +586,7 @@ fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
         "summary": summary_value,
         "provider_attempts": provider_attempts_value,
         "websocket": websocket_value,
+        "privacy": detail.privacy,
         "request": {
             "headers": redact_header_map(detail.request_headers.as_ref()),
             "body_before_conversion": redact_body(detail.request_body.as_deref()),
@@ -915,6 +947,7 @@ mod tests {
     fn request_detail_fixture() -> GatewayRequestLogDetail {
         let now = Utc::now();
         let detail = GatewayRequestLogDetail {
+            privacy: None,
             websocket: None,
             summary: GatewayRequestLogSummary {
                 transport: Default::default(),
@@ -1005,6 +1038,22 @@ mod tests {
         assert_eq!(exported["websocket"]["stream_id"], "lane-export");
         assert_eq!(exported["websocket"]["handshake_status"], 101);
         assert!(!exported.to_string().contains("key=secret"));
+    }
+
+    #[test]
+    fn privacy_export_keeps_the_recorded_log_redaction_marker() {
+        let mut detail = request_detail_fixture();
+        detail.privacy = Some(super::super::privacy::PrivacyDetail {
+            matched_values: 1,
+            restored_values: 2,
+            log_redacted: true,
+            ..Default::default()
+        });
+        let exported = build_request_log_detail_export(&detail);
+        assert_eq!(exported["privacy"]["log_redacted"], true);
+        assert_eq!(exported["privacy"]["matched_values"], 1);
+        assert_eq!(exported["privacy"]["restored_values"], 2);
+        assert!(exported["privacy"].get("mapping").is_none());
     }
 
     #[test]

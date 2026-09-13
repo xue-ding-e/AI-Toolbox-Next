@@ -656,6 +656,7 @@ mod tests {
             detail_offset: None,
         };
         let record = new_request_log_record(GatewayRequestLogDetail {
+            privacy: None,
             websocket: None,
             summary,
             request_headers: Some(BTreeMap::from([(

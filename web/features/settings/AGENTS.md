@@ -50,6 +50,7 @@ sequenceDiagram
 - 防休眠开关的完整“读取偏好 → 保存 → 应用系统状态”流程必须串行执行。`save_settings` 保存后会等待托盘刷新，而合并刷新可能让后发请求先返回；不能只依靠后端系统调用互斥来保证最后一次操作生效。操作期间显示 loading/disabled，失败后解除忙碌状态并允许重试。
 - 防休眠开关显示持久化偏好；系统应用失败时保留已保存的偏好，单独显示可访问的行内错误，不能让 rejected Promise 静默消失，也不能把尚未保存的值显示成已保存。启动恢复失败必须记录后端日志；系统资源的线程归属遵守根文档的 Async Runtime Safety 规则。
 - Gateway 设置页会按 `appProxyConfigKeys` 判断每 CLI 的 `app_configs` 是否为空。后续给 `AppProxyConfig` 增加字段时必须同步更新这个 key 集合，否则设置页清空超时/重试字段时可能误删相邻功能保存的配置。
+- Gateway 的“数据脱敏”分区委托 gateway 模块组件处理，使用独立 privacy 配置命令；不能放进此页普通 settings 的全量自动保存 payload。开关和规则分别更新，本地预览不启用实际流量处理，详细规则见 `web/features/coding/gateway/AGENTS.md`。
 - Gateway 设置页的 `ProxyGatewaySettings` 运行态开关必须和后端字段同步暴露；例如 `lossy_rejection_enabled` 是用户控制“有损转换是否直接 400”的开关，默认关闭，UI 放在“转发与容错 / 请求整流”里 `Thinking budget 修正` 下方。
 - Gateway 的 Claude Thinking 整流和 OpenAI Responses `encrypted_content` 恢复是两个独立运行态开关：前者只控制 `thinking_rectifier_enabled`，后者只控制 `responses_encrypted_content_rectifier_enabled`。新增恢复策略时不能借用名称或说明仅覆盖其他协议的既有开关。
 - 本地/WebDAV restore 成功后，前端内存 store、路由可见性和模块缓存都可能与新数据库不一致；成功弹窗必须强制用户重启/刷新应用，不能提供可关闭后继续使用旧内存态的路径。

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { GatewayPrivacyDetail } from './gatewayPrivacyApi';
 import type { ConnectivityTestResponse } from './opencodeApi';
 
 const MODEL_PRICING_REMOTE_URL =
@@ -342,6 +343,7 @@ export interface GatewayProviderAttempt {
 }
 
 export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
+  privacy?: GatewayPrivacyDetail | null;
   websocket?: {
     connection_id: string;
     response_id: string | null;

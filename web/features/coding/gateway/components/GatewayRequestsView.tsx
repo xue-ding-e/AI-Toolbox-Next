@@ -671,6 +671,20 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <code>{detail.upstream_url ?? '-'}</code>
           <span>{t('gateway.page.requests.fields.error')}</span>
           <strong>{detail.error_category ?? '-'}</strong>
+          {detail.privacy && (detail.privacy.matched_values > 0 || detail.privacy.restored_values > 0 || detail.privacy.failed) && (
+            <>
+              <span>{t('gateway.privacy.title')}</span>
+              <div className={styles.detailStack}>
+                <strong>{detail.privacy.failed ? t('gateway.privacy.detail.failed') : t('gateway.privacy.detail.applied', {
+                  matched: detail.privacy.matched_values, restored: detail.privacy.restored_values,
+                })}</strong>
+                {Object.keys(detail.privacy.rules).length > 0 && <span className={styles.detailSubtitle}>{t('gateway.privacy.detail.rules', {
+                  rules: Object.entries(detail.privacy.rules).map(([rule, count]) => `${rule} (${count})`).join(', '),
+                })}</span>}
+                {detail.privacy.log_redacted && <span className={styles.detailSubtitle}>{t('gateway.privacy.detail.logs')}</span>}
+              </div>
+            </>
+          )}
         </div>
       );
     }

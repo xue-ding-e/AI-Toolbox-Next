@@ -629,6 +629,7 @@ struct PendingTurn {
     received_event: bool,
     failure_kind: Option<GatewayFailureKind>,
     restore_map: HashMap<String, super::compat::xai_responses::NamespacedName>,
+    privacy_restorer: Option<crate::coding::proxy_gateway::privacy::stream::EventRestorer>,
 }
 
 impl PendingTurn {
@@ -719,7 +720,14 @@ impl PendingTurn {
         if self.response.token_usage.envelope_id.is_none() {
             self.response.token_usage.envelope_id = self.metadata.response_id.clone();
         }
-        if self.kind == GatewayRequestKind::Request && self.response.upstream_model_id.is_some() {
+        if self.kind == GatewayRequestKind::Request
+            && self.response.upstream_model_id.is_some()
+            && !self
+                .response
+                .privacy
+                .as_ref()
+                .is_some_and(|privacy| privacy.detail().failed)
+        {
             let key = ProviderModelHealthKey {
                 cli_key: GatewayCliKey::Codex,
                 provider_id: self.response.provider_id.clone().unwrap_or_default(),
@@ -781,6 +789,7 @@ impl PendingTurn {
 struct PendingTurns {
     lanes: HashMap<String, VecDeque<PendingTurn>>,
     completed: VecDeque<String>,
+    protected_completed: std::collections::HashSet<String>,
 }
 
 impl PendingTurns {
@@ -801,9 +810,17 @@ impl PendingTurns {
             .as_ref()
             .and_then(|turn| turn.metadata.response_id.clone())
         {
+            if turn
+                .as_ref()
+                .is_some_and(|turn| turn.response.privacy.is_some())
+            {
+                self.protected_completed.insert(id.clone());
+            }
             self.completed.push_back(id);
             if self.completed.len() > 256 {
-                self.completed.pop_front();
+                if let Some(expired) = self.completed.pop_front() {
+                    self.protected_completed.remove(&expired);
+                }
             }
         }
         turn
@@ -1031,6 +1048,15 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                             .and_then(|value| value.get("type"))
                             .and_then(Value::as_str);
                         if event_type != Some("response.create") {
+                            if context.privacy.enabled() && !value.as_ref().is_some_and(|value| {
+                                event_type == Some("response.cancel") && value.as_object().is_some_and(|object| object.keys().all(|key| matches!(key.as_str(), "type" | "response_id" | "stream_id" | "event_id")))
+                            }) {
+                                let payload = json!({"type":"error","status":400,"error":{"type":"invalid_request_error","code":"privacy_unsupported_event","message":"Privacy protection supports response.create and response.cancel events"}});
+                                if send_message(&mut downstream, Message::Text(payload.to_string().into())).await.is_err() {
+                                    break (GatewayStreamOutcome::Canceled, "client_disconnected", "Client disconnected");
+                                }
+                                continue;
+                            }
                             // Preserve forward-compatible control events; they are not new model requests.
                             if send_message(&mut upstream_socket, Message::Text(text))
                                 .await
@@ -1058,8 +1084,17 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                             headers: handshake.headers.clone(),
                             body: text.as_bytes().to_vec(),
                         };
-                        let prepared =
-                            upstream::prepare_websocket_request(&request, &provider, context, apply_mapping);
+                        let connection_scope = format!("{}:{}", connection_id, value.get("stream_id").and_then(Value::as_str).unwrap_or_default());
+                        let privacy = context.privacy.begin("codex", &request.headers, &request.body, Some(&connection_scope));
+                        let prepared = privacy.as_ref().map_err(Clone::clone).and_then(|privacy| {
+                            upstream::prepare_websocket_request(&request, &provider, context, apply_mapping)
+                                .and_then(|(body, model, map)| {
+                                    let body = if let Some(privacy) = privacy {
+                                        privacy.prepare(&body, &provider.id).inspect_err(|_| privacy.fail())?
+                                    } else { body };
+                                    Ok((body, model, map))
+                                })
+                        });
                         let mut response = empty_response(0, "", "openai-compatible", "");
                         response.cli_key = Some(GatewayCliKey::Codex);
                         response.provider_id = Some(provider.id.clone());
@@ -1078,6 +1113,9 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                         response.is_streaming = true;
                         response.attempt_count = 1;
                         response.provider_attempt_count = 1;
+                        response.privacy = privacy.ok().flatten();
+                        if let Some(privacy) = &response.privacy { privacy.set_usage_provider(response.provider_type.clone()); }
+                        let privacy_restorer = response.privacy.clone().map(crate::coding::proxy_gateway::privacy::stream::EventRestorer::new);
                         let stream_id = value
                             .get("stream_id")
                             .and_then(Value::as_str)
@@ -1110,6 +1148,7 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                             received_event: false,
                             failure_kind: None,
                             restore_map: HashMap::new(),
+                            privacy_restorer,
                         };
                         let prepared = prepared.and_then(|(body, model, map)| {
                             if pending.full(turn.request.body.len().saturating_add(body.len())) {
@@ -1200,6 +1239,9 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                         );
                     }
                     Some(Ok(other)) => {
+                        if context.privacy.enabled() {
+                            break (GatewayStreamOutcome::Canceled, "privacy_unsupported_event", "Binary data is unsupported while privacy protection is enabled");
+                        }
                         if send_message(&mut upstream_socket, other).await.is_err() {
                             break (
                                 GatewayStreamOutcome::Failed,
@@ -1224,6 +1266,12 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                         last_data = Instant::now();
                         let value = serde_json::from_str::<Value>(&text).ok();
                         let lane = value.as_ref().and_then(|value| pending.event_lane(value));
+                        // Late duplicate terminals must not consume or leak into another protected turn.
+                        if value.as_ref().and_then(|value| value.pointer("/response/id").or_else(|| value.get("response_id"))).and_then(Value::as_str)
+                            .is_some_and(|id| pending.completed.iter().any(|completed| completed == id)
+                                && (context.privacy.enabled() || pending.protected_completed.contains(id))) {
+                            continue;
+                        }
                         // Determine scope before popping a default-lane terminal.
                         let connection_error = lane.is_none()
                             && value.as_ref().is_some_and(|value| {
@@ -1234,6 +1282,7 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                         let terminal = classify_sse_event_fields(None, &text);
                         let settings = context.settings_snapshot();
                         let mut outgoing = text.as_bytes().to_vec();
+                        let mut restored_messages = None;
                         if let Some(turn) = lane
                             .as_ref()
                             .and_then(|lane| pending.lanes.get_mut(lane))
@@ -1252,6 +1301,17 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                                     turn.record_upstream_error(value);
                                 }
                             }
+                            if let Some(restorer) = &mut turn.privacy_restorer {
+                                restored_messages = Some(match restorer.push_json(&outgoing) {
+                                    Ok(messages) => messages,
+                                    Err(error) => {
+                                        turn.failure_kind = Some(GatewayFailureKind::RequestSchema);
+                                        turn.response.error_category = Some("privacy_restore_failed".into());
+                                        turn.response.note = error.clone();
+                                        vec![json!({"type":"response.failed","stream_id":turn.metadata.stream_id,"response":{"id":turn.metadata.response_id,"status":"failed","error":{"code":"privacy_restore_failed","message":error}}}).to_string().into_bytes()]
+                                    }
+                                });
+                            }
                         }
                         if connection_error {
                             for turn in pending.lanes.values_mut().flatten() {
@@ -1261,29 +1321,37 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                                 }
                             }
                         }
-                        let sent = send_message(
-                            &mut downstream,
-                            Message::Text(
-                                String::from_utf8(outgoing.clone())
-                                    .map_err(io_error)?
-                                    .into(),
-                            ),
-                        )
-                        .await;
-                        if let Some(lane) = lane {
-                            if sent.is_ok() {
+                        let privacy_unscoped = lane.is_none() && (context.privacy.enabled()
+                            || pending.lanes.values().flatten().any(|turn| turn.privacy_restorer.is_some()));
+                        if privacy_unscoped {
+                            outgoing = json!({"type":"error","status":502,"error":{"code":"privacy_unscoped_event","message":"Could not associate an upstream event with its privacy mapping"}}).to_string().into_bytes();
+                            for turn in pending.lanes.values_mut().flatten() {
+                                if let Some(privacy) = &turn.response.privacy { privacy.fail(); }
+                            }
+                        }
+                        let mut sent = Ok(());
+                        let mut delivered_terminal = None;
+                        let privacy_transformed = restored_messages.is_some();
+                        let passthrough = restored_messages.is_none().then(|| outgoing.clone());
+                        for message in restored_messages.into_iter().flatten().chain(passthrough) {
+                            sent = send_message(&mut downstream, Message::Text(String::from_utf8(message.clone()).map_err(io_error)?.into())).await;
+                            if sent.is_err() { break; }
+                            delivered_terminal = if privacy_transformed {
+                                classify_sse_event_fields(None, std::str::from_utf8(&message).unwrap_or_default()).or(delivered_terminal)
+                            } else { terminal };
+                            if let Some(lane) = &lane {
                                 if let Some(turn) = pending
                                     .lanes
-                                    .get_mut(&lane)
+                                    .get_mut(lane)
                                     .and_then(|queue| queue.front_mut())
                                 {
-                                    turn.record_delivered_event(&outgoing, &settings);
+                                    turn.record_delivered_event(&message, &settings);
                                 }
-                                if let Some(terminal) = terminal {
-                                    if let Some(turn) = pending.pop(&lane) {
-                                        turn.finish(context, terminal_outcome(terminal), None, "", true);
-                                    }
-                                }
+                            }
+                        }
+                        if sent.is_ok() {
+                            if let (Some(lane), Some(terminal)) = (lane, delivered_terminal) {
+                                if let Some(turn) = pending.pop(&lane) { turn.finish(context, terminal_outcome(terminal), None, "", true); }
                             }
                         }
                         if sent.is_err() {
@@ -1292,6 +1360,9 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                                 "client_disconnected",
                                 "Could not deliver WebSocket response to client",
                             );
+                        }
+                        if privacy_unscoped {
+                            break (GatewayStreamOutcome::Failed, "privacy_unscoped_event", "Could not associate an upstream event with its privacy mapping");
                         }
                         if connection_error {
                             // An unscoped error while named lanes are pending is a connection error.
@@ -1320,6 +1391,12 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
                         );
                     }
                     Some(Ok(other)) => {
+                        if context.privacy.enabled() || pending.lanes.values().flatten().any(|turn| turn.privacy_restorer.is_some()) {
+                            for turn in pending.lanes.values_mut().flatten() {
+                                if let Some(privacy) = &turn.response.privacy { privacy.fail(); }
+                            }
+                            break (GatewayStreamOutcome::Failed, "privacy_unsupported_event", "Cannot restore binary upstream data");
+                        }
                         if send_message(&mut downstream, other).await.is_err() {
                             break (
                                 GatewayStreamOutcome::Canceled,

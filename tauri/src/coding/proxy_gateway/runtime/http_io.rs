@@ -245,6 +245,7 @@ pub(super) struct DebugHttpRequest {
 }
 
 pub(super) struct DebugHttpResponse {
+    pub(super) privacy: Option<crate::coding::proxy_gateway::privacy::PrivacyRequest>,
     pub(super) status_code: u16,
     pub(super) status_text: String,
     pub(super) headers: Vec<(String, String)>,
@@ -442,6 +443,7 @@ pub(super) fn json_response(
     let body = serde_json::to_vec(&value)
         .unwrap_or_else(|_| br#"{"error":"response_serialize_failed"}"#.to_vec());
     DebugHttpResponse {
+        privacy: None,
         status_code,
         status_text: status_text.to_string(),
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
@@ -485,6 +487,7 @@ pub(super) fn empty_response(
     note: &str,
 ) -> DebugHttpResponse {
     DebugHttpResponse {
+        privacy: None,
         status_code,
         status_text: status_text.to_string(),
         headers: Vec::new(),
@@ -653,7 +656,14 @@ async fn write_streaming_body(
                     break;
                 }
                 upstream_stream_error = true;
-                response.error_category = Some("stream_error".to_string());
+                response.error_category = Some(
+                    if error.starts_with("privacy_") {
+                        "privacy_restore_failed"
+                    } else {
+                        "stream_error"
+                    }
+                    .to_string(),
+                );
                 response.note = format!("upstream streaming response error: {error}");
                 write_result = Err(std::io::Error::new(std::io::ErrorKind::Other, error));
                 break;
@@ -1057,6 +1067,7 @@ mod tests {
 
     fn test_streaming_response(chunks: Vec<Result<Vec<u8>, String>>) -> DebugHttpResponse {
         DebugHttpResponse {
+            privacy: None,
             status_code: 200,
             status_text: "OK".to_string(),
             headers: vec![("Content-Type".to_string(), "text/event-stream".to_string())],

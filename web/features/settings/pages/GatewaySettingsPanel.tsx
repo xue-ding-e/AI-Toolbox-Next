@@ -9,6 +9,7 @@ import {
   Gauge,
   Loader2,
   Network,
+  ShieldCheck,
   Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -25,6 +26,7 @@ import {
   type ProxyGatewaySettings,
   type ProxyGatewayStatus,
 } from '@/services';
+import GatewayPrivacySettings from '@/features/coding/gateway/components/GatewayPrivacySettings';
 import styles from './GatewaySettingsPanel.module.less';
 
 type BusyAction = 'load' | 'autosave';
@@ -989,6 +991,10 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 );
               })}
             </div>
+          </Section>
+
+          <Section icon={<ShieldCheck size={15} aria-hidden="true" />} title={t('gateway.privacy.title')}>
+            <GatewayPrivacySettings running={status?.running ?? false} />
           </Section>
 
           <Section icon={<FileText size={15} aria-hidden="true" />} title={t('settings.gateway.sections.logs')}>

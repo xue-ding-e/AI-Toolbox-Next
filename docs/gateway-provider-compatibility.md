@@ -1127,6 +1127,19 @@ inferred provider：
 
 关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_enables_websocket_and_restores_original_capability`。
 
+### 7.2 数据脱敏与渠道兼容（issue #347）
+
+数据脱敏默认关闭，独立于 provider profile；没有渠道隐式默认启用。入口是网关设置页的“数据脱敏”，详细边界见 [`gateway-data-redaction.md`](gateway-data-redaction.md)。
+
+- 出站请求先做 provider 的 body/header/path/auth 兼容，再在消息、工具参数/结果和说明文本里替换敏感值；认证 Header、模型/工具身份、关联 ID、媒体和不透明密文不按普通业务文本改写。业务对象里的 `name`/`url` 不能按裸字段名豁免。
+- SSE、JSON 和同协议 Responses WS 在既有响应兼容/namespace 回转之后还原占位符。原始历史记录仍在还原之前，不将客户端还原副本写回 provider side store。
+- 各协议的 JSON 文本工具结果统一解码并扫描业务字段；Responses namespace 内嵌工具的描述/schema 也参与处理，名称与关联 ID 不变。流式工具参数支持多层 JSON 和 Unicode 转义；完整 Anthropic 响应的 content 数组按 block 处理，媒体与 redacted thinking 保持不透明。
+- Anthropic/Gemini 签名绑定对象不能静默修改；需要替换或还原时明确拒绝。此约束只在隐私模式下生效，不改现有 thinking/encrypted-content 整流开关。
+- 启用隐私不改变 WS 的协议能力判定，也不会将已建立连接上的处理错误伪装成握手 426。未知正文/二进制事件和不完整占位符产生本地失败，provider 健康不扣分，已收到 usage 仍保留。
+- WS 保护状态按轮次固定；关掉开关仍需拦截受保护旧轮次的重复事件。开启时，没有待处理请求的正文事件同样不能绕过关联检查。
+- 完全关闭后的新请求沿用既有兼容链路；旧上游历史不会被改写。引用过期映射或其它 provider 的 `previous_response_id` 需要新建会话。
+- 回归包括 `privacy_http_converts_requests_before_redacting_and_restores_json_tools_after_conversion`、`privacy_http_sse_conversion_keeps_tool_json_usage_and_redacted_logs` 和 WebSocket privacy 往返测试。
+
 ## 8. 维护流程
 
 新增或调整 provider/channel 兼容时，按以下步骤：

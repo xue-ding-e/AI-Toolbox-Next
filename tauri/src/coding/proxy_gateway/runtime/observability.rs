@@ -122,11 +122,17 @@ pub(super) fn record_gateway_observability_with_transport(
         .signed_duration_since(started_at)
         .num_milliseconds()
         .max(0) as u64;
-    let input_tokens = response.token_usage.input_tokens;
-    let output_tokens = response.token_usage.output_tokens;
-    let cache_read_tokens = response.token_usage.cache_read_tokens;
-    let cache_creation_tokens = response.token_usage.cache_creation_tokens;
-    let total_tokens = response.token_usage.total_tokens();
+    let privacy_usage = response.privacy.as_ref().map(|privacy| {
+        let mut usage = response.token_usage.clone();
+        usage.merge_max(privacy.usage());
+        usage
+    });
+    let usage = privacy_usage.as_ref().unwrap_or(&response.token_usage);
+    let input_tokens = usage.input_tokens;
+    let output_tokens = usage.output_tokens;
+    let cache_read_tokens = usage.cache_read_tokens;
+    let cache_creation_tokens = usage.cache_creation_tokens;
+    let total_tokens = usage.total_tokens();
     let settings = context.settings_snapshot();
     let fallback_trace_id = process_local_trace_id(request);
     let upstream_response_body_snapshot = response.upstream_response_body_snapshot();
@@ -138,7 +144,7 @@ pub(super) fn record_gateway_observability_with_transport(
             stable_usage_request_id(
                 cli_key,
                 response.provider_id.as_deref(),
-                response.token_usage.envelope_id.as_deref(),
+                usage.envelope_id.as_deref(),
                 &fallback_trace_id,
             )
         })
@@ -157,6 +163,7 @@ pub(super) fn record_gateway_observability_with_transport(
         // Build compact fields first (no body/header yet) so usage-key resolution can
         // decide skip/collision before we write expensive JSONL detail.
         let mut detail = GatewayRequestLogDetail {
+            privacy: response.privacy.as_ref().map(|privacy| privacy.detail()),
             websocket,
             summary: GatewayRequestLogSummary {
                 transport,
@@ -185,7 +192,13 @@ pub(super) fn record_gateway_observability_with_transport(
                 upstream_status_code: response.upstream_status_code,
                 success,
                 error_category: response.error_category.clone(),
-                error_message: (!success).then(|| response.note.clone()),
+                error_message: (!success).then(|| {
+                    response
+                        .privacy
+                        .as_ref()
+                        .map(|privacy| privacy.log_text(&response.note))
+                        .unwrap_or_else(|| response.note.clone())
+                }),
                 stream_outcome: (response.stream_outcome != GatewayStreamOutcome::NotStreaming)
                     .then_some(response.stream_outcome),
                 duration_ms,
@@ -285,41 +298,85 @@ fn maybe_write_request_detail(
         return;
     }
 
+    let privacy_blocked = response
+        .error_category
+        .as_deref()
+        .is_some_and(|category| category.starts_with("privacy_"));
+    let store_body = |body: &[u8], original_len: u64, enabled: bool| {
+        if !enabled {
+            return None;
+        }
+        if let Some(privacy) = &response.privacy {
+            let redacted = privacy.log_body(body, original_len);
+            return stored_body_text(
+                redacted.as_bytes(),
+                redacted.len() as u64,
+                true,
+                settings.log_max_body_size_kb,
+            );
+        }
+        if privacy_blocked {
+            return Some("[privacy: blocked request body omitted]".into());
+        }
+        stored_body_text(body, original_len, true, settings.log_max_body_size_kb)
+    };
+    detail.privacy = response
+        .privacy
+        .as_ref()
+        .map(|privacy| {
+            let mut detail = privacy.detail();
+            detail.log_redacted = settings.store_request_body || settings.store_response_body;
+            detail
+        })
+        .or_else(|| {
+            privacy_blocked.then(|| super::super::privacy::PrivacyDetail {
+                failed: true,
+                log_redacted: true,
+                ..Default::default()
+            })
+        });
     detail.request_headers = settings
         .store_headers
         .then(|| request_log::redact_headers(&request.headers));
-    detail.request_body = stored_body_text(
+    detail.request_body = store_body(
         &request.body,
         request.body.len() as u64,
         settings.store_request_body,
-        settings.log_max_body_size_kb,
     );
-    detail.upstream_request_body = response.upstream_request_body.as_deref().and_then(|body| {
-        stored_body_text(
-            body,
-            body.len() as u64,
-            settings.store_request_body,
-            settings.log_max_body_size_kb,
-        )
-    });
+    detail.upstream_request_body = response
+        .upstream_request_body
+        .as_deref()
+        .and_then(|body| store_body(body, body.len() as u64, settings.store_request_body));
     detail.response_headers = settings
         .store_headers
         .then(|| request_log::redact_headers(&response.headers));
     detail.upstream_response_body =
         upstream_response_body_snapshot.and_then(|(body, original_len)| {
-            stored_body_text(
-                body,
-                *original_len,
-                settings.store_response_body,
-                settings.log_max_body_size_kb,
-            )
+            store_body(body, *original_len, settings.store_response_body)
         });
-    detail.response_body = stored_body_text(
+    detail.response_body = store_body(
         &response.body,
         response.response_body_bytes,
         settings.store_response_body,
-        settings.log_max_body_size_kb,
     );
+    if let Some(privacy) = &response.privacy {
+        for headers in [&mut detail.request_headers, &mut detail.response_headers]
+            .into_iter()
+            .flatten()
+        {
+            for value in headers.values_mut() {
+                *value = privacy.log_text(value);
+            }
+        }
+        for attempt in &mut detail.provider_attempts {
+            if let Some(message) = &mut attempt.error_message {
+                *message = privacy.log_text(message);
+            }
+        }
+    } else if privacy_blocked {
+        detail.request_headers = None;
+        detail.response_headers = None;
+    }
 
     let record = request_log::new_request_log_record(detail.clone());
     match request_log::write_request_log(paths, settings, &record) {

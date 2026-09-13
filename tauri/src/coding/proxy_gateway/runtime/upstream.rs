@@ -30,6 +30,7 @@ use super::side_stores::{
 use super::GatewayRuntimeContext;
 use super::{cache_injector, thinking_budget};
 use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind};
+use crate::coding::proxy_gateway::privacy::PrivacyRequest;
 use crate::coding::proxy_gateway::transformer::{
     append_utf8_safe, check_lossy_conversion, convert_error_response_body,
     convert_request_body_with_context, convert_response_body_with_context,
@@ -782,7 +783,80 @@ pub(super) async fn route_request_with_options(
         );
     };
 
-    forward_to_upstream(request, db, context, &route, options).await
+    let privacy =
+        match if matches!(request.method.as_str(), "GET" | "HEAD") && request.body.is_empty() {
+            Ok(None)
+        } else {
+            context.privacy.begin(
+                route.cli_key.as_str(),
+                &request.headers,
+                &request.body,
+                None,
+            )
+        } {
+            Ok(privacy) => privacy,
+            Err(error) => {
+                let mut response = json_response(
+                    400,
+                    "Bad Request",
+                    json!({"error":"privacy_request_blocked","message":error}),
+                    route.route_name,
+                    None,
+                    &error,
+                );
+                response.cli_key = Some(route.cli_key);
+                response.error_category = Some("privacy_request_blocked".into());
+                return response;
+            }
+        };
+    let mut response =
+        forward_to_upstream(request, db, context, &route, options, privacy.as_ref()).await;
+    if let Some(privacy) = privacy {
+        privacy.set_usage_provider(response.provider_type.clone());
+        if let Some(stream) = response.body_stream.take() {
+            response.body_stream = Some(
+                crate::coding::proxy_gateway::privacy::stream::restore_sse_stream(
+                    stream,
+                    privacy.clone(),
+                ),
+            );
+        } else {
+            if let Ok(value) = serde_json::from_slice(&response.body) {
+                privacy.remember_response(&value);
+            }
+            match privacy.restore(&response.body) {
+                Ok(body) => {
+                    let original = std::mem::replace(&mut response.body, body);
+                    if original != response.body && response.upstream_response_body.is_none() {
+                        response.upstream_response_body_bytes = original.len() as u64;
+                        response.upstream_response_body = Some(original);
+                    }
+                    response.response_body_bytes = response.body.len() as u64;
+                    response.headers.retain(|(name, _)| {
+                        !name.eq_ignore_ascii_case("content-length")
+                            && !name.eq_ignore_ascii_case("etag")
+                    });
+                }
+                Err(error) => {
+                    privacy.fail();
+                    if response.upstream_url.is_some() && response.upstream_status_code.is_none() {
+                        response.upstream_status_code = Some(response.status_code);
+                    }
+                    response.status_code = 502;
+                    response.status_text = "Bad Gateway".into();
+                    response.body = json!({"error":"privacy_restore_failed","message":error})
+                        .to_string()
+                        .into_bytes();
+                    response.response_body_bytes = response.body.len() as u64;
+                    response.headers = vec![("Content-Type".into(), "application/json".into())];
+                    response.error_category = Some("privacy_restore_failed".into());
+                    response.note = error;
+                }
+            }
+        }
+        response.privacy = Some(privacy);
+    }
+    response
 }
 
 fn is_cli_route_probe(request: &DebugHttpRequest, route: &GatewayRoute) -> bool {
@@ -817,6 +891,7 @@ async fn forward_to_upstream(
     context: &GatewayRuntimeContext,
     route: &GatewayRoute,
     options: &GatewayRequestOptions,
+    privacy: Option<&PrivacyRequest>,
 ) -> DebugHttpResponse {
     let requested_model =
         extract_requested_model(request, route).unwrap_or_else(|| "unknown".to_string());
@@ -974,6 +1049,7 @@ async fn forward_to_upstream(
                 app_config.non_streaming_timeout_secs,
                 app_config.streaming_idle_timeout_secs,
                 upstream_response_snapshot_limit,
+                privacy,
             )
             .await
             {
@@ -1207,6 +1283,7 @@ async fn send_upstream_request(
     non_streaming_timeout_secs: u64,
     streaming_idle_timeout_secs: u64,
     upstream_response_snapshot_limit: Option<usize>,
+    privacy: Option<&PrivacyRequest>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let compact_compat = CodexResponsesCompactCompat::new(route, provider);
     let source_protocol = source_protocol_from_route(route);
@@ -1253,6 +1330,14 @@ async fn send_upstream_request(
         compact_compat,
     ) {
         strip_known_invalid_responses_ciphers(context, provider, &mut upstream_body)?;
+    }
+    if let Some(privacy) = privacy {
+        upstream_body = privacy
+            .prepare(&upstream_body, &provider.id)
+            .map_err(|message| {
+                privacy.fail();
+                GatewayForwardError::new(message, GatewayFailureKind::RequestSchema)
+            })?;
     }
     let upstream_body_snapshot = upstream_body.clone();
     let target_streaming = request_declares_streaming(request) || route_declares_streaming(route);
@@ -1398,7 +1483,17 @@ async fn send_upstream_request(
                 compact_compat,
                 &upstream_body_snapshot,
             )? {
-                let rectified_body = rectified.body;
+                let rectified_body = match privacy {
+                    Some(privacy) => {
+                        privacy
+                            .prepare(&rectified.body, &provider.id)
+                            .map_err(|message| {
+                                privacy.fail();
+                                GatewayForwardError::new(message, GatewayFailureKind::RequestSchema)
+                            })?
+                    }
+                    None => rectified.body,
+                };
                 let rectified_context = rectified.conversion_context;
                 let rectified_lossy_warnings = rectified.lossy_warnings;
                 let rectified_pipeline = rectified.pipeline;
@@ -1861,6 +1956,7 @@ async fn build_gateway_response(
         );
 
         return Ok(DebugHttpResponse {
+            privacy: None,
             status_code: status.as_u16(),
             status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
             headers: response_headers,
@@ -1957,6 +2053,7 @@ async fn build_gateway_response(
             pipeline_context.clone(),
         );
         let gateway_response = DebugHttpResponse {
+            privacy: None,
             status_code: status.as_u16(),
             status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
             headers: response_headers,
@@ -2110,6 +2207,7 @@ async fn build_gateway_response(
         .unwrap_or(0);
 
     let gateway_response = DebugHttpResponse {
+        privacy: None,
         status_code: status.as_u16(),
         status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
         headers: response_headers,
@@ -4136,6 +4234,7 @@ fn buffered_gateway_response(
         .map(|body| body.len() as u64)
         .unwrap_or(0);
     DebugHttpResponse {
+        privacy: None,
         status_code,
         status_text,
         headers,
@@ -12928,6 +13027,7 @@ data: {data}\r\n\r\n"
 
     fn protocol_error_debug_response(body: &[u8]) -> DebugHttpResponse {
         DebugHttpResponse {
+            privacy: None,
             status_code: 200,
             status_text: "OK".to_string(),
             headers: vec![("Content-Type".to_string(), "application/json".to_string())],
@@ -15187,6 +15287,7 @@ data: {data}\r\n\r\n"
         .as_bytes()
         .to_vec())]));
         let mut response = DebugHttpResponse {
+            privacy: None,
             status_code: 200,
             status_text: "OK".to_string(),
             headers: vec![(CONTENT_TYPE.to_string(), "text/event-stream".to_string())],
@@ -15248,6 +15349,7 @@ data: {data}\r\n\r\n"
             Ok(delta.clone()),
         ]));
         let mut response = DebugHttpResponse {
+            privacy: None,
             status_code: 200,
             status_text: "OK".to_string(),
             headers: vec![(CONTENT_TYPE.to_string(), "text/event-stream".to_string())],

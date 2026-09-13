@@ -1009,6 +1009,17 @@ Codex 接管写入的 `supports_websockets=true` 描述本机网关能力，并�
 
 2026-09-13 专项参考：cc-switch `e098279934a6041ebab35664c5fbd785df055ee0` 的 `src-tauri/src/codex_config.rs` 仍明确本机代理只提供 HTTP/SSE，没有可直接搬用的 WS 路由；AxonHub `dfbe22593ea33d62d1bc04d47a8e5d6c8b25d2bf` 的 `llm/transformer/openai/responses/websocket_executor.go` 与 `internal/server/api/responses_websocket.go` 提供握手、复用、终态和预热边界参考。本项目采用对应生命周期约束，保留一对一连接，不引入其全局 session pool、HTTP facade、数据库/channel/orchestrator。另核对 Codex `89c8bcf37d64be69e4c8286f4541c1a84ed312a4` 的 `codex-rs/core/src/client.rs`，确认握手 `UPGRADE_REQUIRED` → `FallbackToHttp`。这是 issue #342 的定点审查与实现，未执行两个参考项目的完整 baseline 增量同步，§19.4 的基线保持不变。
 
+### 16.2 请求脱敏与响应还原（issue #347）
+
+数据脱敏是可关闭的 runtime 功能，默认关闭；协议矩阵和 transformer 职责保持不变。完整行为、限额、会话生命周期和 UI 入口见 [`gateway-data-redaction.md`](gateway-data-redaction.md)。
+
+- 请求在历史补全、协议转换和 provider 兼容之后、实际发送之前脱敏。重试/failover 复用请求开始时的策略与映射；从原请求重建正文的签名整流再次脱敏。
+- 响应在原始 provider side store 记录和协议/provider 回转之后还原。SSE/WS 共享按逻辑通道的还原器；工具参数等待完整 JSON 字符串值再解码还原，支持文件内容再次嵌套 JSON 和 Unicode 转义。普通文本保持增量输出，空 error 字段不提前冲刷尾部；保留 SSE 元信息和终态送达语义。
+- Codex 同协议 Responses WebSocket 按每个 `response.create` 处理，不因启用脱敏强制 426。保护开关关闭后，在途轮次继续还原，受保护旧轮次的重复终态仍丢弃；启用时无待处理轮次的上游正文也必须通过关联检查。现有协议不兼容的握手回退仍然有效。
+- 配置位于独立 `privacy` JSONB 记录，通过独立命令编译、持久化和发布 `Arc` 快照；不把规则加入高频 clone 的 `ProxyGatewaySettings`，也不触发 provider cache 清理。关闭时不创建映射或流还原器。
+- 映射仅在有界内存缓存与活动请求中保留；previous response 需同身份、会话、provider 和保护代次。签名绑定的敏感内容、未知占位符和限额失败不得原文放行。日志保存独立脱敏副本，不能持久化反向映射。
+- 回归入口：`privacy/tests.rs` 和 `runtime/websocket/privacy_tests.rs`。专项参考项目与 commit 记录在功能文档，本次未推进 §19.4 baseline。
+
 ## 17. 主要文件索引
 
 ### Runtime 编排

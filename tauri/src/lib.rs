@@ -1979,6 +1979,9 @@ pub fn run() {
             settings::test_proxy_connection,
             // Proxy Gateway
             coding::proxy_gateway::proxy_gateway_get_settings,
+            coding::proxy_gateway::proxy_gateway_get_privacy_settings,
+            coding::proxy_gateway::proxy_gateway_update_privacy_settings,
+            coding::proxy_gateway::proxy_gateway_preview_privacy,
             coding::proxy_gateway::proxy_gateway_update_settings,
             coding::proxy_gateway::proxy_gateway_start,
             coding::proxy_gateway::proxy_gateway_stop,
