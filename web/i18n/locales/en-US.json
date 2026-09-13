@@ -5227,6 +5227,17 @@
       "officialPackages": "Official",
       "openPackagesDirectory": "Open Package Folder",
       "packagesPathLabel": "Package folder"
+    },
+    "apiDescription": {
+      "openaiCompletions": "Standard OpenAI Chat Completions protocol (/v1/chat/completions); works with most third-party relays, vLLM, Ollama, LM Studio, DeepSeek, Groq, etc.",
+      "openaiResponses": "Official OpenAI Responses API (/v1/responses) for GPT-5, o-series, and other newer interfaces; default base URL https://api.openai.com/v1.",
+      "openaiCodexResponses": "Codex driver for the ChatGPT subscription backend (or its reverse proxy); requires ChatGPT OAuth sign-in; default https://chatgpt.com/backend-api.",
+      "azureOpenaiResponses": "OpenAI Responses protocol hosted on Azure; uses the api-key header and api-version query parameter; set baseUrl to your Azure resource endpoint.",
+      "anthropicMessages": "Anthropic Messages API (/v1/messages) for all Claude models and Anthropic-compatible proxies; default base URL https://api.anthropic.com.",
+      "bedrockConverseStream": "AWS Bedrock Converse Stream protocol; authentication uses the AWS credential chain (profile or environment variables).",
+      "googleGenerativeAi": "Google AI Studio Gemini protocol (generateContent); default base URL https://generativelanguage.googleapis.com/v1beta.",
+      "googleGeminiCli": "Internal endpoint protocol for Google Cloud Code / Gemini CLI; OAuth sign-in only.",
+      "googleVertex": "Google Cloud Vertex AI enterprise endpoint; authenticates with a GCP API key or ADC, with project and location resolved from environment variables."
     }
   },
   "dsh": {

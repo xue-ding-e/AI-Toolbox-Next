@@ -1256,6 +1256,40 @@ mod tests {
     }
 
     #[test]
+    fn normalize_omptype_thinking_mode_covers_full_api_vocabulary() {
+        // Mirrors the 9 legal `api` values of omp's models.yml `ApiSchema`;
+        // mode inference must match each wire protocol family or the whole
+        // models.yml validation fails.
+        let cases: [(&str, &str); 9] = [
+            ("openai-completions", "effort"),
+            ("openai-responses", "effort"),
+            ("openai-codex-responses", "effort"),
+            ("azure-openai-responses", "effort"),
+            ("anthropic-messages", "anthropic-adaptive"),
+            ("bedrock-converse-stream", "anthropic-adaptive"),
+            ("google-generative-ai", "google-level"),
+            ("google-gemini-cli", "google-level"),
+            ("google-vertex", "google-level"),
+        ];
+        for (api, expected_mode) in cases {
+            let mut provider = json!({
+                "api": api,
+                "models": [
+                    { "id": "a", "reasoning": true, "thinking": { "efforts": ["low", "high"] } }
+                ]
+            });
+            normalize_omp_provider_for_omptype(&mut provider);
+            assert_eq!(
+                provider["models"][0]["thinking"]["mode"],
+                json!(expected_mode),
+                "api {} should infer thinking mode {}",
+                api,
+                expected_mode
+            );
+        }
+    }
+
+    #[test]
     fn split_provider_model_handles_slashed_model_ids() {
         let (provider, model) = split_provider_model("openrouter/openai/gpt-5");
         assert_eq!(provider.as_deref(), Some("openrouter"));

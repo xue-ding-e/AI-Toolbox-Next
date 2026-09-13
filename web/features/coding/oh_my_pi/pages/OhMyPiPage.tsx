@@ -66,6 +66,12 @@ import CliManualPathSetting from '@/components/common/CliManualPathSetting';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
+  OMP_API_DEFAULT_BASE_URL,
+  OMP_API_DESCRIPTION_I18N_KEYS,
+  OMP_API_OPTIONS,
+  type OmpApiValue,
+} from '../utils/ompApiOptions';
+import {
   buildFetchedOmpModel,
   ompApiToSdkName,
 } from '../utils/ompFetchedModels';
@@ -153,13 +159,6 @@ interface OmpModelModalState {
   modelId?: string;
   model?: Record<string, unknown>;
 }
-
-const PI_API_OPTIONS = [
-  'openai-completions',
-  'openai-responses',
-  'anthropic-messages',
-  'google-generative-ai',
-].map((value) => ({ value, label: value }));
 
 const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'pi-model-settings': <RobotOutlined />,
@@ -942,6 +941,22 @@ const OhMyPiPage: React.FC = () => {
         ? nextProviderConfigJson.authHeader
         : undefined,
     });
+  };
+
+  const handleProviderApiChange = (apiValue?: string) => {
+    // 仅新建弹窗（provider 为空）且 baseUrl 未填时回填官方默认端点；
+    // 编辑/复制已有 provider 一律不覆盖，清空 api 也不清 baseUrl。
+    if (providerModal?.provider || !apiValue) {
+      return;
+    }
+    const currentBaseUrl = providerModalForm.getFieldValue('baseUrl');
+    if (typeof currentBaseUrl === 'string' && currentBaseUrl.trim()) {
+      return;
+    }
+    const defaultBaseUrl = OMP_API_DEFAULT_BASE_URL[apiValue as OmpApiValue];
+    if (defaultBaseUrl) {
+      providerModalForm.setFieldValue('baseUrl', defaultBaseUrl);
+    }
   };
 
   const handleSaveProviderModal = async () => {
@@ -2304,7 +2319,21 @@ const OhMyPiPage: React.FC = () => {
                   <Select
                     allowClear
                     showSearch
-                    options={PI_API_OPTIONS}
+                    options={OMP_API_OPTIONS}
+                    onChange={handleProviderApiChange}
+                    optionRender={(option) => {
+                      const description = OMP_API_DESCRIPTION_I18N_KEYS[
+                        String(option.value) as OmpApiValue
+                      ];
+                      return (
+                        <div>
+                          <div>{option.label}</div>
+                          {description ? (
+                            <div className={styles.apiOptionDescription}>{t(description)}</div>
+                          ) : null}
+                        </div>
+                      );
+                    }}
                     placeholder={t('ohMyPi.provider.apiTypePlaceholder')}
                   />
                 </Form.Item>
@@ -2423,7 +2452,7 @@ const OhMyPiPage: React.FC = () => {
           showModalities={false}
           showInputTypes
           showApi
-          apiOptions={PI_API_OPTIONS}
+          apiOptions={OMP_API_OPTIONS}
           showReasoning
           showOmpThinking
           showCompat

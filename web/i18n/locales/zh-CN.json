@@ -5224,6 +5224,17 @@
       "officialPackages": "官方链接",
       "openPackagesDirectory": "打开包目录",
       "packagesPathLabel": "包目录"
+    },
+    "apiDescription": {
+      "openaiCompletions": "标准的 OpenAI Chat Completions 协议（/v1/chat/completions），适用于大多数第三方中转站、vLLM、Ollama、LM Studio、DeepSeek、Groq 等。",
+      "openaiResponses": "OpenAI 官方 Responses API（/v1/responses），适用于 GPT-5、o-series 等新接口；官方默认 https://api.openai.com/v1。",
+      "openaiCodexResponses": "ChatGPT 订阅后端（或其反代）专用的 Codex 协议，需 ChatGPT OAuth 登录；默认 https://chatgpt.com/backend-api。",
+      "azureOpenaiResponses": "Azure 托管的 OpenAI Responses 协议，使用 api-key 请求头与 api-version 查询参数；baseUrl 填 Azure 资源地址。",
+      "anthropicMessages": "Anthropic Messages API（/v1/messages），适用于 Claude 全系列及兼容代理；官方默认 https://api.anthropic.com。",
+      "bedrockConverseStream": "AWS Bedrock Converse Stream 流式协议，认证走 AWS 凭据链（profile 或环境变量）。",
+      "googleGenerativeAi": "Google AI Studio 的 Gemini 协议（generateContent）；官方默认 https://generativelanguage.googleapis.com/v1beta。",
+      "googleGeminiCli": "Google Cloud Code / Gemini CLI 内部端点专用协议，仅支持 OAuth 登录认证。",
+      "googleVertex": "Google Cloud Vertex AI 企业端点，认证走 GCP API Key 或 ADC，project 与 location 由环境变量解析。"
     }
   },
   "dsh": {
