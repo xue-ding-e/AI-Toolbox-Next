@@ -331,14 +331,12 @@ jobs:
 
             on_arm do
               sha256 "{arm_sha}"
-              url "https://github.com/{repo}/releases/download/v#{{version}}/{arm_dmg}",
-                  verified: "github.com/{repo}/"
+              url "https://github.com/{repo}/releases/download/v#{{version}}/{arm_dmg}"
             end
 
             on_intel do
               sha256 "{intel_sha}"
-              url "https://github.com/{repo}/releases/download/v#{{version}}/{intel_dmg}",
-                  verified: "github.com/{repo}/"
+              url "https://github.com/{repo}/releases/download/v#{{version}}/{intel_dmg}"
             end
 
             name "AI Toolbox"
