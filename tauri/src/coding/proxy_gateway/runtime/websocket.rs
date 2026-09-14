@@ -44,6 +44,7 @@ const MAX_PENDING_BYTES: usize = 64 * 1024 * 1024;
 const CONNECTION_IDLE_TIMEOUT: Duration = Duration::from_secs(50 * 60);
 const CONNECTION_MAX_LIFETIME: Duration = Duration::from_secs(55 * 60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const WEBSOCKET_BETA: &str = "responses_websockets=2026-02-06";
 const WEBSOCKET_DISABLED_REASON: &str =
     "Codex WebSocket support is disabled in gateway settings; use HTTP/SSE.";
@@ -941,6 +942,21 @@ async fn flush_socket<S: AsyncRead + AsyncWrite + Unpin>(
         .map_err(io_error)
 }
 
+async fn close_socket<S: AsyncRead + AsyncWrite + Unpin>(socket: &mut WebSocketStream<S>) {
+    let _ = timeout(CLOSE_TIMEOUT, async {
+        // SinkExt also flushes the reply queued by an incoming Close. The
+        // inherent close(None) sends a new message, which fails in that state.
+        if SinkExt::close(socket).await.is_err() {
+            return;
+        }
+        // Sending Close does not finish the handshake. Drain frames already in
+        // flight until the peer acknowledges it, without forwarding new work.
+        // Dropping TCP earlier can turn our Close into a connection reset.
+        while let Some(Ok(_)) = socket.next().await {}
+    })
+    .await;
+}
+
 fn io_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
 }
@@ -1466,8 +1482,10 @@ async fn relay<S: AsyncRead + AsyncWrite + Unpin, U: AsyncRead + AsyncWrite + Un
         }
     };
     pending.finish_all(context, outcome, category, note);
-    let _ = timeout(Duration::from_secs(1), downstream.close(None)).await;
-    let _ = timeout(Duration::from_secs(1), upstream_socket.close(None)).await;
+    tokio::join!(
+        close_socket(&mut downstream),
+        close_socket(&mut upstream_socket)
+    );
     Ok(())
 }
 

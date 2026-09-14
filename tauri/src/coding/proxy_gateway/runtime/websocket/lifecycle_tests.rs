@@ -1,6 +1,84 @@
 use super::*;
 
 #[tokio::test]
+async fn close_drains_in_flight_messages_until_peer_acknowledges() {
+    let (gateway_io, client_io) = tokio::io::duplex(4096);
+    let mut gateway = WebSocketStream::from_raw_socket(gateway_io, Role::Server, None).await;
+    let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
+    send_json(
+        &mut client,
+        json!({"type":"response.create","model":"test-model","input":"already in flight"}),
+    )
+    .await;
+
+    {
+        let closing = close_socket(&mut gateway);
+        tokio::pin!(closing);
+        assert!(futures_util::poll!(&mut closing).is_pending());
+        let message = timeout(Duration::from_secs(5), client.next())
+            .await
+            .unwrap();
+        assert!(matches!(message, Some(Ok(Message::Close(_)))));
+        assert!(
+            futures_util::poll!(&mut closing).is_pending(),
+            "sending Close must not release a socket before the peer acknowledges it"
+        );
+        client.flush().await.unwrap();
+        timeout(Duration::from_secs(5), &mut closing).await.unwrap();
+    }
+    drop(gateway);
+    assert!(timeout(Duration::from_secs(5), client.next())
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn close_flushes_reply_after_either_peer_initiates_handshake() {
+    use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
+
+    for (gateway_role, peer_role) in [(Role::Server, Role::Client), (Role::Client, Role::Server)] {
+        let (gateway_io, peer_io) = tokio::io::duplex(4096);
+        let mut gateway = WebSocketStream::from_raw_socket(gateway_io, gateway_role, None).await;
+        let mut peer = WebSocketStream::from_raw_socket(peer_io, peer_role, None).await;
+        let frame = CloseFrame {
+            code: CloseCode::Normal,
+            reason: "finished".into(),
+        };
+        peer.close(Some(frame.clone())).await.unwrap();
+        assert_eq!(
+            gateway.next().await.unwrap().unwrap(),
+            Message::Close(Some(frame.clone()))
+        );
+        let closing = tokio::spawn(async move { close_socket(&mut gateway).await });
+        assert_eq!(
+            timeout(Duration::from_secs(5), peer.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            Message::Close(Some(frame)),
+            "{gateway_role:?} must flush its already queued Close reply"
+        );
+        drop(peer);
+        timeout(Duration::from_secs(5), closing)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn close_times_out_when_peer_never_acknowledges() {
+    let (gateway_io, _unresponsive_peer) = tokio::io::duplex(4096);
+    let mut gateway = WebSocketStream::from_raw_socket(gateway_io, Role::Server, None).await;
+    let closing = close_socket(&mut gateway);
+    tokio::pin!(closing);
+    assert!(futures_util::poll!(&mut closing).is_pending());
+    timeout(Duration::from_secs(5), closing).await.unwrap();
+}
+
+#[tokio::test]
 async fn multiplexed_turns_keep_usage_and_errors_in_their_own_lane() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let (_directory, context, _) = test_context(

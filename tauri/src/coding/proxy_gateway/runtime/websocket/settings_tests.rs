@@ -119,24 +119,103 @@ async fn disabling_idle_connection_does_not_forward_next_response_create() {
                 .unwrap(),
             Some(Ok(Message::Close(_)))
         ));
+        socket.flush().await.unwrap();
     });
     let (mut client, gateway) = gateway_connection(context.clone()).await;
-    // Let the relay enter its idle read before changing the setting.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    // A local Ping/Pong proves the relay is running without a scheduling sleep.
+    client
+        .send(Message::Ping(b"ready".to_vec().into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(5), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Message::Pong(b"ready".to_vec().into())
+    );
     context.settings.write().unwrap().codex_websocket_enabled = false;
     send_json(
         &mut client,
         json!({"type":"response.create","model":"test-model","input":"hello"}),
     )
     .await;
-    assert!(matches!(
-        timeout(Duration::from_secs(5), client.next())
-            .await
-            .unwrap(),
-        Some(Ok(Message::Close(_)))
-    ));
+    let closing_message = timeout(Duration::from_secs(5), client.next())
+        .await
+        .unwrap();
+    assert!(
+        matches!(closing_message, Some(Ok(Message::Close(_)))),
+        "expected a WebSocket close frame, received {closing_message:?}"
+    );
+    client.flush().await.unwrap();
     gateway.await.unwrap();
     upstream.await.unwrap();
+    assert!(timeout(Duration::from_secs(5), client.next())
+        .await
+        .unwrap()
+        .is_none());
+    assert!(recorded_details(&context).is_empty());
+    assert_eq!(context.requests_per_minute(), 0);
+}
+
+#[tokio::test]
+async fn disabled_connection_drains_request_arriving_after_close_starts() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let (_directory, context, _) = test_context(
+        &format!("http://{}/v1", listener.local_addr().unwrap()),
+        "openai_responses",
+        true,
+    );
+    let upstream = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let message = timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap();
+        assert!(
+            matches!(message, Some(Ok(Message::Close(_)))),
+            "a request received while closing must not reach upstream: {message:?}"
+        );
+        socket.flush().await.unwrap();
+    });
+    let (mut client, gateway) = gateway_connection(context.clone()).await;
+    context.settings.write().unwrap().codex_websocket_enabled = false;
+    client.send(Message::Ping(Vec::new().into())).await.unwrap();
+
+    // Observe Close on TCP without consuming it in the client WebSocket state.
+    // This deterministically sends a request while the gateway is closing.
+    let mut opcode = [0_u8; 1];
+    assert_eq!(
+        timeout(Duration::from_secs(5), client.get_mut().peek(&mut opcode))
+            .await
+            .unwrap()
+            .unwrap(),
+        1
+    );
+    assert_eq!(opcode[0] & 0x0f, 0x08);
+    send_json(
+        &mut client,
+        json!({"type":"response.create","model":"test-model","input":"arrived during close"}),
+    )
+    .await;
+    let message = timeout(Duration::from_secs(5), client.next())
+        .await
+        .unwrap();
+    assert!(
+        matches!(message, Some(Ok(Message::Close(_)))),
+        "expected graceful closure, received {message:?}"
+    );
+    client.flush().await.unwrap();
+    timeout(Duration::from_secs(5), gateway)
+        .await
+        .unwrap()
+        .unwrap();
+    upstream.await.unwrap();
+    assert!(timeout(Duration::from_secs(5), client.next())
+        .await
+        .unwrap()
+        .is_none());
     assert!(recorded_details(&context).is_empty());
     assert_eq!(context.requests_per_minute(), 0);
 }
