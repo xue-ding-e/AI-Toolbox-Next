@@ -15,9 +15,11 @@
 - 仓库适配器 `repository.rs`：配置单位是 仓库/分支/相对目录；每次备份是独立文件。GitHub 新建用 Contents PUT、Gitee 用 Contents POST（均不带 sha，同名旧文件天然不可覆盖）；GitHub 按 100 MB 预检上传（Gitee 不套用该上限，透传服务端错误）；删除绑定列表返回的 SHA（GitHub DELETE body / Gitee DELETE query）；下载先取 metadata 校验 SHA 再读内容。所有请求走全局 `http_client`（rustls）；错误与日志不泄露 Token（Gitee 的 access_token 在 query 中，不能打印 URL）。
 - 仓库目录枚举：Contents 单次请求，**不做分页循环**（Gitee Contents 官方 schema 根本没有 page/per_page，参数被忽略，循环会无限重取同一批）。GitHub 目录 ≥1000 条、Gitee 目录 ≥100 条时改走 Git Trees recursive（branch → commit sha → `git/trees/{sha}?recursive=1`，两平台同构；Tree 条目只有 `path` 没有 `name`，文件名取 path 末段）。Trees 响应的 `truncated` 是唯一完整性信号：`truncated=true` 的列表可以展示但**绝不能驱动保留数量清理**（`list_backups_detailed` 返回 complete 标志，cleanup 拒绝删除）。
 - 私有仓库限制的执行点在 `upload_file`（每次真实写入前先做一次只读 repo GET 校验 `private=true`），不是只在测试连接命令里；跳过测试连接或测试后仓库转公开都不能绕过。
-- 仓库连接与 Token 存 `settings:backup_repository` 独立记录（Token 不回显，DTO 只有 `has_token`）；旧未发布方案的 `settings:repository_sync` 记录在新记录缺失时一次性迁移（只带连接字段 + token，不带 scopes/基线/状态），迁移即持久化，且绝不覆盖已存在的新记录。备份设置统一保存入口 `save_backup_settings` 在同一 SQLite 事务里 patch AppSettings 的备份字段并更新该记录；新提交的加密密码先写凭据库，数据库写入失败时回滚凭据库（JoinError 与 keyring 错误两层都必须上报，`combine_rollback_error`），不能假报成功。
+- GitHub 100 MB 的预检错误与通用大小错误分开：服务端 HTTP 413、下载读取的保护上限使用不带平台数值的 `fileTooLarge` 提示，不能向 Gitee 用户声称触发了 GitHub 的文件限制。
+- 仓库连接与 Token 存 `settings:backup_repository` 独立记录（Token 不回显，DTO 只有 `has_token`）；旧 `settings:repository_sync` 在新记录缺失时只迁移连接字段与 Token。检查新记录、读取旧记录和持久化迁移必须在同一 SQLite 事务内；读取入口和保存入口共用该流程，避免尚未加载设置就保存时丢失旧 Token，也避免并发迁移覆盖新连接。保存结果直接使用事务返回的连接，不在提交后重新读取另一份状态。
+- 备份设置保存的凭据读取、新密码写入、SQLite 提交与失败回滚在同一个 blocking 操作内执行，并与后台备份的密码读取共用锁，避免读到尚未提交的新密码。`PasswordStore` 是隔离测试边界，测试不得访问真实系统凭据库；回滚失败必须返回单个 `{type, message, suggestion}` JSON 错误，保留保存失败与回滚失败原因，不拼接两个无法被前端解析的 JSON。
 - Token/凭据选择规则全仓库唯一：`resolve_repository_token`（草稿 token 非空则替换；为空时仅同平台复用旧 token，跨平台必须先报 `tokenRequired` 再发网络请求）。保存路径与测试连接路径都必须走它，不要另写第二套复用逻辑。
-- 仓库连接空白草稿（`is_blank_connection`：owner+repository 均空）不是连接：任何渠道保存时它都不得触发 owner/repo 校验，也不得当作删除命令——只有用户在仓库渠道本身保存空白草稿才清空记录，且旧 Token 随连接一起清掉。新用户在本地/WebDAV 渠道保存时表单里的 `branch=main` 默认值不得阻断保存。
+- 只有当前选择仓库渠道时才验证、更新仓库草稿；本地/WebDAV 保存必须保留数据库中的仓库连接和 Token，即使隐藏草稿是半填、跨平台或过期值。仓库渠道本身保存空白草稿（owner+repository 均空）才清空连接和 Token；`branch=main` 默认值不表示已经配置连接。已配置仓库的空 directory 表示仓库根目录，不能在表单读回时替换成默认目录。
 - 备份加密状态读取 `encryption_status` 对凭据库失败是**尽力而为**：返回 `password_known=false`（前端显示未知态），绝不把"状态读不到"变成"设置保存失败"（settings 已落库）。生成加密备份时凭据库不可用仍然整体失败（不降级明文）；恢复路径凭据库读失败映射为 `passwordRequired`，让知道密码的用户走手动一次性输入。
 - 备份包里的 `sqlite/ai-toolbox.db` 是 SQLite 主数据库快照；`db/` 只保留兼容旧 SurrealDB 备份/恢复流程的占位或 legacy 内容；`external-configs/` 是外部运行时配置和 prompt/auth 等文件快照。默认情况下数据库快照与外部文件两者都写入。
 - `backup_cli_config_files_enabled` **只控制** Codex / Claude / Grok / Gemini / Kimi CLI 这些 DB-backed 工具的运行时文件是否进包、是否恢复（默认开启；缺字段按 `true`）。关闭后这些 optional 工具的 `external-configs/<tool>/`（含 `root-dir.txt`）不打包也不恢复，渠道/prompt 靠 SQLite + re-apply 重建。
@@ -111,7 +113,7 @@ sequenceDiagram
 - 被 `settings/` 前端与 `lib.rs` 启动阶段依赖：恢复后可能触发 re-apply + skills/MCP 重同步，自动备份调度器在启动时常驻运行。
 - 与 `coding::reapply_applied_runtime` 耦合：跳过 CLI 配置恢复后由该 helper 串行 re-apply 各 CLI 已应用渠道/prompt。
 - 与 `skills/`、`wsl/`、`ssh/` 间接耦合：恢复出来的文件和元数据后续会继续被这些模块消费。
-- 加密依赖 `ring` + `zeroize`（AES-256-GCM / PBKDF2 / Zeroizing），凭据库依赖 `keyring`（v4，features：windows-native + apple-native + zbus-secret-service，均为持久化凭据后端，不接入 sample/mock fallback）。
+- 加密依赖 `ring` + `zeroize`（AES-256-GCM / PBKDF2 / Zeroizing）。`keyring` v4 当前保留默认 `v1` 兼容入口并启用 `apple-native-keyring-store`，默认按平台选择持久化系统凭据后端；不能把示例或 mock 凭据库接入产品。具体 feature 名称以 `Cargo.toml` 和锁定版本为准。
 
 ## 典型变更场景（按需）
 
@@ -130,6 +132,7 @@ sequenceDiagram
 
 ## 最小验证
 
+- 修复设置、凭据或迁移时跑 `cargo test --lib settings::backup --jobs 2`，包含真实保存函数的 SQLite 往返、非当前渠道草稿隔离、密码写入失败/回滚失败、旧记录先保存后读取，以及解密错误映射。全量交付仍按根目录要求执行完整 `cargo test --jobs 2`。
 - 至少验证：备份包里包含 `sqlite/ai-toolbox.db`、`db_manifest.json` 与相关 `external-configs/` 内容；SQLite-only 场景下不能要求 legacy `db/` 目录有真实数据库文件。
 - 至少验证：restore 后关键外部配置文件落到正确位置。
 - 加密链路至少验证（`encryption.rs`/`filename.rs` 单测覆盖）：加解密往返、每次加密新 salt/nonce、错误密码/篡改/截断/空密码全部失败、magic 头识别；新旧三类文件名 + `.zip.enc` 后缀解析；恢复端到端验证错误密码时数据库零写入。

@@ -897,6 +897,7 @@
           "invalidBranch": "分支名无效",
           "invalidDirectory": "目录必须是安全的相对路径",
           "privateRepository": "仓库必须为私有仓库",
+          "loadSettings": "无法读取仓库配置，请关闭设置弹窗后重试",
           "permission": "访问被拒绝，请检查令牌权限",
           "repositoryNotFound": "仓库或分支不存在",
           "rateLimit": "触发平台 API 速率限制，请稍后重试",
@@ -904,6 +905,7 @@
           "remoteResponse": "平台 API 返回异常响应",
           "notFound": "备份文件已不存在",
           "tooLarge": "备份文件超过 GitHub Contents API 100 MB 上限；请调整备份范围或改用其它存储方式",
+          "fileTooLarge": "备份文件过大，无法处理；请调整备份范围或更换存储位置",
           "fileExists": "仓库中已存在同名文件，旧备份保持不变",
           "remoteChanged": "备份文件在列出后发生了变化，请刷新列表重试",
           "invalidFilename": "不是有效的备份文件名"
@@ -919,6 +921,7 @@
         "repository": "仓库",
         "branch": "分支",
         "directory": "目录",
+        "directoryPlaceholder": "留空使用仓库根目录",
         "token": "访问令牌",
         "tokenPlaceholder": "输入 GitHub / Gitee 访问令牌",
         "tokenStoredPlaceholder": "已保存令牌，留空保持不变",

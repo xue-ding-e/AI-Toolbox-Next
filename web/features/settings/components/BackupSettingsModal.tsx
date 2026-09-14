@@ -7,7 +7,7 @@ import {
   Button,
   InputNumber,
   Switch,
-  message,
+  App,
   List,
   Tag,
   Tooltip,
@@ -83,6 +83,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
+  const { message } = App.useApp();
   const [form] = Form.useForm();
   const [customEntryForm] = Form.useForm<BackupCustomEntryFormValues>();
   const {
@@ -129,14 +130,18 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     'yes' | 'no' | 'unknown'
   >('unknown');
 
-  // Repository connection: token is draft-only (kept out of form values so it is
-  // never persisted into the settings payload).
+  // Tokens are draft-only here; the backend owns the separate repository record
+  // and only returns whether a credential was saved.
   const [repositoryToken, setRepositoryToken] = React.useState('');
   const [repositoryHasToken, setRepositoryHasToken] = React.useState(false);
-  /** Last loaded stored repository config; guards the save path if the async load
-   * has not finished before the user saves. */
+  /** Stored connection for hidden fields. Null blocks repository writes until
+   * loading succeeds, so an empty fallback cannot clear an existing connection. */
   const [loadedRepositoryConfig, setLoadedRepositoryConfig] =
-    React.useState<BackupRepositoryConfigFE>(DEFAULT_REPOSITORY_FORM);
+    React.useState<BackupRepositoryConfigFE | null>(null);
+  const [repositoryLoading, setRepositoryLoading] = React.useState(true);
+  const repositoryPlatform = Form.useWatch(['repository', 'platform'], form);
+  const hasTokenForPlatform = repositoryHasToken
+    && repositoryPlatform === loadedRepositoryConfig?.platform;
   const [testingRepository, setTestingRepository] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
 
@@ -152,6 +157,10 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   React.useEffect(() => {
     if (!isOpen) {
       setScrollContainer(null);
+      setEncryptionPassword('');
+      setRepositoryToken('');
+      setLoadedRepositoryConfig(null);
+      setRepositoryLoading(true);
     }
   }, [isOpen]);
 
@@ -211,6 +220,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   }, [currentFileFilterRules, selectedFilterRuleTool]);
 
   React.useEffect(() => {
+    let cancelled = false;
     if (isOpen) {
       setCurrentBackupType(backupType);
       setCurrentLocalPath(localBackupPath);
@@ -223,9 +233,14 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       setCurrentFileFilterRules(backupFileFilterRules);
       setCurrentEncryptionEnabled(backupEncryptionEnabled);
       setEncryptionPassword('');
+      setRepositoryToken('');
+      setRepositoryLoading(true);
+      setLoadedRepositoryConfig(null);
+      setStoredPasswordState('unknown');
       form.setFieldsValue({
         backupType,
         webdav,
+        repository: DEFAULT_REPOSITORY_FORM,
       });
       void loadFilterPathOptions();
 
@@ -233,6 +248,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       void (async () => {
         try {
           const repositoryView = await getBackupRepositorySettings();
+          if (cancelled) return;
           setRepositoryHasToken(repositoryView.has_token);
           setLoadedRepositoryConfig(repositoryView.config);
           const stored = repositoryView.config;
@@ -242,27 +258,39 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
               owner: stored.owner,
               repository: stored.repository,
               branch: stored.branch || DEFAULT_REPOSITORY_FORM.branch,
-              directory: stored.directory || DEFAULT_REPOSITORY_FORM.directory,
+              // Empty is a valid repository root, not a missing setting.
+              directory: stored.owner || stored.repository
+                ? stored.directory
+                : stored.directory || DEFAULT_REPOSITORY_FORM.directory,
             } satisfies RepositoryFormValues,
           });
           setRepositoryToken('');
         } catch (error) {
+          if (cancelled) return;
           console.error('Failed to load backup repository settings:', error);
           setRepositoryHasToken(false);
+          message.error(t('settings.backupSettings.repository.errors.loadSettings'));
+        } finally {
+          if (!cancelled) setRepositoryLoading(false);
         }
+      })();
+      void (async () => {
         try {
           const encryptionStatus = await getBackupEncryptionStatus();
+          if (cancelled) return;
           setStoredPasswordState(
             encryptionStatus.password_known
               ? (encryptionStatus.has_password ? 'yes' : 'no')
               : 'unknown',
           );
         } catch (error) {
+          if (cancelled) return;
           console.error('Failed to load backup encryption status:', error);
           setStoredPasswordState('unknown');
         }
       })();
     }
+    return () => { cancelled = true; };
   }, [
     isOpen,
     backupType,
@@ -278,6 +306,8 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     autoBackupMaxKeep,
     form,
     loadFilterPathOptions,
+    message,
+    t,
   ]);
 
   const handleSelectFolder = async () => {
@@ -305,7 +335,8 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   };
 
   const handleSave = async () => {
-    if (saving) return;
+    if (saving || repositoryLoading
+      || (currentBackupType === 'repository' && !loadedRepositoryConfig)) return;
     setSaving(true);
     try {
       await form.validateFields();
@@ -316,8 +347,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       // shape that would wipe the saved connection.
       const allValues = form.getFieldsValue(true);
       const webdavValues = (allValues.webdav ?? webdav) as WebDAVConfigFE;
-      const repositoryValues = (allValues.repository ??
-        loadedRepositoryConfig) as BackupRepositoryConfigFE;
+      const repositoryValues = (currentBackupType === 'repository'
+        ? allValues.repository ?? loadedRepositoryConfig
+        : loadedRepositoryConfig) ?? DEFAULT_REPOSITORY_FORM;
       await saveBackupSettingsUnified({
         backupType: currentBackupType,
         localBackupPath: currentLocalPath,
@@ -325,7 +357,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         backupEncryptionEnabled: currentEncryptionEnabled,
         encryptionPassword: encryptionPassword || undefined,
         repository: repositoryValues,
-        repositoryToken: repositoryToken || undefined,
+        repositoryToken: currentBackupType === 'repository'
+          ? repositoryToken || undefined
+          : undefined,
         backupImageAssetsEnabled: currentBackupImageAssetsEnabled,
         backupCliConfigFilesEnabled: currentBackupCliConfigFilesEnabled,
         backupCustomEntries: currentBackupCustomEntries,
@@ -541,6 +575,10 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
       confirmLoading={saving}
+      okButtonProps={{
+        disabled: repositoryLoading
+          || (currentBackupType === 'repository' && !loadedRepositoryConfig),
+      }}
       cancelButtonProps={{ disabled: saving }}
       destroyOnHidden
       afterOpenChange={(opened) => {
@@ -560,9 +598,10 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         labelCol={{ flex: '108px' }}
         wrapperCol={{ flex: '1' }}
         labelAlign="left"
+        labelWrap
         colon
         className={styles.form}
-        disabled={saving}
+        disabled={saving || repositoryLoading}
       >
         <div className={styles.body} ref={attachBody}>
           <section className={styles.sectionCard}>
@@ -630,6 +669,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
               <div style={{ marginTop: 10 }}>
                 <Form.Item label={t('settings.backupSettings.repositoryForm.platform')} name={['repository', 'platform']}>
                   <Select
+                    onChange={() => setRepositoryToken('')}
                     options={[
                       { value: 'github', label: 'GitHub' },
                       { value: 'gitee', label: 'Gitee' },
@@ -658,7 +698,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                   label={t('settings.backupSettings.repositoryForm.directory')}
                   name={['repository', 'directory']}
                 >
-                  <Input placeholder="ai-toolbox" />
+                  <Input placeholder={t('settings.backupSettings.repositoryForm.directoryPlaceholder')} />
                 </Form.Item>
                 <Form.Item
                   label={t('settings.backupSettings.repositoryForm.token')}
@@ -670,7 +710,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                       value={repositoryToken}
                       onChange={(event) => setRepositoryToken(event.target.value)}
                       placeholder={
-                        repositoryHasToken
+                        hasTokenForPlatform
                           ? t('settings.backupSettings.repositoryForm.tokenStoredPlaceholder')
                           : t('settings.backupSettings.repositoryForm.tokenPlaceholder')
                       }
@@ -678,13 +718,17 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                     />
                   </Space.Compact>
                   <Typography.Text className={styles.helperText}>
-                    {repositoryHasToken
+                    {hasTokenForPlatform
                       ? t('settings.backupSettings.repositoryForm.tokenStored')
                       : t('settings.backupSettings.repositoryForm.tokenHint')}
                   </Typography.Text>
                 </Form.Item>
                 <div className={styles.testConnectionRow}>
-                  <Button onClick={handleTestRepositoryConnection} loading={testingRepository}>
+                  <Button
+                    onClick={handleTestRepositoryConnection}
+                    loading={testingRepository}
+                    disabled={repositoryLoading || !loadedRepositoryConfig}
+                  >
                     {testingRepository
                       ? t('settings.webdav.testing')
                       : t('settings.webdav.testConnection')}
@@ -981,10 +1025,8 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
               </div>
             )}
           </section>
-          {scrollContainer && (
-            <ScrollFadeHint scrollContainerRef={{ current: scrollContainer }} />
-          )}
         </div>
+        <ScrollFadeHint scrollContainer={scrollContainer} />
       </Form>
     </Modal>
     <Modal

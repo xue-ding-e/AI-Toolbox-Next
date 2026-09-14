@@ -38,11 +38,12 @@ sequenceDiagram
 
 - 备份设置三渠道（local/webdav/repository）保存走统一入口 `saveBackupSettingsUnified` → 后端 `save_backup_settings`（只 patch 备份字段 + 同事务更新 `settings:backup_repository`）。不要改回两次全量 `save_settings` 或把仓库 Token 放进 AppSettings payload；保存失败要展示后端错误、保留草稿并禁用重复提交。
 - `BackupSettingsModal` 保存时 `validateFields()` 只返回当前挂载的表单项：webdav/repository 的 Form.Item 按渠道条件渲染，缺渠道的值必须从 `form.getFieldsValue(true)`（打开时 setFieldsValue 过的保留值）取，再兜底到打开时加载的 store 值（`loadedRepositoryConfig`）；直接用 `validateFields()` 返回值会得到 undefined 导致崩溃或静默清空已存连接。保存后的 store 同步走 `settingsStoreUtils.ts::backupSettingsStatePatch`——**新增保存字段时必须同时补这个 patch**（曾漏掉 autoBackup 三参数导致弹窗重开读旧值、再保存覆盖新值）。
-- 新用户表单里的仓库草稿带 `branch=main`/`directory=ai-toolbox` 默认值，但 owner/repo 为空；后端按 `is_blank_connection` 视为"无连接"，非仓库渠道保存时它不触发校验也不得清空已存连接。前端不要在本地/WebDAV 渠道往 payload 塞半填仓库草稿去"帮忙校验"。
+- 仓库草稿仅在选择仓库渠道保存时提交为修改；本地/WebDAV 保存使用已加载连接，后端也必须保留自己的当前仓库记录，忽略隐藏的半填或过期草稿。仓库加载完成前禁用保存与编辑，加载失败不允许用默认空草稿清空旧连接；关闭弹窗后忽略未完成加载的返回。已配置仓库的空 directory 表示根目录，不能用 truthy 默认值替换。
+- 切换 GitHub/Gitee 时立即清空输入中的 Token，已保存状态也只对原平台有效；后端仍须拒绝跨平台复用已存 Token。清空前端输入并不能替代后端校验。
 - 备份加密密码只在设置弹窗内出现：提交非空才写入本机系统凭据库，保存成功或关闭后立即从 state 清空；前端只能看到 `has_password` + `password_known` 状态。`password_known=false` 表示本机凭据库读不到（显示"未知"态，不能显示"未设置"）。恢复时后端先读凭据库（凭据库读失败也按 `passwordRequired` 返回，用户仍可手动输密码），前端据此在同一选择上弹密码框重试，取消必须保证零恢复写入。
 - 远端备份列表（WebDAV/仓库）共用 `RemoteBackupRestoreModal`，只消费统一 `BackupFileInfo`（filename/size/encrypted + 仓库条目的 sha）；文件名解析统一走 `utils/backupFilename.ts`（镜像后端契约，支持两类历史命名、新唯一标识与 `.zip`/`.zip.enc`，含多字节 legacy 前缀）。不要在组件里写只匹配 `.zip` 的正则或各自的解析规则；仓库删除/恢复必须带列表返回的 sha。
 - 本地恢复文件选择器同时接受 `.zip` 与 `.zip.enc`（扩展名过滤器 `['zip', 'enc']`），真实格式由后端按文件头判断，与当前是否启用加密无关。
-- `ScrollFadeHint`（备份设置弹窗 + 远端备份列表弹窗）必须用 **callback ref** 绑定真实滚动容器（`.ant-modal-body`）：仅依赖 `isOpen` 的 effect 在 antd portal 首次挂载完成前执行，`bodyRef.current` 是 null，渐变永远不出现；用 `afterOpenChange` 做二次兜底重绑。渐变贴滚动容器可视底部，按剩余滚动量显隐，`pointer-events: none` + `aria-hidden`。保留 `web/App.css` 同时覆盖 `.ant-modal-content` / `.ant-modal-container` 的 viewport-safe 修复，验收需检查 footer 可见、body 内滚动、英文长标签完整显示、首次打开即出现渐变。
+- `ScrollFadeHint` 用 callback ref 取得实际 `.ant-modal-body`，`afterOpenChange` 在复用未销毁的 Modal 时重新绑定。提示使用零高度 sticky 锚点加向上绘制的伪元素，必须放在表单 flex 分组之外，避免 gap 或提示自身新增滚动高度；使用主题阴影变量、`pointer-events: none` 和 `aria-hidden`，到底或无溢出时隐藏。验收首次打开、异步加载、重新打开、缩放、亮暗/system、中英文长标签及 footer 可见性。
 - 数据目录设置区必须分别呈现本进程 `effective/is_custom` 与下次启动 `next_start/restart_required`；不能用保存的 override 标记当前目录，也不能把“稍后重启”说成撤销保存。待生效状态常驻提供重启和撤销入口。目录选择、保存和重置须互斥；后端保存成功响应直接返回最新状态，失败保留当前路径并呈现具体错误。
 - 自定义数据目录只切换应用自己的数据根目录，不自动迁移数据，不覆盖外部 CLI/独立 Skills 路径。迁移引导要先恢复 Gateway 直连，并明确备份范围；重启失败要保留待生效状态且可重试。
 
@@ -81,6 +82,7 @@ sequenceDiagram
 
 ## 最小验证
 
+- `node scripts/verify-backup-settings.mjs` 运行真实设置表单、真实 store 与远端列表，模拟 Tauri 持久化响应；验证三渠道保存往返、自动备份回显、加载前禁止保存、Token 平台切换、失败保留密码草稿，以及零额外滚动高度的渐变。HTTP/SQLite/系统凭据的后端行为必须另跑 Rust 回归，不能把前端 mock 当成真实远端验证。
 - Skills 警告翻译回归位于 `web/test/features/settings/utils/syncMessageTranslator.test.ts`；同步 UI 需验证有警告完成后的单次展示，以及下一次无警告同步后提示清空。
 - 防休眠改动验证 `web/test/stores/keepAwakeSettings.test.ts` 和 Rust `keep_awake::tests` / `keep_awake_preference_round_trips_and_old_records_default_to_disabled`；覆盖连续开关、保存失败、系统失败后重试、跨线程释放和旧配置的默认值。
 - 至少验证：打开设置页能正常加载 config、status 和默认 mappings。

@@ -313,9 +313,7 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
         ) : (
           renderList(parsedBackups, t('settings.backupSettings.noBackupsFound'))
         )}
-        {scrollContainer && (
-          <ScrollFadeHint scrollContainerRef={{ current: scrollContainer }} />
-        )}
+        <ScrollFadeHint scrollContainer={scrollContainer} />
       </div>
     </Modal>
   );

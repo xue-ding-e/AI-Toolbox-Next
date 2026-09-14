@@ -58,10 +58,7 @@ pub struct RepositoryClient {
 }
 
 impl RepositoryClient {
-    pub fn new(
-        client: Client,
-        settings: &BackupRepositorySettings,
-    ) -> Result<Self, String> {
+    pub fn new(client: Client, settings: &BackupRepositorySettings) -> Result<Self, String> {
         validate_config(&settings.config)?;
         if settings.token.is_empty() {
             return Err(backup_error(
@@ -145,16 +142,13 @@ impl RepositoryClient {
     }
 
     async fn send(&self, request: RequestBuilder) -> Result<reqwest::Response, String> {
-        request
-            .send()
-            .await
-            .map_err(|_| {
-                backup_error(
-                    "network",
-                    "settings.backupSettings.repository.errors.network",
-                    "repository request failed",
-                )
-            })
+        request.send().await.map_err(|_| {
+            backup_error(
+                "network",
+                "settings.backupSettings.repository.errors.network",
+                "repository request failed",
+            )
+        })
     }
 
     /// Read-only reachability check for repository, branch, and directory.
@@ -162,10 +156,7 @@ impl RepositoryClient {
     pub async fn check_repository(&self) -> Result<(), String> {
         self.ensure_private_repository().await?;
         let response = self
-            .send(self.request(
-                Method::GET,
-                self.endpoint(&["branches", &self.branch])?,
-            ))
+            .send(self.request(Method::GET, self.endpoint(&["branches", &self.branch])?))
             .await?;
         check_status(response.status())
     }
@@ -194,10 +185,7 @@ impl RepositoryClient {
     }
 
     fn contents_path(&self, filename: &str) -> Vec<String> {
-        let mut suffix: Vec<String> = ["contents"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let mut suffix: Vec<String> = ["contents"].into_iter().map(str::to_string).collect();
         suffix.extend(
             self.directory
                 .split('/')
@@ -340,10 +328,7 @@ impl RepositoryClient {
 
     async fn resolve_branch_commit_sha(&self) -> Result<String, String> {
         let branch_response = self
-            .send(self.request(
-                Method::GET,
-                self.endpoint(&["branches", &self.branch])?,
-            ))
+            .send(self.request(Method::GET, self.endpoint(&["branches", &self.branch])?))
             .await?;
         check_status(branch_response.status())?;
         let branch: Value = branch_response
@@ -387,8 +372,9 @@ impl RepositoryClient {
             ));
         }
         check_status(response.status())?;
-        let metadata: Value = serde_json::from_slice(&read_limited(response, MAX_DOWNLOAD_BYTES).await?)
-            .map_err(|_| repository_response_error())?;
+        let metadata: Value =
+            serde_json::from_slice(&read_limited(response, MAX_DOWNLOAD_BYTES).await?)
+                .map_err(|_| repository_response_error())?;
         let sha = metadata
             .get("sha")
             .and_then(Value::as_str)
@@ -425,8 +411,7 @@ impl RepositoryClient {
             .await?;
         check_status(response.status())?;
         let blob = read_limited(response, MAX_DOWNLOAD_BYTES).await?;
-        let blob: Value =
-            serde_json::from_slice(&blob).map_err(|_| repository_response_error())?;
+        let blob: Value = serde_json::from_slice(&blob).map_err(|_| repository_response_error())?;
         decode_base64(
             blob.get("content")
                 .and_then(Value::as_str)
@@ -464,7 +449,10 @@ impl RepositoryClient {
             "content": STANDARD.encode(bytes),
         });
         let response = self
-            .send(self.request(method, self.contents_url(filename)?).json(&body))
+            .send(
+                self.request(method, self.contents_url(filename)?)
+                    .json(&body),
+            )
             .await?;
         if matches!(response.status().as_u16(), 409 | 422) {
             return Err(backup_error(
@@ -510,9 +498,10 @@ impl RepositoryClient {
                     self.request(Method::DELETE, self.contents_url(filename)?)
                         .query(&[("sha", sha)])
                         .query(&[("branch", &self.branch)])
-                        .query(&[
-                            ("message", format!("AI Toolbox backup cleanup: {filename}").as_str()),
-                        ]),
+                        .query(&[(
+                            "message",
+                            format!("AI Toolbox backup cleanup: {filename}").as_str(),
+                        )]),
                 )
                 .await?
             }
@@ -646,26 +635,22 @@ async fn read_limited(mut response: reqwest::Response, limit: usize) -> Result<V
     {
         return Err(backup_error(
             "tooLarge",
-            "settings.backupSettings.repository.errors.tooLarge",
+            "settings.backupSettings.repository.errors.fileTooLarge",
             "response body exceeds the safety limit",
         ));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| {
-            backup_error(
-                "network",
-                "settings.backupSettings.repository.errors.network",
-                "repository request failed",
-            )
-        })?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|_| {
+        backup_error(
+            "network",
+            "settings.backupSettings.repository.errors.network",
+            "repository request failed",
+        )
+    })? {
         if chunk.len() > limit.saturating_sub(bytes.len()) {
             return Err(backup_error(
                 "tooLarge",
-                "settings.backupSettings.repository.errors.tooLarge",
+                "settings.backupSettings.repository.errors.fileTooLarge",
                 "response body exceeds the safety limit",
             ));
         }
@@ -710,7 +695,7 @@ fn check_status(status: reqwest::StatusCode) -> Result<(), String> {
         ),
         413 => backup_error(
             "tooLarge",
-            "settings.backupSettings.repository.errors.tooLarge",
+            "settings.backupSettings.repository.errors.fileTooLarge",
             "request body too large for the platform",
         ),
         429 => backup_error(
@@ -773,9 +758,9 @@ fn valid_relative_path(path: &str) -> bool {
     !path.contains(['\\', ':', '<', '>', '"', '|', '?', '*'])
         && !path.chars().any(char::is_control)
         && !path.starts_with('/')
-        && path.split('/').all(|part| {
-            !part.is_empty() && part != "." && part != ".."
-        })
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
 async fn repository_client(
@@ -892,7 +877,10 @@ mod tests {
         assert!(validate_config(&config).is_err());
 
         config.directory = "trailing/".into();
-        assert!(validate_config(&config).is_err(), "empty path segment must be rejected");
+        assert!(
+            validate_config(&config).is_err(),
+            "empty path segment must be rejected"
+        );
 
         config.owner = "bad/name".into();
         config.directory = "ok".into();
@@ -954,10 +942,10 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod mock_api_tests {
     use super::*;
+    use crate::settings::backup::repository_settings::BackupRepositoryPlatform;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
-    use crate::settings::backup::repository_settings::BackupRepositoryPlatform;
 
     pub(crate) struct MockApi {
         pub(crate) url: String,
@@ -989,9 +977,7 @@ pub(crate) mod mock_api_tests {
         next: &mut usize,
         request_log: &Arc<Mutex<Vec<String>>>,
     ) -> std::io::Result<()> {
-        let mut reader = BufReader::new(
-            stream.try_clone().expect("clone stream"),
-        );
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
         let mut request_line = String::new();
         reader.read_line(&mut request_line)?;
         // Consume headers and body so the socket is drained before responding.
@@ -1003,10 +989,7 @@ pub(crate) mod mock_api_tests {
             if trimmed.is_empty() {
                 break;
             }
-            if let Some(value) = trimmed
-                .to_ascii_lowercase()
-                .strip_prefix("content-length:")
-            {
+            if let Some(value) = trimmed.to_ascii_lowercase().strip_prefix("content-length:") {
                 content_length = value.trim().parse().unwrap_or(0);
             }
         }
@@ -1042,7 +1025,10 @@ pub(crate) mod mock_api_tests {
         stream.flush()
     }
 
-    pub(crate) fn test_client(server: &MockApi, platform: BackupRepositoryPlatform) -> RepositoryClient {
+    pub(crate) fn test_client(
+        server: &MockApi,
+        platform: BackupRepositoryPlatform,
+    ) -> RepositoryClient {
         RepositoryClient {
             client: reqwest::Client::new(),
             platform,
@@ -1060,6 +1046,33 @@ pub(crate) mod mock_api_tests {
     }
 
     #[tokio::test]
+    async fn server_size_rejections_do_not_claim_a_github_specific_limit() {
+        for platform in [
+            BackupRepositoryPlatform::Github,
+            BackupRepositoryPlatform::Gitee,
+        ] {
+            let server = start_mock(vec![
+                (200, r#"{"private":true}"#.to_string()),
+                (413, r#"{"message":"request body too large"}"#.to_string()),
+            ]);
+            let client = test_client(&server, platform);
+            let error = client
+                .upload_file("ai-toolbox-backup-20260913-120000-abc123ef.zip", b"fixture")
+                .await
+                .expect_err("the platform rejected the payload");
+            let parsed: Value = serde_json::from_str(&error).unwrap();
+            assert_eq!(parsed["type"], "tooLarge");
+            assert_eq!(
+                parsed["suggestion"],
+                "settings.backupSettings.repository.errors.fileTooLarge"
+            );
+            assert!(!error.contains("100 MB"));
+            assert!(!error.contains("GitHub"));
+            assert_eq!(recorded_requests(&server).len(), 2);
+        }
+    }
+
+    #[tokio::test]
     async fn public_repository_upload_is_refused_without_any_write_request() {
         let server = start_mock(vec![(
             200,
@@ -1071,7 +1084,10 @@ pub(crate) mod mock_api_tests {
             .upload_file("ai-toolbox-backup-20260913-120000-abc123ef.zip", b"payload")
             .await
             .expect_err("public repository upload must be refused");
-        assert!(error.contains("privateRepository"), "unexpected error: {error}");
+        assert!(
+            error.contains("privateRepository"),
+            "unexpected error: {error}"
+        );
 
         // Only the read-only private check happened; no PUT reached the API.
         assert_eq!(
@@ -1241,10 +1257,7 @@ pub(crate) mod mock_api_tests {
     async fn retention_cleanup_deletes_only_oldest_when_listing_is_complete() {
         let server = start_mock(vec![
             (200, contents_entries(2)),
-            (
-                200,
-                r#"{"message": "deleted"}"#.to_string(),
-            ),
+            (200, r#"{"message": "deleted"}"#.to_string()),
         ]);
         let client = cleanup_client(&server);
 
@@ -1262,7 +1275,10 @@ pub(crate) mod mock_api_tests {
             "unexpected delete target: {delete_target}"
         );
         assert_eq!(
-            requests.iter().filter(|request| request.starts_with("DELETE")).count(),
+            requests
+                .iter()
+                .filter(|request| request.starts_with("DELETE"))
+                .count(),
             1
         );
     }

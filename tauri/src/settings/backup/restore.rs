@@ -20,15 +20,15 @@ use super::utils::{
     get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
     get_dsh_restore_dir, get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir,
     get_image_assets_dir, get_kimi_restore_dir, get_opencode_auth_restore_path,
-    get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file, normalize_restore_entry_name,
-    push_restore_warning, read_backup_meta_from_archive, read_root_dir_override,
-    record_restored_external_config_wsl_module, resolve_external_config_restore_output_path,
-    resolve_restore_dir_override, resolve_skills_restore_output_path,
-    restore_claude_external_config_file, restore_custom_backup_entries,
-    restore_sqlite_database_snapshot_from_zip, sanitize_restored_claude_database_for_current_os,
-    should_filter_external_config_entry, should_reapply_applied_runtime,
-    should_skip_external_config_on_restore, should_use_root_override_for_tool,
-    write_post_restore_flags, RestoreResult,
+    get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file,
+    normalize_restore_entry_name, push_restore_warning, read_backup_meta_from_archive,
+    read_root_dir_override, record_restored_external_config_wsl_module,
+    resolve_external_config_restore_output_path, resolve_restore_dir_override,
+    resolve_skills_restore_output_path, restore_claude_external_config_file,
+    restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
+    sanitize_restored_claude_database_for_current_os, should_filter_external_config_entry,
+    should_reapply_applied_runtime, should_skip_external_config_on_restore,
+    should_use_root_override_for_tool, write_post_restore_flags, RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
@@ -84,15 +84,20 @@ fn crypto_error_string(error: CryptoError) -> String {
 /// A credential-store read failure is reported as `passwordRequired` rather than a
 /// store error: the user who knows the backup password must still get the manual
 /// one-shot input prompt, and nothing has been written at this point either way.
-fn resolve_password(explicit: Option<&str>) -> Result<String, String> {
+fn resolve_password(
+    explicit: Option<&str>,
+    read_password: impl FnOnce() -> Result<Option<String>, String>,
+) -> Result<String, String> {
     if let Some(password) = explicit.filter(|password| !password.is_empty()) {
         return Ok(password.to_string());
     }
-    match credentials::read_password() {
+    match read_password() {
         Ok(Some(password)) => Ok(password),
         Ok(None) => Err(crypto_error_string(CryptoError::PasswordRequired)),
         Err(store_error) => {
-            log::warn!("Backup credential store unavailable, asking for manual password: {store_error}");
+            log::warn!(
+                "Backup credential store unavailable, asking for manual password: {store_error}"
+            );
             Err(crypto_error_string(CryptoError::PasswordRequired))
         }
     }
@@ -101,11 +106,95 @@ fn resolve_password(explicit: Option<&str>) -> Result<String, String> {
 /// Detect (by header, never by extension) and decrypt encrypted backup bytes.
 /// Plaintext input passes through untouched. On any failure nothing has been written.
 pub fn prepare_backup_bytes(bytes: Vec<u8>, password: Option<&str>) -> Result<Vec<u8>, String> {
+    prepare_backup_bytes_with_password_reader(bytes, password, credentials::read_password)
+}
+
+fn prepare_backup_bytes_with_password_reader(
+    bytes: Vec<u8>,
+    password: Option<&str>,
+    read_password: impl FnOnce() -> Result<Option<String>, String>,
+) -> Result<Vec<u8>, String> {
     if !encryption::is_encrypted(&bytes) {
         return Ok(bytes);
     }
-    let resolved = resolve_password(password)?;
+    let resolved = zeroize::Zeroizing::new(resolve_password(password, read_password)?);
     encryption::decrypt(&bytes, &resolved).map_err(crypto_error_string)
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::*;
+
+    fn encrypted_archive() -> (Vec<u8>, Vec<u8>) {
+        use std::io::{Cursor, Write};
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file("fixture.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"backup fixture").unwrap();
+        let plain = archive.finish().unwrap().into_inner();
+        let encrypted = encryption::encrypt(&plain, "fixture-password").unwrap();
+        (plain, encrypted)
+    }
+
+    #[test]
+    fn plaintext_restore_never_requires_a_credential_store() {
+        let plain = b"plaintext ZIP bytes".to_vec();
+        assert_eq!(
+            prepare_backup_bytes_with_password_reader(plain.clone(), None, || {
+                panic!("plaintext restore must not read credentials");
+            })
+            .unwrap(),
+            plain,
+        );
+    }
+
+    #[test]
+    fn encrypted_restore_can_use_an_explicit_password_without_a_credential_store() {
+        let (plain, encrypted) = encrypted_archive();
+        let prepared =
+            prepare_backup_bytes_with_password_reader(encrypted, Some("fixture-password"), || {
+                panic!("explicit password must not read the credential store")
+            })
+            .unwrap();
+        assert_eq!(prepared, plain);
+        assert!(zip::ZipArchive::new(std::io::Cursor::new(prepared)).is_ok());
+    }
+
+    #[test]
+    fn missing_and_unavailable_credentials_allow_the_same_manual_password_retry() {
+        let (_, encrypted) = encrypted_archive();
+        for stored in [
+            Ok(None),
+            Err("fixture credential store unavailable".to_string()),
+        ] {
+            let error =
+                prepare_backup_bytes_with_password_reader(encrypted.clone(), None, || stored)
+                    .unwrap_err();
+            let error: serde_json::Value = serde_json::from_str(&error).unwrap();
+            assert_eq!(error["type"], "passwordRequired");
+        }
+    }
+
+    #[test]
+    fn wrong_password_or_damaged_archive_never_produces_restore_bytes() {
+        let (_, encrypted) = encrypted_archive();
+        let mut tampered = encrypted.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        let truncated = encrypted[..encryption::ENCRYPTION_MAGIC.len()].to_vec();
+        for (bytes, password, expected_error) in [
+            (encrypted, "wrong-password", "passwordWrong"),
+            (tampered, "fixture-password", "passwordWrong"),
+            (truncated, "fixture-password", "invalidBackup"),
+        ] {
+            let error = prepare_backup_bytes_with_password_reader(bytes, Some(password), || {
+                panic!("explicit password must win")
+            })
+            .unwrap_err();
+            let error: serde_json::Value = serde_json::from_str(&error).unwrap();
+            assert_eq!(error["type"], expected_error);
+        }
+    }
 }
 
 /// Shared restore pipeline over an already-open archive.

@@ -897,6 +897,7 @@
           "invalidBranch": "The branch name is invalid",
           "invalidDirectory": "The directory must be a safe relative path",
           "privateRepository": "The repository must be private",
+          "loadSettings": "Cannot load the repository settings. Close this dialog and try again.",
           "permission": "Access denied; check the token permissions",
           "repositoryNotFound": "The repository or branch does not exist",
           "rateLimit": "The platform API rate limit was hit; retry later",
@@ -904,6 +905,7 @@
           "remoteResponse": "The platform API returned an unexpected response",
           "notFound": "The backup file no longer exists",
           "tooLarge": "The backup exceeds the GitHub Contents API 100 MB limit; reduce the backup scope or switch storage",
+          "fileTooLarge": "The backup file is too large to process; reduce the backup scope or choose another storage location",
           "fileExists": "A file with the same name already exists; the old backup was kept",
           "remoteChanged": "The backup changed after listing; refresh the list and retry",
           "invalidFilename": "Not a valid backup filename"
@@ -919,6 +921,7 @@
         "repository": "Repository",
         "branch": "Branch",
         "directory": "Directory",
+        "directoryPlaceholder": "Leave empty for the repository root",
         "token": "Access token",
         "tokenPlaceholder": "Enter the GitHub / Gitee access token",
         "tokenStoredPlaceholder": "Token stored; leave empty to keep it",

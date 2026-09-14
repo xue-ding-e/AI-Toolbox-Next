@@ -7,26 +7,21 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 28px;
-  margin-top: -28px;
+  height: 0;
   pointer-events: none;
   z-index: 1;
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0) 0%,
-    var(--color-bg-container) 78%,
-    var(--color-bg-container) 100%
-  );
   transition: opacity 0.2s ease;
-}
 
-[data-theme='dark'] .scrollFadeHint {
-  background: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0) 0%,
-    var(--color-bg-container) 78%,
-    var(--color-bg-container) 100%
-  );
+  // Paint upward from a zero-height anchor, outside the form's flex gap. The
+  // indicator must not create its own overflow or change the scroll position.
+  &::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    inset-inline: 0;
+    height: 28px;
+    background: linear-gradient(to bottom, transparent, var(--color-shadow-hover));
+  }
 }
 
 .visible {

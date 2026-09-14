@@ -3,7 +3,7 @@ import styles from './ScrollFadeHint.module.less';
 
 interface ScrollFadeHintProps {
   /** The element whose scrollTop/scrollHeight decides visibility. */
-  scrollContainerRef: React.RefObject<HTMLElement | null>;
+  scrollContainer: HTMLElement | null;
 }
 
 /**
@@ -12,21 +12,21 @@ interface ScrollFadeHintProps {
  * shows while content below remains. Hides at the bottom or when there is no
  * overflow. Never intercepts pointer or keyboard interaction.
  */
-const ScrollFadeHint: React.FC<ScrollFadeHintProps> = ({ scrollContainerRef }) => {
+const ScrollFadeHint: React.FC<ScrollFadeHintProps> = ({ scrollContainer }) => {
   const [visible, setVisible] = React.useState(false);
 
   const recalculate = React.useCallback(() => {
-    const element = scrollContainerRef.current;
+    const element = scrollContainer;
     if (!element) {
       setVisible(false);
       return;
     }
     const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
     setVisible(distanceToBottom > 1);
-  }, [scrollContainerRef]);
+  }, [scrollContainer]);
 
-  React.useEffect(() => {
-    const element = scrollContainerRef.current;
+  React.useLayoutEffect(() => {
+    const element = scrollContainer;
     if (!element) {
       return;
     }
@@ -48,11 +48,12 @@ const ScrollFadeHint: React.FC<ScrollFadeHintProps> = ({ scrollContainerRef }) =
       window.removeEventListener('resize', recalculate);
       element.removeEventListener('scroll', recalculate);
     };
-  }, [scrollContainerRef, recalculate]);
+  }, [scrollContainer, recalculate]);
 
   return (
     <div
       className={`${styles.scrollFadeHint} ${visible ? styles.visible : styles.hidden}`}
+      data-scroll-fade-visible={visible}
       aria-hidden="true"
     />
   );
