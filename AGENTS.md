@@ -75,7 +75,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/shared/deepLink/` | `aitoolbox://` 深链接前端两侧：导入确认弹窗与分享链接生成（URL 格式事实源在后端 `deeplink/parser.rs`） |
 | `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
 | `web/components/common/` | 共享编辑器与基础交互组件的性能和正确性约束 |
-| `tauri/src/settings/backup/` | 备份恢复、WebDAV、自动备份与恢复后续链路 |
+| `tauri/src/settings/backup/` | 备份恢复（本地/WebDAV/GitHub-Gitee 仓库）、可选加密、自动备份与恢复后续链路 |
 | `tauri/src/coding/image/` | Image 后端渠道配置、任务、资产落盘、图片 API 调用与备份联动 |
 
 后续新增模块级 `AGENTS.md` 时，继续在此表追加，不在根文档其他位置零散登记。
@@ -443,6 +443,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 
 - 普通 Ant Design `<Modal>` 居中由 `ConfigProvider` 和全局 `web/App.css` 处理；静态 `Modal.confirm/info/error/success/warning` 通过 `ConfigProvider.config({ holderRender })` 取得同一上下文。
 - 高弹窗必须依赖 `web/App.css` 的 viewport-safe modal 规则：`.ant-modal-wrap` 使用 `--ai-modal-viewport-block-gap` 和 `--ai-modal-viewport-inline-gap`，modal body 内部滚动。不要重新添加 per-modal `top` 偏移或一次性 max-height hack。
+- Ant Design 6 当前 Modal 内容容器使用 `.ant-modal-container`；全局 viewport-safe 规则需同时覆盖历史 `.ant-modal-content` 与该容器。只保留旧 selector 会让高弹窗 footer 溢出视口；浏览器验收须检查 footer 可见且 body 内滚动，不能只检查横向不溢出。
 - 真正全屏弹窗可通过 `rootClassName` 或 `wrapClassName` 将 `--ai-modal-viewport-block-gap` / `--ai-modal-viewport-inline-gap` 设为 `0px`，并明确接管内部滚动。
 - 弹窗内使用 `<Collapse>` 做 section 时，必须传 `bordered={false}` 或 `ghost`，否则 Ant Design CSS-in-JS 的默认白色 header/content 和边框会覆盖模块样式。
 - 自定义 collapse section 时，`.ant-collapse-content` 和 `.ant-collapse-content-box` 都需要显式设置 `background: transparent !important`，避免默认 `colorBgContainer` 破坏 section 背景。

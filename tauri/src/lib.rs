@@ -2018,6 +2018,16 @@ pub fn run() {
             settings::backup::restore_database,
             settings::backup::get_database_path,
             settings::backup::open_app_data_dir,
+            // Backup - Settings (unified save across channels + encryption)
+            settings::backup::save_backup_settings,
+            settings::backup::get_backup_repository_settings,
+            settings::backup::get_backup_encryption_status,
+            // Backup - Repository (GitHub/Gitee)
+            settings::backup::backup_to_repository,
+            settings::backup::list_repository_backups,
+            settings::backup::restore_from_repository,
+            settings::backup::delete_repository_backup,
+            settings::backup::test_backup_repository_connection,
             // Custom data directory (issue #345)
             app_paths::get_app_data_dir_info,
             app_paths::set_app_data_dir_override,

@@ -217,7 +217,8 @@ body {
   max-width: calc(100vw - var(--ai-modal-viewport-inline-gap, 32px));
 }
 
-.ant-modal .ant-modal-content {
+.ant-modal .ant-modal-content,
+.ant-modal .ant-modal-container {
   display: flex;
   max-height: calc(100vh - var(--ai-modal-viewport-block-gap, 48px));
   flex-direction: column;

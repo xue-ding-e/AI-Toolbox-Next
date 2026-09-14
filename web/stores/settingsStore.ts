@@ -16,9 +16,14 @@ import {
   type SidebarHiddenByPage,
   normalizeSidebarHiddenByPage,
 } from '@/services';
+import {
+  saveBackupSettings,
+  type BackupRepositoryConfigFE,
+  type BackupSettingsSaveOutcome,
+} from '@/services/backupApi';
 import { setCodexPreserveOfficialAuthOnSwitch as setCodexPreserveOfficialAuthOnSwitchApi } from '@/services/codexApi';
 import { createKeepAwakeSettingsSlice, type KeepAwakeSettingsState } from './keepAwakeSettings';
-import { buildLaunchOnStartupSettings } from './settingsStoreUtils';
+import { backupSettingsStatePatch, buildLaunchOnStartupSettings } from './settingsStoreUtils';
 
 // Re-export types for convenience (using camelCase for frontend)
 export interface WebDAVConfigFE {
@@ -40,13 +45,35 @@ export interface S3ConfigFE {
   publicDomain: string;
 }
 
+export type BackupType = 'local' | 'webdav' | 'repository';
+
+/** Payload for the unified backup settings save (all channels + encryption). */
+export interface BackupSettingsFormValues {
+  backupType: BackupType;
+  localBackupPath: string;
+  webdav: WebDAVConfigFE;
+  backupEncryptionEnabled: boolean;
+  /** Submit a new password; omit to keep the stored credential. */
+  encryptionPassword?: string;
+  repository: BackupRepositoryConfigFE;
+  /** Empty keeps the stored token (platform switch still requires a new one). */
+  repositoryToken?: string;
+  backupImageAssetsEnabled: boolean;
+  backupCliConfigFilesEnabled: boolean;
+  backupCustomEntries: BackupCustomEntry[];
+  backupFileFilterRules: BackupFileFilterRule[];
+  autoBackupEnabled: boolean;
+  autoBackupIntervalDays: number;
+  autoBackupMaxKeep: number;
+}
+
 interface SettingsState extends KeepAwakeSettingsState {
   // Loading state
   isLoading: boolean;
   isInitialized: boolean;
 
   // Backup settings
-  backupType: 'local' | 'webdav';
+  backupType: BackupType;
   localBackupPath: string;
   webdav: WebDAVConfigFE;
   lastBackupTime: string | null;
@@ -54,6 +81,8 @@ interface SettingsState extends KeepAwakeSettingsState {
   backupCliConfigFilesEnabled: boolean;
   backupCustomEntries: BackupCustomEntry[];
   backupFileFilterRules: BackupFileFilterRule[];
+  /** Encryption switch persisted in settings; the password lives in the OS credential store. */
+  backupEncryptionEnabled: boolean;
 
   // S3 storage settings
   s3: S3ConfigFE;
@@ -104,15 +133,15 @@ interface SettingsState extends KeepAwakeSettingsState {
 
   // Actions
   initSettings: () => Promise<void>;
-  setBackupSettings: (config: {
-    backupType: 'local' | 'webdav';
-    localBackupPath?: string;
-    webdav?: Partial<WebDAVConfigFE>;
-    backupImageAssetsEnabled?: boolean;
-    backupCliConfigFilesEnabled?: boolean;
-    backupCustomEntries?: BackupCustomEntry[];
-    backupFileFilterRules?: BackupFileFilterRule[];
-  }) => Promise<void>;
+  /**
+   * Unified backup settings save: patches only backup-related settings fields,
+   * updates the repository connection record, and stores a newly submitted
+   * encryption password. Throws on validation/save failure so the modal can keep
+   * the draft and show the error.
+   */
+  saveBackupSettingsUnified: (
+    config: BackupSettingsFormValues
+  ) => Promise<BackupSettingsSaveOutcome>;
   setS3: (config: Partial<S3ConfigFE>) => Promise<void>;
   setLastBackupTime: (time: string | null) => Promise<void>;
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
@@ -122,11 +151,6 @@ interface SettingsState extends KeepAwakeSettingsState {
   setLightweightOnClose: (enabled: boolean) => Promise<void>;
   setProxyMode: (mode: ProxyMode) => Promise<void>;
   setProxyUrl: (url: string) => Promise<void>;
-  setAutoBackupSettings: (config: {
-    enabled: boolean;
-    intervalDays: number;
-    maxKeep: number;
-  }) => Promise<void>;
   setLastAutoBackupTime: (time: string) => void;
   setAutoCheckUpdate: (enabled: boolean) => Promise<void>;
   setVisibleTabs: (tabs: string[]) => Promise<void>;
@@ -163,14 +187,6 @@ const toFrontendS3 = (s3: S3Config): S3ConfigFE => ({
 });
 
 // Convert frontend camelCase to backend snake_case
-const toBackendWebDAV = (webdav: WebDAVConfigFE): WebDAVConfig => ({
-  url: webdav.url,
-  username: webdav.username,
-  password: webdav.password,
-  remote_path: webdav.remotePath,
-  host_label: webdav.hostLabel,
-});
-
 const toBackendS3 = (s3: S3ConfigFE): S3Config => ({
   access_key: s3.accessKey,
   secret_key: s3.secretKey,
@@ -205,7 +221,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   ...createKeepAwakeSettingsSlice(set, { getSettings, saveSettings, setKeepAwake }),
   isLoading: false,
   isInitialized: false,
-  backupType: 'local',
+  backupType: 'local' as BackupType,
   localBackupPath: '',
   webdav: defaultWebDAV,
   s3: defaultS3,
@@ -214,6 +230,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   backupCliConfigFilesEnabled: true,
   backupCustomEntries: [],
   backupFileFilterRules: [],
+  backupEncryptionEnabled: false,
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
@@ -245,7 +262,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     try {
       const settings = await getSettings();
       set({
-        backupType: (settings.backup_type as 'local' | 'webdav') || 'local',
+        backupType: (['local', 'webdav', 'repository'].includes(settings.backup_type)
+          ? settings.backup_type
+          : 'local') as BackupType,
         localBackupPath: settings.local_backup_path,
         webdav: toFrontendWebDAV(settings.webdav),
         s3: toFrontendS3(settings.s3),
@@ -254,6 +273,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         backupCliConfigFilesEnabled: settings.backup_cli_config_files_enabled ?? true,
         backupCustomEntries: settings.backup_custom_entries ?? [],
         backupFileFilterRules: settings.backup_file_filter_rules ?? [],
+        backupEncryptionEnabled: settings.backup_encryption?.enabled ?? false,
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
@@ -287,53 +307,35 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 
-  setBackupSettings: async (config) => {
-    const state = get();
-    const newBackupType = config.backupType ?? state.backupType;
-    const newWebdav = config.webdav
-      ? { ...state.webdav, ...config.webdav }
-      : state.webdav;
-    const newLocalPath = config.localBackupPath ?? state.localBackupPath;
-    const newBackupImageAssetsEnabled =
-      config.backupImageAssetsEnabled ?? state.backupImageAssetsEnabled;
-    const newBackupCliConfigFilesEnabled =
-      config.backupCliConfigFilesEnabled ?? state.backupCliConfigFilesEnabled;
-    const newBackupCustomEntries = config.backupCustomEntries ?? state.backupCustomEntries;
-    const newBackupFileFilterRules = config.backupFileFilterRules ?? state.backupFileFilterRules;
-
-    set({
-      backupType: newBackupType,
-      localBackupPath: newLocalPath,
-      webdav: newWebdav,
-      backupImageAssetsEnabled: newBackupImageAssetsEnabled,
-      backupCliConfigFilesEnabled: newBackupCliConfigFilesEnabled,
-      backupCustomEntries: newBackupCustomEntries,
-      backupFileFilterRules: newBackupFileFilterRules,
+  saveBackupSettingsUnified: async (config) => {
+    const outcome = await saveBackupSettings({
+      backup_type: config.backupType,
+      local_backup_path: config.localBackupPath,
+      webdav: {
+        url: config.webdav.url,
+        username: config.webdav.username,
+        password: config.webdav.password,
+        remote_path: config.webdav.remotePath,
+        host_label: config.webdav.hostLabel,
+      },
+      backup_encryption_enabled: config.backupEncryptionEnabled,
+      encryption_password: config.encryptionPassword || undefined,
+      repository: config.repository,
+      repository_token: config.repositoryToken || undefined,
+      backup_image_assets_enabled: config.backupImageAssetsEnabled,
+      backup_cli_config_files_enabled: config.backupCliConfigFilesEnabled,
+      backup_custom_entries: config.backupCustomEntries,
+      backup_file_filter_rules: config.backupFileFilterRules,
+      auto_backup_enabled: config.autoBackupEnabled,
+      auto_backup_interval_days: config.autoBackupIntervalDays,
+      auto_backup_max_keep: config.autoBackupMaxKeep,
     });
 
-    // Get current settings and update
-    const currentSettings = await getSettings();
-    const newSettings: AppSettings = {
-      ...currentSettings,
-      backup_type: newBackupType,
-      local_backup_path: newLocalPath,
-      webdav: toBackendWebDAV(newWebdav),
-      backup_image_assets_enabled: newBackupImageAssetsEnabled,
-      backup_cli_config_files_enabled: newBackupCliConfigFilesEnabled,
-      backup_custom_entries: newBackupCustomEntries,
-      backup_file_filter_rules: newBackupFileFilterRules,
-    };
-    await saveSettings(newSettings);
-    const savedSettings = await getSettings();
-    set({
-      backupType: (savedSettings.backup_type as 'local' | 'webdav') || newBackupType,
-      localBackupPath: savedSettings.local_backup_path,
-      webdav: toFrontendWebDAV(savedSettings.webdav),
-      backupImageAssetsEnabled: savedSettings.backup_image_assets_enabled ?? true,
-      backupCliConfigFilesEnabled: savedSettings.backup_cli_config_files_enabled ?? true,
-      backupCustomEntries: savedSettings.backup_custom_entries ?? [],
-      backupFileFilterRules: savedSettings.backup_file_filter_rules ?? [],
-    });
+    // Reflect the saved state; concurrent settings writes are untouched because the
+    // backend patches only backup-related fields. The shared patch helper keeps
+    // every submitted field (including auto-backup parameters) in sync.
+    set(backupSettingsStatePatch(config, outcome));
+    return outcome;
   },
 
   setS3: async (config) => {
@@ -446,23 +448,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       proxy_url: url,
-    };
-    await saveSettings(newSettings);
-  },
-
-  setAutoBackupSettings: async (config) => {
-    set({
-      autoBackupEnabled: config.enabled,
-      autoBackupIntervalDays: config.intervalDays,
-      autoBackupMaxKeep: config.maxKeep,
-    });
-
-    const currentSettings = await getSettings();
-    const newSettings: AppSettings = {
-      ...currentSettings,
-      auto_backup_enabled: config.enabled,
-      auto_backup_interval_days: config.intervalDays,
-      auto_backup_max_keep: config.maxKeep,
     };
     await saveSettings(newSettings);
   },

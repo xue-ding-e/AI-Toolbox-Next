@@ -36,6 +36,13 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 备份设置三渠道（local/webdav/repository）保存走统一入口 `saveBackupSettingsUnified` → 后端 `save_backup_settings`（只 patch 备份字段 + 同事务更新 `settings:backup_repository`）。不要改回两次全量 `save_settings` 或把仓库 Token 放进 AppSettings payload；保存失败要展示后端错误、保留草稿并禁用重复提交。
+- `BackupSettingsModal` 保存时 `validateFields()` 只返回当前挂载的表单项：webdav/repository 的 Form.Item 按渠道条件渲染，缺渠道的值必须从 `form.getFieldsValue(true)`（打开时 setFieldsValue 过的保留值）取，再兜底到打开时加载的 store 值（`loadedRepositoryConfig`）；直接用 `validateFields()` 返回值会得到 undefined 导致崩溃或静默清空已存连接。保存后的 store 同步走 `settingsStoreUtils.ts::backupSettingsStatePatch`——**新增保存字段时必须同时补这个 patch**（曾漏掉 autoBackup 三参数导致弹窗重开读旧值、再保存覆盖新值）。
+- 新用户表单里的仓库草稿带 `branch=main`/`directory=ai-toolbox` 默认值，但 owner/repo 为空；后端按 `is_blank_connection` 视为"无连接"，非仓库渠道保存时它不触发校验也不得清空已存连接。前端不要在本地/WebDAV 渠道往 payload 塞半填仓库草稿去"帮忙校验"。
+- 备份加密密码只在设置弹窗内出现：提交非空才写入本机系统凭据库，保存成功或关闭后立即从 state 清空；前端只能看到 `has_password` + `password_known` 状态。`password_known=false` 表示本机凭据库读不到（显示"未知"态，不能显示"未设置"）。恢复时后端先读凭据库（凭据库读失败也按 `passwordRequired` 返回，用户仍可手动输密码），前端据此在同一选择上弹密码框重试，取消必须保证零恢复写入。
+- 远端备份列表（WebDAV/仓库）共用 `RemoteBackupRestoreModal`，只消费统一 `BackupFileInfo`（filename/size/encrypted + 仓库条目的 sha）；文件名解析统一走 `utils/backupFilename.ts`（镜像后端契约，支持两类历史命名、新唯一标识与 `.zip`/`.zip.enc`，含多字节 legacy 前缀）。不要在组件里写只匹配 `.zip` 的正则或各自的解析规则；仓库删除/恢复必须带列表返回的 sha。
+- 本地恢复文件选择器同时接受 `.zip` 与 `.zip.enc`（扩展名过滤器 `['zip', 'enc']`），真实格式由后端按文件头判断，与当前是否启用加密无关。
+- `ScrollFadeHint`（备份设置弹窗 + 远端备份列表弹窗）必须用 **callback ref** 绑定真实滚动容器（`.ant-modal-body`）：仅依赖 `isOpen` 的 effect 在 antd portal 首次挂载完成前执行，`bodyRef.current` 是 null，渐变永远不出现；用 `afterOpenChange` 做二次兜底重绑。渐变贴滚动容器可视底部，按剩余滚动量显隐，`pointer-events: none` + `aria-hidden`。保留 `web/App.css` 同时覆盖 `.ant-modal-content` / `.ant-modal-container` 的 viewport-safe 修复，验收需检查 footer 可见、body 内滚动、英文长标签完整显示、首次打开即出现渐变。
 - 数据目录设置区必须分别呈现本进程 `effective/is_custom` 与下次启动 `next_start/restart_required`；不能用保存的 override 标记当前目录，也不能把“稍后重启”说成撤销保存。待生效状态常驻提供重启和撤销入口。目录选择、保存和重置须互斥；后端保存成功响应直接返回最新状态，失败保留当前路径并呈现具体错误。
 - 自定义数据目录只切换应用自己的数据根目录，不自动迁移数据，不覆盖外部 CLI/独立 Skills 路径。迁移引导要先恢复 Gateway 直连，并明确备份范围；重启失败要保留待生效状态且可重试。
 

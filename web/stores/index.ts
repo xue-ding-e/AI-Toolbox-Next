@@ -1,6 +1,12 @@
 export { useThemeStore, type ThemeMode } from './themeStore';
 export { useAppStore } from './appStore';
-export { useSettingsStore, type WebDAVConfigFE, type S3ConfigFE } from './settingsStore';
+export {
+  useSettingsStore,
+  type WebDAVConfigFE,
+  type S3ConfigFE,
+  type BackupType,
+  type BackupSettingsFormValues,
+} from './settingsStore';
 export type {
   SidebarPageKey,
   SidebarHiddenByPage,

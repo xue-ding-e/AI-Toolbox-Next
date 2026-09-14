@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AppSettings } from '../../services/settingsApi.ts';
-import { buildLaunchOnStartupSettings } from '../../stores/settingsStoreUtils.ts';
+import {
+  backupSettingsStatePatch,
+  buildLaunchOnStartupSettings,
+} from '../../stores/settingsStoreUtils.ts';
 
 function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -33,6 +36,10 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     backup_cli_config_files_enabled: true,
     backup_custom_entries: [],
     backup_file_filter_rules: [],
+    backup_encryption: {
+      enabled: false,
+      credential_ref: 'keyring:ai-toolbox-backup-encryption',
+    },
     launch_on_startup: true,
     minimize_to_tray_on_close: true,
     start_minimized: false,
@@ -99,4 +106,49 @@ test('buildLaunchOnStartupSettings preserves start_minimized when launch on star
 
   assert.equal(updatedSettings.launch_on_startup, true);
   assert.equal(updatedSettings.start_minimized, true);
+});
+
+test('unified backup save patch syncs every submitted field including auto-backup params', () => {
+  const config = {
+    backupType: 'repository' as const,
+    localBackupPath: 'D:/backups',
+    webdav: {
+      url: 'https://dav.example.com',
+      username: 'user',
+      password: 'pass',
+      remotePath: '/backup',
+      hostLabel: 'Office PC',
+    },
+    backupImageAssetsEnabled: true,
+    backupCliConfigFilesEnabled: false,
+    backupCustomEntries: [{
+      id: 'custom-backup-1',
+      name: 'notes',
+      source_path: 'D:/notes',
+      restore_path: null,
+      entry_type: 'file' as const,
+      enabled: true,
+    }],
+    backupFileFilterRules: [{ tool: 'opencode', file_path: 'auth.json' }],
+    autoBackupEnabled: true,
+    autoBackupIntervalDays: 2,
+    autoBackupMaxKeep: 3,
+  };
+
+  const patch = backupSettingsStatePatch(config, { encryption: { enabled: true } });
+
+  // Regression (review F04): a save that only changed auto-backup parameters used
+  // to leave the store holding the old values, so reopening the modal and saving
+  // again silently reverted them.
+  assert.equal(patch.autoBackupEnabled, true);
+  assert.equal(patch.autoBackupIntervalDays, 2);
+  assert.equal(patch.autoBackupMaxKeep, 3);
+  assert.equal(patch.backupEncryptionEnabled, true);
+  assert.equal(patch.backupType, 'repository');
+  assert.equal(patch.localBackupPath, 'D:/backups');
+  assert.equal(patch.webdav.hostLabel, 'Office PC');
+  assert.equal(patch.backupImageAssetsEnabled, true);
+  assert.equal(patch.backupCliConfigFilesEnabled, false);
+  assert.deepEqual(patch.backupCustomEntries, config.backupCustomEntries);
+  assert.deepEqual(patch.backupFileFilterRules, config.backupFileFilterRules);
 });

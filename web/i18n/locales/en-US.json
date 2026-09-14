@@ -889,7 +889,67 @@
       "unknownHostLabel": "Unlabeled",
       "otherHostRestoreHint": "Restoring this backup will overwrite the current device's settings and data.",
       "currentHostEmpty": "No backup files were found for the current host label \"{{hostLabel}}\".",
-      "otherHostEmpty": "No backups from other hosts were found."
+      "otherHostEmpty": "No backups from other hosts were found.",
+      "repository": {
+        "errors": {
+          "tokenRequired": "An access token is required; switching platforms requires a new token for that platform",
+          "invalidRepository": "Owner and repository names may only contain letters, digits, '-', '_', and '.'",
+          "invalidBranch": "The branch name is invalid",
+          "invalidDirectory": "The directory must be a safe relative path",
+          "privateRepository": "The repository must be private",
+          "permission": "Access denied; check the token permissions",
+          "repositoryNotFound": "The repository or branch does not exist",
+          "rateLimit": "The platform API rate limit was hit; retry later",
+          "network": "The network request failed",
+          "remoteResponse": "The platform API returned an unexpected response",
+          "notFound": "The backup file no longer exists",
+          "tooLarge": "The backup exceeds the GitHub Contents API 100 MB limit; reduce the backup scope or switch storage",
+          "fileExists": "A file with the same name already exists; the old backup was kept",
+          "remoteChanged": "The backup changed after listing; refresh the list and retry",
+          "invalidFilename": "Not a valid backup filename"
+        }
+      },
+      "noRepositoryConfigured": "Repository connection is not configured yet. Fill in the GitHub / Gitee settings in backup settings",
+      "saveFailed": "Failed to save backup settings",
+      "backupTarget": "Storage target",
+      "encryptedBadge": "Encrypted",
+      "repositoryForm": {
+        "platform": "Platform",
+        "owner": "Owner",
+        "repository": "Repository",
+        "branch": "Branch",
+        "directory": "Directory",
+        "token": "Access token",
+        "tokenPlaceholder": "Enter the GitHub / Gitee access token",
+        "tokenStoredPlaceholder": "Token stored; leave empty to keep it",
+        "tokenStored": "Token stored; switching platforms requires a new token for that platform",
+        "tokenHint": "The token is stored only in the local database and is never shown again; repository read/write permission is required"
+      },
+      "encryption": {
+        "title": "Backup encryption",
+        "description": "Encrypt new backups for every storage channel; existing backups stay as they were created, and the password is stored in this machine's OS credential store",
+        "password": "Encryption password",
+        "passwordPlaceholder": "Enter a new password; leave empty to keep the stored one",
+        "passwordStored": "A password is stored on this machine; old backups still restore with their original password",
+        "passwordNotSet": "No password has been set on this machine yet",
+        "passwordPromptTitle": "Enter the backup decryption password",
+        "passwordPromptDesc": "This backup is encrypted. The password is used only for this restore and is not saved",
+        "passwordRequiredPrompt": "Enter the decryption password",
+        "errors": {
+          "passwordRequired": "This backup is encrypted; a password is required to restore it",
+          "passwordWrong": "Wrong password or the backup file is corrupted",
+          "invalidBackup": "The backup file is truncated or not a valid encrypted backup",
+          "encryption": "Backup encryption failed",
+          "credentialStore": "Cannot access this machine's OS credential store",
+          "passwordEmpty": "The password cannot be empty",
+          "credentialRollback": "Restoring the previous password failed; please set the backup encryption password again"
+        },
+        "passwordStateUnknown": "Password status is unknown (the OS credential store is unavailable)"
+      },
+      "errors": {
+        "invalidBackupType": "Invalid storage type"
+      },
+      "repositoryChannel": "GitHub / Gitee"
     },
     "syncMessages": {
       "sshSyncDisabled": "SSH sync is not enabled",

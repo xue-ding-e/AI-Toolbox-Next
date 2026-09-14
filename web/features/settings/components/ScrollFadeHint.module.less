@@ -1,0 +1,44 @@
+// Sticky bottom gradient hint for tall modal bodies (see DESIGN.md: no decorative
+// gradients elsewhere; this one is a functional scroll affordance themed by shadow
+// variables).
+
+.scrollFadeHint {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  margin-top: -28px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    var(--color-bg-container) 78%,
+    var(--color-bg-container) 100%
+  );
+  transition: opacity 0.2s ease;
+}
+
+[data-theme='dark'] .scrollFadeHint {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    var(--color-bg-container) 78%,
+    var(--color-bg-container) 100%
+  );
+}
+
+.visible {
+  opacity: 1;
+}
+
+.hidden {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrollFadeHint {
+    transition: none;
+  }
+}

@@ -889,7 +889,67 @@
       "unknownHostLabel": "未标识",
       "otherHostRestoreHint": "恢复后会覆盖当前设备的设置与数据。",
       "currentHostEmpty": "当前主机标识为“{{hostLabel}}”，暂未找到带该标识的备份文件。",
-      "otherHostEmpty": "暂未找到其他主机的备份文件。"
+      "otherHostEmpty": "暂未找到其他主机的备份文件。",
+      "repository": {
+        "errors": {
+          "tokenRequired": "需要访问令牌；切换平台时必须输入新平台的令牌",
+          "invalidRepository": "所有者和仓库名只能包含字母、数字、-、_ 和 .",
+          "invalidBranch": "分支名无效",
+          "invalidDirectory": "目录必须是安全的相对路径",
+          "privateRepository": "仓库必须为私有仓库",
+          "permission": "访问被拒绝，请检查令牌权限",
+          "repositoryNotFound": "仓库或分支不存在",
+          "rateLimit": "触发平台 API 速率限制，请稍后重试",
+          "network": "网络请求失败",
+          "remoteResponse": "平台 API 返回异常响应",
+          "notFound": "备份文件已不存在",
+          "tooLarge": "备份文件超过 GitHub Contents API 100 MB 上限；请调整备份范围或改用其它存储方式",
+          "fileExists": "仓库中已存在同名文件，旧备份保持不变",
+          "remoteChanged": "备份文件在列出后发生了变化，请刷新列表重试",
+          "invalidFilename": "不是有效的备份文件名"
+        }
+      },
+      "noRepositoryConfigured": "尚未配置仓库连接，请在备份设置中填写 GitHub / Gitee 仓库信息",
+      "saveFailed": "备份设置保存失败",
+      "backupTarget": "存储目标",
+      "encryptedBadge": "已加密",
+      "repositoryForm": {
+        "platform": "平台",
+        "owner": "所有者",
+        "repository": "仓库",
+        "branch": "分支",
+        "directory": "目录",
+        "token": "访问令牌",
+        "tokenPlaceholder": "输入 GitHub / Gitee 访问令牌",
+        "tokenStoredPlaceholder": "已保存令牌，留空保持不变",
+        "tokenStored": "已保存令牌；切换平台时必须输入新平台的令牌",
+        "tokenHint": "令牌仅保存在本机数据库，不会回显；需要仓库读写权限"
+      },
+      "encryption": {
+        "title": "备份加密",
+        "description": "为所有存储渠道的新备份启用加密；旧备份仍使用创建时的状态，密码保存在本机系统凭据库中",
+        "password": "加密密码",
+        "passwordPlaceholder": "输入新密码；留空保留已保存密码",
+        "passwordStored": "本机已保存密码；修改后旧备份仍用旧密码恢复",
+        "passwordNotSet": "本机尚未设置密码",
+        "passwordPromptTitle": "输入备份解密密码",
+        "passwordPromptDesc": "该备份已加密。密码仅用于本次恢复，不会保存",
+        "passwordRequiredPrompt": "请输入解密密码",
+        "errors": {
+          "passwordRequired": "该备份已加密，需要输入密码才能恢复",
+          "passwordWrong": "密码错误或备份文件已损坏",
+          "invalidBackup": "备份文件已截断或不是有效的加密备份",
+          "encryption": "备份加密失败",
+          "credentialStore": "无法访问本机系统凭据库",
+          "passwordEmpty": "密码不能为空",
+          "credentialRollback": "恢复原密码失败，请重新设置备份加密密码"
+        },
+        "passwordStateUnknown": "无法读取本机密码状态（系统凭据库不可用）"
+      },
+      "errors": {
+        "invalidBackupType": "存储方式无效"
+      },
+      "repositoryChannel": "GitHub / Gitee"
     },
     "syncMessages": {
       "sshSyncDisabled": "SSH 同步未启用",

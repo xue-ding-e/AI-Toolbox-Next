@@ -1,7 +1,7 @@
 use super::types::{
     default_backup_file_filter_rules, default_sidebar_hidden_by_page, AppSettings,
-    BackupCustomEntry, BackupFileFilterRule, S3Config, SessionContentFilter, SessionDetailFilters,
-    SessionRoleFilter, WebDAVConfig,
+    BackupCustomEntry, BackupEncryptionConfig, BackupFileFilterRule, S3Config,
+    SessionContentFilter, SessionDetailFilters, SessionRoleFilter, WebDAVConfig,
 };
 /**
  * Settings Adapter Layer
@@ -24,6 +24,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
 
         webdav: get_webdav(&value),
         s3: get_s3(&value),
+        backup_encryption: get_backup_encryption(&value),
 
         last_backup_time: get_opt_str(&value, "last_backup_time"),
         backup_image_assets_enabled: get_bool(&value, "backup_image_assets_enabled", true),
@@ -398,6 +399,29 @@ fn get_webdav(value: &Value) -> WebDAVConfig {
         }
     } else {
         WebDAVConfig::default()
+    }
+}
+
+/// Backup encryption defaults to disabled for both missing and malformed records.
+/// The credential reference is informational only and never carries the password.
+fn get_backup_encryption(value: &Value) -> BackupEncryptionConfig {
+    let default = BackupEncryptionConfig::default();
+    match value.get("backup_encryption") {
+        Some(encryption) => BackupEncryptionConfig {
+            enabled: encryption
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            credential_ref: {
+                let reference = get_str(encryption, "credential_ref", "");
+                if reference.is_empty() {
+                    default.credential_ref.clone()
+                } else {
+                    reference
+                }
+            },
+        },
+        None => default,
     }
 }
 

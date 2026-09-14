@@ -2,10 +2,23 @@
 
 ## 一句话职责
 
-- `backup/` 负责本地备份恢复、WebDAV 备份恢复和自动备份调度。
+- `backup/` 负责本地备份恢复、WebDAV 备份恢复、GitHub/Gitee 仓库备份恢复、可选备份加密和自动备份调度。
 
 ## Source of Truth
 
+- 三个存储渠道（local / webdav / repository）共享同一生成与恢复管线：
+  - 生成层 `generate.rs::generate_backup_file`：读设置 → `create_backup_zip`（范围、过滤、SQLite、外部文件的唯一事实源仍是 `utils.rs::write_backup_zip_contents`）→ 可选加密 → 共享文件名。存储层只接收完成字节，禁止查询 provider/MCP/Skills 等业务表。
+  - 恢复层 `restore.rs::restore_from_archive<R: Read + Seek>`：本地文件、WebDAV 下载、仓库下载都先经 `prepare_backup_bytes`（按文件头识别加密并解密），再走同一管线。不要在某个渠道复制第三份恢复实现。
+- 加密封装 `encryption.rs`：`AI-TOOLBOX-BACKUP-ENC-1\0` magic + 随机 32 字节 salt + 随机 12 字节 nonce + AES-256-GCM 密文；PBKDF2-HMAC-SHA256 600000 次；magic/header 参与认证。识别加密**只看文件头**，不看 `.zip.enc` 后缀。
+- 备份加密密码保存在本机系统凭据库（`credentials.rs`，keyring：Windows Credential Manager / macOS Keychain / Linux Secret Service），AppSettings 只存 `backup_encryption.enabled` 开关和固定 `credential_ref`。密码不进入 AppSettings、备份包、日志或前端。加密开启但凭据库读不到密码时整个备份失败，**绝不降级为未加密上传**。
+- 文件名契约 `filename.rs`：新格式 `ai-toolbox-backup-<YYYYMMDD>-<HHMMSS>-<unique8>[_<host>].zip[.enc]`（unique8 保证同秒/多设备不冲突）；同时兼容 current（无 unique）与 legacy 前缀命名。仓库列表、本地保留数量清理、WebDAV 列表都必须用共享识别（含 `.zip.enc`），不能裸匹配 `.zip`。
+- 仓库适配器 `repository.rs`：配置单位是 仓库/分支/相对目录；每次备份是独立文件。GitHub 新建用 Contents PUT、Gitee 用 Contents POST（均不带 sha，同名旧文件天然不可覆盖）；GitHub 按 100 MB 预检上传（Gitee 不套用该上限，透传服务端错误）；删除绑定列表返回的 SHA（GitHub DELETE body / Gitee DELETE query）；下载先取 metadata 校验 SHA 再读内容。所有请求走全局 `http_client`（rustls）；错误与日志不泄露 Token（Gitee 的 access_token 在 query 中，不能打印 URL）。
+- 仓库目录枚举：Contents 单次请求，**不做分页循环**（Gitee Contents 官方 schema 根本没有 page/per_page，参数被忽略，循环会无限重取同一批）。GitHub 目录 ≥1000 条、Gitee 目录 ≥100 条时改走 Git Trees recursive（branch → commit sha → `git/trees/{sha}?recursive=1`，两平台同构；Tree 条目只有 `path` 没有 `name`，文件名取 path 末段）。Trees 响应的 `truncated` 是唯一完整性信号：`truncated=true` 的列表可以展示但**绝不能驱动保留数量清理**（`list_backups_detailed` 返回 complete 标志，cleanup 拒绝删除）。
+- 私有仓库限制的执行点在 `upload_file`（每次真实写入前先做一次只读 repo GET 校验 `private=true`），不是只在测试连接命令里；跳过测试连接或测试后仓库转公开都不能绕过。
+- 仓库连接与 Token 存 `settings:backup_repository` 独立记录（Token 不回显，DTO 只有 `has_token`）；旧未发布方案的 `settings:repository_sync` 记录在新记录缺失时一次性迁移（只带连接字段 + token，不带 scopes/基线/状态），迁移即持久化，且绝不覆盖已存在的新记录。备份设置统一保存入口 `save_backup_settings` 在同一 SQLite 事务里 patch AppSettings 的备份字段并更新该记录；新提交的加密密码先写凭据库，数据库写入失败时回滚凭据库（JoinError 与 keyring 错误两层都必须上报，`combine_rollback_error`），不能假报成功。
+- Token/凭据选择规则全仓库唯一：`resolve_repository_token`（草稿 token 非空则替换；为空时仅同平台复用旧 token，跨平台必须先报 `tokenRequired` 再发网络请求）。保存路径与测试连接路径都必须走它，不要另写第二套复用逻辑。
+- 仓库连接空白草稿（`is_blank_connection`：owner+repository 均空）不是连接：任何渠道保存时它都不得触发 owner/repo 校验，也不得当作删除命令——只有用户在仓库渠道本身保存空白草稿才清空记录，且旧 Token 随连接一起清掉。新用户在本地/WebDAV 渠道保存时表单里的 `branch=main` 默认值不得阻断保存。
+- 备份加密状态读取 `encryption_status` 对凭据库失败是**尽力而为**：返回 `password_known=false`（前端显示未知态），绝不把"状态读不到"变成"设置保存失败"（settings 已落库）。生成加密备份时凭据库不可用仍然整体失败（不降级明文）；恢复路径凭据库读失败映射为 `passwordRequired`，让知道密码的用户走手动一次性输入。
 - 备份包里的 `sqlite/ai-toolbox.db` 是 SQLite 主数据库快照；`db/` 只保留兼容旧 SurrealDB 备份/恢复流程的占位或 legacy 内容；`external-configs/` 是外部运行时配置和 prompt/auth 等文件快照。默认情况下数据库快照与外部文件两者都写入。
 - `backup_cli_config_files_enabled` **只控制** Codex / Claude / Grok / Gemini / Kimi CLI 这些 DB-backed 工具的运行时文件是否进包、是否恢复（默认开启；缺字段按 `true`）。关闭后这些 optional 工具的 `external-configs/<tool>/`（含 `root-dir.txt`）不打包也不恢复，渠道/prompt 靠 SQLite + re-apply 重建。
 - **OpenCode / OpenClaw / Pi** 的 provider/model/main config 以运行时文件为主数据，**始终**进入备份/恢复（仍受 `backup_file_filter_rules` 约束）。开关关闭不会跳过它们。
@@ -24,28 +37,39 @@
 
 - 备份不是只备份数据库，还要把各工具外部配置文件、prompt、auth、skills 等一起打包，否则恢复后会出现“库里有记录、运行时文件缺失”的分叉。
 - Skills 文件备份/恢复必须以当前 `skill_settings:skills.central_repo_path` 解析出的中央仓库目录为准，而不是固定 `{app_data_dir}/skills`。恢复 SQLite 快照后再解析该路径；若目标目录不存在，恢复流程负责创建。
-- WebDAV 与本地备份共用备份 zip 生成能力，但上传/列举/恢复链路分离，这样可以分别处理网络错误和本地文件错误。
+- 三渠道共用生成/恢复管线但保留各自薄包装命令：网络错误与本地文件错误分别处理，同时保证任何渠道的备份在任何渠道语义一致（同一 zip 结构、同一加密格式、同一恢复 flags/warnings）。加密只改变文件的存储表示，不改变备份内容语义。
+- 备份加密密码放系统凭据库而不是 SQLite：重启后的自动备份能读到密码，同时密码不进入备份包本身；跨设备恢复不迁移凭据，恢复加密备份时输入的密码默认只用于本次解密。
 - 自动备份作为后台调度器常驻运行，周期性读取设置并决定是否执行，而不是把调度状态散落到 UI 层。
 - 自定义备份项用 `custom-backup/manifest.json` 描述恢复目标，payload 使用稳定相对路径存放，避免把绝对路径直接作为 zip entry，也避免不同文件名互相覆盖。
+- 本地备份先写 `.part` 临时文件再 rename，失败不会留下看似完整的备份。
 
 ## 关键流程
 
 ```mermaid
 sequenceDiagram
   participant UI as Settings/Restore
-  participant Backup as backup::local/webdav
+  participant Gen as backup::generate
+  participant Store as local/webdav/repository
   participant Zip as Backup Zip
   participant DB as Database + External Files
 
-  UI->>Backup: backup / restore
-  Backup->>Zip: create/read zip
+  UI->>Store: backup / restore
+  Store->>Gen: generate_backup_file
+  Gen->>Zip: create/read zip (optional AES-GCM encrypt)
   Zip->>DB: write/read db snapshot + external-configs
-  Backup-->>UI: result + warnings
+  Store-->>UI: result + warnings
 ```
 
 ## 易错点与历史坑（Gotchas）
 
-- 数据目录覆盖从固定默认位置的 `app_paths.json` 启动引导；备份包不包含/恢复该文件。DB、图片资产、默认 Skills 路径及恢复 flags 都使用本次运行已冻结的数据根目录，保存下次启动目录后仍写当前目录。本地/WebDAV 恢复标记写失败必须上报，不能成功返回却不触发后续同步。独立自定义 Skills 仓库仍由 `skill_settings` 决定，不因应用目录变化被重置。
+- 加密备份恢复/生成必须经过共享入口（`prepare_backup_bytes` / `generate.rs`）。任何渠道出现“缺密码、错密码、截断、篡改”都必须在**任何恢复写入之前**报错；`CryptoError::AuthFailed` 映射为 `passwordWrong`，`PasswordRequired` 映射为 `passwordRequired`，前端据此在同一次恢复选择中弹出密码框重试，取消与错误都不能修改数据库/外部配置。
+- 恢复的密码优先级：显式传入的一次性密码 > 本机凭据库；**凭据库读取失败也按 `passwordRequired` 处理**（用户可能知道密码，不能剥夺手动输入机会），但生成加密备份时凭据库不可用仍整体失败，绝不降级明文。改密码只影响今后备份，旧备份仍用创建时密码；关闭加密不重写旧备份，也不清理已存密码。
+- 文件名解析的所有定长切片必须走 `str::get`（非字符边界返回 None），不能 `&body[..15]` / `split_at` 直切——多字节主机标签（如中文 legacy 前缀）会直接 panic，且调度器不会捕获该 panic。
+- 自动备份 repository 分支：未配置（空白连接）时**静默跳过**（与 webdav/local 一致），不要发 `auto-backup-failed`；上传与保留数量清理必须复用**同一个 `RepositoryClient` 快照**（`perform_repository_backup` 返回 client），不能在清理入口重新读设置——否则上传期间切换连接会让 A 仓库的成功触发 B 仓库的删除。
+- 仓库渠道的回归测试用 `repository.rs::mock_api_tests` 的 TcpListener mock（`start_mock` 按序应答并记录 `METHOD path`，query 剥离防 Token 入日志；`RepositoryClient::for_test` 跳过凭据校验指向本地监听）。私仓拦截、Trees 解析、truncated 清理跳过都有现成用例，改这块行为时先跑它们。
+- `save_backup_settings` 的事务边界：凭据库写入在最前（失败则整体不动）；SQLite 内 patch settings 字段 + 写 `backup_repository` 记录同事务；DB 失败时把旧密码写回凭据库。并发保存其它设置不受影响（只 patch 备份字段），但不要把这个入口改回全量 `save_settings`。
+- 备份/恢复的 JSON 错误载荷统一 `{type, message, suggestion}`（`credentials::backup_error`），`suggestion` 是 i18n key；前端解析 `type` 判断密码重试。错误 `message`/`detail` 不得包含密码或 Token。
+- 数据目录覆盖从固定默认位置的 `app_paths.json` 启动引导；备份包不包含/恢复该文件。DB、图片资产、默认 Skills 路径及恢复 flags 都使用本次运行已冻结的数据根目录，保存下次启动目录后仍写当前目录。本地/WebDAV/仓库恢复标记写失败必须上报，不能成功返回却不触发后续同步。独立自定义 Skills 仓库仍由 `skill_settings` 决定，不因应用目录变化被重置。
 
 - 不要把备份理解成“只有数据库”。`external-configs/` 下的 OpenCode/Claude/Codex/OpenClaw 配置、prompt、auth 等同样关键。
 - 不要把 SSH/WSL 映射当作自定义备份项来源。SSH/WSL 是同步规则；自定义备份项是备份恢复规则，两者状态语义不同。
@@ -56,9 +80,9 @@ sequenceDiagram
 - 恢复启动编排中 `.reapply_applied_required` 优先并执行已含 OMO/OMOS 的全量 re-apply；只有 `.resync_required` 时仅串行重建 OMO/OMOS，随后继续 Skills、MCP 和单次 WSL sync，不能借普通恢复重写其它 CLI。
 - 恢复专用 apply/MCP 入口不得发中间 `wsl-sync-request-*`、`mcp-changed` 等自动同步事件。最终 WSL 同步只传播本轮实际改写的 CLI 模块，同时同步 MCP/Skills 一次，不能顺手覆盖受保护的 OpenClaw/OpenCode/Pi 本机运行时文件。
 - 普通 `timeout(work())` 无法可靠抢占卡在同步文件 I/O 的 future。re-apply 要在独立 task 中运行，超时后 abort 并继续下一个 CLI；写入前再用 `spawn_blocking` 做短时无写入路径探测，降低不可达 UNC 路径拖死恢复链路的概率。
-- 新增外部配置文件进入备份时，要同时检查本地备份、WebDAV 备份和 restore 路径，不要只改一个入口。所有从 zip entry 派生的 restore 输出路径都必须经过 `resolve_external_config_restore_output_path`（或等价共享安全 helper），不能直接 `restore_dir.join(entry_path)`；本地与 WebDAV 分支必须保持一致，防止 `..` 或目标目录内 symlink 把文件写出 restore root。
-- 新增 app data 缓存文件进入备份时，也要同时检查本地备份、WebDAV 备份和 restore 路径；这些文件通常位于 zip 根目录，和 `preset_models.json` 的处理方式保持一致。
-- SQLite-only 用户迁移完成后通常没有 `{app_data}/database` legacy 目录；本地/WebDAV 自动备份不能因为这个目录缺失而失败，必须继续写入 `sqlite/ai-toolbox.db` 和 manifest。
+- 新增外部配置文件进入备份时，要同时检查本地备份、WebDAV 备份、仓库版本和 restore 路径，不要只改一个入口。所有从 zip entry 派生的 restore 输出路径都必须经过 `resolve_external_config_restore_output_path`（或等价共享安全 helper），不能直接 `restore_dir.join(entry_path)`；共享恢复实现已经统一这一点。
+- 新增 app data 缓存文件进入备份时，也要同时检查生成层与 restore 路径；这些文件通常位于 zip 根目录，和 `preset_models.json` 的处理方式保持一致。
+- SQLite-only 用户迁移完成后通常没有 `{app_data}/database` legacy 目录；自动备份不能因为这个目录缺失而失败，必须继续写入 `sqlite/ai-toolbox.db` 和 manifest。
 - Codex 全局 prompt 备份要同时保留两个已存在的已知文件：`AGENTS.md` 与 `AGENTS.override.md`。即使 override 当前生效，基础 `AGENTS.md` 仍是未来清空/删除 override 后的回退数据，不能只备份 active 文件。
 - Grok 外部状态备份覆盖当前 runtime root 下的 `auth.json`、`config.toml`、`AGENTS.md` 和 `plugins/`，不默认备份 `sessions/`；恢复时必须尊重动态 root 与统一文件过滤规则。
 - Grok / Kimi `plugins/` 备份跳过 `.git`、`node_modules`、cache、build/dist/target 等可重建内容；目录中的 symlink 不跟随，恢复目标的现有相对路径组件若是 symlink 必须拒绝，避免写出 runtime root。
@@ -77,8 +101,9 @@ sequenceDiagram
 - OpenList/AList 的 WebDAV 下载若走「302 重定向」策略，GET 会被 302 指向上游网盘 CDN 签名地址（115 防盗链），通用客户端拿不到 Cookie/IP 绑定会得到 403。这不是账号认证错误：列目录（PROPFIND）和上传（PUT）都能过，唯独下载/恢复 GET 报 403，且内网（出口 IP 匹配）能下、公网/Bind 不匹配会 403。修复在服务端（改「本机代理/本地代理」下载策略、升级服务端、或改用原生驱动），本 app 无法根治。对应地，WebDAV 下载（GET）的错误映射不能用通用 403→authFailed：要比较 `response.url()` host 与配置 host，若 403 且被重定向到外部 host，则应返回 `settings.webdav.errors.downloadRedirect` 型诊断，避免误导「改用户名密码」。
 - SQLite 快照恢复是**原地覆盖 live DB 再跑迁移**（`conn.restore` 原地覆盖 → 同连接 `run_all` 迁移）。这个顺序有一个致命的数据安全要求：恢复前**必须**先对当前 live DB 取一份安全备份（temp 文件），迁移或 restore 任一步失败时**必须**用该安全备份回滚 live DB，否则 app 会卡在「被旧 schema 覆盖、迁移又失败、原数据已不可恢复」的降级态且无法回到恢复前状态。回滚本身若也失败，要把「恢复失败 + 回滚失败」一起上报。同样，解压出的快照临时 DB 文件清理不能放在恢复 `?` 之后——恢复失败会提前返回跳过清理，泄漏完整大小的大文件；应先取 `result` 再无条件 `remove_file`，最后 `result?`。
 - `db::backup::backup_to_path` 是「先 checkpoint 再 backup」的安全拷贝入口，新增任何「在恢复前保留一份可回滚的旧态」场景都复用它；不要在 backup utils 里另写 `conn.backup` 直调。
-- 旧 SurrealDB-only 备份（zip 有 `db/` 但无 `sqlite/ai-toolbox.db`）恢复到已迁移到 SQLite 的应用是**静默无效**的（启动时旧目录只会被归档删除、不会导入），local/webdav restore 必须显式报错拦截；未迁移机器仍允许解压走一次性导入。`cleanup_incomplete_sqlite_database` 在删除现有 SQLite 前必须先经 `backup_to_path` 存一份 `{app_data}/ai-toolbox.pre-import-backup.db`，备份失败则拒绝删除（否则导入失败时原库已无回退点）。
+- 旧 SurrealDB-only 备份（zip 有 `db/` 但无 `sqlite/ai-toolbox.db`）恢复到已迁移到 SQLite 的应用是**静默无效**的（启动时旧目录只会被归档删除、不会导入），restore 必须显式报错拦截；未迁移机器仍允许解压走一次性导入。`cleanup_incomplete_sqlite_database` 在删除现有 SQLite 前必须先经 `backup_to_path` 存一份 `{app_data}/ai-toolbox.pre-import-backup.db`，备份失败则拒绝删除（否则导入失败时原库已无回退点）。
 - 备份/恢复元数据要点：hermes 备份 zip entry 必须用真实 prompt 文件名（`SOUL.md`，走 `hermes::constants::HERMES_PROMPT_FILE`），不要写成仓库内 agent 文档的 `AGENTS.md`；hermes/dsh 都有 WSL 文件映射，`wsl_module_for_external_config_tool` / 恢复 resync payload 必须包含它们；Claude Desktop 是 Windows/macOS 桌面应用，没有 WSL 文件映射，不应加入 resync payload。`clear_restored_cli_custom_roots` 除 `root_dir/config_path` 外还要清 hermes/dsh 的 `config_dir`，否则恢复后的默认目录文件不会被读到；过滤规则路径归一化 `tool_prefixes` 必须覆盖 hermes（`~/.hermes/` 与 `%LOCALAPPDATA%/hermes`）、dsh（`~/.dsh/`）、claude_desktop（`%LOCALAPPDATA%/Claude` 与 `%LOCALAPPDATA%/Claude-3p`）。新工具接入备份按本文件「新增 CLI / coding 工具接入备份时（必做清单）」逐项走。
+- 自动备份的 `last_auto_backup_time` 同时用于成功记录和失败节流（失败也写入以防每 10 分钟重试）；新备份真正成功后才执行保留数量清理，清理失败只是 warning，不能把已上传的备份说成不存在或回滚成功状态。`max_keep=0` 沿用不清理。
 
 ## 跨模块依赖
 
@@ -86,6 +111,7 @@ sequenceDiagram
 - 被 `settings/` 前端与 `lib.rs` 启动阶段依赖：恢复后可能触发 re-apply + skills/MCP 重同步，自动备份调度器在启动时常驻运行。
 - 与 `coding::reapply_applied_runtime` 耦合：跳过 CLI 配置恢复后由该 helper 串行 re-apply 各 CLI 已应用渠道/prompt。
 - 与 `skills/`、`wsl/`、`ssh/` 间接耦合：恢复出来的文件和元数据后续会继续被这些模块消费。
+- 加密依赖 `ring` + `zeroize`（AES-256-GCM / PBKDF2 / Zeroizing），凭据库依赖 `keyring`（v4，features：windows-native + apple-native + zbus-secret-service，均为持久化凭据后端，不接入 sample/mock fallback）。
 
 ## 典型变更场景（按需）
 
@@ -106,5 +132,7 @@ sequenceDiagram
 
 - 至少验证：备份包里包含 `sqlite/ai-toolbox.db`、`db_manifest.json` 与相关 `external-configs/` 内容；SQLite-only 场景下不能要求 legacy `db/` 目录有真实数据库文件。
 - 至少验证：restore 后关键外部配置文件落到正确位置。
+- 加密链路至少验证（`encryption.rs`/`filename.rs` 单测覆盖）：加解密往返、每次加密新 salt/nonce、错误密码/篡改/截断/空密码全部失败、magic 头识别；新旧三类文件名 + `.zip.enc` 后缀解析；恢复端到端验证错误密码时数据库零写入。
+- 涉及仓库渠道时至少验证：配置校验（owner/repo/branch/目录逃逸拒绝）；真实私库上传/列表/按 SHA 下载/删除需要真机验证，mock 不能代替。
 - 涉及自定义备份项时，至少验证：`custom-backup/manifest.json` 存在、payload 文件存在、restore 后按 `~/...` 或 `%APPDATA%/...` 写回目标路径。
 - 若本轮只改了文档或静态逻辑，也要明确说明尚未做真实备份→恢复端到端验证。

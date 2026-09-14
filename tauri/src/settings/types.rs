@@ -24,6 +24,24 @@ pub struct S3Config {
     pub public_domain: String,
 }
 
+/// Optional backup encryption configuration. `credential_ref` documents where the
+/// password lives (fixed OS credential-store entry); the secret itself is never
+/// stored in settings. Missing fields default to disabled encryption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupEncryptionConfig {
+    pub enabled: bool,
+    pub credential_ref: String,
+}
+
+impl Default for BackupEncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            credential_ref: "keyring:ai-toolbox-backup-encryption".to_string(),
+        }
+    }
+}
+
 /// Custom file or directory included in backup archives
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -147,6 +165,10 @@ pub struct AppSettings {
     pub local_backup_path: String,
     pub webdav: WebDAVConfig,
     pub s3: S3Config,
+    /// Optional backup encryption: only the switch and the local credential-store
+    /// reference live here. The password itself is stored in the OS credential store
+    /// and never enters settings, backups, or logs.
+    pub backup_encryption: BackupEncryptionConfig,
     pub last_backup_time: Option<String>,
     /// Include generated image files in backup zip (default: true)
     pub backup_image_assets_enabled: bool,
@@ -255,6 +277,7 @@ impl Default for AppSettings {
             local_backup_path: String::new(),
             webdav: WebDAVConfig::default(),
             s3: S3Config::default(),
+            backup_encryption: BackupEncryptionConfig::default(),
             last_backup_time: None,
             backup_image_assets_enabled: true,
             backup_cli_config_files_enabled: true,

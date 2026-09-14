@@ -47,6 +47,12 @@ export interface BackupFileFilterPathOption {
   file_path: string;
 }
 
+/** Optional backup encryption: switch + credential-store reference only (no password). */
+export interface BackupEncryptionConfig {
+  enabled: boolean;
+  credential_ref: string;
+}
+
 // Session detail filter chips (role + content visibility), persisted to SQLite
 // under the `session_detail_filters` key of the settings singleton record.
 export interface SessionDetailRoleFilter {
@@ -126,6 +132,7 @@ export interface AppSettings {
   backup_cli_config_files_enabled: boolean;
   backup_custom_entries: BackupCustomEntry[];
   backup_file_filter_rules: BackupFileFilterRule[];
+  backup_encryption: BackupEncryptionConfig;
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
   start_minimized: boolean;
@@ -183,6 +190,10 @@ export const defaultSettings: AppSettings = {
   backup_cli_config_files_enabled: true,
   backup_custom_entries: [],
   backup_file_filter_rules: [],
+  backup_encryption: {
+    enabled: false,
+    credential_ref: 'keyring:ai-toolbox-backup-encryption',
+  },
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
