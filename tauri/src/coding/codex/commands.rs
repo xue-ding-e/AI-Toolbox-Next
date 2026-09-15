@@ -1855,20 +1855,81 @@ fn remove_codex_experimental_bearer_token(config_toml: &str) -> Result<String, S
     Ok(document.to_string())
 }
 
+/// Drop `requires_openai_auth` from the active provider's `[model_providers.<id>]`
+/// table.
+///
+/// Codex treats `requires_openai_auth = true` as "this provider needs the OpenAI
+/// auth flow" and resolves the credential from `auth.json` or the `OPENAI_API_KEY`
+/// environment variable. When neither is available it aborts with
+/// "Missing environment variable: OPENAI_API_KEY". Gateway/relay providers
+/// (ccNexus, AxonHub) leave this flag unset and let the upstream manage auth;
+/// we do the same for custom providers that carry no managed key, so users no
+/// longer have to hand-delete the line from `config.toml` after every switch
+/// (see issue #353).
+fn strip_active_provider_requires_openai_auth(config_toml: &str) -> Result<String, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    if let Some(provider_id) = active_codex_model_provider_id(&document) {
+        if let Some(provider_table) = document
+            .as_table_mut()
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_like_mut())
+            .and_then(|providers| providers.get_mut(&provider_id))
+            .and_then(|item| item.as_table_like_mut())
+        {
+            provider_table.remove("requires_openai_auth");
+        }
+    }
+
+    Ok(document.to_string())
+}
+
 fn project_codex_auth_to_runtime_config(
     managed_config_toml: &str,
     managed_auth: &serde_json::Value,
     preserve_official_auth: bool,
+    provider_category: &str,
 ) -> Result<String, String> {
-    if !preserve_official_auth {
-        return Ok(managed_config_toml.to_string());
+    let api_key = extract_codex_managed_api_key(managed_auth);
+
+    // Decide whether Codex should use the OpenAI auth flow for this provider,
+    // i.e. read the credential from `auth.json` (or the `OPENAI_API_KEY` env
+    // var). `requires_openai_auth = true` is only correct when that is the
+    // intended credential source; otherwise Codex either demands a missing
+    // credential ("Missing environment variable: OPENAI_API_KEY") or sends the
+    // wrong one (auth.json creds instead of the provider bearer token → 401).
+    // See issue #353 and the parallel cc-switch#7211 investigation.
+    //
+    // Keep `requires_openai_auth` only when Codex should read auth.json:
+    //   - official providers: ChatGPT OAuth tokens in auth.json need it;
+    //   - custom provider with a managed key written to auth.json
+    //     (preserve=false): mirrors `codex login --with-api-key`.
+    // Drop it otherwise:
+    //   - custom provider authenticating via `experimental_bearer_token`
+    //     (preserve=true): `true` makes Codex send auth.json credentials instead
+    //     of the provider bearer token, causing 401 (cc-switch#7211);
+    //   - custom provider with no key at all: nothing to read, so don't demand.
+    // Gateway/relay providers (ccNexus, AxonHub) likewise leave this unset.
+    let uses_openai_auth =
+        provider_category == "official" || (api_key.is_some() && !preserve_official_auth);
+
+    let mut config_toml = managed_config_toml.to_string();
+    if !uses_openai_auth {
+        config_toml = strip_active_provider_requires_openai_auth(&config_toml)?;
     }
 
-    let Some(api_key) = extract_codex_managed_api_key(managed_auth) else {
-        return Ok(managed_config_toml.to_string());
+    if !preserve_official_auth {
+        return Ok(config_toml);
+    }
+
+    let Some(api_key) = api_key else {
+        return Ok(config_toml);
     };
 
-    set_codex_experimental_bearer_token(managed_config_toml, &api_key)
+    set_codex_experimental_bearer_token(&config_toml, &api_key)
 }
 
 fn should_preserve_codex_official_auth(provider: &CodexProvider, setting_enabled: bool) -> bool {
@@ -3170,7 +3231,21 @@ async fn get_managed_codex_config_for_provider_cleanup(
         .unwrap_or_else(|| serde_json::json!({}));
     let managed_config =
         get_managed_codex_config_for_provider(db, &provider.settings_config).await?;
-    let projected_config = project_codex_auth_to_runtime_config(&managed_config, &auth, true)?;
+    // Mirror the apply path's projection: the cleanup diff removes exactly the
+    // fields that were written to disk, so previous_managed must be projected
+    // with the same preserve flag (and the same requires_openai_auth rule) as
+    // the apply that wrote it. Using a hardcoded `true` here left stale
+    // `requires_openai_auth` (and bearer-token) fields on disk after switching.
+    let preserve_official_auth = should_preserve_codex_official_auth(
+        provider,
+        load_codex_auth_preservation_enabled(db)?,
+    );
+    let projected_config = project_codex_auth_to_runtime_config(
+        &managed_config,
+        &auth,
+        preserve_official_auth,
+        &provider.category,
+    )?;
     if provider.category == "official" && load_codex_unified_session_history_enabled(db)? {
         unified_history::inject_unified_session_history_config(&projected_config)
     } else {
@@ -3190,7 +3265,16 @@ async fn get_managed_codex_config_for_provider_cleanup_with_unified_history(
         .unwrap_or_else(|| serde_json::json!({}));
     let managed_config =
         get_managed_codex_config_for_provider(db, &provider.settings_config).await?;
-    let projected_config = project_codex_auth_to_runtime_config(&managed_config, &auth, true)?;
+    let preserve_official_auth = should_preserve_codex_official_auth(
+        provider,
+        load_codex_auth_preservation_enabled(db)?,
+    );
+    let projected_config = project_codex_auth_to_runtime_config(
+        &managed_config,
+        &auth,
+        preserve_official_auth,
+        &provider.category,
+    )?;
     if provider.category == "official" && unified_history_enabled {
         unified_history::inject_unified_session_history_config(&projected_config)
     } else {
@@ -3532,8 +3616,12 @@ async fn apply_config_to_file_with_previous_managed_config(
         should_preserve_codex_official_auth(&provider, auth_preservation_enabled);
     let managed_config =
         build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
-    let mut final_config =
-        project_codex_auth_to_runtime_config(&managed_config, &auth, preserve_official_auth)?;
+    let mut final_config = project_codex_auth_to_runtime_config(
+        &managed_config,
+        &auth,
+        preserve_official_auth,
+        &provider.category,
+    )?;
     if provider.category == "official" && load_codex_unified_session_history_enabled(db)? {
         final_config = unified_history::inject_unified_session_history_config(&final_config)?;
     }
@@ -5444,7 +5532,8 @@ base_url = "https://api.example.com/v1"
         });
 
         let projected =
-            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true).unwrap();
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true, "custom")
+                .unwrap();
         let doc: DocumentMut = projected.parse().unwrap();
 
         assert_eq!(
@@ -5464,12 +5553,136 @@ model = "gpt-5.4"
         });
 
         let error =
-            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true).unwrap_err();
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true, "custom")
+                .unwrap_err();
 
         assert!(
             error.contains("config.toml has no active model_provider"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn project_codex_auth_strips_requires_openai_auth_for_keyless_custom_provider() {
+        // issue #353: a custom provider with no managed API key must not keep
+        // `requires_openai_auth = true`, otherwise Codex aborts with
+        // "Missing environment variable: OPENAI_API_KEY" when auth.json and the
+        // env var are both empty. Gateway/relay providers (ccNexus, AxonHub)
+        // leave this flag unset and let the upstream manage auth; we do the same.
+        let managed_config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let managed_auth = json!({});
+
+        let projected =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, false, "custom")
+                .unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table")
+            .get("requires_openai_auth")
+            .is_none());
+    }
+
+    #[test]
+    fn project_codex_auth_keeps_requires_openai_auth_for_custom_provider_with_key() {
+        // A custom provider WITH a managed API key keeps requires_openai_auth so
+        // Codex reads the credential from auth.json (mirrors `codex login
+        // --with-api-key`). preserve=false leaves the key in auth.json, not in
+        // config.toml, so no experimental_bearer_token is written.
+        let managed_config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let managed_auth = json!({ "OPENAI_API_KEY": "sk-third-party" });
+
+        let projected =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, false, "custom")
+                .unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+
+        assert_eq!(
+            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table")
+            .get("experimental_bearer_token")
+            .is_none());
+    }
+
+    #[test]
+    fn project_codex_auth_keeps_requires_openai_auth_for_official_provider_without_key() {
+        // Official providers may rely on ChatGPT OAuth tokens in auth.json, so
+        // requires_openai_auth must survive even when no managed API key is set.
+        let managed_config = r#"
+model_provider = "openai"
+
+[model_providers.openai]
+name = "OpenAI"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let managed_auth = json!({});
+
+        let projected =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, false, "official")
+                .unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+
+        assert_eq!(
+            doc["model_providers"]["openai"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn project_codex_auth_strips_requires_openai_auth_when_projecting_bearer_token() {
+        // cc-switch#7211: for a third-party provider authenticating via
+        // experimental_bearer_token (preserve=true), keeping
+        // requires_openai_auth = true makes Codex send auth.json credentials
+        // instead of the provider bearer token, causing 401. The bearer token
+        // is the intended credential, so drop requires_openai_auth.
+        let managed_config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let managed_auth = json!({ "OPENAI_API_KEY": "sk-third-party" });
+
+        let projected =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true, "custom")
+                .unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+
+        assert_eq!(
+            doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("sk-third-party")
+        );
+        assert!(doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table")
+            .get("requires_openai_auth")
+            .is_none());
     }
 
     #[test]
@@ -5502,6 +5715,47 @@ model = "gpt-5.4"
         assert_eq!(doc["model"].as_str(), Some("gpt-5.4"));
         assert!(doc.get("model_provider").is_none());
         assert!(doc.get("model_providers").is_none());
+    }
+
+    #[test]
+    fn build_written_codex_config_toml_drops_stale_requires_openai_auth_on_switch() {
+        // issue #353 regression: switching from a custom provider that kept
+        // requires_openai_auth=true (key in auth.json, preserve=false) to a
+        // keyless custom provider (requires_openai_auth stripped) must remove
+        // the stale flag from disk via the previous_managed diff — otherwise
+        // Codex keeps demanding OPENAI_API_KEY after the switch.
+        let previous_managed = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let next_managed = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+"#;
+
+        let rendered = build_written_codex_config_toml(
+            previous_managed,
+            Some(previous_managed),
+            next_managed,
+        )
+        .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table")
+            .get("requires_openai_auth")
+            .is_none());
     }
 
     #[test]
@@ -5990,7 +6244,7 @@ base_url = "https://api.provider-a.com/v1"
 "#;
         let provider_a_auth = json!({"OPENAI_API_KEY": "sk-provider-a"});
         let projected_a =
-            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, true)
+            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, true, "custom")
                 .unwrap();
         let doc_a: DocumentMut = projected_a.parse().unwrap();
         assert_eq!(
@@ -6008,7 +6262,7 @@ base_url = "https://api.provider-b.com/v1"
 "#;
         let provider_b_auth = json!({"OPENAI_API_KEY": "sk-provider-b"});
         let projected_b =
-            project_codex_auth_to_runtime_config(provider_b_config, &provider_b_auth, true)
+            project_codex_auth_to_runtime_config(provider_b_config, &provider_b_auth, true, "custom")
                 .unwrap();
 
         // Simulate diff cleanup: previous_managed has provider-a token, next_managed has provider-b
@@ -6039,7 +6293,8 @@ model = "claude-sonnet-4-6"
         let projected_official = project_codex_auth_to_runtime_config(
             official_config,
             &official_auth,
-            false, // preserve=false for official
+            false,    // preserve=false for official
+            "official",
         )
         .unwrap();
 
@@ -6058,7 +6313,7 @@ model = "claude-sonnet-4-6"
 
         // Switch back to Provider A with preserve=false (switch disabled)
         let projected_a_no_preserve =
-            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, false)
+            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, false, "custom")
                 .unwrap();
         let doc_a_no_preserve: DocumentMut = projected_a_no_preserve.parse().unwrap();
         // Should not have experimental_bearer_token when preserve=false
