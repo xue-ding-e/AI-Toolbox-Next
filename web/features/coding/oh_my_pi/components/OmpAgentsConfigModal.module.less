@@ -1,0 +1,142 @@
+.modalContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nameLabel {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.sectionCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 16px 18px;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sectionDesc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: -4px;
+}
+
+.rolesGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roleRow {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 140px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border-secondary, var(--color-border));
+}
+
+.roleInfo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.roleTag {
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.roleName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roleDescIcon {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.customAgentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.customAgentCard {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.customAgentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agentFormRow {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.agentFormLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.emptyCustomAgents {
+  padding: 12px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+}

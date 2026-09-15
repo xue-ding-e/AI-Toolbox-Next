@@ -126,3 +126,64 @@ export interface OmpExtensionCommandResult {
   command: string;
   output: string;
 }
+
+/**
+ * OMP 核心模型角色配置(modelRoles)。
+ */
+export interface OmpModelRoleConfig {
+  model?: string;
+  thinkingLevel?: string;
+}
+
+/**
+ * OMP subagent 集中配置:单个 agent 的 frontmatter 配置(通用 JSON)。
+ */
+export type OmpAgentConfig = Record<string, unknown>;
+
+/**
+ * OMP subagent / roles 集中配置:一套方案(profile)。
+ * - `modelRoles`: 核心角色模型映射(default, plan, task, advisor, commit, tiny 等),
+ *   apply 时写入 config.yml 的 modelRoles。
+ * - `agents`: 自定义 subagent 映射,apply 时渲染为 <agentDir>/agents/*.md。
+ * - `otherFields`: 保留扩展字段。
+ */
+export interface OmpAgentsConfig {
+  id: string;
+  name: string;
+  isApplied: boolean;
+  isDisabled: boolean;
+  modelRoles?: Record<string, OmpModelRoleConfig | string> | null;
+  agents: Record<string, OmpAgentConfig> | null;
+  otherFields?: Record<string, unknown>;
+  sortIndex?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface OmpAgentsConfigInput {
+  id?: string;
+  name: string;
+  modelRoles?: Record<string, OmpModelRoleConfig | string> | null;
+  agents: Record<string, OmpAgentConfig> | null;
+  otherFields?: Record<string, unknown>;
+}
+
+/** 低层:单个 agent 文件视图(编辑弹窗预览当前目录用)。 */
+export interface OmpAgentFile {
+  name: string;
+  path: string;
+  frontmatter: string;
+  prompt: string;
+  rawContent: string;
+  contentHash: string;
+  config?: OmpAgentConfig;
+  parseError?: string;
+  isBuiltin: boolean;
+  isOverride: boolean;
+}
+
+export interface SaveOmpAgentFileRequest {
+  path: string;
+  expectedContentHash: string;
+  content: string;
+}

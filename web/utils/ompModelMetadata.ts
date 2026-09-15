@@ -202,3 +202,63 @@ export const buildOmpThinkingFromPreset = (
   }
   return thinking;
 };
+
+/** 从模型定义提取支持的思考级别下拉选项列表(含 off 与 auto)。若不支持 reasoning 返回空数组。 */
+export const getOmpModelThinkingLevelOptions = (
+  model: Record<string, unknown> | undefined,
+): Array<{ value: string; label: string }> => {
+  const levels = getOmpModelThinkingLevels(model);
+  if (levels.length === 0) {
+    return [];
+  }
+  const levelSet = new Set(levels);
+  const optionSet = new Set<string>();
+  const options: Array<{ value: string; label: string }> = [];
+  // `off`(关闭思考)是独立于级别区间的选项,恒可作为思考选项。
+  options.push({ value: 'off', label: 'off' });
+  optionSet.add('off');
+  // 标准级别始终打头,再附上模型声明的扩展级别(去重、保序)。
+  for (const levelKey of PI_THINKING_LEVEL_KEYS) {
+    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
+      optionSet.add(levelKey);
+      options.push({ value: levelKey, label: levelKey });
+    }
+  }
+  for (const levelKey of levels) {
+    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
+      optionSet.add(levelKey);
+      options.push({ value: levelKey, label: levelKey });
+    }
+  }
+  // OMP 支持 `auto`(自动选择思考级别)。
+  options.push({ value: 'auto', label: 'auto' });
+  return options;
+};
+
+/** 从 provider 配置(modelsProvider)中安全提取归一化的模型记录列表。 */
+export const getProviderModelRecords = (
+  providerConfig: Record<string, unknown> | undefined,
+): Array<{ id: string; model: Record<string, unknown> }> => {
+  if (!providerConfig) {
+    return [];
+  }
+  const models = providerConfig.models;
+  if (!Array.isArray(models)) {
+    return [];
+  }
+  return models
+    .map((model) => {
+      if (typeof model === 'string') {
+        return { id: model, model: { id: model } };
+      }
+      if (model && typeof model === 'object' && typeof (model as Record<string, unknown>).id === 'string') {
+        return {
+          id: (model as Record<string, string>).id,
+          model: model as Record<string, unknown>,
+        };
+      }
+      return null;
+    })
+    .filter((entry): entry is { id: string; model: Record<string, unknown> } => !!entry);
+};
+

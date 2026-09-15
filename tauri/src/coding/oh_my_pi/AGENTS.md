@@ -10,7 +10,11 @@
 - OMP 设置的事实源是当前运行时根目录的 `config.yml`(YAML,点分 camelCase 键)。
 - OMP MCP server 主数据仍属于全局 MCP 模块,派生文件是当前运行时根目录的 `mcp.json`。
 - 全局提示词预设存 `oh_my_pi_prompt_config` 表,写入运行时根目录的 `AGENTS.md`。
-- 文件式预览由 `read_omp_runtime_config` 返回原始文件内容（`configContent`/`modelsContent`/`mcpContent`/`promptContent`），前端按文件 Tab 展示，与 Codex 一致。
+- 文件式预览由 `read_omp_runtime_config` 返回原始文件内容(`configContent`/`modelsContent`/`mcpContent`/`promptContent`),前端按文件 Tab 展示,与 Codex 一致。
+- **subagent / roles 集中配置(OMP 侧「Subagents 集中配置」)**: 多套方案存 `oh_my_pi_agents_config` 表，分为**核心模型角色(modelRoles)**与**自定义 subagents(agents)**两层。
+  1. 核心模型角色(`model_roles`): 对应 OMP 原生内置角色(`default`, `plan`, `task`, `advisor`, `commit`, `tiny`, `smol`, `slow`, `vision`)。apply 时写入运行时 `config.yml` 的 `modelRoles` 映射(`provider/modelId:thinkingLevel`)，`default` 的思考等级同步更新 `defaultThinkingLevel`。
+  2. 自定义 subagents(`agents`): 对应扩展的委托代理，apply 时渲染为 `<agentDir>/agents/*.md`。
+  空库时 `__local__` 桥接态同时读取本地 `config.yml` 的 `modelRoles` 与 `agents/*.md`。
 
 ## 与 Pi 的差异
 
@@ -31,8 +35,14 @@
 - OMP 的持久化端点与共享诊断端点分开：Anthropic 在诊断时补 `/v1`，Gemini 补版本路径，不能反写 `models.yml`。`openai-codex-responses` 诊断显式携带 apiFormat，使用 Codex 请求/终态契约；Azure、Bedrock、Gemini CLI、Vertex 及自定义 API 暂无对应诊断适配，界面禁用并说明，不能降成 Chat Completions。模型连接一致时可用模型覆盖值，不同连接混用时禁用供应商级诊断。
 - 新建供应商的默认地址由表单记录自动填值来源，API 切换只更新仍由表单自动填入的地址；用户编辑或主动清空后停止自动修改。编辑/复制现有供应商不自动填地址，重新打开新建弹窗才重置自动填值状态。
 
+- subagent 方案(agents)是数据库 profile,删除方案不会删正在运行的文件;`clear applied` 重置 `config.yml` 里的 `modelRoles` 并清空 `agents/*.md` 目录。`main` / `sub` 是 OMP 会话 sentinel agentName,自定义 agent 名不得使用;文件名只允许字母/数字/`-`/`_`/`.`。
+- 渲染整份方案到目录时**先整体校验再写**——任一自定义 agent 的 frontmatter 非法(自定义缺 description、model/tools 类型错误、保留名、非法文件名)则整份拒绝,避免写到一半留下脏目录。
+- 核心模型角色(`modelRoles`)独立于自定义 agent 文件管理，确保 OMP 原生 default、plan、task、advisor、commit、tiny、smol、slow、vision 的模型分配原子落盘生效。
+
 ## 最小验证
 
+- 新增、修改、删除一个 subagent 方案后,apply 后 `<agentDir>/agents/*.md` 目录与方案完全一致(含清理方案外自定义文件),clear applied 后目录为空且数据库 applied 标记取消。
+- subagent 方案含非法 agent(缺 description / 非法文件名 / 保留名)时 apply 整体失败,目录保持不变。
 - 新增、修改、删除一个 provider 后,其他 provider 和未知字段保持不变。
 - 保存默认模型后 `config.yml` 的 `modelRoles.default` 为 `provider/modelId`。
 - 安装 `omp` 后运行 `omp plugin list --json` 可列出插件。

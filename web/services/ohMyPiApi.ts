@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  OmpAgentsConfig,
+  OmpAgentsConfigInput,
+  OmpAgentFile,
   OmpExtensionActionInput,
   OmpExtensionCommandResult,
   OmpExtensionInstallInput,
@@ -11,6 +14,7 @@ import type {
   OmpRuntimeConfig,
   OmpSettingsConfig,
   OmpSettingsConfigInput,
+  SaveOmpAgentFileRequest,
 } from '@/types/ohMyPi';
 
 export const getOmpRootPathInfo = async (): Promise<OmpPathInfo> => {
@@ -53,6 +57,67 @@ export const deleteOmpRuntimeProvider = async (
   providerKey: string,
 ): Promise<OmpRuntimeConfig> => {
   return await invoke<OmpRuntimeConfig>('delete_omp_runtime_provider', { providerKey });
+};
+
+// ============================================================================
+// OMP subagent 集中配置(多套方案 + 一键切换)
+// ============================================================================
+
+/** 列出所有 subagent 方案;空库时返回本地 agents/*.md 的 __local__ 桥接态。 */
+export const listOmpAgentsConfigs = async (): Promise<OmpAgentsConfig[]> => {
+  return await invoke<OmpAgentsConfig[]>('list_omp_agents_configs');
+};
+
+export const createOmpAgentsConfig = async (
+  input: OmpAgentsConfigInput,
+): Promise<OmpAgentsConfig> => {
+  return await invoke<OmpAgentsConfig>('create_omp_agents_config', { input });
+};
+
+export const updateOmpAgentsConfig = async (
+  input: OmpAgentsConfigInput,
+): Promise<OmpAgentsConfig> => {
+  return await invoke<OmpAgentsConfig>('update_omp_agents_config', { input });
+};
+
+export const deleteOmpAgentsConfig = async (id: string): Promise<void> => {
+  await invoke('delete_omp_agents_config', { id });
+};
+
+export const applyOmpAgentsConfig = async (configId: string): Promise<void> => {
+  await invoke('apply_omp_agents_config', { configId });
+};
+
+export const clearOmpAgentsAppliedConfig = async (configId: string): Promise<void> => {
+  await invoke('clear_omp_agents_applied_config', { configId });
+};
+
+export const toggleOmpAgentsConfigDisabled = async (
+  configId: string,
+  isDisabled: boolean,
+): Promise<void> => {
+  await invoke('toggle_omp_agents_config_disabled', { configId, isDisabled });
+};
+
+export const reorderOmpAgentsConfigs = async (ids: string[]): Promise<void> => {
+  await invoke('reorder_omp_agents_configs', { ids });
+};
+
+/** 低层:列出现有 agents/*.md 文件视图(编辑弹窗预览当前目录)。 */
+export const listOmpAgents = async (): Promise<OmpAgentFile[]> => {
+  return await invoke<OmpAgentFile[]>('list_omp_agents');
+};
+
+export const saveOmpAgentFile = async (
+  request: SaveOmpAgentFileRequest,
+): Promise<OmpAgentFile> => {
+  return await invoke<OmpAgentFile>('save_omp_agent', { request });
+};
+
+export const deleteOmpAgentFile = async (
+  request: Omit<SaveOmpAgentFileRequest, 'content'>,
+): Promise<void> => {
+  await invoke('delete_omp_agent', { request });
 };
 
 export const listOmpExtensions = async (): Promise<OmpExtensionListResult> => {

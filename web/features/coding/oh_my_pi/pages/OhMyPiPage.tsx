@@ -36,6 +36,7 @@ import {
   RightOutlined,
   RobotOutlined,
   SettingOutlined,
+  TeamOutlined,
   ThunderboltOutlined,
   ToolOutlined,
   ImportOutlined,
@@ -118,10 +119,10 @@ import {
 import { useSettingsStore } from '@/stores';
 import {
   PI_INPUT_TYPES,
-  PI_THINKING_LEVEL_KEYS,
   buildOmpThinkingFromPreset,
   getOmpModelDefaultThinkingLevel,
-  getOmpModelThinkingLevels,
+  getOmpModelThinkingLevelOptions,
+  getProviderModelRecords,
 } from '@/utils/ompModelMetadata';
 import {
   deleteOmpRuntimeProvider,
@@ -143,6 +144,7 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import { extractOmpProviderFromCcSwitch } from '../utils/importMapping';
+import OmpAgentsSettings from '../components/OmpAgentsSettings';
 import OmpExtensionsSection from '../components/OmpExtensionsSection';
 import styles from './OhMyPiPage.module.less';
 
@@ -164,6 +166,7 @@ interface OmpModelModalState {
 const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'pi-model-settings': <RobotOutlined />,
   'pi-providers': <DatabaseOutlined />,
+  'pi-agents': <TeamOutlined />,
   'pi-extensions': <AppstoreAddOutlined />,
   'pi-global-prompt': <FileTextOutlined />,
   'pi-other-configuration': <ToolOutlined />,
@@ -224,32 +227,6 @@ const parseStringArray = (value: string | undefined): string[] => {
   }
 };
 
-const getProviderModelRecords = (
-  providerConfig: Record<string, unknown> | undefined,
-): Array<{ id: string; model: Record<string, unknown> }> => {
-  if (!providerConfig) {
-    return [];
-  }
-  const models = providerConfig.models;
-  if (!Array.isArray(models)) {
-    return [];
-  }
-  return models
-    .map((model) => {
-      if (typeof model === 'string') {
-        return { id: model, model: { id: model } };
-      }
-      if (model && typeof model === 'object' && typeof (model as Record<string, unknown>).id === 'string') {
-        return {
-          id: (model as Record<string, string>).id,
-          model: model as Record<string, unknown>,
-        };
-      }
-      return null;
-    })
-    .filter((entry): entry is { id: string; model: Record<string, unknown> } => !!entry);
-};
-
 const setOptionalStringField = (
   target: Record<string, unknown>,
   key: string,
@@ -287,37 +264,6 @@ const hasProviderConfigContent = (providerConfig: Record<string, unknown>): bool
     return true;
   })
 );
-
-const getOmpModelThinkingLevelOptions = (
-  model: Record<string, unknown> | undefined,
-): Array<{ value: string; label: string }> => {
-  const levels = getOmpModelThinkingLevels(model);
-  if (levels.length === 0) {
-    return [];
-  }
-  const levelSet = new Set(levels);
-  const optionSet = new Set<string>();
-  const options: Array<{ value: string; label: string }> = [];
-  // `off`(关闭思考)是独立于级别区间的选项,恒可为 defaultThinkingLevel。
-  options.push({ value: 'off', label: 'off' });
-  optionSet.add('off');
-  // 标准级别始终打头,再附上模型声明的扩展级别(去重、保序)。
-  for (const levelKey of PI_THINKING_LEVEL_KEYS) {
-    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
-      optionSet.add(levelKey);
-      options.push({ value: levelKey, label: levelKey });
-    }
-  }
-  for (const levelKey of levels) {
-    if (levelSet.has(levelKey) && !optionSet.has(levelKey)) {
-      optionSet.add(levelKey);
-      options.push({ value: levelKey, label: levelKey });
-    }
-  }
-  // OMP 支持 `auto`(自动选择思考级别)作为全局默认思考级别选项。
-  options.push({ value: 'auto', label: 'auto' });
-  return options;
-};
 
 const isOmpThinkingLevelSupported = (
   thinkingLevel: string | undefined,
@@ -599,24 +545,29 @@ const OhMyPiPage: React.FC = () => {
       order: 2,
     },
     {
+      id: 'pi-agents',
+      title: t('ohMyPi.subagents.title'),
+      order: 3,
+    },
+    {
       id: 'pi-extensions',
       title: t('ohMyPi.extensions.title'),
-      order: 3,
+      order: 4,
     },
     {
       id: 'pi-global-prompt',
       title: t('ohMyPi.prompt.title'),
-      order: 4,
+      order: 5,
     },
     {
       id: 'pi-other-configuration',
       title: t('ohMyPi.otherConfig.title'),
-      order: 5,
+      order: 6,
     },
     {
       id: 'pi-session-manager',
       title: t('sessionManager.title'),
-      order: 6,
+      order: 7,
     },
   ], [t]);
 
@@ -715,6 +666,43 @@ const OhMyPiPage: React.FC = () => {
     }
     return Array.from(options.entries()).map(([value, label]) => ({ value, label }));
   }, [runtimeConfig]);
+
+  /** 分组模型选项(供 subagent 方案编辑弹窗复用): 角色别名 + provider -> model list。 */
+  const ompAgentsModelOptions = React.useMemo(() => {
+    const groups: Array<{ label: string; options: Array<{ label: string; value: string }> }> = [];
+
+    // 常用内置角色别名(供自定义 Subagent 快速委派使用)
+    const roleAliasOptions = [
+      { label: '@default (默认模型)', value: '@default' },
+      { label: '@plan (架构规划专员)', value: '@plan' },
+      { label: '@task (子任务执行代理)', value: '@task' },
+      { label: '@advisor (监督与审查顾问)', value: '@advisor' },
+      { label: '@commit (Git 提交生成器)', value: '@commit' },
+      { label: '@tiny (轻量级后台任务)', value: '@tiny' },
+      { label: '@smol (低延迟快速模型)', value: '@smol' },
+      { label: '@slow (深度慢思考推理)', value: '@slow' },
+      { label: '@vision (视觉多模态分析)', value: '@vision' },
+    ];
+    groups.push({
+      label: t('ohMyPi.subagents.roleAliasesGroup'),
+      options: roleAliasOptions,
+    });
+
+    runtimeConfig?.providers.forEach((provider) => {
+      const modelIds = provider.modelIds ?? [];
+      if (modelIds.length === 0) {
+        return;
+      }
+      groups.push({
+        label: provider.displayName || provider.providerKey,
+        options: modelIds.map((modelId) => ({
+          label: modelId,
+          value: `${provider.providerKey}/${modelId}`,
+        })),
+      });
+    });
+    return groups;
+  }, [runtimeConfig, t]);
 
   const selectedProviderKey = Form.useWatch('defaultProvider', modelForm);
   const selectedDefaultModel = Form.useWatch('defaultModel', modelForm);
@@ -2208,6 +2196,21 @@ const OhMyPiPage: React.FC = () => {
                   ),
                 },
               ]}
+            />
+          </div>
+
+          <div
+            id="pi-agents"
+            className={styles.ompSection}
+            data-pi-sidebar-section="true"
+            data-sidebar-title={t('ohMyPi.subagents.title')}
+          >
+            <OmpAgentsSettings
+              modelOptions={ompAgentsModelOptions}
+              providers={runtimeConfig?.providers ?? []}
+              onConfigUpdated={() => {
+                void loadConfig(true);
+              }}
             />
           </div>
 

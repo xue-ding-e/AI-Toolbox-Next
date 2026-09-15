@@ -1,7 +1,10 @@
 use chrono::Local;
 use serde_json::{json, Map, Value};
 
-use super::types::{OmpPromptConfig, OmpPromptConfigContent, OmpSettingsConfig};
+use super::types::{
+    OmpAgentsConfig, OmpAgentsConfigContent, OmpPromptConfig, OmpPromptConfigContent,
+    OmpSettingsConfig,
+};
 use crate::coding::db_id::db_extract_id;
 
 pub fn settings_from_db_value(value: Value) -> OmpSettingsConfig {
@@ -71,6 +74,72 @@ pub fn prompt_to_db_value(content: &OmpPromptConfigContent) -> Value {
         Value::String(content.content.clone()),
     );
     map.insert("is_applied".to_string(), Value::Bool(content.is_applied));
+    if let Some(sort_index) = content.sort_index {
+        map.insert("sort_index".to_string(), json!(sort_index));
+    }
+    map.insert(
+        "created_at".to_string(),
+        Value::String(content.created_at.clone()),
+    );
+    map.insert(
+        "updated_at".to_string(),
+        Value::String(content.updated_at.clone()),
+    );
+    Value::Object(map)
+}
+
+// ============================================================================
+// OMP subagent 方案(oh_my_pi_agents_config)adapter
+// ============================================================================
+
+pub fn agents_from_db_value(value: Value) -> OmpAgentsConfig {
+    OmpAgentsConfig {
+        id: db_extract_id(&value),
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Unnamed Config")
+            .to_string(),
+        is_applied: value
+            .get("is_applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        is_disabled: value
+            .get("is_disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        model_roles: value.get("model_roles").cloned(),
+        agents: value.get("agents").cloned(),
+        other_fields: value.get("other_fields").cloned(),
+        sort_index: value
+            .get("sort_index")
+            .and_then(Value::as_i64)
+            .map(|value| value as i32),
+        created_at: value
+            .get("created_at")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        updated_at: value
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+pub fn agents_to_db_value(content: &OmpAgentsConfigContent) -> Value {
+    let mut map = Map::new();
+    map.insert("name".to_string(), Value::String(content.name.clone()));
+    map.insert("is_applied".to_string(), Value::Bool(content.is_applied));
+    map.insert("is_disabled".to_string(), Value::Bool(content.is_disabled));
+    if let Some(model_roles) = &content.model_roles {
+        map.insert("model_roles".to_string(), model_roles.clone());
+    }
+    if let Some(agents) = &content.agents {
+        map.insert("agents".to_string(), agents.clone());
+    }
+    if let Some(other_fields) = &content.other_fields {
+        map.insert("other_fields".to_string(), other_fields.clone());
+    }
     if let Some(sort_index) = content.sort_index {
         map.insert("sort_index".to_string(), json!(sort_index));
     }

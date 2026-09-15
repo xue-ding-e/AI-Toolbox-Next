@@ -183,6 +183,65 @@ pub struct OmpModelsProviderInput {
     pub provider: Value,
 }
 
+/// OMP subagent / roles 集中配置:一套方案(profile)。
+/// - `model_roles`: 核心模型角色映射(default, plan, task, advisor, commit, tiny 等),
+///   apply 时落盘写入运行时 `config.yml` 的 `modelRoles`。
+/// - `agents`: 自定义 subagent 映射,apply 时渲染为 `<agentDir>/agents/*.md` 文件。
+/// - `other_fields`: 保留扩展字段。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpAgentsConfig {
+    pub id: String,
+    pub name: String,
+    pub is_applied: bool,
+    pub is_disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_roles: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other_fields: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// OMP subagent 方案内容(落库部分,不含辅助 id/时间戳之外的渲染字段)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OmpAgentsConfigContent {
+    pub name: String,
+    pub is_applied: bool,
+    pub is_disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_roles: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other_fields: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 创建/更新 OMP subagent 方案的入参。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpAgentsConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_roles: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other_fields: Option<Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OmpExtensionSummary {

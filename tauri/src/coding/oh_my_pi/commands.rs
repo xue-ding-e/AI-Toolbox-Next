@@ -133,7 +133,7 @@ pub async fn get_omp_prompt_path_async(db: &SqliteDbState) -> Result<PathBuf, St
     ))
 }
 
-fn read_yaml_object_or_empty(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_yaml_object_or_empty(path: &Path) -> Result<Value, String> {
     if !path.exists() {
         return Ok(Value::Object(Map::new()));
     }
@@ -153,7 +153,7 @@ fn read_yaml_object_or_empty(path: &Path) -> Result<Value, String> {
     }
 }
 
-fn write_yaml_object(path: &Path, value: &Value) -> Result<(), String> {
+pub(crate) fn write_yaml_object(path: &Path, value: &Value) -> Result<(), String> {
     if !value.is_object() {
         return Err(format!(
             "{} must be written as a YAML mapping",
@@ -171,7 +171,7 @@ fn write_yaml_object(path: &Path, value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn object_mut(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
+pub(crate) fn object_mut(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
     value
         .as_object_mut()
         .ok_or_else(|| "Expected a mapping object".to_string())
