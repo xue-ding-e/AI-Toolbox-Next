@@ -117,21 +117,6 @@ pub(super) fn attach_responses_raw_request_metadata(body: &Value, request: &mut 
             tool_choice.clone(),
         );
     }
-
-    if let Some(input_items) = body.get("input").and_then(Value::as_array) {
-        let raw_input_items = input_items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| !is_structurally_represented_responses_input_item(item))
-            .map(|(index, item)| raw_responses_fragment(index, item.clone()))
-            .collect::<Vec<_>>();
-        if !raw_input_items.is_empty() {
-            request.transformer_metadata.insert(
-                RESPONSES_RAW_INPUT_ITEMS_METADATA_KEY.to_string(),
-                Value::Array(raw_input_items),
-            );
-        }
-    }
 }
 
 pub(super) fn raw_responses_fragment(index: usize, value: Value) -> Value {
@@ -249,6 +234,8 @@ pub(super) fn is_structurally_represented_responses_input_item(item: &Value) -> 
         None | Some(
             "message"
                 | "input_text"
+                | "output_text"
+                | "text"
                 | "input_image"
                 | "function_call"
                 | "function_call_output"
@@ -284,12 +271,14 @@ pub(super) fn responses_instructions_text(value: Option<&Value>) -> Option<Strin
 pub(super) fn append_responses_input_to_messages(
     input: Option<&Value>,
     messages: &mut Vec<Message>,
-) {
+) -> Vec<Value> {
+    let mut raw_input_items = Vec::new();
     match input {
         Some(Value::Array(items)) => {
             let mut index = 0;
             let mut pending_trailing_reasoning: Option<Message> = None;
             let mut last_assistant_index: Option<usize> = None;
+            let mut assistant_turn_index: Option<usize> = None;
             while index < items.len() {
                 let item = &items[index];
                 if item.get("type").and_then(Value::as_str) == Some("reasoning") {
@@ -309,8 +298,11 @@ pub(super) fn append_responses_input_to_messages(
                         )
                     }) {
                         // Forward-merged with following item — not trailing.
-                        messages.push(reasoning_message);
-                        last_assistant_index = messages.len().checked_sub(1);
+                        last_assistant_index = Some(append_responses_assistant_message(
+                            messages,
+                            reasoning_message,
+                            &mut assistant_turn_index,
+                        ));
                         index += 2;
                     } else {
                         // May be trailing: hold until next non-reasoning boundary or end.
@@ -332,9 +324,36 @@ pub(super) fn append_responses_input_to_messages(
                     flush_pending_reasoning(messages, pending, last_assistant_index);
                 }
 
-                append_responses_item_to_messages(item, messages);
-                if item_role.as_deref() == Some("assistant") {
-                    last_assistant_index = messages.len().checked_sub(1);
+                match responses_item_to_message(item) {
+                    Some(message)
+                        if message.role == "assistant"
+                            && !matches!(
+                                item.get("type").and_then(Value::as_str),
+                                Some("compaction" | "compaction_summary")
+                            ) =>
+                    {
+                        last_assistant_index = Some(append_responses_assistant_message(
+                            messages,
+                            message,
+                            &mut assistant_turn_index,
+                        ));
+                    }
+                    message => {
+                        // Results, non-assistant messages and raw-only items end
+                        // this turn. Never merge two calls across a tool result.
+                        assistant_turn_index = None;
+                        if !is_structurally_represented_responses_input_item(item) {
+                            let mut fragment = raw_responses_fragment(index, item.clone());
+                            // Assistant/reasoning items may collapse into fewer
+                            // Responses items. Anchor raw fragments between IR
+                            // messages instead of reusing their old wire index.
+                            fragment["message_index"] = json!(messages.len());
+                            raw_input_items.push(fragment);
+                        }
+                        if let Some(message) = message {
+                            messages.push(message);
+                        }
+                    }
                 }
                 index += 1;
             }
@@ -350,6 +369,31 @@ pub(super) fn append_responses_input_to_messages(
         Some(Value::Object(_)) => append_responses_item_to_messages(input.unwrap(), messages),
         _ => {}
     }
+    raw_input_items
+}
+
+fn append_responses_assistant_message(
+    messages: &mut Vec<Message>,
+    mut message: Message,
+    assistant_turn_index: &mut Option<usize>,
+) -> usize {
+    if let Some(index) = *assistant_turn_index {
+        let batch = &mut messages[index];
+        for mut call in std::mem::take(&mut message.tool_calls) {
+            call.index = batch.tool_calls.len();
+            batch.tool_calls.push(call);
+        }
+        merge_responses_assistant_message(batch, message);
+        return index;
+    }
+
+    // Responses can interleave commentary and separate parallel call items
+    // within one model turn, including text arriving after calls in SSE. Keep
+    // the entire turn together before its tool results (issue #352).
+    let index = messages.len();
+    messages.push(message);
+    *assistant_turn_index = Some(index);
+    index
 }
 
 fn flush_pending_reasoning(
@@ -423,19 +467,25 @@ pub(super) fn responses_item_boundary_role(item: &Value) -> Option<String> {
 }
 
 pub(super) fn append_responses_item_to_messages(item: &Value, messages: &mut Vec<Message>) {
+    if let Some(message) = responses_item_to_message(item) {
+        messages.push(message);
+    }
+}
+
+fn responses_item_to_message(item: &Value) -> Option<Message> {
     match item.get("type").and_then(Value::as_str) {
-        Some("input_text") | Some("output_text") | Some("text") => messages.push(Message {
+        Some("input_text") | Some("output_text") | Some("text") => Some(Message {
             role: responses_text_item_role(item),
             content: responses_value_to_message_content(item),
             annotations: part_annotations(item),
             ..Default::default()
         }),
-        Some("function_call") | Some("custom_tool_call") => messages.push(Message {
+        Some("function_call") | Some("custom_tool_call") => Some(Message {
             role: "assistant".to_string(),
             tool_calls: vec![responses_call_to_tool_call(item, 0)],
             ..Default::default()
         }),
-        Some("function_call_output") | Some("custom_tool_call_output") => messages.push(Message {
+        Some("function_call_output") | Some("custom_tool_call_output") => Some(Message {
             role: "tool".to_string(),
             tool_call_id: item
                 .get("call_id")
@@ -447,21 +497,15 @@ pub(super) fn append_responses_item_to_messages(item: &Value, messages: &mut Vec
                 .unwrap_or_default(),
             ..Default::default()
         }),
-        Some("reasoning") => messages.push(responses_reasoning_message(item)),
-        Some("compaction") | Some("compaction_summary") => {
-            messages.push(responses_compaction_message(item))
-        }
-        Some("input_image") => {
-            if let Some(part) = responses_input_image_part(item) {
-                messages.push(Message {
-                    role: "user".to_string(),
-                    content: MessageContent::Parts(vec![part]),
-                    ..Default::default()
-                });
-            }
-        }
-        None | Some("message") => messages.push(responses_message_item_to_llm(item)),
-        _ => {}
+        Some("reasoning") => Some(responses_reasoning_message(item)),
+        Some("compaction") | Some("compaction_summary") => Some(responses_compaction_message(item)),
+        Some("input_image") => responses_input_image_part(item).map(|part| Message {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![part]),
+            ..Default::default()
+        }),
+        None | Some("message") => Some(responses_message_item_to_llm(item)),
+        _ => None,
     }
 }
 
@@ -567,31 +611,36 @@ pub(super) fn merge_responses_following_item_into_reasoning_message(
                 return false;
             }
             let following_message = responses_message_item_to_llm(following);
-            merge_message_into_reasoning_message(reasoning_message, following_message);
+            merge_responses_assistant_message(reasoning_message, following_message);
             true
         }
         _ => false,
     }
 }
 
-pub(super) fn merge_message_into_reasoning_message(
-    reasoning_message: &mut Message,
-    message: Message,
-) {
+fn merge_responses_assistant_message(reasoning_message: &mut Message, mut message: Message) {
     if reasoning_message.id.is_empty() {
-        reasoning_message.id = message.id;
+        reasoning_message.id = std::mem::take(&mut message.id);
     }
     if reasoning_message.content.is_empty() {
-        reasoning_message.content = message.content;
+        reasoning_message.content = std::mem::take(&mut message.content);
     } else if !message.content.is_empty() {
         let mut parts = message_content_into_parts(std::mem::take(&mut reasoning_message.content));
-        parts.extend(message_content_into_parts(message.content));
+        parts.extend(message_content_into_parts(std::mem::take(
+            &mut message.content,
+        )));
         reasoning_message.content = MessageContent::Parts(parts);
     }
-    if reasoning_message.refusal.is_empty() {
-        reasoning_message.refusal = message.refusal;
+    if !message.refusal.is_empty() {
+        if !reasoning_message.refusal.is_empty() {
+            reasoning_message.refusal.push('\n');
+        }
+        reasoning_message.refusal.push_str(&message.refusal);
     }
-    reasoning_message.annotations.extend(message.annotations);
+    reasoning_message
+        .annotations
+        .append(&mut message.annotations);
+    append_reasoning_fields(reasoning_message, message);
 }
 
 pub(super) fn message_content_into_parts(content: MessageContent) -> Vec<MessageContentPart> {

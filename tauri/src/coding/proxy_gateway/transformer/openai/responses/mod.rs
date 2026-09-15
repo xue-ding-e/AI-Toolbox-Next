@@ -6,6 +6,9 @@ pub(crate) mod shared;
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+mod parallel_tool_tests;
+
 use crate::coding::proxy_gateway::transformer::error::ProtocolConversionError;
 use crate::coding::proxy_gateway::transformer::llm::{Request, Response};
 use crate::coding::proxy_gateway::transformer::openai::codex_tools::validate_responses_namespace_tool_names;

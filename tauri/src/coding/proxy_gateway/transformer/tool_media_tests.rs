@@ -132,6 +132,13 @@ fn responses_stringified_and_mcp_tool_images_move_out_of_chat_tool_text() {
     );
 
     let messages = converted["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["role"], "assistant");
+    assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+    assert_eq!(messages[0]["tool_calls"][1]["id"], "call_2");
+    assert_eq!(messages[1]["tool_call_id"], "call_1");
+    assert_eq!(messages[2]["tool_call_id"], "call_2");
     assert_eq!(
         messages
             .iter()

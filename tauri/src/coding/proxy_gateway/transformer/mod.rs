@@ -21,7 +21,7 @@ mod types;
 mod tool_media_tests;
 
 pub use error::ProtocolConversionError;
-pub(crate) use gemini::gemini_stream_error;
+pub(crate) use gemini::{gemini_stream_error, merge_gemini_function_call_part};
 pub use kernel::{
     convert_error_response_body, convert_request_body, convert_request_body_with_context,
     convert_request_value, convert_response_body, convert_response_body_with_context,

@@ -1048,7 +1048,7 @@ let client = http_client::client(&state).await?;
 let client = http_client::client_with_timeout(&state, 60).await?;
 
 // Bypass proxy (special cases only)
-let client = http_client::client_no_proxy(30)?;
+let client = http_client::create_client_no_proxy(30)?;
 
 // Get proxy URL directly (for non-HTTP use cases like git)
 let proxy_url = http_client::get_proxy_from_settings(&state).await?;
@@ -1059,7 +1059,7 @@ let proxy_url = http_client::get_proxy_from_settings(&state).await?;
 
 1. **NEVER** use `reqwest::Client::new()` or `reqwest::Client::builder()` directly
 2. **ALWAYS** use `http_client::client()` for requests that should respect proxy settings
-3. Use `http_client::client_no_proxy()` only when you explicitly need to bypass proxy
+3. Use `http_client::create_client_no_proxy()` only when you explicitly need to bypass proxy
 4. **For non-HTTP proxy needs** (e.g., git operations, external CLI tools): Use `http_client::get_proxy_from_settings()` to retrieve the proxy URL and apply it appropriately (e.g., set environment variables like `HTTP_PROXY`/`HTTPS_PROXY`)
 
 ### Supported Proxy Formats

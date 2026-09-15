@@ -1,5 +1,6 @@
 use super::gemini::{
     gemini_finish_to_openai_finish, gemini_stream_error, gemini_usage_to_llm, llm_usage_to_gemini,
+    merge_gemini_function_call_part, synthesize_gemini_tool_id,
 };
 use super::kernel::ConversionContext;
 use super::llm::Usage;
@@ -208,6 +209,8 @@ struct SourceStreamState {
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
     gemini_seen_tool_call: bool,
+    gemini_next_tool_index: usize,
+    gemini_pending_tool_parts: Vec<Value>,
     pending_chat_finish_reason: Option<String>,
     chat_emitted_finish: bool,
     pending_anthropic_usage: Option<Value>,
@@ -486,7 +489,8 @@ impl SourceStreamState {
         match source {
             AiProtocol::OpenAiChat => self.finish_chat(),
             AiProtocol::OpenAiResponses => self.finish_responses(),
-            AiProtocol::AnthropicMessages | AiProtocol::GeminiNative => Vec::new(),
+            AiProtocol::GeminiNative => self.flush_gemini_tool_calls(),
+            AiProtocol::AnthropicMessages => Vec::new(),
         }
     }
 
@@ -1278,38 +1282,15 @@ impl SourceStreamState {
                     }
                     self.gemini_accumulated_reasoning = reasoning_text;
                 }
-                for (index, part) in parts.iter().enumerate() {
-                    let Some(function_call) = part.get("functionCall") else {
+                for part in parts {
+                    if part.get("functionCall").is_none() {
                         continue;
-                    };
-                    self.gemini_seen_tool_call = true;
-                    if let Some(signature) = gemini_part_thought_signature(part) {
-                        out.push(UnifiedStreamEvent::ToolCallSignature {
-                            index,
-                            signature: encode_signature(SignatureProvider::Gemini, signature),
-                        });
                     }
-                    let id = function_call
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .filter(|id| !id.is_empty())
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| format!("gemini_synth_{index}"));
-                    let args = function_call
-                        .get("args")
-                        .cloned()
-                        .unwrap_or_else(|| json!({}));
-                    out.push(UnifiedStreamEvent::ToolCall {
-                        index,
-                        id,
-                        tool_type: TOOL_TYPE_FUNCTION.to_string(),
-                        name: function_call
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        arguments: serde_json::to_string(&args).unwrap_or_default(),
-                    });
+                    self.gemini_seen_tool_call = true;
+                    // Keep only tool snapshots until finish; text/reasoning
+                    // continue streaming. Re-emitting a closed JSON args object
+                    // would concatenate two objects in Chat/Responses clients.
+                    merge_gemini_function_call_part(&mut self.gemini_pending_tool_parts, part);
                 }
             }
             if let Some(finish_reason) = candidate
@@ -1317,6 +1298,7 @@ impl SourceStreamState {
                 .and_then(Value::as_str)
                 .filter(|reason| !reason.trim().is_empty())
             {
+                out.extend(self.flush_gemini_tool_calls());
                 out.push(UnifiedStreamEvent::Finish {
                     reason: gemini_finish_to_openai_finish(
                         Some(finish_reason),
@@ -1333,12 +1315,52 @@ impl SourceStreamState {
                 .and_then(Value::as_array)
                 .is_none_or(|candidates| candidates.is_empty())
         {
+            out.extend(self.flush_gemini_tool_calls());
             out.push(UnifiedStreamEvent::Finish {
-                reason: Some("stop".to_string()),
+                reason: Some(
+                    if self.gemini_seen_tool_call {
+                        "tool_calls"
+                    } else {
+                        "stop"
+                    }
+                    .to_string(),
+                ),
                 usage: gemini_stream_usage(value.get("usageMetadata")),
             });
         }
         out
+    }
+
+    fn flush_gemini_tool_calls(&mut self) -> Vec<UnifiedStreamEvent> {
+        let mut events = Vec::new();
+        for part in self.gemini_pending_tool_parts.drain(..) {
+            let function_call = &part["functionCall"];
+            let index = self.gemini_next_tool_index;
+            self.gemini_next_tool_index += 1;
+            if let Some(signature) = gemini_part_thought_signature(&part) {
+                events.push(UnifiedStreamEvent::ToolCallSignature {
+                    index,
+                    signature: encode_signature(SignatureProvider::Gemini, signature),
+                });
+            }
+            events.push(UnifiedStreamEvent::ToolCall {
+                index,
+                id: function_call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(synthesize_gemini_tool_id),
+                tool_type: TOOL_TYPE_FUNCTION.to_string(),
+                name: function_call
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                arguments: function_call.get("args").unwrap_or(&json!({})).to_string(),
+            });
+        }
+        events
     }
 }
 

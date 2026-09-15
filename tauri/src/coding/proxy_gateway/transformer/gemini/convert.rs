@@ -17,12 +17,11 @@ use super::super::shared::{
     extract_error_type, json_string, reasoning_effort_to_budget_tokens, stop_from_value,
     tool_arguments_value, tool_choice_from_gemini,
 };
+use super::{synthesize_gemini_tool_id, SYNTHETIC_GEMINI_TOOL_ID_PREFIX};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
-const SYNTHETIC_GEMINI_TOOL_ID_PREFIX: &str = "gemini_synth_";
-
-pub fn gemini_request_to_llm(body: Value) -> Request {
+pub fn gemini_request_to_llm(mut body: Value) -> Request {
     let mut request = Request {
         model: body
             .get("model")
@@ -56,26 +55,93 @@ pub fn gemini_request_to_llm(body: Value) -> Request {
             ..Default::default()
         });
     }
-    if let Some(contents) = body.get("contents").and_then(Value::as_array) {
-        let mut function_call_ids_by_name = HashMap::new();
+    if let Some(contents) = body.get_mut("contents").and_then(Value::as_array_mut) {
+        resolve_gemini_request_tool_ids(contents);
         for content in contents {
-            for message in
-                gemini_request_content_to_llm_messages(content, &function_call_ids_by_name)
-            {
-                for tool_call in &message.tool_calls {
-                    if !tool_call.id.is_empty() && !tool_call.function.name.is_empty() {
-                        function_call_ids_by_name
-                            .insert(tool_call.function.name.clone(), tool_call.id.clone());
-                    }
-                }
-                request.messages.push(message);
-            }
+            request
+                .messages
+                .extend(gemini_request_content_to_llm_messages(content));
         }
     }
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
         request.tools = tools.iter().flat_map(gemini_tool_to_llm).collect();
     }
     request
+}
+
+fn resolve_gemini_request_tool_ids(contents: &mut [Value]) {
+    let mut pending_calls: Vec<(String, String)> = Vec::new();
+    for content in contents {
+        let is_model_turn = content.get("role").and_then(Value::as_str) == Some("model");
+        let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
+            pending_calls.clear();
+            continue;
+        };
+        if is_model_turn
+            || !parts
+                .iter()
+                .any(|part| part.get("functionResponse").is_some())
+        {
+            pending_calls.clear();
+        }
+        for part in parts.iter_mut() {
+            let Some(call) = part.get_mut("functionCall").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let call_id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| {
+                    let id = synthesize_gemini_tool_id();
+                    call.insert("id".to_string(), json!(id));
+                    id
+                });
+            let name = call.get("name").and_then(Value::as_str).unwrap_or_default();
+            pending_calls.push((name.to_string(), call_id));
+        }
+
+        // Native IDs take precedence even when a later result is explicit and
+        // an earlier result omits its ID. Never let name matching consume it.
+        for part in parts.iter() {
+            if let Some(id) = part
+                .pointer("/functionResponse/id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                pending_calls.retain(|(_, call_id)| call_id != id);
+            }
+        }
+        for part in parts.iter_mut() {
+            let Some(response) = part
+                .get_mut("functionResponse")
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+            if response
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+            {
+                continue;
+            }
+            let name = response
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(index) = pending_calls
+                .iter()
+                .position(|(call_name, _)| call_name == name)
+            {
+                // Older Gemini history may have no IDs. Match each occurrence
+                // once, in call order, rather than reusing the last same-name ID.
+                let (_, call_id) = pending_calls.remove(index);
+                response.insert("id".to_string(), json!(call_id));
+            }
+        }
+    }
 }
 
 fn reasoning_effort_from_gemini_thinking_config(config: &Value) -> Option<String> {
@@ -192,19 +258,16 @@ fn gemini_parts_text(parts: Option<&Value>) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn gemini_request_content_to_llm_messages(
-    content: &Value,
-    function_call_ids_by_name: &HashMap<String, String>,
-) -> Vec<Message> {
+fn gemini_request_content_to_llm_messages(content: &Value) -> Vec<Message> {
     let Some(parts) = content.get("parts").and_then(Value::as_array) else {
-        return vec![gemini_content_to_llm(content, function_call_ids_by_name)];
+        return vec![gemini_content_to_llm(content)];
     };
     let function_response_count = parts
         .iter()
         .filter(|part| part.get("functionResponse").is_some())
         .count();
     if function_response_count <= 1 {
-        return vec![gemini_content_to_llm(content, function_call_ids_by_name)];
+        return vec![gemini_content_to_llm(content)];
     }
 
     let mut messages = Vec::with_capacity(function_response_count);
@@ -215,38 +278,26 @@ fn gemini_request_content_to_llm_messages(
                 messages.push(gemini_content_segment_to_llm(
                     content,
                     std::mem::take(&mut segment_parts),
-                    function_call_ids_by_name,
                 ));
             }
         }
         segment_parts.push(part.clone());
     }
     if !segment_parts.is_empty() {
-        messages.push(gemini_content_segment_to_llm(
-            content,
-            segment_parts,
-            function_call_ids_by_name,
-        ));
+        messages.push(gemini_content_segment_to_llm(content, segment_parts));
     }
     messages
 }
 
-fn gemini_content_segment_to_llm(
-    content: &Value,
-    parts: Vec<Value>,
-    function_call_ids_by_name: &HashMap<String, String>,
-) -> Message {
+fn gemini_content_segment_to_llm(content: &Value, parts: Vec<Value>) -> Message {
     let mut segment = content.clone();
     if let Some(object) = segment.as_object_mut() {
         object.insert("parts".to_string(), Value::Array(parts));
     }
-    gemini_content_to_llm(&segment, function_call_ids_by_name)
+    gemini_content_to_llm(&segment)
 }
 
-fn gemini_content_to_llm(
-    content: &Value,
-    function_call_ids_by_name: &HashMap<String, String>,
-) -> Message {
+fn gemini_content_to_llm(content: &Value) -> Message {
     let role = match content.get("role").and_then(Value::as_str) {
         Some("model") => "assistant",
         _ => "user",
@@ -326,7 +377,7 @@ fn gemini_content_to_llm(
                         .and_then(Value::as_str)
                         .filter(|id| !id.is_empty())
                         .map(ToString::to_string)
-                        .unwrap_or_else(|| format!("{SYNTHETIC_GEMINI_TOOL_ID_PREFIX}{index}")),
+                        .unwrap_or_else(synthesize_gemini_tool_id),
                     tool_type: TOOL_TYPE_FUNCTION.to_string(),
                     function: FunctionCall {
                         name: function_call
@@ -352,7 +403,6 @@ fn gemini_content_to_llm(
                     .and_then(Value::as_str)
                     .filter(|id| !id.is_empty())
                     .map(ToString::to_string)
-                    .or_else(|| function_call_ids_by_name.get(&function_name).cloned())
                     .or_else(|| (!function_name.is_empty()).then(|| function_name.clone()));
                 tool_result = Some(Message {
                     role: "tool".to_string(),
@@ -504,10 +554,23 @@ fn gemini_function_response_content(function_response: &Value) -> MessageContent
 
 pub fn llm_request_to_gemini(request: Request) -> Value {
     let mut system_chunks = Vec::new();
-    let mut contents = Vec::new();
+    let mut contents: Vec<Value> = Vec::new();
     let mut tool_names_by_id = HashMap::new();
+    let mut tool_call_order = HashMap::new();
+    let mut pending_tool_results = Vec::new();
     let supports_multimodal_function_response = is_gemini_3_model(&request.model);
     for message in request.messages {
+        if message.role == "tool" {
+            pending_tool_results.push(message);
+            continue;
+        }
+        append_gemini_tool_result_batch(
+            &mut contents,
+            &mut pending_tool_results,
+            &tool_names_by_id,
+            &tool_call_order,
+            supports_multimodal_function_response,
+        );
         if message.role == "system" || message.role == "developer" {
             if let MessageContent::Text(text) = message.content {
                 if !text.is_empty() {
@@ -516,21 +579,21 @@ pub fn llm_request_to_gemini(request: Request) -> Value {
             }
             continue;
         }
-        if message.role == "tool" {
-            contents.push(llm_tool_message_to_gemini_content(
-                message,
-                &tool_names_by_id,
-                supports_multimodal_function_response,
-            ));
-            continue;
-        }
-        for tool_call in &message.tool_calls {
+        for (index, tool_call) in message.tool_calls.iter().enumerate() {
             if !tool_call.id.is_empty() && !tool_call.function.name.is_empty() {
                 tool_names_by_id.insert(tool_call.id.clone(), tool_call.function.name.clone());
+                tool_call_order.insert(tool_call.id.clone(), index);
             }
         }
         contents.push(llm_message_to_gemini_content(message));
     }
+    append_gemini_tool_result_batch(
+        &mut contents,
+        &mut pending_tool_results,
+        &tool_names_by_id,
+        &tool_call_order,
+        supports_multimodal_function_response,
+    );
     let mut body = json!({
         "contents": contents
     });
@@ -798,14 +861,7 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
     };
     let mut parts = Vec::new();
     if message.role == "tool" {
-        parts.push(json!({
-            "functionResponse": {
-                "id": message.tool_call_id.clone().unwrap_or_default(),
-                "name": message.tool_call_name.or(message.tool_call_id).unwrap_or_default(),
-                "response": gemini_function_response_value(message.content)
-            }
-        }));
-        return json!({ "role": "user", "parts": parts });
+        return llm_tool_message_to_gemini_content(message, &HashMap::new(), false);
     }
     let message_signature = message
         .reasoning_signature
@@ -936,6 +992,48 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
     json!({ "role": role, "parts": parts })
 }
 
+fn append_gemini_tool_result_batch(
+    contents: &mut Vec<Value>,
+    pending_results: &mut Vec<Message>,
+    tool_names_by_id: &HashMap<String, String>,
+    tool_call_order: &HashMap<String, usize>,
+    supports_multimodal_function_response: bool,
+) {
+    if pending_results.is_empty() {
+        return;
+    }
+    if pending_results.iter().any(|message| {
+        message
+            .tool_call_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(SYNTHETIC_GEMINI_TOOL_ID_PREFIX))
+    }) {
+        // IDs synthesized for older Gemini calls must be removed on replay.
+        // Restore call order before removing them, or reversed completions of
+        // the same function would silently exchange their results upstream.
+        pending_results.sort_by_key(|message| {
+            message
+                .tool_call_id
+                .as_ref()
+                .and_then(|id| tool_call_order.get(id))
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+    }
+    let mut parts = Vec::new();
+    for message in pending_results.drain(..) {
+        let mut content = llm_tool_message_to_gemini_content(
+            message,
+            tool_names_by_id,
+            supports_multimodal_function_response,
+        );
+        if let Value::Array(result_parts) = content["parts"].take() {
+            parts.extend(result_parts);
+        }
+    }
+    contents.push(json!({"role": "user", "parts": parts}));
+}
+
 fn llm_tool_message_to_gemini_content(
     message: Message,
     tool_names_by_id: &HashMap<String, String>,
@@ -974,10 +1072,12 @@ fn llm_tool_message_to_gemini_content(
         None => (gemini_function_response_value(message.content), Vec::new()),
     };
     let mut function_response = json!({
-        "id": tool_call_id,
         "name": tool_call_name,
         "response": response
     });
+    if !tool_call_id.is_empty() && !tool_call_id.starts_with(SYNTHETIC_GEMINI_TOOL_ID_PREFIX) {
+        function_response["id"] = json!(tool_call_id);
+    }
     let mut parts = Vec::new();
     if supports_multimodal_function_response && !media_parts.is_empty() {
         function_response["parts"] = Value::Array(media_parts);
@@ -1091,10 +1191,8 @@ pub fn gemini_response_to_llm(body: Value) -> Response {
                 .iter()
                 .enumerate()
                 .map(|(index, candidate)| {
-                    let message = gemini_content_to_llm(
-                        candidate.get("content").unwrap_or(&json!({})),
-                        &HashMap::new(),
-                    );
+                    let message =
+                        gemini_content_to_llm(candidate.get("content").unwrap_or(&json!({})));
                     let has_tool = !message.tool_calls.is_empty();
                     Choice {
                         index,
@@ -1110,7 +1208,7 @@ pub fn gemini_response_to_llm(body: Value) -> Response {
         })
         .unwrap_or_else(|| {
             vec![Choice {
-                message: gemini_content_to_llm(&json!({}), &HashMap::new()),
+                message: gemini_content_to_llm(&json!({})),
                 finish_reason: Some("stop".to_string()),
                 ..Default::default()
             }]

@@ -40,6 +40,8 @@
 
 ## 核心设计决策（Why）
 
+- 历史缓存找回了全部 call item 不等于下一轮工具协议合法（issue #352）。Responses 入站 transformer 必须把同一 turn 的调用、前中后 commentary 和 reasoning 归为同一 assistant，runtime 不为 Kimi/GLM 增加第二套重排。真实 HTTP 回归要让严格 Chat/Gemini 模拟上游校验最终批次与配对，覆盖 JSON/SSE/forced SSE、完整/部分历史、previous-response/唯一 call-id 补全和正文日志关闭/截断；不能只验证缓存计数或存在 tool output。
+- Gemini 并行调用必须同时检查普通流式和非流客户端的 forced SSE 聚合：聚合器不能按函数名覆盖同名调用，统一复用 transformer 的 `merge_gemini_function_call_part`，仅同一非空原生 ID 才合并快照。无 ID 的独立调用逐个保留，JSON/SSE 转出本地 ID 须跨轮唯一。Vertex provider 移除全部 function ID 前要恢复结果的调用顺序，且 marker/媒体跟随所属结果，避免 ID 消失后同名逆序结果串配。
 - Codex WebSocket 只在 runtime 做 Responses 同协议转发（架构文档 §16.1、兼容文档 §7.1）。必须先校验实际上游的有效 `101`，再升级下游；转换、动态协议或显式关闭 WS 的渠道在升级前 `426`。接管表的 `supports_websockets=true` 描述本机能力，上游判断仍读数据库 provider 的原始配置，恢复直连要恢复原值。
 - 网关 `codex_websocket_enabled` 默认关闭，旧 settings 缺字段也关闭；这是独立于 provider capability 的运行态门控，不修改接管文件。关闭时在 provider 加载前 `426`，上游握手完成后、下游升级前再次检查。已有连接只在 pending 全部结算后关闭，空闲读被新帧唤醒时也要检查；不能中断在途 usage、额外记录模型失败或让空闲连接继续生成。开启后 Codex 已回退的旧会话需新建/重启才能重试，不能承诺自动恢复 WS。回归见 `runtime/websocket/settings_tests.rs` 与 `settings.rs`。
 - 一条 WS 固定一个 provider/认证身份；`previous_response_id` 是连接内状态，禁止在已升级连接里静默 failover 或重放生成。握手可复用原 retry 预算，但不能把握手尝试记成每轮生成重试；握手阶段没有实际模型，只看 provider 冷却。

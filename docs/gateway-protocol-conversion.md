@@ -296,7 +296,7 @@ IR 通过 `transformer_metadata` 保留少量 provider-local roundtrip 信息，
 
 OpenAI Responses request 中不能完整结构化表达的 raw-only `input[]` item、`tools[]` item 和复杂 `tool_choice` 使用 `transformer_metadata` sidecar 保存，并且只在当前 request/response 转换链路中使用：
 
-- raw fragment 按原 index 合并回 Responses target，不能降级成空 message 或提升为跨请求 store。
+- raw tool fragment 按原 index 合并回 Responses target。raw input fragment 还要记录所在的 IR message 边界，出站时根据实际输出 item 数重算 index；assistant/commentary/reasoning 归并会减少 item 数，直接复用旧 wire index 会把 raw item 移进下一工具批次。不能把 raw item 降级成空 message 或提升为跨请求 store。
 - 只要原请求存在 raw tool fragment，就必须保存 `openai_responses_tool_signatures`；原 structured tool 集合为空时也要保存空数组 `[]`。
 - 同时写入 `openai_responses_tool_signatures_complete=true`，明确区分“原 structured 集合确实为空”和“没有完整性证据”。
 - merge 前重新计算当前 structured tool signatures，并要求数量、顺序和每项 `type:name` 完全一致。
@@ -337,6 +337,29 @@ OpenAI Responses request 中不能完整结构化表达的 raw-only `input[]` it
 Anthropic tool-result 入站如果包含标准 parser 不认识的 block，必须先保留原始数组为 JSON 文本，再让共享识别入口处理 MCP/Responses alternate 形态；不能在 inbound 阶段静默丢失。该规则只对转换路径生效，同协议直通仍由 runtime 保持原始 wire body。
 
 Gemini Native 入站同一个 `content.parts` 可以包含多个并行 `functionResponse`。请求转换必须按每个 `functionResponse` 拆成独立 tool message，并把紧随其后的 Gemini 2.x marker/顶层媒体归到前一个工具结果；不能用单个临时变量覆盖后只保留最后一个。
+
+### 8.4 Responses 并行工具调用与 assistant turn（issue #352）
+
+Responses 的每个 `function_call` / `custom_tool_call` 是独立 input item，同一 assistant turn 还可以在调用前、中、后穿插 commentary 和 reasoning。`openai/responses/shared.rs::append_responses_input_to_messages` 必须把连续 assistant item 归入同一个 IR message，保留全部文本、reasoning、refusal 和调用；Chat 出站才能得到 `assistant(content, tool_calls=[A,B]) -> tool(A) -> tool(B)`。逐 item 输出 assistant，即使所有结果和 ID 仍在，也会使严格 Chat 上游在结果到达前看到新 assistant，报缺少工具结果。工具之后才出现文本的上游 SSE 及 `response.output_item.done` 历史同样走此规则。
+
+- 同名调用按各自原始 `call_id` 保留，不按工具名去重或重编号；批次内 index 按出现顺序递增，新批次从零开始。function/custom 混合与经过 Codex context 展平的 namespace/tool search 都消费同一入站归并。
+- reasoning 和 assistant commentary 不切断工具批次；前置、调用间和尾部 reasoning 按既有归属规则合并一次，保留 signature/context。tool output、非 assistant 消息、独立输入、raw-only item 和 compaction 结束当前 turn，不能跨这些边界把不同轮次拼在一起。raw input 的恢复位置见 §8.1。
+- 工具结果保留正文，带 ID 的结果逆序仍按 ID 配对，不合成缺失结果。Gemini 出站需要移除 ID 时先恢复调用顺序，见 §8.5。关闭 `parallel_tool_calls` 只影响后续生成，不能据此破坏历史批次。图片继续在整批 tool results 之后由 Chat writer 输出 synthetic user 媒体消息。
+- 归并属于纯 transformer 的 Responses 入站语义，供 Chat/Anthropic/Gemini 出站复用；不增加 provider 开关、数据库状态或 runtime 全局消息重排。同协议 Responses 继续原始 body 直通。
+- `CodexHistoryStore` 负责找回缺失 call item，不能替代 IR 的批次归并。JSON/SSE 已记录完整调用、或 `previous_response_id` 成功补回整批后，下一轮仍必须通过相同转换入口。
+
+精确回归在 `openai/responses/parallel_tool_tests.rs`；公开协议和真实 HTTP 回归在 `tauri/tests/coding/proxy_gateway/`，同时覆盖共享入站的 compact Chat fallback。`parallel_tools_matrix.rs` 对四协议的 12 个非 identity request 方向和 12 个 JSON response 往返方向逐项核对最终 wire；SSE 覆盖 Chat/Anthropic/Gemini -> Responses 历史回放及 Gemini -> Chat/Anthropic 工具事件生命周期。HTTP 模拟上游独立校验完整批次，覆盖完整/部分历史、previous-response/唯一 call-id 补全、JSON/SSE/强制 SSE 聚合、结果逆序、反复重放以及关闭/截断正文日志。只断言工具结果数量或 JSON shape 不足以验证该契约。
+
+### 8.5 Gemini 工具身份、结果分组与流式快照
+
+- Gemini 入站同名调用不能使用单值 `name -> id` 映射。`gemini/convert.rs::resolve_gemini_request_tool_ids` 在当前请求内维护未完成调用：原生 ID 优先；同一 content 中显式 ID 的结果先占用对应调用，剩余无 ID 结果再按函数名和调用顺序逐个消费，不能重复借用最后一个 ID。
+- 缺少调用 ID 时，JSON request/response 与 SSE 共用 `gemini/mod.rs::synthesize_gemini_tool_id` 生成带 `gemini_synth_` 前缀的 UUID。不能用 part 下标作为跨轮身份，否则多轮历史或 Codex history store 会出现同 ID 调用。原生 ID 不重写。
+- Gemini 出站将连续 IR tool messages 汇入同一 user content；每个结果连同 Gemini 2.x marker/inline image 或 Gemini 3.x nested parts 一起移动。普通 user、model 及 instructions 边界结束批次。
+- 仅本地合成 ID 不回传 Gemini；移除前按原调用顺序排列整批结果，避免同名工具逆序完成时失去关联。带原生 ID 的普通 Gemini 请求保持结果提交顺序。Vertex 的“移除全部 function ID”由 runtime 决定，必须在移除前完成等价排序并保持媒体归属；混合原生/匿名结果时先保留显式配对，再把匿名结果放回剩余调用位置，不能简单把无 ID 结果排到末尾。provider 判断不进入 transformer。
+- Gemini 的 chunk 内 `parts[0]` 不是流级工具 index。`gemini/stream.rs::merge_gemini_function_call_part` 只在同一非空原生 ID 下合并参数快照和签名；不同 ID 或无 ID 的每次出现均保留，不能按名称、参数相同或 chunk 内位置去重。`StreamKernel` 暂存工具快照，到 finish/EOF 输出每个调用一次并分配连续 index；普通文本和 reasoning 继续即时输出，不缓存整条 SSE。已进入错误终态时不得在 EOF 补发工具或成功终态。
+- 非流客户端遇到 forced SSE 时，`runtime/upstream.rs::GeminiCandidateAggregate` 复用同一纯协议 helper。该聚合路径仍由 runtime 按 MIME/客户端 streaming 意图选择，缺少合法终态的拒绝规则不变；不能只修正常 SSE 转换而漏掉聚合器按工具名覆盖的路径。
+
+相关回归：`parallel_tools_matrix.rs`、`parallel_tools_http.rs`；runtime 的 `gemini_sse_aggregate_*` 和 `outbound_adapter_*vertex*` 同时核对相同名称的不同 ID、匿名调用、同 ID 更新、signature、逆序结果及图片归属。
 
 ## 9. ConversionContext
 
@@ -1261,6 +1284,14 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
   - **已经吸收：Anthropic Messages SSE 非对象归一**（参考 cc-switch `ff3bc242` 的 `transform_codex_anthropic` / `streaming_codex_anthropic` 防护）。AI Toolbox 在 `runtime/upstream.rs` 的 `AnthropicSseAggregate::push_block` 中给 `message_start` 加 `filter(|m| m.is_object())` 门控，`content_block_start` 对非对象 `content_block` 归一为 `{"type":"text","text":""}`，使后续 delta 文本继续承接而不是静默丢弃成 completed 空输出；此路径本来就通过 `as_object_mut()` 避免 panic（比 cc-switch 更早防住），本次补齐了"不 panic 且不吞文本"的行为。回归测试 `anthropic_sse_aggregate_recovers_non_object_content_block_as_text`、`anthropic_sse_aggregate_non_object_message_does_not_panic`，位于 `runtime/upstream.rs`。
   - **已经吸收：DeepSeek 官方 Codex catalog mirror**（参考 cc-switch `8ae1ce85`）。对 `wire_api="responses"`（native Responses）且在 `base_url` 命中 `deepseek.com` 的 Codex provider，生成的 `ai-toolbox-codex-model-catalog.json` 镜像内置的 DeepSeek 官方 models.json（`tauri/resources/codex_deepseek_catalog_template.json`，freeform `apply_patch`、GPT-5 harness base_instructions、low/high/max reasoning、1m context），避免 neutral 模板把 DeepSeek 能力声明错配（如 image modality、text_and_image web search）。`CodexCatalogModelSpec.display_name` / `context_window` 改为 `Option` 以区分"用户显式值"与"默认兜底"：官方条目保留 vendor 声明，用户显式覆盖仍优先，未知模型克隆官方旗舰条目而不冒充。非 deepseek host 或非 Responses target 仍走 neutral 模板。实现位于 `codex/commands.rs`（`codex_official_vendor_catalog_models` / `codex_vendor_catalog_model_entry` / `fill_template_fields_from_static`），回归测试 `deepseek_host_native_catalog_mirrors_official_entries`、`non_deepseek_or_non_native_provider_keeps_neutral_template`。
   - **明确不吸收**：`c49cf96a` 的 Grok Build `x-grok-conv-id` / `x-grok-session-id` 会话提取（AI Toolbox 当前不代理 Grok Build 产品）、`4bfb3fc3` 的 Claude Desktop proxy 与 session logs 去重（AI Toolbox 不代理 Claude Desktop）。`12b972a6` models.dev pricing sync、`cd17912f` Object.prototype walker、zip-slip、deeplink risk 等属前端/配置/CI 层，与本机 gateway 无关。
+
+2026-09-15 issue #352 定点修复及多协议复查，参考快照为 cc-switch `42ac174dbc42e0cf50a50e60c5f2c3dcecca4560`（`origin/main`）与 AxonHub `48b7314a1c17d9545f729b2be3d9ed7fb05d60d1`（`origin/unstable`）。本次核对四协议的并行调用、SSE 历史回放和 forced SSE 聚合，不是完整增量同步，两个正式 baseline 不推进，也不改写参考仓库工作树。
+
+- Responses 参考 cc-switch `append_responses_input_as_chat_messages` / `flush_pending_tool_calls` 及 `5e0f3442` 的相邻 commentary 合并，以及 AxonHub `convertInputToMessages` / `convertReasoningWithFollowing` 的 IR 分组。AI Toolbox 将该语义统一到 Responses 入站，补齐前置、调用间、调用后文本及 reasoning；保留非 assistant、结果、raw、compaction 边界，并重算 raw input 的恢复位置。实现与测试见 §8.4。
+- Gemini 参考 AxonHub `outbound_convert.go` 的连续 tool message 分组、`outbound_stream.go` 的流级工具 index、`aggregator.go` 的逐调用累积，以及 cc-switch `transform_gemini.rs` 的唯一合成 ID/不回传合成 ID、`streaming_gemini.rs::merge_tool_call_snapshots` 的原生 ID/签名保留。实现与测试见 §8.5。
+- 明确不照搬 AxonHub 入站“按函数名查最后一个 ID”的回填，也不采纳 cc-switch 将无 ID 的 chunk 内位置视作同一次累计调用的假设：不同 SSE 事件可以分别在 `parts[0]` 返回独立同名调用，只有原生 ID 能证明快照身份。无 ID 时保留每次调用；请求结果按待完成调用顺序配对。provider/orchestrator/global store 仍不下沉 transformer。
+- 本地 HTTP 回归使用严格 Chat 和 Gemini 模拟上游，覆盖真实网关请求准备、响应转换、历史补全、逆序结果以及正文日志关闭/截断；不把这些测试表述成真实 Kimi/GLM/Gemini/Vertex 服务联调。
+- 最终验证：`cargo test --jobs 2` 共 2357 个通过、8 个既有 ignored，包含全部集成测试与 doctest；`pnpm test` 共 584 个通过；`pnpm exec tsc --noEmit` 通过。本次累计新增 91 个回归用例，包含初次修复的 47 个和多协议复查补充的 44 个；改动 Rust 文件格式检查与 `git diff --check` 均通过。
 
 ### 19.5 行为同步策略
 

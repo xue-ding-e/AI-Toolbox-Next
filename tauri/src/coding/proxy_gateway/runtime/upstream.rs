@@ -34,8 +34,8 @@ use crate::coding::proxy_gateway::privacy::PrivacyRequest;
 use crate::coding::proxy_gateway::transformer::{
     append_utf8_safe, check_lossy_conversion, convert_error_response_body,
     convert_request_body_with_context, convert_response_body_with_context,
-    convert_sse_stream_with_context, strip_sse_field, AiProtocol, ConversionContext,
-    ConversionRoute,
+    convert_sse_stream_with_context, merge_gemini_function_call_part, strip_sse_field, AiProtocol,
+    ConversionContext, ConversionRoute,
 };
 use crate::coding::proxy_gateway::types::{
     CodexChatReasoningMeta, GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt,
@@ -3175,20 +3175,9 @@ impl GeminiCandidateAggregate {
                 return;
             }
         }
-        if let Some(function_call) = part.get("functionCall") {
-            let name = function_call
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if let Some(existing) = self.parts.iter_mut().rev().find(|candidate_part| {
-                candidate_part
-                    .pointer("/functionCall/name")
-                    .and_then(Value::as_str)
-                    == Some(name)
-            }) {
-                merge_gemini_function_call(existing, function_call);
-                return;
-            }
+        if part.get("functionCall").is_some() {
+            merge_gemini_function_call_part(&mut self.parts, part);
+            return;
         }
         self.parts.push(part.clone());
     }
@@ -3223,37 +3212,6 @@ fn append_json_string_field(value: &mut Value, field: &str, suffix: &str) {
         field.to_string(),
         Value::String(format!("{current}{suffix}")),
     );
-}
-
-fn merge_gemini_function_call(existing_part: &mut Value, incoming_function_call: &Value) {
-    let Some(existing_call) = existing_part
-        .get_mut("functionCall")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    if let Some(id) = incoming_function_call.get("id").cloned() {
-        existing_call.insert("id".to_string(), id);
-    }
-    if let Some(args) = incoming_function_call.get("args") {
-        let existing_args = existing_call
-            .entry("args".to_string())
-            .or_insert_with(|| json!({}));
-        merge_json_objects(existing_args, args);
-    }
-}
-
-fn merge_json_objects(existing: &mut Value, incoming: &Value) {
-    match (existing.as_object_mut(), incoming.as_object()) {
-        (Some(existing_object), Some(incoming_object)) => {
-            for (key, value) in incoming_object {
-                existing_object.insert(key.clone(), value.clone());
-            }
-        }
-        _ => {
-            *existing = incoming.clone();
-        }
-    }
 }
 
 /// Anthropic usage fields are cumulative snapshots, not per-event deltas.
@@ -6543,10 +6501,30 @@ fn clear_gemini_vertex_function_ids(object: &mut serde_json::Map<String, Value>)
     let Some(contents) = object.get_mut("contents").and_then(Value::as_array_mut) else {
         return;
     };
+    let mut tool_calls = Vec::new();
     for content in contents {
         let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
             continue;
         };
+        if parts.iter().any(|part| part.get("functionCall").is_some()) {
+            tool_calls = parts
+                .iter()
+                .filter_map(|part| part.get("functionCall"))
+                .map(|call| {
+                    (
+                        call.get("id")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .map(ToString::to_string),
+                        call.get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    )
+                })
+                .collect();
+        }
+        reorder_gemini_vertex_function_responses(parts, &tool_calls);
         for part in parts {
             if let Some(function_call) = part.get_mut("functionCall").and_then(Value::as_object_mut)
             {
@@ -6560,6 +6538,74 @@ fn clear_gemini_vertex_function_ids(object: &mut serde_json::Map<String, Value>)
             }
         }
     }
+}
+
+fn reorder_gemini_vertex_function_responses(
+    parts: &mut Vec<Value>,
+    tool_calls: &[(Option<String>, String)],
+) {
+    if tool_calls.is_empty()
+        || parts
+            .iter()
+            .filter(|part| part.get("functionResponse").is_some())
+            .count()
+            < 2
+    {
+        return;
+    }
+    let mut prefix = Vec::new();
+    let mut groups: Vec<(Option<usize>, Vec<Value>)> = Vec::new();
+    for part in std::mem::take(parts) {
+        if part.get("functionResponse").is_some() {
+            groups.push((None, vec![part]));
+        } else if let Some((_, group)) = groups.last_mut() {
+            // Keep Gemini 2.x marker/media parts attached to their result.
+            group.push(part);
+        } else {
+            prefix.push(part);
+        }
+    }
+    let mut pending_calls = tool_calls.iter().enumerate().collect::<Vec<_>>();
+    for (order, group) in &mut groups {
+        let Some(id) = group[0]
+            .pointer("/functionResponse/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        if let Some(position) = pending_calls
+            .iter()
+            .position(|(_, (call_id, _))| call_id.as_deref() == Some(id))
+        {
+            *order = Some(pending_calls.remove(position).0);
+        }
+    }
+    // The transformer may already have removed synthetic IDs. Reserve native
+    // matches first, then place anonymous results in the remaining call slots.
+    for (order, group) in &mut groups {
+        let result = &group[0]["functionResponse"];
+        if result
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty())
+        {
+            continue;
+        }
+        let name = result
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if let Some(position) = pending_calls
+            .iter()
+            .position(|(_, (_, call_name))| call_name == name)
+        {
+            *order = Some(pending_calls.remove(position).0);
+        }
+    }
+    groups.sort_by_key(|(order, _)| order.unwrap_or(usize::MAX));
+    prefix.extend(groups.into_iter().flat_map(|(_, group)| group));
+    *parts = prefix;
 }
 
 fn apply_provider_body_compat_after_generic(
@@ -14175,6 +14221,122 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
+    fn outbound_adapter_orders_vertex_parallel_results_before_removing_ids() {
+        let body = json!({"contents": [
+            {"role": "model", "parts": [
+                {"functionCall": {"id": "tool_a", "name": "read_file", "args": {"path": "first.txt"}}},
+                {"functionCall": {"id": "tool_b", "name": "read_file", "args": {"path": "second.txt"}}}
+            ]},
+            {"role": "user", "parts": [
+                {"functionResponse": {"id": "tool_b", "name": "read_file", "response": {"result": "second result"}}},
+                {"functionResponse": {"id": "tool_a", "name": "read_file", "response": {"result": "first result"}}}
+            ]}
+        ]});
+        for provider_type in ["google-vertex", "gemini-vertex", "gemini"] {
+            let bytes = apply_outbound_adapter_compat_for_provider_type(
+                serde_json::to_vec(&body).unwrap(),
+                None,
+                AiProtocol::GeminiNative,
+                provider_type,
+            )
+            .unwrap();
+            let converted: Value = serde_json::from_slice(&bytes).unwrap();
+            let parts = converted["contents"][1]["parts"].as_array().unwrap();
+            if provider_type == "gemini" {
+                assert_eq!(parts[0]["functionResponse"]["id"], "tool_b");
+                assert_eq!(
+                    parts[0]["functionResponse"]["response"]["result"],
+                    "second result"
+                );
+            } else {
+                assert!(parts[0]["functionResponse"].get("id").is_none());
+                assert!(parts[1]["functionResponse"].get("id").is_none());
+                assert_eq!(
+                    parts[0]["functionResponse"]["response"]["result"],
+                    "first result"
+                );
+                assert_eq!(
+                    parts[1]["functionResponse"]["response"]["result"],
+                    "second result"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outbound_adapter_keeps_vertex_media_attached_when_reordering_results() {
+        let body = json!({"contents": [
+            {"role": "model", "parts": [
+                {"functionCall": {"id": "tool_a", "name": "read_file", "args": {}}},
+                {"functionCall": {"id": "tool_b", "name": "read_file", "args": {}}}
+            ]},
+            {"role": "user", "parts": [
+                {"functionResponse": {"id": "tool_b", "name": "read_file", "response": {"result": "b"}}},
+                {"text": "media b"}, {"inlineData": {"mimeType": "image/png", "data": "IMAGE_B"}},
+                {"functionResponse": {"id": "tool_a", "name": "read_file", "response": {"result": "a"}}},
+                {"text": "media a"}, {"inlineData": {"mimeType": "image/png", "data": "IMAGE_A"}}
+            ]}
+        ]});
+        let bytes = apply_outbound_adapter_compat_for_provider_type(
+            serde_json::to_vec(&body).unwrap(),
+            None,
+            AiProtocol::GeminiNative,
+            "google-vertex",
+        )
+        .unwrap();
+        let converted: Value = serde_json::from_slice(&bytes).unwrap();
+        let parts = converted["contents"][1]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[0]["functionResponse"]["response"]["result"], "a");
+        assert_eq!(parts[1]["text"], "media a");
+        assert_eq!(parts[2]["inlineData"]["data"], "IMAGE_A");
+        assert_eq!(parts[3]["functionResponse"]["response"]["result"], "b");
+        assert_eq!(parts[4]["text"], "media b");
+        assert_eq!(parts[5]["inlineData"]["data"], "IMAGE_B");
+    }
+
+    #[test]
+    fn outbound_adapter_orders_vertex_mixed_native_and_idless_results() {
+        for result_order in [[0, 1, 2], [2, 0, 1]] {
+            let calls = (0..3)
+                .map(|index| {
+                    let mut call = json!({"name": "read_file", "args": {"file": index}});
+                    if index > 0 {
+                        call["id"] = json!(format!("call_{index}"));
+                    }
+                    json!({"functionCall": call})
+                })
+                .collect::<Vec<_>>();
+            let results = result_order
+                .into_iter()
+                .map(|index| {
+                    let mut result = json!({"name": "read_file", "response": {"file": index}});
+                    if index > 0 {
+                        result["id"] = json!(format!("call_{index}"));
+                    }
+                    json!({"functionResponse": result})
+                })
+                .collect::<Vec<_>>();
+            let body = json!({"contents": [
+                {"role": "model", "parts": calls}, {"role": "user", "parts": results}
+            ]});
+            let bytes = apply_outbound_adapter_compat_for_provider_type(
+                serde_json::to_vec(&body).unwrap(),
+                None,
+                AiProtocol::GeminiNative,
+                "google-vertex",
+            )
+            .unwrap();
+            let converted: Value = serde_json::from_slice(&bytes).unwrap();
+            for index in 0..3 {
+                let result = &converted["contents"][1]["parts"][index]["functionResponse"];
+                assert_eq!(result["response"]["file"], index, "{converted}");
+                assert!(result.get("id").is_none());
+            }
+        }
+    }
+
+    #[test]
     fn outbound_adapter_filters_private_fields_on_direct_json_body() {
         let request = debug_request(
             br#"{
@@ -15879,6 +16041,95 @@ data: {data}\r\n\r\n"
             "rust"
         );
         assert_eq!(value["usageMetadata"]["totalTokenCount"], 8);
+    }
+
+    async fn aggregate_gemini_tool_parts_for_test(parts: Vec<Value>) -> Value {
+        let part_count = parts.len();
+        let chunks = parts
+            .into_iter()
+            .enumerate()
+            .map(|(index, part)| {
+                let mut candidate =
+                    json!({"index": 0, "content": {"role": "model", "parts": [part]}});
+                if index + 1 == part_count {
+                    candidate["finishReason"] = json!("STOP");
+                }
+                Ok(format!(
+                    "data: {}\n\n",
+                    json!({"responseId": "gemini_aggregate_fixture", "candidates": [candidate]})
+                )
+                .into_bytes())
+            })
+            .collect::<Vec<Result<Vec<u8>, String>>>();
+        let (_, body) =
+            aggregate_gemini_sse_stream(Box::pin(futures_util::stream::iter(chunks)), None)
+                .await
+                .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_keeps_distinct_ids_for_same_name_parallel_calls() {
+        let value = aggregate_gemini_tool_parts_for_test(vec![
+            json!({"functionCall": {"id": "tool_a", "name": "read_file", "args": {"path": "first.txt"}}, "thoughtSignature": "signature-a"}),
+            json!({"functionCall": {"id": "tool_b", "name": "read_file", "args": {"path": "second.txt"}}, "thoughtSignature": "signature-b"}),
+        ]).await;
+        let parts = value["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["functionCall"]["id"], "tool_a");
+        assert_eq!(parts[0]["functionCall"]["args"]["path"], "first.txt");
+        assert_eq!(parts[0]["thoughtSignature"], "signature-a");
+        assert_eq!(parts[1]["functionCall"]["id"], "tool_b");
+        assert_eq!(parts[1]["functionCall"]["args"]["path"], "second.txt");
+        assert_eq!(parts[1]["thoughtSignature"], "signature-b");
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_never_deduplicates_anonymous_calls_by_name_or_arguments() {
+        let call = json!({"functionCall": {"name": "read_file", "args": {"path": "same.txt"}}});
+        let value = aggregate_gemini_tool_parts_for_test(vec![call.clone(), call.clone()]).await;
+        assert_eq!(
+            value["candidates"][0]["content"]["parts"],
+            json!([call.clone(), call])
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_merges_same_id_snapshots_and_preserves_call_signature() {
+        let value = aggregate_gemini_tool_parts_for_test(vec![
+            json!({"functionCall": {"id": "tool_a", "name": "read_file", "args": {"path": "first.txt"}}, "thoughtSignature": "signature-a"}),
+            json!({"functionCall": {"id": "tool_a", "name": "read_file", "args": {"encoding": "utf8"}}}),
+        ]).await;
+        let parts = value["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0]["functionCall"]["args"],
+            json!({"path": "first.txt", "encoding": "utf8"})
+        );
+        assert_eq!(parts[0]["thoughtSignature"], "signature-a");
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_aggregate_keeps_parallel_calls_with_interleaved_text() {
+        let value = aggregate_gemini_tool_parts_for_test(vec![
+            json!({"text": "before "}),
+            json!({"functionCall": {"id": "tool_a", "name": "read_file", "args": {}}}),
+            json!({"text": "between "}),
+            json!({"functionCall": {"id": "tool_b", "name": "read_file", "args": {}}}),
+            json!({"text": "after"}),
+        ])
+        .await;
+        let parts = value["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["text"], "before between after");
+        assert_eq!(parts[1]["functionCall"]["id"], "tool_a");
+        assert_eq!(parts[2]["functionCall"]["id"], "tool_b");
     }
 
     #[test]

@@ -23,6 +23,8 @@ mod mcp_command_normalize;
 mod oh_my_opencode_slim_adapter;
 #[path = "coding/open_code/opencode_roundtrip.rs"]
 mod open_code_opencode_roundtrip;
+#[path = "coding/proxy_gateway/mod.rs"]
+mod proxy_gateway;
 #[path = "coding/skills/sync_engine.rs"]
 mod skills_sync_engine;
 #[path = "coding/skills/tool_adapters.rs"]

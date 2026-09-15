@@ -162,6 +162,12 @@ Responses source 转 Chat 时有两条有意区分的 transformer 输入形态�
 
 Responses source 转 Anthropic Messages / Gemini Native 时，namespace child 声明使用与 Chat 相同的 `flatten_namespace_tool_name()` 投影为普通 function，并用 namespace-only `ConversionContext` 保持同一次请求/响应的身份映射。历史 `function_call` 与具名 `tool_choice` 必须同步改写 flat name，namespace 类型 choice 降为 `auto`；Anthropic/Gemini 的 JSON 和 SSE 工具调用转回 Responses 时恢复原 `namespace` 与子工具名。最终 flat name 与顶层 function/custom 或其它 namespace child 重名时在本地 fail closed，不向上游发送重复工具声明。该行为是所有 Responses→Anthropic/Gemini 转换的通用 wire 兼容，不受 providerType 开关控制。
 
+Responses source 的并行工具批次在 transformer 入站统一归并（issue #352，架构文档 §8.4），不依赖 `providerType`：连续 function/custom 调用与调用前、中、后的 assistant commentary/reasoning 输出同一条 assistant，随后逐条输出所有结果。非 assistant 消息、工具结果、raw item 与 compaction 边界不跨越；原始 call ID、参数和结果正文保留，不补造缺失结果。namespace/tool search 的 context 路径和 custom-only 的原有扩展路径共用该规则，custom-only 最终 wire 过滤仍沿用上面的既有边界。
+
+这保证 Kimi/Moonshot、GLM/Z.ai 和普通 custom Chat 上游收到合法工具消息序列，包括上游 SSE 在工具调用之后才发出文本的情况；Bailian 的 provider-local 合并 helper 继续保留原触发条件，不代替公共 Responses 转换。`parallel_tool_calls=false` 不能删除或拆散已存在的历史并行批次。回归见 `tauri/tests/coding/proxy_gateway/parallel_tools.rs`、`parallel_tools_matrix.rs`、`parallel_tools_http.rs`：完整协议矩阵和真实 HTTP 后续请求核验最终 wire、完整/部分历史、JSON/SSE/强制聚合、历史缓存和正文日志关闭/截断。
+
+Gemini 的通用工具语义见架构文档 §8.5：同批结果归为一个 user content；入站显式 ID 优先，无 ID 的同名结果按待完成调用逐个匹配；只为缺失调用 ID 生成唯一的本地身份。合成 ID 不回传 Gemini，移除前按调用顺序排列结果并保持媒体归属；普通 Gemini 原生 ID 及对应结果提交顺序保留。Gemini source SSE 和 forced SSE 聚合共用按原生 ID 合并快照的 helper，不能按函数名或 chunk 内位置覆盖并行调用。
+
 ### 2.3 prompt cache
 
 - OpenAI Responses target：最终 body 没有 `prompt_cache_key` 时，从稳定 session 线索 fallback；显式值不覆盖。
@@ -867,12 +873,12 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - target Gemini + streaming 自动补 `alt=sse`。
 - Gemini API version 从 provider base URL 推断，支持 `v1` / `v1beta` / `v1alpha`。
 - Gemini source 转非 Gemini target 时过滤 `alt=sse` 和 `key=` query。
-- Gemini Vertex target 删除 `contents[].parts[].functionCall.id` 和 `functionResponse.id`。
+- Gemini Vertex target 删除 `contents[].parts[].functionCall.id` 和 `functionResponse.id`；删除前依据同轮原生调用 ID 排列 functionResponse，匿名结果再匹配尚未被显式 ID 占用的同名调用位置，不能把已移除合成 ID 的结果统一排到末尾。Gemini 2.x 后随 marker/inline media 与 Gemini 3.x nested media 必须随各自结果一起移动。同名工具逆序完成时，直接删 ID 会交换结果归属。该规则仅由 `GeminiVertex` provider compat 触发，普通 Gemini 保留原生 ID 与结果提交顺序。
 
 响应侧：
 
 - target Gemini 的原始 SSE 可被 `GeminiShadowStore` 旁路记录，用于后续 reliable session 的 thoughtSignature shadow 回放。
-- Gemini response/SSE 的协议结构转换由 transformer 处理。
+- Gemini response/SSE 的协议结构转换由 transformer 处理。工具快照只在非空原生 ID 相同时合并；无 ID 的独立调用逐次保留，不能按函数名 deduplicate。正常 SSE 暂存工具快照、持续输出文本/reasoning，在终态输出完整工具参数；非流客户端的 forced SSE 由 runtime 聚合，复用同一纯协议 helper。回归：`gemini_sse_aggregate_*`、`outbound_adapter_*vertex*` 及 `tauri/tests/coding/proxy_gateway/`。
 
 测试：
 
