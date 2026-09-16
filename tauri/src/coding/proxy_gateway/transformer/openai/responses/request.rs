@@ -2,6 +2,7 @@ use crate::coding::proxy_gateway::transformer::llm::{
     ApiFormat, Message, MessageContent, Request, RequestType, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
 };
 use crate::coding::proxy_gateway::transformer::shared::{
+    downgrade_instruction_message, instruction_hoist_plan, placement_for_api_format,
     should_emit_openai_request_metadata, stop_from_value, stop_to_value, tool_choice_from_openai,
     tool_choice_to_responses,
 };
@@ -165,9 +166,13 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     let truncation =
         responses_metadata_or_extra_body(&request, RESPONSES_TRUNCATION_METADATA_KEY, "truncation");
     let mut message_input_offsets = Vec::with_capacity(request.messages.len() + 1);
-    for message in request.messages {
+    let hoist_instructions = instruction_hoist_plan(
+        &request.messages,
+        placement_for_api_format(request.api_format),
+    );
+    for (message_index, message) in request.messages.into_iter().enumerate() {
         message_input_offsets.push(input.len());
-        if message.role == "system" || message.role == "developer" {
+        if hoist_instructions[message_index] {
             if let MessageContent::Text(text) = message.content {
                 if !text.is_empty() {
                     instructions.push(text);
@@ -175,6 +180,10 @@ pub fn llm_request_to_responses(request: Request) -> Value {
             }
             continue;
         }
+        // Instruction messages written in place (Anthropic/Claude Code sources) are
+        // downgraded to `user`: hoisting them would rewrite the prompt head every
+        // turn and break upstream prefix caching (see `shared/system_messages.rs`).
+        let message = downgrade_instruction_message(message);
         append_llm_message_as_responses_input(message, &mut input, &mut custom_tool_call_ids);
     }
     message_input_offsets.push(input.len());

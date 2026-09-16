@@ -781,7 +781,7 @@ apply_outbound_adapter_compat_value(
 4. 读取 effective meta 中的 `codexChatReasoning`；没有配置时，才根据明确的 effective `providerType/apiFormat` 做窄范围推导。
 5. `apply_provider_body_compat_before_generic()` 先做 provider 专属 body 改写。
 6. 如果 target 是 OpenAI Chat，执行 Codex -> Chat 多供应商 reasoning/thinking 参数映射。
-7. 如果 target 是 OpenAI Chat，执行通用第三方 Chat 兼容清理，例如 `developer` 转 `system`、system 合并到首条、过滤 Responses custom tool、清理常见不支持字段。
+7. 如果 target 是 OpenAI Chat，执行通用第三方 Chat 兼容清理，例如 `developer` 转 `system`、instruction 消息按来源方向排布（Anthropic/Claude Code 来源只合并前导连续块，块之后的 system 原位降级为 `user`；其余来源与直通 body 一律合并到首条，见 §19.7 F-15）、过滤 Responses custom tool、清理常见不支持字段。
 8. 对发生协议转换的请求，清理无 tools 时的 `tool_choice` / `parallel_tool_calls` 等控制字段。
 9. `apply_provider_body_compat_after_generic()` 做必须在通用清理后执行的 provider 规则。
 10. 如果 target 是 OpenAI Chat，执行 `reasoningField` 策略和 DeepSeek 最终 reasoning 门控。
@@ -1293,6 +1293,19 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 - 本地 HTTP 回归使用严格 Chat 和 Gemini 模拟上游，覆盖真实网关请求准备、响应转换、历史补全、逆序结果以及正文日志关闭/截断；不把这些测试表述成真实 Kimi/GLM/Gemini/Vertex 服务联调。
 - 最终验证：`cargo test --jobs 2` 共 2357 个通过、8 个既有 ignored，包含全部集成测试与 doctest；`pnpm test` 共 584 个通过；`pnpm exec tsc --noEmit` 通过。本次累计新增 91 个回归用例，包含初次修复的 47 个和多协议复查补充的 44 个；改动 Rust 文件格式检查与 `git diff --check` 均通过。
 
+2026-09-16 issue #356 定点修复：instruction（`system`/`developer`）消息位置改为按来源方向门控。参考快照为 cc-switch `e098279934a6041ebab35664c5fbd785df055ee0`（本地 checkout 与 `origin/main` 的提交，**是 §19.4 记录 baseline `42ac174d` 的祖先**，即本次分析基于比 baseline 更早的快照）与 AxonHub `dfbe22593ea33d62d1bc04d47a8e5d6c8b25d2bf`（本地 checkout == §19.4 记录的 `origin/unstable` baseline）。两条关键参考提交（cc-switch `b724f5dd`、AxonHub `9dfd6ac0`）同时存在于本次快照与各自 baseline 之内，因此本次不推进 baseline，也不改写参考仓库工作树。
+
+- 参考快照与 remote-tracking 的增量核对（只读，不 checkout）：cc-switch `HEAD..origin/main` 24 个提交中触及 `providers/{transform,transform_codex_chat}.rs` 的为 `bd247a4a`（缺省 tool description）、`c6286e14`（grok reasoning effort）、`5e0f3442`（相邻 commentary 与待处理 tool call 合并），都不改 system/developer 位置结论；`transform_codex_chat.rs` 的 `collapse_system_messages_to_head`（3 处引用）与 `transform.rs` 的 `test_anthropic_to_openai_preserves_mid_conversation_system_in_place` 在 `origin/main` 上同样存在。AxonHub `HEAD..origin/unstable` 75 个提交未触碰 `llm/pipeline/cc/system_messages.go`，但给 `llm/transformer/openai/outbound_convert.go` 新增了 `mergeSystemMessages`（把多条 system 合并到**第一条 system 所在位置**）。该增量未推进 baseline、未吸收，只作为"Chat 出站对非 Claude Code 来源做合并"的同向佐证。
+
+- 问题：网关把入站 `system` 消息**全部**合并到首条 system，于是 Claude Code 每轮追加的逐轮变化 `role:"system"` 提醒（`<total_tokens>N tokens left</total_tokens>`）把首条越堆越长，prompt 前缀在约 15.9 KB 处断开，上游前缀缓存整段失效（命中率 7.7%，同上游同模型的 Codex 路由 98.4%）。
+- 参考结论（两个项目都是**按方向**分裂，不是按角色）：cc-switch `Anthropic -> Chat` 自 `b724f5dd revert(proxy): drop Anthropic system-message hoisting (#3775)`（2026-06-16，release notes 记录合并期命中率 99%→20%）起不再合并，回归测试 `test_anthropic_to_openai_preserves_mid_conversation_system_in_place` 直接点名 `<total_tokens>`；而 `Responses -> Chat` 在 `transform_codex_chat.rs:289` **无条件**调用 `collapse_system_messages_to_head`，注释明确"避免中间 system（如 Codex 的 `developer` 指令）"。AxonHub 从另一侧得到同一结论：Chat 出站是 1:1 `lo.Map` 不提，Anthropic/Responses 出站照旧提，另用 `llm/pipeline/cc/system_messages.go`（`9dfd6ac0`，2026-08-10）只对 Claude Code 客户端把前导块之后的 system 原位降级为 `user`。
+- 吸收：新增 `transformer/shared/system_messages.rs::InstructionPlacement`，Chat/Responses writer 与 runtime Chat compat 共用；Anthropic 来源用 `PreserveOrder`（只合并前导连续块，块之后的 instruction 保 index、role 降级为 `user`），其他来源与同协议直通 body 用 `MergeToHead`（历史"全部合并到首条"）。**不吸收** cc-switch 的"原件保留 `system` role"形态：降级为 `user` 才能继续保证上游看不到中途 system role（AxonHub 同款取舍）。Anthropic target 不改：`conversion_route()` 只在 source != target 时创建，Anthropic 来源同协议直通，该 writer 只可能收到 `MergeToHead`。
+- 回归：`shared/system_messages.rs` 单测覆盖 placement 门控、合并/保序两条路径与首条跨轮字节稳定；`kernel_tests.rs` 覆盖 Anthropic->Chat 尾随提醒保位、Responses->Chat 迟到 `developer` 仍合并、Anthropic->Responses `instructions` 只收前导块、Chat->Anthropic 全量合并；`runtime/upstream.rs` 覆盖带 Anthropic conversion route 的保序与直通/Responses route 的合并；旧的 `openai_chat_target_collapses_system_messages_to_head` 已按新规则改写。
+- 本次实测（读取 `%APPDATA%\com.ai-toolbox\proxy-gateway\request-logs` 全量 307 条含 body 的 Codex 请求）：22%（68/307）的请求在 `input` 前导块**之后**仍带 instruction 项，共 144 条**全部是 `developer`**（最大一条 24,859 字符的 Codex 身份/指令块），跨轮 hash 稳定；打断 `function_call` 批次的 instruction 项为 0。这是"不能无条件降级"的直接依据，也是 Responses 方向必须保持 `MergeToHead` 的回归基线。
+- 未纳入：Gemini target 仍把 instruction 提到 `systemInstruction`（`contents` 只有 user/model role，本次不改）。
+- 明确不吸收：不引入"保留全部 system 于原位"或"按 provider 开关切换"的第三种模式；方向门控已覆盖两个真实客户端，多一个开关只会增加状态组合。
+- 最终验证：本次改动只涉及 Rust 与文档。`cargo test --jobs 2` 在独立 `CARGO_TARGET_DIR` 下执行（默认 target 目录被正在运行的本机应用占用二进制，无法重链接）共 2378 个通过、8 个既有 ignored、0 失败，含 2163 个 lib 测试、174 个 coding 集成测试、4 个 deeplink、27 个 sqlite_jsonb 与 10 个 doctest；改动文件 `cargo fmt --check` 通过（仓库其它模块存在本次之前就有的 rustfmt 偏差，未一并处理）。`pnpm test` / `pnpm exec tsc --noEmit` 未执行：本机 pnpm 垫片指向缺失的 fnm alias，且本次未改动任何前端文件。
+
 ### 19.5 行为同步策略
 
 | 同步对象 | 可自动化程度 | 当前建议 |
@@ -1352,6 +1365,7 @@ AxonHub 主要用于查询统一 IR、公共协议转换和完整生命周期：
 | F-12 | 非流 Responses cancellation 与 LLM `finish_reason="cancelled"` 双向映射，反向 canonical status 为 `canceled`，不能退化为 `completed`。 |
 | F-13 | runtime 的失败与空响应分类同时检查最终 body 和原始 `upstream_response_body`；转换不能隐藏失败，也不能抹掉合法终态。 |
 | F-14（审查纪律） | 发现“违反官方字面”的实现时，必须先对照 `../cc-switch` 与 `../axonhub` 判断是否为渠道兼容有意设计；跨协议 incomplete 使用 `response.completed`+`status=incomplete` 属 cc-switch 对齐项，见 §18，不得反复当 P0 bug。 |
+| F-15 | **instruction 位置按来源方向门控**：`shared/system_messages.rs::InstructionPlacement` 决定 `system`/`developer` 是合并到目标协议唯一 instruction 位置（Chat 首条 system、Responses `instructions`、Anthropic 顶层 `system`）还是按原 index 原地保留。**Anthropic Messages 来源**（即 Claude Code）用 `PreserveOrder`：只合并前导连续块，块之后的 instruction 消息保持原 index、role 降级为 `user`——Claude Code 每轮在对话尾部追加逐轮变化的 `role:"system"` 提醒（`<total_tokens>N tokens left</total_tokens>`），提到首条会让首条每轮变长、上游前缀缓存整段失效（issue #356：命中率 7.7%，同链路 Codex 98.4%）。**其余来源和同协议直通 body** 用 `MergeToHead`，即历史"全部合并到首条"行为：Codex（Responses 来源）的身份/指令块是 `developer` 角色且跨轮稳定，合并既满足"上游只接受单首位 system"的兼容约束也不伤缓存。transformer 侧用 `placement_for_api_format`，runtime 侧用 `placement_for_protocol(conversion_route.source)`，两处必须复用同一实现；Anthropic target 只可能拿到 `MergeToHead`（Anthropic 来源同协议直通）。Gemini target 仍无条件提到 `systemInstruction`，未纳入本次范围。参考依据与回归位置见 §19.4 的 issue #356 条目。 |
 
 其它已经落位的细节点：
 

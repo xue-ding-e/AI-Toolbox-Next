@@ -34,8 +34,9 @@ use crate::coding::proxy_gateway::privacy::PrivacyRequest;
 use crate::coding::proxy_gateway::transformer::{
     append_utf8_safe, check_lossy_conversion, convert_error_response_body,
     convert_request_body_with_context, convert_response_body_with_context,
-    convert_sse_stream_with_context, merge_gemini_function_call_part, strip_sse_field, AiProtocol,
-    ConversionContext, ConversionRoute,
+    convert_sse_stream_with_context, merge_gemini_function_call_part,
+    normalize_chat_system_messages, placement_for_protocol, strip_sse_field, AiProtocol,
+    ConversionContext, ConversionRoute, InstructionPlacement,
 };
 use crate::coding::proxy_gateway::types::{
     CodexChatReasoningMeta, GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt,
@@ -6331,10 +6332,18 @@ fn apply_outbound_adapter_compat_value(
     }
 
     if target_protocol == AiProtocol::OpenAiChat {
+        // Anthropic (Claude Code) sources must keep instruction order: Codex's
+        // `developer` instruction blocks are stable and safe to merge, Claude Code's
+        // per-turn `<total_tokens>` reminders are not. See
+        // `transformer/shared/system_messages.rs`.
+        let placement = conversion_route.map_or(InstructionPlacement::MergeToHead, |route| {
+            placement_for_protocol(route.source)
+        });
         normalize_openai_chat_for_provider_compat(
             value,
             provider_kind,
             should_preserve_chat_reasoning_effort(provider_kind, codex_chat_reasoning),
+            placement,
         );
     }
 
@@ -7908,6 +7917,7 @@ fn normalize_openai_chat_for_provider_compat(
     value: &mut Value,
     provider_kind: Option<ProviderBodyCompat>,
     preserve_reasoning_effort: bool,
+    placement: InstructionPlacement,
 ) {
     let Value::Object(object) = value else {
         return;
@@ -7922,7 +7932,7 @@ fn normalize_openai_chat_for_provider_compat(
 
     sanitize_openai_chat_tools(object);
     if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
-        sanitize_openai_chat_messages(messages);
+        sanitize_openai_chat_messages(messages, placement);
     }
 }
 
@@ -7950,7 +7960,7 @@ fn is_supported_openai_chat_tool(tool: &Value) -> bool {
             .is_some_and(|name| !name.trim().is_empty())
 }
 
-fn sanitize_openai_chat_messages(messages: &mut Vec<Value>) {
+fn sanitize_openai_chat_messages(messages: &mut Vec<Value>, placement: InstructionPlacement) {
     let mut removed_tool_call_ids = Vec::new();
     let mut filtered_messages = Vec::with_capacity(messages.len());
 
@@ -7975,36 +7985,7 @@ fn sanitize_openai_chat_messages(messages: &mut Vec<Value>) {
         filtered_messages.push(message);
     }
 
-    *messages = collapse_openai_chat_system_messages_to_head(filtered_messages);
-}
-
-fn collapse_openai_chat_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
-    let mut system_chunks = Vec::new();
-    let mut rest = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        if message.get("role").and_then(Value::as_str) == Some("system") {
-            if let Some(content) = message.get("content").and_then(Value::as_str) {
-                if !content.trim().is_empty() {
-                    system_chunks.push(content.to_string());
-                }
-                continue;
-            }
-        }
-        rest.push(message);
-    }
-
-    if system_chunks.is_empty() {
-        return rest;
-    }
-
-    let mut normalized = Vec::with_capacity(rest.len() + 1);
-    normalized.push(json!({
-        "role": "system",
-        "content": system_chunks.join("\n\n")
-    }));
-    normalized.extend(rest);
-    normalized
+    *messages = normalize_chat_system_messages(filtered_messages, placement);
 }
 
 fn is_removed_tool_result_message(message: &Value, removed_tool_call_ids: &[String]) -> bool {
@@ -13893,6 +13874,82 @@ data: {data}\r\n\r\n"
         assert_eq!(messages[1]["reasoning_content"], "Need to edit one file.");
         assert!(messages[1].get("reasoning").is_none());
         assert!(messages[1].get("tool_calls").is_none());
+    }
+
+    fn late_reminder_chat_body() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "model": "deepseek-v4.1-flash",
+            "messages": [
+                {"role": "system", "content": "You are Claude Code."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {
+                    "role": "system",
+                    "content": "<total_tokens>14963538 tokens left</total_tokens>"
+                },
+                {"role": "user", "content": "Continue"}
+            ]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn outbound_adapter_keeps_claude_code_reminder_in_place_for_anthropic_source() {
+        let body = apply_outbound_adapter_compat(
+            late_reminder_chat_body(),
+            Some(ConversionRoute::new(
+                AiProtocol::AnthropicMessages,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        // Anthropic (Claude Code) sources keep the reminder at its index with the
+        // role downgraded, so the prompt prefix stays stable across turns.
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Claude Code.");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(
+            messages[3]["content"],
+            "<total_tokens>14963538 tokens left</total_tokens>"
+        );
+    }
+
+    #[test]
+    fn outbound_adapter_merges_late_system_message_for_non_anthropic_sources() {
+        // Direct Chat bodies (and every non-Anthropic source) keep the historical
+        // merge: one leading system, no mid-conversation system role.
+        for route in [
+            None,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+        ] {
+            let body = apply_outbound_adapter_compat(
+                late_reminder_chat_body(),
+                route,
+                AiProtocol::OpenAiChat,
+            )
+            .unwrap();
+            let value = serde_json::from_slice::<Value>(&body).unwrap();
+            let messages = value["messages"].as_array().unwrap();
+
+            assert_eq!(messages.len(), 4);
+            assert_eq!(messages[0]["role"], "system");
+            assert_eq!(
+                messages[0]["content"],
+                "You are Claude Code.\n\n<total_tokens>14963538 tokens left</total_tokens>"
+            );
+            assert!(messages
+                .iter()
+                .all(|message| message["role"].as_str() != Some("system")
+                    || message["content"].as_str() == messages[0]["content"].as_str()));
+        }
     }
 
     #[test]

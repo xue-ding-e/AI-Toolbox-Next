@@ -145,7 +145,7 @@
 - 入口：`openai/responses/mod.rs::llm_request_to_responses`、`llm_response_to_responses`，stream target 为 `OpenAiResponses`。
 - Request 输出 `model`、`input`、`instructions`、`max_output_tokens`、temperature、`top_p`、penalty、`service_tier`、`top_logprobs`、`user`、`reasoning.effort`、`stream`、`stop`、`tool_choice`、`tools`、`parallel_tool_calls`、`text.format` / verbosity、`prompt_cache_key`、`extra_body`；`metadata` 只在来源也是 OpenAI Chat/Responses 时作为 OpenAI 原生字段透传，Anthropic `metadata.user_id` 和任意自定义 metadata 只用于转回 Anthropic，不能泄漏到 Responses target。
 - `input` 当前统一输出 array，不保留 AxonHub 的 single string input optimization。
-- system/developer 合并为 `instructions`；user/assistant text/image/refusal/annotations 输出为 message content。
+- system/developer 按 `InstructionPlacement` 汇总为 `instructions`：`MergeToHead` 全部汇总；`PreserveOrder` 只汇总前导连续块，块之后的降级为 `user` 并按其原 index 留在 `input`，不能提进 `instructions`（前缀缓存，见「JSON 请求转换细节」）；user/assistant text/image/refusal/annotations 输出为 message content。
 - Assistant reasoning 输出为 reasoning item；function/custom tool call 与 output 都支持，custom output 通过当前 request 内 call id 判断 item type。
 - 无最终 tools 时清理 `tool_choice` / `parallel_tool_calls` 属于 Gateway runtime outbound adapter 兼容，不属于纯协议结构转换。
 - Tool call item 必须输出 `status:"completed"`。Responses `function_call.id` 是 item id，必须使用 `fc*` 形态；custom tool item id 必须使用 `ctc*` 形态；原始工具调用 id 保留在 `call_id`，不要把 Anthropic/Chat 的 `call_*` 直接写进 Responses item `id`。
@@ -168,6 +168,7 @@
 - 入口：`anthropic/outbound.rs::llm_request_to_anthropic`、`llm_response_to_anthropic`，stream target 为 `AnthropicMessages`。
 - Request 输出 `model`、`messages`、`system`、`max_tokens`、`thinking`、temperature、`top_p`、`stream`、`stop_sequences`、`tool_choice`、`tools`。
 - `max_tokens` 缺失时默认输出 `8192`，避免 Anthropic target 缺必填字段。
+- 该 writer 只接 `MergeToHead`：source 为 Anthropic Messages 时协议相同、走直通不进入本 writer，因此所有 system/developer 都汇总进顶层 `system`（顺序保留、空行连接）。
 - `metadata["user_id"]` 要输出到 Anthropic `metadata.user_id`。
 - 无最终 tools 时清理 `tool_choice` 属于 Gateway runtime outbound adapter 兼容，不属于纯协议结构转换。
 - URL/header/auth/Bedrock/Vertex/LongCat 平台差异不在本模块，由 Gateway runtime target protocol/header/auth 决策负责。
@@ -204,9 +205,14 @@
 - Anthropic `system` 转 OpenAI Chat `system` message，转 Responses `instructions`，转 Gemini `systemInstruction.parts[].text`。
 - Anthropic 入站 `system` 如果是 array，要在 request-scoped `transformer_metadata` 中记录 array instructions marker；同一次 IR 出站回 Anthropic 时必须继续输出 array `system`，string system 仍输出 string。这个 marker 只在本次转换内有效，不能期望经 OpenAI Responses JSON 的 `instructions` 字符串再恢复原 Anthropic array shape。
 - Claude Code 可能在 Anthropic `system` 开头注入动态 `x-anthropic-billing-header:` 行；转换到非 Anthropic 目标前必须只剥离开头这一个动态 attribution 行，并保留后续稳定 prompt 文本。不要删除非开头位置的同名文本，避免误删用户内容。
-- 转 OpenAI Chat target 时，多个 `system` / `developer` 消息必须合并并移动到首条 system。cc-switch 对 Anthropic->Chat 和 Responses->Chat 都这样做，第三方 Chat 兼容接口更容易接受单首位 system，而不是多条或中途 system。
+- 转 OpenAI Chat target 时，instruction 消息（`system` / `developer`）的位置由 `shared/system_messages.rs::InstructionPlacement` **按转换来源方向**决定，不要在调用点自行拼装规则：
+  - `MergeToHead`（非 Anthropic 来源，含同协议直通 body）：**所有** instruction 消息合并到首条 system（`\n\n` 连接）——Codex（Responses 来源）的 `developer` 身份/指令块跨轮稳定，合并既保住"上游只接受单首位 system"的兼容性，也不破坏前缀缓存；cc-switch `transform_codex_chat.rs` 的 `collapse_system_messages_to_head` 就是无条件这样做。缺失文本的 instruction 消息原位保留，纯空白文本仍随消息丢弃（与旧实现一致）。
+  - `PreserveOrder`（Anthropic Messages 来源，即 Claude Code）：只有**前导连续**块合并到首条；块之后的 instruction 消息保持原 index、role 降级成 `user`、内容不动。Claude Code 每轮在对话尾部追加逐轮变化的 `role:"system"` 提醒（如 `<total_tokens>N tokens left</total_tokens>`），提到首条会让首条每轮变长、上游前缀缓存整段失效（issue #356：命中率 7.7%，同链路 Codex 98.4%）。
+  - 门控依据是"来源方向"而不是 CLI 名：Anthropic Messages 在本网关是 Claude Code 的入站协议，也是唯一由客户端在会话中途追加 `system` 注解的协议。cc-switch 同样按方向分裂（Anthropic->Chat 自 `b724f5dd revert(proxy): drop Anthropic system-message hoisting (#3775)` 起不再合并，其 release notes 记录合并期命中率 99%→20%，回归测试 `test_anthropic_to_openai_preserves_mid_conversation_system_in_place` 直接点名 `<total_tokens>`；Responses->Chat 继续无条件合并）；AxonHub 从另一侧得到同一结论（Chat 出站 1:1，Anthropic/Responses 出站照旧合并，另用 `llm/pipeline/cc/system_messages.go` 只对 Claude Code 客户端把前导块之后的 system 原位降级为 `user`）。"cc-switch 也把 Anthropic 的 system 合并到首条"是已过时说法，不要再用作依据。
+  - transformer 侧用 `placement_for_api_format(request.api_format)`，runtime 侧用 `placement_for_protocol(conversion_route.source)`（无转换即直通 body：`MergeToHead`）；两边必须复用同一实现，不要各自重新实现。
 - OpenAI Responses `instructions` 不一定只是一段字符串；数组形态要按 text parts 合并为 system 文本，不能因为 `as_str()` 失败而丢失 Codex instructions。
-- OpenAI Chat `system` 和 `developer` 都汇总到 Anthropic `system` 或 Responses `instructions`，顺序保留，用空行连接。
+- OpenAI Chat `system` 和 `developer` 汇总到 Anthropic `system` 或 Responses `instructions` 时按同一 `InstructionPlacement` 规则处理（见下节「JSON 请求转换细节」）：`MergeToHead` 全部汇总、顺序保留、用空行连接；`PreserveOrder` 只取前导连续块，块之后的 instruction 消息降级为 `user` 留在原位（Responses 在 `input`，Anthropic 走既有 role 映射）。三者共用 `shared/system_messages.rs` 的 `instruction_hoist_plan` / `downgrade_instruction_message`。
+- Anthropic target 实际只会收到 `MergeToHead`：`conversion_route()` 只在 source != target 时创建，所以 Anthropic Messages 来源走同协议直通，不会进入 `llm_request_to_anthropic`。
 - Anthropic `messages[].content` 支持 string 和 block array；OpenAI/Gemini 转入时统一输出 Anthropic block array。
 - 文本映射：
   - Anthropic `text` <-> Chat text / Responses `input_text`、`output_text` / Gemini `parts[].text`。

@@ -150,7 +150,7 @@ Claude Desktop 使用独立 `/claude-desktop` 前缀和自己的 provider 表，
 - 过滤 tools，只保留 `type=function` 且有 `function.name` 的工具，移除 `response_custom_tool`。
 - `developer` role 改成 `system`。
 - system content parts 压成 string。
-- 多个 system 合并到首条。
+- 多个 system 合并到首条；Anthropic Messages 来源（Claude Code）例外：只合并前导连续块，块之后的 system/developer 保持原 index、role 降级为 `user`（`InstructionPlacement`，见 `docs/gateway-protocol-conversion.md` §19.7 F-15）。
 - tool call arguments 空值补 `"{}"`。
 - 删除 Google 私有 `thought_signature/thoughtSignature`，以及 `google`、`extra_content/extra_fields` 中包含 signature 的容器。
 - 删除不支持 tool call 及对应 tool result。

@@ -10,7 +10,8 @@ use super::super::shared::tool_media::{
 };
 use super::super::shared::{
     content_text, extract_error_code, extract_error_message, extract_error_param,
-    extract_error_type, extract_reasoning_field_text, normalize_function_parameters_owned,
+    extract_error_type, extract_reasoning_field_text, normalize_chat_system_messages,
+    normalize_function_parameters_owned, placement_for_api_format,
     should_emit_openai_request_metadata, split_leading_think_block, stop_from_value, stop_to_value,
     tool_choice_from_openai, tool_choice_to_openai,
 };
@@ -352,8 +353,9 @@ fn split_chat_inline_think_content(
 }
 
 pub fn llm_request_to_chat(request: Request) -> Value {
+    let placement = placement_for_api_format(request.api_format);
     let messages = llm_messages_to_chat(request.messages);
-    let messages = normalize_chat_system_messages(messages);
+    let messages = normalize_chat_system_messages(messages, placement);
     let mut body = json!({
         "model": request.model,
         "messages": messages,
@@ -544,51 +546,6 @@ fn flush_chat_tool_media(messages: &mut Vec<Value>, pending_media: &mut Vec<Valu
         "role": "user",
         "content": std::mem::take(pending_media)
     }));
-}
-
-fn normalize_chat_system_messages(messages: Vec<Value>) -> Vec<Value> {
-    let mut system_chunks = Vec::new();
-    let mut rest = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        if message.get("role").and_then(Value::as_str) == Some("system") {
-            if let Some(text) = chat_system_message_text(&message) {
-                if !text.trim().is_empty() {
-                    system_chunks.push(text);
-                }
-                continue;
-            }
-        }
-        rest.push(message);
-    }
-
-    if system_chunks.is_empty() {
-        return rest;
-    }
-
-    let mut normalized = Vec::with_capacity(rest.len() + 1);
-    normalized.push(json!({
-        "role": "system",
-        "content": system_chunks.join("\n\n")
-    }));
-    normalized.extend(rest);
-    normalized
-}
-
-fn chat_system_message_text(message: &Value) -> Option<String> {
-    match message.get("content")? {
-        Value::String(text) => Some(text.clone()),
-        Value::Array(parts) => {
-            let text = parts
-                .iter()
-                .filter_map(|part| part.get("text").and_then(Value::as_str))
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            (!text.is_empty()).then_some(text)
-        }
-        _ => None,
-    }
 }
 
 fn llm_message_to_chat(message: Message) -> Value {

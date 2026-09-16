@@ -31,6 +31,9 @@ pub use kernel::{
 pub use kernel::{convert_sse_stream, convert_sse_stream_with_context, ConversionContext};
 pub use shared::lossy::{check_lossy_conversion, LossyConversionIssue};
 pub(crate) use shared::signature::DEFAULT_GEMINI_THOUGHT_SIGNATURE;
+pub(crate) use shared::system_messages::{
+    normalize_chat_system_messages, placement_for_protocol, InstructionPlacement,
+};
 pub use shared::tool_schema::flatten_namespace_tool_name;
 pub(crate) use sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 pub use types::{AiProtocol, ConversionRoute};

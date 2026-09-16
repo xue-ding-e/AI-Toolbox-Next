@@ -2,6 +2,7 @@ pub mod error;
 pub mod lossy;
 pub mod messages;
 pub mod signature;
+pub(crate) mod system_messages;
 pub mod thinking_config;
 pub(crate) mod tool_media;
 pub mod tool_schema;
@@ -17,6 +18,10 @@ pub use messages::{
     tool_arguments_value, tool_choice_from_anthropic, tool_choice_from_gemini,
     tool_choice_from_openai, tool_choice_to_anthropic, tool_choice_to_openai,
     tool_choice_to_responses,
+};
+pub(crate) use system_messages::{
+    downgrade_instruction_message, instruction_hoist_plan, normalize_chat_system_messages,
+    placement_for_api_format,
 };
 pub use thinking_config::{budget_tokens_to_reasoning_effort, reasoning_effort_to_budget_tokens};
 pub use tool_schema::{

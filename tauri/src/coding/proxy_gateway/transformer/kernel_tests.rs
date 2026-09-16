@@ -1552,8 +1552,62 @@ fn anthropic_system_strips_leading_billing_header_for_converted_targets() {
     assert!(!gemini.to_string().contains("x-anthropic-billing-header"));
 }
 
+/// Text of a converted Chat message, which is either a plain string or the
+/// text-parts array shape Anthropic sources normalize to.
+fn chat_message_text(message: &Value) -> String {
+    match &message["content"] {
+        Value::String(text) => text.clone(),
+        other => other
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+    }
+}
+
 #[test]
-fn openai_chat_target_collapses_system_messages_to_head() {
+fn openai_chat_target_merges_leading_instruction_run_to_head() {
+    let converted = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+        json!({
+            "model": "gpt-5.1-codex-mini",
+            "instructions": "Top instruction",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "Leading developer instruction"}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}]
+                }
+            ]
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(converted["messages"][0]["role"], "system");
+    assert_eq!(
+        converted["messages"][0]["content"],
+        "Top instruction\n\nLeading developer instruction"
+    );
+    assert_eq!(converted["messages"][1]["role"], "user");
+    assert_eq!(converted["messages"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn openai_chat_target_merges_late_codex_instructions_for_responses_source() {
+    // Codex keeps its identity/instruction blocks in `developer` items, which are
+    // stable across turns, so the Responses source must keep the historical
+    // merge-everything-to-head behavior (same as cc-switch's codex chat transform,
+    // which merges mid-stream `developer` instructions into the head as well).
     let converted = convert_request_value(
         ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
         json!({
@@ -1567,21 +1621,188 @@ fn openai_chat_target_collapses_system_messages_to_head() {
                 },
                 {
                     "type": "message",
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": "Late instruction"}]
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "Collaboration Mode: Default"}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "more"}]
                 }
             ]
         }),
     )
     .unwrap();
 
-    assert_eq!(converted["messages"][0]["role"], "system");
+    let messages = converted["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["role"], "system");
     assert_eq!(
-        converted["messages"][0]["content"],
-        "Top instruction\n\nLate instruction"
+        chat_message_text(&messages[0]),
+        "Top instruction\n\nCollaboration Mode: Default"
     );
-    assert_eq!(converted["messages"][1]["role"], "user");
-    assert_eq!(converted["messages"].as_array().unwrap().len(), 2);
+    assert!(messages
+        .iter()
+        .all(|message| message["role"].as_str() != Some("developer")));
+}
+
+#[test]
+fn anthropic_to_openai_chat_keeps_claude_code_token_reminder_out_of_the_head() {
+    // Claude Code appends a per-turn `role:"system"` reminder such as
+    // `<total_tokens>N tokens left</total_tokens>` at the tail of the conversation.
+    // Hoisting it into the head system message rewrote the prompt prefix every
+    // turn and dropped the upstream cache hit rate to ~7% (#356).
+    let converted = convert_request_value(
+        ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+        json!({
+            "model": "deepseek-v4.1-flash",
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {
+                    "role": "system",
+                    "content": "<total_tokens>14963538 tokens left</total_tokens>"
+                },
+                {"role": "user", "content": "Continue"}
+            ]
+        }),
+    )
+    .unwrap();
+
+    let messages = converted["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(messages[0]["role"], "system");
+    assert_eq!(messages[0]["content"], "You are Claude Code.");
+    // The trailing reminder keeps its index and bytes; only the role changes.
+    assert_eq!(messages[3]["role"], "user");
+    assert_eq!(
+        chat_message_text(&messages[3]),
+        "<total_tokens>14963538 tokens left</total_tokens>"
+    );
+    assert_eq!(messages[4]["role"], "user");
+    assert_eq!(chat_message_text(&messages[4]), "Continue");
+}
+
+#[test]
+fn anthropic_to_openai_chat_head_stays_byte_stable_when_a_turn_appends_a_reminder() {
+    let body_for_turn = |reminder: &str| {
+        let mut messages = vec![
+            json!({"role": "user", "content": "Hello"}),
+            json!({"role": "assistant", "content": "Hi there!"}),
+        ];
+        if !reminder.is_empty() {
+            messages.push(json!({"role": "system", "content": reminder}));
+        }
+        messages.push(json!({"role": "user", "content": "Continue"}));
+        json!({
+            "model": "deepseek-v4.1-flash",
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": messages
+        })
+    };
+
+    let convert = |reminder: &str| {
+        convert_request_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            body_for_turn(reminder),
+        )
+        .unwrap()
+    };
+
+    let first = convert("");
+    let second = convert("<total_tokens>14900000 tokens left</total_tokens>");
+
+    // Whatever the reminder says, the cached prefix must be unchanged: the head
+    // system message, the user turn and the assistant turn are byte-identical, and
+    // the reminder only adds a message after them.
+    assert_eq!(first["messages"][0], second["messages"][0]);
+    assert_eq!(first["messages"][1], second["messages"][1]);
+    assert_eq!(first["messages"][2], second["messages"][2]);
+    assert_eq!(chat_message_text(&first["messages"][2]), "Hi there!");
+    assert_eq!(first["messages"].as_array().unwrap().len(), 4);
+    assert_eq!(second["messages"].as_array().unwrap().len(), 5);
+}
+
+#[test]
+fn openai_responses_target_keeps_late_system_message_out_of_instructions() {
+    let converted = convert_request_value(
+        ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiResponses),
+        json!({
+            "model": "gpt-5.1-codex-mini",
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {
+                    "role": "system",
+                    "content": "<total_tokens>14963538 tokens left</total_tokens>"
+                },
+                {"role": "user", "content": "Continue"}
+            ]
+        }),
+    )
+    .unwrap();
+
+    // Only the leading instruction run may reach the hoisted `instructions` field.
+    assert_eq!(converted["instructions"], "You are Claude Code.");
+
+    // The reminder stays in `input` at its own position, downgraded to `user`.
+    let input = converted["input"].as_array().unwrap();
+    let late = input
+        .iter()
+        .find(|item| {
+            item.pointer("/content/0/text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("<total_tokens>"))
+        })
+        .expect("late system message should keep an input item");
+    assert_eq!(late["role"], "user");
+    assert_eq!(
+        late.pointer("/content/0/text").and_then(Value::as_str),
+        Some("<total_tokens>14963538 tokens left</total_tokens>")
+    );
+}
+
+#[test]
+fn anthropic_target_merges_every_system_message_into_top_level_system() {
+    // Anthropic Messages is never a conversion source for an Anthropic target
+    // (`conversion_route()` only exists when source != target), so this writer only
+    // serves Chat/Responses/Gemini sources. Their instruction content is stable
+    // across turns, so the historical merge stays - same as cc-switch's
+    // Codex -> Anthropic transform, which hoists `developer` items out of `input`
+    // into the top-level `system` field.
+    let converted = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+        json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "system", "content": "You are Claude Code."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {
+                    "role": "system",
+                    "content": "<total_tokens>14963538 tokens left</total_tokens>"
+                },
+                {"role": "user", "content": "Continue"}
+            ]
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        converted["system"],
+        "You are Claude Code.\n\n<total_tokens>14963538 tokens left</total_tokens>"
+    );
+
+    let messages = converted["messages"].as_array().unwrap();
+    assert!(messages
+        .iter()
+        .all(|message| message["role"].as_str() != Some("system")));
 }
 
 #[test]

@@ -55,6 +55,10 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
     let mut index = 0;
     while index < request_messages.len() {
         let message = &request_messages[index];
+        // Every instruction message is merged into the top-level `system` field.
+        // Anthropic Messages is never a conversion source here (same-protocol
+        // requests pass through), so this path only serves Chat/Responses/Gemini
+        // sources, whose instruction content is stable across turns.
         if message.role == "system" || message.role == "developer" {
             match &message.content {
                 MessageContent::Text(text) if !text.is_empty() => system_chunks.push(text.clone()),
