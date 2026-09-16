@@ -362,7 +362,8 @@
       "priorityPn": "{{label}} participates in failover by provider order",
       "mode": {
         "single": "Single-channel proxy",
-        "failover": "Failover"
+        "failover": "Failover",
+        "aggregate": "Aggregate"
       },
       "effects": {
         "singleProxy": "Single-channel proxy forwards only to P0 and returns an error after same-channel retries are exhausted.",
@@ -376,6 +377,53 @@
         "disabled": "Failover disabled",
         "disableFailed": "Failed to disable failover: {{error}}"
       }
+    },
+    "aggregate": {
+      "button": "Aggregate",
+      "title": "Aggregate mode",
+      "cliLabel": "CLI",
+      "enable": "Enable aggregate mode",
+      "disable": "Disable aggregate mode",
+      "enabledLabel": "Enabled",
+      "disabledLabel": "Not enabled",
+      "sites": "{{count}} sites selected",
+      "separator": "Model name separator",
+      "separatorPlaceholder": ".",
+      "separatorInvalidEmpty": "Separator must not be empty",
+      "separatorInvalidReserved": "Separator must not contain letters, digits, underscores or hyphens",
+      "separatorHint": "Joins the site id and the upstream model name: {{example}}. It cannot contain letters, digits, '_' or '-', otherwise the site and model cannot be told apart.",
+      "naming": "Model naming",
+      "namingHint": "After changing the template, restart Codex to see the new model list.",
+      "namingSiteModel": "Site.Model",
+      "namingModelAtSite": "Model@Site",
+      "namingModelOnly": "Model only (duplicates get #2)",
+      "alias": "Site alias",
+      "aliasPlaceholder": "Optional alias",
+      "aliasInvalid": "Aliases must use 1–32 letters, digits, '_' or '-' and be unique.",
+      "noSites": "No available sites",
+      "noSitesHint": "This CLI has no proxyable sites yet. Add and enable providers on its page before enabling aggregate mode.",
+      "sitesRequired": "Select at least one site to enable aggregate mode",
+      "selectAll": "Select all",
+      "clearSelection": "Clear",
+      "selectedCount": "{{count}} selected",
+      "searchPlaceholder": "Search sites",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "reorderHint": "Drag to change site priority",
+      "notice": {
+        "enabled": "Aggregate mode enabled",
+        "disableFailed": "Failed to disable aggregate mode: {{error}}",
+        "enableFailed": "Failed to enable aggregate mode: {{error}}",
+        "disabled": "Aggregate mode disabled",
+        "invalidConfig": "Aggregate config is invalid. Check the site selection and separator."
+      },
+      "effects": {
+        "crossSiteList": "The model list merges every selected site, with a site prefix on each model name.",
+        "settingsManaged": "Site selection and separator are managed in this settings section.",
+        "applyDisabled": "Provider apply buttons are locked while aggregate mode is on."
+      },
+      "modeHint": "Merges several sites into one model list and routes each request by its model-name prefix; a failing site falls back to other sites declaring the same model.",
+      "takeoverHint": "Aggregate mode takes over this CLI through the gateway and rewrites its model list."
     },
     "privacy": {
       "title": "Data redaction",

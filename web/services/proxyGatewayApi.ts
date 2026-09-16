@@ -14,7 +14,28 @@ export type GatewayCliKey =
   | 'opencode'
   | 'claude_desktop';
 export type GatewayPricingModelSource = 'upstream' | 'requested';
-export type GatewayProxyMode = 'single' | 'failover';
+export type GatewayProxyMode = 'single' | 'failover' | 'aggregate';
+export type GatewayAggregateNamingMode = 'site_model' | 'model_at_site' | 'model_only';
+
+/**
+ * Aggregate-mode routing config. Every selected site becomes a candidate and
+ * each request is routed by the model name the CLI asked for: the generated
+ * model list exposes `<site_id><separator><model>` and the gateway strips that
+ * prefix before forwarding. Mirrors the backend `AggregateManifestConfig`.
+ */
+export interface GatewayAggregateConfig {
+  /** Selected site ids in display order, which is also the fallback order. */
+  provider_ids: string[];
+  /** Separator between site id and model name. Defaults to `.`. */
+  separator: string;
+  /** Optional selected-site aliases used in aggregate slugs and labels. */
+  aliases?: Record<string, string>;
+  /** Template used to name each selected `(site, model)` pair. */
+  naming?: GatewayAggregateNamingMode;
+}
+
+/** Default separator between site id and upstream model name in aggregate mode. */
+export const DEFAULT_AGGREGATE_SEPARATOR = '.';
 
 export interface AppProxyConfig {
   streaming_first_byte_timeout_secs?: number | null;
@@ -169,6 +190,8 @@ export interface GatewayCliTakeoverStatus {
   managed_targets: GatewayManagedTarget[];
   mode: GatewayProxyMode | null;
   primary_provider_id: string | null;
+  /** Present only for aggregate-mode manifests; absent for single/failover. */
+  aggregate?: GatewayAggregateConfig | null;
   provider_priorities: ProviderPriorityEntry[];
   message: string | null;
 }
@@ -538,6 +561,22 @@ export const engageProxyGatewayFailover = async (
   cliKey: GatewayCliKey
 ): Promise<GatewayCliTakeoverStatus> => {
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_failover', { cliKey });
+};
+
+export const engageProxyGatewayAggregate = async (
+  cliKey: GatewayCliKey,
+  providerIds: string[],
+  separator: string,
+  aliases?: Record<string, string>,
+  naming: GatewayAggregateNamingMode = 'site_model',
+): Promise<GatewayCliTakeoverStatus> => {
+  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_aggregate', {
+    cliKey,
+    providerIds,
+    separator,
+    aliases: aliases ?? {},
+    naming,
+  });
 };
 
 export const disengageProxyGatewayFailover = async (

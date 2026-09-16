@@ -45,5 +45,8 @@ export function shouldReengageKimiGatewayOnSave(
   gatewayMode: string | null | undefined,
 ): boolean {
   const editingAppliedRecord = Boolean(editingProvider?.isApplied);
-  return editingAppliedRecord && (gatewayMode === 'single' || gatewayMode === 'failover');
+  // Aggregate takes over the runtime config the same way, so an applied-record
+  // save still needs the restore -> save -> re-engage round trip there.
+  return editingAppliedRecord &&
+    (gatewayMode === 'single' || gatewayMode === 'failover' || gatewayMode === 'aggregate');
 }

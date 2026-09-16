@@ -49,8 +49,10 @@ import {
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
   providerNeedsGatewayProxy,
+  resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
+  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
@@ -103,6 +105,7 @@ import type {
   GeminiCliSettings,
 } from '@/types/geminicli';
 import {
+  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -715,16 +718,20 @@ const GeminiCliPage: React.FC = () => {
       };
 
       const isLocalTemp = editingProvider?.id === GEMINI_CLI_LOCAL_PROVIDER_ID;
-      const gatewayModeBeforeSave = gatewayCliStatus?.mode;
+      const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+      const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && !isLocalTemp && editingProvider.isApplied) &&
-        (gatewayModeBeforeSave === 'single' || gatewayModeBeforeSave === 'failover');
+        gatewayModeBeforeSave !== null;
 
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
+        aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('gemini'),
         engageSingle: () => engageProxyGatewaySingle('gemini', editingProvider?.id || ''),
         engageFailover: () => engageProxyGatewayFailover('gemini'),
+        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+          engageProxyGatewayAggregate('gemini', providerIds, separator, aliases, naming),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

@@ -153,6 +153,26 @@ pub struct SessionUsageMetadata {
 pub enum GatewayProxyMode {
     Single,
     Failover,
+    /// Aggregate mode keeps every selected provider as a candidate and routes
+    /// each request by the model name the CLI asked for. The model catalog
+    /// exposes one entry per (site, model) pair named `<site_id><sep><model>`;
+    /// the gateway strips that prefix before forwarding. Providers that declare
+    /// the same upstream model act as fallbacks for each other.
+    Aggregate,
+}
+
+/// Aggregate routing details exposed in CLI takeover status responses.
+///
+/// Kept separate from the manifest type so the public status DTO does not
+/// create a module cycle with `cli_proxy::manifest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayAggregateConfig {
+    pub provider_ids: Vec<String>,
+    pub separator: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, String>,
+    pub naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
 }
 
 impl GatewayProxyMode {
@@ -160,6 +180,7 @@ impl GatewayProxyMode {
         match self {
             Self::Single => "single",
             Self::Failover => "failover",
+            Self::Aggregate => "aggregate",
         }
     }
 }
@@ -211,6 +232,14 @@ pub struct ProviderGatewayMeta {
     /// keep the pinned model) and wins over family/default mapping.
     #[serde(default, rename = "modelRewrites", alias = "model_rewrites")]
     pub model_rewrites: Option<Vec<ModelRewriteRule>>,
+    /// Upstream model ids this provider declares in its `modelCatalog`.
+    ///
+    /// Populated from `settingsConfig.modelCatalog.models` so aggregate mode can
+    /// tell whether a fallback site actually offers the requested model. Empty
+    /// means "unknown": the provider never declared a catalog, so aggregate
+    /// routing keeps it as a last-resort candidate instead of excluding it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_models: Vec<String>,
 }
 
 /// One user-defined exact model rewrite rule: when the CLI requests `from`
@@ -293,6 +322,7 @@ impl Default for ProviderGatewayMeta {
             pricing_model_source: "upstream".to_string(),
             custom_headers: None,
             model_rewrites: None,
+            declared_models: Vec::new(),
         }
     }
 }
@@ -610,6 +640,8 @@ pub struct GatewayCliTakeoverStatus {
     pub managed_targets: Vec<GatewayManagedTarget>,
     pub mode: Option<GatewayProxyMode>,
     pub primary_provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<GatewayAggregateConfig>,
     pub provider_priorities: Vec<ProviderPriorityEntry>,
     pub message: Option<String>,
 }

@@ -1,3 +1,4 @@
+use super::aggregate_naming::AggregateNamingMode;
 use super::cli_proxy;
 use super::listen::check_port_available;
 use super::model_health;
@@ -357,6 +358,52 @@ pub async fn proxy_gateway_engage_failover(
     let paths = proxy_gateway_paths(&app)?;
     let next_status =
         cli_proxy::engage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
+    gateway_state.clear_provider_cache()?;
+    emit_gateway_cli_wsl_sync_request(&app, cli_key);
+    Ok(next_status)
+}
+
+/// Engage aggregate mode for Codex: one model list across the selected sites.
+///
+/// `provider_ids` is the user's selected sites in display order; `separator` is
+/// the string placed between the site id and the model name in the generated
+/// catalog (default `.`).
+#[tauri::command]
+pub async fn proxy_gateway_engage_aggregate(
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+    provider_ids: Vec<String>,
+    separator: Option<String>,
+    aliases: Option<BTreeMap<String, String>>,
+    naming: Option<AggregateNamingMode>,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    let _data_dir_transition = crate::app_paths::DATA_DIR_CHANGE_LOCK.lock().await;
+    crate::app_paths::ensure_no_pending_data_dir_change()?;
+    let status = {
+        let manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.status()
+    };
+    let paths = proxy_gateway_paths(&app)?;
+    let separator = separator
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| cli_proxy::manifest::AGGREGATE_DEFAULT_SEPARATOR.to_string());
+    let next_status = cli_proxy::engage_aggregate_cli(
+        db_state.db(),
+        &paths,
+        cli_key,
+        &status,
+        provider_ids,
+        separator,
+        aliases.unwrap_or_default(),
+        naming.unwrap_or_default(),
+    )
+    .await?;
     gateway_state.clear_provider_cache()?;
     emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)

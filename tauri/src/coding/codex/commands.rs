@@ -392,7 +392,7 @@ fn get_codex_config_dir() -> Result<std::path::PathBuf, String> {
     get_codex_root_dir_without_db()
 }
 
-async fn get_codex_config_dir_from_db_async(
+pub(crate) async fn get_codex_config_dir_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<std::path::PathBuf, String> {
     get_codex_root_dir_from_db_async(db).await
@@ -2961,6 +2961,230 @@ fn codex_model_catalog_from_specs(
     serde_json::json!({ "models": models })
 }
 
+/// One `(site, model)` entry for the aggregate-mode catalog.
+struct AggregateCatalogEntry {
+    /// The configured aggregate slug — what Codex shows and sends back verbatim.
+    slug: String,
+    /// `<site label> · <model>` for the model picker.
+    display_name: String,
+    context_window: Option<u64>,
+    reasoning_levels: Option<Vec<String>>,
+    default_reasoning_level: Option<String>,
+    service_tiers: Option<Vec<String>>,
+    auto_review_model_override: Option<String>,
+}
+
+/// Build the aggregate-mode catalog: one entry per `(site, upstream model)`
+/// pair, with the site encoded into the slug so the gateway can route on it.
+///
+/// Reuses `codex_model_catalog_entry` so every non-slug field (reasoning
+/// levels, tool support, truncation policy, modality, …) stays identical to
+/// the single-provider catalog.
+fn aggregate_catalog_from_entries(
+    entries: &[AggregateCatalogEntry],
+    default_context_window: u64,
+) -> Value {
+    let models: Vec<Value> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let spec = CodexCatalogModelSpec {
+                model: entry.slug.clone(),
+                display_name: Some(entry.display_name.clone()),
+                context_window: entry.context_window,
+                auto_review_model_override: entry.auto_review_model_override.clone(),
+                reasoning_levels: entry.reasoning_levels.clone(),
+                default_reasoning_level: entry.default_reasoning_level.clone(),
+                service_tiers: entry.service_tiers.clone(),
+            };
+            codex_model_catalog_entry(&spec, index, default_context_window)
+        })
+        .collect();
+
+    serde_json::json!({ "models": models })
+}
+
+/// Collect one aggregate entry per `(site, model)` pair across `sites`.
+///
+/// `sites` is `(site_id, site_label, settings_config)` in the user's display
+/// order; the order of the produced entries follows it, so the Codex model list
+/// mirrors the order the user arranged in the settings panel.
+fn codex_aggregate_catalog_entries(
+    sites: &[(String, String, Value)],
+    naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+) -> Result<Vec<AggregateCatalogEntry>, String> {
+    use crate::coding::proxy_gateway::aggregate_naming::AggregateSlugAllocator;
+
+    let mut entries = Vec::new();
+    let mut allocator = AggregateSlugAllocator::default();
+
+    for (site_id, site_label, settings_config) in sites {
+        if site_id.trim().is_empty() {
+            continue;
+        }
+        let Some(models) = settings_config
+            .get("modelCatalog")
+            .and_then(|catalog| catalog.get("models"))
+            .and_then(|models| models.as_array())
+        else {
+            continue;
+        };
+
+        // Mirror the single-provider catalog's naming helpers so a mapped model
+        // keeps its display name and context window in aggregate mode too.
+        for item in models {
+            let Some(model) = item
+                .get("model")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+            else {
+                continue;
+            };
+            let Some(slug) = naming.allocate(&mut allocator, site_id, model)? else {
+                continue;
+            };
+
+            let model_display_name = item
+                .get("displayName")
+                .or_else(|| item.get("display_name"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(model);
+
+            entries.push(AggregateCatalogEntry {
+                slug,
+                display_name: format!("{site_label} · {model_display_name}"),
+                context_window: parse_codex_positive_u64(
+                    item.get("contextWindow")
+                        .or_else(|| item.get("context_window")),
+                ),
+                reasoning_levels: item
+                    .get("reasoningLevels")
+                    .or_else(|| item.get("reasoning_levels"))
+                    .and_then(|value| value.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str())
+                            .map(str::trim)
+                            .filter(|level| !level.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|levels| !levels.is_empty()),
+                default_reasoning_level: item
+                    .get("defaultReasoningLevel")
+                    .or_else(|| item.get("default_reasoning_level"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_string),
+                service_tiers: item
+                    .get("serviceTiers")
+                    .or_else(|| item.get("service_tiers"))
+                    .and_then(|value| value.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str())
+                            .map(str::trim)
+                            .filter(|tier| !tier.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|tiers| !tiers.is_empty()),
+                auto_review_model_override: None,
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Read the aggregate routing config (selected sites + separator) from the
+/// Codex gateway manifest.
+///
+/// Returns `None` unless the manifest is enabled and in aggregate mode, so the
+/// single/failover catalog paths stay untouched.
+#[cfg(test)]
+pub(crate) fn read_codex_aggregate_selection(config_dir: &Path) -> Option<(Vec<String>, String)> {
+    use crate::coding::proxy_gateway::cli_proxy::manifest::{
+        AggregateManifestConfig, CliProxyManifest, AGGREGATE_DEFAULT_SEPARATOR,
+    };
+    use crate::coding::proxy_gateway::types::{GatewayCliKey, GatewayProxyMode};
+
+    let manifest_path = crate::coding::proxy_gateway::paths::ProxyGatewayPaths::new(config_dir)
+        .manifest_path(GatewayCliKey::Codex);
+    let content = fs::read_to_string(&manifest_path).ok()?;
+    let manifest: CliProxyManifest = serde_json::from_str(&content).ok()?;
+    if !manifest.enabled || manifest.mode != GatewayProxyMode::Aggregate {
+        return None;
+    }
+    let AggregateManifestConfig {
+        provider_ids,
+        separator,
+        ..
+    } = manifest.aggregate.unwrap_or_default();
+    let separator = if separator.is_empty() {
+        AGGREGATE_DEFAULT_SEPARATOR.to_string()
+    } else {
+        separator
+    };
+    Some((provider_ids, separator))
+}
+
+/// Write the aggregate-mode catalog file for the Codex gateway takeover.
+///
+/// Called by the CLI takeover path (not by the single-provider `apply` path),
+/// because aggregate routing only exists while the gateway is engaged.
+/// `providers` is `(site_id, site_label, settings_config)` in display order.
+///
+/// Returns `Ok(true)` when an aggregate catalog was written.
+pub(crate) fn write_codex_aggregate_catalog(
+    config_dir: &Path,
+    providers: &[(String, String, Value)],
+    naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+    default_context_window: u64,
+) -> Result<bool, String> {
+    let entries = codex_aggregate_catalog_entries(providers, naming)?;
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    let catalog = aggregate_catalog_from_entries(&entries, default_context_window);
+    let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+    let catalog_content = serde_json::to_string_pretty(&catalog)
+        .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
+    fs::write(&catalog_path, catalog_content)
+        .map_err(|e| format!("Failed to write Codex model catalog: {}", e))?;
+    Ok(true)
+}
+
+/// Default context window used when an aggregate entry declares none.
+pub(crate) const CODEX_AGGREGATE_DEFAULT_CONTEXT_WINDOW: u64 = CODEX_DEFAULT_CONTEXT_WINDOW;
+
+/// Retire the aggregate catalog when leaving aggregate mode.
+///
+/// The file is shared with the single-provider path, so only the
+/// `model_catalog_json` pointer decides whether Codex reads it. Leaving
+/// aggregate mode therefore only needs to remove the stale pointer; the file
+/// itself is rewritten by the next single-provider `apply`.
+pub(crate) fn remove_codex_aggregate_catalog(config_dir: &Path) -> Result<(), String> {
+    let config_path = config_dir.join("config.toml");
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let config_toml = fs::read_to_string(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))?;
+    let updated = set_codex_model_catalog_json_field(&config_toml, false)?;
+    if updated != config_toml {
+        fs::write(&config_path, updated)
+            .map_err(|error| format!("Failed to write config.toml: {error}"))?;
+    }
+    Ok(())
+}
+
 /// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
 /// catalog (models.json) that AI Toolbox mirrors verbatim. Matched against
 /// the parsed `base_url` host ONLY — deliberately NOT by model brand: official
@@ -4281,19 +4505,24 @@ pub async fn read_codex_settings(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_toml_configs, build_written_codex_config_toml, codex_catalog_model_specs,
+        aggregate_catalog_from_entries, append_toml_configs, build_written_codex_config_toml,
+        codex_aggregate_catalog_entries, codex_catalog_model_specs,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         fill_template_fields_from_static, heal_dangling_codex_model_provider,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
+        read_codex_aggregate_selection, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, CodexHistoryRuntimeSource,
-        CodexHistorySourceCandidate, CodexHistorySourceMode, RemoteCodexModel,
-        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
+        strip_codex_common_config_from_toml, write_codex_aggregate_catalog,
+        CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
+        RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
+    use crate::coding::proxy_gateway::aggregate_naming::{
+        AggregateNamingConfig, AggregateNamingMode,
+    };
     use serde_json::{json, Value};
     use std::path::PathBuf;
     use toml_edit::DocumentMut;
@@ -4917,6 +5146,233 @@ approval_policy = "never"
             Some("reviewer-model")
         );
         assert_eq!(specs[1].model, "mapped-b");
+    }
+
+    /// Build a `(site_id, label, settings_config)` triple for aggregate tests.
+    fn aggregate_site(id: &str, label: &str, models: serde_json::Value) -> (String, String, Value) {
+        (
+            id.to_string(),
+            label.to_string(),
+            json!({ "modelCatalog": { "models": models } }),
+        )
+    }
+
+    fn aggregate_naming(separator: &str) -> AggregateNamingConfig {
+        AggregateNamingConfig {
+            separator: separator.to_string(),
+            ..AggregateNamingConfig::default()
+        }
+    }
+
+    #[test]
+    fn aggregate_catalog_names_models_with_site_prefix() {
+        let sites = vec![
+            aggregate_site(
+                "unsee",
+                "sub.unsee.you",
+                json!([{ "model": "deepseek-v4-flash", "displayName": "DS Flash" }]),
+            ),
+            aggregate_site(
+                "nexfaro",
+                "ai.nexfaro.com",
+                json!([{ "model": "gpt-5.6-sol", "contextWindow": 400000 }]),
+            ),
+        ];
+
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        let slugs: Vec<&str> = entries.iter().map(|e| e.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            vec!["unsee.deepseek-v4-flash", "nexfaro.gpt-5.6-sol"]
+        );
+        assert_eq!(entries[0].display_name, "sub.unsee.you · DS Flash");
+        assert_eq!(entries[1].context_window, Some(400000));
+    }
+
+    #[test]
+    fn aggregate_catalog_keeps_same_model_on_different_sites() {
+        let sites = vec![
+            aggregate_site("site1", "Site 1", json!([{ "model": "gpt-5.6-sol" }])),
+            aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-sol" }])),
+        ];
+
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        // Both sites keep their own entry so the user can pick either one.
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].slug, "site1.gpt-5.6-sol");
+        assert_eq!(entries[1].slug, "site2.gpt-5.6-sol");
+    }
+
+    #[test]
+    fn aggregate_catalog_supports_custom_separator() {
+        let sites = vec![aggregate_site(
+            "site1",
+            "Site 1",
+            json!([{ "model": "m1" }]),
+        )];
+
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming("/")).unwrap();
+
+        assert_eq!(entries[0].slug, "site1/m1");
+    }
+
+    #[test]
+    fn aggregate_catalog_skips_sites_without_models() {
+        let sites = vec![
+            aggregate_site("empty", "Empty", json!([])),
+            ("nodecl".to_string(), "No Catalog".to_string(), json!({})),
+            aggregate_site("ok", "OK", json!([{ "model": "m1" }])),
+        ];
+
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].slug, "ok.m1");
+    }
+
+    #[test]
+    fn aggregate_catalog_dedupes_repeated_slug() {
+        let sites = vec![aggregate_site(
+            "site1",
+            "Site 1",
+            json!([{ "model": "m1" }, { "model": "m1" }]),
+        )];
+
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn aggregate_catalog_entry_reuses_neutral_template_fields() {
+        let sites = vec![aggregate_site(
+            "site1",
+            "Site 1",
+            json!([{
+                "model": "m1",
+                "reasoningLevels": ["high", "max"],
+                "defaultReasoningLevel": "high"
+            }]),
+        )];
+        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        let catalog = aggregate_catalog_from_entries(&entries, 200000);
+        let model = &catalog["models"][0];
+
+        assert_eq!(model["slug"], "site1.m1");
+        assert_eq!(model["context_window"], 200000);
+        let levels: Vec<&str> = model["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level["effort"].as_str())
+            .collect();
+        assert_eq!(levels, vec!["high", "max"]);
+        assert_eq!(model["default_reasoning_level"], "high");
+        // Same neutral template fields the single-provider catalog emits.
+        assert_eq!(model["visibility"], "list");
+        assert_eq!(model["shell_type"], "unified_exec");
+    }
+
+    #[test]
+    fn write_aggregate_catalog_skips_empty_selection() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        let written =
+            write_codex_aggregate_catalog(&temp_dir.path(), &[], &aggregate_naming("."), 200000)
+                .unwrap();
+
+        assert!(!written);
+        assert!(!temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+            .exists());
+    }
+
+    #[test]
+    fn write_aggregate_catalog_writes_file_and_returns_true() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let sites = vec![aggregate_site(
+            "site1",
+            "Site 1",
+            json!([{ "model": "m1" }]),
+        )];
+
+        let written =
+            write_codex_aggregate_catalog(&temp_dir.path(), &sites, &aggregate_naming("."), 200000)
+                .unwrap();
+
+        assert!(written);
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        let catalog: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(catalog_path).unwrap()).unwrap();
+        assert_eq!(catalog["models"][0]["slug"], "site1.m1");
+    }
+
+    #[test]
+    fn aggregate_catalog_applies_alias_and_naming_template() {
+        let sites = vec![aggregate_site(
+            "76a6ef74",
+            "Unsee Relay",
+            json!([{ "model": "deepseek-v4-flash" }]),
+        )];
+        let mut aliases = std::collections::BTreeMap::new();
+        aliases.insert("76a6ef74".to_string(), "unsee".to_string());
+        let naming = AggregateNamingConfig {
+            separator: "@".to_string(),
+            aliases,
+            naming: AggregateNamingMode::ModelAtSite,
+        };
+
+        let entries = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
+
+        assert_eq!(entries[0].slug, "deepseek-v4-flash@unsee");
+        assert_eq!(entries[0].display_name, "Unsee Relay · deepseek-v4-flash");
+    }
+
+    #[test]
+    fn remove_aggregate_catalog_clears_pointer_only_when_it_is_ours() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Our pointer: removed.
+        std::fs::write(
+            &config_path,
+            format!("model_provider = \"custom\"\nmodel_catalog_json = \"{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME}\"\n"),
+        )
+        .unwrap();
+        remove_codex_aggregate_catalog(temp_dir.path()).unwrap();
+        let after = std::fs::read_to_string(&config_path).unwrap();
+        assert!(!after.contains("model_catalog_json"));
+        assert!(after.contains("model_provider"));
+
+        // Someone else's pointer: left untouched.
+        std::fs::write(
+            &config_path,
+            "model_catalog_json = \"other-catalog.json\"\n",
+        )
+        .unwrap();
+        remove_codex_aggregate_catalog(temp_dir.path()).unwrap();
+        let untouched = std::fs::read_to_string(&config_path).unwrap();
+        assert!(untouched.contains("other-catalog.json"));
+    }
+
+    #[test]
+    fn remove_aggregate_catalog_is_noop_without_config_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        assert!(remove_codex_aggregate_catalog(temp_dir.path()).is_ok());
+    }
+
+    #[test]
+    fn read_aggregate_selection_returns_none_without_manifest() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        assert!(read_codex_aggregate_selection(temp_dir.path()).is_none());
     }
 
     #[test]

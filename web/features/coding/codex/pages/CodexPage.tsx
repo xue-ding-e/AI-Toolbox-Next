@@ -94,8 +94,10 @@ import {
   getGatewayProviderProfilesVersion,
   openAiApiFormatFromBaseUrl,
   providerNeedsGatewayProxy,
+  resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
+  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
@@ -145,6 +147,7 @@ import SectionSidebarLayout, {
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 import { parseCodexSettingsConfig } from '../utils/codexSettingsConfig';
 import {
+  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -1339,16 +1342,20 @@ const CodexPage: React.FC = () => {
 
       let savedProviderId = isLocalTemp ? CODEX_LOCAL_PROVIDER_ID : '';
       let savedProvider: CodexProvider | null = null;
-      const gatewayModeBeforeSave = gatewayCliStatus?.mode;
+      const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+      const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && !isLocalTemp && editingProvider.isApplied) &&
-        (gatewayModeBeforeSave === 'single' || gatewayModeBeforeSave === 'failover');
+        gatewayModeBeforeSave !== null;
 
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
+        aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('codex'),
         engageSingle: () => engageProxyGatewaySingle('codex', savedProviderId),
         engageFailover: () => engageProxyGatewayFailover('codex'),
+        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+          engageProxyGatewayAggregate('codex', providerIds, separator, aliases, naming),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

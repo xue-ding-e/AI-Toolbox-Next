@@ -40,6 +40,9 @@ import {
   firstGatewayApiFormat,
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
+  isGatewayAggregateMode,
+  isGatewayFailoverMode,
+  isGatewayProxyMode,
   providerNeedsGatewayProxy,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
@@ -181,8 +184,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     { cli: t('settings.gateway.cli.gemini') },
   );
   const gatewayMode = gatewayStatus?.mode ?? null;
-  const gatewayFailoverActive = gatewayMode === 'failover';
-  const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
+  const gatewayFailoverActive = isGatewayFailoverMode(gatewayMode);
+  const gatewayAggregateActive = isGatewayAggregateMode(gatewayMode);
+  const gatewayProxyActive = isGatewayProxyMode(gatewayMode);
   const priorityEntry = gatewayFailoverActive
     ? gatewayStatus?.provider_priorities.find((entry) => entry.provider_id === provider.id)
     : undefined;
@@ -206,6 +210,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
     gatewayProxyActive &&
+    // Aggregate has no single primary to switch; its site list is edited in the
+    // gateway settings aggregate block, so hide the P0-style switch action.
+    !gatewayAggregateActive &&
     !isApplied &&
     !provider.isDisabled &&
     !isOfficialProvider &&

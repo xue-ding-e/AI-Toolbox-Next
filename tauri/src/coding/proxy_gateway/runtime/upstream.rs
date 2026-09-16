@@ -22,7 +22,10 @@ use super::middleware::{
     BillingHeaderCchMiddleware, EnsureMaxTokensMiddleware, Middleware, PipelineContext,
 };
 use super::pipeline::Pipeline;
-use super::providers::{ProviderAuthStrategy, UpstreamModelMapping, UpstreamProvider};
+use super::providers::{
+    resolve_aggregate_route_with_selection, ProviderAuthStrategy, UpstreamModelMapping,
+    UpstreamProvider,
+};
 use super::routes::{build_target_url, match_gateway_route, split_request_target, GatewayRoute};
 use super::side_stores::{
     record_gemini_sse_stream, record_responses_sse_stream, GeminiShadowSessionKey,
@@ -980,14 +983,122 @@ async fn forward_to_upstream(
     }
     // Connectivity tests pin a provider and model; never rewrite those requests.
     let allow_provider_model_mapping = options.provider_override_id.is_none();
+    // Aggregate mode resolves the target site from the model prefix instead of
+    // from the manifest's primary provider. The prefix is authoritative, so the
+    // per-channel default/family mapping must not run for it.
+    let aggregate_selection = provider_candidates
+        .selection
+        .as_ref()
+        .filter(|selection| selection.mode == GatewayProxyMode::Aggregate);
     // Claude family + Codex default-model rewrite only run in failover mode.
     // Grok always rewrites when allowed (CLI takeover hardcodes model=grok-build).
     let apply_failover_model_mapping = allow_provider_model_mapping
+        && aggregate_selection.is_none()
         && !provider_candidates
             .selection
             .as_ref()
             .is_some_and(|selection| selection.mode == GatewayProxyMode::Single);
-    let providers = provider_candidates.providers;
+    let mut providers = provider_candidates.providers;
+
+    // Aggregate mode: keep the site named by the model prefix first, and keep
+    // the other sites that declare the same upstream model as fallbacks.
+    let mut aggregate_upstream_model: Option<String> = None;
+    if let Some(selection) = aggregate_selection {
+        let resolved =
+            match resolve_aggregate_route_with_selection(&requested_model, selection, &providers) {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    let mut response = json_response(
+                        404,
+                        "Not Found",
+                        json!({
+                            "error": "gateway_aggregate_model_unknown",
+                            "message": error,
+                        }),
+                        route.route_name,
+                        None,
+                        "aggregate model slug did not resolve",
+                    );
+                    response.cli_key = Some(route.cli_key);
+                    response.requested_model = Some(requested_model);
+                    response.error_category = Some("model_not_found".to_string());
+                    return response;
+                }
+            };
+        aggregate_upstream_model = Some(resolved.upstream_model.clone());
+        if let Some(site_id) = resolved.site_id.as_deref() {
+            let Some(index) = providers.iter().position(|provider| provider.id == site_id) else {
+                let mut response = json_response(
+                    404,
+                    "Not Found",
+                    json!({
+                        "error": "gateway_aggregate_site_unknown",
+                        "message": format!(
+                            "No enabled gateway site named '{}' for {}. Pick a model from the model list.",
+                            site_id,
+                            route.cli_key.as_str(),
+                        ),
+                    }),
+                    route.route_name,
+                    None,
+                    "aggregate model prefix named a site that is not an enabled candidate",
+                );
+                response.cli_key = Some(route.cli_key);
+                response.requested_model = Some(requested_model);
+                response.error_category = Some("provider_missing".to_string());
+                return response;
+            };
+            let target = providers.remove(index);
+            // A fallback site only makes sense when it actually offers the same
+            // upstream model. Aggregate manifests declare the visible catalog,
+            // so do not send a model to sites with no matching declaration.
+            let model = resolved.upstream_model.as_str();
+            let mut declaring = Vec::new();
+            for provider in providers {
+                if provider
+                    .meta
+                    .declared_models
+                    .iter()
+                    .any(|declared| declared == model)
+                {
+                    declaring.push(provider);
+                }
+            }
+            let mut ordered = Vec::with_capacity(declaring.len() + 1);
+            ordered.push(target);
+            ordered.extend(declaring);
+            providers = ordered;
+        } else {
+            let model = resolved.upstream_model.as_str();
+            providers.retain(|provider| {
+                provider
+                    .meta
+                    .declared_models
+                    .iter()
+                    .any(|declared| declared == model)
+            });
+            if providers.is_empty() {
+                let mut response = json_response(
+                    404,
+                    "Not Found",
+                    json!({
+                        "error": "gateway_aggregate_model_unknown",
+                        "message": format!(
+                            "No enabled aggregate site declares model '{}'. Pick a model from the Codex model list.",
+                            model
+                        ),
+                    }),
+                    route.route_name,
+                    None,
+                    "aggregate bare model did not match any declared catalog",
+                );
+                response.cli_key = Some(route.cli_key);
+                response.requested_model = Some(requested_model);
+                response.error_category = Some("model_not_found".to_string());
+                return response;
+            }
+        }
+    }
 
     let settings = context.settings_snapshot();
     let app_config = settings.effective_app_config(route.cli_key);
@@ -1016,13 +1127,19 @@ async fn forward_to_upstream(
     let is_single_provider = providers.len() == 1;
 
     'providers: for provider in providers {
-        let upstream_model_id = resolve_upstream_model_id(
-            request,
-            &requested_model,
-            &provider,
-            apply_failover_model_mapping,
-            allow_provider_model_mapping,
-        );
+        // Aggregate mode: the model prefix already named the exact upstream
+        // model, so forward it verbatim instead of running the per-channel
+        // default/family mapping.
+        let upstream_model_id = match aggregate_upstream_model.as_deref() {
+            Some(model) => model.to_string(),
+            None => resolve_upstream_model_id(
+                request,
+                &requested_model,
+                &provider,
+                apply_failover_model_mapping,
+                allow_provider_model_mapping,
+            ),
+        };
         let health_key = ProviderModelHealthKey {
             cli_key: route.cli_key,
             provider_id: provider.id.clone(),

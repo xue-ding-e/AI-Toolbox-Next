@@ -362,7 +362,8 @@
       "priorityPn": "{{label}} 按供应商排序参与故障转移",
       "mode": {
         "single": "单渠道代理",
-        "failover": "故障转移"
+        "failover": "故障转移",
+        "aggregate": "聚合模式"
       },
       "effects": {
         "singleProxy": "单渠道代理只转发到 P0，同渠道重试耗尽后返回错误。",
@@ -376,6 +377,53 @@
         "disabled": "已关闭故障转移",
         "disableFailed": "关闭故障转移失败：{{error}}"
       }
+    },
+    "aggregate": {
+      "button": "聚合模式",
+      "title": "聚合模式",
+      "cliLabel": "CLI",
+      "enable": "启用聚合模式",
+      "disable": "关闭聚合模式",
+      "enabledLabel": "已启用",
+      "disabledLabel": "未启用",
+      "sites": "已选站点 {{count}} 个",
+      "separator": "模型名分隔符",
+      "separatorPlaceholder": ".",
+      "separatorInvalidEmpty": "分隔符不能为空",
+      "separatorInvalidReserved": "分隔符不能包含字母、数字、下划线或连字符",
+      "separatorHint": "用于拼接站点 ID 与上游模型名：{{example}}。不能包含字母、数字、下划线或连字符，否则无法区分站点与模型。",
+      "naming": "模型命名",
+      "namingHint": "切换模板后，重启 Codex 即可看到新的模型列表。",
+      "namingSiteModel": "站点.模型",
+      "namingModelAtSite": "模型@站点",
+      "namingModelOnly": "仅模型（重名自动加 #2）",
+      "alias": "站点别名",
+      "aliasPlaceholder": "可选别名",
+      "aliasInvalid": "站点别名只能使用 1–32 个字母、数字、下划线或连字符，且不能重名。",
+      "noSites": "暂无可用站点",
+      "noSitesHint": "此 CLI 没有可代理的站点。启用聚合模式前，请先在对应页面添加并启用供应商。",
+      "sitesRequired": "至少选择 1 个站点才能启用聚合模式",
+      "selectAll": "全选",
+      "clearSelection": "清空",
+      "selectedCount": "已选 {{count}} 个",
+      "searchPlaceholder": "搜索站点",
+      "moveUp": "上移一位",
+      "moveDown": "下移一位",
+      "reorderHint": "拖拽调整站点优先顺序",
+      "notice": {
+        "enabled": "已启用聚合模式",
+        "disableFailed": "关闭聚合模式失败：{{error}}",
+        "enableFailed": "启用聚合模式失败：{{error}}",
+        "disabled": "已关闭聚合模式",
+        "invalidConfig": "聚合配置无效，请检查站点选择与分隔符"
+      },
+      "effects": {
+        "crossSiteList": "模型列表聚合所有已选站点，模型名带站点前缀。",
+        "settingsManaged": "站点选择与分隔符在此设置分区维护。",
+        "applyDisabled": "聚合模式开启时，供应商应用按钮会被锁定。"
+      },
+      "modeHint": "聚合多个站点到一个模型列表，按模型名前缀路由到对应站点；站点失败时自动尝试其他声明了同一模型的站点。",
+      "takeoverHint": "聚合模式使用网关接管该 CLI，并重写它的模型列表。"
     },
     "privacy": {
       "title": "数据脱敏",

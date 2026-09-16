@@ -9,6 +9,7 @@ import {
   Gauge,
   Loader2,
   Network,
+  Route,
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ import {
   type ProxyGatewayStatus,
 } from '@/services';
 import GatewayPrivacySettings from '@/features/coding/gateway/components/GatewayPrivacySettings';
+import GatewayAggregateSettings from '@/features/coding/gateway/components/GatewayAggregateSettings';
 import styles from './GatewaySettingsPanel.module.less';
 
 type BusyAction = 'load' | 'autosave';
@@ -308,6 +310,22 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     const entries = cliStatuses.map((cliStatus) => [cliStatus.cli_key, cliStatus] as const);
     return Object.fromEntries(entries) as Partial<Record<SupportedGatewayCliKey, GatewayCliTakeoverStatus>>;
   }, [cliStatuses]);
+
+  /**
+   * Aggregate engage/disengage rewrites the same CLI runtime config this panel
+   * reports under "接管状态". Re-read it so those tags do not go stale while the
+   * user stays on the settings tab. `getProxyGatewayCliStatuses` is the same
+   * command this panel already loads on mount, so no extra data source is added.
+   */
+  const refreshCliStatuses = React.useCallback(() => {
+    void getProxyGatewayCliStatuses()
+      .then((nextCliStatuses) => {
+        setCliStatuses(nextCliStatuses);
+      })
+      .catch((error) => {
+        console.error('Failed to refresh gateway CLI statuses:', error);
+      });
+  }, []);
 
   const triggerSave = React.useCallback(() => {
     if (!draftSettings || !savedSettings) {
@@ -900,6 +918,18 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 </div>
               </div>
             </div>
+          </Section>
+
+          {/*
+            Aggregate mode sits beside the resilience section: it also rewrites
+            the CLI runtime config, but it is controlled by its own engage /
+            restore commands instead of the panel's auto-saved settings payload.
+          */}
+          <Section icon={<Route size={15} aria-hidden="true" />} title={t('gateway.aggregate.title')}>
+            <GatewayAggregateSettings
+              running={status?.running ?? false}
+              onTakeoverChange={refreshCliStatuses}
+            />
           </Section>
         </div>
 

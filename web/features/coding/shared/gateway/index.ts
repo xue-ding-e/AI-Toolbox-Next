@@ -1,5 +1,8 @@
 export { default as GatewayFailoverButton } from './GatewayFailoverButton';
 export {
+  isGatewayAggregateMode,
+  isGatewayFailoverMode,
+  isGatewayProxyMode,
   canApplyProviderWithGatewayProxy,
   codexWireApiFormatFromConfig,
   gatewayProxyReason,
@@ -29,7 +32,27 @@ export {
   type GatewayProviderProfileReference,
 } from './providerProfiles';
 export {
+  moveAggregateSite,
+  reconcileAggregateSiteSelection,
+  toAggregateSiteCandidates,
+  type GatewayAggregateProviderLike,
+  type GatewayAggregateSiteCandidate,
+} from './gatewayAggregateCandidates';
+export {
+  buildGatewayAggregateModelSlug,
+  prepareGatewayAggregateAliasReengage,
+  normalizeGatewayAggregateAliases,
+  isAggregateSiteId,
+  normalizeGatewayAggregateSiteIds,
+  resolveGatewayReengageMode,
+  toGatewayAggregateReengageConfig,
+  validateGatewayAggregateSeparator,
+  validateGatewayAggregateAlias,
+  type GatewayAggregateSeparatorInvalidReason,
+} from './gatewayAggregateConfig';
+export {
   isGatewayReengageMode,
   saveProviderWithGatewayReengage,
+  type GatewayAggregateReengageConfig,
   type GatewayReengageMode,
 } from './providerSaveReengage';

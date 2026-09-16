@@ -4,8 +4,14 @@ use crate::coding::proxy_gateway::types::{
     ProviderPriorityEntry, ProxyGatewaySettings,
 };
 use crate::coding::proxy_gateway::{
-    cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
-    provider_profiles::load_gateway_provider_profiles_for_runtime, transformer::AiProtocol,
+    aggregate_naming::{
+        build_aggregate_slug_table, split_model_at_site_slug, split_site_model_slug,
+        AggregateNamingConfig, AggregateNamingMode,
+    },
+    cli_proxy::manifest::CliProxyManifest,
+    paths::ProxyGatewayPaths,
+    provider_profiles::load_gateway_provider_profiles_for_runtime,
+    transformer::AiProtocol,
 };
 use crate::coding::{claude_code, claude_desktop, codex, gemini_cli, grok, kimi};
 use crate::db::helpers::db_list;
@@ -75,6 +81,15 @@ pub(crate) struct UpstreamModelMapping {
 pub(crate) struct GatewayProviderSelection {
     pub(crate) mode: GatewayProxyMode,
     pub(crate) primary_provider_id: String,
+    /// Aggregate mode only: the sites the user selected, in display order.
+    /// Empty in single/failover mode, and ignored there.
+    pub(crate) aggregate_provider_ids: Vec<String>,
+    /// Aggregate mode only: the separator between site id and model name.
+    pub(crate) aggregate_separator: String,
+    /// Aggregate mode only: user aliases for selected sites.
+    pub(crate) aggregate_aliases: std::collections::BTreeMap<String, String>,
+    /// Aggregate mode only: template used by the Codex catalog and router.
+    pub(crate) aggregate_naming: AggregateNamingMode,
 }
 
 pub(crate) async fn load_candidate_providers(
@@ -209,9 +224,14 @@ pub(crate) fn load_gateway_provider_selection(
         if !manifest.enabled {
             None
         } else {
+            let aggregate = manifest.aggregate.clone().unwrap_or_default();
             Some(GatewayProviderSelection {
                 mode: manifest.mode,
                 primary_provider_id: manifest.primary_provider_id,
+                aggregate_provider_ids: aggregate.provider_ids,
+                aggregate_separator: aggregate.separator,
+                aggregate_aliases: aggregate.aliases,
+                aggregate_naming: aggregate.naming,
             })
         }
     };
@@ -274,9 +294,14 @@ pub(crate) async fn load_gateway_provider_selection_async(
         if !manifest.enabled {
             None
         } else {
+            let aggregate = manifest.aggregate.clone().unwrap_or_default();
             Some(GatewayProviderSelection {
                 mode: manifest.mode,
                 primary_provider_id: manifest.primary_provider_id,
+                aggregate_provider_ids: aggregate.provider_ids,
+                aggregate_separator: aggregate.separator,
+                aggregate_aliases: aggregate.aliases,
+                aggregate_naming: aggregate.naming,
             })
         }
     };
@@ -346,7 +371,160 @@ fn apply_provider_selection(
                 Ok(providers)
             }
         }
+        // Aggregate mode keeps every candidate so the request-time model prefix
+        // can pick the target. Selected sites are promoted to the front in the
+        // order the user arranged them; unselected sites stay available as
+        // fallbacks (they are only used when another site declares the same
+        // upstream model).
+        GatewayProxyMode::Aggregate => {
+            let selected = &selection.aggregate_provider_ids;
+            if selected.is_empty() {
+                return Ok(providers);
+            }
+            let mut ordered = Vec::with_capacity(providers.len());
+            for id in selected {
+                if let Some(index) = providers.iter().position(|provider| &provider.id == id) {
+                    ordered.push(providers.remove(index));
+                }
+            }
+            ordered.extend(providers);
+            Ok(ordered)
+        }
     }
+}
+
+/// The resolved target of one aggregate-mode request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AggregateRoute {
+    /// Site id parsed from the model prefix, when the request carried one.
+    pub(crate) site_id: Option<String>,
+    /// Model name to forward upstream (prefix stripped).
+    pub(crate) upstream_model: String,
+    /// `true` when the exact model slug selected a site and must bypass model
+    /// rewrite/default mapping.
+    pub(crate) explicit: bool,
+}
+
+/// Resolve which site should serve an aggregate-mode request.
+///
+/// Order of resolution:
+/// 1. Explicit `<site_id><sep><model>` prefix naming a known site.
+/// 2. First candidate whose declared model catalog contains the requested
+///    model name (mirrors the non-aggregate "bare model name" behaviour).
+///
+/// `providers` must already be ordered by preference.
+#[cfg(test)]
+pub(crate) fn resolve_aggregate_route(
+    requested_model: &str,
+    separator: &str,
+    providers: &[UpstreamProvider],
+) -> AggregateRoute {
+    let selection = GatewayProviderSelection {
+        mode: GatewayProxyMode::Aggregate,
+        primary_provider_id: providers
+            .first()
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default(),
+        aggregate_provider_ids: providers
+            .iter()
+            .map(|provider| provider.id.clone())
+            .collect(),
+        aggregate_separator: separator.to_string(),
+        aggregate_aliases: std::collections::BTreeMap::new(),
+        aggregate_naming: AggregateNamingMode::SiteModel,
+    };
+    resolve_aggregate_route_with_selection(requested_model, &selection, providers).unwrap_or_else(
+        |_| AggregateRoute {
+            site_id: None,
+            upstream_model: requested_model.to_string(),
+            explicit: false,
+        },
+    )
+}
+
+pub(crate) fn resolve_aggregate_route_with_selection(
+    requested_model: &str,
+    selection: &GatewayProviderSelection,
+    providers: &[UpstreamProvider],
+) -> Result<AggregateRoute, String> {
+    let selected_sites = selection
+        .aggregate_provider_ids
+        .iter()
+        .filter_map(|site_id| {
+            providers
+                .iter()
+                .find(|provider| &provider.id == site_id)
+                .map(|provider| (provider.id.clone(), provider.meta.declared_models.clone()))
+        })
+        .collect::<Vec<_>>();
+    let naming = AggregateNamingConfig {
+        separator: selection.aggregate_separator.clone(),
+        aliases: selection.aggregate_aliases.clone(),
+        naming: selection.aggregate_naming,
+    };
+    let table = build_aggregate_slug_table(
+        &selected_sites,
+        &naming.separator,
+        &naming.aliases,
+        naming.naming,
+    )?;
+    if let Some(entry) = table.iter().find(|entry| entry.slug == requested_model) {
+        return Ok(AggregateRoute {
+            site_id: Some(entry.site_id.clone()),
+            upstream_model: entry.upstream_model.clone(),
+            explicit: true,
+        });
+    }
+
+    // Preserve the historical provider-id prefix contract even after a user
+    // opts into aliases or a different catalog template. This also keeps every
+    // enabled (unselected) candidate addressable in aggregate mode.
+    let all_ids = providers
+        .iter()
+        .map(|provider| (provider.id.as_str(), provider.id.as_str()));
+    let parsed = match naming.naming {
+        AggregateNamingMode::SiteModel => split_site_model_slug(
+            requested_model,
+            &naming.separator,
+            providers.iter().map(|provider| {
+                (
+                    provider.id.as_str(),
+                    crate::coding::proxy_gateway::aggregate_naming::aggregate_site_prefix(
+                        provider.id.as_str(),
+                        &naming.aliases,
+                    ),
+                )
+            }),
+        ),
+        AggregateNamingMode::ModelAtSite => split_model_at_site_slug(
+            requested_model,
+            &naming.separator,
+            providers.iter().map(|provider| {
+                (
+                    provider.id.as_str(),
+                    crate::coding::proxy_gateway::aggregate_naming::aggregate_site_prefix(
+                        provider.id.as_str(),
+                        &naming.aliases,
+                    ),
+                )
+            }),
+        ),
+        AggregateNamingMode::ModelOnly => None,
+    }
+    .or_else(|| split_site_model_slug(requested_model, &naming.separator, all_ids));
+    if let Some((site_id, upstream_model)) = parsed {
+        return Ok(AggregateRoute {
+            site_id: Some(site_id),
+            upstream_model,
+            explicit: true,
+        });
+    }
+
+    Ok(AggregateRoute {
+        site_id: None,
+        upstream_model: requested_model.to_string(),
+        explicit: false,
+    })
 }
 
 fn sort_candidate_providers(providers: &mut [UpstreamProvider]) {
@@ -809,6 +987,7 @@ fn provider_meta_from_record(
         .unwrap_or_else(|| default_pricing_model_source.clone()),
         custom_headers: custom_headers_from_meta(meta_value),
         model_rewrites: model_rewrites_from_meta(meta_value),
+        declared_models: Vec::new(),
     };
     apply_gateway_profile_reference(cli_key, &mut meta);
     if meta.provider_type.is_none() {
@@ -826,7 +1005,46 @@ fn provider_meta_from_record(
         meta.pricing_model_source = default_pricing_model_source;
     }
     merge_model_catalog_image_capabilities(&mut meta, record.get("settings_config"));
+    meta.declared_models = declared_models_from_settings(record.get("settings_config"));
     meta
+}
+
+/// Read the upstream model ids a provider declares in its `modelCatalog`.
+///
+/// Used by aggregate mode to decide which sites may serve a given model as a
+/// fallback. Providers without a declared catalog return an empty list, which
+/// callers treat as "unknown" rather than "offers nothing".
+fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String> {
+    let Some(settings_config) = settings_config else {
+        return Vec::new();
+    };
+    let settings_value = match settings_config {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
+        Value::Object(_) => Some(settings_config.clone()),
+        _ => None,
+    };
+    let Some(models) = settings_value
+        .as_ref()
+        .and_then(|value| value.get("modelCatalog").or(Some(value)))
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+        .or_else(|| {
+            settings_value
+                .as_ref()
+                .and_then(|value| value.get("models"))
+                .and_then(Value::as_array)
+        })
+    else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for model in models {
+        if let Some(model_id) = model_catalog_model_id(model) {
+            push_unique_string(&mut out, model_id);
+        }
+    }
+    out
 }
 
 fn gateway_profile_reference_from_meta(value: &Value) -> Option<GatewayProviderProfileReference> {
@@ -1711,6 +1929,23 @@ fn codex_auto_review_model_from_catalog(catalog: &Value) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Build a single/failover selection with the aggregate fields defaulted.
+    fn selection_for(
+        mode: GatewayProxyMode,
+        primary_provider_id: &str,
+    ) -> GatewayProviderSelection {
+        GatewayProviderSelection {
+            mode,
+            primary_provider_id: primary_provider_id.to_string(),
+            aggregate_provider_ids: Vec::new(),
+            aggregate_separator:
+                crate::coding::proxy_gateway::cli_proxy::manifest::AGGREGATE_DEFAULT_SEPARATOR
+                    .to_string(),
+            aggregate_aliases: std::collections::BTreeMap::new(),
+            aggregate_naming: AggregateNamingMode::default(),
+        }
+    }
+
     fn provider(name: &str, sort_index: Option<i32>) -> UpstreamProvider {
         UpstreamProvider {
             supports_websockets: None,
@@ -1726,6 +1961,167 @@ mod tests {
             meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
         }
+    }
+
+    fn aggregate_selection(ids: &[&str], separator: &str) -> GatewayProviderSelection {
+        GatewayProviderSelection {
+            mode: GatewayProxyMode::Aggregate,
+            primary_provider_id: ids.first().copied().unwrap_or_default().to_string(),
+            aggregate_provider_ids: ids.iter().map(|id| id.to_string()).collect(),
+            aggregate_separator: separator.to_string(),
+            aggregate_aliases: std::collections::BTreeMap::new(),
+            aggregate_naming: AggregateNamingMode::default(),
+        }
+    }
+
+    #[test]
+    fn aggregate_selection_keeps_every_candidate() {
+        let providers = vec![
+            provider("site-a", Some(10)),
+            provider("site-b", Some(20)),
+            provider("site-c", Some(30)),
+        ];
+
+        let selection = aggregate_selection(&["site-c", "site-a"], ".");
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        // Selected sites are promoted in the user's order; the rest stay as
+        // fallbacks instead of being dropped.
+        let ids: Vec<&str> = selected.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["site-c", "site-a", "site-b"]);
+    }
+
+    #[test]
+    fn aggregate_selection_without_sites_keeps_candidates_in_order() {
+        let providers = vec![provider("site-a", Some(10)), provider("site-b", Some(20))];
+
+        let selection = aggregate_selection(&[], ".");
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        let ids: Vec<&str> = selected.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["site-a", "site-b"]);
+    }
+
+    #[test]
+    fn aggregate_selection_ignores_unknown_site_ids() {
+        let providers = vec![provider("site-a", Some(10))];
+
+        let selection = aggregate_selection(&["missing", "site-a"], ".");
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        let ids: Vec<&str> = selected.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["site-a"]);
+    }
+
+    #[test]
+    fn aggregate_route_splits_site_prefix() {
+        let providers = vec![provider("site1", None), provider("site2", None)];
+
+        let route = resolve_aggregate_route("site1/deepseek-v4-flash", "/", &providers);
+
+        assert_eq!(route.site_id.as_deref(), Some("site1"));
+        assert_eq!(route.upstream_model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_route_uses_default_dot_separator() {
+        let providers = vec![provider("76a6ef74", None)];
+
+        let route = resolve_aggregate_route(
+            "76a6ef74.deepseek-v4.1-flash-expires-on-0910",
+            ".",
+            &providers,
+        );
+
+        assert_eq!(route.site_id.as_deref(), Some("76a6ef74"));
+        // Only the site prefix is stripped; dots inside the model name survive.
+        assert_eq!(route.upstream_model, "deepseek-v4.1-flash-expires-on-0910");
+    }
+
+    #[test]
+    fn aggregate_route_handles_dashed_and_underscored_site_ids() {
+        let providers = vec![provider("nofx-a656", None), provider("site_2", None)];
+
+        let dash = resolve_aggregate_route("nofx-a656.gpt-5.6-sol", ".", &providers);
+        assert_eq!(dash.site_id.as_deref(), Some("nofx-a656"));
+        assert_eq!(dash.upstream_model, "gpt-5.6-sol");
+
+        let underscore = resolve_aggregate_route("site_2.glm-5.3-flash", ".", &providers);
+        assert_eq!(underscore.site_id.as_deref(), Some("site_2"));
+        assert_eq!(underscore.upstream_model, "glm-5.3-flash");
+    }
+
+    #[test]
+    fn aggregate_route_falls_back_to_bare_model_without_prefix() {
+        let providers = vec![provider("site1", None)];
+
+        let route = resolve_aggregate_route("deepseek-v4-flash", ".", &providers);
+
+        assert_eq!(route.site_id, None);
+        assert_eq!(route.upstream_model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_route_ignores_unknown_site_prefix() {
+        let providers = vec![provider("site1", None)];
+
+        // `site9` is not a candidate, so the whole string stays as the model
+        // name and the caller resolves it by declared catalog membership.
+        let route = resolve_aggregate_route("site9.deepseek-v4-flash", ".", &providers);
+
+        assert_eq!(route.site_id, None);
+        assert_eq!(route.upstream_model, "site9.deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_route_requires_separator_after_site_id() {
+        let providers = vec![provider("site1", None)];
+
+        // No separator between site id and model: not a prefixed request.
+        let route = resolve_aggregate_route("site1deepseek", ".", &providers);
+
+        assert_eq!(route.site_id, None);
+    }
+
+    #[test]
+    fn aggregate_route_rejects_empty_model_after_separator() {
+        let providers = vec![provider("site1", None)];
+
+        let route = resolve_aggregate_route("site1.", ".", &providers);
+
+        assert_eq!(route.site_id, None);
+    }
+
+    #[test]
+    fn aggregate_route_supports_custom_separator() {
+        let providers = vec![provider("site1", None)];
+
+        let route = resolve_aggregate_route("site1>deepseek-v4-flash", ">", &providers);
+
+        assert_eq!(route.site_id.as_deref(), Some("site1"));
+        assert_eq!(route.upstream_model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_separator_validation_rejects_ambiguous_values() {
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator(".").is_ok()
+        );
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator("/").is_ok()
+        );
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator("").is_err()
+        );
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator("-").is_err()
+        );
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator("_").is_err()
+        );
+        assert!(
+            super::super::super::cli_proxy::manifest::validate_aggregate_separator("a").is_err()
+        );
     }
 
     #[test]
@@ -1792,10 +2188,7 @@ api_key = "secret"
             provider("primary", Some(20)),
             provider("third", Some(30)),
         ];
-        let selection = GatewayProviderSelection {
-            mode: GatewayProxyMode::Single,
-            primary_provider_id: "primary".to_string(),
-        };
+        let selection = selection_for(GatewayProxyMode::Single, "primary");
 
         let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
 
@@ -1813,10 +2206,7 @@ api_key = "secret"
             provider("primary", Some(20)),
             provider("third", Some(30)),
         ];
-        let selection = GatewayProviderSelection {
-            mode: GatewayProxyMode::Failover,
-            primary_provider_id: "primary".to_string(),
-        };
+        let selection = selection_for(GatewayProxyMode::Failover, "primary");
 
         let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
 
@@ -1830,10 +2220,7 @@ api_key = "secret"
     #[test]
     fn failover_selection_keeps_sorted_order_when_primary_is_missing() {
         let providers = vec![provider("first", Some(10)), provider("second", Some(20))];
-        let selection = GatewayProviderSelection {
-            mode: GatewayProxyMode::Failover,
-            primary_provider_id: "missing".to_string(),
-        };
+        let selection = selection_for(GatewayProxyMode::Failover, "missing");
 
         let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
 

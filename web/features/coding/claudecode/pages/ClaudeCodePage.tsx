@@ -72,8 +72,10 @@ import {
   getGatewayProviderProfilesVersion,
   isGatewayConfigFlagEnabled,
   providerNeedsGatewayProxy,
+  resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
+  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
@@ -119,6 +121,7 @@ import {
 } from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import {
+  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -1068,16 +1071,20 @@ const ClaudeCodePage: React.FC = () => {
 
       let savedProviderId = isLocalTemp ? '__local__' : '';
       let savedProvider: ClaudeCodeProvider | null = null;
-      const gatewayModeBeforeSave = gatewayCliStatus?.mode;
+      const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+      const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && !isLocalTemp && editingProvider.isApplied) &&
-        (gatewayModeBeforeSave === 'single' || gatewayModeBeforeSave === 'failover');
+        gatewayModeBeforeSave !== null;
 
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
+        aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('claude'),
         engageSingle: () => engageProxyGatewaySingle('claude', savedProviderId),
         engageFailover: () => engageProxyGatewayFailover('claude'),
+        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+          engageProxyGatewayAggregate('claude', providerIds, separator, aliases, naming),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

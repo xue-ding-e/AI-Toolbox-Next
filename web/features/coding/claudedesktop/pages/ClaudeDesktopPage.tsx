@@ -76,6 +76,7 @@ import {
 } from '@/features/coding/shared/providerList';
 import { useRefreshStore, useSettingsStore } from '@/stores';
 import {
+  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -85,7 +86,9 @@ import { hasAllApiHubExtension, refreshTrayMenu } from '@/services/appApi';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
 import {
   GatewayFailoverButton,
+  resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
+  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import {
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -700,16 +703,20 @@ const ClaudeDesktopPage: React.FC = () => {
   const handleProviderSubmit = async (values: ClaudeDesktopFormValues) => {
     try {
       let savedProvider: ClaudeDesktopProvider | null = null;
-      const gatewayModeBeforeSave = gatewayCliStatus?.mode;
+      const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+      const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && editingProvider.isApplied) &&
-        (gatewayModeBeforeSave === 'single' || gatewayModeBeforeSave === 'failover');
+        gatewayModeBeforeSave !== null;
 
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
+        aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('claude_desktop'),
         engageSingle: () => engageProxyGatewaySingle('claude_desktop', savedProvider?.id || ''),
         engageFailover: () => engageProxyGatewayFailover('claude_desktop'),
+        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+          engageProxyGatewayAggregate('claude_desktop', providerIds, separator, aliases, naming),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           const category = values.category || editingProvider?.category || 'custom';

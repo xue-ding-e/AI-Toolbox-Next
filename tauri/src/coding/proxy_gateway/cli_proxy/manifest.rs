@@ -1,6 +1,66 @@
-use crate::coding::proxy_gateway::types::{GatewayCliKey, GatewayProxyMode};
+use crate::coding::proxy_gateway::{
+    aggregate_naming::AggregateNamingMode,
+    types::{GatewayCliKey, GatewayProxyMode},
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Component, Path};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AggregateManifestConfig {
+    /// Sites selected for aggregate routing, in the user's display order.
+    #[serde(default)]
+    pub provider_ids: Vec<String>,
+    /// Separator between site id and upstream model name. Defaults to `.`.
+    #[serde(default = "default_aggregate_separator")]
+    pub separator: String,
+    /// Per-site display/routing aliases. A missing entry falls back to the
+    /// provider id so manifests written before aliases remain compatible.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, String>,
+    /// How `(site, model)` pairs are named in the generated Codex catalog.
+    #[serde(default)]
+    pub naming: AggregateNamingMode,
+}
+
+fn default_aggregate_separator() -> String {
+    AGGREGATE_DEFAULT_SEPARATOR.to_string()
+}
+
+impl Default for AggregateManifestConfig {
+    fn default() -> Self {
+        Self {
+            provider_ids: Vec::new(),
+            separator: default_aggregate_separator(),
+            aliases: BTreeMap::new(),
+            naming: AggregateNamingMode::default(),
+        }
+    }
+}
+
+/// Default separator between the site id and the upstream model name in
+/// aggregate mode. `.` keeps the generated slugs acceptable to Codex's
+/// telemetry tags (unlike `:`) while still being readable.
+pub const AGGREGATE_DEFAULT_SEPARATOR: &str = ".";
+
+/// Validate a user-supplied aggregate separator.
+///
+/// The separator must be non-empty and must not contain characters that are
+/// legal inside a site id, otherwise `<site_id><sep><model>` becomes ambiguous
+/// and cannot be split back reliably.
+pub fn validate_aggregate_separator(separator: &str) -> Result<(), String> {
+    if separator.is_empty() {
+        return Err("Aggregate separator must not be empty".to_string());
+    }
+    if separator
+        .chars()
+        .any(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err("Aggregate separator must not contain letters, digits, '_' or '-'".to_string());
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +75,10 @@ pub struct CliProxyManifest {
     pub created_at: String,
     pub updated_at: String,
     pub files: Vec<CliProxyManifestFile>,
+    /// Aggregate-mode routing config. Absent for single/failover manifests, and
+    /// absent in manifests written before aggregate mode existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<AggregateManifestConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +112,26 @@ impl CliProxyManifest {
             created_at: timestamp.clone(),
             updated_at: timestamp,
             files: Vec::new(),
+            aggregate: None,
         }
+    }
+
+    /// Attach aggregate routing config and switch the manifest to aggregate mode.
+    pub fn with_aggregate(
+        mut self,
+        provider_ids: Vec<String>,
+        separator: String,
+        aliases: BTreeMap<String, String>,
+        naming: AggregateNamingMode,
+    ) -> Self {
+        self.mode = GatewayProxyMode::Aggregate;
+        self.aggregate = Some(AggregateManifestConfig {
+            provider_ids,
+            separator,
+            aliases,
+            naming,
+        });
+        self
     }
 }
 
@@ -121,5 +204,17 @@ mod tests {
     fn backup_relative_path_rejects_absolute_path() {
         assert!(validate_backup_rel_path("C:\\Users\\config.toml").is_err());
         assert!(validate_backup_rel_path("/tmp/config.toml").is_err());
+    }
+
+    #[test]
+    fn aggregate_manifest_defaults_naming_for_older_manifests() {
+        let parsed: AggregateManifestConfig = serde_json::from_value(serde_json::json!({
+            "provider_ids": ["site-a"],
+            "separator": "."
+        }))
+        .unwrap();
+
+        assert!(parsed.aliases.is_empty());
+        assert_eq!(parsed.naming, AggregateNamingMode::SiteModel);
     }
 }

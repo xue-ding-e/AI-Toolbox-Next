@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { AlertTriangle, CheckCircle2, Loader2, Network, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
+  DEFAULT_AGGREGATE_SEPARATOR,
   disengageProxyGatewayFailover,
   engageProxyGatewayFailover,
   getProxyGatewayCliStatus,
@@ -11,7 +12,13 @@ import {
   type GatewayCliTakeoverStatus,
 } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
-import { restoreDirectUnavailableHintKey, type GatewayProxyReason } from './providerProtocol';
+import {
+  isGatewayAggregateMode,
+  isGatewayProxyMode,
+  restoreDirectUnavailableHintKey,
+  type GatewayProxyReason,
+} from './providerProtocol';
+import { buildGatewayAggregateModelSlug } from './gatewayAggregateConfig';
 import styles from './GatewayFailoverButton.module.less';
 
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'>;
@@ -38,7 +45,7 @@ const formatGatewayError = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 const isGatewayProxyActive = (status: GatewayCliTakeoverStatus | null) =>
-  status?.mode === 'single' || status?.mode === 'failover';
+  isGatewayProxyMode(status?.mode);
 
 const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   cliKey,
@@ -119,16 +126,26 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
 
   const visible = isGatewayProxyActive(status);
   const failoverActive = status?.mode === 'failover';
+  // Aggregate has its own takeover state but no failover toggle: the site list
+  // lives in the gateway settings aggregate block, so only "restore direct"
+  // stays actionable here.
+  const aggregateActive = isGatewayAggregateMode(status?.mode);
   const canRestoreDirect = Boolean(status?.can_restore_direct);
   const restoreDirectUnavailableTitle = t(
     restoreDirectUnavailableHintKey(primaryProviderNeedsProxyReason),
     { cli: t(`settings.gateway.cli.${cliKey}`) },
   );
-  const dot = failoverActive ? (status?.dot ?? 'gray') : 'gray';
+  const dot = failoverActive || aggregateActive ? (status?.dot ?? 'gray') : 'gray';
   const statusMessage = status?.message ?? t('gateway.takeover.buttonTooltip');
   const actionLabel = failoverActive
     ? t('gateway.failover.disengageButton')
-    : t('gateway.failover.button');
+    : aggregateActive
+      ? t('gateway.aggregate.button')
+      : t('gateway.failover.button');
+  // Aggregate sites are addressed by model prefix; the label the model list
+  // shows for each (site, model) pair is the concrete thing to display.
+  const aggregateSeparator = status?.aggregate?.separator ?? DEFAULT_AGGREGATE_SEPARATOR;
+  const aggregateSiteIds = status?.aggregate?.provider_ids ?? [];
 
   const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -259,7 +276,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
             </div>
 
             <div className={styles.dialogBody}>
-              {failoverActive && (
+              {(failoverActive || aggregateActive) && (
                 <div className={styles.stateRow}>
                   <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
                   <span>{t(`gateway.takeover.state.${status?.state ?? 'direct'}`)}</span>
@@ -272,23 +289,57 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
               )}
 
               <div className={styles.effectList}>
-                <div>
-                  <CheckCircle2 size={14} aria-hidden="true" />
-                  <span>{t('gateway.failover.effects.singleProxy')}</span>
-                </div>
-                <div>
-                  <ShieldCheck size={14} aria-hidden="true" />
-                  <span>{t('gateway.failover.effects.p0Pinned')}</span>
-                </div>
-                <div>
-                  <CheckCircle2 size={14} aria-hidden="true" />
-                  <span>{t('gateway.failover.effects.providerOrder')}</span>
-                </div>
-                <div>
-                  <AlertTriangle size={14} aria-hidden="true" />
-                  <span>{t('gateway.failover.effects.applyDisabled')}</span>
-                </div>
+                {aggregateActive ? (
+                  <>
+                    <div>
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      <span>{t('gateway.aggregate.effects.crossSiteList')}</span>
+                    </div>
+                    <div>
+                      <ShieldCheck size={14} aria-hidden="true" />
+                      <span>{t('gateway.aggregate.effects.settingsManaged')}</span>
+                    </div>
+                    <div>
+                      <AlertTriangle size={14} aria-hidden="true" />
+                      <span>{t('gateway.aggregate.effects.applyDisabled')}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      <span>{t('gateway.failover.effects.singleProxy')}</span>
+                    </div>
+                    <div>
+                      <ShieldCheck size={14} aria-hidden="true" />
+                      <span>{t('gateway.failover.effects.p0Pinned')}</span>
+                    </div>
+                    <div>
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      <span>{t('gateway.failover.effects.providerOrder')}</span>
+                    </div>
+                    <div>
+                      <AlertTriangle size={14} aria-hidden="true" />
+                      <span>{t('gateway.failover.effects.applyDisabled')}</span>
+                    </div>
+                  </>
+                )}
               </div>
+
+              {aggregateActive && aggregateSiteIds.length ? (
+                <div className={styles.priorityList}>
+                  <span className={styles.targetTitle}>
+                    {t('gateway.aggregate.sites', { count: aggregateSiteIds.length })}
+                  </span>
+                  <div>
+                    {aggregateSiteIds.map((siteId) => (
+                      <code key={siteId}>
+                        {buildGatewayAggregateModelSlug(siteId, '<model>', aggregateSeparator)}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               {failoverActive && status?.provider_priorities.length ? (
                 <div className={styles.priorityList}>
@@ -345,19 +396,26 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
                   <span>{t('gateway.proxy.restoreDirectButton')}</span>
                 </button>
               ) : null}
-              <button
-                type="button"
-                className={styles.primaryButton}
-                disabled={busyAction !== null}
-                onClick={handleToggleFailover}
-              >
-                {busyAction === 'enableFailover' || busyAction === 'disableFailover' ? (
-                  <Loader2 size={14} className={styles.spin} aria-hidden="true" />
-                ) : (
-                  <Network size={14} aria-hidden="true" />
-                )}
-                <span>{actionLabel}</span>
-              </button>
+              {/*
+                Aggregate mode is engaged and edited from the gateway settings
+                aggregate block; a failover toggle here would either be a no-op
+                or silently switch modes, so keep only "restore direct".
+              */}
+              {!aggregateActive ? (
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  disabled={busyAction !== null}
+                  onClick={handleToggleFailover}
+                >
+                  {busyAction === 'enableFailover' || busyAction === 'disableFailover' ? (
+                    <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+                  ) : (
+                    <Network size={14} aria-hidden="true" />
+                  )}
+                  <span>{actionLabel}</span>
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

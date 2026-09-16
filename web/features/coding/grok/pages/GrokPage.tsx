@@ -99,8 +99,10 @@ import {
   getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
   openAiApiFormatFromBaseUrl,
+  resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
+  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildGrokProviderConnectivityInfo,
@@ -153,6 +155,7 @@ import {
 } from '@/utils/grokConfigUtils';
 import { parseGrokSettingsConfig } from '../utils/grokSettingsConfig';
 import {
+  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -609,11 +612,14 @@ const GrokPage: React.FC = () => {
     await saveGrokProviderCatalogWithGatewayReengage({
       provider,
       settingsConfig,
-      gatewayMode: gatewayCliStatus?.mode,
+      gatewayMode: resolveGatewayReengageMode(gatewayCliStatus),
+      aggregateConfig: toGatewayAggregateReengageConfig(gatewayCliStatus),
       updateProvider: updateGrokProvider,
       restoreDirect: () => restoreProxyGatewayCliDirect('grok'),
       engageSingle: () => engageProxyGatewaySingle('grok', provider.id),
       engageFailover: () => engageProxyGatewayFailover('grok'),
+      engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+        engageProxyGatewayAggregate('grok', providerIds, separator, aliases, naming),
       onGatewayStatusChange: setGatewayCliStatus,
     });
     await loadConfig(true);
@@ -1541,16 +1547,20 @@ const GrokPage: React.FC = () => {
 
       let savedProviderId = isLocalTemp ? GROK_LOCAL_PROVIDER_ID : '';
       let savedProvider: GrokProvider | null = null;
-      const gatewayModeBeforeSave = gatewayCliStatus?.mode;
+      const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+      const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
       const shouldReengageGatewayProxy =
         Boolean(editingProvider && !isCopyMode && !isLocalTemp && editingProvider.isApplied) &&
-        (gatewayModeBeforeSave === 'single' || gatewayModeBeforeSave === 'failover');
+        gatewayModeBeforeSave !== null;
 
       await saveProviderWithGatewayReengage({
         gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
+        aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
         restoreDirect: () => restoreProxyGatewayCliDirect('grok'),
         engageSingle: () => engageProxyGatewaySingle('grok', savedProviderId),
         engageFailover: () => engageProxyGatewayFailover('grok'),
+        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
+          engageProxyGatewayAggregate('grok', providerIds, separator, aliases, naming),
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

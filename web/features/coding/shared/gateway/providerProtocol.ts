@@ -94,6 +94,28 @@ export const canApplyProviderWithGatewayProxy = (
   status?: GatewayCliTakeoverStatus | null,
 ) => Boolean(status?.can_takeover);
 
+// ---- Gateway proxy mode guards ----
+//
+// `aggregate` is a third takeover mode: it keeps every selected site as a
+// candidate and routes by the `<site_id><sep><model>` prefix. It is NOT a
+// failover variant, so keep the two predicates separate instead of folding
+// aggregate into a failover check.
+
+/** Any mode that rewrites the CLI runtime config and routes through the gateway. */
+export const isGatewayProxyMode = (
+  mode?: GatewayCliTakeoverStatus['mode'] | null,
+): boolean => mode === 'single' || mode === 'failover' || mode === 'aggregate';
+
+/** Failover specifically: P0 pinned first, P1+ tried in provider order. */
+export const isGatewayFailoverMode = (
+  mode?: GatewayCliTakeoverStatus['mode'] | null,
+): boolean => mode === 'failover';
+
+/** Aggregate specifically: cross-site model list with per-site model prefixes. */
+export const isGatewayAggregateMode = (
+  mode?: GatewayCliTakeoverStatus['mode'] | null,
+): boolean => mode === 'aggregate';
+
 export const codexWireApiFormatFromConfig = (config?: string | null) => {
   if (!config) {
     return null;
