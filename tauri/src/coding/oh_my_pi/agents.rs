@@ -49,6 +49,33 @@ const OMP_BUILTIN_AGENT_NAMES: [&str; 5] = [
 /// `main` / `sub` 是 OMP 的会话 sentinel agentName,自定义 agent 不得占用。
 const OMP_RESERVED_AGENT_NAMES: [&str; 2] = ["main", "sub"];
 
+/// OMP 原生核心模型角色键(镜像上游 `config/model-roles.ts` 的 `MODEL_ROLES`)。
+/// 方案 apply 时只接管这 9 个角色;`config.yml` 里方案之外的自定义 role
+/// (上游 `getKnownRoleIds` 会收录任意 role 名)由用户自己维护,apply 不能清掉。
+const OMP_CORE_MODEL_ROLE_KEYS: [&str; 9] = [
+    "default", "plan", "task", "advisor", "commit", "tiny", "smol", "slow", "vision",
+];
+
+fn is_core_model_role(role: &str) -> bool {
+    OMP_CORE_MODEL_ROLE_KEYS.contains(&role)
+}
+
+/// `modelRoles` 值里的 `:suffix` 是否真的是思考级别。
+///
+/// 与上游 `parseThinkingLevel` 一样对词表做**精确**匹配(上游用 selector map 查表,
+/// 不折叠大小写):大小写不符的后缀宁可当成字面 model id,也不能截断 model id。
+fn is_valid_thinking_level(level: &str) -> bool {
+    super::commands::OMP_THINKING_LEVEL_KEYS.contains(&level.trim())
+}
+
+/// 上游 `parseBoolean` 同时接受布尔与 `"true"`/`"false"` 字符串。
+fn is_boolean_like(value: &Value) -> bool {
+    value.is_boolean()
+        || value.as_str().is_some_and(|text| {
+            matches!(text.trim().to_ascii_lowercase().as_str(), "true" | "false")
+        })
+}
+
 /// 单 agent 的运行时视图(前端逐 agent 编辑用)。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -147,7 +174,10 @@ fn validate_omp_agent_config(name_from_file: &str, config: &Value) -> Result<(),
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(name_from_file);
-    if OMP_RESERVED_AGENT_NAMES.contains(&resolved_name) {
+    // 上游 `parseAgentFields` 用 `name.trim().toLowerCase()` 比对 sentinel,
+    // 这里同样大小写不敏感(否则 `Main.md` 能写出去、被 OMP 丢掉)。
+    let normalized_name = resolved_name.trim().to_ascii_lowercase();
+    if OMP_RESERVED_AGENT_NAMES.contains(&normalized_name.as_str()) {
         return Err("Agent name 'main' and 'sub' are reserved by OMP and cannot be used".to_string());
     }
     let description = object
@@ -155,8 +185,11 @@ fn validate_omp_agent_config(name_from_file: &str, config: &Value) -> Result<(),
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or_default();
-    if description.is_empty() && !OMP_BUILTIN_AGENT_NAMES.contains(&resolved_name) {
-        return Err("Custom OMP Agents require a non-empty description".to_string());
+    // 上游对**所有** agent 都要求非空 description(`parseAgentFields` 缺
+    // name/description 一律返回 null,内置 agent 也不例外),所以内置名不豁免:
+    // 否则会写出 OMP 直接丢弃的覆盖文件。
+    if description.is_empty() {
+        return Err("OMP Agents require a non-empty description".to_string());
     }
     if let Some(model) = object.get("model") {
         let valid = model.is_string()
@@ -197,7 +230,7 @@ fn validate_omp_agent_config(name_from_file: &str, config: &Value) -> Result<(),
     }
     for key in ["blocking", "readSummarize"] {
         if let Some(value) = object.get(key) {
-            if !value.is_boolean() {
+            if !is_boolean_like(value) {
                 return Err(format!("OMP Agent {key} must be a boolean"));
             }
         }
@@ -234,7 +267,7 @@ fn agent_name_from_config(name_from_file: &str, config: Option<&Value>) -> Strin
     from_config.unwrap_or_else(|| name_from_file.to_string())
 }
 
-fn read_agent_file(_root: &Path, file_path: &Path) -> Result<OmpAgent, String> {
+fn read_agent_file(file_path: &Path) -> Result<OmpAgent, String> {
     let raw_content = fs::read_to_string(file_path)
         .map_err(|error| format!("Failed to read {}: {error}", file_path.display()))?;
     let name_from_file = file_path
@@ -372,13 +405,19 @@ pub async fn list_omp_agents_configs(
 }
 
 /// 解析 role 字符串:例如 "anthropic/claude-sonnet-4-6:high" -> ("anthropic/claude-sonnet-4-6", Some("high"))
+///
+/// 只有当冒号后缀是**合法思考级别**时才拆(镜像上游 `splitThinkingSuffix` 只在
+/// 后缀能解析成 level 时剥离)。否则冒号属于字面 model id,例如 Ollama tag
+/// `ollama/qwen2.5:14b`、OpenRouter `openrouter/...:free`——拆错会把 model id
+/// 截断,apply 出去的角色就再也解析不到模型了。
 pub(crate) fn parse_role_string(raw: &str) -> (String, Option<String>) {
     let trimmed = raw.trim();
     if let Some(colon_idx) = trimmed.rfind(':') {
         let model_part = &trimmed[..colon_idx];
         let level_part = &trimmed[colon_idx + 1..];
-        if !model_part.is_empty() && !level_part.is_empty() && !model_part.ends_with('/') {
-            return (model_part.to_string(), Some(level_part.to_string()));
+        if !model_part.is_empty() && !model_part.ends_with('/') && is_valid_thinking_level(level_part)
+        {
+            return (model_part.to_string(), Some(level_part.trim().to_string()));
         }
     }
     (trimmed.to_string(), None)
@@ -406,7 +445,7 @@ async fn load_local_agents_config(db: &SqliteDbState) -> Result<OmpAgentsConfig,
             .collect::<Vec<_>>();
         files.sort();
         for file in files {
-            let Ok(agent) = read_agent_file(&root, &file) else {
+            let Ok(agent) = read_agent_file(&file) else {
                 continue;
             };
             if let Some(config) = agent.config {
@@ -578,7 +617,6 @@ pub async fn reorder_omp_agents_configs(
             .map(|_| ())
         })?;
     }
-    let _ = db;
     Ok(())
 }
 
@@ -617,41 +655,56 @@ pub async fn toggle_omp_agents_config_disabled(
     Ok(())
 }
 
-/// 将方案的 model_roles 写入运行时 config.yml。
-pub(crate) async fn apply_model_roles_to_settings(
-    db: &SqliteDbState,
-    model_roles: Option<&Value>,
-) -> Result<(), String> {
-    let config_path = get_omp_config_path_async(db).await?;
-    let mut settings = read_yaml_object_or_empty(&config_path)?;
-    let settings_object = object_mut(&mut settings)?;
+/// 解析单个 role 值:字符串 `provider/model:level` 或对象 `{model, thinkingLevel}`。
+fn parse_role_value(role_val: &Value) -> (String, Option<String>) {
+    match role_val {
+        Value::String(raw) => parse_role_string(raw),
+        Value::Object(map) => {
+            let model = map
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let level = map
+                .get("thinkingLevel")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            (model, level)
+        }
+        _ => (String::new(), None),
+    }
+}
 
-    let mut next_roles = Map::new();
-    let mut next_default_thinking: Option<String> = None;
+/// 把方案角色合并进现有 `modelRoles`(纯函数,便于单测)。
+///
+/// - 只接管 9 个核心 role:方案外的自定义 role 原样保留,方案里没写的核心 role = 清除。
+/// - 方案里显式留空(model 为空)的 role = 清除。
+/// - 第二项返回 `default` 角色的思考等级(由调用方决定写/删全局 `defaultThinkingLevel`)。
+fn merge_model_roles(
+    existing: Option<&Value>,
+    preset: Option<&Value>,
+) -> (Map<String, Value>, Option<String>) {
+    let mut next_roles = existing
+        .and_then(Value::as_object)
+        .map(|roles| {
+            roles
+                .iter()
+                .filter(|(role, _)| !is_core_model_role(role))
+                .map(|(role, value)| (role.clone(), value.clone()))
+                .collect::<Map<String, Value>>()
+        })
+        .unwrap_or_default();
 
-    if let Some(roles_obj) = model_roles.and_then(Value::as_object) {
+    let mut default_thinking_level: Option<String> = None;
+
+    if let Some(roles_obj) = preset.and_then(Value::as_object) {
         for (role, role_val) in roles_obj {
-            let (model_id, thinking_level) = match role_val {
-                Value::String(s) => parse_role_string(s),
-                Value::Object(map) => {
-                    let m = map
-                        .get("model")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    let t = map
-                        .get("thinkingLevel")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string);
-                    (m, t)
-                }
-                _ => continue,
-            };
-
+            let (model_id, thinking_level) = parse_role_value(role_val);
             if model_id.is_empty() {
+                next_roles.remove(role);
                 continue;
             }
 
@@ -663,10 +716,33 @@ pub(crate) async fn apply_model_roles_to_settings(
             next_roles.insert(role.clone(), Value::String(role_val_str));
 
             if role == "default" {
-                next_default_thinking = thinking_level;
+                default_thinking_level = thinking_level;
             }
         }
     }
+
+    (next_roles, default_thinking_level)
+}
+
+/// 将方案的 model_roles 写入运行时 config.yml。
+///
+/// 只接管 9 个核心角色:方案里没写的核心角色视为用户清空,方案之外的自定义 role
+/// (上游 `getKnownRoleIds` 允许任意 role 名)原样保留——一次 apply 不能把用户自己
+/// 维护的 role 抹掉。
+///
+/// `default` 角色的思考等级同步到全局 `defaultThinkingLevel`:方案里是合法词表值就
+/// 写入,否则删除。只增不减会让清空后的旧值继续对默认模型生效(与既有
+/// `update_default_selection` 的"显式清空才删"策略一致)。
+pub(crate) async fn apply_model_roles_to_settings(
+    db: &SqliteDbState,
+    model_roles: Option<&Value>,
+) -> Result<(), String> {
+    let config_path = get_omp_config_path_async(db).await?;
+    let mut settings = read_yaml_object_or_empty(&config_path)?;
+    let settings_object = object_mut(&mut settings)?;
+
+    let (next_roles, default_thinking_level) =
+        merge_model_roles(settings_object.get("modelRoles"), model_roles);
 
     if next_roles.is_empty() {
         settings_object.remove("modelRoles");
@@ -674,8 +750,13 @@ pub(crate) async fn apply_model_roles_to_settings(
         settings_object.insert("modelRoles".to_string(), Value::Object(next_roles));
     }
 
+    let next_default_thinking = default_thinking_level
+        .map(|level| level.trim().to_string())
+        .filter(|level| is_valid_thinking_level(level));
     if let Some(level) = next_default_thinking {
         settings_object.insert("defaultThinkingLevel".to_string(), json!(level));
+    } else {
+        settings_object.remove("defaultThinkingLevel");
     }
 
     write_yaml_object(&config_path, &settings)?;
@@ -736,6 +817,19 @@ fn remove_managed_agent_files(root: &Path) -> Result<(), String> {
             }
         }
     }
+
+    // 保证 canonical 目录存在(WSL/SSH 的 `omp-agents-dir` 是目录映射,整体镜像;
+    // 本机源目录缺失时同步链路会直接跳过,远端就会留下 stale agents)。创建失败
+    // 只警告:本机删除与库状态照常完成,不要因此让"clear applied"整体失败。
+    let directory = canonical_agents_dir(root);
+    if !directory.exists() {
+        if let Err(error) = fs::create_dir_all(&directory) {
+            log::warn!(
+                "Failed to recreate OMP agent directory {}: {error}",
+                directory.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -769,15 +863,26 @@ pub async fn apply_omp_agents_config_internal<R: tauri::Runtime>(
         return Ok(());
     }
 
+    apply_omp_agents_config_internal_without_events(db, config_id).await?;
+    let payload = if from_tray { "tray" } else { "window" };
+    let _ = app.emit("config-changed", payload);
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-omp", ());
+    Ok(())
+}
+
+/// apply 的静默变体:渲染目录 + 更新 applied 标记,但**不发事件**。
+/// 备份恢复的 re-apply 编排使用(恢复期间 WSL 同步由收尾统一触发,中间链路
+/// 不得各自 emit,见 `reapply_applied_runtime` 模块说明)。
+pub async fn apply_omp_agents_config_internal_without_events(
+    db: &SqliteDbState,
+    config_id: &str,
+) -> Result<(), String> {
     apply_omp_agents_config_to_dir(db, config_id).await?;
     let now = Local::now().to_rfc3339();
     db.with_conn_mut(|conn| {
         db_update_applied_status(conn, DbTable::OhMyPiAgentsConfig, Some(config_id), &now)
     })?;
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-omp", ());
     Ok(())
 }
 
@@ -847,6 +952,9 @@ fn render_agent_file(
     if declared_name.is_none() {
         frontmatter.insert("name".to_string(), json!(name));
     }
+    // 校验的是"即将写出去的那份 frontmatter"(name 已补齐),任一字段非法就让整份
+    // 方案失败——避免目录里出现 OMP 会丢弃的 agent 文件。
+    validate_omp_agent_config(name, &Value::Object(frontmatter.clone()))?;
     let prompt = frontmatter
         .remove("prompt")
         .and_then(|value| value.as_str().map(str::to_string))
@@ -908,7 +1016,7 @@ pub async fn list_omp_agents(
         };
         files.sort();
         for file in files {
-            if let Ok(agent) = read_agent_file(&root, &file) {
+            if let Ok(agent) = read_agent_file(&file) {
                 agents.push(agent);
             }
         }
@@ -937,17 +1045,19 @@ pub async fn list_omp_agents(
     }
 
     agents.sort_by(|left, right| {
-        let builtin_rank = |name: &str| {
+        // 内置 agent 按 bundled 顺序排在前面,其余按名称排序:两处目录的读取
+        // 顺序不稳定,前端需要一个确定顺序。同名的两个文件(agent/ 与 agents/
+        // 都有 task.md)保留原顺序。
+        let builtin_rank = |agent: &OmpAgent| {
             OMP_BUILTIN_AGENT_NAMES
                 .iter()
-                .position(|builtin| *builtin == name)
+                .position(|builtin| *builtin == agent.name)
                 .map(|index| index as i32)
                 .unwrap_or(i32::MAX)
         };
-        left.name
-            .cmp(&right.name)
-            .then_with(|| left.is_builtin.cmp(&right.is_builtin))
-            .then_with(|| builtin_rank(&left.name).cmp(&builtin_rank(&right.name)))
+        builtin_rank(left)
+            .cmp(&builtin_rank(right))
+            .then_with(|| left.name.cmp(&right.name))
     });
 
     Ok(agents)
@@ -990,7 +1100,7 @@ pub async fn save_omp_agent<R: tauri::Runtime>(
     fs::write(&path, &request.content)
         .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
     emit_omp_agents_changed(&app);
-    read_agent_file(&root, &path)
+    read_agent_file(&path)
 }
 
 /// 删除单个 agent 文件(自定义 agent / 内置覆盖文件)。
@@ -1046,10 +1156,11 @@ pub async fn get_applied_omp_agents_config_id(db: &SqliteDbState) -> Result<Opti
 #[cfg(test)]
 mod tests {
     use super::{
-        is_valid_agent_file_name, parse_omp_agent, render_agent_file, validate_omp_agent_config,
-        OMP_BUILTIN_AGENT_NAMES, OMP_RESERVED_AGENT_NAMES,
+        is_core_model_role, is_valid_agent_file_name, merge_model_roles, parse_omp_agent,
+        parse_role_string, render_agent_file, validate_omp_agent_config, OMP_BUILTIN_AGENT_NAMES,
+        OMP_RESERVED_AGENT_NAMES,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn parses_frontmatter_and_prompt() {
@@ -1084,9 +1195,15 @@ mod tests {
     }
 
     #[test]
-    fn builtin_agents_skip_description_requirement() {
-        let config = json!({ "name": "task" });
-        assert!(validate_omp_agent_config("task", &config).is_ok());
+    fn builtin_agent_overrides_also_require_description() {
+        // 上游 `parseAgentFields` 对内置 agent 同样要求 name + description:缺
+        // description 的覆盖文件会被 OMP 直接丢弃,所以这里不豁免内置名。
+        assert!(validate_omp_agent_config("task", &json!({ "name": "task" })).is_err());
+        assert!(validate_omp_agent_config(
+            "task",
+            &json!({ "name": "task", "description": "delegated tasks" })
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1095,6 +1212,42 @@ mod tests {
             let config = json!({ "name": reserved, "description": "x" });
             assert!(validate_omp_agent_config("whatever", &config).is_err());
         }
+    }
+
+    #[test]
+    fn rejects_reserved_names_case_insensitively() {
+        // 上游比对的是 `name.trim().toLowerCase()`,大小写变体同样必须拦下。
+        for reserved in ["MAIN", "Sub", " main "] {
+            let config = json!({ "name": reserved, "description": "x" });
+            assert!(
+                validate_omp_agent_config("whatever", &config).is_err(),
+                "{reserved:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_boolean_strings_like_upstream() {
+        // 上游 `parseBoolean` 接受 "true"/"false" 字符串,过严会把合法文件拒掉。
+        let config = json!({
+            "name": "x",
+            "description": "d",
+            "blocking": "true",
+            "readSummarize": "FALSE"
+        });
+        assert!(validate_omp_agent_config("x", &config).is_ok());
+        assert!(validate_omp_agent_config(
+            "x",
+            &json!({ "name": "x", "description": "d", "blocking": "yes" })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn render_rejects_agent_without_description() {
+        let mut rendered = Vec::new();
+        assert!(render_agent_file("custom", &json!({ "model": "@smol" }), &mut rendered).is_err());
+        assert!(rendered.is_empty(), "整份方案失败时不得留下半成品");
     }
 
     #[test]
@@ -1179,7 +1332,6 @@ mod tests {
 
     #[test]
     fn parses_role_strings_with_and_without_thinking_suffix() {
-        use super::parse_role_string;
         assert_eq!(
             parse_role_string("anthropic/claude-sonnet-4-6:high"),
             ("anthropic/claude-sonnet-4-6".to_string(), Some("high".to_string()))
@@ -1192,5 +1344,99 @@ mod tests {
             parse_role_string("@task:auto"),
             ("@task".to_string(), Some("auto".to_string()))
         );
+    }
+
+    #[test]
+    fn keeps_colon_model_ids_that_are_not_thinking_levels() {
+        // Ollama tag / OpenRouter 免费档都是字面 model id,`:` 后面不是思考级别时
+        // 必须整串保留,否则 load_local_agents_config 会把它截断成不存在的模型。
+        assert_eq!(
+            parse_role_string("ollama/qwen2.5:14b"),
+            ("ollama/qwen2.5:14b".to_string(), None)
+        );
+        assert_eq!(
+            parse_role_string("openrouter/deepseek/deepseek-r1:free"),
+            ("openrouter/deepseek/deepseek-r1:free".to_string(), None)
+        );
+        // 大小写不符的后缀同样按字面 model id 处理(与上游查表语义一致)。
+        assert_eq!(
+            parse_role_string("anthropic/claude-sonnet-4-6:HIGH"),
+            ("anthropic/claude-sonnet-4-6:HIGH".to_string(), None)
+        );
+        // 词表里的级别(minimal..max、off、auto)照常拆。
+        assert_eq!(
+            parse_role_string("openai/gpt-5:xhigh"),
+            ("openai/gpt-5".to_string(), Some("xhigh".to_string()))
+        );
+        assert_eq!(
+            parse_role_string("openai/gpt-5:off"),
+            ("openai/gpt-5".to_string(), Some("off".to_string()))
+        );
+    }
+
+    #[test]
+    fn core_model_role_keys_match_frontend_and_upstream() {
+        for role in [
+            "default", "plan", "task", "advisor", "commit", "tiny", "smol", "slow", "vision",
+        ] {
+            assert!(is_core_model_role(role), "{role} must be a core role");
+        }
+        assert!(!is_core_model_role("my-custom-role"));
+    }
+
+    #[test]
+    fn merge_model_roles_keeps_custom_roles_and_clears_missing_core_roles() {
+        let existing = json!({
+            "default": "old/default",
+            "smol": "old/smol",
+            "subagent-retry-fallback-abc": "p/m",
+        });
+        let preset = json!({
+            "default": { "model": "new/default" },
+            "plan": { "model": "new/plan", "thinkingLevel": "auto" },
+        });
+
+        let (roles, default_thinking) = merge_model_roles(Some(&existing), Some(&preset));
+
+        // 方案外的自定义 role 必须保留,不能被一次 apply 抹掉。
+        assert_eq!(
+            roles.get("subagent-retry-fallback-abc").and_then(Value::as_str),
+            Some("p/m")
+        );
+        // 方案里没写的核心 role(smol)= 用户清空。
+        assert!(!roles.contains_key("smol"));
+        assert_eq!(roles.get("default").and_then(Value::as_str), Some("new/default"));
+        assert_eq!(roles.get("plan").and_then(Value::as_str), Some("new/plan:auto"));
+        // default 没写思考级别 => 调用方应删除全局 defaultThinkingLevel。
+        assert_eq!(default_thinking, None);
+    }
+
+    #[test]
+    fn merge_model_roles_reports_default_thinking_level() {
+        let preset = json!({ "default": { "model": "p/m", "thinkingLevel": "high" } });
+        let (roles, default_thinking) = merge_model_roles(None, Some(&preset));
+        assert_eq!(roles.get("default").and_then(Value::as_str), Some("p/m:high"));
+        assert_eq!(default_thinking.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn merge_model_roles_without_preset_clears_core_but_keeps_custom() {
+        // clear applied:核心 role 全清,自定义 role 保留。
+        let existing = json!({ "default": "p/m", "vision": "p/v", "my-role": "p/r" });
+        let (roles, default_thinking) = merge_model_roles(Some(&existing), None);
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles.get("my-role").and_then(Value::as_str), Some("p/r"));
+        assert_eq!(default_thinking, None);
+    }
+
+    #[test]
+    fn merge_model_roles_keeps_colon_model_ids_intact() {
+        let preset = json!({ "smol": "ollama/qwen2.5:14b", "slow": "p/m:high" });
+        let (roles, _) = merge_model_roles(None, Some(&preset));
+        assert_eq!(
+            roles.get("smol").and_then(Value::as_str),
+            Some("ollama/qwen2.5:14b")
+        );
+        assert_eq!(roles.get("slow").and_then(Value::as_str), Some("p/m:high"));
     }
 }

@@ -953,7 +953,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 16;
+    const CURRENT_DEFAULTS_VERSION: u64 = 17;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -975,6 +975,7 @@ async fn backfill_default_mappings(
         "kimi-credentials",
         "kimi-plugins",
     ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V17: &[&str] = &["omp-agents-dir"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1030,6 +1031,11 @@ async fn backfill_default_mappings(
                 16,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V16,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                17,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V17,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1494,6 +1500,18 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .to_string_lossy()
                         .to_string();
                     mapping.wsl_path = omp_wsl_target_path_from_location(&location, "RULES.md");
+                }
+            }
+            "omp-agents-dir" => {
+                if let Ok(location) =
+                    runtime_location::get_oh_my_pi_runtime_location_async(db).await
+                {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("agents")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = omp_wsl_target_path_from_location(&location, "agents");
                 }
             }
             "hermes-config" | "hermes-prompt" => {
@@ -2057,6 +2075,22 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
+        FileMapping {
+            // Subagents 集中配置渲染出的 `agents/*.md`(`<agentDir>/agents`,与
+            // OMP 用户级 agent 发现路径一致)。目录映射是**整体镜像**:apply 后同步
+            // 会把新文件推过去,clear applied 后本机目录为空,同步同样会清掉 WSL
+            // 侧残留——删除语义因此不依赖"本机文件不存在就跳过"的单文件链路。
+            id: "omp-agents-dir".to_string(),
+            name: "Oh My Pi Subagents 目录（agents）".to_string(),
+            module: "oh_my_pi".to_string(),
+            windows_path: "~/.omp/agent/agents".to_string(),
+            wsl_path: "~/.omp/agent/agents".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
         // Hermes - runtime config.yaml + authored global prompt.
         FileMapping {
             id: "hermes-config".to_string(),
@@ -2404,6 +2438,50 @@ mod tests {
         assert_eq!(mapping.windows_path, "~/.pi/agent/mcp.json");
         assert_eq!(mapping.wsl_path, "~/.pi/agent/mcp.json");
         assert!(!mapping.is_directory);
+    }
+
+    #[test]
+    fn omp_agents_dir_default_mapping_is_a_directory() {
+        let mapping = default_file_mappings()
+            .into_iter()
+            .find(|mapping| mapping.id == "omp-agents-dir")
+            .expect("omp-agents-dir default mapping exists");
+
+        assert_eq!(mapping.module, "oh_my_pi");
+        assert!(mapping.is_directory);
+        assert_eq!(mapping.windows_path, "~/.omp/agent/agents");
+        assert_eq!(mapping.wsl_path, "~/.omp/agent/agents");
+    }
+
+    #[test]
+    fn omp_agents_dir_mapping_does_not_shadow_the_prompt_mapping() {
+        // `omp-agents` 是 AGENTS.md(全局提示词),和 agents 目录是两条不同映射。
+        let prompt = default_file_mappings()
+            .into_iter()
+            .find(|mapping| mapping.id == "omp-agents")
+            .expect("omp-agents default mapping exists");
+        assert!(!prompt.is_directory);
+        assert_eq!(prompt.windows_path, "~/.omp/agent/AGENTS.md");
+    }
+
+    #[test]
+    fn defaults_backfill_v17_only_adds_omp_agents_dir_for_existing_v16_users() {
+        let ids = ["omp-agents-dir"];
+        assert!(should_backfill_versioned_mapping(
+            16,
+            17,
+            "omp-agents-dir",
+            &ids
+        ));
+        assert!(!should_backfill_versioned_mapping(
+            16, 17, "omp-config", &ids
+        ));
+        assert!(!should_backfill_versioned_mapping(
+            17,
+            17,
+            "omp-agents-dir",
+            &ids
+        ));
     }
 
     #[test]

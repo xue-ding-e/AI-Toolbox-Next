@@ -768,30 +768,54 @@ async fn reapply_omp<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
         "prompt",
         first_applied_prompt_id(&db, DbTable::OhMyPiPromptConfig),
     );
-    if prompt_id.is_none() {
-        return result;
-    }
-
-    match oh_my_pi::get_omp_prompt_path_async(&db).await {
-        Ok(path) => {
-            if let Err(error) = probe_runtime_path(path).await {
-                result.warnings.push(error);
-                return result;
+    if prompt_id.is_some() {
+        match oh_my_pi::get_omp_prompt_path_async(&db).await {
+            Ok(path) => {
+                if let Err(error) = probe_runtime_path(path).await {
+                    result.warnings.push(error);
+                } else {
+                    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+                        oh_my_pi::apply_omp_prompt_config_internal_without_events(
+                            app.state(),
+                            app,
+                            &prompt_id,
+                        )
+                        .await
+                    })
+                    .await;
+                }
+            }
+            Err(error) => {
+                result
+                    .warnings
+                    .push(format!("failed to resolve prompt path: {error}"));
             }
         }
-        Err(error) => {
-            result
+    }
+
+    // subagent 方案:applied 标记在库里,但运行目录(`agents/*.md` + config.yml 的
+    // modelRoles)可能被备份跳过或整份缺失,恢复后要按同一份方案重新渲染。
+    let agents_record = oh_my_pi::get_applied_omp_agents_config_id(&db).await;
+    let agents_id = resolve_record_id(&mut result, "agents", agents_record);
+    if agents_id.is_some() {
+        match runtime_location::get_oh_my_pi_runtime_location_async(&db).await {
+            Ok(location) => {
+                if let Err(error) = probe_runtime_path(location.host_path).await {
+                    result.warnings.push(error);
+                } else {
+                    apply_record(&mut result, "agents", agents_id, |agents_id| async move {
+                        oh_my_pi::apply_omp_agents_config_internal_without_events(&db, &agents_id)
+                            .await
+                    })
+                    .await;
+                }
+            }
+            Err(error) => result
                 .warnings
-                .push(format!("failed to resolve prompt path: {error}"));
-            return result;
+                .push(format!("failed to resolve runtime dir: {error}")),
         }
     }
 
-    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
-        oh_my_pi::apply_omp_prompt_config_internal_without_events(app.state(), app, &prompt_id)
-            .await
-    })
-    .await;
     result
 }
 

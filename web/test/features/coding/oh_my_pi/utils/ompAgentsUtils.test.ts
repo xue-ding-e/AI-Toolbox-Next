@@ -253,6 +253,27 @@ test('parse and format OmpModelRoleEntry', async () => {
   assert.deepEqual(parseOmpModelRoleEntry('openai/gpt-5'), {
     model: 'openai/gpt-5',
   });
+  // 只有合法思考级别才当 `:level` 拆:Ollama tag / OpenRouter 免费档是字面 model id,
+  // 拆了会让保存后的模型被截断(与后端 parse_role_string 一致)。
+  assert.deepEqual(parseOmpModelRoleEntry('ollama/qwen2.5:14b'), {
+    model: 'ollama/qwen2.5:14b',
+  });
+  assert.deepEqual(parseOmpModelRoleEntry('openrouter/deepseek/deepseek-r1:free'), {
+    model: 'openrouter/deepseek/deepseek-r1:free',
+  });
+  // 大小写不符的后缀同样按字面 model id(上游查表不折叠大小写)。
+  assert.deepEqual(parseOmpModelRoleEntry('anthropic/claude-sonnet-4-6:HIGH'), {
+    model: 'anthropic/claude-sonnet-4-6:HIGH',
+  });
+  // 词表里的扩展级别照常拆。
+  assert.deepEqual(parseOmpModelRoleEntry('openai/gpt-5:xhigh'), {
+    model: 'openai/gpt-5',
+    thinkingLevel: 'xhigh',
+  });
+  assert.deepEqual(parseOmpModelRoleEntry('openai/gpt-5:off'), {
+    model: 'openai/gpt-5',
+    thinkingLevel: 'off',
+  });
   // Object input
   assert.deepEqual(
     parseOmpModelRoleEntry({ model: 'anthropic/claude-opus-4-6', thinkingLevel: 'auto' }),

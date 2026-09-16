@@ -4,6 +4,7 @@ import type {
   OmpRuntimeProviderView,
 } from '../../../../types/ohMyPi.ts';
 import {
+  OMP_THINKING_LEVELS,
   getOmpModelDefaultThinkingLevel,
   getOmpModelThinkingLevelOptions,
   getProviderModelRecords,
@@ -112,10 +113,13 @@ export const parseOmpModelRoleEntry = (
     const trimmed = raw.trim();
     const lastColon = trimmed.lastIndexOf(':');
     if (lastColon > 0 && !trimmed.slice(0, lastColon).endsWith('/')) {
-      return {
-        model: trimmed.slice(0, lastColon),
-        thinkingLevel: trimmed.slice(lastColon + 1),
-      };
+      const level = trimmed.slice(lastColon + 1);
+      // 只有后缀是合法思考级别才当作 `:level`(与后端 parse_role_string、上游
+      // splitThinkingSuffix 一致)。Ollama tag(`ollama/qwen2.5:14b`)、OpenRouter
+      // `:free` 这类字面 model id 必须整串保留,否则保存后模型会被截断。
+      if (OMP_THINKING_LEVELS.has(level)) {
+        return { model: trimmed.slice(0, lastColon), thinkingLevel: level };
+      }
     }
     return { model: trimmed };
   }

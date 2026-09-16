@@ -1108,7 +1108,8 @@
         "ompModels": "Oh My Pi Models",
         "ompMcp": "Oh My Pi MCP Config",
         "ompAgents": "Oh My Pi Global Prompt",
-        "ompRules": "Oh My Pi Rules"
+        "ompRules": "Oh My Pi Rules",
+        "ompAgentsDir": "Oh My Pi Subagents Directory (agents)"
       },
       "allMappings": "All",
       "mappings": "mappings",
@@ -5380,6 +5381,9 @@
       "clearAppliedConfirmContent": "Clearing \"{{name}}\" resets modelRoles and empties the agents/*.md directory (the preset stays in the database).",
       "clearAppliedConfirmOk": "Confirm clear",
       "clearAppliedSuccess": "Applied preset cleared",
+      "disableAppliedConfirmTitle": "Disable applied preset",
+      "disableAppliedConfirmContent": "Disabling {{name}} withdraws the applied configuration: the agents/*.md directory is emptied and config.yml modelRoles is reset (the preset itself is kept). Continue?",
+      "disableAppliedConfirmOk": "Disable",
       "configDisabled": "Preset disabled",
       "configEnabled": "Preset enabled",
       "configDisabledDesc": "Disabled and cannot be applied",
@@ -5421,6 +5425,18 @@
       "modelPlaceholder": "Pick a model or type @role / provider/model",
       "thinkingLevel": "Thinking level",
       "thinkingLevelPlaceholder": "off / auto / low / high...",
+      "descriptionRequired": "Custom subagents require a description",
+      "aliasLabels": {
+        "default": "default model",
+        "plan": "architect",
+        "task": "subtask agent",
+        "advisor": "review advisor",
+        "commit": "commit message",
+        "tiny": "lightweight background",
+        "smol": "low-latency fast",
+        "slow": "deep reasoning",
+        "vision": "vision multimodal"
+      },
       "selectModelFirst": "Select model first",
       "thinkingNotSupported": "Thinking not supported",
       "roleAliasesGroup": "Role Aliases",

@@ -153,7 +153,8 @@ export interface OmpAgentsConfig {
   isApplied: boolean;
   isDisabled: boolean;
   modelRoles?: Record<string, OmpModelRoleConfig | string> | null;
-  agents: Record<string, OmpAgentConfig> | null;
+  /** 后端在方案没有自定义 agent 时会省略该字段(skip_serializing_if),读的时候按空对象处理。 */
+  agents?: Record<string, OmpAgentConfig> | null;
   otherFields?: Record<string, unknown>;
   sortIndex?: number;
   createdAt?: string;

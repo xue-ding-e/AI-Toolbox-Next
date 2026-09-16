@@ -1145,7 +1145,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 15;
+    const CURRENT_DEFAULTS_VERSION: u64 = 16;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1168,6 +1168,7 @@ async fn backfill_default_file_mappings(
         "kimi-credentials",
         "kimi-plugins",
     ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] = &["omp-agents-dir"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1223,6 +1224,11 @@ async fn backfill_default_file_mappings(
                 15,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V15,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                16,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V16,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1660,6 +1666,18 @@ pub async fn resolve_dynamic_paths_with_db(
                         .to_string();
                     mapping.remote_path =
                         omp_remote_target_path_from_location(&location, "RULES.md");
+                }
+            }
+            "omp-agents-dir" => {
+                if let Ok(location) =
+                    runtime_location::get_oh_my_pi_runtime_location_async(db).await
+                {
+                    mapping.local_path = location
+                        .host_path
+                        .join("agents")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.remote_path = omp_remote_target_path_from_location(&location, "agents");
                 }
             }
             "hermes-config" | "hermes-prompt" => {
@@ -2231,6 +2249,20 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
+        SSHFileMapping {
+            // Subagents 集中配置渲染出的 `agents/*.md`(`<agentDir>/agents`)。
+            // 目录映射整体镜像,apply/clear applied 都会如实反映到远端。
+            id: "omp-agents-dir".to_string(),
+            name: "Oh My Pi Subagents 目录（agents）".to_string(),
+            module: "oh_my_pi".to_string(),
+            local_path: "~/.omp/agent/agents".to_string(),
+            remote_path: "~/.omp/agent/agents".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
         // Hermes - runtime config.yaml + authored global prompt.
         SSHFileMapping {
             id: "hermes-config".to_string(),
@@ -2580,6 +2612,42 @@ mod tests {
         assert_eq!(mapping.local_path, "~/.pi/agent/mcp.json");
         assert_eq!(mapping.remote_path, "~/.pi/agent/mcp.json");
         assert!(!mapping.is_directory);
+    }
+
+    #[test]
+    fn omp_agents_dir_default_mapping_is_a_directory() {
+        let mapping = default_file_mappings()
+            .into_iter()
+            .find(|mapping| mapping.id == "omp-agents-dir")
+            .expect("omp-agents-dir default mapping exists");
+
+        assert_eq!(mapping.module, "oh_my_pi");
+        assert!(mapping.is_directory);
+        assert_eq!(mapping.local_path, "~/.omp/agent/agents");
+        assert_eq!(mapping.remote_path, "~/.omp/agent/agents");
+    }
+
+    #[test]
+    fn defaults_backfill_v16_only_adds_omp_agents_dir_for_existing_v15_users() {
+        let ids = ["omp-agents-dir"];
+        assert!(should_backfill_versioned_mapping(
+            15,
+            16,
+            "omp-agents-dir",
+            &ids
+        ));
+        assert!(!should_backfill_versioned_mapping(
+            15,
+            16,
+            "kimi-config",
+            &ids
+        ));
+        assert!(!should_backfill_versioned_mapping(
+            16,
+            16,
+            "omp-agents-dir",
+            &ids
+        ));
     }
 
     #[test]

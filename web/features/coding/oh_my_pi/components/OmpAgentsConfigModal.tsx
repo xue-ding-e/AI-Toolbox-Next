@@ -1,10 +1,9 @@
 import React from 'react';
 import {
+  App,
   Button,
   Collapse,
-  Form,
   Input,
-  message,
   Modal,
   Select,
   Space,
@@ -28,7 +27,6 @@ import type {
 } from '@/types/ohMyPi';
 import {
   OMP_CORE_MODEL_ROLES,
-  OMP_CORE_MODEL_ROLE_KEYS,
   OMP_RESERVED_AGENT_NAMES,
   isValidOmpAgentFileName,
   ompAgentConfigToDraft,
@@ -108,7 +106,8 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
   onSuccess,
 }) => {
   const { t } = useTranslation();
-  const [form] = Form.useForm();
+  // 仓库约定:优先 `<App>` + `App.useApp()`,静态 `message` 拿不到主题/语言上下文。
+  const { message: appMessage } = App.useApp();
   const [name, setName] = React.useState('');
   const [modelRolesState, setModelRolesState] = React.useState<
     Record<string, { model?: string; thinkingLevel?: string }>
@@ -117,6 +116,10 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
   const [newCustomName, setNewCustomName] = React.useState('');
   const [showAddCustom, setShowAddCustom] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  // 只给"初始化" effect 读:父页面每次渲染都会传新的 providers 数组,直接进 deps
+  // 会把编辑中的表单重置掉。
+  const providersRef = React.useRef(providers);
+  providersRef.current = providers;
 
   /** 核心角色专用选项列表：排除 @role 别名，强制绑定具体供应商模型 */
   const coreRoleModelOptions = React.useMemo(() => {
@@ -149,7 +152,7 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
       let thinkingLevel = parsed.thinkingLevel || roleDef.defaultThinkingLevel || undefined;
       // 检查当前模型是否支持该思考级别
       if (model) {
-        const thinkingInfo = getOmpThinkingOptionsForModel(model, providers);
+        const thinkingInfo = getOmpThinkingOptionsForModel(model, providersRef.current);
         if (!thinkingInfo.supported) {
           thinkingLevel = undefined;
         } else if (
@@ -171,13 +174,15 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
     const schemeAgents = initialValues?.agents ?? {};
     if (schemeAgents) {
       Object.entries(schemeAgents).forEach(([agentKey, agent]) => {
-        if (!agent || OMP_CORE_MODEL_ROLE_KEYS.has(agentKey) || OMP_RESERVED_AGENT_NAMES.has(agentKey)) {
+        // 只跳过 OMP 保留名(main/sub)。与核心 role 同名的 agent(如 `task`,
+        // 上游确实有 bundled task.md)是合法的覆盖文件,跳过会让它保存后消失。
+        if (!agent || OMP_RESERVED_AGENT_NAMES.has(agentKey)) {
           return;
         }
         const draft = ompAgentConfigToDraft(agent);
         // 检查自定义 agent 模型与思考级别支持
         if (draft.model) {
-          const thinkingInfo = getOmpThinkingOptionsForModel(draft.model, providers);
+          const thinkingInfo = getOmpThinkingOptionsForModel(draft.model, providersRef.current);
           if (!thinkingInfo.supported) {
             draft.thinkingLevel = undefined;
           } else if (
@@ -221,8 +226,9 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
     setCustomAgents(nextCustom);
     setNewCustomName('');
     setShowAddCustom(false);
-    form.resetFields();
-  }, [open, initialValues, form, providers]);
+    // 只在弹窗打开 / 编辑目标变化时初始化。`providers` 走 ref(最新值)而不进 deps:
+    // 它是父页面每次渲染新建的数组,进 deps 会让父页面任何重渲染都把编辑中的内容重置掉。
+  }, [open, initialValues]);
 
   const handleRoleChange = (
     roleKey: string,
@@ -283,23 +289,19 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
   const handleAddCustomAgent = () => {
     const trimmed = newCustomName.trim();
     if (!trimmed) {
-      message.error(t('ohMyPi.subagents.agentKeyRequired'));
+      appMessage.error(t('ohMyPi.subagents.agentKeyRequired'));
       return;
     }
     if (!isValidOmpAgentFileName(trimmed)) {
-      message.error(t('ohMyPi.subagents.agentKeyInvalid'));
+      appMessage.error(t('ohMyPi.subagents.agentKeyInvalid'));
       return;
     }
     if (OMP_RESERVED_AGENT_NAMES.has(trimmed)) {
-      message.error(t('ohMyPi.subagents.agentKeyReserved'));
-      return;
-    }
-    if (OMP_CORE_MODEL_ROLE_KEYS.has(trimmed)) {
-      message.error(t('ohMyPi.subagents.agentKeyBuiltin'));
+      appMessage.error(t('ohMyPi.subagents.agentKeyReserved'));
       return;
     }
     if (customAgents.some((c) => c.key === trimmed)) {
-      message.error(t('ohMyPi.subagents.agentKeyDuplicate'));
+      appMessage.error(t('ohMyPi.subagents.agentKeyDuplicate'));
       return;
     }
     const newDraft: OmpAgentFormDraft = {
@@ -338,14 +340,23 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
   const handleSubmit = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      message.error(t('ohMyPi.subagents.nameRequired'));
+      appMessage.error(t('ohMyPi.subagents.nameRequired'));
       return;
     }
 
     // 检查自定义 agent 中的 JSON 是否合法
     for (const agent of customAgents) {
       if (!agent.advancedValid) {
-        message.error(t('ohMyPi.subagents.invalidAgentJson'));
+        appMessage.error(t('ohMyPi.subagents.invalidAgentJson'));
+        return;
+      }
+    }
+
+    // 上游 `parseAgentFields` 对每个 agent 都要求非空 description(缺了会被 OMP
+    // 丢弃),后端 apply 也会整份拒绝。这里先拦住并给出可读提示。
+    for (const agent of customAgents) {
+      if (!agent.draft.description || !agent.draft.description.trim()) {
+        appMessage.error(t('ohMyPi.subagents.descriptionRequired'));
         return;
       }
     }
@@ -368,7 +379,7 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
       try {
         advancedObj = parseRawAdvanced(agent.advancedRaw);
       } catch {
-        message.error(t('ohMyPi.subagents.invalidAgentJson'));
+        appMessage.error(t('ohMyPi.subagents.invalidAgentJson'));
         return;
       }
       const baseConfig = ompAgentDraftToConfig(agent.draft, advancedObj);
@@ -395,7 +406,7 @@ const OmpAgentsConfigModal: React.FC<OmpAgentsConfigModalProps> = ({
 
   const logError = (err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
-    message.error(msg);
+    appMessage.error(msg);
   };
 
   return (

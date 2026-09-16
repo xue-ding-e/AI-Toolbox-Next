@@ -145,6 +145,7 @@ import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFro
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import { extractOmpProviderFromCcSwitch } from '../utils/importMapping';
 import OmpAgentsSettings from '../components/OmpAgentsSettings';
+import { OMP_CORE_MODEL_ROLES } from '../utils/ompAgentsUtils';
 import OmpExtensionsSection from '../components/OmpExtensionsSection';
 import styles from './OhMyPiPage.module.less';
 
@@ -671,18 +672,12 @@ const OhMyPiPage: React.FC = () => {
   const ompAgentsModelOptions = React.useMemo(() => {
     const groups: Array<{ label: string; options: Array<{ label: string; value: string }> }> = [];
 
-    // 常用内置角色别名(供自定义 Subagent 快速委派使用)
-    const roleAliasOptions = [
-      { label: '@default (默认模型)', value: '@default' },
-      { label: '@plan (架构规划专员)', value: '@plan' },
-      { label: '@task (子任务执行代理)', value: '@task' },
-      { label: '@advisor (监督与审查顾问)', value: '@advisor' },
-      { label: '@commit (Git 提交生成器)', value: '@commit' },
-      { label: '@tiny (轻量级后台任务)', value: '@tiny' },
-      { label: '@smol (低延迟快速模型)', value: '@smol' },
-      { label: '@slow (深度慢思考推理)', value: '@slow' },
-      { label: '@vision (视觉多模态分析)', value: '@vision' },
-    ];
+    // 常用内置角色别名(供自定义 Subagent 快速委派使用)。标签走 i18n:
+    // 这份列表会直接出现在弹窗的模型下拉里,英文界面不能显示中文。
+    const roleAliasOptions = OMP_CORE_MODEL_ROLES.map((role) => ({
+      label: `@${role.key} (${t(`ohMyPi.subagents.aliasLabels.${role.key}`)})`,
+      value: `@${role.key}`,
+    }));
     groups.push({
       label: t('ohMyPi.subagents.roleAliasesGroup'),
       options: roleAliasOptions,

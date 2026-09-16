@@ -20,7 +20,10 @@ use crate::db::SqliteDbState;
 use tauri::{Emitter, Runtime};
 
 /// OMP 思考级别白名单(OMP 支持 `auto`,比 Pi 多一个)。
-const OMP_THINKING_LEVEL_KEYS: [&str; 8] = [
+/// OMP 思考级别词表:`off`/`auto` 加 EffortSchema 的 `minimal..max`。
+/// 既用于校验全局 `defaultThinkingLevel`,也用于判定 `modelRoles` 值里的
+/// `:level` 后缀是否真的是思考级别(见 `agents::parse_role_string`)。
+pub(crate) const OMP_THINKING_LEVEL_KEYS: [&str; 8] = [
     "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto",
 ];
 const OMP_MODEL_ROLE_KEY: &str = "default";

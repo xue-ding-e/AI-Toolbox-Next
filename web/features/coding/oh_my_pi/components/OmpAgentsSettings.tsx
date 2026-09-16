@@ -58,7 +58,6 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import {
   OMP_CORE_MODEL_ROLES,
-  OMP_CORE_MODEL_ROLE_KEYS,
   OMP_RESERVED_AGENT_NAMES,
   getOmpModelRoleDisplay,
 } from '../utils/ompAgentsUtils';
@@ -141,11 +140,10 @@ const SortableCard: React.FC<{
 
   const customAgentEntries = React.useMemo(() => {
     const schemeAgents = config.agents ?? {};
+    // 只排除 OMP 保留名(main/sub)。像 `task` 这种与核心 role 同名的 agent 是
+    // 合法的 bundled 覆盖,过滤掉会让它在保存后静默消失。
     return Object.entries(schemeAgents)
-      .filter(
-        ([name]) =>
-          !OMP_CORE_MODEL_ROLE_KEYS.has(name) && !OMP_RESERVED_AGENT_NAMES.has(name),
-      )
+      .filter(([name]) => !OMP_RESERVED_AGENT_NAMES.has(name))
       .map(([name, agent]) => ({
         name,
         description: agent?.description ? String(agent.description) : '',
@@ -436,16 +434,33 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
     });
   };
 
-  const handleToggleDisabled = async (config: OmpAgentsConfig, isDisabled: boolean) => {
+  const applyToggleDisabled = async (config: OmpAgentsConfig, isDisabled: boolean) => {
     try {
       await toggleOmpAgentsConfigDisabled(config.id, isDisabled);
       void appMessage.success(
         isDisabled ? t('ohMyPi.subagents.configDisabled') : t('ohMyPi.subagents.configEnabled'),
       );
       await refreshAfterChange();
+      onConfigUpdated?.();
     } catch {
       void appMessage.error(t('common.error'));
     }
+  };
+
+  const handleToggleDisabled = async (config: OmpAgentsConfig, isDisabled: boolean) => {
+    if (!isDisabled || !config.isApplied) {
+      await applyToggleDisabled(config, isDisabled);
+      return;
+    }
+    // 禁用「已应用」方案会撤回运行目录(清空 agents/*.md 并重置 modelRoles),
+    // 属于破坏性操作:下拉里一个小开关不能一点就删,必须二次确认。
+    Modal.confirm({
+      title: t('ohMyPi.subagents.disableAppliedConfirmTitle'),
+      content: t('ohMyPi.subagents.disableAppliedConfirmContent', { name: config.name }),
+      okText: t('ohMyPi.subagents.disableAppliedConfirmOk'),
+      okButtonProps: { danger: true },
+      onOk: () => applyToggleDisabled(config, isDisabled),
+    });
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -508,6 +523,20 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
     await refreshAfterChange();
     onConfigUpdated?.();
   };
+
+  // 弹窗的初始化 effect 以 `initialValues` 的对象身份为依赖:必须 memo,否则每次
+  // 渲染都新建对象,父页面任何重渲染都会把弹窗里正在编辑的内容重置掉。
+  const modalInitialValues = React.useMemo(
+    () =>
+      editingConfig
+        ? {
+            ...editingConfig,
+            id: isCopyMode ? undefined : editingConfig.id,
+            name: isCopyMode ? `${editingConfig.name}_copy` : editingConfig.name,
+          }
+        : undefined,
+    [editingConfig, isCopyMode],
+  );
 
   const managedConfigs = configs.filter((c) => c.id !== '__local__');
   const appliedConfig = configs.find((c) => c.isApplied && c.id !== '__local__');
@@ -628,7 +657,7 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
                   <Alert
                     type="info"
                     showIcon
-                    message={t('ohMyPi.subagents.localOnlyHint')}
+                    title={t('ohMyPi.subagents.localOnlyHint')}
                     style={{ marginTop: 8 }}
                   />
                 )}
@@ -641,15 +670,7 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
       <OmpAgentsConfigModal
         open={modalOpen}
         isEdit={!isCopyMode && !!editingConfig}
-        initialValues={
-          editingConfig
-            ? {
-                ...editingConfig,
-                id: isCopyMode ? undefined : editingConfig.id,
-                name: isCopyMode ? `${editingConfig.name}_copy` : editingConfig.name,
-              }
-            : undefined
-        }
+        initialValues={modalInitialValues}
         modelOptions={modelOptions}
         providers={providers}
         onCancel={() => {

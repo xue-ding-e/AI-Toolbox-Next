@@ -17,6 +17,12 @@ const PI_EXTENDED_THINKING_LEVELS = new Set<string>(PI_EXTENDED_THINKING_LEVEL_K
 // OMP 模型 `thinking` 结构支持的思考级别词表(不含 off/auto,它们与列表正交)。
 const OMP_THINKING_EFFORT_KEYS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+/** OMP 思考级别全词表:`off`/`auto` 加 EffortSchema 的 `minimal..max`。
+ *  与后端 `oh_my_pi::commands::OMP_THINKING_LEVEL_KEYS` 一致,用于判定
+ *  `provider/model:level` 里的后缀到底是不是思考级别。 */
+export const OMP_THINKING_LEVEL_KEYS = [...PI_THINKING_LEVEL_KEYS, 'auto'] as const;
+export const OMP_THINKING_LEVELS = new Set<string>(OMP_THINKING_LEVEL_KEYS);
+
 const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

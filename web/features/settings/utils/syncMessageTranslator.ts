@@ -164,6 +164,11 @@ const BUILTIN_FILE_MAPPINGS = [
 		rustDefaultName: "Oh My Pi 规则",
 		i18nSuffix: "ompRules",
 	},
+	{
+		id: "omp-agents-dir",
+		rustDefaultName: "Oh My Pi Subagents 目录（agents）",
+		i18nSuffix: "ompAgentsDir",
+	},
 ] as const;
 
 /** Map stable `id` and Rust default `name` (zh) → i18n key suffix. */

@@ -1108,7 +1108,8 @@
         "ompModels": "Oh My Pi 模型供应商",
         "ompMcp": "Oh My Pi MCP 配置",
         "ompAgents": "Oh My Pi 全局提示词",
-        "ompRules": "Oh My Pi 规则"
+        "ompRules": "Oh My Pi 规则",
+        "ompAgentsDir": "Oh My Pi Subagents 目录（agents）"
       },
       "allMappings": "全部",
       "mappings": "个映射",
@@ -5377,6 +5378,9 @@
       "clearAppliedConfirmContent": "清除方案「{{name}}」会重置 modelRoles 并清空 agents/*.md 目录(保留数据库方案)。",
       "clearAppliedConfirmOk": "确认清除",
       "clearAppliedSuccess": "已清除应用",
+      "disableAppliedConfirmTitle": "禁用已应用方案",
+      "disableAppliedConfirmContent": "禁用「{{name}}」会撤回运行目录：清空 agents/*.md 并重置 config.yml 的 modelRoles（方案记录保留）。确定继续吗？",
+      "disableAppliedConfirmOk": "确认禁用",
       "configDisabled": "方案已禁用",
       "configEnabled": "方案已启用",
       "configDisabledDesc": "已禁用,不可应用",
@@ -5418,6 +5422,18 @@
       "modelPlaceholder": "选择模型或输入 @role / provider/model",
       "thinkingLevel": "思考级别",
       "thinkingLevelPlaceholder": "off / auto / low / high...",
+      "descriptionRequired": "自定义代理必须填写用途描述",
+      "aliasLabels": {
+        "default": "默认模型",
+        "plan": "架构规划",
+        "task": "子任务代理",
+        "advisor": "审查顾问",
+        "commit": "提交生成",
+        "tiny": "轻量后台",
+        "smol": "低延迟快速",
+        "slow": "深度慢思考",
+        "vision": "视觉多模态"
+      },
       "selectModelFirst": "请先选择模型",
       "thinkingNotSupported": "该模型不支持思考",
       "roleAliasesGroup": "常用角色别名 (Role Aliases)",
