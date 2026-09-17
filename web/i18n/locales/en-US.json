@@ -1925,9 +1925,7 @@
       "alreadyExists": "Already exists",
       "removeMissing": "Also remove local models missing from this API response ({{count}})",
       "removeMissingNone": "Remove missing models: none found in this fetch",
-      "returnedCount": "Returned",
-      "selectedCount": "Selected",
-      "removableCount": "Removable",
+      "statsLine": "Returned {{returned}} · Selected {{selected}}",
       "applyChanges": "Apply Changes (add {{addCount}}, remove {{removeCount}})",
       "applySuccess": "Model list updated: added {{addCount}}, removed {{removeCount}}"
     },
@@ -5354,7 +5352,8 @@
     },
     "diagnostics": {
       "unsupportedApi": "Connectivity testing is not available for {{api}}. Verify it with the OMP CLI.",
-      "mixedConnections": "Models use different protocols or endpoints. Verify them individually with the OMP CLI.",
+      "mixedConnections": "Models use different protocols or endpoints. Each model is tested with its own connection.",
+      "noTestableModel": "The protocols these models use cannot be connectivity tested. Verify them with the OMP CLI.",
       "modelDiscoveryUnavailable": "Model discovery is not available for this connection. Add models manually."
     },
     "subagents": {

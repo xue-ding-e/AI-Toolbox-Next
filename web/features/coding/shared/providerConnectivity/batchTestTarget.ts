@@ -1,3 +1,8 @@
+import {
+  resolveModelConnection,
+  type ProviderModelConnections,
+} from './modelConnection';
+
 export interface ProviderConnectivityInfo {
   providerId: string;
   providerName: string;
@@ -12,6 +17,8 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
+  /** Models whose own api/baseUrl overrides the provider connection (OMP). */
+  modelConnections?: ProviderModelConnections;
 }
 
 export interface ProviderConnectivityBatchTarget {
@@ -69,7 +76,22 @@ export function buildProviderConnectivityBatchTarget(
     ? options.preferredModelId
     : info.modelIds[0];
 
-  if (options.requireBaseUrl && !baseUrl) {
+  // OMP models may carry their own api/baseUrl; the batch probes one model per
+  // provider, so that model's own connection wins over the provider's.
+  const connection = resolveModelConnection(
+    {
+      npm,
+      baseUrl,
+      ...(info.apiFormat ? { apiFormat: info.apiFormat } : {}),
+    },
+    modelId ?? '',
+    info.modelConnections,
+  );
+  const requestNpm = connection.npm;
+  const requestBaseUrl = connection.baseUrl.trim();
+  const requestApiFormat = connection.apiFormat;
+
+  if (options.requireBaseUrl && !requestBaseUrl) {
     return {
       providerId: info.providerId,
       errorMessage: options.errorMessages.missingBaseUrl,
@@ -105,10 +127,10 @@ export function buildProviderConnectivityBatchTarget(
         }
       : {
           request: {
-            npm,
-            ...(info.apiFormat ? { apiFormat: info.apiFormat } : {}),
+            npm: requestNpm,
+            ...(requestApiFormat ? { apiFormat: requestApiFormat } : {}),
             providerId: info.providerId,
-            baseUrl,
+            baseUrl: requestBaseUrl,
             ...(apiKey ? { apiKey } : {}),
             ...(providerOptions.headers ? { headers: providerOptions.headers } : {}),
             ...(info.reasoningEffort ? { reasoningEffort: info.reasoningEffort } : {}),

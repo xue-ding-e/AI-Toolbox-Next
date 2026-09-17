@@ -14,6 +14,11 @@ import {
   type GatewayConnectivityTestRequest,
 } from '@/services/proxyGatewayApi';
 import type { OpenCodeProvider } from '@/types/opencode';
+import {
+  buildTokenCapFields,
+  resolveModelConnection,
+  type ProviderModelConnections,
+} from '@/features/coding/shared/providerConnectivity/modelConnection';
 import styles from './ConnectivityTestModal.module.less';
 
 
@@ -24,6 +29,8 @@ interface ConnectivityTestModalProps {
   providerName: string;
   providerConfig: OpenCodeProvider;
   apiFormat?: ConnectivityTestRequest['apiFormat'];
+  /** Per-model connection overrides (OMP `models.yml` allows per-model api/baseUrl). */
+  modelConnections?: ProviderModelConnections;
   modelIds: string[];
   removableModelIds?: string[];
   diagnostics?: OpenCodeDiagnosticsConfig;
@@ -53,6 +60,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   providerName,
   providerConfig,
   apiFormat,
+  modelConnections,
   modelIds,
   removableModelIds,
   diagnostics,
@@ -194,7 +202,6 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       // 1. Save diagnostics configuration
       const npm = providerConfig.npm || '@ai-sdk/openai-compatible';
-      const isGoogle = npm === '@ai-sdk/google';
 
       const headersObject = (headersJson && typeof headersJson === 'object' && !Array.isArray(headersJson))
         ? (headersJson as Record<string, unknown>)
@@ -208,9 +215,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         defaultTestModelId,
         stream: values.stream,
         ...(values.temperature !== undefined ? { temperature: values.temperature } : {}),
-        ...(values.maxTokens !== undefined
-          ? (isGoogle ? { maxOutputTokens: values.maxTokens } : { maxTokens: values.maxTokens })
-          : {}),
+        ...buildTokenCapFields(npm, values.maxTokens),
         ...(headersObject ? { headers: headersObject } : {}),
         ...(bodyObject ? { body: bodyObject } : {}),
       };
@@ -232,9 +237,8 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         prompt: values.prompt,
         stream: values.stream,
         ...(values.temperature !== undefined ? { temperature: values.temperature } : {}),
-        ...(values.maxTokens !== undefined
-          ? (isGoogle ? { maxOutputTokens: values.maxTokens } : { maxTokens: values.maxTokens })
-          : {}),
+        // The token cap is added per model below: the field name depends on the
+        // SDK that actually serves the request, which a model may override.
         ...(Object.keys(mergedHeaders).length > 0 ? { headers: mergedHeaders } : {}),
         ...(bodyObject ? { body: bodyObject } : {}),
         modelIds: [],
@@ -245,6 +249,10 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       const failedModelIds: string[] = [];
       const promises = modelsToTest.map(async (modelId) => {
         try {
+          // A model may override the provider's connection (OMP `models.yml`), so
+          // each test follows the model it is probing instead of the provider.
+          const modelRequest = resolveModelConnection(baseRequest, modelId, modelConnections);
+          const request = { ...modelRequest, ...buildTokenCapFields(modelRequest.npm, values.maxTokens) };
           const response = gatewayRequest
             ? await testGatewayProviderModelConnectivity({
                 ...gatewayRequest,
@@ -254,7 +262,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                 timeoutSecs: 30,
               })
             : await testProviderModelConnectivity({
-                ...baseRequest,
+                ...request,
                 modelIds: [modelId],
               });
 

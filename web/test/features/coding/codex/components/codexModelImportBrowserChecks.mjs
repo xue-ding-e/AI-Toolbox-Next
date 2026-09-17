@@ -107,6 +107,46 @@ export async function verifyCodexModelImport({ send, evaluate, baseUrl, artifact
   await action('cancelImport()'); await action('failNextFetch("Fixture discovery failed")'); await openImport();
   check('a failed discovery displays an error instead of reporting successful results', await evaluate('document.body.textContent.includes("Fixture discovery failed")'));
 
+  // A long catalog must use the dialog's leftover height instead of a fixed
+  // box: one scroller (the list), a header that stays pinned, and a footer that
+  // never leaves the viewport (issue #360).
+  const manyModels = Array.from({ length: 60 }, (_, index) => ({ id: 'bulk-' + (index + 1), ownedBy: 'fixture' }));
+  await openFixture('scenario=custom');
+  await action('setModels(' + JSON.stringify(manyModels) + ')');
+  await openImport();
+  const listLayout = await evaluate(`(() => {
+    const modal = Array.from(document.querySelectorAll('.ant-modal')).at(-1);
+    const table = modal.querySelector('.ant-table-wrapper');
+    const scrollerOf = (element) => {
+      for (let node = element && element.parentElement; node; node = node.parentElement) {
+        const overflow = getComputedStyle(node).overflowY;
+        if (overflow === 'auto' || overflow === 'scroll') return node;
+      }
+      return null;
+    };
+    const wrap = scrollerOf(table);
+    const body = modal.querySelector('.ant-modal-body');
+    const footer = modal.querySelector('.ant-modal-footer');
+    const header = modal.querySelector('.ant-table-thead th');
+    const headerTop = header.getBoundingClientRect().top;
+    wrap.scrollTop = 300;
+    return {
+      rows: modal.querySelectorAll('.ant-table-tbody tr[data-row-key]').length,
+      listHeight: wrap.clientHeight,
+      scrollsTheBody: wrap === body,
+      listScrolls: wrap.scrollTop > 0,
+      headerPinned: Math.abs(header.getBoundingClientRect().top - headerTop) < 2,
+      bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+      footerVisible: footer.getBoundingClientRect().bottom <= innerHeight + 1,
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+    };
+  })()`);
+  check('a long model list fills the dialog height in a single scrolling region', [listLayout.listHeight > 320, listLayout.scrollsTheBody], [true, false]);
+  check('scrolling the list keeps the body and the footer in place', [listLayout.listScrolls, listLayout.bodyScrolls, listLayout.footerVisible], [true, false, true]);
+  check('the list header stays pinned while the rows scroll', listLayout.headerPinned);
+  check('the widened list still renders every fetched row without page overflow', [listLayout.rows, listLayout.pageFits], [60, true]);
+  await screenshot('long-list');
+
   for (const displayTheme of ['light', 'dark', 'system']) {
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
     await openFixture('scenario=preset&theme=' + displayTheme + '&language=' + (displayTheme === 'light' ? 'zh-CN' : 'en-US'));

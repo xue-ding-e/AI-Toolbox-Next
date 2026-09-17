@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getOmpDiagnostics } from '../../../../../features/coding/oh_my_pi/utils/ompDiagnostics.ts';
+import {
+  getOmpDiagnostics,
+  getTestableOmpModelIds,
+  toOmpModelConnectionMap,
+} from '../../../../../features/coding/oh_my_pi/utils/ompDiagnostics.ts';
 import { OMP_API_DEFAULT_BASE_URL } from '../../../../../features/coding/oh_my_pi/utils/ompApiOptions.ts';
 import { buildModelsUrl, getDefaultModelsApiType } from '../../../../../components/common/FetchModelsModal/request.ts';
 import { buildProviderConnectivityBatchTarget } from '../../../../../features/coding/shared/providerConnectivity/batchTestTarget.ts';
@@ -41,12 +45,105 @@ test('unsupported native protocols never fall through to OpenAI-compatible diagn
   }
 });
 
-test('OMP diagnostics use homogeneous model overrides and refuse mixed connections', () => {
+test('OMP diagnostics use homogeneous model overrides and fall back to the provider endpoint when mixed', () => {
   const provider = { api: 'openai-completions', baseUrl: 'https://relay.example/v1', models: [
     { id: 'one', api: 'openai-codex-responses' }, { id: 'two', api: 'openai-codex-responses' },
   ] };
   assert.equal(getOmpDiagnostics(provider).apiFormat, 'openai-codex-responses');
-  assert.equal(getOmpDiagnostics({ ...provider, models: [...provider.models, { id: 'chat' }] }).supportsConnectivity, false);
-  assert.equal(getOmpDiagnostics({ ...provider, models: [{ id: 'one' }, { id: 'two', baseUrl: 'https://other.example/v1' }] }).supportsConnectivity, false);
+
+  // A model on another protocol no longer greys the provider buttons out:
+  // discovery keeps the provider endpoint, connectivity follows each model.
+  const mixedProtocol = getOmpDiagnostics({ ...provider, models: [...provider.models, { id: 'chat' }] });
+  assert.equal(mixedProtocol.mixedConnections, true);
+  assert.equal(mixedProtocol.supportsConnectivity, true);
+  assert.equal(mixedProtocol.supportsModelDiscovery, true);
+  assert.equal(mixedProtocol.api, 'openai-completions');
+  assert.equal(mixedProtocol.baseUrl, 'https://relay.example/v1');
+
+  const mixedBaseUrl = getOmpDiagnostics({
+    ...provider, models: [{ id: 'one' }, { id: 'two', baseUrl: 'https://other.example/v1' }],
+  });
+  assert.equal(mixedBaseUrl.mixedConnections, true);
+  assert.equal(mixedBaseUrl.supportsConnectivity, true);
+  assert.equal(mixedBaseUrl.supportsModelDiscovery, true);
+  assert.equal(mixedBaseUrl.baseUrl, 'https://relay.example/v1');
+
   assert.equal(getOmpDiagnostics({ api: 'google-generative-ai', baseUrl: 'https://generativelanguage.googleapis.com' }).baseUrl, 'https://generativelanguage.googleapis.com/v1beta');
+});
+
+test('a per-model api override keeps discovery enabled and tests each model on its own connection', () => {
+  const diagnostics = getOmpDiagnostics({
+    api: 'openai-responses',
+    baseUrl: 'https://relay.example/v1',
+    models: [
+      { id: 'gpt-5' },
+      { id: 'claude-sonnet', api: 'anthropic-messages', baseUrl: 'https://relay.example/anthropic' },
+    ],
+  });
+
+  // Issue #360: this exact shape used to disable "fetch models" entirely.
+  assert.equal(diagnostics.supportsModelDiscovery, true);
+  assert.equal(diagnostics.supportsConnectivity, true);
+  assert.equal(diagnostics.mixedConnections, true);
+  assert.equal(diagnostics.api, 'openai-responses');
+  assert.equal(diagnostics.npm, '@ai-sdk/openai');
+  assert.equal(buildModelsUrl(diagnostics.baseUrl, getDefaultModelsApiType(diagnostics.npm), diagnostics.npm), 'https://relay.example/v1/models');
+
+  const modelIds = getTestableOmpModelIds(diagnostics.modelConnections);
+  const modelConnections = toOmpModelConnectionMap(diagnostics.modelConnections);
+  assert.deepEqual(modelIds, ['gpt-5', 'claude-sonnet']);
+  assert.deepEqual(modelConnections, {
+    'gpt-5': { npm: '@ai-sdk/openai', baseUrl: 'https://relay.example/v1', apiFormat: undefined },
+    'claude-sonnet': { npm: '@ai-sdk/anthropic', baseUrl: 'https://relay.example/anthropic/v1', apiFormat: undefined },
+  });
+
+  // The batch probe follows the model it picked, not the provider connection.
+  const target = buildProviderConnectivityBatchTarget({
+    providerId: 'p',
+    providerName: 'P',
+    providerConfig: { npm: diagnostics.npm, options: { baseURL: diagnostics.baseUrl, apiKey: 'k' } },
+    apiFormat: diagnostics.apiFormat,
+    modelIds,
+    modelConnections,
+  }, {
+    requireBaseUrl: true,
+    preferredModelId: 'claude-sonnet',
+    errorMessages: { missingBaseUrl: 'url', missingApiKey: 'key', missingModel: 'model' },
+  });
+  assert.equal(target.request?.npm, '@ai-sdk/anthropic');
+  assert.equal(target.request?.baseUrl, 'https://relay.example/anthropic/v1');
+  assert.equal(target.request?.apiFormat, undefined);
+  assert.deepEqual(target.request?.modelIds, ['claude-sonnet']);
+});
+
+test('a mixed provider without a provider-level api keeps per-model testing but cannot discover models', () => {
+  const diagnostics = getOmpDiagnostics({ baseUrl: 'https://relay.example/v1', models: [
+    { id: 'one', api: 'openai-completions' }, { id: 'two', api: 'anthropic-messages' },
+  ] });
+  assert.equal(diagnostics.mixedConnections, true);
+  // Every model still knows its own protocol, so connectivity testing works…
+  assert.equal(diagnostics.supportsConnectivity, true);
+  assert.deepEqual(getTestableOmpModelIds(diagnostics.modelConnections), ['one', 'two']);
+  // …but there is no provider-level protocol to list the catalog with.
+  assert.equal(diagnostics.supportsModelDiscovery, false);
+
+});
+
+test('connectivity is disabled when no model has a testable connection', () => {
+  const overrides = [
+    { id: 'one', api: 'google-vertex' }, { id: 'two', api: 'bedrock-converse-stream' },
+  ];
+
+  // Nothing testable anywhere (no provider api either): stay off rather than
+  // probing an unknown endpoint.
+  const untestable = getOmpDiagnostics({ baseUrl: 'https://relay.example/v1', models: overrides });
+  assert.equal(untestable.supportsConnectivity, false);
+  assert.equal(untestable.supportsModelDiscovery, false);
+  assert.deepEqual(getTestableOmpModelIds(untestable.modelConnections), []);
+
+  // A testable provider api is not enough when every model overrides to an
+  // untestable protocol: the button must not open an empty test list.
+  const overriddenEverywhere = getOmpDiagnostics({ api: 'openai-responses', baseUrl: 'https://relay.example/v1', models: overrides });
+  assert.equal(overriddenEverywhere.supportsModelDiscovery, true);
+  assert.equal(overriddenEverywhere.supportsConnectivity, false);
 });

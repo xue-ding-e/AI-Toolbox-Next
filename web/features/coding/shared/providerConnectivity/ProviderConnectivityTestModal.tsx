@@ -16,6 +16,7 @@ import {
   parseKimiSettingsConfig,
 } from '@/features/coding/kimi/utils/settingsConfig';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
+import type { ProviderModelConnections } from '@/features/coding/shared/providerConnectivity/modelConnection';
 import type { GatewayCliKey } from '@/services/proxyGatewayApi';
 
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com/v1';
@@ -29,6 +30,8 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
+  /** Models whose own api/baseUrl overrides the provider connection (OMP). */
+  modelConnections?: ProviderModelConnections;
 }
 
 interface ProviderConnectivityTestModalProps {
@@ -227,6 +230,7 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       providerName={connectivityInfo.providerName}
       providerConfig={connectivityInfo.providerConfig}
       apiFormat={connectivityInfo.apiFormat}
+      modelConnections={connectivityInfo.modelConnections}
       modelIds={connectivityInfo.modelIds}
       removableModelIds={removableModelIds ?? connectivityInfo.modelIds}
       diagnostics={diagnostics}

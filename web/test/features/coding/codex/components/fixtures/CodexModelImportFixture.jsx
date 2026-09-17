@@ -142,7 +142,13 @@ function FixtureApp() {
   fixture.reopenSaved = async () => { setProvider(structuredClone(state.saved)); setOpen(true); await wait(250); };
   fixture.switchProtocol = async apiFormat => { setProvider(createProvider(apiFormat)); setOpen(true); await wait(250); };
   return (
-    <ConfigProvider theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+    // `centered: true` mirrors the app's ConfigProvider (web/app/providers.tsx);
+    // without it modals keep antd's default 100px top offset and can overflow
+    // the viewport, which the layout assertions would misread as a regression.
+    <ConfigProvider
+      modal={{ centered: true }}
+      theme={{ algorithm: resolvedTheme === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm }}
+    >
       <App>
         <CodexProviderFormModal open={open} provider={provider} onCancel={() => setOpen(false)} onSubmit={async values => {
           state.saved = structuredClone({ ...provider, ...values });

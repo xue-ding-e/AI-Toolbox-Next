@@ -189,20 +189,6 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   }, [existingModelIds, fetched, models]);
 
   const canConfirm = selectedRowKeys.length > 0 || (removeMissingModels && missingModelCount > 0);
-  const summaryItems = [
-    {
-      label: t('opencode.fetchModels.returnedCount'),
-      value: models.length,
-    },
-    {
-      label: t('opencode.fetchModels.selectedCount'),
-      value: selectedRowKeys.length,
-    },
-    {
-      label: t('opencode.fetchModels.removableCount'),
-      value: missingModelCount,
-    },
-  ];
 
   return (
     <Modal
@@ -234,43 +220,39 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       ]}
     >
       <div className={styles.content}>
-        <section className={styles.sectionCard}>
+        <section className={`${styles.sectionCard} ${styles.sourceCard}`}>
           <div className={styles.sectionHeader}>
             <div className={styles.sectionTitle}>{t('opencode.fetchModels.sourceSection')}</div>
             <Text className={styles.sectionHint}>{t('opencode.fetchModels.sourceSectionHint')}</Text>
           </div>
 
-          <div className={`${styles.fieldBlock} ${styles.fieldRow}`}>
+          <div className={styles.fieldRow}>
             <Text strong className={styles.fieldLabel}>
               {t('opencode.fetchModels.apiType')}
             </Text>
-            <div>
-              <div className={styles.apiTypePanel}>
-                <Radio.Group
-                  value={apiType}
-                  onChange={(e) => setApiType(e.target.value)}
-                  className={styles.apiTypeGroup}
-                >
-                  <Radio value="openai_compat">
-                    {t('opencode.fetchModels.openaiCompat')}
-                    <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                      (/models)
-                    </Text>
-                  </Radio>
-                  {supportsNative && (
-                    <Radio value="native">
-                      {t('opencode.fetchModels.native')}
-                      <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                        ({t('opencode.fetchModels.nativeHint')})
-                      </Text>
-                    </Radio>
-                  )}
-                </Radio.Group>
-              </div>
-            </div>
+            <Radio.Group
+              value={apiType}
+              onChange={(e) => setApiType(e.target.value)}
+              className={styles.apiTypeGroup}
+            >
+              <Radio value="openai_compat">
+                {t('opencode.fetchModels.openaiCompat')}
+                <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                  (/models)
+                </Text>
+              </Radio>
+              {supportsNative && (
+                <Radio value="native">
+                  {t('opencode.fetchModels.native')}
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    ({t('opencode.fetchModels.nativeHint')})
+                  </Text>
+                </Radio>
+              )}
+            </Radio.Group>
           </div>
 
-          <div className={`${styles.fieldBlock} ${styles.fieldRow}`}>
+          <div className={styles.fieldRow}>
             <Text strong className={styles.fieldLabel}>
               {t('opencode.fetchModels.apiUrl')}
             </Text>
@@ -294,7 +276,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
           </div>
         </section>
 
-        <section className={styles.sectionCard}>
+        <section className={`${styles.sectionCard} ${styles.resultCard}`}>
           <div className={styles.sectionHeader}>
             <div className={styles.sectionTitle}>{t('opencode.fetchModels.resultSection')}</div>
             <Text className={styles.sectionHint}>{t('opencode.fetchModels.resultSectionHint')}</Text>
@@ -317,11 +299,35 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
               onChange={(e) => setSearchText(e.target.value)}
               allowClear
             />
+            {fetched && (
+              <Text className={styles.statsText}>
+                {t('opencode.fetchModels.statsLine', {
+                  returned: models.length,
+                  selected: selectedRowKeys.length,
+                })}
+              </Text>
+            )}
           </div>
+
+          {fetched && (
+            <div className={styles.cleanupRow}>
+              {missingModelCount > 0 ? (
+                <Checkbox
+                  checked={removeMissingModels}
+                  onChange={(event) => setRemoveMissingModels(event.target.checked)}
+                >
+                  {t('opencode.fetchModels.removeMissing', { count: missingModelCount })}
+                </Checkbox>
+              ) : (
+                <Text type="secondary" className={styles.statsMuted}>
+                  {t('opencode.fetchModels.removeMissingNone')}
+                </Text>
+              )}
+            </div>
+          )}
 
           {error && (
             <Alert
-              className={styles.errorAlert}
               type="error"
               message={t('opencode.fetchModels.fetchFailed')}
               description={error}
@@ -332,36 +338,6 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
           )}
 
           {fetched && (
-            <div className={styles.summaryGrid}>
-              {summaryItems.map((item) => (
-                <div key={item.label} className={styles.summaryCard}>
-                  <Text className={styles.summaryLabel}>{item.label}</Text>
-                  <Text className={styles.summaryValue}>{item.value}</Text>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {fetched && missingModelCount > 0 && (
-            <div className={styles.cleanupCard}>
-              <Checkbox
-                checked={removeMissingModels}
-                onChange={(event) => setRemoveMissingModels(event.target.checked)}
-              >
-                {t('opencode.fetchModels.removeMissing', { count: missingModelCount })}
-              </Checkbox>
-            </div>
-          )}
-
-          {fetched && missingModelCount === 0 && (
-            <div className={styles.cleanupMuted}>
-              <Text type="secondary">
-                {t('opencode.fetchModels.removeMissingNone')}
-              </Text>
-            </div>
-          )}
-
-          {fetched && (
             <div className={styles.tableWrap}>
               <Table
                 rowKey="id"
@@ -369,7 +345,6 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
                 dataSource={filteredModels}
                 rowSelection={rowSelection}
                 pagination={false}
-                scroll={{ y: 300 }}
                 size="small"
                 locale={{
                   emptyText: searchText ? t('opencode.fetchModels.noSearchResults') : t('opencode.fetchModels.noModelsFound'),

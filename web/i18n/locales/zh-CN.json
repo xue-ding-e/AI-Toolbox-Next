@@ -1922,9 +1922,7 @@
       "alreadyExists": "已存在",
       "removeMissing": "同时清理本地已存在但本次接口未返回的模型（{{count}} 个）",
       "removeMissingNone": "清理缺失项：本次暂未发现可清理的本地模型",
-      "returnedCount": "接口返回",
-      "selectedCount": "选中新增",
-      "removableCount": "可清理",
+      "statsLine": "返回 {{returned}} · 已选 {{selected}}",
       "applyChanges": "应用变更（新增 {{addCount}}，清理 {{removeCount}}）",
       "applySuccess": "模型列表已更新：新增 {{addCount}} 个，清理 {{removeCount}} 个"
     },
@@ -5351,7 +5349,8 @@
     },
     "diagnostics": {
       "unsupportedApi": "暂不支持 {{api}} 的连通性测试，请使用 OMP CLI 验证。",
-      "mixedConnections": "模型使用不同的协议或地址，请使用 OMP CLI 逐个验证。",
+      "mixedConnections": "模型使用不同的协议或地址，将按各自连接分别测试。",
+      "noTestableModel": "模型各自使用的协议暂不支持连通性测试，请使用 OMP CLI 验证。",
       "modelDiscoveryUnavailable": "此连接暂不支持获取模型，请手动添加模型。"
     },
     "subagents": {

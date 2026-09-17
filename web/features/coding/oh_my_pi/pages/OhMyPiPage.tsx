@@ -72,7 +72,11 @@ import {
   OMP_API_OPTIONS,
   type OmpApiValue,
 } from '../utils/ompApiOptions';
-import { getOmpDiagnostics } from '../utils/ompDiagnostics';
+import {
+  getOmpDiagnostics,
+  getTestableOmpModelIds,
+  toOmpModelConnectionMap,
+} from '../utils/ompDiagnostics';
 import {
   buildFetchedOmpModel,
   ompApiToSdkName,
@@ -775,7 +779,6 @@ const OhMyPiPage: React.FC = () => {
       return null;
     }
     const providerConfig = provider.modelsProvider ?? {};
-    const modelIds = getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id);
     const diagnostics = getOmpDiagnostics(providerConfig);
     if (!diagnostics.supportsConnectivity) return null;
     const connection = buildOmpOpenCodeProvider(provider, providerConfig);
@@ -784,7 +787,9 @@ const OhMyPiPage: React.FC = () => {
       providerName: provider.displayName,
       providerConfig: { ...connection, npm: diagnostics.npm, options: { ...connection.options, baseURL: diagnostics.baseUrl } },
       apiFormat: diagnostics.apiFormat,
-      modelIds,
+      // 每个模型按自己的连接测试：模型级覆盖只影响它自己的请求。
+      modelIds: getTestableOmpModelIds(diagnostics.modelConnections),
+      modelConnections: toOmpModelConnectionMap(diagnostics.modelConnections),
     };
   }, [connectivityProviderId, ompProviders]);
 
@@ -1609,7 +1614,7 @@ const OhMyPiPage: React.FC = () => {
       const diagnostics = getOmpDiagnostics(provider.modelsProvider ?? {});
       providerConfig.npm = diagnostics.npm;
       providerConfig.options = { ...providerConfig.options, baseURL: diagnostics.baseUrl };
-      const modelIds = getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id);
+      const modelIds = getTestableOmpModelIds(diagnostics.modelConnections);
       return buildProviderConnectivityBatchTarget(
         {
           providerId: provider.providerKey,
@@ -1617,6 +1622,7 @@ const OhMyPiPage: React.FC = () => {
           providerConfig,
           apiFormat: diagnostics.apiFormat,
           modelIds,
+          modelConnections: toOmpModelConnectionMap(diagnostics.modelConnections),
         },
         {
           requireBaseUrl: true,
@@ -1800,16 +1806,19 @@ const OhMyPiPage: React.FC = () => {
     const providerBaseUrl = getStringField(providerConfig, 'baseUrl');
     const diagnostics = getOmpDiagnostics(providerConfig);
     const hasModelIds = getProviderModelRecords(provider.modelsProvider).length > 0;
-    const unsupportedReason = diagnostics.mixedConnections
-      ? t('ohMyPi.diagnostics.mixedConnections')
-      : t('ohMyPi.diagnostics.unsupportedApi', { api: diagnostics.api || t('common.notSet') });
     const connectivityTooltip = !diagnostics.supportsConnectivity
-      ? unsupportedReason
+      // 有模型却测不了，说明每个模型各自用了不支持的协议。
+      ? hasModelIds
+        ? t('ohMyPi.diagnostics.noTestableModel')
+        : t('ohMyPi.diagnostics.unsupportedApi', { api: diagnostics.api || t('common.notSet') })
       : !diagnostics.baseUrl
       ? t('common.baseUrlMissing')
       : !hasModelIds
         ? t('common.modelMissing')
-        : '';
+        // 混用连接不再是禁用理由，只是提示：测试会按各模型自己的连接分别发。
+        : diagnostics.mixedConnections
+          ? t('ohMyPi.diagnostics.mixedConnections')
+          : '';
     const fetchModelsTooltip = !diagnostics.supportsModelDiscovery
       ? t('ohMyPi.diagnostics.modelDiscoveryUnavailable')
       : !diagnostics.baseUrl ? t('common.baseUrlMissing') : '';
