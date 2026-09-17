@@ -8,6 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::codex_rollout;
 use super::message_blocks::{
     message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
     usage_from_value,
@@ -81,88 +82,49 @@ pub fn scan_recent_sessions(root: &Path, limit: usize) -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
-    let reader = BufReader::new(file);
+    // Keep the original contract: a session file that cannot be opened is an
+    // error, not an empty conversation. Ancestors that vanish mid-lineage are
+    // handled far more gently below.
+    File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
+
+    let sessions_root = find_sessions_root(path);
     let mut messages = Vec::new();
     let mut current_model: Option<String> = None;
     let mut prev_token_usage = CodexTokenUsageTotals::default();
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
+    visit_lineage_lines(sessions_root.as_deref(), path, |line| {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return true;
         };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-
-        let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        match record_type {
-            "turn_context" => {
-                if let Some(model) = value
-                    .get("payload")
-                    .and_then(|payload| payload.get("model"))
-                    .and_then(Value::as_str)
-                {
-                    current_model = Some(model.to_string());
-                }
-                continue;
-            }
-            "response_item" => {}
-            "event_msg" => {
-                if let Some(payload) = value.get("payload") {
-                    if apply_codex_event_message(&mut messages, payload, ts, &mut prev_token_usage)
-                    {
-                        continue;
-                    }
-                }
-                continue;
-            }
-            "compacted" => {
-                if let Some(payload) = value.get("payload") {
-                    messages.push(codex_compacted_message(payload, ts));
-                }
-                continue;
-            }
-            _ => continue,
-        }
-
-        let payload = match value.get("payload") {
-            Some(payload) => payload,
-            None => continue,
-        };
-
-        let Some(message) = codex_message_from_payload(payload, ts, current_model.as_deref())
-        else {
-            continue;
-        };
-        if message.content.trim().is_empty() {
-            continue;
-        }
-        messages.push(message);
-    }
+        // One shared per-record path for reading and searching, so a record type
+        // added for one is never silently missing from the other.
+        codex_record_search_text(
+            &value,
+            &mut messages,
+            &mut current_model,
+            &mut prev_token_usage,
+        );
+        true
+    });
 
     assign_missing_message_ids(&mut messages, PROVIDER_ID);
     Ok(messages)
 }
 
 pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, String> {
-    let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
-    let reader = BufReader::new(file);
+    File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
+
+    let sessions_root = find_sessions_root(path);
     let mut messages = Vec::new();
     let mut current_model: Option<String> = None;
     let mut prev_token_usage = CodexTokenUsageTotals::default();
+    let mut found = false;
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
+    // A thread's earlier records live in its prefix rollouts, so searching only
+    // the file we were handed would miss most of the conversation.
+    visit_lineage_lines(sessions_root.as_deref(), path, |line| {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return true;
         };
 
         if let Some(text) = codex_record_search_text(
@@ -172,17 +134,82 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
             &mut prev_token_usage,
         ) {
             if text_contains_query(&text, query_lower) {
-                return Ok(true);
+                found = true;
+                return false;
             }
         }
         if let Some(last_message) = messages.last() {
             if text_contains_query(&last_message.content, query_lower) {
-                return Ok(true);
+                found = true;
+                return false;
             }
         }
-    }
+        true
+    });
 
-    Ok(false)
+    Ok(found)
+}
+
+/// Feed every record of a session, oldest rollout first, to `visit`.
+///
+/// `visit` returns `false` to stop early. Reading the whole lineage rather than
+/// the single requested file is what makes a `paginated` thread's conversation
+/// complete: its newest rollout only holds the records since the last revert,
+/// and the earlier ones stay in the prefix files it points at.
+fn visit_lineage_lines(
+    sessions_root: Option<&Path>,
+    path: &Path,
+    mut visit: impl FnMut(&str) -> bool,
+) {
+    let lineage = match sessions_root {
+        Some(root) => codex_rollout::resolve_lineage(root, path),
+        None => codex_rollout::Lineage::single(path.to_path_buf()),
+    };
+
+    for segment in &lineage.segments {
+        if !visit_segment_lines(segment, &mut visit) {
+            return;
+        }
+    }
+}
+
+/// Stream one lineage segment, honoring its cutoff. Returns `false` when `visit`
+/// asked to stop.
+fn visit_segment_lines(
+    segment: &codex_rollout::LineageSegment,
+    visit: &mut impl FnMut(&str) -> bool,
+) -> bool {
+    let Ok(file) = File::open(&segment.path) else {
+        // An ancestor we cannot read costs us its records, not the whole session.
+        return true;
+    };
+    let mut reader = BufReader::new(file);
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut consumed: u64 = 0;
+
+    loop {
+        buffer.clear();
+        let read = match reader.read_until(b'\n', &mut buffer) {
+            Ok(read) => read,
+            Err(_) => return true,
+        };
+        if read == 0 {
+            return true;
+        }
+        // The cutoff is "immediately after the last included record", so a record
+        // starting at or past it belongs to the child, not to this segment.
+        if segment
+            .end_byte_offset
+            .is_some_and(|limit| consumed >= limit)
+        {
+            return true;
+        }
+        consumed = consumed.saturating_add(read as u64);
+
+        if !visit(&String::from_utf8_lossy(&buffer)) {
+            return false;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -666,6 +693,8 @@ pub fn delete_session(path: &Path) -> Result<(), String> {
         _ => vec![path.to_path_buf()],
     };
 
+    ensure_no_external_references(path, &artifacts)?;
+
     let mut failures = Vec::new();
     for artifact in artifacts {
         match std::fs::remove_file(&artifact) {
@@ -684,6 +713,44 @@ pub fn delete_session(path: &Path) -> Result<(), String> {
             failures.join(", ")
         ))
     }
+}
+
+/// Refuse to delete rollouts another thread still replays from.
+///
+/// A `paginated` thread can keep its history in an older rollout and point at it
+/// with `history_base`. Removing that prefix would leave the referencing thread
+/// unable to reconstruct its conversation, so the delete is rejected rather than
+/// silently corrupting it. This is Codex's own
+/// `ensure_no_external_references` guard, applied before its thread delete.
+///
+/// A rollout with no resolvable sessions root has no references to check, and one
+/// whose own thread cannot be determined is left to the caller's existing
+/// single-file fallback.
+fn ensure_no_external_references(path: &Path, artifacts: &[PathBuf]) -> Result<(), String> {
+    let (Some(sessions_root), Some(thread_id)) =
+        (find_sessions_root(path), artifact_session_id(path))
+    else {
+        return Ok(());
+    };
+
+    let referenced =
+        codex_rollout::rollout_ids_referenced_by_other_threads(&sessions_root, &thread_id);
+    if referenced.is_empty() {
+        return Ok(());
+    }
+
+    let blocked: Vec<String> = codex_rollout::rollout_ids_of(artifacts)
+        .into_iter()
+        .filter(|rollout_id| referenced.contains(rollout_id))
+        .collect();
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Codex session {thread_id} cannot be deleted: {} rollout(s) are still used as history by other sessions",
+        blocked.len()
+    ))
 }
 
 pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
@@ -1106,7 +1173,7 @@ fn session_index_path(root: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_messages, scan_sessions};
+    use super::{delete_session, load_messages, scan_messages_for_query, scan_sessions};
 
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1265,6 +1332,286 @@ mod tests {
         assert!(messages[2]
             .content
             .contains(r#"D:\GitHub\claude-code-history-viewer"#));
+    }
+
+    /// A `session_meta` record in the shape Codex writes.
+    fn session_meta_record(
+        thread_id: &str,
+        history_mode: &str,
+        history_base: Option<serde_json::Value>,
+    ) -> String {
+        let mut payload = serde_json::json!({
+            "id": thread_id,
+            "cwd": "/tmp/project",
+            "history_mode": history_mode,
+        });
+        if let Some(base) = history_base {
+            payload["history_base"] = base;
+        }
+        serde_json::json!({
+            "timestamp": "2026-09-17T10:00:00Z",
+            "type": "session_meta",
+            "payload": payload,
+        })
+        .to_string()
+    }
+
+    /// A `response_item` user message, which `load_messages` surfaces as text.
+    fn user_record(text: &str) -> String {
+        serde_json::json!({
+            "timestamp": "2026-09-17T10:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": text }],
+            }
+        })
+        .to_string()
+    }
+
+    /// Writes a rollout from pre-built records. Returns the byte offset after each
+    /// record, which is the value a child records as its cutoff.
+    fn write_lineage_rollout(path: &Path, lines: &[String]) -> Vec<u64> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create rollout directory");
+        }
+        let mut content = String::new();
+        let mut offsets = Vec::new();
+        for line in lines {
+            content.push_str(line);
+            content.push('\n');
+            offsets.push(content.len() as u64);
+        }
+        fs::write(path, content).expect("failed to write rollout");
+        offsets
+    }
+
+    fn codex_lineage_fixture(test_dir: &TestDir) -> (PathBuf, PathBuf, PathBuf) {
+        let sessions_root = test_dir.path().join("sessions");
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let child_rollout_id = "01a08e80-1111-7c31-9a20-6d3f11b91882";
+        let prefix = sessions_root
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{thread_id}.jsonl"));
+        let child = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!(
+                "rollout-2026-09-17T09-00-00-{thread_id}_{child_rollout_id}.jsonl"
+            ));
+        (sessions_root, prefix, child)
+    }
+
+    /// A `paginated` thread keeps its earlier records in prefix rollouts and points
+    /// at them with `history_base` instead of copying them, so reading only the
+    /// file the client named would show one segment of the conversation.
+    #[test]
+    fn load_messages_stitches_a_paginated_lineage() {
+        let test_dir = TestDir::new("lineage-stitch");
+        let (_sessions_root, prefix, child) = codex_lineage_fixture(&test_dir);
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        let offsets = write_lineage_rollout(
+            &prefix,
+            &[
+                session_meta_record(thread_id, "paginated", None),
+                user_record("earlier turn"),
+            ],
+        );
+        write_lineage_rollout(
+            &child,
+            &[
+                session_meta_record(
+                    thread_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        "end_byte_offset": offsets[1],
+                    })),
+                ),
+                user_record("later turn"),
+            ],
+        );
+
+        let messages = load_messages(&child).expect("load Codex messages");
+
+        let texts: Vec<&str> = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(texts, vec!["earlier turn", "later turn"]);
+    }
+
+    /// Only `paginated` threads keep rollouts. A `legacy` child must not pull in
+    /// another file's records even when both carry the same thread id.
+    #[test]
+    fn load_messages_does_not_stitch_a_legacy_thread() {
+        let test_dir = TestDir::new("lineage-legacy");
+        let (_sessions_root, prefix, child) = codex_lineage_fixture(&test_dir);
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        write_lineage_rollout(
+            &prefix,
+            &[
+                session_meta_record(thread_id, "legacy", None),
+                user_record("stale record"),
+            ],
+        );
+        write_lineage_rollout(
+            &child,
+            &[
+                session_meta_record(thread_id, "legacy", None),
+                user_record("current record"),
+            ],
+        );
+
+        let messages = load_messages(&child).expect("load Codex messages");
+
+        let texts: Vec<&str> = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(texts, vec!["current record"]);
+    }
+
+    /// The cutoff is "immediately after the last included prefix record", so a
+    /// record the child did not depend on must not be replayed.
+    #[test]
+    fn load_messages_honors_a_segment_cutoff() {
+        let test_dir = TestDir::new("lineage-cutoff");
+        let (_sessions_root, prefix, child) = codex_lineage_fixture(&test_dir);
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        let offsets = write_lineage_rollout(
+            &prefix,
+            &[
+                session_meta_record(thread_id, "paginated", None),
+                user_record("included record"),
+                user_record("record past the cutoff"),
+            ],
+        );
+        write_lineage_rollout(
+            &child,
+            &[
+                session_meta_record(
+                    thread_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        // Right after "included record".
+                        "end_byte_offset": offsets[1],
+                    })),
+                ),
+                user_record("child record"),
+            ],
+        );
+
+        let messages = load_messages(&child).expect("load Codex messages");
+
+        let texts: Vec<&str> = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(texts, vec!["included record", "child record"]);
+    }
+
+    /// Search must reach the prefix segments too, or a query would miss most of a
+    /// paginated thread's history.
+    #[test]
+    fn scan_messages_for_query_reaches_prefix_segments() {
+        let test_dir = TestDir::new("lineage-search");
+        let (_sessions_root, prefix, child) = codex_lineage_fixture(&test_dir);
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        let offsets = write_lineage_rollout(
+            &prefix,
+            &[
+                session_meta_record(thread_id, "paginated", None),
+                user_record("the needle lives here"),
+            ],
+        );
+        write_lineage_rollout(
+            &child,
+            &[
+                session_meta_record(
+                    thread_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        "end_byte_offset": offsets[1],
+                    })),
+                ),
+                user_record("nothing relevant here"),
+            ],
+        );
+
+        assert!(
+            scan_messages_for_query(&child, "needle").expect("search should run"),
+            "a prefix segment's records are part of the session"
+        );
+        assert!(!scan_messages_for_query(&child, "absent").expect("search should run"));
+    }
+
+    /// Another thread can keep its history in a rollout we are about to delete.
+    /// Removing it would break that thread's replay, so the delete is refused.
+    #[test]
+    fn delete_session_refuses_when_another_thread_references_a_rollout() {
+        let test_dir = TestDir::new("delete-external-reference");
+        let sessions_root = test_dir.path().join("sessions");
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let other_id = "01a08e11-2c7d-7b55-8e10-4a9c77d20453";
+
+        let target = sessions_root
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{thread_id}.jsonl"));
+        // The other thread's rollout names ours as its history base.
+        let dependent = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T09-00-00-{other_id}.jsonl"));
+
+        write_lineage_rollout(
+            &target,
+            &[
+                session_meta_record(thread_id, "paginated", None),
+                user_record("history another thread depends on"),
+            ],
+        );
+        write_lineage_rollout(
+            &dependent,
+            &[
+                session_meta_record(
+                    other_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        "end_byte_offset": 128,
+                    })),
+                ),
+                user_record("dependent thread record"),
+            ],
+        );
+
+        let error = delete_session(&target).expect_err("delete should be refused");
+        assert!(
+            error.contains("still used as history"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            target.exists(),
+            "a refused delete must leave the rollout in place"
+        );
     }
 
     #[test]
