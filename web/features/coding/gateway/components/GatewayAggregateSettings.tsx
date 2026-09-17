@@ -35,12 +35,14 @@ import { isCodexLocalProviderId } from '@/features/coding/codex/utils/localProvi
 import { primaryCodexProviderNeedsGatewayProxy } from '@/features/coding/codex/utils/codexGatewayProxyNeed';
 import {
   buildGatewayAggregateModelSlug,
+  getGatewayProviderProfilesVersion,
   isAggregateSiteId,
   moveAggregateSite,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
   reconcileAggregateSiteSelection,
   restoreDirectUnavailableHintKey,
+  subscribeGatewayProviderProfiles,
   toAggregateSiteCandidates,
   validateGatewayAggregateSeparator,
   validateGatewayAggregateAlias,
@@ -210,6 +212,16 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     [cliKey, cliStatuses],
   );
   const engaged = selectedStatus?.mode === 'aggregate';
+  // The primary provider's protocol is partly read from the gateway provider
+  // profile store (`getGatewayProviderApiFormatFromMeta`), which changes without
+  // the provider list identity changing. Subscribe the same way the Codex page
+  // and provider card do, otherwise editing that profile while this panel is open
+  // leaves the guard below answering about the previous protocol.
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
   // Aggregate names the first selected site as `primary_provider_id`. The shared
   // gateway dialog refuses to restore direct while that provider still needs the
   // gateway for protocol conversion, so this entry point must refuse too —
@@ -221,7 +233,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         selectedStatus?.primary_provider_id,
         isCodexLocalProviderId,
       ),
-    [providers, selectedStatus?.primary_provider_id],
+    [gatewayProviderProfilesVersion, providers, selectedStatus?.primary_provider_id],
   );
   const restoreDirectBlocked = engaged && primaryNeedsProxy.needsProxy;
   const restoreDirectBlockedHint = t(
@@ -414,6 +426,14 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     const nextSiteIds = checked
       ? normalizeGatewayAggregateSiteIds([...siteIds, siteId])
       : siteIds.filter((item) => item !== siteId);
+    // Dropping the last site leaves aggregate mode, and that exit is refused
+    // while the primary still needs the gateway. Bail out before writing the
+    // form: the backend stays on the old selection, so showing an emptied list
+    // would describe a state that is not running.
+    if (engaged && nextSiteIds.length === 0 && restoreDirectBlocked) {
+      setNotice({ kind: 'error', text: restoreDirectBlockedHint });
+      return;
+    }
     setSiteIds(nextSiteIds);
     // Auto-save: a running aggregate takeover must follow the new site list.
     if (!engaged) {

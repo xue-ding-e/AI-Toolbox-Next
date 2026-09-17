@@ -34,15 +34,10 @@ import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
 import {
   canApplyProviderWithGatewayProxy,
-  codexWireApiFormatFromConfig,
-  firstGatewayApiFormat,
-  getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
   isGatewayAggregateMode,
   isGatewayFailoverMode,
   isGatewayProxyMode,
-  openAiApiFormatFromBaseUrl,
-  providerNeedsGatewayProxy,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
@@ -53,6 +48,7 @@ import {
   isCodexLocalProviderId,
   shouldShowCodexOfficialAccounts,
 } from '../utils/localProvider';
+import { codexProviderNeedsGatewayProxy } from '../utils/codexGatewayProxyNeed';
 
 const { Text } = Typography;
 
@@ -166,35 +162,21 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const isLocalProvider = isCodexLocalProviderId(provider.id);
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showRuntimeApplied = isApplied && !isLocalProvider;
-  const settingsConfigApiFormat = settingsConfig as CodexSettingsConfig & {
-    apiFormat?: unknown;
-    api_format?: unknown;
-  };
+  // The protocol check reads the gateway provider profile store, which updates
+  // independently of `provider`, so it has to be a dependency — not just a
+  // re-render trigger.
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
     getGatewayProviderProfilesVersion,
     getGatewayProviderProfilesVersion,
   );
-  const providerProfileApiFormat = React.useMemo(
-    () => getGatewayProviderApiFormatFromMeta(provider.meta, 'codex'),
-    [gatewayProviderProfilesVersion, provider.meta],
+  // Official providers and the `__local__` bridge never route through the
+  // gateway; everything else is the exact check the Codex page and the aggregate
+  // settings panel run, kept in one place.
+  const needsGatewayProxy = React.useMemo(
+    () => !isOfficialProvider && !isLocalProvider && codexProviderNeedsGatewayProxy(provider),
+    [gatewayProviderProfilesVersion, isLocalProvider, isOfficialProvider, provider],
   );
-  const providerApiFormat = firstGatewayApiFormat(
-    providerProfileApiFormat,
-    provider.meta?.apiFormat,
-    typeof settingsConfigApiFormat.apiFormat === 'string'
-      ? settingsConfigApiFormat.apiFormat
-      : undefined,
-    typeof settingsConfigApiFormat.api_format === 'string'
-      ? settingsConfigApiFormat.api_format
-      : undefined,
-    codexWireApiFormatFromConfig(settingsConfig.config),
-    openAiApiFormatFromBaseUrl(baseUrl),
-  );
-  const needsGatewayProxy =
-    !isOfficialProvider &&
-    !isLocalProvider &&
-    providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
   const restoreDirectUnavailableTitle = t(
     'gateway.proxy.restoreDirectUnavailableHintProtocol',
     { cli: t('settings.gateway.cli.codex') },

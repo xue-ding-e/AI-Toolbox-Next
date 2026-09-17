@@ -72,7 +72,15 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
 import CodexMemoriesPanel from '../components/CodexMemoriesPanel/CodexMemoriesPanel';
 import CodexHistorySyncModal from '../components/CodexHistorySyncModal';
-import { CODEX_LOCAL_PROVIDER_ID, shouldLoadCodexOfficialAccounts } from '../utils/localProvider';
+import {
+  CODEX_LOCAL_PROVIDER_ID,
+  isCodexLocalProviderId,
+  shouldLoadCodexOfficialAccounts,
+} from '../utils/localProvider';
+import {
+  codexProviderNeedsGatewayProxy,
+  primaryCodexProviderNeedsGatewayProxy,
+} from '../utils/codexGatewayProxyNeed';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
@@ -87,13 +95,8 @@ import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import {
   areGatewayProviderProfilesInitialized,
-  codexWireApiFormatFromConfig,
-  firstGatewayApiFormat,
   GatewayFailoverButton,
-  getGatewayProviderApiFormatFromMeta,
   getGatewayProviderProfilesVersion,
-  openAiApiFormatFromBaseUrl,
-  providerNeedsGatewayProxy,
   resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
@@ -254,29 +257,20 @@ const CodexPage: React.FC = () => {
     getGatewayProviderProfilesVersion,
     getGatewayProviderProfilesVersion,
   );
-  const primaryGatewayProviderNeedsProxy = React.useMemo(() => {
-    const primaryProvider = providers.find(
-      (provider) => provider.id === gatewayCliStatus?.primary_provider_id,
-    );
-    if (!primaryProvider || primaryProvider.category === 'official' || primaryProvider.id === CODEX_LOCAL_PROVIDER_ID) {
-      return false;
-    }
-    const settingsConfig = parseCodexSettingsConfig(primaryProvider.settingsConfig) as CodexSettingsConfig & {
-      apiFormat?: unknown;
-      api_format?: unknown;
-    };
-    const baseUrl = extractCodexBaseUrl(settingsConfig.config);
-    const providerApiFormat = firstGatewayApiFormat(
-      getGatewayProviderApiFormatFromMeta(primaryProvider.meta, 'codex'),
-      primaryProvider.meta?.apiFormat,
-      typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
-      typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
-      codexWireApiFormatFromConfig(settingsConfig.config),
-      openAiApiFormatFromBaseUrl(baseUrl),
-    );
-    return providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
-  }, [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers]);
-  const primaryGatewayProviderNeedsProxyReason = primaryGatewayProviderNeedsProxy ? 'protocol' : null;
+  // Shared with the provider card and the aggregate settings panel so all three
+  // answer "must this provider keep the takeover?" the same way.
+  const {
+    needsProxy: primaryGatewayProviderNeedsProxy,
+    reason: primaryGatewayProviderNeedsProxyReason,
+  } = React.useMemo(
+    () =>
+      primaryCodexProviderNeedsGatewayProxy(
+        providers,
+        gatewayCliStatus?.primary_provider_id,
+        isCodexLocalProviderId,
+      ),
+    [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers],
+  );
   const [savingCodexUnifiedHistory, setSavingCodexUnifiedHistory] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
@@ -908,21 +902,8 @@ const CodexPage: React.FC = () => {
       return;
     }
 
-    const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig) as CodexSettingsConfig & {
-      apiFormat?: unknown;
-      api_format?: unknown;
-    };
-    const baseUrl = extractCodexBaseUrl(settingsConfig.config);
-    const providerApiFormat = firstGatewayApiFormat(
-      getGatewayProviderApiFormatFromMeta(provider.meta, 'codex'),
-      provider.meta?.apiFormat,
-      typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
-      typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
-      codexWireApiFormatFromConfig(settingsConfig.config),
-      openAiApiFormatFromBaseUrl(baseUrl),
-    );
     setConnectivityInfo(buildCodexProviderConnectivityInfo(provider));
-    setConnectivityUsesGateway(providerNeedsGatewayProxy(providerApiFormat, 'openai_responses'));
+    setConnectivityUsesGateway(codexProviderNeedsGatewayProxy(provider));
     setConnectivityModalOpen(true);
   };
 
@@ -976,22 +957,11 @@ const CodexPage: React.FC = () => {
       const connectivityInfo = buildCodexProviderConnectivityInfo(provider);
       const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig) as {
         config?: string;
-        apiFormat?: unknown;
-        api_format?: unknown;
       };
       const hasExplicitBaseUrl = Boolean(
         settingsConfig.config?.match(/^\s*base_url\s*=\s*['"]/m),
       );
-      const baseUrl = extractCodexBaseUrl(settingsConfig.config);
-      const providerApiFormat = firstGatewayApiFormat(
-        getGatewayProviderApiFormatFromMeta(provider.meta, 'codex'),
-        provider.meta?.apiFormat,
-        typeof settingsConfig.apiFormat === 'string' ? settingsConfig.apiFormat : undefined,
-        typeof settingsConfig.api_format === 'string' ? settingsConfig.api_format : undefined,
-        codexWireApiFormatFromConfig(settingsConfig.config),
-        openAiApiFormatFromBaseUrl(baseUrl),
-      );
-      const useGateway = providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
+      const useGateway = codexProviderNeedsGatewayProxy(provider);
 
       if (provider.category !== 'official' && !hasExplicitBaseUrl) {
         return {

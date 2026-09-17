@@ -1034,9 +1034,16 @@ fn provider_meta_from_record(
 
 /// Read the upstream model ids a provider declares in its `modelCatalog`.
 ///
-/// Used by aggregate mode to decide which sites may serve a given model as a
-/// fallback. Providers without a declared catalog return an empty list, which
-/// callers treat as "unknown" rather than "offers nothing".
+/// Used by aggregate mode to decide which sites may serve a given model, as a
+/// fallback or as a bare-model target. Providers without a declared catalog
+/// return an empty list, which callers treat as "offers nothing" and exclude.
+///
+/// The extraction must stay identical to the one that publishes the Codex
+/// catalog (`codex::commands::codex_aggregate_catalog_entries`), or the router
+/// would resolve slugs that the model list never shows: the `modelCatalog.models`
+/// array only, keyed on `model`, which is also what the single-provider catalog
+/// (`codex_catalog_model_specs`) reads. Do not widen this to `model_catalog_model_id`
+/// (it also accepts `id`/`name`/`modelId`) or to a root-level `models` array.
 fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String> {
     let Some(settings_config) = settings_config else {
         return Vec::new();
@@ -1048,23 +1055,22 @@ fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String>
     };
     let Some(models) = settings_value
         .as_ref()
-        .and_then(|value| value.get("modelCatalog").or(Some(value)))
+        .and_then(|value| value.get("modelCatalog"))
         .and_then(|catalog| catalog.get("models"))
         .and_then(Value::as_array)
-        .or_else(|| {
-            settings_value
-                .as_ref()
-                .and_then(|value| value.get("models"))
-                .and_then(Value::as_array)
-        })
     else {
         return Vec::new();
     };
 
     let mut out = Vec::new();
     for model in models {
-        if let Some(model_id) = model_catalog_model_id(model) {
-            push_unique_string(&mut out, model_id);
+        if let Some(model_id) = model
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model_id| !model_id.is_empty())
+        {
+            push_unique_string(&mut out, model_id.to_string());
         }
     }
     out

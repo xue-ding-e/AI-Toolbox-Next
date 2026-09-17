@@ -337,6 +337,13 @@ pub fn split_site_model_slug<'a>(
         if requested_model.len() <= prefix_len {
             continue;
         }
+        // The head has to be an ASCII prefix, so an index that lands inside a
+        // multi-byte character of the model name can only be a non-match. Guard
+        // it explicitly: `split_at` panics on a non-char-boundary index, and the
+        // release profile builds with `panic = "abort"`.
+        if !requested_model.is_char_boundary(prefix.len()) {
+            continue;
+        }
         let (head, rest) = requested_model.split_at(prefix.len());
         if !head.eq_ignore_ascii_case(prefix) {
             continue;
@@ -374,8 +381,12 @@ pub fn split_model_at_site_slug<'a>(
             continue;
         }
         let split_at = requested_model.len() - suffix_len;
-        // Both sides of the split are ASCII (prefix charset + separator), so
-        // slicing here is safe; the model keeps its own case and separators.
+        // The *tail* is ASCII by construction (separator + prefix), but the cut
+        // index can still land inside a multi-byte character of the model name;
+        // `split_at` would panic there, so treat it as a non-match.
+        if !requested_model.is_char_boundary(split_at) {
+            continue;
+        }
         let (model, tail) = requested_model.split_at(split_at);
         if !tail.eq_ignore_ascii_case(&format!("{separator}{prefix}")) {
             continue;
@@ -577,6 +588,30 @@ mod tests {
         assert_eq!(
             split_model_at_site_slug("deepseek-v4-flash", "@", entries),
             None
+        );
+    }
+
+    #[test]
+    fn split_helpers_never_panic_on_a_cut_inside_a_multibyte_model_name() {
+        // Byte 5 of "1234中.x" is inside '中'; a bare `split_at(5)` would panic
+        // (and release builds abort the process). Same for the suffix helper,
+        // where byte 5 of "中文site1" is inside '文'.
+        assert_eq!(
+            split_site_model_slug("1234中.x", ".", [("site-a", "site1")]),
+            None
+        );
+        assert_eq!(
+            split_model_at_site_slug("中文site1", ".", [("site-a", "site1")]),
+            None
+        );
+        // A well-formed multi-byte model with the full prefix still splits.
+        assert_eq!(
+            split_site_model_slug("site1.中模型", ".", [("site-a", "site1")]),
+            Some(("site-a".to_string(), "中模型".to_string()))
+        );
+        assert_eq!(
+            split_model_at_site_slug("中模型.site1", ".", [("site-a", "site1")]),
+            Some(("site-a".to_string(), "中模型".to_string()))
         );
     }
 

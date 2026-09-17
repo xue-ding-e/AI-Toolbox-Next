@@ -216,7 +216,7 @@ Gemini 的通用工具语义见架构文档 §8.5：同批结果归为一个 use
 - provider `data.meta.modelRewrites`（snake/camel 双兼容）是非空 `ModelRewriteRule` 数组，每项 `{ from, to }`；读取侧过滤 `from`/`to` 空白的规则，空数组视为未配置。
 - 不是指定 `provider_override_id` 的连通性测试（连通性测试保留用户点选模型）。
 - 与 family/default 映射不同，该规则**在所有代理模式生效**：single 模式 CLI 透传模型命中规则时同样改写。
-- 聚合模式（`mode = "aggregate"`）按模型名是否自带站点身份区分：命中聚合 slug 或 `<site><sep><model>` 前缀的请求已经由前缀指定了精确上游模型，**跳过本规则**（前缀优先）；无前缀的裸模型名（用户手填的模型 id）与其他模式一样命中本规则。聚合模式始终不进入 per-CLI family/default/auto-review 映射。
+- 聚合模式（`mode = "aggregate"`）按模型名是否自带站点身份区分：命中**已发布 slug 表**（`AggregateSlugEntry.slug`）或解析出 `<site><sep><model>` / `<model><sep><site>` 前缀的请求已经指定了精确上游模型，**跳过本规则**；其余裸模型名（用户手填的模型 id）与其他模式一样命中本规则。判据是「是否命中 slug 表/前缀」而不是「有没有分隔符」——`model_only` 模式下已发布的 slug 本身就没有分隔符（如 `m#2`），它同样算 explicit 并跳过本规则，只有既不是 slug 也不是前缀的模型名（`AggregateRoute.explicit = false`）才走本规则。聚合模式始终不进入 per-CLI family/default/auto-review 映射。
 
 匹配与改写语义：
 

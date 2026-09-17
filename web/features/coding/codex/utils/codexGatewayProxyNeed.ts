@@ -1,13 +1,13 @@
-import type { CodexProvider } from '@/types/codex';
 import {
   codexWireApiFormatFromConfig,
   firstGatewayApiFormat,
-  getGatewayProviderApiFormatFromMeta,
   openAiApiFormatFromBaseUrl,
   providerNeedsGatewayProxy,
   type GatewayProxyReason,
-} from '@/features/coding/shared/gateway';
-import { extractCodexBaseUrl } from '@/utils/codexConfigUtils';
+} from '../../shared/gateway/providerProtocol';
+import { getGatewayProviderApiFormatFromMeta } from '../../shared/gateway/providerProfiles';
+import type { CodexProvider } from '../../../../types/codex';
+import { extractCodexBaseUrl } from '../../../../utils/codexConfigUtils';
 import { parseCodexSettingsConfig } from './codexSettingsConfig';
 
 /**

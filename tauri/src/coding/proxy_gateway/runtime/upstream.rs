@@ -1032,57 +1032,33 @@ async fn forward_to_upstream(
             };
         aggregate_upstream_model = Some(resolved.upstream_model.clone());
         aggregate_model_is_explicit = resolved.explicit;
-        if let Some(site_id) = resolved.site_id.as_deref() {
-            let Some(index) = providers.iter().position(|provider| provider.id == site_id) else {
-                let mut response = json_response(
-                    404,
-                    "Not Found",
-                    json!({
-                        "error": "gateway_aggregate_site_unknown",
-                        "message": format!(
-                            "No enabled gateway site named '{}' for {}. Pick a model from the model list.",
-                            site_id,
-                            route.cli_key.as_str(),
-                        ),
-                    }),
-                    route.route_name,
-                    None,
-                    "aggregate model prefix named a site that is not an enabled candidate",
-                );
-                response.cli_key = Some(route.cli_key);
-                response.requested_model = Some(requested_model);
-                response.error_category = Some("provider_missing".to_string());
-                return response;
-            };
-            let target = providers.remove(index);
-            // A fallback site only makes sense when it actually offers the same
-            // upstream model. Aggregate manifests declare the visible catalog,
-            // so do not send a model to sites with no matching declaration.
-            let model = resolved.upstream_model.as_str();
-            let mut declaring = Vec::new();
-            for provider in providers {
-                if provider
-                    .meta
-                    .declared_models
-                    .iter()
-                    .any(|declared| declared == model)
-                {
-                    declaring.push(provider);
-                }
-            }
-            let mut ordered = Vec::with_capacity(declaring.len() + 1);
+        // The slug or prefix named the site; a bare model name names only the
+        // model. Either way the site has to be an enabled candidate right now —
+        // a site that was disabled since engage keeps its published slug in the
+        // Codex list, so fall back to whichever candidate still declares that
+        // upstream model instead of failing the request outright.
+        let target = resolved
+            .site_id
+            .as_deref()
+            .and_then(|site_id| providers.iter().position(|provider| provider.id == site_id))
+            .map(|index| providers.remove(index));
+        let model = resolved.upstream_model.clone();
+        // A fallback site only makes sense when it actually offers the same
+        // upstream model. Aggregate manifests declare the visible catalog, so
+        // never send a model to a site that does not declare it.
+        let mut fallbacks = aggregate_model_candidates(
+            providers,
+            &model,
+            aggregate_model_is_explicit,
+            allow_provider_model_mapping,
+        );
+        if let Some(target) = target {
+            let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
             ordered.push(target);
-            ordered.extend(declaring);
+            ordered.append(&mut fallbacks);
             providers = ordered;
         } else {
-            let model = resolved.upstream_model.as_str();
-            providers.retain(|provider| {
-                provider
-                    .meta
-                    .declared_models
-                    .iter()
-                    .any(|declared| declared == model)
-            });
+            providers = fallbacks;
             if providers.is_empty() {
                 let mut response = json_response(
                     404,
@@ -1090,13 +1066,12 @@ async fn forward_to_upstream(
                     json!({
                         "error": "gateway_aggregate_model_unknown",
                         "message": format!(
-                            "No enabled aggregate site declares model '{}'. Pick a model from the Codex model list.",
-                            model
+                            "No enabled aggregate site declares model '{model}'. Pick a model from the Codex model list.",
                         ),
                     }),
                     route.route_name,
                     None,
-                    "aggregate bare model did not match any declared catalog",
+                    "aggregate model did not match any declared catalog",
                 );
                 response.cli_key = Some(route.cli_key);
                 response.requested_model = Some(requested_model);
@@ -5201,6 +5176,38 @@ async fn wait_before_retry(retry_interval_secs: u64) {
     if retry_interval_secs > 0 {
         tokio::time::sleep(Duration::from_secs(retry_interval_secs)).await;
     }
+}
+
+/// Keep the aggregate candidates that can serve `model`.
+///
+/// Membership is decided on the id that will actually be forwarded, so this
+/// must agree with `resolve_aggregate_upstream_model`: a site picked by slug or
+/// prefix is matched on the model verbatim, while a bare model name is matched
+/// on that site's own rewrite result. A provider that declares no catalog is
+/// dropped either way — there is nothing to match against, and the published
+/// Codex catalog only ever lists declared models.
+fn aggregate_model_candidates(
+    providers: Vec<UpstreamProvider>,
+    model: &str,
+    explicit: bool,
+    allow_provider_model_mapping: bool,
+) -> Vec<UpstreamProvider> {
+    providers
+        .into_iter()
+        .filter(|provider| {
+            let forwarded = resolve_aggregate_upstream_model(
+                model,
+                explicit,
+                provider,
+                allow_provider_model_mapping,
+            );
+            provider
+                .meta
+                .declared_models
+                .iter()
+                .any(|declared| declared == &forwarded)
+        })
+        .collect()
 }
 
 /// Resolve the upstream model for one aggregate-mode attempt.
@@ -12878,6 +12885,71 @@ data: {data}\r\n\r\n"
             resolve_aggregate_upstream_model("gpt-5-luna", false, &provider, false),
             "gpt-5-luna"
         );
+    }
+
+    #[test]
+    fn aggregate_model_candidates_match_on_the_forwarded_model() {
+        let declaring = |id: &str, models: &[&str]| {
+            let mut provider = provider_for_cli(GatewayCliKey::Codex);
+            provider.id = id.to_string();
+            provider.meta.declared_models = models.iter().map(|model| model.to_string()).collect();
+            provider
+        };
+        let with_rule = |mut provider: UpstreamProvider| {
+            provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+                from: "gpt-5-luna".to_string(),
+                to: "gpt-5-mini".to_string(),
+            }];
+            provider
+        };
+        let kept_ids = |providers: Vec<UpstreamProvider>| -> Vec<String> {
+            providers.into_iter().map(|provider| provider.id).collect()
+        };
+
+        let site_a = with_rule(declaring("site-a", &["gpt-5-mini"]));
+        let site_b = declaring("site-b", &["glm-5"]);
+        let site_c = declaring("site-c", &[]);
+
+        // A bare model name reaches a declaration only through the site's own
+        // rewrite rule. The rewrite runs before forwarding, so it decides
+        // membership here too — otherwise the typed name would 404 even though
+        // the same request works in single/failover mode.
+        assert_eq!(
+            kept_ids(aggregate_model_candidates(
+                vec![site_a.clone(), site_b.clone(), site_c.clone()],
+                "gpt-5-luna",
+                false,
+                true,
+            )),
+            vec!["site-a"]
+        );
+        // An explicit slug is matched on the model verbatim: the rule must not
+        // widen the fallback set for a site the prefix already pinned.
+        assert_eq!(
+            kept_ids(aggregate_model_candidates(
+                vec![site_a.clone(), site_b.clone()],
+                "gpt-5-mini",
+                true,
+                true,
+            )),
+            vec!["site-a"]
+        );
+        assert!(
+            aggregate_model_candidates(vec![site_a.clone()], "gpt-5-luna", true, true).is_empty()
+        );
+        // Connectivity tests pin the provider and model: no mapping, no match.
+        assert_eq!(
+            kept_ids(aggregate_model_candidates(
+                vec![site_a.clone(), site_b.clone()],
+                "gpt-5-mini",
+                true,
+                false,
+            )),
+            vec!["site-a"]
+        );
+        assert!(aggregate_model_candidates(vec![site_a], "gpt-5-luna", false, false).is_empty());
+        // A site without a declared catalog is never a candidate.
+        assert!(aggregate_model_candidates(vec![site_c], "glm-5", true, true).is_empty());
     }
 
     #[test]

@@ -895,10 +895,21 @@ async fn retire_codex_aggregate_catalog(db: &SqliteDbState, cli_key: GatewayCliK
     if cli_key != GatewayCliKey::Codex {
         return;
     }
-    if let Ok(config_dir) =
-        crate::coding::codex::commands::get_codex_config_dir_from_db_async(db).await
-    {
-        let _ = crate::coding::codex::commands::remove_codex_aggregate_catalog(&config_dir);
+    use crate::coding::codex::commands as codex_commands;
+
+    // Best effort: this runs on the way out of aggregate mode, and a failure
+    // here must not block the mode change. Both failure paths are still worth a
+    // warning — a stale pointer keeps Codex advertising slugs that no longer
+    // route, which is otherwise invisible until a request 404s.
+    let config_dir = match codex_commands::get_codex_config_dir_from_db_async(db).await {
+        Ok(config_dir) => config_dir,
+        Err(error) => {
+            log::warn!("Failed to resolve Codex config dir to retire aggregate catalog: {error}");
+            return;
+        }
+    };
+    if let Err(error) = codex_commands::remove_codex_aggregate_catalog(&config_dir) {
+        log::warn!("Failed to retire Codex aggregate model catalog pointer: {error}");
     }
 }
 
