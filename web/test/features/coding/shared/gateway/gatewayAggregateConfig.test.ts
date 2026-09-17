@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { GatewayCliTakeoverStatus } from '../../../../../services/proxyGatewayApi.ts';
 import {
   buildGatewayAggregateModelSlug,
+  buildGatewayAggregateSitePreviewSlug,
   isAggregateSiteId,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
@@ -143,6 +144,21 @@ test('aggregate reengage config is only built for a valid aggregate manifest', (
 test('aggregate slug joins site id and model with the configured separator', () => {
   assert.equal(buildGatewayAggregateModelSlug('76a6ef74', 'deepseek-v4-flash', '.'), '76a6ef74.deepseek-v4-flash');
   assert.equal(buildGatewayAggregateModelSlug('site-1', 'glm-5.3', '::'), 'site-1::glm-5.3');
+});
+
+test('aggregate preview uses the effective alias and naming template', () => {
+  assert.equal(
+    buildGatewayAggregateSitePreviewSlug('site-a', '.', 'site_model', { 'site-a': 'relay' }),
+    'relay.<model>',
+  );
+  assert.equal(
+    buildGatewayAggregateSitePreviewSlug('site-a', '@', 'model_at_site', { 'site-a': 'relay' }),
+    '<model>@relay',
+  );
+  assert.equal(
+    buildGatewayAggregateSitePreviewSlug('site-a', '.', 'model_only', { 'site-a': 'relay' }),
+    '<model>',
+  );
 });
 
 test('aliases may not shadow any candidate site id', () => {

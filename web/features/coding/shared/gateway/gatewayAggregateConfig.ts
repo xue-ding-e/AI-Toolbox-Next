@@ -150,3 +150,14 @@ export const buildGatewayAggregateModelSlug = (
     ? `${modelId}${separator}${siteId}`
     : `${siteId}${separator}${modelId}`;
 };
+
+/** Preview slug shown for one selected site in the aggregate takeover dialog. */
+export const buildGatewayAggregateSitePreviewSlug = (
+  siteId: string,
+  separator: string,
+  naming: GatewayAggregateNamingMode = 'site_model',
+  aliases?: Record<string, string> | null,
+): string => {
+  const alias = aliases?.[siteId]?.trim();
+  return buildGatewayAggregateModelSlug(alias || siteId, '<model>', separator, naming);
+};

@@ -16,6 +16,7 @@
 - 聚合模式（第三种网关模式）的接管状态以后端 `manifest.aggregate` 为准：前端通过 `engageProxyGatewayAggregate(cliKey, providerIds, separator, aliases, naming)` 调用 `proxy_gateway_engage_aggregate`，**不自行持久化勾选站点、分隔符、别名或模板**，也不根据本地 state 推断当前模式。别名限 1–32 个 `[A-Za-z0-9_-]`；唯一性判定与后端 `validate_aggregate_site_prefixes` 一致，比的是**每个候选的有效前缀**（有别名用别名，否则用 provider id），所以别名既不能与别的别名重合，也不能吃掉某个**未选中**兜底站点的 provider id。`normalizeGatewayAggregateAliases` 之外不要另写校验。三种模板为站点.模型、模型@站点、仅模型，后者同名由后端确定性显示为 `#2/#3`（编号由后端在接管时固化进 manifest）。修改后需重新接管，Codex 重启后刷新模型列表。模式判断统一走 `providerProtocol.ts` 的 `isGatewayProxyMode` / `isGatewayFailoverMode` / `isGatewayAggregateMode`，不要在组件里重写 `mode === 'single' || mode === 'failover'` 这类硬编码比较——那会把聚合模式误判成未接管。
 - `gatewayFailoverActive` 与聚合模式**语义不同**：aggregate 不是 failover 的一种。聚合模式下 `GatewayFailoverButton` 展示站点前缀说明并隐藏故障转移开关，只保留「恢复直连」，因为聚合没有 P0 主渠道可切、也没有单一渠道可故障转移。
 - 聚合模式的「恢复直连」在两个入口必须用同一门控：`primary_provider_id`（= 第一个选中站点）需要网关做协议转换时，`GatewayFailoverButton` 和设置页聚合开关都拒绝恢复直连并显示 `restoreDirectUnavailableHintProtocol`（`codexGatewayProxyNeed.ts::primaryCodexProviderNeedsGatewayProxy` 是唯一判定处，不要各写一份格式推断）。退路是先换掉/取消勾选该站点或禁用该 provider，而不是把开关放开写出一份 Codex 用不了的直连配置。
+- 接管弹窗里的 slug 预览必须走 `buildGatewayAggregateSitePreviewSlug`：有效前缀是 alias 或 provider id，并带 `naming` 模板；不能只拼 `<siteId><sep><model>`，否则 aliases、`model_at_site`、`model_only` 都会显示错。
 
 ## 核心设计决策（Why）
 

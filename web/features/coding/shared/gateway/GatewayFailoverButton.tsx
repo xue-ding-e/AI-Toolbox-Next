@@ -18,7 +18,7 @@ import {
   restoreDirectUnavailableHintKey,
   type GatewayProxyReason,
 } from './providerProtocol';
-import { buildGatewayAggregateModelSlug } from './gatewayAggregateConfig';
+import { buildGatewayAggregateSitePreviewSlug } from './gatewayAggregateConfig';
 import styles from './GatewayFailoverButton.module.less';
 
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'>;
@@ -145,6 +145,8 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   // Aggregate sites are addressed by model prefix; the label the model list
   // shows for each (site, model) pair is the concrete thing to display.
   const aggregateSeparator = status?.aggregate?.separator ?? DEFAULT_AGGREGATE_SEPARATOR;
+  const aggregateAliases = status?.aggregate?.aliases ?? {};
+  const aggregateNaming = status?.aggregate?.naming ?? 'site_model';
   const aggregateSiteIds = status?.aggregate?.provider_ids ?? [];
 
   const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -334,7 +336,12 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
                   <div>
                     {aggregateSiteIds.map((siteId) => (
                       <code key={siteId}>
-                        {buildGatewayAggregateModelSlug(siteId, '<model>', aggregateSeparator)}
+                        {buildGatewayAggregateSitePreviewSlug(
+                          siteId,
+                          aggregateSeparator,
+                          aggregateNaming,
+                          aggregateAliases,
+                        )}
                       </code>
                     ))}
                   </div>
