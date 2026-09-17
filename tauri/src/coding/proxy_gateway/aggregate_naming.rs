@@ -77,7 +77,10 @@ impl AggregateNamingMode {
 ///
 /// Both sides must build slugs from this struct only: the `model_only` template
 /// numbers duplicate models by walk order, so any divergence between the two
-/// walk orders would silently route a `#N` slug to the wrong site.
+/// walk orders would silently route a `#N` slug to the wrong site. The table
+/// produced at engage time is persisted in the manifest (`slug_table`) and is
+/// what request-time routing consumes; this config only rebuilds a table for
+/// manifests written before the table was persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregateNamingConfig {
     /// Connector between prefix and model name (unused by `model_only`).
@@ -210,7 +213,11 @@ pub fn validate_aggregate_site_prefixes(
 }
 
 /// One `(site, model)` pair with the slug it must be published under.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Persisted in the manifest so request-time routing replays the exact table the
+/// Codex catalog was built from, instead of re-deriving slugs from whatever
+/// sites happen to be enabled later (see `AggregateNamingConfig`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregateSlugEntry {
     pub site_id: String,
     pub upstream_model: String,

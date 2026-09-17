@@ -5,8 +5,8 @@ import type { GatewayCliTakeoverStatus } from '../../../../../services/proxyGate
 import {
   buildGatewayAggregateModelSlug,
   isAggregateSiteId,
+  normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
-  prepareGatewayAggregateAliasReengage,
   resolveGatewayReengageMode,
   toGatewayAggregateReengageConfig,
   validateGatewayAggregateSeparator,
@@ -145,46 +145,44 @@ test('aggregate slug joins site id and model with the configured separator', () 
   assert.equal(buildGatewayAggregateModelSlug('site-1', 'glm-5.3', '::'), 'site-1::glm-5.3');
 });
 
-test('alias edits produce an immediate re-engage payload only when valid', () => {
+test('aliases may not shadow any candidate site id', () => {
+  // Another *selected* site's id: the auto-derived prefix already collides.
+  assert.equal(
+    normalizeGatewayAggregateAliases({ 'site-a': 'site-b' }, ['site-a', 'site-b']),
+    null,
+  );
+  // An *unselected* candidate keeps answering to its provider id at request
+  // time, so the backend refuses this prefix; the form must not submit it.
+  assert.equal(
+    normalizeGatewayAggregateAliases({ 'site-a': 'site-c' }, ['site-a'], ['site-a', 'site-c']),
+    null,
+  );
+  // Prefix matching is case-insensitive, so the shadow check must be too.
+  assert.equal(
+    normalizeGatewayAggregateAliases({ 'site-a': 'SITE-C' }, ['site-a'], ['site-a', 'site-c']),
+    null,
+  );
+  // A real alias, and an alias equal to its own site id, both stay usable.
   assert.deepEqual(
-    prepareGatewayAggregateAliasReengage(
-      {},
-      'site-a',
-      'relay-a',
+    normalizeGatewayAggregateAliases({ 'site-a': 'relay' }, ['site-a'], ['site-a', 'site-c']),
+    { 'site-a': 'relay' },
+  );
+  assert.deepEqual(
+    normalizeGatewayAggregateAliases({ 'site-a': 'site-a' }, ['site-a'], ['site-a', 'site-c']),
+    { 'site-a': 'site-a' },
+  );
+  // Only *effective* prefixes must be unique: site-b answers to its own alias,
+  // so site-a may take over the raw id `site-b` (the backend accepts this too).
+  assert.deepEqual(
+    normalizeGatewayAggregateAliases(
+      { 'site-a': 'site-b', 'site-b': 'relay-b' },
       ['site-a', 'site-b'],
-      true,
-      '.',
-      'site_model',
     ),
-    {
-      siteIds: ['site-a', 'site-b'],
-      separator: '.',
-      aliases: { 'site-a': 'relay-a' },
-      naming: 'site_model',
-    },
+    { 'site-a': 'site-b', 'site-b': 'relay-b' },
   );
-  assert.equal(
-    prepareGatewayAggregateAliasReengage(
-      {},
-      'site-a',
-      'bad alias',
-      ['site-a'],
-      true,
-      '.',
-      'site_model',
-    ),
-    null,
-  );
-  assert.equal(
-    prepareGatewayAggregateAliasReengage(
-      {},
-      'site-a',
-      'relay-a',
-      ['site-a'],
-      false,
-      '.',
-      'site_model',
-    ),
-    null,
+  // Blank aliases are dropped rather than treated as an alias.
+  assert.deepEqual(
+    normalizeGatewayAggregateAliases({ 'site-a': '  ' }, ['site-a'], ['site-a']),
+    {},
   );
 });

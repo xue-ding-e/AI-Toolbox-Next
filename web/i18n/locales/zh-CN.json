@@ -406,7 +406,6 @@
       "selectAll": "全选",
       "clearSelection": "清空",
       "selectedCount": "已选 {{count}} 个",
-      "searchPlaceholder": "搜索站点",
       "moveUp": "上移一位",
       "moveDown": "下移一位",
       "reorderHint": "拖拽调整站点优先顺序",

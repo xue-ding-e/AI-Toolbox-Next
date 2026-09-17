@@ -40,7 +40,6 @@ export {
 } from './gatewayAggregateCandidates';
 export {
   buildGatewayAggregateModelSlug,
-  prepareGatewayAggregateAliasReengage,
   normalizeGatewayAggregateAliases,
   isAggregateSiteId,
   normalizeGatewayAggregateSiteIds,

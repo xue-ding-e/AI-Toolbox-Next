@@ -53,13 +53,11 @@ import {
   providerNeedsGatewayProxy,
   resolveGatewayReengageMode,
   subscribeGatewayProviderProfiles,
-  toGatewayAggregateReengageConfig,
 } from '@/features/coding/shared/gateway';
 import {
   saveProviderWithGatewayReengage,
 } from '@/features/coding/shared/gateway/providerSaveReengage';
 import {
-  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   getProxyGatewayCliStatus,
@@ -314,19 +312,17 @@ const KimiPage: React.FC = () => {
   const handleSaveProvider = async (values: KimiProviderInput) => {
     const plan = buildKimiProviderSavePlan(editingProvider, values, { isCopy: isCopyMode });
     const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
-    const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
     const shouldReengageGatewayProxy = shouldReengageKimiGatewayOnSave(editingProvider, gatewayModeBeforeSave);
 
     let savedProviderId = editingProvider?.id ?? '';
 
     await saveProviderWithGatewayReengage({
       gatewayMode: shouldReengageGatewayProxy ? gatewayModeBeforeSave : null,
-      aggregateConfig: shouldReengageGatewayProxy ? gatewayAggregateBeforeSave : null,
       restoreDirect: () => restoreProxyGatewayCliDirect('kimi'),
       engageSingle: () => engageProxyGatewaySingle('kimi', savedProviderId),
       engageFailover: () => engageProxyGatewayFailover('kimi'),
-      engageAggregate: ({ providerIds, separator, aliases, naming }) =>
-        engageProxyGatewayAggregate('kimi', providerIds, separator, aliases, naming),
+      // No `engageAggregate`: aggregate mode is Codex-only, so this CLI can
+      // never report it and the re-engage helper would reject the replay.
       onGatewayStatusChange: setGatewayCliStatus,
       saveProvider: async () => {
         switch (plan.action) {

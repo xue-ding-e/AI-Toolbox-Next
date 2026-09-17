@@ -406,7 +406,6 @@
       "selectAll": "Select all",
       "clearSelection": "Clear",
       "selectedCount": "{{count}} selected",
-      "searchPlaceholder": "Search sites",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "reorderHint": "Drag to change site priority",

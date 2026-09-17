@@ -6,7 +6,7 @@ use crate::coding::proxy_gateway::types::{
 use crate::coding::proxy_gateway::{
     aggregate_naming::{
         build_aggregate_slug_table, split_model_at_site_slug, split_site_model_slug,
-        AggregateNamingConfig, AggregateNamingMode,
+        AggregateNamingConfig, AggregateNamingMode, AggregateSlugEntry,
     },
     cli_proxy::manifest::CliProxyManifest,
     paths::ProxyGatewayPaths,
@@ -90,6 +90,10 @@ pub(crate) struct GatewayProviderSelection {
     pub(crate) aggregate_aliases: std::collections::BTreeMap<String, String>,
     /// Aggregate mode only: template used by the Codex catalog and router.
     pub(crate) aggregate_naming: AggregateNamingMode,
+    /// Aggregate mode only: slug table persisted at engage time. Empty when the
+    /// manifest predates it, in which case routing rebuilds the table from the
+    /// live candidates (`aggregate_provider_ids` + `aggregate_naming`).
+    pub(crate) aggregate_slug_table: Vec<AggregateSlugEntry>,
 }
 
 pub(crate) async fn load_candidate_providers(
@@ -232,6 +236,7 @@ pub(crate) fn load_gateway_provider_selection(
                 aggregate_separator: aggregate.separator,
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
+                aggregate_slug_table: aggregate.slug_table,
             })
         }
     };
@@ -302,6 +307,7 @@ pub(crate) async fn load_gateway_provider_selection_async(
                 aggregate_separator: aggregate.separator,
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
+                aggregate_slug_table: aggregate.slug_table,
             })
         }
     };
@@ -408,11 +414,18 @@ pub(crate) struct AggregateRoute {
 /// Resolve which site should serve an aggregate-mode request.
 ///
 /// Order of resolution:
-/// 1. Explicit `<site_id><sep><model>` prefix naming a known site.
-/// 2. First candidate whose declared model catalog contains the requested
+/// 1. The slug table persisted in the manifest at engage time.
+/// 2. Explicit `<site_id><sep><model>` prefix naming a known site.
+/// 3. First candidate whose declared model catalog contains the requested
 ///    model name (mirrors the non-aggregate "bare model name" behaviour).
 ///
 /// `providers` must already be ordered by preference.
+///
+/// The persisted table comes first because it is what the Codex catalog was
+/// generated from: re-deriving it here would renumber `model_only` `#N` slugs
+/// whenever a selected site stops being an enabled candidate, silently routing
+/// an already-published slug to a different site. Manifests written before the
+/// table was persisted fall through to the rebuild.
 #[cfg(test)]
 pub(crate) fn resolve_aggregate_route(
     requested_model: &str,
@@ -432,6 +445,7 @@ pub(crate) fn resolve_aggregate_route(
         aggregate_separator: separator.to_string(),
         aggregate_aliases: std::collections::BTreeMap::new(),
         aggregate_naming: AggregateNamingMode::SiteModel,
+        aggregate_slug_table: Vec::new(),
     };
     resolve_aggregate_route_with_selection(requested_model, &selection, providers).unwrap_or_else(
         |_| AggregateRoute {
@@ -447,27 +461,36 @@ pub(crate) fn resolve_aggregate_route_with_selection(
     selection: &GatewayProviderSelection,
     providers: &[UpstreamProvider],
 ) -> Result<AggregateRoute, String> {
-    let selected_sites = selection
-        .aggregate_provider_ids
-        .iter()
-        .filter_map(|site_id| {
-            providers
-                .iter()
-                .find(|provider| &provider.id == site_id)
-                .map(|provider| (provider.id.clone(), provider.meta.declared_models.clone()))
-        })
-        .collect::<Vec<_>>();
     let naming = AggregateNamingConfig {
         separator: selection.aggregate_separator.clone(),
         aliases: selection.aggregate_aliases.clone(),
         naming: selection.aggregate_naming,
     };
-    let table = build_aggregate_slug_table(
-        &selected_sites,
-        &naming.separator,
-        &naming.aliases,
-        naming.naming,
-    )?;
+    // Prefer the table the catalog was published from; only rebuild it (from
+    // whichever selected sites are still enabled candidates) for manifests that
+    // predate the persisted table.
+    let rebuilt_table;
+    let table = if selection.aggregate_slug_table.is_empty() {
+        let selected_sites = selection
+            .aggregate_provider_ids
+            .iter()
+            .filter_map(|site_id| {
+                providers
+                    .iter()
+                    .find(|provider| &provider.id == site_id)
+                    .map(|provider| (provider.id.clone(), provider.meta.declared_models.clone()))
+            })
+            .collect::<Vec<_>>();
+        rebuilt_table = build_aggregate_slug_table(
+            &selected_sites,
+            &naming.separator,
+            &naming.aliases,
+            naming.naming,
+        )?;
+        rebuilt_table.as_slice()
+    } else {
+        selection.aggregate_slug_table.as_slice()
+    };
     if let Some(entry) = table.iter().find(|entry| entry.slug == requested_model) {
         return Ok(AggregateRoute {
             site_id: Some(entry.site_id.clone()),
@@ -1943,6 +1966,7 @@ mod tests {
                     .to_string(),
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
+            aggregate_slug_table: Vec::new(),
         }
     }
 
@@ -1971,6 +1995,7 @@ mod tests {
             aggregate_separator: separator.to_string(),
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
+            aggregate_slug_table: Vec::new(),
         }
     }
 
@@ -2100,6 +2125,39 @@ mod tests {
 
         assert_eq!(route.site_id.as_deref(), Some("site1"));
         assert_eq!(route.upstream_model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_route_replays_the_persisted_slug_table_when_a_site_is_gone() {
+        // `model_only` published m / m#2 / m#3 for site-a..c. site-b is no longer
+        // an enabled candidate when the request arrives: rebuilding the table
+        // would renumber m#2 onto site-c, so the persisted table must win.
+        let providers = vec![provider("site-a", Some(10)), provider("site-c", Some(30))];
+        let mut selection = aggregate_selection(&["site-a", "site-b", "site-c"], ".");
+        selection.aggregate_naming = AggregateNamingMode::ModelOnly;
+        selection.aggregate_slug_table = vec![
+            AggregateSlugEntry {
+                site_id: "site-a".to_string(),
+                upstream_model: "m".to_string(),
+                slug: "m".to_string(),
+            },
+            AggregateSlugEntry {
+                site_id: "site-b".to_string(),
+                upstream_model: "m".to_string(),
+                slug: "m#2".to_string(),
+            },
+            AggregateSlugEntry {
+                site_id: "site-c".to_string(),
+                upstream_model: "m".to_string(),
+                slug: "m#3".to_string(),
+            },
+        ];
+
+        let route = resolve_aggregate_route_with_selection("m#2", &selection, &providers).unwrap();
+
+        assert_eq!(route.site_id.as_deref(), Some("site-b"));
+        assert_eq!(route.upstream_model, "m");
+        assert!(route.explicit);
     }
 
     #[test]

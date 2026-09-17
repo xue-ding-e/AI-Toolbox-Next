@@ -105,7 +105,6 @@ import type {
   GeminiCliSettings,
 } from '@/types/geminicli';
 import {
-  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -730,8 +729,8 @@ const GeminiCliPage: React.FC = () => {
         restoreDirect: () => restoreProxyGatewayCliDirect('gemini'),
         engageSingle: () => engageProxyGatewaySingle('gemini', editingProvider?.id || ''),
         engageFailover: () => engageProxyGatewayFailover('gemini'),
-        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
-          engageProxyGatewayAggregate('gemini', providerIds, separator, aliases, naming),
+        // No `engageAggregate`: aggregate mode is Codex-only, so this CLI can
+        // never report it and the re-engage helper would reject the replay.
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

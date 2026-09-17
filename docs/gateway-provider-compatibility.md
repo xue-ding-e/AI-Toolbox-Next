@@ -216,6 +216,7 @@ Gemini 的通用工具语义见架构文档 §8.5：同批结果归为一个 use
 - provider `data.meta.modelRewrites`（snake/camel 双兼容）是非空 `ModelRewriteRule` 数组，每项 `{ from, to }`；读取侧过滤 `from`/`to` 空白的规则，空数组视为未配置。
 - 不是指定 `provider_override_id` 的连通性测试（连通性测试保留用户点选模型）。
 - 与 family/default 映射不同，该规则**在所有代理模式生效**：single 模式 CLI 透传模型命中规则时同样改写。
+- 聚合模式（`mode = "aggregate"`）按模型名是否自带站点身份区分：命中聚合 slug 或 `<site><sep><model>` 前缀的请求已经由前缀指定了精确上游模型，**跳过本规则**（前缀优先）；无前缀的裸模型名（用户手填的模型 id）与其他模式一样命中本规则。聚合模式始终不进入 per-CLI family/default/auto-review 映射。
 
 匹配与改写语义：
 
@@ -232,13 +233,14 @@ Gemini 的通用工具语义见架构文档 §8.5：同批结果归为一个 use
 
 - `types.rs::ModelRewriteRule` / `ProviderGatewayMeta.model_rewrites`
 - `runtime/providers.rs::model_rewrites_from_meta()` / `model_rewrite_rules_from_meta()`
-- `runtime/upstream.rs::resolve_upstream_model_id()`
+- `runtime/upstream.rs::resolve_upstream_model_id()` / `resolve_model_rewrite_rule()`（聚合模式的裸模型名分支复用后者）
 
 测试：
 
 - `provider_meta_reads_model_rewrites_and_filters_blank_rules`
 - `provider_meta_reads_snake_case_model_rewrites_and_defaults_to_none`
 - `codex_single_exact_rewrite_rule_applies`
+- `aggregate_bare_model_still_honours_rewrite_rules_but_explicit_slug_does_not`
 - `codex_failover_exact_rewrite_rule_wins_over_default_model`
 - `codex_failover_exact_rewrite_rule_wins_over_auto_review_model`
 - `model_rewrite_rule_matches_case_insensitively_after_trim`

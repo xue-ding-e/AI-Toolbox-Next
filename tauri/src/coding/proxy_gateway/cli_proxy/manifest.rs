@@ -1,5 +1,5 @@
 use crate::coding::proxy_gateway::{
-    aggregate_naming::AggregateNamingMode,
+    aggregate_naming::{AggregateNamingMode, AggregateSlugEntry},
     types::{GatewayCliKey, GatewayProxyMode},
 };
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,15 @@ pub struct AggregateManifestConfig {
     /// How `(site, model)` pairs are named in the generated Codex catalog.
     #[serde(default)]
     pub naming: AggregateNamingMode,
+    /// Slug table the Codex catalog was generated from, in publication order.
+    ///
+    /// Persisted so routing replays the exact table instead of re-deriving it
+    /// from the currently enabled candidates: with `model_only` a site that
+    /// disappears would otherwise renumber every later `#N` slug, silently
+    /// pointing it at another site. `provider_ids` + `naming` rebuild the table
+    /// for manifests written before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slug_table: Vec<AggregateSlugEntry>,
 }
 
 fn default_aggregate_separator() -> String {
@@ -35,6 +44,7 @@ impl Default for AggregateManifestConfig {
             separator: default_aggregate_separator(),
             aliases: BTreeMap::new(),
             naming: AggregateNamingMode::default(),
+            slug_table: Vec::new(),
         }
     }
 }
@@ -123,6 +133,7 @@ impl CliProxyManifest {
         separator: String,
         aliases: BTreeMap<String, String>,
         naming: AggregateNamingMode,
+        slug_table: Vec<AggregateSlugEntry>,
     ) -> Self {
         self.mode = GatewayProxyMode::Aggregate;
         self.aggregate = Some(AggregateManifestConfig {
@@ -130,6 +141,7 @@ impl CliProxyManifest {
             separator,
             aliases,
             naming,
+            slug_table,
         });
         self
     }
@@ -216,5 +228,7 @@ mod tests {
 
         assert!(parsed.aliases.is_empty());
         assert_eq!(parsed.naming, AggregateNamingMode::SiteModel);
+        // No persisted table: routing rebuilds it from `provider_ids` + `naming`.
+        assert!(parsed.slug_table.is_empty());
     }
 }

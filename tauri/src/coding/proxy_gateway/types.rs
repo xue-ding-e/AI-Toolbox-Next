@@ -235,9 +235,11 @@ pub struct ProviderGatewayMeta {
     /// Upstream model ids this provider declares in its `modelCatalog`.
     ///
     /// Populated from `settingsConfig.modelCatalog.models` so aggregate mode can
-    /// tell whether a fallback site actually offers the requested model. Empty
-    /// means "unknown": the provider never declared a catalog, so aggregate
-    /// routing keeps it as a last-resort candidate instead of excluding it.
+    /// tell whether a site actually offers the requested model. A bare model
+    /// name only resolves to sites listed here; empty means the provider never
+    /// declared a catalog, so it is excluded rather than guessed at. A site
+    /// named by an explicit `<site><sep><model>` prefix is routed regardless,
+    /// because the prefix is authoritative.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declared_models: Vec<String>,
 }

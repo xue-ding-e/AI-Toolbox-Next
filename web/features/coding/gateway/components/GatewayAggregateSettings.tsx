@@ -30,6 +30,9 @@ import {
   type GatewayCliTakeoverStatus,
 } from '@/services';
 import { listCodexProviders } from '@/services/codexApi';
+import type { CodexProvider } from '@/types/codex';
+import { isCodexLocalProviderId } from '@/features/coding/codex/utils/localProvider';
+import { primaryCodexProviderNeedsGatewayProxy } from '@/features/coding/codex/utils/codexGatewayProxyNeed';
 import {
   buildGatewayAggregateModelSlug,
   isAggregateSiteId,
@@ -37,6 +40,7 @@ import {
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
   reconcileAggregateSiteSelection,
+  restoreDirectUnavailableHintKey,
   toAggregateSiteCandidates,
   validateGatewayAggregateSeparator,
   validateGatewayAggregateAlias,
@@ -56,15 +60,21 @@ const AGGREGATE_CLI_KEYS: AggregateCliKey[] = [
 /**
  * Reuse the providers page data source per CLI; the gateway cannot reach any
  * provider the CLI page does not already own, so no extra request is invented.
+ *
+ * Returns the raw records too: the settings block has to re-check the primary
+ * provider's protocol requirement before restoring direct mode, and that needs
+ * the provider's `meta`/`settingsConfig`, not just its id and name.
  */
 const loadProviders = async (
   cliKey: AggregateCliKey,
-): Promise<GatewayAggregateSiteCandidate[]> => {
+): Promise<{ providers: CodexProvider[]; candidates: GatewayAggregateSiteCandidate[] }> => {
   switch (cliKey) {
-    case 'codex':
-      return toAggregateSiteCandidates(await listCodexProviders());
+    case 'codex': {
+      const providers = await listCodexProviders();
+      return { providers, candidates: toAggregateSiteCandidates(providers) };
+    }
     default:
-      return [];
+      return { providers: [], candidates: [] };
   }
 };
 
@@ -182,6 +192,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const { t } = useTranslation();
   const [cliKey, setCliKey] = React.useState<AggregateCliKey>('codex');
   const [candidates, setCandidates] = React.useState<GatewayAggregateSiteCandidate[]>([]);
+  const [providers, setProviders] = React.useState<CodexProvider[]>([]);
   const [loadingSites, setLoadingSites] = React.useState(true);
   const [siteIds, setSiteIds] = React.useState<string[]>([]);
   const [separator, setSeparator] = React.useState<string>(DEFAULT_AGGREGATE_SEPARATOR);
@@ -199,8 +210,32 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     [cliKey, cliStatuses],
   );
   const engaged = selectedStatus?.mode === 'aggregate';
+  // Aggregate names the first selected site as `primary_provider_id`. The shared
+  // gateway dialog refuses to restore direct while that provider still needs the
+  // gateway for protocol conversion, so this entry point must refuse too —
+  // otherwise the switch silently writes a direct config Codex cannot use.
+  const primaryNeedsProxy = React.useMemo(
+    () =>
+      primaryCodexProviderNeedsGatewayProxy(
+        providers,
+        selectedStatus?.primary_provider_id,
+        isCodexLocalProviderId,
+      ),
+    [providers, selectedStatus?.primary_provider_id],
+  );
+  const restoreDirectBlocked = engaged && primaryNeedsProxy.needsProxy;
+  const restoreDirectBlockedHint = t(
+    restoreDirectUnavailableHintKey(primaryNeedsProxy.reason),
+    { cli: t(`settings.gateway.cli.${cliKey}`) },
+  );
   const separatorError = validateGatewayAggregateSeparator(separator);
-  const normalizedAliases = normalizeGatewayAggregateAliases(aliases, siteIds);
+  // Unselected candidates keep answering to their provider id, so aliases are
+  // validated against the full candidate set — the same set the backend checks.
+  const candidateSiteIds = React.useMemo(
+    () => candidates.map((candidate) => candidate.id),
+    [candidates],
+  );
+  const normalizedAliases = normalizeGatewayAggregateAliases(aliases, siteIds, candidateSiteIds);
   const canEngage =
     running && siteIds.length > 0 && separatorError === null && normalizedAliases !== null && !busy;
   const sensors = useSensors(
@@ -255,9 +290,11 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         if (disposed || revisionRef.current !== request) {
           return;
         }
-        setCandidates(next);
+        setProviders(next.providers);
+        setCandidates(next.candidates);
       } catch (error) {
         if (!disposed && revisionRef.current === request) {
+          setProviders([]);
           setCandidates([]);
           setNotice({ kind: 'error', text: formatError(error) });
         }
@@ -284,15 +321,25 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         ? saved.separator
         : DEFAULT_AGGREGATE_SEPARATOR,
     );
-    setAliases(saved?.aliases ?? {});
     setNaming(saved?.naming ?? 'site_model');
     if (!saved) {
+      setAliases({});
       setSiteIds([]);
       return;
     }
     const { siteIds: nextSiteIds } = reconcileAggregateSiteSelection(
       saved.provider_ids,
       candidates,
+    );
+    const selectedIds = new Set(nextSiteIds);
+    // An alias keyed on a site that is no longer selectable (deleted or newly
+    // disabled provider) can never be edited — its row is not rendered — and
+    // `normalizeGatewayAggregateAliases` rejects the whole map for it, which
+    // would leave the form permanently un-engageable. Drop those keys instead.
+    setAliases(
+      Object.fromEntries(
+        Object.entries(saved.aliases ?? {}).filter(([siteId]) => selectedIds.has(siteId)),
+      ),
     );
     setSiteIds(nextSiteIds);
   }, [candidates, selectedStatus]);
@@ -326,6 +373,10 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const handleToggle = async (checked: boolean) => {
     setNotice(null);
     if (!checked) {
+      if (restoreDirectBlocked) {
+        setNotice({ kind: 'error', text: restoreDirectBlockedHint });
+        return;
+      }
       setBusy(true);
       try {
         await restoreProxyGatewayCliDirect(cliKey);
@@ -374,7 +425,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       await handleToggle(false);
       return;
     }
-    const nextAliases = normalizeGatewayAggregateAliases(aliases, nextSiteIds);
+    const nextAliases = normalizeGatewayAggregateAliases(aliases, nextSiteIds, candidateSiteIds);
     if (separatorError === null && nextAliases) {
       void runEngage(nextSiteIds, separator, nextAliases, naming);
     }
@@ -418,7 +469,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     if (!engaged || siteIds.length === 0) {
       return;
     }
-    const nextAliases = normalizeGatewayAggregateAliases(aliases, siteIds);
+    const nextAliases = normalizeGatewayAggregateAliases(aliases, siteIds, candidateSiteIds);
     if (!nextAliases) {
       setNotice({ kind: 'error', text: t('gateway.aggregate.aliasInvalid') });
       return;
@@ -474,8 +525,14 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
           <Switch
             size="small"
             checked={engaged}
-            disabled={busy || (!engaged && !canEngage) || (!engaged && !running)}
+            disabled={
+              busy ||
+              (!engaged && !canEngage) ||
+              (!engaged && !running) ||
+              restoreDirectBlocked
+            }
             loading={busy}
+            title={restoreDirectBlocked ? restoreDirectBlockedHint : undefined}
             aria-label={
               engaged ? t('gateway.aggregate.disable') : t('gateway.aggregate.enable')
             }
@@ -512,6 +569,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       </div>
 
       <p className={styles.helper}>{t('gateway.aggregate.modeHint')}</p>
+      {restoreDirectBlocked ? <p className={styles.helper}>{restoreDirectBlockedHint}</p> : null}
       {!running ? <p className={styles.helper}>{t('gateway.aggregate.takeoverHint')}</p> : null}
 
       <div className={styles.fieldRow}>

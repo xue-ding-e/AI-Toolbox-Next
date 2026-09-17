@@ -47,51 +47,30 @@ export const validateGatewayAggregateAlias = (alias: string): boolean =>
 export const normalizeGatewayAggregateAliases = (
   aliases: Record<string, string> | null | undefined,
   selectedSiteIds: readonly string[],
+  allSiteIds: readonly string[] = selectedSiteIds,
 ): Record<string, string> | null => {
   const selected = new Set(selectedSiteIds);
   const normalized: Record<string, string> = {};
-  const seen = new Set<string>();
   for (const [siteId, rawAlias] of Object.entries(aliases ?? {})) {
     const alias = rawAlias.trim();
     if (!alias) continue;
     if (!selected.has(siteId) || !validateGatewayAggregateAlias(alias)) return null;
-    const key = alias.toLowerCase();
-    if (seen.has(key)) return null;
-    seen.add(key);
     normalized[siteId] = alias;
   }
-  for (const siteId of selectedSiteIds) {
-    const effective = normalized[siteId] ?? siteId;
-    const key = effective.toLowerCase();
-    if (seen.has(key) && normalized[siteId] === undefined) return null;
-    seen.add(key);
+  // Every candidate must answer to exactly one prefix, mirroring the backend's
+  // `validate_aggregate_site_prefixes`: a site is addressed by its alias when it
+  // has one, otherwise by its provider id. Unselected candidates always keep
+  // their id (request-time routing leaves them addressable as fallbacks), so an
+  // alias may not shadow one of those either — the form must not submit a
+  // selection the engage command would refuse.
+  const prefixes = new Set<string>();
+  for (const siteId of allSiteIds) {
+    const prefix = (selected.has(siteId) ? normalized[siteId] : undefined) ?? siteId;
+    const key = prefix.toLowerCase();
+    if (prefixes.has(key)) return null;
+    prefixes.add(key);
   }
   return normalized;
-};
-
-/** Build the canonical aggregate payload for an alias edit, when it can be
- * applied immediately to an already engaged takeover. */
-export const prepareGatewayAggregateAliasReengage = (
-  currentAliases: Record<string, string>,
-  siteId: string,
-  alias: string,
-  siteIds: readonly string[],
-  engaged: boolean,
-  separator: string,
-  naming: GatewayAggregateNamingMode,
-): { siteIds: string[]; separator: string; aliases: Record<string, string>; naming: GatewayAggregateNamingMode } | null => {
-  const nextAliases = { ...currentAliases, [siteId]: alias };
-  if (!alias.trim()) delete nextAliases[siteId];
-  const normalizedAliases = normalizeGatewayAggregateAliases(nextAliases, siteIds);
-  if (!engaged || siteIds.length === 0 || !normalizedAliases) {
-    return null;
-  }
-  return {
-    siteIds: [...siteIds],
-    separator,
-    aliases: normalizedAliases,
-    naming,
-  };
 };
 
 /** Drop duplicate/non-addressable site ids while preserving the user's order. */

@@ -1,5 +1,5 @@
 use ai_toolbox_lib::coding::proxy_gateway::{
-    aggregate_naming::AggregateNamingMode,
+    aggregate_naming::{AggregateNamingMode, AggregateSlugEntry},
     cli_proxy::manifest::CliProxyManifest,
     paths::ProxyGatewayPaths,
     types::{GatewayCliKey, GatewayProxyMode, ProxyGatewaySettings},
@@ -29,6 +29,23 @@ impl RunningAggregateGateway {
         providers: &[(&str, &str, &str, &[&str])],
         mode: GatewayProxyMode,
         selected_sites: &[&str],
+    ) -> Self {
+        Self::new_with_slug_table(
+            providers,
+            mode,
+            selected_sites,
+            AggregateNamingMode::default(),
+            Vec::new(),
+        )
+    }
+
+    /// Same gateway, with the slug table the engage path would have persisted.
+    fn new_with_slug_table(
+        providers: &[(&str, &str, &str, &[&str])],
+        mode: GatewayProxyMode,
+        selected_sites: &[&str],
+        naming: AggregateNamingMode,
+        slug_table: Vec<AggregateSlugEntry>,
     ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let db = SqliteDbState::in_memory_for_test().unwrap();
@@ -75,7 +92,8 @@ impl RunningAggregateGateway {
                     .collect(),
                 ".".to_string(),
                 std::collections::BTreeMap::new(),
-                AggregateNamingMode::default(),
+                naming,
+                slug_table,
             );
         }
         fs::create_dir_all(paths.manifest_path(GatewayCliKey::Codex).parent().unwrap()).unwrap();
@@ -413,6 +431,50 @@ async fn aggregate_unknown_site_prefix_returns_404_without_calling_any_upstream(
 
     assert_eq!(abort_if_idle(site_a_task).await, None);
     assert_eq!(abort_if_idle(site_b_task).await, None);
+}
+
+#[tokio::test]
+async fn aggregate_replays_the_persisted_table_when_a_site_is_no_longer_enabled() {
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let site_b_task = spawn_upstream_capture(site_b, 200, responses_success("modelX", "from B"));
+
+    // The manifest was engaged with siteA + siteB under `model_only`, so it
+    // published modelX (siteA) and modelX#2 (siteB). siteA is no longer an
+    // enabled candidate: rebuilding the table from the live candidates would
+    // renumber modelX#2 down onto siteB, so a slug the user already had in
+    // their Codex list would change meaning. The persisted table wins instead.
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[("siteB", "Site B", &site_b_url, &["modelX"])],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::ModelOnly,
+        vec![
+            AggregateSlugEntry {
+                site_id: "siteA".to_string(),
+                upstream_model: "modelX".to_string(),
+                slug: "modelX".to_string(),
+            },
+            AggregateSlugEntry {
+                site_id: "siteB".to_string(),
+                upstream_model: "modelX".to_string(),
+                slug: "modelX#2".to_string(),
+            },
+        ],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "modelX#2").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["output"][0]["content"][0]["text"], "from B");
+
+    let captured = tokio::time::timeout(REQUEST_TIMEOUT, site_b_task)
+        .await
+        .expect("site B request should arrive")
+        .unwrap()
+        .expect("site B request should be captured");
+    // The slug resolved back to the upstream model id before forwarding.
+    assert_eq!(captured["model"], "modelX");
 }
 
 #[tokio::test]

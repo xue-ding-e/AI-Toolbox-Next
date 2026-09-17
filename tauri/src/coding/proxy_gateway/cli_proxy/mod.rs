@@ -615,6 +615,26 @@ pub async fn engage_aggregate_cli(
     let settings = settings::load_settings_from_sqlite_state(db)?;
     let effective_origin =
         resolve_effective_base_origin(base_origin, targets.is_wsl_direct, &settings.wsl_host);
+    let naming_config = crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig {
+        separator: separator.clone(),
+        aliases: aliases.clone(),
+        naming,
+    };
+    // Allocate the slug table before the manifest is written: the manifest is
+    // the router's source of truth, so it must carry the same table the catalog
+    // below is generated from.
+    let site_specs = load_aggregate_site_specs(db, &ordered_providers).await?;
+    let slug_table =
+        crate::coding::codex::commands::codex_aggregate_slug_table(&site_specs, &naming_config)?;
+    // The catalog and the manifest table come from the same allocation pass, so
+    // an empty table means the selected sites declare no models at all. Check it
+    // here, before anything is written, so the abort leaves the CLI untouched.
+    if slug_table.is_empty() {
+        return Err(
+            "Selected sites declare no models, so no aggregate catalog was generated".to_string(),
+        );
+    }
+
     let mut manifest = prepare_manifest(
         paths,
         cli_key,
@@ -628,6 +648,7 @@ pub async fn engage_aggregate_cli(
         separator.clone(),
         aliases.clone(),
         naming,
+        slug_table,
     );
     sync_manifest_managed_fields(&mut manifest, &targets);
     write_manifest(paths, cli_key, &manifest)?;
@@ -655,22 +676,15 @@ pub async fn engage_aggregate_cli(
     // Generate the aggregated catalog so Codex's model picker lists every
     // selected (site, model) pair. Failing here would leave Codex pointing at a
     // catalog that does not match the routing manifest, so surface the error.
-    if let Err(error) = write_codex_aggregate_catalog_file(
-        db,
-        &ordered_providers,
-        &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig {
-            separator,
-            aliases,
-            naming,
-        },
-    )
-    .await
-    {
+    if let Err(error) = write_codex_aggregate_catalog_file(db, &site_specs, &naming_config).await {
         // A manifest/config pair without its aggregate catalog is not a usable
         // takeover: Codex would have no model slugs that the router can
         // resolve. Roll back the runtime files and leave a disabled, direct
-        // manifest instead of trapping the CLI in a half-engaged state.
+        // manifest instead of trapping the CLI in a half-engaged state. The
+        // write may have truncated the shared catalog file, so drop the pointer
+        // instead of leaving Codex reading a half-written catalog.
         let _ = restore_gateway_config(cli_key, paths, &targets_for_apply, &manifest);
+        retire_codex_aggregate_catalog(db, cli_key).await;
         manifest.enabled = false;
         manifest.mode = GatewayProxyMode::Single;
         manifest.aggregate = None;
@@ -687,7 +701,7 @@ pub async fn engage_aggregate_cli(
 /// Build and write the aggregate model catalog for the Codex runtime root.
 async fn write_codex_aggregate_catalog_file(
     db: &SqliteDbState,
-    providers: &[UpstreamProvider],
+    site_specs: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
 ) -> Result<(), String> {
     use crate::coding::codex::commands as codex_commands;
@@ -698,10 +712,9 @@ async fn write_codex_aggregate_catalog_file(
             .map_err(|e| format!("Failed to create .codex directory: {e}"))?;
     }
 
-    let site_specs = load_aggregate_site_specs(db, providers).await?;
     let written = codex_commands::write_codex_aggregate_catalog(
         &config_dir,
-        &site_specs,
+        site_specs,
         naming,
         codex_commands::CODEX_AGGREGATE_DEFAULT_CONTEXT_WINDOW,
     )?;
@@ -710,6 +723,11 @@ async fn write_codex_aggregate_catalog_file(
             "Selected sites declare no models, so no aggregate catalog was generated".to_string(),
         );
     }
+    // The catalog is only visible once Codex's `model_catalog_json` names it.
+    // The takeover patches config.toml without touching that key, so assert it
+    // here — otherwise a re-engage after a provider save (which restores direct
+    // first, and that now drops the pointer) would leave Codex with no catalog.
+    codex_commands::ensure_codex_model_catalog_pointer(&config_dir)?;
     Ok(())
 }
 
@@ -821,6 +839,10 @@ pub async fn disengage_failover_cli(
     // superset of "gateway proxy on", so leaving it must restore the P0-only
     // single-mode runtime config and drop the aggregate manifest block.
     if manifest.enabled && manifest.mode != GatewayProxyMode::Single {
+        // Only an aggregate takeover rewrote the shared Codex catalog file; a
+        // failover takeover leaves the single-provider catalog and its pointer
+        // alone, so it must not be retired here.
+        let left_aggregate = manifest.mode == GatewayProxyMode::Aggregate;
         let primary_provider =
             load_proxyable_provider(db, cli_key, &manifest.primary_provider_id).await?;
         let mut targets = resolve_targets(db, cli_key).await?;
@@ -849,18 +871,35 @@ pub async fn disengage_failover_cli(
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
         write_manifest(paths, cli_key, &manifest)?;
 
-        // Leaving aggregate mode must also retire the aggregated catalog,
-        // otherwise Codex would keep listing `<site>.<model>` slugs that no
-        // longer resolve through the manifest.
-        if cli_key == GatewayCliKey::Codex {
-            if let Ok(config_dir) =
-                crate::coding::codex::commands::get_codex_config_dir_from_db_async(db).await
-            {
-                let _ = crate::coding::codex::commands::remove_codex_aggregate_catalog(&config_dir);
-            }
+        // Falling back to single mode also leaves aggregate behind, so retire
+        // the aggregated catalog here too.
+        if left_aggregate {
+            retire_codex_aggregate_catalog(db, cli_key).await;
         }
     }
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
+}
+
+/// Drop the Codex aggregate catalog pointer when aggregate mode is left behind.
+///
+/// `write_codex_aggregate_catalog` overwrites the AI Toolbox-managed Codex model
+/// catalog — the same file the single-provider `apply` path writes and points
+/// `model_catalog_json` at — so a takeover that stops being aggregate must stop
+/// advertising that pointer, or Codex keeps listing `<site>.<model>` slugs whose
+/// prefix nothing routes any more. The file content is replaced by the next
+/// single-provider `apply`.
+///
+/// Call this from *every* path that abandons an aggregate takeover: restore
+/// direct and disengage both reach it, and so does the engage rollback.
+async fn retire_codex_aggregate_catalog(db: &SqliteDbState, cli_key: GatewayCliKey) {
+    if cli_key != GatewayCliKey::Codex {
+        return;
+    }
+    if let Ok(config_dir) =
+        crate::coding::codex::commands::get_codex_config_dir_from_db_async(db).await
+    {
+        let _ = crate::coding::codex::commands::remove_codex_aggregate_catalog(&config_dir);
+    }
 }
 
 pub async fn restore_cli_direct(
@@ -890,6 +929,13 @@ pub async fn restore_cli_direct(
     }
 
     restore_gateway_config(cli_key, paths, &targets, &manifest)?;
+    // Leaving aggregate restores the pre-takeover config, whose
+    // `model_catalog_json` still names the catalog file this takeover rewrote
+    // with aggregate slugs. Retire the pointer before the manifest stops saying
+    // "aggregate", otherwise Codex keeps listing slugs nothing routes.
+    if manifest.mode == GatewayProxyMode::Aggregate {
+        retire_codex_aggregate_catalog(db, cli_key).await;
+    }
     // Drop original snapshots after a successful restore so the next engage re-backs up
     // the post-direct runtime files instead of reusing a stale first-engage .bak.
     clear_gateway_backups(paths, cli_key, &manifest);
@@ -1315,6 +1361,7 @@ async fn proxy_details_for_manifest(
         aggregate_separator: aggregate.separator,
         aggregate_aliases: aggregate.aliases,
         aggregate_naming: aggregate.naming,
+        aggregate_slug_table: aggregate.slug_table,
     };
     match load_candidate_providers_with_settings_and_selection(db, cli_key, None, Some(&selection))
         .await

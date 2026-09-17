@@ -121,7 +121,6 @@ import {
 } from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import {
-  engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -1083,8 +1082,8 @@ const ClaudeCodePage: React.FC = () => {
         restoreDirect: () => restoreProxyGatewayCliDirect('claude'),
         engageSingle: () => engageProxyGatewaySingle('claude', savedProviderId),
         engageFailover: () => engageProxyGatewayFailover('claude'),
-        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
-          engageProxyGatewayAggregate('claude', providerIds, separator, aliases, naming),
+        // No `engageAggregate`: aggregate mode is Codex-only, so this CLI can
+        // never report it and the re-engage helper would reject the replay.
         onGatewayStatusChange: setGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {

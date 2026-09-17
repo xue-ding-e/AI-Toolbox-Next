@@ -26,6 +26,7 @@ use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::proxy_gateway::aggregate_naming::AggregateSlugEntry;
 use crate::coding::proxy_gateway::{
     cli_proxy, paths::ProxyGatewayPaths, provider_protocol, provider_switch, types::GatewayCliKey,
 };
@@ -3009,13 +3010,19 @@ fn aggregate_catalog_from_entries(
 /// `sites` is `(site_id, site_label, settings_config)` in the user's display
 /// order; the order of the produced entries follows it, so the Codex model list
 /// mirrors the order the user arranged in the settings panel.
+///
+/// Also returns the `(site, upstream model) -> slug` table that was allocated
+/// alongside the catalog. The caller persists it in the manifest so request-time
+/// routing replays this exact table instead of rebuilding one that could
+/// renumber `model_only` `#N` slugs.
 fn codex_aggregate_catalog_entries(
     sites: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
-) -> Result<Vec<AggregateCatalogEntry>, String> {
+) -> Result<(Vec<AggregateCatalogEntry>, Vec<AggregateSlugEntry>), String> {
     use crate::coding::proxy_gateway::aggregate_naming::AggregateSlugAllocator;
 
     let mut entries = Vec::new();
+    let mut slug_table = Vec::new();
     let mut allocator = AggregateSlugAllocator::default();
 
     for (site_id, site_label, settings_config) in sites {
@@ -3044,6 +3051,11 @@ fn codex_aggregate_catalog_entries(
             let Some(slug) = naming.allocate(&mut allocator, site_id, model)? else {
                 continue;
             };
+            slug_table.push(AggregateSlugEntry {
+                site_id: site_id.clone(),
+                upstream_model: model.to_string(),
+                slug: slug.clone(),
+            });
 
             let model_display_name = item
                 .get("displayName")
@@ -3100,7 +3112,19 @@ fn codex_aggregate_catalog_entries(
         }
     }
 
-    Ok(entries)
+    Ok((entries, slug_table))
+}
+
+/// Slug table the aggregate catalog publishes, without writing the catalog.
+///
+/// Used by the CLI takeover path to persist the table in the manifest *before*
+/// the runtime files are patched, so the manifest and the catalog it points at
+/// always describe the same slugs.
+pub(crate) fn codex_aggregate_slug_table(
+    providers: &[(String, String, Value)],
+    naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+) -> Result<Vec<crate::coding::proxy_gateway::aggregate_naming::AggregateSlugEntry>, String> {
+    Ok(codex_aggregate_catalog_entries(providers, naming)?.1)
 }
 
 /// Read the aggregate routing config (selected sites + separator) from the
@@ -3148,7 +3172,7 @@ pub(crate) fn write_codex_aggregate_catalog(
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
     default_context_window: u64,
 ) -> Result<bool, String> {
-    let entries = codex_aggregate_catalog_entries(providers, naming)?;
+    let (entries, _slug_table) = codex_aggregate_catalog_entries(providers, naming)?;
     if entries.is_empty() {
         return Ok(false);
     }
@@ -3163,6 +3187,29 @@ pub(crate) fn write_codex_aggregate_catalog(
 
 /// Default context window used when an aggregate entry declares none.
 pub(crate) const CODEX_AGGREGATE_DEFAULT_CONTEXT_WINDOW: u64 = CODEX_DEFAULT_CONTEXT_WINDOW;
+
+/// Point Codex at the AI Toolbox-managed catalog file.
+///
+/// The aggregate takeover owns the catalog file while it is engaged, so it must
+/// own the pointer too: leaving aggregate removes `model_catalog_json`, and
+/// every provider save while engaged runs a restore-direct → re-engage round
+/// trip (`saveProviderWithGatewayReengage`). Without re-asserting the pointer
+/// here, that round trip would leave Codex reading no catalog at all and the
+/// aggregated model list would silently disappear.
+pub(crate) fn ensure_codex_model_catalog_pointer(config_dir: &Path) -> Result<(), String> {
+    let config_path = config_dir.join("config.toml");
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let config_toml = fs::read_to_string(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))?;
+    let updated = set_codex_model_catalog_json_field(&config_toml, true)?;
+    if updated != config_toml {
+        fs::write(&config_path, updated)
+            .map_err(|error| format!("Failed to write config.toml: {error}"))?;
+    }
+    Ok(())
+}
 
 /// Retire the aggregate catalog when leaving aggregate mode.
 ///
@@ -4506,11 +4553,11 @@ pub async fn read_codex_settings(
 mod tests {
     use super::{
         aggregate_catalog_from_entries, append_toml_configs, build_written_codex_config_toml,
-        codex_aggregate_catalog_entries, codex_catalog_model_specs,
-        extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
-        fill_template_fields_from_static, heal_dangling_codex_model_provider,
-        infer_codex_provider_category_from_settings, merge_codex_auth_json,
-        merge_remote_codex_official_models, normalize_codex_model_tier,
+        codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_model_specs,
+        ensure_codex_model_catalog_pointer, extract_codex_common_config_from_settings_toml,
+        extract_provider_settings_for_storage, fill_template_fields_from_static,
+        heal_dangling_codex_model_provider, infer_codex_provider_category_from_settings,
+        merge_codex_auth_json, merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
         read_codex_aggregate_selection, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, static_codex_official_models,
@@ -5179,7 +5226,7 @@ approval_policy = "never"
             ),
         ];
 
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         let slugs: Vec<&str> = entries.iter().map(|e| e.slug.as_str()).collect();
         assert_eq!(
@@ -5197,7 +5244,7 @@ approval_policy = "never"
             aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-sol" }])),
         ];
 
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         // Both sites keep their own entry so the user can pick either one.
         assert_eq!(entries.len(), 2);
@@ -5213,7 +5260,7 @@ approval_policy = "never"
             json!([{ "model": "m1" }]),
         )];
 
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming("/")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming("/")).unwrap();
 
         assert_eq!(entries[0].slug, "site1/m1");
     }
@@ -5226,7 +5273,7 @@ approval_policy = "never"
             aggregate_site("ok", "OK", json!([{ "model": "m1" }])),
         ];
 
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].slug, "ok.m1");
@@ -5240,7 +5287,7 @@ approval_policy = "never"
             json!([{ "model": "m1" }, { "model": "m1" }]),
         )];
 
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         assert_eq!(entries.len(), 1);
     }
@@ -5256,7 +5303,7 @@ approval_policy = "never"
                 "defaultReasoningLevel": "high"
             }]),
         )];
-        let entries = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         let catalog = aggregate_catalog_from_entries(&entries, 200000);
         let model = &catalog["models"][0];
@@ -5328,10 +5375,37 @@ approval_policy = "never"
             naming: AggregateNamingMode::ModelAtSite,
         };
 
-        let entries = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
 
         assert_eq!(entries[0].slug, "deepseek-v4-flash@unsee");
         assert_eq!(entries[0].display_name, "Unsee Relay · deepseek-v4-flash");
+    }
+
+    #[test]
+    fn aggregate_slug_table_pairs_every_catalog_slug_with_its_site_and_model() {
+        let sites = vec![
+            aggregate_site("site-a", "Site A", json!([{ "model": "m1" }])),
+            aggregate_site("site-b", "Site B", json!([{ "model": "m1" }])),
+        ];
+
+        let table = codex_aggregate_slug_table(&sites, &aggregate_naming(".")).unwrap();
+
+        // The persisted table must address the same pairs the catalog publishes,
+        // in the same order, so routing never diverges from the model list.
+        let pairs: Vec<(&str, &str, &str)> = table
+            .iter()
+            .map(|entry| {
+                (
+                    entry.site_id.as_str(),
+                    entry.upstream_model.as_str(),
+                    entry.slug.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("site-a", "m1", "site-a.m1"), ("site-b", "m1", "site-b.m1")]
+        );
     }
 
     #[test]
@@ -5366,6 +5440,31 @@ approval_policy = "never"
         let temp_dir = tempfile::tempdir().expect("tempdir");
 
         assert!(remove_codex_aggregate_catalog(temp_dir.path()).is_ok());
+    }
+
+    #[test]
+    fn ensure_catalog_pointer_sets_and_restores_the_managed_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Absent pointer: the takeover asserts it, so a re-engage round trip
+        // (which drops it first) still ends with Codex reading the catalog.
+        std::fs::write(&config_path, "model_provider = \"custom\"\n").unwrap();
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+        let after = std::fs::read_to_string(&config_path).unwrap();
+        assert!(after.contains(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME));
+        assert!(after.contains("model_provider"));
+
+        // Round trip: retire then re-assert, exactly like restore-direct ->
+        // re-engage, and the pointer must come back.
+        remove_codex_aggregate_catalog(temp_dir.path()).unwrap();
+        assert!(!std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("model_catalog_json"));
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+        assert!(std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME));
     }
 
     #[test]
@@ -6198,12 +6297,9 @@ base_url = "https://api.example.com/v1"
 wire_api = "responses"
 "#;
 
-        let rendered = build_written_codex_config_toml(
-            previous_managed,
-            Some(previous_managed),
-            next_managed,
-        )
-        .unwrap();
+        let rendered =
+            build_written_codex_config_toml(previous_managed, Some(previous_managed), next_managed)
+                .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
@@ -6699,9 +6795,13 @@ name = "Provider A"
 base_url = "https://api.provider-a.com/v1"
 "#;
         let provider_a_auth = json!({"OPENAI_API_KEY": "sk-provider-a"});
-        let projected_a =
-            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, true, "custom")
-                .unwrap();
+        let projected_a = project_codex_auth_to_runtime_config(
+            provider_a_config,
+            &provider_a_auth,
+            true,
+            "custom",
+        )
+        .unwrap();
         let doc_a: DocumentMut = projected_a.parse().unwrap();
         assert_eq!(
             doc_a["model_providers"]["provider-a"]["experimental_bearer_token"].as_str(),
@@ -6717,9 +6817,13 @@ name = "Provider B"
 base_url = "https://api.provider-b.com/v1"
 "#;
         let provider_b_auth = json!({"OPENAI_API_KEY": "sk-provider-b"});
-        let projected_b =
-            project_codex_auth_to_runtime_config(provider_b_config, &provider_b_auth, true, "custom")
-                .unwrap();
+        let projected_b = project_codex_auth_to_runtime_config(
+            provider_b_config,
+            &provider_b_auth,
+            true,
+            "custom",
+        )
+        .unwrap();
 
         // Simulate diff cleanup: previous_managed has provider-a token, next_managed has provider-b
         let cleaned_b = build_written_codex_config_toml(
@@ -6749,7 +6853,7 @@ model = "claude-sonnet-4-6"
         let projected_official = project_codex_auth_to_runtime_config(
             official_config,
             &official_auth,
-            false,    // preserve=false for official
+            false, // preserve=false for official
             "official",
         )
         .unwrap();
@@ -6768,9 +6872,13 @@ model = "claude-sonnet-4-6"
         assert!(doc_official.get("experimental_bearer_token").is_none());
 
         // Switch back to Provider A with preserve=false (switch disabled)
-        let projected_a_no_preserve =
-            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, false, "custom")
-                .unwrap();
+        let projected_a_no_preserve = project_codex_auth_to_runtime_config(
+            provider_a_config,
+            &provider_a_auth,
+            false,
+            "custom",
+        )
+        .unwrap();
         let doc_a_no_preserve: DocumentMut = projected_a_no_preserve.parse().unwrap();
         // Should not have experimental_bearer_token when preserve=false
         assert!(doc_a_no_preserve["model_providers"]["provider-a"]

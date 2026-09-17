@@ -1003,6 +1003,11 @@ async fn forward_to_upstream(
     // Aggregate mode: keep the site named by the model prefix first, and keep
     // the other sites that declare the same upstream model as fallbacks.
     let mut aggregate_upstream_model: Option<String> = None;
+    // `true` when the model name itself selected the site (a published slug or a
+    // `<site><sep><model>` prefix). Those already name the exact upstream model,
+    // so user rewrite rules must not touch them; a bare model name still runs
+    // them, exactly like the non-aggregate paths.
+    let mut aggregate_model_is_explicit = false;
     if let Some(selection) = aggregate_selection {
         let resolved =
             match resolve_aggregate_route_with_selection(&requested_model, selection, &providers) {
@@ -1026,6 +1031,7 @@ async fn forward_to_upstream(
                 }
             };
         aggregate_upstream_model = Some(resolved.upstream_model.clone());
+        aggregate_model_is_explicit = resolved.explicit;
         if let Some(site_id) = resolved.site_id.as_deref() {
             let Some(index) = providers.iter().position(|provider| provider.id == site_id) else {
                 let mut response = json_response(
@@ -1127,11 +1133,17 @@ async fn forward_to_upstream(
     let is_single_provider = providers.len() == 1;
 
     'providers: for provider in providers {
-        // Aggregate mode: the model prefix already named the exact upstream
-        // model, so forward it verbatim instead of running the per-channel
-        // default/family mapping.
+        // Aggregate mode never runs the per-CLI default/family mapping: the
+        // prefix (or the published slug) already names the exact upstream
+        // model. A bare model name, though, is a user-typed model id exactly
+        // like in the other modes, so its per-channel rewrite rules still apply.
         let upstream_model_id = match aggregate_upstream_model.as_deref() {
-            Some(model) => model.to_string(),
+            Some(model) => resolve_aggregate_upstream_model(
+                model,
+                aggregate_model_is_explicit,
+                &provider,
+                allow_provider_model_mapping,
+            ),
             None => resolve_upstream_model_id(
                 request,
                 &requested_model,
@@ -5191,6 +5203,52 @@ async fn wait_before_retry(retry_interval_secs: u64) {
     }
 }
 
+/// Resolve the upstream model for one aggregate-mode attempt.
+///
+/// Aggregate mode never runs the per-CLI family/default mapping: an explicit
+/// slug or `<site><sep><model>` prefix already names the exact upstream model.
+/// A bare model name is a user-typed model id, so it still honours the
+/// provider's `modelRewrites` exactly like the non-aggregate paths do.
+fn resolve_aggregate_upstream_model(
+    model: &str,
+    explicit: bool,
+    provider: &UpstreamProvider,
+    allow_provider_model_mapping: bool,
+) -> String {
+    if explicit {
+        return strip_one_m_context_marker(model).to_string();
+    }
+    resolve_model_rewrite_rule(provider, model, allow_provider_model_mapping)
+        .unwrap_or_else(|| strip_one_m_context_marker(model).to_string())
+}
+
+/// Apply one provider's user-defined exact model rewrite rule (`modelRewrites`).
+///
+/// Returns the mapped upstream model, or `None` when no rule matches. Kept
+/// separate from `resolve_upstream_model_id` because aggregate mode wants the
+/// rewrite but not the per-CLI family/default mapping that follows it.
+fn resolve_model_rewrite_rule(
+    provider: &UpstreamProvider,
+    requested_model: &str,
+    allow_provider_model_mapping: bool,
+) -> Option<String> {
+    if !allow_provider_model_mapping {
+        return None;
+    }
+    let normalized_model = strip_one_m_context_marker(requested_model)
+        .trim()
+        .to_ascii_lowercase();
+    if normalized_model.is_empty() {
+        return None;
+    }
+    provider
+        .model_mapping
+        .rewrite_rules
+        .iter()
+        .find(|rule| rule.from.trim().to_ascii_lowercase() == normalized_model)
+        .map(|rule| strip_one_m_context_marker(rule.to.trim()).to_string())
+}
+
 fn is_codex_auto_review_request(request: &DebugHttpRequest) -> bool {
     header_value_ci(&request.headers, "x-openai-subagent")
         .map(str::trim)
@@ -5213,20 +5271,10 @@ fn resolve_upstream_model_id(
     // tests keep the pinned model. [1M] is stripped before matching and again
     // before forwarding so both the match key and the mapped target stay
     // clean upstream model IDs.
-    if allow_provider_model_mapping {
-        let normalized_model = strip_one_m_context_marker(requested_model)
-            .trim()
-            .to_ascii_lowercase();
-        if !normalized_model.is_empty() {
-            if let Some(rule) = provider
-                .model_mapping
-                .rewrite_rules
-                .iter()
-                .find(|rule| rule.from.trim().to_ascii_lowercase() == normalized_model)
-            {
-                return strip_one_m_context_marker(rule.to.trim()).to_string();
-            }
-        }
+    if let Some(mapped) =
+        resolve_model_rewrite_rule(provider, requested_model, allow_provider_model_mapping)
+    {
+        return mapped;
     }
     match provider.cli_key {
         GatewayCliKey::Claude => {
@@ -12797,6 +12845,39 @@ data: {data}\r\n\r\n"
         // Issue #321: single-mode title requests for a relay-disabled model
         // are rewritten even though default-model mapping is failover-only.
         assert_eq!(resolve_model("gpt-5-luna", &provider, false), "gpt-5-mini");
+    }
+
+    #[test]
+    fn aggregate_bare_model_still_honours_rewrite_rules_but_explicit_slug_does_not() {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.model_mapping.default_model = Some("p1-main".to_string());
+        provider.model_mapping.rewrite_rules = vec![ModelRewriteRule {
+            from: "gpt-5-luna".to_string(),
+            to: "gpt-5-mini".to_string(),
+        }];
+
+        // Bare model name (user-typed id): rewrites apply, like every other mode.
+        assert_eq!(
+            resolve_aggregate_upstream_model("gpt-5-luna", false, &provider, true),
+            "gpt-5-mini"
+        );
+        // Same model reached through a published slug / `<site><sep><model>`
+        // prefix: the prefix already named the upstream model, so it wins.
+        assert_eq!(
+            resolve_aggregate_upstream_model("gpt-5-luna", true, &provider, true),
+            "gpt-5-luna"
+        );
+        // The per-CLI default/auto-review mapping never applies in aggregate
+        // mode, with or without a prefix.
+        assert_eq!(
+            resolve_aggregate_upstream_model("unknown-model", false, &provider, true),
+            "unknown-model"
+        );
+        // Connectivity tests pin the model: mapping stays disabled.
+        assert_eq!(
+            resolve_aggregate_upstream_model("gpt-5-luna", false, &provider, false),
+            "gpt-5-luna"
+        );
     }
 
     #[test]
