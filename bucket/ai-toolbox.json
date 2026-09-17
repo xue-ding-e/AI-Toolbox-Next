@@ -2,7 +2,7 @@
     "version": "1.1.5",
     "description": "Desktop toolbox for managing AI coding assistant configurations",
     "homepage": "https://github.com/coulsontl/ai-toolbox",
-    "license": "MIT",
+    "license": "AGPL-3.0-or-later",
     "architecture": {
         "64bit": {
             "url": "https://github.com/coulsontl/ai-toolbox/releases/download/v1.1.5/AI.Toolbox_1.1.5_x64-setup.exe#/dl.exe",

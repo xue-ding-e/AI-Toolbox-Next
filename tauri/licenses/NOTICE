@@ -1,0 +1,49 @@
+# Third-Party Notices
+
+AI Toolbox incorporates material from the projects listed below. This file
+records each item's origin, license, and any local modifications. Full license
+texts are kept in [`licenses/`](licenses/).
+
+---
+
+## AxonHub protocol test fixtures
+
+- **Source**: [looplj/axonhub](https://github.com/looplj/axonhub)
+- **Upstream path**: `llm/transformer/{anthropic,openai,openai/responses,gemini}/testdata/`
+- **Upstream revision**: `bd7144ecfcafe661710322287e673b1e86129224`
+- **License**: **LGPL-3.0**. The `llm/` directory of AxonHub is licensed under
+  the GNU Lesser General Public License version 3.0 (see AxonHub's `llm/LICENSE`).
+  Full text: [`licenses/LGPL-3.0.txt`](licenses/LGPL-3.0.txt), together with
+  [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt) — LGPL-3.0 incorporates the
+  terms of GPL-3.0 by reference.
+- **Local path**: `tauri/src/coding/proxy_gateway/transformer/fixtures/reference/`
+- **File count**: 118
+- **Kept in sync by**: `scripts/sync-axonhub-fixtures.mjs`
+
+**Modifications** made to the local copies:
+
+1. Line endings normalised to LF.
+2. Encrypted / signed content blobs redacted to placeholders
+   (e.g. the `encrypted_content` and `reasoning_signature` fields).
+3. Path strings naming the upstream repository rewritten
+   (`/axonhub/` → `/reference/`).
+
+These files are **not** compiled into the distributed application; they are read
+from disk by the test suite only. They remain under **LGPL-3.0** and are **not**
+relicensed under AGPL-3.0.
+
+---
+
+## Agent icon assets
+
+Icons under `web/assets/agent-icons/` are third-party marks with their own
+provenance and license notes — see
+[`web/assets/agent-icons/NOTICE.md`](web/assets/agent-icons/NOTICE.md).
+
+---
+
+## Bundled dependencies
+
+Rust crates (`tauri/Cargo.toml`, `tauri/Cargo.lock`) and npm packages
+(`package.json`, `pnpm-lock.yaml`) are used under their respective licenses.
+Refer to each package for its license terms.

@@ -337,11 +337,18 @@ cd tauri && cargo check
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-or-later](LICENSE) © 2026 coulsontl
+
+本程序是自由软件：您可以依据自由软件基金会发布的 [GNU Affero 通用公共许可证第 3 版](LICENSE)（或您选择的任何更高版本）条款，重新发布和/或修改它。
+
+本程序基于「有用」的目的发布，但不提供任何明示或默示的担保，包括但不限于对适销性或特定用途适用性的担保。详见 [LICENSE](LICENSE)。
+
+本项目采用 AGPL-3.0，因此**通过计算机网络与本程序交互的用户同样有权获取其源代码**。本仓库即为完整对应源码，每个 Release 的源码对应同一 tag。
 
 ## Acknowledgments
 
-- [skills-hub](https://github.com/qufei1993/skills-hub)
-- [cc-switch](https://github.com/farion1231/cc-switch)
+- [skills-hub](https://github.com/qufei1993/skills-hub) — MIT
+- [cc-switch](https://github.com/farion1231/cc-switch) — MIT
+- [skills-manager](https://github.com/xingkongliang/skills-manager) — MIT
 - [linux.do](https://linux.do)
-- [axonhub](https://github.com/looplj/axonhub)
+- [axonhub](https://github.com/looplj/axonhub) — Apache-2.0（其中 `llm/` 目录为 LGPL-3.0，详见 [NOTICE](NOTICE)）

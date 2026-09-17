@@ -342,6 +342,7 @@ jobs:
             name "AI Toolbox"
             desc "Desktop toolbox for managing AI coding assistant configurations"
             homepage "https://github.com/{repo}"
+            license "AGPL-3.0-or-later"
 
             app "AI Toolbox.app"
           end
@@ -432,7 +433,7 @@ jobs:
               "version": version,
               "description": "Desktop toolbox for managing AI coding assistant configurations",
               "homepage": f"https://github.com/{repo}",
-              "license": "MIT",
+              "license": "AGPL-3.0-or-later",
               "architecture": {
                   "64bit": {
                       "url": f"https://github.com/{repo}/releases/download/v{version}/{exe_name}#/dl.exe",

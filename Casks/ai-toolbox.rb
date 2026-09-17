@@ -14,6 +14,7 @@ cask "ai-toolbox" do
   name "AI Toolbox"
   desc "Desktop toolbox for managing AI coding assistant configurations"
   homepage "https://github.com/coulsontl/ai-toolbox"
+  license "AGPL-3.0-or-later"
 
   app "AI Toolbox.app"
 end
