@@ -41,6 +41,7 @@
 - `modelRoles` 值里的 `:level` 后缀只有落在思考级别词表(`off`/`auto` + `minimal..max`)内才当级别拆;否则整串按字面 model id 处理(Ollama tag `ollama/qwen2.5:14b`、OpenRouter `:free`)。大小写不符同样不拆——与上游 selector map 精确查表一致,避免截断 model id。后端 `parse_role_string`、前端 `parseOmpModelRoleEntry` 必须保持同一条规则。
 - `defaultThinkingLevel` 是全局键:apply 时方案里 `default` 有合法词表值就写入,没有(或值非法)就删除——只增不减会让清空后的旧值继续作用于默认模型。
 - 禁用「已应用」方案会撤回运行目录(清空 `agents/*.md` + 重置核心 `modelRoles`),前端必须二次确认后再调用 `toggle_omp_agents_config_disabled`;后端在"已应用且被禁用"时复用 clear applied 流程,不留"已禁用但仍应用到运行目录"的悬挂状态。
+- apply/已应用方案 update 必须先对整份 `agents` 做无副作用 render/validate,再写 `config.yml` 或 `agents/` 目录;否则非法 agent 会先改 `modelRoles` 再失败,而 update 又会把 re-apply 错误吞掉。
 - 备份恢复的 re-apply 编排除了全局提示词,还要按 `get_applied_omp_agents_config_id` 重新渲染 subagent 方案(用 `apply_omp_agents_config_internal_without_events`,不得在恢复期间 emit 事件)。
 - 文件级 agent 编辑命令(`list_omp_agents` / `save_omp_agent` / `delete_omp_agent` 与前端同名 API 封装)是**给后续"agents/*.md 文件编辑器"铺的地基,当前没有 UI 入口**;不要当成死代码删掉,也不要误以为前端已经在用。
 

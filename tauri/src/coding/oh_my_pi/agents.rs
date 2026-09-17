@@ -30,7 +30,7 @@ use crate::db::helpers::{
     db_create, db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_bool,
     db_update_applied_status,
 };
-use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec, JsonFieldPath};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 
 /// 扫描目录:canonical `agents/`(落点)+ legacy `agent/`(仅读兼容)。
@@ -38,13 +38,8 @@ const AGENT_DIRECTORY_NAMES: [&str; 2] = ["agent", "agents"];
 
 /// OMP bundled(task 子系统)内置 subagent 清单,镜像上游
 /// `packages/coding-agent/src/task/agents.ts` 的 `EMBEDDED_AGENT_DEFS`。
-const OMP_BUILTIN_AGENT_NAMES: [&str; 5] = [
-    "task",
-    "sonic",
-    "scout",
-    "reviewer",
-    "security-reviewer",
-];
+const OMP_BUILTIN_AGENT_NAMES: [&str; 5] =
+    ["task", "sonic", "scout", "reviewer", "security-reviewer"];
 
 /// `main` / `sub` 是 OMP 的会话 sentinel agentName,自定义 agent 不得占用。
 const OMP_RESERVED_AGENT_NAMES: [&str; 2] = ["main", "sub"];
@@ -178,7 +173,9 @@ fn validate_omp_agent_config(name_from_file: &str, config: &Value) -> Result<(),
     // 这里同样大小写不敏感(否则 `Main.md` 能写出去、被 OMP 丢掉)。
     let normalized_name = resolved_name.trim().to_ascii_lowercase();
     if OMP_RESERVED_AGENT_NAMES.contains(&normalized_name.as_str()) {
-        return Err("Agent name 'main' and 'sub' are reserved by OMP and cannot be used".to_string());
+        return Err(
+            "Agent name 'main' and 'sub' are reserved by OMP and cannot be used".to_string(),
+        );
     }
     let description = object
         .get("description")
@@ -357,13 +354,17 @@ fn agents_config_order() -> Result<OrderSpec, String> {
 
 fn list_agents_configs_from_sqlite(db: &SqliteDbState) -> Result<Vec<OmpAgentsConfig>, String> {
     let mut configs = db.with_conn(|conn| {
-        Ok(db_list(conn, DbTable::OhMyPiAgentsConfig, Some(&agents_config_order()?))
-            .map(|records| {
-                records
-                    .into_iter()
-                    .map(adapter::agents_from_db_value)
-                    .collect::<Vec<_>>()
-            })?)
+        Ok(db_list(
+            conn,
+            DbTable::OhMyPiAgentsConfig,
+            Some(&agents_config_order()?),
+        )
+        .map(|records| {
+            records
+                .into_iter()
+                .map(adapter::agents_from_db_value)
+                .collect::<Vec<_>>()
+        })?)
     })?;
     configs.sort_by(|a, b| match (a.sort_index, b.sort_index) {
         (Some(ai), Some(bi)) => ai.cmp(&bi),
@@ -384,7 +385,11 @@ fn get_agents_config_from_sqlite(
     })
 }
 
-fn put_agents_config_to_sqlite(db: &SqliteDbState, config_id: &str, data: &Value) -> Result<(), String> {
+fn put_agents_config_to_sqlite(
+    db: &SqliteDbState,
+    config_id: &str,
+    data: &Value,
+) -> Result<(), String> {
     db.with_conn(|conn| db_put(conn, DbTable::OhMyPiAgentsConfig, config_id, data))
 }
 
@@ -415,7 +420,9 @@ pub(crate) fn parse_role_string(raw: &str) -> (String, Option<String>) {
     if let Some(colon_idx) = trimmed.rfind(':') {
         let model_part = &trimmed[..colon_idx];
         let level_part = &trimmed[colon_idx + 1..];
-        if !model_part.is_empty() && !model_part.ends_with('/') && is_valid_thinking_level(level_part)
+        if !model_part.is_empty()
+            && !model_part.ends_with('/')
+            && is_valid_thinking_level(level_part)
         {
             return (model_part.to_string(), Some(level_part.trim().to_string()));
         }
@@ -449,10 +456,7 @@ async fn load_local_agents_config(db: &SqliteDbState) -> Result<OmpAgentsConfig,
                 continue;
             };
             if let Some(config) = agent.config {
-                let mut fields = config
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                let mut fields = config.as_object().cloned().unwrap_or_default();
                 fields.insert("name".to_string(), json!(agent.name));
                 if !agent.prompt.trim().is_empty() {
                     fields.insert("prompt".to_string(), json!(agent.prompt));
@@ -537,8 +541,7 @@ pub async fn create_omp_agents_config(
         updated_at: now,
     };
     let data = adapter::agents_to_db_value(&content);
-    let created = db
-        .with_conn(|conn| db_create(conn, DbTable::OhMyPiAgentsConfig, &data))?;
+    let created = db.with_conn(|conn| db_create(conn, DbTable::OhMyPiAgentsConfig, &data))?;
     let _ = app.emit("config-changed", "window");
     Ok(adapter::agents_from_db_value(created))
 }
@@ -557,10 +560,7 @@ pub async fn update_omp_agents_config(
     let existing = get_agents_config_from_sqlite(db, &config_id)?
         .ok_or_else(|| format!("OMP Agents config '{}' not found", config_id))?;
     let now = Local::now().to_rfc3339();
-    let created_at = existing
-        .created_at
-        .clone()
-        .unwrap_or_else(|| now.clone());
+    let created_at = existing.created_at.clone().unwrap_or_else(|| now.clone());
     let content = OmpAgentsConfigContent {
         name: input.name,
         is_applied: existing.is_applied,
@@ -572,6 +572,13 @@ pub async fn update_omp_agents_config(
         created_at,
         updated_at: now,
     };
+    if existing.is_applied {
+        // This update will re-apply the scheme to the live runtime. Validate the
+        // whole scheme before persisting it, so an invalid edit fails as a
+        // command error instead of being saved and then silently ignored by the
+        // re-apply warning below.
+        render_agent_files(content.agents.as_ref())?;
+    }
     put_agents_config_to_sqlite(db, &config_id, &adapter::agents_to_db_value(&content))?;
 
     if existing.is_applied {
@@ -772,7 +779,9 @@ pub async fn clear_omp_agents_applied_config(
     config_id: String,
 ) -> Result<(), String> {
     if config_id == "__local__" {
-        return Err("Local config cannot be cleared; save it as a managed config first".to_string());
+        return Err(
+            "Local config cannot be cleared; save it as a managed config first".to_string(),
+        );
     }
     clear_omp_agents_applied_config_internal(state.db(), &app).await
 }
@@ -813,7 +822,10 @@ fn remove_managed_agent_files(root: &Path) -> Result<(), String> {
             .collect::<Vec<_>>();
         for file in files {
             if let Err(error) = fs::remove_file(&file) {
-                log::warn!("Failed to remove OMP agent file {}: {error}", file.display());
+                log::warn!(
+                    "Failed to remove OMP agent file {}: {error}",
+                    file.display()
+                );
             }
         }
     }
@@ -887,10 +899,7 @@ pub async fn apply_omp_agents_config_internal_without_events(
 }
 
 /// 把指定方案的 model_roles 写入 config.yml,并将自定义 agents 映射渲染为文件(校验 + 清理 + 全量写)。
-async fn apply_omp_agents_config_to_dir(
-    db: &SqliteDbState,
-    config_id: &str,
-) -> Result<(), String> {
+async fn apply_omp_agents_config_to_dir(db: &SqliteDbState, config_id: &str) -> Result<(), String> {
     let config = get_agents_config_from_sqlite(db, config_id)?
         .ok_or_else(|| format!("OMP Agents config '{}' not found", config_id))?;
     if config.is_disabled {
@@ -900,6 +909,10 @@ async fn apply_omp_agents_config_to_dir(
         ));
     }
 
+    // 先校验并渲染整份方案的每个 agent;任一非法则整体失败,且此时还没有
+    // 触碰 config.yml 或 agents 目录,避免留下半应用状态。
+    let rendered = render_agent_files(config.agents.as_ref())?;
+
     // 1. 核心 model_roles 写入 config.yml
     apply_model_roles_to_settings(db, config.model_roles.as_ref()).await?;
 
@@ -908,14 +921,6 @@ async fn apply_omp_agents_config_to_dir(
     let directory = canonical_agents_dir(&root);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Failed to create {}: {error}", directory.display()))?;
-
-    // 先校验整份方案的每个 agent,任一非法则整体失败(避免写到一半留下脏目录)。
-    let mut rendered = Vec::<(String, String)>::new(); // (file_name, content)
-    if let Some(agents) = config.agents.as_ref().and_then(Value::as_object) {
-        for (name, agent_config) in agents {
-            render_agent_file(name, agent_config, &mut rendered)?;
-        }
-    }
 
     remove_managed_agent_files(&root)?;
     for (file_name, content) in rendered {
@@ -936,7 +941,9 @@ fn render_agent_file(
         return Err(format!("Invalid OMP agent name: {name:?}"));
     }
     if OMP_RESERVED_AGENT_NAMES.contains(&name) {
-        return Err(format!("Agent name '{name}' is reserved by OMP and cannot be used"));
+        return Err(format!(
+            "Agent name '{name}' is reserved by OMP and cannot be used"
+        ));
     }
     let object = agent_config
         .as_object()
@@ -965,6 +972,18 @@ fn render_agent_file(
     let content = format!("---\n{yaml}---\n\n{prompt}");
     rendered.push((format!("{name}.md"), content));
     Ok(())
+}
+
+/// Validate and render every agent in a scheme before any runtime file is
+/// touched. Any invalid agent rejects the whole scheme.
+fn render_agent_files(agents: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let mut rendered = Vec::new();
+    if let Some(agents) = agents.and_then(Value::as_object) {
+        for (name, agent_config) in agents {
+            render_agent_file(name, agent_config, &mut rendered)?;
+        }
+    }
+    Ok(rendered)
 }
 
 fn is_valid_agent_file_name(name: &str) -> bool {
@@ -1022,10 +1041,8 @@ pub async fn list_omp_agents(
         }
     }
 
-    let existing_names: std::collections::HashSet<String> = agents
-        .iter()
-        .map(|agent| agent.name.clone())
-        .collect();
+    let existing_names: std::collections::HashSet<String> =
+        agents.iter().map(|agent| agent.name.clone()).collect();
     for builtin in OMP_BUILTIN_AGENT_NAMES {
         if existing_names.contains(builtin) {
             continue;
@@ -1131,12 +1148,12 @@ pub async fn delete_omp_agent<R: tauri::Runtime>(
 /// 内置(未覆盖)agent 的展示描述。
 pub fn builtin_agent_description(name: &str) -> Option<&'static str> {
     match name {
-        "task" => Some(
-            "General-purpose subagent with full capabilities for delegated multi-step tasks",
-        ),
-        "sonic" => Some(
-            "Low-reasoning agent for strictly mechanical updates or data collection only",
-        ),
+        "task" => {
+            Some("General-purpose subagent with full capabilities for delegated multi-step tasks")
+        }
+        "sonic" => {
+            Some("Low-reasoning agent for strictly mechanical updates or data collection only")
+        }
         "scout" => Some("Read-only retrieval of external docs and dependency sources"),
         "reviewer" => Some("Review a change for concrete correctness findings"),
         "security-reviewer" => Some("Review a change for security issues"),
@@ -1145,9 +1162,19 @@ pub fn builtin_agent_description(name: &str) -> Option<&'static str> {
 }
 
 /// 供 tray 复用:读取当前 applied 方案 id(没有则 None)。
-pub async fn get_applied_omp_agents_config_id(db: &SqliteDbState) -> Result<Option<String>, String> {
-    let records =
-        db.with_conn(|conn| db_query_by_bool(conn, DbTable::OhMyPiAgentsConfig, &JsonFieldPath::new("is_applied")?, true, None, Some(1)))?;
+pub async fn get_applied_omp_agents_config_id(
+    db: &SqliteDbState,
+) -> Result<Option<String>, String> {
+    let records = db.with_conn(|conn| {
+        db_query_by_bool(
+            conn,
+            DbTable::OhMyPiAgentsConfig,
+            &JsonFieldPath::new("is_applied")?,
+            true,
+            None,
+            Some(1),
+        )
+    })?;
     Ok(records
         .first()
         .map(|record| crate::coding::db_id::db_extract_id(record)))
@@ -1157,8 +1184,8 @@ pub async fn get_applied_omp_agents_config_id(db: &SqliteDbState) -> Result<Opti
 mod tests {
     use super::{
         is_core_model_role, is_valid_agent_file_name, merge_model_roles, parse_omp_agent,
-        parse_role_string, render_agent_file, validate_omp_agent_config, OMP_BUILTIN_AGENT_NAMES,
-        OMP_RESERVED_AGENT_NAMES,
+        parse_role_string, render_agent_file, render_agent_files, validate_omp_agent_config,
+        OMP_BUILTIN_AGENT_NAMES, OMP_RESERVED_AGENT_NAMES,
     };
     use serde_json::{json, Value};
 
@@ -1314,6 +1341,21 @@ mod tests {
     }
 
     #[test]
+    fn render_agent_files_validates_the_whole_scheme_before_returning_output() {
+        let valid = json!({
+            "first": { "description": "first" },
+            "second": { "description": "second" },
+        });
+        assert_eq!(render_agent_files(Some(&valid)).unwrap().len(), 2);
+
+        let invalid = json!({
+            "first": { "description": "first" },
+            "second": { "name": "second" },
+        });
+        assert!(render_agent_files(Some(&invalid)).is_err());
+    }
+
+    #[test]
     fn valid_file_names_pass() {
         assert!(is_valid_agent_file_name("reviewer"));
         assert!(is_valid_agent_file_name("security-reviewer"));
@@ -1334,7 +1376,10 @@ mod tests {
     fn parses_role_strings_with_and_without_thinking_suffix() {
         assert_eq!(
             parse_role_string("anthropic/claude-sonnet-4-6:high"),
-            ("anthropic/claude-sonnet-4-6".to_string(), Some("high".to_string()))
+            (
+                "anthropic/claude-sonnet-4-6".to_string(),
+                Some("high".to_string())
+            )
         );
         assert_eq!(
             parse_role_string("openai/gpt-5-turbo"),
@@ -1400,13 +1445,21 @@ mod tests {
 
         // 方案外的自定义 role 必须保留,不能被一次 apply 抹掉。
         assert_eq!(
-            roles.get("subagent-retry-fallback-abc").and_then(Value::as_str),
+            roles
+                .get("subagent-retry-fallback-abc")
+                .and_then(Value::as_str),
             Some("p/m")
         );
         // 方案里没写的核心 role(smol)= 用户清空。
         assert!(!roles.contains_key("smol"));
-        assert_eq!(roles.get("default").and_then(Value::as_str), Some("new/default"));
-        assert_eq!(roles.get("plan").and_then(Value::as_str), Some("new/plan:auto"));
+        assert_eq!(
+            roles.get("default").and_then(Value::as_str),
+            Some("new/default")
+        );
+        assert_eq!(
+            roles.get("plan").and_then(Value::as_str),
+            Some("new/plan:auto")
+        );
         // default 没写思考级别 => 调用方应删除全局 defaultThinkingLevel。
         assert_eq!(default_thinking, None);
     }
@@ -1415,7 +1468,10 @@ mod tests {
     fn merge_model_roles_reports_default_thinking_level() {
         let preset = json!({ "default": { "model": "p/m", "thinkingLevel": "high" } });
         let (roles, default_thinking) = merge_model_roles(None, Some(&preset));
-        assert_eq!(roles.get("default").and_then(Value::as_str), Some("p/m:high"));
+        assert_eq!(
+            roles.get("default").and_then(Value::as_str),
+            Some("p/m:high")
+        );
         assert_eq!(default_thinking.as_deref(), Some("high"));
     }
 
