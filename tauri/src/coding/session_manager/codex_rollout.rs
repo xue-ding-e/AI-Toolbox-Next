@@ -877,19 +877,58 @@ mod tests {
         );
         let index = CodexStateIndex::load(dir.path()).expect("index should load");
 
+        // A backslash path written by Codex's database must match the same
+        // rollout as scanned with forward slashes, on every platform.
         let candidates = vec![
             (
                 "/codex/sessions/2026/09/17/rollout-b.jsonl".to_string(),
                 900,
             ),
             (
-                r"c:/codex/sessions/2026/09/17/rollout-a.jsonl".to_string(),
+                "C:/codex/sessions/2026/09/17/rollout-a.jsonl".to_string(),
                 100,
             ),
         ];
         let selected = select_canonical_index(Some(&index), PREFIX_ID, &candidates)
             .expect("a candidate should be selected");
         assert_eq!(candidates[selected].0, candidates[1].0);
+    }
+
+    /// Case folding is deliberately platform-scoped: Windows paths are
+    /// case-insensitive, so a differently-cased database path still names the
+    /// same rollout, while on Unix-like systems it names a *different* file and
+    /// must not be treated as a match.
+    #[test]
+    fn database_paths_fold_case_only_where_the_platform_does() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_state_db(
+            dir.path(),
+            "state_5.sqlite",
+            &[(PREFIX_ID, r"C:\codex\sessions\2026\09\17\rollout-a.jsonl")],
+        );
+        let index = CodexStateIndex::load(dir.path()).expect("index should load");
+
+        let candidates = vec![
+            (
+                "/codex/sessions/2026/09/17/rollout-b.jsonl".to_string(),
+                900,
+            ),
+            (
+                "c:/codex/sessions/2026/09/17/rollout-a.jsonl".to_string(),
+                100,
+            ),
+        ];
+        let selected = select_canonical_index(Some(&index), PREFIX_ID, &candidates)
+            .expect("a candidate should be selected");
+
+        // Case-insensitive platforms honour the database hint even though the
+        // candidate is newer; case-sensitive ones fall back to newest-wins.
+        let expected = if cfg!(windows) {
+            &candidates[1]
+        } else {
+            &candidates[0]
+        };
+        assert_eq!(candidates[selected].0, expected.0);
     }
 
     /// Builds a two-rollout paginated thread: a prefix and a child that references
