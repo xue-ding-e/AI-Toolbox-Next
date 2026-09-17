@@ -11,6 +11,7 @@ pub mod adapter;
 pub mod builtin_models;
 pub mod commands;
 pub mod constants;
+pub mod session_artifact;
 pub mod tray_support;
 pub mod types;
 pub mod web_ui;

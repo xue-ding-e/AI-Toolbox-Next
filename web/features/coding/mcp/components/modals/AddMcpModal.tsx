@@ -22,6 +22,7 @@ import { restrictToVerticalAxis, restrictToParentElement } from '@dnd-kit/modifi
 import { CSS } from '@dnd-kit/utilities';
 import * as mcpApi from '../../services/mcpApi';
 import type { CreateMcpServerInput, UpdateMcpServerInput, McpTool, McpServer, StdioConfig, HttpConfig } from '../../types';
+import { MCP_SERVER_NAME_PATTERN } from '../../utils/mcpServerName';
 import styles from './AddMcpModal.module.less';
 
 function reorderFormListFields(
@@ -143,6 +144,9 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
   const [preferredTools, setPreferredTools] = useState<string[] | null>(null);
 
   const isEditMode = !!editingServer;
+  // dsh is the only tool with a constraint on the server name, and it is the
+  // cordis sync target that would break, so its hint and rule are scoped to it.
+  const dshSelected = selectedTools.includes('dsh');
 
   // Split tools based on preferred tools setting + selected tools
   const visibleTools = useMemo(() => {
@@ -579,12 +583,25 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
         <Form.Item
           label={t('mcp.name')}
           required
+          extra={
+            dshSelected && !isEditMode ? (
+              <span className={styles.nameHint}>{t('mcp.nameDshHint')}</span>
+            ) : undefined
+          }
         >
           <div className={styles.nameRow}>
             <Form.Item
               name="name"
               noStyle
-              rules={[{ required: true, message: t('mcp.nameRequired') }]}
+              rules={[
+                { required: true, message: t('mcp.nameRequired') },
+                // dsh's MCP client refuses names outside this pattern. Only the
+                // create form can enforce it: in edit mode the field is
+                // disabled, so a legacy invalid name could never be saved.
+                ...(!isEditMode && dshSelected
+                  ? [{ pattern: MCP_SERVER_NAME_PATTERN, message: t('mcp.nameDshInvalid') }]
+                  : []),
+              ]}
             >
               <Input placeholder={t('mcp.namePlaceholder')} disabled={isEditMode} />
             </Form.Item>

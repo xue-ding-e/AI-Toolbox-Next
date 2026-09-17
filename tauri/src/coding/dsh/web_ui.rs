@@ -1,25 +1,20 @@
 //! DSh (DeepSeek Harness) Web UI 打开 / `dsh web` 启动能力(对齐 hermes/openclaw)。
 //!
-//! DSh 的 web UI 监听本地端口(默认 3080,`DSH_WEB_PORT` 可覆盖),通过 `dsh web` 或
-//! `npx @deepseek-ai/dsh web` 启动。与 hermes/openclaw 不同,dsh 根路径返回的状态码
-//! 未经证实(未必是 200|401),故 `probe_web_up` 采用 socket-level liveness:任何 HTTP
-//! 响应(2xx/3xx/4xx/5xx)即视为在线,只有连接错误/超时才视为离线——避免误判在线为离线
-//! 后又因端口占用启动失败的死循环。
+//! DSh 的 web UI 端口只能由 `dsh web --port <n>` 旗标决定,组合默认 3080;上游没有
+//! 任何端口相关的环境变量(全历史无 `DSH_WEB_PORT`)。我们启动时不传 `--port`,让用户
+//! 自己的 `webserver` 配置继续生效,因此探测/打开一律按默认 3080 处理,用户自定义端口
+//! 的场景不被探测。将来若要支持,必须在启动时传 `--port` 并让探测与打开共用同一个值,
+//! 绝不要重新引入 env 读取。
+//!
+//! 通过 `dsh web` 或 `npx @deepseek-ai/dsh web` 启动。与 hermes/openclaw 不同,dsh 根
+//! 路径返回的状态码未经证实(未必是 200|401),故 `probe_web_up` 采用 socket-level
+//! liveness:任何 HTTP 响应(2xx/3xx/4xx/5xx)即视为在线,只有连接错误/超时才视为离线
+//! ——避免误判在线为离线后又因端口占用启动失败的死循环。
 
 use std::process::Command;
 
-/// 覆盖端口的 env 键。
-pub const DSH_WEB_PORT_ENV: &str = "DSH_WEB_PORT";
-/// DSh Web UI 默认端口。
+/// DSh Web UI 默认端口(组合默认,也是我们探测/打开的端口)。
 pub const DSH_WEB_DEFAULT_PORT: u16 = 3080;
-
-/// 解析 Web 端口:读 `DSH_WEB_PORT` env(非法/未设回落默认)。
-pub fn resolve_web_port() -> u16 {
-    std::env::var(DSH_WEB_PORT_ENV)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u16>().ok())
-        .unwrap_or(DSH_WEB_DEFAULT_PORT)
-}
 
 /// 构造 DSh Web UI 完整 URL(`http://127.0.0.1:{port}` + 可选 path)。
 pub fn build_web_url(port: u16, path: Option<&str>) -> String {
@@ -179,14 +174,6 @@ fn launch_linux_dashboard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-    }
 
     #[test]
     fn linux_dashboard_command_keeps_executable_quotes() {
@@ -225,37 +212,6 @@ mod tests {
             build_web_url(8080, Some("health")),
             "http://127.0.0.1:8080/health"
         );
-    }
-
-    #[test]
-    fn resolve_web_port_defaults_when_unset_or_invalid() {
-        let _guard = test_guard();
-        let old = std::env::var_os(DSH_WEB_PORT_ENV);
-
-        std::env::remove_var(DSH_WEB_PORT_ENV);
-        assert_eq!(resolve_web_port(), DSH_WEB_DEFAULT_PORT);
-
-        std::env::set_var(DSH_WEB_PORT_ENV, "not-a-port");
-        assert_eq!(resolve_web_port(), DSH_WEB_DEFAULT_PORT);
-
-        match old {
-            Some(v) => std::env::set_var(DSH_WEB_PORT_ENV, v),
-            None => std::env::remove_var(DSH_WEB_PORT_ENV),
-        }
-    }
-
-    #[test]
-    fn resolve_web_port_reads_env() {
-        let _guard = test_guard();
-        let old = std::env::var_os(DSH_WEB_PORT_ENV);
-
-        std::env::set_var(DSH_WEB_PORT_ENV, "9999");
-        assert_eq!(resolve_web_port(), 9999);
-
-        match old {
-            Some(v) => std::env::set_var(DSH_WEB_PORT_ENV, v),
-            None => std::env::remove_var(DSH_WEB_PORT_ENV),
-        }
     }
 
     #[test]

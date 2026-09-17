@@ -2,34 +2,12 @@ use super::parsers::{native_record, number, read_jsonl, string, timestamp, Parse
 use super::{GatewayUsageTool, SessionUsageRecord, TokenUsage};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-pub(super) fn generation(path: &Path) -> Option<u32> {
-    let name = path.file_name()?.to_str()?;
-    let name = name.strip_suffix(".zstd").unwrap_or(name);
-    if name == "session.jsonl" {
-        return Some(0);
-    }
-    let version = name.strip_prefix("session.v")?.strip_suffix(".jsonl")?;
-    if version.starts_with('0') {
-        return None;
-    }
-    version.parse().ok()
-}
-
-pub(super) fn select_generations(files: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut selected = BTreeMap::<PathBuf, PathBuf>::new();
-    for file in files {
-        let directory = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let replace = selected.get(&directory).is_none_or(|old| {
-            (generation(&file), file.extension()) > (generation(old), old.extension())
-        });
-        if replace {
-            selected.insert(directory, file);
-        }
-    }
-    selected.into_values().collect()
-}
+// The artifact naming rule (which file is a session, which generation is live)
+// is a dsh on-disk layout fact, so it lives in the dsh module and is shared
+// with the session browser rather than duplicated here.
+pub(super) use crate::coding::dsh::session_artifact::{generation, select_generations};
 
 pub(super) fn parse(path: &Path, fallback: i64) -> Result<ParsedSession, String> {
     let mut session = path

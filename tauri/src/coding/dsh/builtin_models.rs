@@ -75,6 +75,34 @@ mod tests {
         assert!(ids.iter().any(|id| id == "deepseek-v4-pro"));
     }
 
+    /// The catalog mirrors the installed pi-ai adapter, so the facts most
+    /// likely to drift silently are pinned here: the reasoning levels a route
+    /// offers, the output-cap field spelling, and multimodal routes.
+    #[test]
+    fn bundled_catalog_keeps_upstream_deepseek_capabilities() {
+        let models = builtin_models_for("deepseek").expect("deepseek catalog");
+        let find = |id: &str| {
+            models
+                .iter()
+                .find(|model| model.get("id").and_then(Value::as_str) == Some(id))
+                .unwrap_or_else(|| panic!("missing model {id}"))
+        };
+
+        let flash = find("deepseek-v4-flash");
+        assert_eq!(flash["reasoningEfforts"]["low"], "low");
+        assert_eq!(flash["compat"]["maxTokensField"], "max_tokens");
+
+        let vision = find("deepseek-v4-flash-vision-exp");
+        let input: Vec<&str> = vision["input"]
+            .as_array()
+            .expect("vision input modalities")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(input.contains(&"image"));
+        assert_eq!(vision["compat"]["maxTokensField"], "max_tokens");
+    }
+
     #[test]
     fn bundled_catalog_ignores_unknown_routes() {
         assert!(!has_builtin_models("not-a-catalog-route"));

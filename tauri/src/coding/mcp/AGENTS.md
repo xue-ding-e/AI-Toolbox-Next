@@ -43,6 +43,7 @@ sequenceDiagram
 - WSL 自动同步依赖 `mcp-changed` 事件；如果只更新数据库、不发事件，WSL 侧不会跟进。
 - `mcp_import_from_tool` 导入后会改写工具配置，必须同样发 `config-changed` + `mcp-changed`（与 create/update/delete 同一契约），否则 WSL 自动同步与托盘都不感知导入结果。
 - `mcp_update_server` 只对 enabled_tools 做「增」同步会留下差集：从 enabled_tools 移除的工具、以及改名 server 的旧名字条目会残留在工具配置文件里继续被加载。更新时必须先按 previous name/enabled_tools 差集调用 `remove_server_from_tool_async` 并删除对应 sync_detail，再对新 enabled_tools 全量重同步。
+- dsh 的 `serverName` 受上游约束 `^[A-Za-z0-9_-]{1,32}$`（`@deepseek-ai/dsh-mcp-client`），违规的名字会让那一行在 dsh 里加载失败。该名字同时是行的身份键（`config.serverName` 与派生的 plugin `id`），**不可 sanitize，只能拒绝**（`cordis_patch::validate_dsh_server_name`）。守卫必须**只在 `sync_server_to_cordis` 一处**：`remove_server_from_cordis` 要保持能删除历史违规条目，`import_servers_from_cordis` 要保持可读以便排查；`mcp_create_server`/`mcp_update_server` 也不得硬拒绝——JSON 导入会直接用默认同步目标调 create，而同一名字对 Claude/Codex/Gemini 完全合法，失败只应体现为该工具的同步结果。前端镜像判定在 `web/features/coding/mcp/utils/mcpServerName.ts`，改动需两处同步。
 - `cmd /c` 后处理不只有 JSON/TOML：wsl/ssh 的 `strip_cmd_c_from_*_mcp_file` 对 `hermes` 走 `process_hermes_yaml_mcp_servers`（只重写 `mcp_servers:` 段，其余字节保留），对 `dsh` 走 `process_cordis_patch_yaml`（重写 `insert` 行里 `@deepseek-ai/dsh-mcp-client` 的 config）。新增 YAML 型 MCP 工具时必须在 command_normalize 提供对应整文件处理函数并在两处 strip 分支注册，否则远端会残留 Windows 的 `cmd /c`。
 - Hermes `process_hermes_yaml_mcp_servers` 在解析前必须先做顶层重复 key 自愈（复用 `yaml_sync::deduplicate_top_level_keys`），与 `read_yaml_object_or_empty` 保持一致；否则旧配置中的重复顶层 section 会导致 WSL/SSH MCP 后处理直接解析失败。
 - 不要把恢复专用 no-event 入口复用到普通 CRUD/手动同步路径；它只用于已有外层编排明确负责最终 WSL 投影的场景。

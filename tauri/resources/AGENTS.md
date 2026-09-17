@@ -10,6 +10,7 @@
 - `models.dev.json` 是 OpenCode 免费/官方模型默认数据的源码来源。`tauri/src/coding/open_code/free_models.rs` 同样通过 `include_str!` 在编译期嵌入它；运行时 app data 里的 `models.dev.json` 只是缓存，不是本仓编辑入口。
 - `model_pricing.json` 是 Gateway 官方模型定价默认数据的源码来源。`tauri/src/db/model_pricing_seed.rs` 通过 `include_str!` 编译期嵌入它，并在 SQLite migration 后用 `INSERT OR IGNORE` 增量补齐 `model_pricing` 表。
 - `gateway_provider_profiles.json` 是 Gateway 内置供应商 endpoint 默认数据的源码来源。`tauri/src/coding/proxy_gateway/provider_profiles.rs` 通过 `include_str!` 编译期嵌入它；运行时 app data 里的同名文件是远端刷新缓存，用于前端启动后动态更新供应商列表、API 格式和 Base URL。
+- `dsh_builtin_models.json` 是 dsh（DeepSeek Harness）内置渠道默认模型的源码来源。`tauri/src/coding/dsh/builtin_models.rs` 通过 `include_str!` 编译期嵌入它。它是**已安装 `@earendil-works/pi-ai` catalog 投影到 dsh `llm-pi-ai` route model profile schema** 的结果（键：`id`/`name`/`api`/`baseURL`/`contextWindow`/`maxTokens`/`reasoning`/`input`/`reasoningEfforts`/`compat`），用来在 dsh 运行时不在场时也能展示与编辑该渠道的默认模型。上游 `thinkingLevelMap` 中值为 `null` 的档位在本文件里**不写键**（缺失即表示不支持）。
 - 备份/恢复里读写的 `preset_models.json`、`models.dev.json`、`model_pricing.json`、`gateway_provider_profiles.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
 
 ## 核心设计决策（Why）
@@ -73,6 +74,7 @@ sequenceDiagram
 - 改 `models.dev.json` 时，至少检查：
   - 变更是否真的是 OpenCode 默认模型数据，而不是应该改运行时缓存或远端源。
   - `tauri/src/coding/open_code/free_models.rs` 的默认读取路径和筛选语义是否仍成立。
+- 改 `dsh_builtin_models.json` 时，任何增量都必须**从已安装的 `@earendil-works/pi-ai` 包实际提取**（`dist/providers/data/<provider>.json`），不能凭记忆补字段或模型：字段拼写（`baseURL`、`thinkingFormat`、`maxTokensField`）与档位集合会随 pi-ai 升级漂移，凭印象写出的内容不会被 dsh 接受，也不会被我们的展示层发现。
 - 改 `model_pricing.json` 时，至少检查：
   - 是否仍是合法 JSON 数组。
   - 每个对象字段是否与 SQLite `model_pricing` 表一致，成本字段是否仍是非负数字字符串。

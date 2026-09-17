@@ -8,6 +8,7 @@
 
 - 会话的真实来源不是数据库，而是各工具运行时目录或导出快照。Grok 使用 `<root>/sessions/<encoded-cwd>/<session-id>/summary.json + chat_history.jsonl` 目录结构。
 - `source_path` 是会话操作的关键标识；对 OpenCode 这种特殊格式，还要经过专门的同源判断逻辑，不能简单字符串比较。
+- dsh 的会话目录会**并存多个格式代际**产物（`session.jsonl` 是 v0，`session.v<N>.jsonl` 是第 N 代，各自可带 `.zstd`），迁移只新增文件不改写旧的，**数值最大的一代才是活跃产物**。发现时必须按目录选最高代，否则会显示旧快照、甚至整会话不可见；命名与代际规则唯一来源是 `crate::coding::dsh::session_artifact`，不要在 session_manager 里另写白名单。删除任一产物等于删除整个会话目录（所有代际一起消失），是正确语义。
 - 当前工具的会话上下文路径必须先经 `runtime_location` 决议，再派生 sessions/projects/agents/data_root 等目录。
 
 ## 核心设计决策（Why）

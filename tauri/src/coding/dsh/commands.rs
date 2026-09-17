@@ -1406,7 +1406,7 @@ pub async fn save_dsh_local_prompt_config(
 pub async fn open_dsh_web_ui(path: Option<String>) -> Result<(), String> {
     use super::web_ui;
 
-    let port = web_ui::resolve_web_port();
+    let port = web_ui::DSH_WEB_DEFAULT_PORT;
     if !web_ui::probe_web_up(port).await {
         return Err("DSh Web UI 未运行,请先启动 dsh web".to_string());
     }
@@ -1847,7 +1847,11 @@ const AGENT_INSTRUCTIONS_PLUGIN_ID: &str = "agent-instructions";
 
 /// `config.maxBytes` written when enabling the plugin: 256 KiB, so the
 /// workspace-instruction baseline budget can fit both `~/.dsh/AGENTS.md` and
-/// a sizeable project `AGENTS.md`, instead of the bundle default 65536 bytes.
+/// a sizeable project `AGENTS.md`, instead of the base bundle default 65536.
+///
+/// This value only reaches base-backed profiles. On the Web surface the live
+/// `agent-instructions` row is mounted per session from an agent preset, so the
+/// home patch writes below cannot change the budget there.
 const AGENT_INSTRUCTIONS_MAX_BYTES: u64 = 256 * 1024;
 
 /// Resolve the home-level `cordis.patch.yml` path via DB-priority config dir.
@@ -1856,12 +1860,18 @@ async fn get_dsh_cordis_patch_path(db: &SqliteDbState) -> Result<PathBuf, String
     Ok(root.join("cordis.patch.yml"))
 }
 
-/// Check whether the `agent-instructions` plugin is enabled.
+/// Check whether the **home-level** `cordis.patch.yml` enables `agent-instructions`.
 ///
-/// The dsh-web-app bundle disables it by default. Users enable it by adding
-/// `- id: agent-instructions, disabled: false` to the home-level
-/// `cordis.patch.yml`. When the home patch has no override for this plugin,
-/// the bundle default (disabled) applies.
+/// Scope, and it matters: this reports the home patch's override only. The home
+/// patch governs base-backed profiles (tui / headless), where the base bundle
+/// disables the plugin and a user enables it with
+/// `- id: agent-instructions, disabled: false`. When the home patch carries no
+/// override, that base default (disabled) applies.
+///
+/// It deliberately says nothing about the Web surface: there the web bundle's
+/// row is a `disabled: true` tombstone and the live row is mounted per session
+/// from an agent preset, so the home patch neither reflects nor controls it.
+/// Callers must not present this result as "the global prompt is (in)active".
 #[tauri::command]
 pub async fn check_dsh_agent_instructions(
     state: tauri::State<'_, SqliteDbState>,
@@ -1885,6 +1895,9 @@ pub async fn check_dsh_agent_instructions(
 
 /// Enable the `agent-instructions` plugin by writing `disabled: false` and
 /// `config.maxBytes: 262144` (256 KiB) to the home-level `cordis.patch.yml`.
+///
+/// Base-backed profiles only — see [`check_dsh_agent_instructions`] for why the
+/// Web surface is out of reach from here.
 #[tauri::command]
 pub async fn enable_dsh_agent_instructions(
     state: tauri::State<'_, SqliteDbState>,

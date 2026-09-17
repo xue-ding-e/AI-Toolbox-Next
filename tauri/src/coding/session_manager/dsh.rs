@@ -2,7 +2,11 @@
 //!
 //! dsh persists every session as a versioned JSONL artifact under its sessions
 //! root (`<home>/sessions`):
-//!   `<home>/sessions/<project-key>/<encoded-session-id>/session.jsonl[.zstd]`
+//!   `<home>/sessions/<project-key>/<encoded-session-id>/session[.v<N>].jsonl[.zstd]`
+//!
+//! One session directory may hold several format generations side by side; the
+//! numerically highest is the live one. That naming rule is owned by
+//! `crate::coding::dsh::session_artifact` and must not be re-implemented here.
 //!
 //! The first line is a `{type:"session", version, id, createdAt, cwd...}`
 //! header; every following line is a `StorageRecord` — either a full
@@ -20,10 +24,12 @@
 //! tool-execution cards. Events whose `surfaceOp` replaces earlier surface
 //! nodes (compaction copies) stay model-only and are skipped.
 //!
-//! Limitations: dsh titles live in a separate projection store, so the list
-//! title falls back to the first user message; last-active is approximated by
-//! the artifact's file mtime, and the tail timestamp is not read for zstd
-//! artifacts (a bounded head read keeps the scan cheap).
+//! Limitations: the list title is the last `session/title` event inside the
+//! bounded head window, falling back to the first user message when the log
+//! carries none; a rename that lands deeper than that window is not picked up
+//! (zstd frames offer no cheap read from the tail, so the head window is a
+//! deliberate cost bound). Last-active is approximated by the artifact's file
+//! mtime, and the tail timestamp is not read for zstd artifacts.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -38,6 +44,7 @@ use super::message_blocks::{
 };
 use super::utils::{extract_text, parse_timestamp_to_ms, text_contains_query, truncate_summary};
 use super::{assign_missing_message_ids, SessionMessage, SessionMessageUsage, SessionMeta};
+use crate::coding::dsh::session_artifact;
 
 const PROVIDER_ID: &str = "dsh";
 const TITLE_MAX_CHARS: usize = 80;
@@ -50,17 +57,6 @@ struct PendingToolCall {
     call_id: String,
     name: String,
     arguments: Option<Value>,
-}
-
-fn is_session_artifact_name(name: &str) -> bool {
-    name == "session.jsonl" || name == "session.jsonl.zstd"
-}
-
-fn is_session_artifact(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(is_session_artifact_name)
-        .unwrap_or(false)
 }
 
 /// Open a session artifact for buffered text reading, decompressing zstd when
@@ -95,7 +91,10 @@ fn read_head_lines(path: &Path, max_lines: usize) -> std::io::Result<Vec<String>
     Ok(lines)
 }
 
-/// Recursively collect every session artifact under `root`.
+/// Recursively collect the live session artifact of every session under `root`.
+///
+/// A session directory can hold several format generations side by side, so the
+/// candidates are reduced to the highest generation per directory.
 fn collect_session_artifacts(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -107,12 +106,12 @@ fn collect_session_artifacts(root: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if is_session_artifact(&path) {
+            } else if session_artifact::is_session_artifact(&path) {
                 files.push(path);
             }
         }
     }
-    files
+    session_artifact::select_generations(files)
 }
 
 fn file_modified_ms(path: &Path) -> Option<i64> {
@@ -397,13 +396,18 @@ fn parse_session_artifact(path: &Path) -> Option<SessionMeta> {
     let mut created_at: Option<i64> = None;
     let mut cwd: Option<String> = None;
     let mut first_user: Option<String> = None;
+    let mut title_event: Option<String> = None;
 
     for raw_line in &head {
         let line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(line).ok()?;
+        // One unparsable line must not hide the whole session: the artifact is
+        // appended to by another process, so a torn tail line is expected.
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let event_type = value.get("type").and_then(Value::as_str).unwrap_or("");
         if event_type == "session" {
             if session_id.is_none() {
@@ -418,6 +422,16 @@ fn parse_session_artifact(path: &Path) -> Option<SessionMeta> {
                     .and_then(Value::as_str)
                     .filter(|text| !text.trim().is_empty())
                     .map(str::to_string);
+            }
+        }
+        if event_type == "session/title" {
+            // The last title event wins, mirroring upstream's `findLast`. An
+            // explicit user rename is stored the same way (its source kind is
+            // `user`), so it needs no special case here.
+            if let Some(title) = value.pointer("/data/title").and_then(Value::as_str) {
+                if !title.trim().is_empty() {
+                    title_event = Some(truncate_summary(title, TITLE_MAX_CHARS).to_string());
+                }
             }
         }
         if first_user.is_none() {
@@ -436,7 +450,7 @@ fn parse_session_artifact(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id,
-        title: first_user.clone(),
+        title: title_event.or_else(|| first_user.clone()),
         summary: first_user,
         project_dir: cwd,
         created_at: Some(created_at),
@@ -571,14 +585,12 @@ pub fn scan_messages_for_query(source: &str, query_lower: &str) -> Result<bool, 
 }
 
 /// Delete a dsh session by removing its owning artifact directory, guarded to
-/// the artifact name and a location under `root`.
+/// the artifact name (any generation) and a location under `root`.
 pub fn delete_session(root: &Path, source: &str) -> Result<(), String> {
     let path = Path::new(source);
-    let artifact_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Invalid dsh session path".to_string())?;
-    if !is_session_artifact_name(artifact_name) {
+    // Any generation is a legitimate handle: deleting removes the whole session
+    // directory, so every generation of that session goes with it.
+    if !session_artifact::is_session_artifact(path) {
         return Err("Not a dsh session artifact".to_string());
     }
     let session_dir = path
@@ -605,20 +617,34 @@ mod tests {
         zstd::stream::encode_all(std::io::Cursor::new(payload), 0).expect("zstd encode")
     }
 
+    /// Write one artifact under its own session directory, using the canonical
+    /// v0 name.
     fn write_artifact(dir: &Path, session_id: &str, compressed: bool, events: &str) {
+        let file_name = if compressed {
+            "session.jsonl.zstd"
+        } else {
+            "session.jsonl"
+        };
+        write_artifact_named(dir, session_id, file_name, compressed, events);
+    }
+
+    /// Write one artifact with an explicit file name, so a test can place
+    /// several format generations of one session side by side.
+    fn write_artifact_named(
+        dir: &Path,
+        session_id: &str,
+        file_name: &str,
+        compressed: bool,
+        events: &str,
+    ) {
         let session_dir = dir.join(session_id);
         std::fs::create_dir_all(&session_dir).expect("create session dir");
-        let path = if compressed {
-            session_dir.join("session.jsonl.zstd")
-        } else {
-            session_dir.join("session.jsonl")
-        };
         let payload = if compressed {
             zstd_bytes(events.as_bytes())
         } else {
             events.as_bytes().to_vec()
         };
-        std::fs::write(&path, payload).expect("write artifact");
+        std::fs::write(session_dir.join(file_name), payload).expect("write artifact");
     }
 
     /// Realistic dsh v0 log: header, a real prompt, injected context, one
@@ -802,8 +828,132 @@ mod tests {
         assert_eq!(arguments, Some(json!({ "a": 1 })));
     }
 
+    /// A directory holding several generations yields exactly one session,
+    /// resolved from the highest generation.
+    #[test]
+    fn scan_prefers_the_highest_generation_in_one_session_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_artifact_named(
+            dir.path(),
+            "proj-a",
+            "session.jsonl.zstd",
+            true,
+            &sample_events(1_600_000_000_000),
+        );
+        // A migrated successor: same session id, newer generation, its own
+        // header creation metadata is the same because it is the same session.
+        write_artifact_named(
+            dir.path(),
+            "proj-a",
+            "session.v3.jsonl.zstd",
+            true,
+            &sample_events(1_700_000_000_000),
+        );
+
+        let artifacts = collect_session_artifacts(dir.path());
+        assert_eq!(artifacts.len(), 1);
+        assert!(artifacts[0].ends_with("session.v3.jsonl.zstd"));
+
+        let sessions = scan_sessions(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].source_path.ends_with("session.v3.jsonl.zstd"));
+        assert_eq!(sessions[0].created_at.unwrap(), 1_700_000_000_000);
+    }
+
+    /// A session whose only artifact is a versioned generation is visible.
+    #[test]
+    fn scan_finds_a_versioned_only_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_artifact_named(
+            dir.path(),
+            "proj-a",
+            "session.v3.jsonl",
+            false,
+            &sample_events(1_700_000_000_000),
+        );
+
+        let sessions = scan_sessions(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].source_path.ends_with("session.v3.jsonl"));
+    }
+
+    /// One unparsable line in the head window must not hide the session.
+    #[test]
+    fn scan_survives_an_unparsable_head_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let events = format!(
+            "{}\n{{ truncated",
+            sample_events(1_700_000_000_000).trim_end()
+        );
+        write_artifact(dir.path(), "proj-a", false, &events);
+
+        let sessions = scan_sessions(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Hello there"));
+    }
+
+    /// Any generation is a valid delete handle; the whole session directory goes.
+    #[test]
+    fn delete_accepts_a_versioned_artifact() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_artifact_named(
+            dir.path(),
+            "proj-a",
+            "session.v3.jsonl.zstd",
+            true,
+            &sample_events(1_700_000_000_000),
+        );
+        let path = collect_session_artifacts(dir.path())[0].clone();
+        delete_session(dir.path(), &path.to_string_lossy()).expect("delete");
+        assert!(!path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn delete_rejects_a_non_artifact_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_artifact(dir.path(), "proj-a", false, &sample_events(1));
+        let stray = dir.path().join("proj-a").join("notes.txt");
+        std::fs::write(&stray, "x").expect("write stray file");
+        assert!(delete_session(dir.path(), &stray.to_string_lossy()).is_err());
+        assert!(stray.exists());
+    }
+
+    /// The last `session/title` event wins; the summary keeps the first prompt.
+    #[test]
+    fn scan_reads_the_last_session_title_event() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let events = format!(
+            r##"{}
+{{"type":"session/title","seq":13,"time":13,"data":{{"title":"Generated title","messageSeqs":[7],"source":{{"kind":"provider","provider":"session-title-first-prompt-llm"}}}}}}
+{{"type":"session/title","seq":14,"time":14,"data":{{"title":"Renamed by hand","messageSeqs":[7],"source":{{"kind":"user"}}}}}}
+"##,
+            sample_events(1_700_000_000_000).trim_end()
+        );
+        write_artifact(dir.path(), "proj-a", false, &events);
+
+        let sessions = scan_sessions(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Renamed by hand"));
+        assert_eq!(sessions[0].summary.as_deref(), Some("Hello there"));
+    }
+
+    /// An empty title event must not blank the title.
+    #[test]
+    fn scan_ignores_an_empty_title_event() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let events = format!(
+            "{}\n{}",
+            sample_events(1_700_000_000_000).trim_end(),
+            r#"{"type":"session/title","seq":13,"time":13,"data":{"title":"   "}}"#
+        );
+        write_artifact(dir.path(), "proj-a", false, &events);
+
+        let sessions = scan_sessions(dir.path());
+        assert_eq!(sessions[0].title.as_deref(), Some("Hello there"));
+    }
+
     /// Smoke test over a real artifact: point `DSH_SMOKE_SESSION` at a
-    /// `session.jsonl[.zstd]` path and run with `cargo test -- --ignored`.
+    /// `session[.v<N>].jsonl[.zstd]` path and run with `cargo test -- --ignored`.
     #[test]
     #[ignore]
     fn real_artifact_smoke() {
@@ -832,5 +982,73 @@ mod tests {
             "tool blocks: {} ({tool_block_kinds:?})",
             tool_block_kinds.len()
         );
+    }
+
+    /// Smoke test over a real sessions root: point `DSH_SMOKE_SESSIONS_ROOT` at
+    /// a dsh `<home>/sessions` directory and run
+    /// `cargo test --lib -- --ignored dsh_sessions`.
+    ///
+    /// The count assertion is the one that matters: a session directory whose
+    /// selected artifact fails to parse would silently vanish from the list,
+    /// and only comparing against the directory count catches that.
+    #[test]
+    #[ignore]
+    fn real_sessions_root_smoke() {
+        let Ok(root) = std::env::var("DSH_SMOKE_SESSIONS_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+
+        // Ground truth: every session directory that holds an accepted
+        // artifact, counted without the parser under test.
+        let mut expected_dirs: Vec<PathBuf> = Vec::new();
+        let mut pending = vec![root.clone()];
+        while let Some(dir) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if session_artifact::is_session_artifact(&path) {
+                    expected_dirs.push(
+                        path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+                    );
+                }
+            }
+        }
+        expected_dirs.sort();
+        expected_dirs.dedup();
+
+        let sessions = scan_sessions(&root);
+        for meta in &sessions {
+            println!("{} -> {}", meta.session_id, meta.source_path);
+        }
+        println!(
+            "session dirs on disk: {}, sessions parsed: {}",
+            expected_dirs.len(),
+            sessions.len()
+        );
+
+        assert_eq!(
+            sessions.len(),
+            expected_dirs.len(),
+            "every session directory must yield exactly one parsed session"
+        );
+        let mut source_dirs: Vec<&str> = sessions
+            .iter()
+            .filter_map(|meta| Path::new(&meta.source_path).parent())
+            .filter_map(|dir| dir.to_str())
+            .collect();
+        source_dirs.sort_unstable();
+        let before = source_dirs.len();
+        source_dirs.dedup();
+        assert_eq!(before, source_dirs.len(), "one artifact per session dir");
+        let mut ids: Vec<&str> = sessions.iter().map(|meta| meta.session_id.as_str()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "session ids must be unique");
     }
 }

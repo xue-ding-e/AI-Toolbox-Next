@@ -4047,6 +4047,8 @@
     "name": "服务器名称",
     "nameRequired": "请输入服务器名称",
     "namePlaceholder": "输入 MCP 服务器名称",
+    "nameDshInvalid": "dsh 仅接受 1–32 个 A–Z a–z 0–9 _ - 字符",
+    "nameDshHint": "注意：仅对 dsh 生效，其它工具不限名称格式",
     "type": "服务器类型",
     "command": "命令",
     "commandRequired": "请输入命令",
@@ -5666,9 +5668,10 @@
       "confirmDisable": "确定要禁用「{{name}}」吗？将取消应用并清空该工具的提示词内容，该配置会保留在列表中，可随时重新应用。"
     },
     "agentInstructions": {
-      "disabledWarning": "agent-instructions 插件未启用，全局提示词不会生效",
+      "disabledWarning": "agent-instructions 未在 home 级 cordis.patch.yml 中启用",
+      "scopeNote": "该开关只写入 home 级 cordis.patch.yml，仅对 dsh tui / headless 等基础 profile 生效；dsh Web 会话的 agent-instructions 由 agent preset 决定，不受此开关控制。",
       "enable": "启用",
-      "enableSuccess": "已启用，请重启 dsh 会话以生效"
+      "enableSuccess": "已写入 home 级 cordis.patch.yml（仅对 dsh tui / headless 生效）"
     }
   },
   "hermes": {

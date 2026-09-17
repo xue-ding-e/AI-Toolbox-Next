@@ -14,6 +14,7 @@
 - 配置目录解析优先级：应用 DB `dsh_settings_config` 的 `common.config_dir`（source=`custom`）> 环境变量 `DSH_HOME`（`env`）> shell 配置（`shell`）> 平台默认（`default`）。平台默认：mac/Linux `~/.dsh`，Windows `%USERPROFILE%\.dsh`。
 - SQLite 只保存配置目录选择（`common` 记录）与全局提示词预设（`dsh_prompt_config`）；**不要**新增 `dsh_provider` 之类第二套 provider 主数据。
 - 配置目录优先级由 `commands.rs` 的同一解析器提供给文件操作与 `runtime_location`；WSL UNC 识别、`module_statuses` 和同步跳过集合统一由 `runtime_location` 产出，不在 dsh 内复制判定。普通目录保留本机同步，UNC 目录视为已直接操作 WSL 文件。
+- 会话产物的磁盘布局事实（含命名与代际选择）唯一来源是 `session_artifact.rs`：`<sessions root>/<project key>/<encoded session id>/session[.v<N>].jsonl[.zstd]`，`session.jsonl` 即格式 v0，`session.v<N>.jsonl` 为第 N 代；**同一会话目录可并存多代**（迁移只新增文件、不改写旧文件），**数值最大的一代才是活跃产物**。`session_manager`（浏览）与 `proxy_gateway`（用量导入）都必须走这里，不得各自复制判定规则。
 
 ## 核心设计决策
 
@@ -38,9 +39,11 @@
 - `settings.yaml` 允许未知 top-level 与 provider 未知字段；读写必须 preserve unknown fields。
 - 保存 Other Settings 时不要把托管键（`llm-pi-ai`、`agent-default-model`）带回文件。
 - 内置 provider 即使没有写进 `llm-pi-ai.providers`（凭 env/默认可用）也不应显示为 missing；凭据缺失显示为未配置而非 missing。
-- dsh MCP 由 `mcp::cordis_patch` 适配器管理 `~/.dsh/cordis.patch.yml`（Cordis patch DSL，format `cordis`）。每个 MCP server 是一行 `insert`，包名固定 `@deepseek-ai/dsh-mcp-client`，`config.serverName` 作 key。本模块（dsh）仍管 `settings.yaml`/`.credentials.yaml`/`AGENTS.md`，不直接写 MCP 配置。dsh 是 developer preview，cordis patch 格式可能迭代；adapter 隔离在 `cordis_patch.rs` 便于后续更新。
+- dsh MCP 由 `mcp::cordis_patch` 适配器管理 `~/.dsh/cordis.patch.yml`（Cordis patch DSL，format `cordis`）。每个 MCP server 是一行 `insert`，包名固定 `@deepseek-ai/dsh-mcp-client`，`config.serverName` 作 key，且该 key 受上游约束 `^[A-Za-z0-9_-]{1,32}$`（写入前在 `sync_server_to_cordis` 校验，详见 `mcp/AGENTS.md`）。本模块（dsh）仍管 `settings.yaml`/`.credentials.yaml`/`AGENTS.md`，不直接写 MCP 配置。dsh 是 developer preview，cordis patch 格式可能迭代；adapter 隔离在 `cordis_patch.rs` 便于后续更新。
 - `read_dsh_runtime_config` 返回的 `credentialsContent` 是 `.credentials.yaml` 原始内容，包含真实密钥；前端仅用于只读文件预览，不得把该字段当作可编辑数据回写。
-- 启用 agent-instructions（`enable_dsh_agent_instructions`）会同时往 home 级 `cordis.patch.yml` 写 `disabled: false` 和 `config.maxBytes: 262144`（256 KiB），覆盖 bundle 默认 64 KiB 预算，避免项目根 `AGENTS.md` 一超 64 KiB 就把 `~/.dsh/AGENTS.md` 整文件挤出 baseline。`check_dsh_agent_instructions` 仍只按 `disabled` 判定启用；重复启用会幂等覆盖 maxBytes。cordis patch 写字段走 `mcp::cordis_patch::set_plugin_config_field`（合并 config、保留其它字段与行）。
+- 启用 agent-instructions（`enable_dsh_agent_instructions`）会同时往 home 级 `cordis.patch.yml` 写 `disabled: false` 和 `config.maxBytes: 262144`（256 KiB），覆盖 base bundle 默认的 64 KiB 预算，避免项目根 `AGENTS.md` 一超 64 KiB 就把 `~/.dsh/AGENTS.md` 整文件挤出 baseline。`check_dsh_agent_instructions` 仍只按 `disabled` 判定启用；重复启用会幂等覆盖 maxBytes。cordis patch 写字段走 `mcp::cordis_patch::set_plugin_config_field`（合并 config、保留其它字段与行）。
+- **该开关只治理 base 系 profile（tui / headless 等）。** dsh 0.1.x 起把 agent plane 移到 per-session **agent preset**：web bundle 里 `agent-instructions` 那行是 `disabled: true` 的占位墓碑，真正生效的行由每个会话的预设挂载（`maxBytes: 65536`），home 级 `cordis.patch.yml` 够不到它。因此 Web 会话既不受这个开关控制，也拿不到 256 KiB；Web 面唯一杠杆是用户自建预设 `${DSH_HOME}/.agent-presets/<id>/`（不得改随包安装的那份）。UI 文案必须如实说明这个作用域，不要再写成无条件的「全局提示词不会生效」。
+- Web UI 端口唯一事实是 `dsh web` 的组合默认 **3080**（上游没有任何端口环境变量）。我们启动时不传 `--port`，让用户自己的 `webserver` 配置生效，所以探测/打开一律按 3080；用户自定义端口不被探测。将来若要支持，必须启动时传 `--port` 且探测与打开共用同一个值，绝不重新引入 env 读取。
 
 ## 最小验证
 

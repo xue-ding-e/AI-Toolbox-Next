@@ -4050,6 +4050,8 @@
     "name": "Server Name",
     "nameRequired": "Please enter server name",
     "namePlaceholder": "Enter MCP server name",
+    "nameDshInvalid": "dsh only accepts 1–32 characters from A–Z a–z 0–9 _ -",
+    "nameDshHint": "Note: dsh only — other tools accept any name",
     "type": "Server Type",
     "command": "Command",
     "commandRequired": "Please enter command",
@@ -5669,9 +5671,10 @@
       "confirmDisable": "Disable \"{{name}}\"? It will be unapplied and the tool prompt file will be cleared. The config stays in the list and can be re-applied anytime."
     },
     "agentInstructions": {
-      "disabledWarning": "The agent-instructions plugin is disabled. Global prompt will not take effect.",
+      "disabledWarning": "agent-instructions is not enabled in the home-level cordis.patch.yml.",
+      "scopeNote": "This toggle only writes the home-level cordis.patch.yml, so it affects base-backed profiles (dsh tui / headless) only. In dsh Web sessions, agent-instructions comes from the per-session agent preset and is not controlled here.",
       "enable": "Enable",
-      "enableSuccess": "Enabled. Restart your dsh session for it to take effect."
+      "enableSuccess": "Written to the home-level cordis.patch.yml (dsh tui / headless only)."
     }
   },
   "hermes": {

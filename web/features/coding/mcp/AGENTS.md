@@ -45,6 +45,7 @@ sequenceDiagram
 - 导入成功后要回到 scan/result 刷新链路，不要只关弹窗不刷新列表。
 - 不要把 MCP 自身的 `description` 和 AI Toolbox 管理备注 `user_note` 合并存储；卡片展示可以在 `user_note` 为空时回退展示 `description`，但编辑入口必须分开。
 - MCP stdio 的 `command` 字段是可执行文件路径，不是 shell 命令行字符串；Windows 路径和 JetBrains runtime 路径可能合法包含空格。前端保存、导入和编辑时不能按空格拆分 `command`，参数只来自显式的 `args` 数组。
+- server 名称的字符集/长度限制是 **dsh 专属**（`^[A-Za-z0-9_-]{1,32}$`），其它工具不限。所以新增/编辑弹窗里的名称校验与提示必须门控在「本次同步目标包含 dsh」上，且**只作用于新建**：编辑态名称输入是 `disabled`，对它加规则会让历史违规名永远存不下去。权威守卫在后端 `cordis_patch`，这里的判定只是同等规则的镜像（`utils/mcpServerName.ts`）。
 - MCP 卡片的命令包版本只处理 stdio `npx/pnpx/tpnx` 与 `uv/uvx` 这两类 runner；不执行升级、不调用 CLI、其他 `command` 不展示版本。未 pin 或 `@latest` 的包名可异步查询 npm/PyPI registry 后展示真实最新版本号；查询失败时不要把 `latest` 伪装成具体版本。
 - JSON 导入既要支持 `{ mcpServers: { name: config } }` / `{ name: config }` 这类带 server 名称的映射，也要兼容用户从工具里复制出来的裸单 server 配置对象。裸对象没有名称时可以使用稳定默认名，再交给重复名处理流程。
 - 组工具模式只是分组视图里的前端批量控制模式，未分组不参与启用时的统一和组级工具控制；卡片工具列表仍展示，但卡片内工具添加/移除入口应只读禁用，点击时提示用户到分组标题后操作。MCP 工具开关是 toggle 语义，批量添加/移除前必须先按 `enabled_tools` 过滤目标 server，不能对整组无脑 toggle。

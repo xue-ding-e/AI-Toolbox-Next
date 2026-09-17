@@ -2108,12 +2108,16 @@ const DshPage: React.FC = () => {
             data-dsh-sidebar-section="true"
             data-sidebar-title={t('dsh.prompt.title', { defaultValue: '全局提示词' })}
           >
-            {!agentInstructionsEnabled && (
+            {!agentInstructionsEnabled ? (
               <Alert
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}
                 message={t('dsh.agentInstructions.disabledWarning')}
+                // One fact, one key, two render positions: the scope note also
+                // shows below when the toggle is already on, because a user who
+                // enabled it still needs to know the Web surface is not covered.
+                description={t('dsh.agentInstructions.scopeNote')}
                 action={
                   <Button
                     size="small"
@@ -2125,6 +2129,10 @@ const DshPage: React.FC = () => {
                   </Button>
                 }
               />
+            ) : (
+              <div className={styles.agentInstructionsScope}>
+                {t('dsh.agentInstructions.scopeNote')}
+              </div>
             )}
             <GlobalPromptSettings
               translationKeyPrefix="dsh.prompt"

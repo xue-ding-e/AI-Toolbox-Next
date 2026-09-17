@@ -25,6 +25,31 @@ use super::yaml_sync::atomic_write_bytes;
 /// The fixed Cordis plugin package name for dsh's MCP client.
 const DSH_MCP_PACKAGE: &str = "@deepseek-ai/dsh-mcp-client";
 
+/// Longest `serverName` upstream's MCP client config accepts.
+///
+/// dsh validates the name against `^[A-Za-z0-9_-]{1,32}$` and a violating row
+/// fails to load, so it must never reach the patch file. The mirrored frontend
+/// predicate lives in `web/features/coding/mcp/utils/mcpServerName.ts`.
+const DSH_SERVER_NAME_MAX_LEN: usize = 32;
+
+/// Whether a server name is usable as a dsh `serverName`.
+///
+/// The name is the row's identity key (`config.serverName`, and the derived
+/// plugin `id`), so it is not sanitizable: reject it instead of rewriting it.
+fn validate_dsh_server_name(name: &str) -> Result<(), String> {
+    let length_ok = !name.is_empty() && name.chars().count() <= DSH_SERVER_NAME_MAX_LEN;
+    let charset_ok = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if length_ok && charset_ok {
+        return Ok(());
+    }
+    Err(format!(
+        "dsh MCP server name {name:?} cannot be used: dsh's MCP client requires 1-32 characters \
+         from A-Z a-z 0-9 _ -"
+    ))
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -139,6 +164,14 @@ fn is_any_dsh_mcp_entry(entry: &Value) -> bool {
 /// Finds an existing insert row with matching `serverName` and updates it, or
 /// appends a new top-level `- insert:` op. Preserves all other plugin rows.
 pub(crate) fn sync_server_to_cordis(config_path: &Path, server: &McpServer) -> Result<(), String> {
+    // The only guarded entry point, deliberately: `remove_server_from_cordis`
+    // must stay able to delete a row whose name predates this check, and
+    // `import_servers_from_cordis` must stay readable so such a row can be
+    // inspected. Create/update do not reject either — a name that is fine for
+    // Claude/Codex/Gemini must remain usable, and the failure belongs to this
+    // tool's sync result.
+    validate_dsh_server_name(&server.name)?;
+
     let mut array = read_cordis_array(config_path)?;
 
     let new_config = build_cordis_config(server)?;
@@ -762,6 +795,74 @@ mod tests {
         assert_eq!(imported[0].name, "fs");
         assert_eq!(imported[0].server_type, "stdio");
         assert_eq!(imported[0].server_config["command"], "npx");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A name dsh's MCP client cannot load must be refused before it is
+    /// written, and the target file must stay untouched.
+    #[test]
+    fn test_sync_rejects_names_dsh_cannot_load() {
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cordis.patch.yml");
+
+        let too_long = "a".repeat(DSH_SERVER_NAME_MAX_LEN + 1);
+        for bad_name in ["", "my server", "a.b", "名字", too_long.as_str()] {
+            let server = make_stdio_server(bad_name, "npx", &["-y", "@mcp/memory"]);
+            assert!(
+                sync_server_to_cordis(&path, &server).is_err(),
+                "expected {bad_name:?} to be refused"
+            );
+        }
+        assert!(!path.exists(), "a refused name must not create the file");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The accepted boundary is 1..=32 characters from `[A-Za-z0-9_-]`.
+    #[test]
+    fn test_sync_accepts_the_dsh_name_boundaries() {
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cordis.patch.yml");
+
+        let exactly_max = "a".repeat(DSH_SERVER_NAME_MAX_LEN);
+        for good_name in ["a", "my-server_1", exactly_max.as_str()] {
+            let server = make_stdio_server(good_name, "npx", &["-y", "@mcp/memory"]);
+            sync_server_to_cordis(&path, &server)
+                .unwrap_or_else(|error| panic!("expected {good_name:?} to be accepted: {error}"));
+        }
+
+        let imported = import_servers_from_cordis(&path).unwrap();
+        assert_eq!(imported.len(), 3);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A row written before this guard existed must stay removable, otherwise
+    /// the invalid entry could never be cleaned out of the user's file.
+    #[test]
+    fn test_remove_can_delete_a_legacy_invalid_name() {
+        let dir =
+            std::env::temp_dir().join(format!("cordis_test_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cordis.patch.yml");
+
+        let legacy = json!([
+            { "insert": [
+                { "id": "mcp-my server", "name": DSH_MCP_PACKAGE, "config": { "serverName": "my server", "transport": "stdio", "command": "npx" } }
+            ]}
+        ]);
+        let yaml_str = serde_yaml::to_string(&legacy).unwrap();
+        atomic_write_bytes(&path, yaml_str.as_bytes()).unwrap();
+
+        remove_server_from_cordis(&path, "my server").unwrap();
+
+        let array = read_cordis_array(&path).unwrap();
+        assert!(array.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
