@@ -14,6 +14,9 @@
 ## 核心设计决策（Why）
 
 - 四个工具共用一套 Session Manager 入口，但上下文解析各不相同，因此通过 `ToolSessionContext` 隔离各自文件布局。
+- **会话身份是 `(runtime context, session_id)`，不是 `source_path`。** 多个 runtime 会把一个逻辑会话落成多个产物：Codex 每次 resume 新开一个 `rollout-<ts>-<thread id>.jsonl`（thread id 不变）、Gemini CLI 把一个会话摊在多个 `session-<ts>-<前8位>.jsonl` 上、pi/open-claw/Claude Code 的副本可能同时存在于两个 root 下。列表必须按会话身份收敛成一行（保留活跃时间最大的产物，即这些布局里的活跃产物），否则同一个 id 会以 N 行、N 个不同"最近活跃"出现（issue #357）。收敛只按 `source_path` 去重是错的：它恰恰收敛不了这种情况；`session_dedupe_key` 因此只是删除/导出批次的防线，不是列表语义。
+- 删除也走同一身份：删掉列表上那一行必须带走该会话的全部产物。Codex 的 `delete_session` 会从 `sessions/` 根递归找出同 id 的全部 rollout 一起删（沿用 dsh"删任一产物 = 删整个会话"、Gemini CLI"同 id 文件一起清"的既有语义），否则删完一行，旧 rollout 会作为同一个会话再次出现。
+- dsh 的 `select_generations`（按会话目录取最高代）与共享层按 id 收敛是两层互补：前者解决"一个目录多代"，后者解决"一个 id 多文件"，不要用其中一层去替代另一层。
 - 读会话详情、删除、导出等重 I/O 操作统一放进 `spawn_blocking`，避免堵塞 Tauri async runtime。
 - 导出使用统一 schema `ai-toolbox.session-export.v2`，同时保留 normalized messages 和 native snapshot，兼顾跨工具一致性与原生往返恢复。
 - 会话详情页和导出里的消息展示统一消费 normalized `SessionMessage.blocks`。各工具 parser 负责把 raw runtime shape 转成 text/thinking/tool_call/tool_result 等 block；前端不应再按 Claude/Codex/Gemini/OpenCode 的原始 JSON 结构分叉展示。
@@ -37,6 +40,9 @@ sequenceDiagram
 ## 易错点与历史坑（Gotchas）
 
 - 不要假设所有工具的会话根目录都是同一种布局。Codex 是 `sessions/`，Claude Code 是 `projects/`，OpenClaw 是配置目录旁的 `agents/`，OpenCode 还涉及 data/state/sqlite。
+- 不要把"一个会话 = 一个文件"当成前提。`scan_sessions`/`scan_recent_sessions` 逐文件产出 `SessionMeta`，所以只要某个 runtime 一个 id 落多个文件，不收敛就会直接变成多行；判断重复时看 `session_id`，不要看文件路径或时间（时间本来就各不相同，那正是各产物的活跃时间）。
+- 收敛时必须把"id 为空"的会话单独放行，不能把它们当成同一个身份合并；否则会把一批没有 id 的会话折叠成一行。
+- 同一个 id 出现在不同 runtime context（local vs WSL/SSH）下不能合并，那是两个真实存在的会话；收敛 key 必须带上 context，而不是只带 id。
 - 对 OpenCode，会话来源判断和导入导出依赖显式运行时环境与官方导出格式，不能套用其它工具的 JSONL 逻辑。
 - OpenCode CLI 版本可能在 official export 的 `info` 中自动补默认 `cost` / `tokens` 字段；往返测试应只归一化这类 CLI 默认补字段，不要把真实消息、路径或用户内容差异吞掉。
 - 对 OpenCode 删除，不要为了确认 `source_path` 再先全量扫描会话缓存。`source_path` 自身就能解析出 `session_id` 并直接执行删除；预扫描只会把单删/批删放大成整库遍历。

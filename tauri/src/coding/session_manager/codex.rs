@@ -607,9 +607,83 @@ fn number_field(value: &Value, keys: &[&str]) -> Option<i64> {
         })
 }
 
+/// The session id a rollout artifact carries.
+///
+/// Codex names rollouts `rollout-<timestamp>-<thread id>.jsonl`, so the filename
+/// answers without reading the file; only a non-canonical name falls back to the
+/// `session_meta` header.
+fn artifact_session_id(path: &Path) -> Option<String> {
+    infer_session_id_from_filename(path).or_else(|| parse_session(path).map(|meta| meta.session_id))
+}
+
+/// Every rollout artifact of one logical session under `root`.
+///
+/// Codex opens a fresh `rollout-*.jsonl` on resume while keeping the thread id in
+/// `session_meta`, so one session owns several files spread over dated
+/// directories. Identity is the id, not the file.
+fn session_artifacts(root: &Path, session_id: &str) -> Vec<PathBuf> {
+    let mut artifacts = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if artifact_session_id(&path).as_deref() == Some(session_id) {
+                artifacts.push(path);
+            }
+        }
+    }
+    artifacts
+}
+
+/// Delete a Codex session.
+///
+/// `path` is any one of the session's artifacts; every artifact of that logical
+/// session is removed, so a resumed thread cannot reappear through its older
+/// rollout files after the user deleted the single row they were shown. This
+/// matches dsh (any generation deletes the whole session directory) and Gemini
+/// CLI (every file carrying the session id goes). Without a resolvable id or
+/// sessions root there is nothing to collapse onto, so the requested file alone
+/// is removed.
 pub fn delete_session(path: &Path) -> Result<(), String> {
-    std::fs::remove_file(path)
-        .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+    let artifacts = match (find_sessions_root(path), artifact_session_id(path)) {
+        (Some(root), Some(session_id)) => {
+            let mut artifacts = session_artifacts(&root, &session_id);
+            if !artifacts.iter().any(|artifact| artifact.as_path() == path) {
+                artifacts.push(path.to_path_buf());
+            }
+            artifacts
+        }
+        _ => vec![path.to_path_buf()],
+    };
+
+    let mut failures = Vec::new();
+    for artifact in artifacts {
+        match std::fs::remove_file(&artifact) {
+            Ok(()) => {}
+            // Deleting an already-gone artifact is convergence, not an error.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!("{}: {error}", artifact.display())),
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to delete Codex session file(s): {}",
+            failures.join(", ")
+        ))
+    }
 }
 
 pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
@@ -1060,6 +1134,65 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    fn write_session_meta(path: &Path, session_id: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create session directory");
+        }
+        fs::write(
+            path,
+            serde_json::json!({
+                "timestamp": "2026-09-17T10:00:00Z",
+                "type": "session_meta",
+                "payload": { "id": session_id, "cwd": "/tmp/project" }
+            })
+            .to_string(),
+        )
+        .expect("failed to write session file");
+    }
+
+    /// Codex keeps one thread in several rollout files across dated directories
+    /// (a fresh file per resume, all carrying the thread id). Deleting the row the
+    /// list shows must take every artifact of that session, or the older rollouts
+    /// just reappear as the same session.
+    #[test]
+    fn delete_session_removes_every_rollout_of_one_thread() {
+        let test_dir = TestDir::new("delete-shared-thread");
+        let sessions_root = test_dir.path().join("sessions");
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let other_id = "01a08e11-2c7d-7b55-8e10-4a9c77d20453";
+
+        let superseded = sessions_root
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{thread_id}.jsonl"));
+        let live = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T09-00-00-{thread_id}.jsonl"));
+        let unrelated = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T10-00-00-{other_id}.jsonl"));
+
+        write_session_meta(&superseded, thread_id);
+        write_session_meta(&live, thread_id);
+        write_session_meta(&unrelated, other_id);
+
+        // Any artifact is a valid handle: deleting through the superseded file
+        // removes the live one too.
+        super::delete_session(&superseded).expect("delete should succeed");
+
+        assert!(!superseded.exists());
+        assert!(!live.exists());
+        assert!(unrelated.exists());
+
+        // Repeated deletion converges instead of failing.
+        super::delete_session(&live).expect("repeated delete should converge");
     }
 
     #[test]

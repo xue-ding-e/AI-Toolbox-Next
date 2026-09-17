@@ -897,6 +897,57 @@ fn annotate_session_source(mut session: SessionMeta, entry: &SessionContextEntry
     session
 }
 
+/// Timestamp the list orders by and the live-artifact pick compares on.
+fn session_activity_ts(meta: &SessionMeta) -> i64 {
+    meta.last_active_at.or(meta.created_at).unwrap_or(0)
+}
+
+/// Collapse the artifacts of one logical session into a single row.
+///
+/// Several runtimes keep one session as more than one on-disk artifact: Codex
+/// opens a fresh `rollout-<ts>-<id>.jsonl` on resume while keeping the thread id
+/// in `session_meta`, Gemini CLI spreads a session over several
+/// `session-<ts>-<first8>.jsonl` chat files, and a copied pi/open-claw session
+/// directory can hold a second artifact. The list keys rows on `source_path`, so
+/// every artifact used to become its own row — the same session id showed up N
+/// times with N different "last active" times.
+///
+/// Identity is `(runtime context, session id)`: one row per logical session, and
+/// the artifact with the greatest activity wins because that is the live one for
+/// those layouts. The same id under two runtime contexts (local vs WSL/SSH) stays
+/// two rows — those are genuinely different sessions. Ties break on the greater
+/// `source_path`, which follows the dated directory/file ordering those layouts
+/// use, so the pick stays deterministic.
+fn collapse_sessions_by_identity(sessions: Vec<SessionWithContext>) -> Vec<SessionWithContext> {
+    let mut index_by_key: HashMap<(usize, String), usize> = HashMap::new();
+    let mut collapsed: Vec<SessionWithContext> = Vec::with_capacity(sessions.len());
+
+    for session in sessions {
+        // An absent id is not an identity; merging every id-less session into
+        // one row would hide real sessions, so keep them apart.
+        if session.meta.session_id.is_empty() {
+            collapsed.push(session);
+            continue;
+        }
+
+        let key = (session.context_index, session.meta.session_id.clone());
+        let Some(&existing) = index_by_key.get(&key) else {
+            index_by_key.insert(key, collapsed.len());
+            collapsed.push(session);
+            continue;
+        };
+
+        let current = &collapsed[existing];
+        let session_ts = session_activity_ts(&session.meta);
+        let current_ts = session_activity_ts(&current.meta);
+        if (session_ts, &session.meta.source_path) > (current_ts, &current.meta.source_path) {
+            collapsed[existing] = session;
+        }
+    }
+
+    collapsed
+}
+
 fn find_session_with_context(
     contexts: &SessionContextSet,
     source_path: &str,
@@ -1000,7 +1051,7 @@ fn list_sessions_blocking(
 ) -> Result<SessionListPage, String> {
     let use_quick_initial_page =
         page == 1 && page_size <= 10 && query.is_none() && path_filter.is_none() && !force_refresh;
-    let (mut sessions, partial, cache_state, meta_complete) = match load_mode {
+    let (sessions, partial, cache_state, meta_complete) = match load_mode {
         SessionListLoadMode::CacheFirst => {
             let (mut cached_sessions, cache_partial, cache_state) =
                 collect_any_cached_sessions_with_context(&contexts, source_mode);
@@ -1049,18 +1100,13 @@ fn list_sessions_blocking(
             SessionListLoadMode::Auto | SessionListLoadMode::Full | SessionListLoadMode::Refresh
         );
 
+    // One logical session can be several on-disk artifacts; collapse before
+    // anything sorts, filters, counts or returns rows, so the count the UI shows
+    // matches the rows it renders.
+    let mut sessions = collapse_sessions_by_identity(sessions);
+
     sessions.sort_by(|left, right| {
-        let left_ts = left
-            .meta
-            .last_active_at
-            .or(left.meta.created_at)
-            .unwrap_or(0);
-        let right_ts = right
-            .meta
-            .last_active_at
-            .or(right.meta.created_at)
-            .unwrap_or(0);
-        right_ts.cmp(&left_ts)
+        session_activity_ts(&right.meta).cmp(&session_activity_ts(&left.meta))
     });
 
     let available_paths = build_session_paths_from_contexts(&sessions, DEFAULT_SESSION_PATH_LIMIT);
@@ -3090,6 +3136,152 @@ mod tests {
         assert!(!full_result.partial);
         assert!(!full_result.has_more);
         assert!(full_result.meta_complete);
+    }
+
+    fn write_codex_rollout(path: &Path, session_id: &str, timestamp: &str) {
+        write_text_file(
+            path,
+            &json!({
+                "timestamp": timestamp,
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "timestamp": timestamp,
+                    "cwd": "/tmp/project",
+                }
+            })
+            .to_string(),
+        );
+    }
+
+    fn test_session_at(
+        context_index: usize,
+        session_id: &str,
+        source_path: &str,
+        ts: i64,
+    ) -> SessionWithContext {
+        SessionWithContext {
+            context_index,
+            meta: SessionMeta {
+                provider_id: "codex".to_string(),
+                session_id: session_id.to_string(),
+                title: None,
+                summary: None,
+                project_dir: None,
+                created_at: Some(ts),
+                last_active_at: Some(ts),
+                source_path: source_path.to_string(),
+                resume_command: None,
+                runtime_source: None,
+                runtime_distro: None,
+            },
+        }
+    }
+
+    /// Codex opens a fresh rollout file per resume while keeping the thread id in
+    /// `session_meta`, so one session owns several artifacts. The list showed one
+    /// row per artifact; it must show one row per session, from the live artifact.
+    #[test]
+    fn list_shows_one_row_per_session_when_rollouts_share_a_thread_id() {
+        let test_root = TestDir::new("collapse-shared-thread-id");
+        let sessions_root = test_root.path().join("sessions");
+        let shared_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let other_id = "01a08e11-2c7d-7b55-8e10-4a9c77d20453";
+        let superseded = sessions_root
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{shared_id}.jsonl"));
+        let live = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T09-00-00-{shared_id}.jsonl"));
+        let unrelated = sessions_root
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T10-00-00-{other_id}.jsonl"));
+
+        write_codex_rollout(&superseded, shared_id, "2026-09-11T10:00:00Z");
+        write_codex_rollout(&live, shared_id, "2026-09-17T09:00:00Z");
+        write_codex_rollout(&unrelated, other_id, "2026-09-17T10:00:00Z");
+
+        let contexts = SessionContextSet {
+            entries: vec![SessionContextEntry {
+                context: ToolSessionContext::Codex {
+                    sessions_root: sessions_root.clone(),
+                },
+                source: SessionRuntimeSource::Local,
+                distro: None,
+            }],
+            available_sources: Vec::new(),
+        };
+
+        let result = list_sessions_blocking(
+            contexts,
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::Full,
+        )
+        .expect("full list should succeed");
+
+        let session_ids: Vec<&str> = result
+            .items
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(session_ids, vec![other_id, shared_id]);
+        assert_eq!(result.total, 2);
+
+        let shared = result
+            .items
+            .iter()
+            .find(|session| session.session_id == shared_id)
+            .expect("shared session should be listed");
+        assert_eq!(shared.source_path, live.to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn collapse_keeps_the_same_session_id_under_two_runtime_contexts() {
+        // The local and WSL/SSH copies of an id are different sessions.
+        let collapsed = collapse_sessions_by_identity(vec![
+            test_session_at(0, "shared", "/local/rollout-shared.jsonl", 100),
+            test_session_at(1, "shared", "//wsl/rollout-shared.jsonl", 900),
+        ]);
+
+        assert_eq!(collapsed.len(), 2);
+    }
+
+    #[test]
+    fn collapse_keeps_id_less_sessions_apart() {
+        // An absent id carries no identity; merging them would hide real sessions.
+        let collapsed = collapse_sessions_by_identity(vec![
+            test_session_at(0, "", "/sessions/a.jsonl", 100),
+            test_session_at(0, "", "/sessions/b.jsonl", 900),
+        ]);
+
+        assert_eq!(collapsed.len(), 2);
+    }
+
+    #[test]
+    fn collapse_breaks_activity_ties_on_the_greater_source_path() {
+        // Dated rollout layouts sort chronologically by name, so the later path is
+        // the live artifact and the pick must not depend on scan order.
+        let collapsed = collapse_sessions_by_identity(vec![
+            test_session_at(0, "shared", "/sessions/2026/09/16/rollout-a.jsonl", 900),
+            test_session_at(0, "shared", "/sessions/2026/09/17/rollout-b.jsonl", 900),
+        ]);
+
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(
+            collapsed[0].meta.source_path,
+            "/sessions/2026/09/17/rollout-b.jsonl"
+        );
     }
 
     #[test]
