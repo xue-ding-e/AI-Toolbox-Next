@@ -596,7 +596,26 @@ pub async fn engage_aggregate_cli(
             "Aggregate alias references unselected site '{unknown_provider_id}'"
         ));
     }
-    crate::coding::proxy_gateway::aggregate_naming::validate_aggregate_aliases(&aliases)?;
+    // Explicit aliases are user input and must fail loudly (the negative path in
+    // the acceptance criteria). Derived display-name prefixes below never fail:
+    // they silently fall back to the provider id instead.
+    crate::coding::proxy_gateway::aggregate_naming::validate_aggregate_aliases(
+        &aliases, &separator,
+    )?;
+    // Default the prefix to the user's own site name instead of the opaque
+    // provider id whenever the user has not typed an explicit alias. Derived
+    // names never fail the engage: an unusable or colliding name silently keeps
+    // the provider id. Only explicit aliases are validated above.
+    let selected_names = ordered_providers
+        .iter()
+        .map(|provider| (provider.id.clone(), provider.name.clone()))
+        .collect::<Vec<_>>();
+    let aliases = crate::coding::proxy_gateway::aggregate_naming::resolve_effective_site_aliases(
+        &selected_names,
+        &aliases,
+        &available_ids,
+        &separator,
+    );
     // Runtime aggregate routing also keeps every enabled, unselected provider
     // addressable by its provider id as a fallback. Validate aliases against
     // that complete addressable set, not only the selected sites, so an alias

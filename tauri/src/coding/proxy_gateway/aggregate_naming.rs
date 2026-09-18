@@ -22,8 +22,10 @@
 //! site that declared `deepseek-v4-flash`.
 //!
 //! Invariants:
-//! - Alias charset is `[A-Za-z0-9_-]` (the separator must not be part of a
-//!   prefix token, otherwise `<prefix><sep><model>` cannot be split back).
+//! - A prefix token must not contain the configured separator, whitespace or
+//!   control characters; otherwise `<prefix><sep><model>` cannot be split back.
+//!   Everything else is allowed, so CJK site names such as `思源888 pro` are
+//!   valid prefixes once normalised.
 //! - Aliases are unique case-insensitively because aggregate prefix matching is
 //!   ASCII case-insensitive; the same applies to the effective prefix token
 //!   (alias, else provider id) of every site.
@@ -123,12 +125,58 @@ impl AggregateNamingConfig {
     }
 }
 
+/// Turn a provider's user-facing name into a usable prefix token.
+///
+/// Aggregate mode prefers the user's own site name over the opaque provider id
+/// (the reported UX bug: `76a6ef74af6c4151812787cc519b534b.model` instead of
+/// `思源888 pro.model`). Names are free-form, so normalise instead of rejecting:
+/// trim, drop control characters, fold runs of whitespace to a single `-`, and
+/// replace the configured separator with `-` so the result can still be split
+/// back out of a slug. Returns `None` when nothing usable is left, in which case
+/// callers fall back to the provider id.
+pub fn derive_site_prefix_from_name(name: &str, separator: &str) -> Option<String> {
+    let replaced = if separator.is_empty() {
+        name.to_string()
+    } else {
+        name.replace(separator, "-")
+    };
+    let mut out = String::new();
+    let mut pending_dash = false;
+    for ch in replaced.trim().chars() {
+        // Whitespace is checked before the control check: tab/newline are both,
+        // and folding them into '-' reads far better than deleting them.
+        if ch.is_whitespace() {
+            pending_dash = !out.is_empty();
+            continue;
+        }
+        if ch.is_control() {
+            continue;
+        }
+        if pending_dash {
+            out.push('-');
+            pending_dash = false;
+        }
+        out.push(ch);
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 /// Validate one configured alias.
 ///
 /// An empty string means "no alias configured" and must be filtered out by the
 /// caller before validating; reaching this function with an empty value is a
 /// programming error the caller surfaces as a validation failure.
-pub fn validate_aggregate_alias(alias: &str) -> Result<(), String> {
+///
+/// Charset is deliberately permissive (CJK site names are a first-class case):
+/// only the *structural* characters are refused — whitespace, control
+/// characters and the configured separator. A prefix may not contain the
+/// separator, otherwise `<prefix><sep><model>` cannot be split back.
+pub fn validate_aggregate_alias(alias: &str, separator: &str) -> Result<(), String> {
     if alias.is_empty() {
         return Err("Aggregate site alias must not be empty".to_string());
     }
@@ -137,20 +185,30 @@ pub fn validate_aggregate_alias(alias: &str) -> Result<(), String> {
             "Aggregate site alias must be at most {AGGREGATE_ALIAS_MAX_LEN} characters"
         ));
     }
-    if alias
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
-    {
-        return Err(
-            "Aggregate site alias may only contain letters, digits, '_' or '-'".to_string(),
-        );
+    if let Some(ch) = alias.chars().find(|ch| ch.is_whitespace()) {
+        return Err(format!(
+            "Aggregate site alias must not contain whitespace (found {ch:?})"
+        ));
+    }
+    if let Some(ch) = alias.chars().find(|ch| ch.is_control()) {
+        return Err(format!(
+            "Aggregate site alias must not contain control characters (found {ch:?})"
+        ));
+    }
+    if !separator.is_empty() && alias.contains(separator) {
+        return Err(format!(
+            "Aggregate site alias must not contain the separator '{separator}'"
+        ));
     }
     Ok(())
 }
 
 /// Validate every configured alias: charset/length plus case-insensitive
 /// uniqueness, because prefix matching is ASCII case-insensitive.
-pub fn validate_aggregate_aliases(aliases: &BTreeMap<String, String>) -> Result<(), String> {
+pub fn validate_aggregate_aliases(
+    aliases: &BTreeMap<String, String>,
+    separator: &str,
+) -> Result<(), String> {
     let mut seen: BTreeMap<String, &str> = BTreeMap::new();
     for (provider_id, alias) in aliases {
         let alias = alias.trim();
@@ -161,7 +219,7 @@ pub fn validate_aggregate_aliases(aliases: &BTreeMap<String, String>) -> Result<
                 "Aggregate site alias for '{provider_id}' must not be empty"
             ));
         }
-        validate_aggregate_alias(alias)
+        validate_aggregate_alias(alias, separator)
             .map_err(|error| format!("Aggregate site alias '{alias}': {error}"))?;
         let key = alias.to_ascii_lowercase();
         if let Some(previous) = seen.get(&key) {
@@ -184,6 +242,61 @@ pub fn aggregate_site_prefix<'a>(
         .map(|alias| alias.trim())
         .filter(|alias| !alias.is_empty())
         .unwrap_or(site_id)
+}
+
+/// Compute the alias map aggregate mode should actually publish.
+///
+/// Explicit aliases win unchanged. A selected site without one falls back to
+/// its normalised display name — the reported UX bug was a catalog full of
+/// opaque provider ids (`76a6ef74af6c4151812787cc519b534b.model`) when the user
+/// had already named the site (`思源888 pro.model`).
+///
+/// A derived name is only used when it cannot steal another site's address:
+/// derived prefixes must stay unique (case-insensitively) against every
+/// enabled provider id and against every explicit alias. Anything unusable —
+/// empty after normalisation, too long, or colliding — silently falls back to
+/// the provider id, so engaging never fails just because two sites share a
+/// display name. Only *explicit* aliases are allowed to fail validation.
+///
+/// `selected` is `(provider_id, display_name)` in the user's priority order;
+/// `all_ids` is every enabled candidate id (unselected sites stay addressable
+/// by their ids at request time).
+pub fn resolve_effective_site_aliases(
+    selected: &[(String, String)],
+    explicit: &BTreeMap<String, String>,
+    all_ids: &[String],
+    separator: &str,
+) -> BTreeMap<String, String> {
+    let mut taken: BTreeMap<String, String> = all_ids
+        .iter()
+        .map(|id| (id.to_ascii_lowercase(), id.clone()))
+        .collect();
+    let mut effective = explicit.clone();
+    for (id, alias) in &effective {
+        taken.insert(alias.to_ascii_lowercase(), id.clone());
+    }
+
+    for (id, name) in selected {
+        if effective.contains_key(id) {
+            continue;
+        }
+        let Some(prefix) = derive_site_prefix_from_name(name, separator) else {
+            continue;
+        };
+        if prefix == *id || prefix.chars().count() > AGGREGATE_ALIAS_MAX_LEN {
+            continue;
+        }
+        if validate_aggregate_alias(&prefix, separator).is_err() {
+            continue;
+        }
+        let key = prefix.to_ascii_lowercase();
+        if taken.contains_key(&key) {
+            continue;
+        }
+        taken.insert(key, id.clone());
+        effective.insert(id.clone(), prefix);
+    }
+    effective
 }
 
 /// Validate that every site in `site_ids` has a distinct effective prefix.
@@ -425,25 +538,124 @@ mod tests {
 
     #[test]
     fn alias_validation_accepts_backend_charset_only() {
-        assert!(validate_aggregate_alias("unsee").is_ok());
-        assert!(validate_aggregate_alias("chain888").is_ok());
-        assert!(validate_aggregate_alias("my-site_1").is_ok());
-        assert!(validate_aggregate_alias(&"a".repeat(AGGREGATE_ALIAS_MAX_LEN)).is_ok());
+        assert!(validate_aggregate_alias("unsee", ".").is_ok());
+        assert!(validate_aggregate_alias("chain888", ".").is_ok());
+        assert!(validate_aggregate_alias("my-site_1", ".").is_ok());
+        // CJK site names are a first-class case: the reported UX bug was the
+        // catalog showing an opaque provider id instead of the user's name.
+        // (An explicit alias must still be a single token; a *display name*
+        // with spaces goes through `derive_site_prefix_from_name` instead.)
+        assert!(validate_aggregate_alias("中文", ".").is_ok());
+        assert!(validate_aggregate_alias("思源888", ".").is_ok());
+        assert!(validate_aggregate_alias("思源888 pro", ".").is_err());
+        assert!(validate_aggregate_alias(&"a".repeat(AGGREGATE_ALIAS_MAX_LEN), ".").is_ok());
 
-        assert!(validate_aggregate_alias("").is_err());
-        assert!(validate_aggregate_alias(&"a".repeat(AGGREGATE_ALIAS_MAX_LEN + 1)).is_err());
-        assert!(validate_aggregate_alias("with space").is_err());
-        assert!(validate_aggregate_alias("with.dot").is_err());
-        assert!(validate_aggregate_alias("with:colon").is_err());
-        assert!(validate_aggregate_alias("中文").is_err());
+        assert!(validate_aggregate_alias("", ".").is_err());
+        assert!(validate_aggregate_alias(&"a".repeat(AGGREGATE_ALIAS_MAX_LEN + 1), ".").is_err());
+        // Structural characters only: whitespace, control chars, separator.
+        assert!(validate_aggregate_alias("with space", ".").is_err());
+        assert!(validate_aggregate_alias("with\nnewline", ".").is_err());
+        assert!(validate_aggregate_alias("with.dot", ".").is_err());
+        // A character that merely *looks* like the separator is fine.
+        assert!(validate_aggregate_alias("with:colon", ".").is_ok());
+        assert!(validate_aggregate_alias("with/slash", ".").is_ok());
+        // ...but it is refused when the separator actually is `/`.
+        assert!(validate_aggregate_alias("with/slash", "/").is_err());
     }
 
     #[test]
     fn alias_validation_rejects_case_insensitive_duplicates() {
-        assert!(validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "chain888")])).is_ok());
-        assert!(validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "UNSEE")])).is_err());
-        assert!(validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "unsee")])).is_err());
-        assert!(validate_aggregate_aliases(&aliases(&[("a", "")])).is_err());
+        assert!(
+            validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "chain888")]), ".").is_ok()
+        );
+        assert!(
+            validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "UNSEE")]), ".").is_err()
+        );
+        assert!(
+            validate_aggregate_aliases(&aliases(&[("a", "unsee"), ("b", "unsee")]), ".").is_err()
+        );
+        assert!(validate_aggregate_aliases(&aliases(&[("a", "")]), ".").is_err());
+    }
+
+    #[test]
+    fn derived_site_prefix_uses_the_user_name_and_normalises_it() {
+        assert_eq!(
+            derive_site_prefix_from_name("Unsee Relay", ".").as_deref(),
+            Some("Unsee-Relay")
+        );
+        // The reported case: CJK + digits + a space survive as a usable token.
+        assert_eq!(
+            derive_site_prefix_from_name("思源888 pro", ".").as_deref(),
+            Some("思源888-pro")
+        );
+        // A name that contains the separator must not produce an unsplittable
+        // slug, so the separator becomes a dash.
+        assert_eq!(
+            derive_site_prefix_from_name("ai.nexfaro.com", ".").as_deref(),
+            Some("ai-nexfaro-com")
+        );
+        // Control characters are dropped; whitespace runs collapse.
+        assert_eq!(
+            derive_site_prefix_from_name("  a\t\tb  ", ".").as_deref(),
+            Some("a-b")
+        );
+        // Nothing usable → caller keeps the provider id.
+        assert_eq!(derive_site_prefix_from_name("   ", "."), None);
+        assert_eq!(derive_site_prefix_from_name("\u{7}", "."), None);
+    }
+
+    #[test]
+    fn effective_site_aliases_prefer_names_but_never_steal_an_address() {
+        let selected = vec![
+            ("76a6ef74".to_string(), "思源888 pro".to_string()),
+            ("ccex".to_string(), "Unsee Relay".to_string()),
+        ];
+        let all_ids = vec!["76a6ef74".to_string(), "ccex".to_string()];
+
+        let effective = resolve_effective_site_aliases(&selected, &BTreeMap::new(), &all_ids, ".");
+        assert_eq!(
+            effective.get("76a6ef74").map(String::as_str),
+            Some("思源888-pro")
+        );
+        assert_eq!(
+            effective.get("ccex").map(String::as_str),
+            Some("Unsee-Relay")
+        );
+
+        // An explicit alias always wins over the derived display name.
+        let explicit = aliases(&[("ccex", "relay")]);
+        let effective = resolve_effective_site_aliases(&selected, &explicit, &all_ids, ".");
+        assert_eq!(effective.get("ccex").map(String::as_str), Some("relay"));
+
+        // The derived name collides with the other site's id → keep the id, do
+        // not fail the engage (names are user-facing, ids are addressable).
+        let colliding = vec![
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "Bee".to_string()),
+        ];
+        let effective = resolve_effective_site_aliases(
+            &colliding,
+            &BTreeMap::new(),
+            &["a".to_string(), "b".to_string()],
+            ".",
+        );
+        assert_eq!(effective.get("a"), None);
+        assert_eq!(effective.get("b").map(String::as_str), Some("Bee"));
+
+        // Two sites with the same display name: the first keeps it, the second
+        // falls back to its provider id instead of silently shadowing it.
+        let duplicate_names = vec![
+            ("a".to_string(), "Relay".to_string()),
+            ("b".to_string(), "Relay".to_string()),
+        ];
+        let effective = resolve_effective_site_aliases(
+            &duplicate_names,
+            &BTreeMap::new(),
+            &["a".to_string(), "b".to_string()],
+            ".",
+        );
+        assert_eq!(effective.get("a").map(String::as_str), Some("Relay"));
+        assert_eq!(effective.get("b"), None);
     }
 
     #[test]
@@ -625,5 +837,45 @@ mod tests {
             split_model_at_site_slug("DeepSeek-V4@UNSEE", "@", [("site-a", "unsee")]),
             Some(("site-a".to_string(), "DeepSeek-V4".to_string()))
         );
+    }
+
+    #[test]
+    fn site_prefix_never_steals_a_longer_model_name() {
+        // A site aliased `luna` must not answer for a *different* site's model
+        // that merely starts with the same letters; only the exact
+        // `<prefix><separator>` head may be split off.
+        let sites = [("site-a", "luna"), ("site-b", "xxx")];
+
+        assert_eq!(
+            split_site_model_slug("luna/luna-plus", "/", sites),
+            Some(("site-a".to_string(), "luna-plus".to_string()))
+        );
+        // `xxx/luna-plus` belongs to site-b and stays untouched by site-a.
+        assert_eq!(
+            split_site_model_slug("xxx/luna-plus", "/", sites),
+            Some(("site-b".to_string(), "luna-plus".to_string()))
+        );
+        // `luna-plus` alone has no separator after the prefix, so no site owns
+        // it — it must fall through to the bare-model-name path instead.
+        assert_eq!(split_site_model_slug("luna-plus", "/", sites), None);
+        assert_eq!(split_site_model_slug("lunaXplus", "/", sites), None);
+    }
+
+    #[test]
+    fn unicode_prefixes_round_trip_without_panicking() {
+        let sites = [("76a6ef74", "思源888-pro"), ("ccex", "备用")];
+
+        assert_eq!(
+            split_site_model_slug("思源888-pro.gpt-5.6-luna", ".", sites),
+            Some(("76a6ef74".to_string(), "gpt-5.6-luna".to_string()))
+        );
+        assert_eq!(
+            split_model_at_site_slug("gpt-5.6-luna.备用", ".", sites),
+            Some(("ccex".to_string(), "gpt-5.6-luna".to_string()))
+        );
+        // Cut inside a multi-byte character of the *prefix* must be a
+        // non-match, never a panic (release builds abort on panic).
+        assert_eq!(split_site_model_slug("思源.gpt-5.6-luna", ".", sites), None);
+        assert_eq!(split_model_at_site_slug("gpt.备", ".", sites), None);
     }
 }

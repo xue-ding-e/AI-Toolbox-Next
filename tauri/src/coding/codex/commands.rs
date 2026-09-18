@@ -2976,11 +2976,16 @@ fn codex_model_catalog_from_specs(
 }
 
 /// One `(site, model)` entry for the aggregate-mode catalog.
+#[derive(Debug)]
 struct AggregateCatalogEntry {
     /// The configured aggregate slug — what Codex shows and sends back verbatim.
     slug: String,
     /// `<site label> · <model>` for the model picker.
     display_name: String,
+    /// Hidden entries are addressable but never listed: Codex's spawn_agent
+    /// resolves exact slugs, while `visibility = "hide"` keeps them out of the
+    /// picker and out of the first-5 model hint list.
+    hidden: bool,
     context_window: Option<u64>,
     reasoning_levels: Option<Vec<String>>,
     default_reasoning_level: Option<String>,
@@ -2998,6 +3003,9 @@ fn aggregate_catalog_from_entries(
     entries: &[AggregateCatalogEntry],
     default_context_window: u64,
 ) -> Value {
+    // Hidden bare-name aliases sit after the whole visible table so they can
+    // never take one of Codex's five visible `spawn_agent` model hints.
+    const HIDDEN_ALIAS_PRIORITY_BASE: u64 = 9000;
     let models: Vec<Value> = entries
         .iter()
         .enumerate()
@@ -3011,7 +3019,20 @@ fn aggregate_catalog_from_entries(
                 default_reasoning_level: entry.default_reasoning_level.clone(),
                 service_tiers: entry.service_tiers.clone(),
             };
-            codex_model_catalog_entry(&spec, index, default_context_window)
+            let mut value = codex_model_catalog_entry(&spec, index, default_context_window);
+            if entry.hidden {
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "visibility".to_string(),
+                        serde_json::Value::String("hide".to_string()),
+                    );
+                    object.insert(
+                        "priority".to_string(),
+                        serde_json::json!(HIDDEN_ALIAS_PRIORITY_BASE + index as u64),
+                    );
+                }
+            }
+            value
         })
         .collect();
 
@@ -3074,6 +3095,13 @@ fn codex_aggregate_catalog_entries(
     let mut entries = Vec::new();
     let mut slug_table = Vec::new();
     let mut allocator = AggregateSlugAllocator::default();
+    // Bare upstream model names in first-appearance order. Aggregate mode
+    // replaces the single-provider catalog, so every bare name that used to
+    // resolve (`gpt-5.6-luna`, `gpt-5.6-terra`, …) must stay addressable —
+    // Codex's `spawn_agent`, `[agents] default_subagent_model`, auto-review and
+    // memory extraction all send bare names. They are published as hidden
+    // entries so they never consume one of the five visible model hints.
+    let mut bare_models: Vec<String> = Vec::new();
 
     for (site_id, site_label, settings_config) in sites {
         if site_id.trim().is_empty() {
@@ -3097,6 +3125,7 @@ fn codex_aggregate_catalog_entries(
 
             entries.push(AggregateCatalogEntry {
                 slug,
+                hidden: false,
                 display_name: format!("{site_label} · {model_display_name}"),
                 context_window: spec.context_window,
                 reasoning_levels: spec.reasoning_levels,
@@ -3107,7 +3136,46 @@ fn codex_aggregate_catalog_entries(
                 // prefix, so the aggregate entries never advertise it.
                 auto_review_model_override: None,
             });
+
+            if !bare_models.iter().any(|existing| existing == model) {
+                bare_models.push(model.to_string());
+            }
         }
+    }
+
+    // Hidden bare-name aliases go *after* the whole visible table: the order is
+    // part of the contract (`model_only` numbering, the five visible spawn hints
+    // and the aggregate preview all depend on it).
+    let visible_slugs = slug_table
+        .iter()
+        .map(|entry| (entry.slug.as_str(), entry.upstream_model.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for model in bare_models {
+        match visible_slugs.get(model.as_str()) {
+            // `model_only` (or a user alias) already publishes this exact slug
+            // for the same upstream model, so the bare name is already
+            // addressable and a second catalog entry would be a duplicate.
+            Some(upstream_model) if *upstream_model == model.as_str() => continue,
+            // A generated slug that coincidentally spells a *different* model
+            // name would make the bare name unreachable/ambiguous. Never
+            // silently mis-route: surface an actionable conflict instead.
+            Some(upstream_model) => {
+                return Err(format!(
+                    "Aggregate model name '{model}' collides with the slug generated for upstream model '{upstream_model}'; rename the site alias or change the naming template"
+                ));
+            }
+            None => {}
+        }
+        entries.push(AggregateCatalogEntry {
+            slug: model.clone(),
+            hidden: true,
+            display_name: model,
+            context_window: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
+            service_tiers: None,
+            auto_review_model_override: None,
+        });
     }
 
     Ok((entries, slug_table))
@@ -3176,10 +3244,7 @@ pub(crate) fn write_codex_aggregate_catalog(
     }
     let catalog = aggregate_catalog_from_entries(&entries, default_context_window);
     let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
-    let catalog_content = serde_json::to_string_pretty(&catalog)
-        .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
-    fs::write(&catalog_path, catalog_content)
-        .map_err(|e| format!("Failed to write Codex model catalog: {}", e))?;
+    write_codex_catalog_file_atomic(&catalog_path, &catalog)?;
     Ok(true)
 }
 
@@ -3473,12 +3538,34 @@ fn prepare_codex_config_with_model_catalog(
         .map(|vendor_models| codex_vendor_catalog_from_specs(&specs, &vendor_models))
         .unwrap_or_else(|| codex_model_catalog_from_specs(&specs, default_context_window));
     let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
-    let catalog_content = serde_json::to_string_pretty(&catalog)
-        .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
-    fs::write(&catalog_path, catalog_content)
-        .map_err(|e| format!("Failed to write Codex model catalog: {}", e))?;
+    write_codex_catalog_file_atomic(&catalog_path, &catalog)?;
 
     set_codex_model_catalog_json_field(config_toml, true)
+}
+
+/// Write a Codex model catalog atomically.
+///
+/// The catalog is a single JSON file that Codex reads on startup, and both the
+/// single-provider and aggregate paths rewrite it in place. A plain `fs::write`
+/// truncates first, so a crash or a full disk mid-write leaves Codex parsing a
+/// half-written file. Write to a sibling temp file, re-parse it to prove the
+/// payload is intact, then replace the target in one step.
+fn write_codex_catalog_file_atomic(catalog_path: &Path, catalog: &Value) -> Result<(), String> {
+    let catalog_content = serde_json::to_string_pretty(catalog)
+        .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
+    // Parse-back guard: serialization already produced this string, so a
+    // failure here means the value itself is not valid JSON (NaN, etc.).
+    serde_json::from_str::<Value>(&catalog_content)
+        .map_err(|e| format!("Refusing to write an invalid Codex model catalog: {}", e))?;
+
+    let temp_path = catalog_path.with_extension("json.tmp");
+    fs::write(&temp_path, catalog_content)
+        .map_err(|e| format!("Failed to write Codex model catalog: {}", e))?;
+    fs::rename(&temp_path, catalog_path).map_err(|e| {
+        // Leave no temp file behind when the replacement itself failed.
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to replace Codex model catalog: {}", e)
+    })
 }
 
 async fn get_managed_codex_config_for_provider(
@@ -3505,10 +3592,8 @@ async fn get_managed_codex_config_for_provider_cleanup(
     // with the same preserve flag (and the same requires_openai_auth rule) as
     // the apply that wrote it. Using a hardcoded `true` here left stale
     // `requires_openai_auth` (and bearer-token) fields on disk after switching.
-    let preserve_official_auth = should_preserve_codex_official_auth(
-        provider,
-        load_codex_auth_preservation_enabled(db)?,
-    );
+    let preserve_official_auth =
+        should_preserve_codex_official_auth(provider, load_codex_auth_preservation_enabled(db)?);
     let projected_config = project_codex_auth_to_runtime_config(
         &managed_config,
         &auth,
@@ -3534,10 +3619,8 @@ async fn get_managed_codex_config_for_provider_cleanup_with_unified_history(
         .unwrap_or_else(|| serde_json::json!({}));
     let managed_config =
         get_managed_codex_config_for_provider(db, &provider.settings_config).await?;
-    let preserve_official_auth = should_preserve_codex_official_auth(
-        provider,
-        load_codex_auth_preservation_enabled(db)?,
-    );
+    let preserve_official_auth =
+        should_preserve_codex_official_auth(provider, load_codex_auth_preservation_enabled(db)?);
     let projected_config = project_codex_auth_to_runtime_config(
         &managed_config,
         &auth,
@@ -4560,7 +4643,8 @@ mod tests {
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
         read_codex_aggregate_selection, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, write_codex_aggregate_catalog, CodexCatalogModelSpec,
+        strip_codex_common_config_from_toml, write_codex_aggregate_catalog, AggregateCatalogEntry,
+        CodexCatalogModelSpec,
         CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
         RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
@@ -5271,6 +5355,12 @@ approval_policy = "never"
         }
     }
 
+    /// Entries Codex actually lists in its model picker. Hidden bare-name
+    /// aliases are addressable but must never appear here.
+    fn visible_entries(entries: &[AggregateCatalogEntry]) -> Vec<&AggregateCatalogEntry> {
+        entries.iter().filter(|entry| !entry.hidden).collect()
+    }
+
     #[test]
     fn aggregate_catalog_names_models_with_site_prefix() {
         let sites = vec![
@@ -5288,7 +5378,10 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        let slugs: Vec<&str> = entries.iter().map(|e| e.slug.as_str()).collect();
+        let slugs: Vec<&str> = visible_entries(&entries)
+            .iter()
+            .map(|e| e.slug.as_str())
+            .collect();
         assert_eq!(
             slugs,
             vec!["unsee.deepseek-v4-flash", "nexfaro.gpt-5.6-sol"]
@@ -5307,7 +5400,7 @@ approval_policy = "never"
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
         // Both sites keep their own entry so the user can pick either one.
-        assert_eq!(entries.len(), 2);
+        assert_eq!(visible_entries(&entries).len(), 2);
         assert_eq!(entries[0].slug, "site1.gpt-5.6-sol");
         assert_eq!(entries[1].slug, "site2.gpt-5.6-sol");
     }
@@ -5335,7 +5428,7 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        assert_eq!(entries.len(), 1);
+        assert_eq!(visible_entries(&entries).len(), 1);
         assert_eq!(entries[0].slug, "ok.m1");
     }
 
@@ -5349,7 +5442,7 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        assert_eq!(entries.len(), 1);
+        assert_eq!(visible_entries(&entries).len(), 1);
     }
 
     #[test]
@@ -5586,6 +5679,133 @@ approval_policy = "never"
 
         assert_eq!(entries[0].slug, "deepseek-v4-flash@unsee");
         assert_eq!(entries[0].display_name, "Unsee Relay · DeepSeek V4 Flash");
+    }
+
+    #[test]
+    fn aggregate_catalog_publishes_hidden_bare_name_aliases() {
+        let sites = vec![
+            aggregate_site(
+                "site1",
+                "Site 1",
+                json!([{ "model": "gpt-5.6-luna" }, { "model": "gpt-5.6-terra" }]),
+            ),
+            aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-luna" }])),
+        ];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let catalog = aggregate_catalog_from_entries(&entries, 200000);
+        let models = catalog["models"].as_array().unwrap();
+
+        // Visible table first, in site/model order.
+        let visible: Vec<&str> = models
+            .iter()
+            .filter(|model| model["visibility"] == "list")
+            .filter_map(|model| model["slug"].as_str())
+            .collect();
+        assert_eq!(
+            visible,
+            vec![
+                "site1.gpt-5.6-luna",
+                "site1.gpt-5.6-terra",
+                "site2.gpt-5.6-luna"
+            ]
+        );
+
+        // Hidden bare-name aliases follow the visible table, deduplicated, and
+        // are addressable by exact name (Codex resolves spawn_agent by slug).
+        let hidden: Vec<&str> = models
+            .iter()
+            .filter(|model| model["visibility"] == "hide")
+            .filter_map(|model| model["slug"].as_str())
+            .collect();
+        assert_eq!(hidden, vec!["gpt-5.6-luna", "gpt-5.6-terra"]);
+
+        for alias in &hidden {
+            let entry = models
+                .iter()
+                .find(|model| model["slug"].as_str() == Some(alias))
+                .expect("hidden alias entry");
+            // `supported_in_api` must stay true: Codex filters entries with
+            // `supported_in_api = false` out of API-key mode entirely.
+            assert_eq!(entry["supported_in_api"], true);
+            // Hidden entries must never occupy a visible picker/hint slot.
+            assert!(entry["priority"].as_u64().unwrap() >= 9000);
+        }
+    }
+
+    #[test]
+    fn aggregate_catalog_normalises_cjk_site_names_into_usable_prefixes() {
+        let sites = vec![aggregate_site(
+            "76a6ef74af6c4151812787cc519b534b",
+            "思源888 pro",
+            json!([{ "model": "gpt-5.6-luna" }]),
+        )];
+        let mut aliases = std::collections::BTreeMap::new();
+        aliases.insert(
+            "76a6ef74af6c4151812787cc519b534b".to_string(),
+            "思源888-pro".to_string(),
+        );
+        let naming = AggregateNamingConfig {
+            separator: ".".to_string(),
+            aliases,
+            naming: AggregateNamingMode::SiteModel,
+        };
+
+        let (entries, table) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
+
+        assert_eq!(entries[0].slug, "思源888-pro.gpt-5.6-luna");
+        assert_eq!(entries[0].display_name, "思源888 pro · gpt-5.6-luna");
+        // The published slug must round-trip back to (site, model) so the
+        // router can address it: the multi-byte prefix is cut on a char
+        // boundary, not in the middle of a character.
+        assert_eq!(
+            crate::coding::proxy_gateway::aggregate_naming::split_site_model_slug(
+                &table[0].slug,
+                ".",
+                [("76a6ef74af6c4151812787cc519b534b", "思源888-pro")],
+            ),
+            Some((
+                "76a6ef74af6c4151812787cc519b534b".to_string(),
+                "gpt-5.6-luna".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_model_only_numbering_ignores_hidden_aliases() {
+        let sites = vec![
+            aggregate_site("site-a", "Site A", json!([{ "model": "gpt-5.6-luna" }])),
+            aggregate_site("site-b", "Site B", json!([{ "model": "gpt-5.6-luna" }])),
+        ];
+        let naming = AggregateNamingConfig {
+            separator: ".".to_string(),
+            aliases: std::collections::BTreeMap::new(),
+            naming: AggregateNamingMode::ModelOnly,
+        };
+
+        let (entries, table) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
+
+        // `model_only` already publishes the bare names, so no hidden entries
+        // are added and the `#N` table stays exactly as before this change.
+        let slugs: Vec<&str> = table.iter().map(|entry| entry.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["gpt-5.6-luna", "gpt-5.6-luna#2"]);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| !entry.hidden));
+    }
+
+    #[test]
+    fn aggregate_catalog_reports_a_bare_name_that_collides_with_a_generated_slug() {
+        // Site `a` publishes `a.luna`; site `b` declares a model literally named
+        // `a.luna`. The bare name is already taken by site a's generated slug,
+        // so silently publishing it would mis-route. Expect a clear error.
+        let sites = vec![
+            aggregate_site("a", "A", json!([{ "model": "luna" }])),
+            aggregate_site("b", "B", json!([{ "model": "a.luna" }])),
+        ];
+
+        let error = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap_err();
+
+        assert!(error.contains("a.luna"), "unexpected error: {error}");
     }
 
     #[test]

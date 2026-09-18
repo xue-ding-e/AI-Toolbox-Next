@@ -5,11 +5,14 @@ import type { GatewayCliTakeoverStatus } from '../../../../../services/proxyGate
 import {
   buildGatewayAggregateModelSlug,
   buildGatewayAggregateSitePreviewSlug,
+  deriveGatewayAggregateSitePrefix,
   isAggregateSiteId,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
+  resolveGatewayAggregateEffectiveAliases,
   resolveGatewayReengageMode,
   toGatewayAggregateReengageConfig,
+  validateGatewayAggregateAlias,
   validateGatewayAggregateSeparator,
 } from '../../../../../features/coding/shared/gateway/gatewayAggregateConfig.ts';
 import {
@@ -200,5 +203,97 @@ test('aliases may not shadow any candidate site id', () => {
   assert.deepEqual(
     normalizeGatewayAggregateAliases({ 'site-a': '  ' }, ['site-a'], ['site-a']),
     {},
+  );
+});
+
+// ---- site-name prefixes and bare-name aliases ------------------------------
+
+test('explicit aliases allow CJK but reject structural characters', () => {
+  assert.equal(validateGatewayAggregateAlias('思源888', '.'), true);
+  assert.equal(validateGatewayAggregateAlias('中文', '.'), true);
+  // A space is the separator between a display name and a model, so an
+  // explicit alias can never contain one.
+  assert.equal(validateGatewayAggregateAlias('思源888 pro', '.'), false);
+  assert.equal(validateGatewayAggregateAlias('with.dot', '.'), false);
+  assert.equal(validateGatewayAggregateAlias('with/slash', '.'), true);
+  assert.equal(validateGatewayAggregateAlias('with/slash', '/'), false);
+  assert.equal(validateGatewayAggregateAlias('', '.'), false);
+  assert.equal(validateGatewayAggregateAlias('a'.repeat(33), '.'), false);
+});
+
+test('derived site prefixes normalise a display name into a usable token', () => {
+  assert.equal(deriveGatewayAggregateSitePrefix('思源888 pro', '.'), '思源888-pro');
+  assert.equal(deriveGatewayAggregateSitePrefix('ai.nexfaro.com', '.'), 'ai-nexfaro-com');
+  assert.equal(deriveGatewayAggregateSitePrefix('  a\t\tb  ', '.'), 'a-b');
+  assert.equal(deriveGatewayAggregateSitePrefix('   ', '.'), null);
+});
+
+test('effective aliases default to the site name but never steal an address', () => {
+  const selected = [
+    { id: '76a6ef74af6c4151812787cc519b534b', name: '思源888 pro' },
+    { id: 'ccex', name: 'Unsee Relay' },
+  ];
+  const allIds = ['76a6ef74af6c4151812787cc519b534b', 'ccex'];
+
+  assert.deepEqual(resolveGatewayAggregateEffectiveAliases({}, selected, allIds, '.'), {
+    '76a6ef74af6c4151812787cc519b534b': '思源888-pro',
+    ccex: 'Unsee-Relay',
+  });
+
+  // An explicit alias always wins over the derived display name.
+  assert.deepEqual(
+    resolveGatewayAggregateEffectiveAliases({ ccex: 'relay' }, selected, allIds, '.'),
+    { '76a6ef74af6c4151812787cc519b534b': '思源888-pro', ccex: 'relay' },
+  );
+
+  // A derived name that collides with another address keeps the provider id
+  // instead of shadowing it, so engaging never fails on a duplicate name.
+  assert.deepEqual(
+    resolveGatewayAggregateEffectiveAliases(
+      {},
+      [
+        { id: 'a', name: 'b' },
+        { id: 'b', name: 'Bee' },
+      ],
+      ['a', 'b'],
+      '.',
+    ),
+    { b: 'Bee' },
+  );
+
+  // Two sites sharing a display name: the first keeps it, the second falls
+  // back to its provider id (no silent overwrite).
+  assert.deepEqual(
+    resolveGatewayAggregateEffectiveAliases(
+      {},
+      [
+        { id: 'a', name: 'Relay' },
+        { id: 'b', name: 'Relay' },
+      ],
+      ['a', 'b'],
+      '.',
+    ),
+    { a: 'Relay' },
+  );
+});
+
+test('effective alias map round-trips a saved aggregate manifest', () => {
+  // A manifest saved before names were derived stores only explicit aliases;
+  // re-engaging must not lose them, and a CJK alias must survive the trip.
+  const manifest = {
+    provider_ids: ['76a6ef74', 'ccex'],
+    separator: '.',
+    aliases: { '76a6ef74': '思源888' },
+  };
+  assert.deepEqual(
+    toGatewayAggregateReengageConfig(
+      status({ mode: 'aggregate', aggregate: manifest }),
+    ),
+    {
+      providerIds: ['76a6ef74', 'ccex'],
+      separator: '.',
+      aliases: { '76a6ef74': '思源888' },
+      naming: 'site_model',
+    },
   );
 });

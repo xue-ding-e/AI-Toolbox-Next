@@ -41,9 +41,11 @@ export {
 export {
   buildGatewayAggregateModelSlug,
   buildGatewayAggregateSitePreviewSlug,
+  deriveGatewayAggregateSitePrefix,
   normalizeGatewayAggregateAliases,
   isAggregateSiteId,
   normalizeGatewayAggregateSiteIds,
+  resolveGatewayAggregateEffectiveAliases,
   resolveGatewayReengageMode,
   toGatewayAggregateReengageConfig,
   validateGatewayAggregateSeparator,
