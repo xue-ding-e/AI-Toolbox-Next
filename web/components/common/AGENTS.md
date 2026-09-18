@@ -17,7 +17,7 @@
 - `FetchModelsModal` 搜索只改变视图，跨搜索的选择必须保留；Ant Design Table 需要 `preserveSelectedRowKeys: true`，否则第二次勾选时就会丢掉隐藏行，确认阶段遍历完整列表也无法恢复。关闭、重新获取或切换连接后应重置选择，旧连接/旧弹窗的异步结果不能覆盖新结果。
 - 模型导入弹窗可能一直挂载，不能只在首次 `useState` 初始化 SDK 对应的 API 类型；每次打开或切换 SDK 都要重置为正确的原生/兼容模式。Google Native 的可编辑 URL 必须与后端发现路径一致：无版本时仅在探测 URL 补 `/v1beta`，保留显式版本和用户手改 URL，不改写供应商保存的 Base URL。
 
-- `FetchModelsModal` 的可选 `configValueMode`（目前仅 Pi 传 `'pi'`）表示后端会自行解析 apiKey/headers 的配置值语法：此时预览 URL 不得内嵌原始 key（Google native 的 `?key=` 由后端解析后补齐），新增消费方默认不传，保持既有 URL 语义。
+- `FetchModelsModal` 的可选 `configValueMode`（Pi 传 `'pi'`、OMP 传 `'omp'`）表示后端会在该工具运行时里解析 apiKey/headers 的配置值语法：此时预览 URL 不得内嵌原始 key（Google native 的 `?key=` 由后端解析后补齐），新增消费方默认不传，保持既有 URL 语义。
 
 ## 最小验证
 

@@ -17,7 +17,7 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
-  configValueMode?: 'pi';
+  configValueMode?: 'pi' | 'omp';
   /** Models whose own api/baseUrl overrides the provider connection (OMP). */
   modelConnections?: ProviderModelConnections;
 }
@@ -27,7 +27,7 @@ export interface ProviderConnectivityBatchTarget {
   request?: {
     npm: string;
     apiFormat?: 'openai-codex-responses';
-    configValueMode?: 'pi';
+    configValueMode?: 'pi' | 'omp';
     providerId: string;
     baseUrl: string;
     apiKey?: string;

@@ -7,13 +7,14 @@ export function getDefaultModelsApiType(sdkType?: string): ApiType {
 }
 
 /** Google native query auth is completed by the backend when the provider
- * resolves its own config values, so the raw $ENV_VAR / !command template
- * must not be baked into the previewed URL. */
+ * resolves its own config values, so a raw config value (Pi `$ENV_VAR` /
+ * `!command`, OMP env name / `!command`) must not be baked into the previewed
+ * URL. */
 export function resolveModelsUrlApiKey(
   apiKey: string | undefined,
   configValueMode?: ConfigValueMode,
 ): string | undefined {
-  return configValueMode === 'pi' ? undefined : apiKey;
+  return configValueMode ? undefined : apiKey;
 }
 
 /** Keep the editable URL preview aligned with models_api.rs discovery paths. */

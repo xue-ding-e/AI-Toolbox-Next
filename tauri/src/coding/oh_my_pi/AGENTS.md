@@ -23,6 +23,7 @@
 - OMP 扩展是 `omp plugin` 系统(plugins),不是 Pi 的 `extensions` 命令;本地扩展目录是 `<root>/extensions`。
 - OMP 的 skills 由 native 能力(priority 100)从 `<agentDir>/skills`(即 `~/.omp/agent/skills`)发现,应用把 skills 同步到该目录;不是 agents 能力(priority 70,可被 `skills.enableAgentsUser` 关闭)的 `~/.agents/skills`。
 - OMP 与 Pi 都识别 `PI_CODING_AGENT_DIR`,但应用内自定义根目录分别保存。
+- OMP 的 `models.yml` 配置值语法与 Pi 不同:provider `apiKey` / header 值是「先按**精确大小写**当环境变量名查,查不到就当字面量」,或以 `!` 开头的 shell 命令(10s 超时,stdout trim,进程内缓存成功结果)。命令失败/超时/空输出、或 header 解析为空时**省略该值**,不是报错——上游实现是 `packages/coding-agent/src/config/model-config-values.ts`(精确大小写查找见 `packages/utils/src/env.ts` 的 `$envExact`),不要套用 Pi 的 `$ENV_VAR` 插值规则。
 
 ## Gotchas
 
@@ -33,6 +34,7 @@
 - OMP 的 `thinking.mode` 是其 schema 的必填字段(`ThinkingControlModeSchema`:effort/budget/google-level/anthropic-adaptive/anthropic-budget-effort)。生成带 `thinking` 块的模型时若缺 mode,整个 models.yml 校验失败、所有自定义 provider 被禁用。前端 `buildOmpThinkingFromPreset(variants, api)` 按 api 推断 mode(google 系→google-level、anthropic-messages/bedrock→anthropic-adaptive、其余→effort);后端 `normalize_omp_provider_for_omptype` 对旧数据/手写 JSON 缺 mode 时同样兜底补上。
 - provider `api` 的合法词表是 omp `ApiSchema` 的 9 个值(见前端 `web/features/coding/oh_my_pi/utils/ompApiOptions.ts`,镜像 oh-my-pi `models-config-schema-bundle.ts`);未知 `api` 值会让整个 models.yml 校验失败、禁用所有自定义 provider。但 omp 的 `Api` 类型对扩展开放(可注册自定义 API),因此前后端都不对 `api` 做枚举硬校验,保持字符串透传;provider 表单 Select 只提供词表选项,自定义值走原始 JSON 编辑。
 - WSL 场景下选中 `~/.omp` 目录且其 `agent` 子目录为有效运行时布局时,归一化为 `~/.omp/agent`。
+- 「获取模型」/「连通性测试」必须先按 OMP 语义解析 `apiKey`/headers 再发请求,即前端 OMP 页面传可选 `configValueMode: "omp"`,后端实现在 `tauri/src/coding/omp_config_value.rs`,本机/WSL Direct 的 host 选择共用 `tauri/src/coding/config_value_host.rs`。命令 shell 与 OMP 一致:Windows 走 `cmd /C`(Node `execSync` 默认 shell),Unix/WSL 走 `/bin/sh -c`。`!command` 解析不到时凭证被省略,且只要 provider 配置了 `apiKey`,共享命令就不再回退到 OpenCode `auth.json`(否则会把另一个工具的密钥发到该端点);只有完全没配 `apiKey` 的 provider 才保留既有的 provider 兜底。排查「OMP 没配 key 却带上 Bearer」时先看这里。
 - OMP 的持久化端点与共享诊断端点分开：Anthropic 在诊断时补 `/v1`，Gemini 补版本路径，不能反写 `models.yml`。`openai-codex-responses` 诊断显式携带 apiFormat，使用 Codex 请求/终态契约；Azure、Bedrock、Gemini CLI、Vertex 及自定义 API 暂无对应诊断适配，界面禁用并说明，不能降成 Chat Completions。模型连接一致时可用模型覆盖值；不同连接混用时不再禁用，而是退回供应商级 `api`/`baseUrl` 作为目录（获取模型）端点，连通性测试则按每个模型自己的 `api`/`baseUrl` 逐个发起（协议不在连通性词表内的模型不进入测试列表）。连通性的可用性以逐模型为准：有模型时只要还有一个模型的连接在词表内就放行，全部不可测则禁用（否则会出现“按钮可用但测试列表为空”）；没有模型时才回落到代表性连接。
 - 新建供应商的默认地址由表单记录自动填值来源，API 切换只更新仍由表单自动填入的地址；用户编辑或主动清空后停止自动修改。编辑/复制现有供应商不自动填地址，重新打开新建弹窗才重置自动填值状态。
 
@@ -53,5 +55,6 @@
 - `modelRoles` 写成字面 model id(如 `ollama/qwen2.5:14b`)时,打开方案弹窗再保存、apply 后该值逐字不变。
 - WSL 同步下 apply / clear applied 一个方案,`~/.omp/agent/agents/` 与 Windows 侧目录一致(clear 后远端同样为空)。
 - 新增、修改、删除一个 provider 后,其他 provider 和未知字段保持不变。
+- `apiKey` 写成环境变量名时「获取模型」/「连通性测试」用变量值;写成 `$ENV_VAR`(非 `!` 开头)时按字面量发送(OMP 不插值);写成 `!cmd` 时执行并 trim;命令失败/空输出时不带该凭证,且不应报解析错误。
 - 保存默认模型后 `config.yml` 的 `modelRoles.default` 为 `provider/modelId`。
 - 安装 `omp` 后运行 `omp plugin list --json` 可列出插件。

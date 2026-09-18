@@ -6,6 +6,8 @@ pub mod claude_desktop;
 pub mod cli_resolver;
 pub mod codex;
 pub mod config_cleanup;
+// Shared host (local vs WSL Direct) for provider config value resolution.
+pub mod config_value_host;
 pub mod deeplink;
 pub mod dsh;
 pub mod gemini_cli;
@@ -18,11 +20,13 @@ pub mod mcp;
 pub mod oh_my_openagent;
 pub mod oh_my_opencode_slim;
 pub mod oh_my_pi;
+// Resolver for OMP-style config values (exact env name or literal / !command).
+pub mod omp_config_value;
 pub mod open_claw;
 pub mod open_code;
 pub mod pi;
-// Shared resolver for Pi-style config values (env interpolation / !command) used by
-// the common model-discovery and connectivity commands.
+// Resolver for Pi-style config values (env interpolation / !command) used by the
+// common model-discovery and connectivity commands.
 pub mod pi_config_value;
 pub mod preset_models;
 pub mod proxy_gateway;

@@ -6,9 +6,9 @@
 export type ApiType = 'native' | 'openai_compat';
 
 /** Config value syntax the backend resolves for this request.
- * Pi resolves `apiKey` / header values itself, so the modal must not treat
- * `apiKey` as a URL credential or as a plain literal. */
-export type ConfigValueMode = 'pi';
+ * Pi and OMP resolve `apiKey` / header values in their own runtime, so the
+ * modal must not treat `apiKey` as a URL credential or as a plain literal. */
+export type ConfigValueMode = 'pi' | 'omp';
 
 /** Fetched model info from API */
 export interface FetchedModel {
@@ -43,7 +43,7 @@ export interface FetchModelsModalProps {
   apiKey?: string;
   headers?: Record<string, string>;
   sdkType?: string;
-  /** Opt in to the provider tool's own config value syntax (Pi `models.json`). */
+  /** Opt in to the provider tool's own config value syntax (Pi `models.json` / OMP `models.yml`). */
   configValueMode?: ConfigValueMode;
   existingModelIds: string[];
   /** Owner groups (ownedBy values) pinned to the front of the sorted list,

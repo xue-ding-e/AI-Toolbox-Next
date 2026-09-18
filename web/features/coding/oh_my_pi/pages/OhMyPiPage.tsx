@@ -766,6 +766,9 @@ const OhMyPiPage: React.FC = () => {
       apiKey: getStringField(providerConfig, 'apiKey'),
       headers: asStringRecord(providerConfig.headers),
       sdkName: diagnostics.npm,
+      // OMP resolves `apiKey` / header values itself; the shared commands must
+      // resolve the models.yml config value syntax instead of sending templates.
+      configValueMode: 'omp' as const,
       existingModelIds: getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id),
     };
   }, [fetchModelsProviderId, ompProviders]);
@@ -787,6 +790,7 @@ const OhMyPiPage: React.FC = () => {
       providerName: provider.displayName,
       providerConfig: { ...connection, npm: diagnostics.npm, options: { ...connection.options, baseURL: diagnostics.baseUrl } },
       apiFormat: diagnostics.apiFormat,
+      configValueMode: 'omp' as const,
       // 每个模型按自己的连接测试：模型级覆盖只影响它自己的请求。
       modelIds: getTestableOmpModelIds(diagnostics.modelConnections),
       modelConnections: toOmpModelConnectionMap(diagnostics.modelConnections),
@@ -1621,6 +1625,7 @@ const OhMyPiPage: React.FC = () => {
           providerName: provider.displayName,
           providerConfig,
           apiFormat: diagnostics.apiFormat,
+          configValueMode: 'omp' as const,
           modelIds,
           modelConnections: toOmpModelConnectionMap(diagnostics.modelConnections),
         },
@@ -2504,6 +2509,7 @@ const OhMyPiPage: React.FC = () => {
             apiKey={fetchModelsProviderInfo.apiKey}
             headers={fetchModelsProviderInfo.headers}
             sdkType={fetchModelsProviderInfo.sdkName}
+            configValueMode={fetchModelsProviderInfo.configValueMode}
             existingModelIds={fetchModelsProviderInfo.existingModelIds}
             onCancel={() => setFetchModelsModalOpen(false)}
             onSuccess={handleFetchModelsSuccess}

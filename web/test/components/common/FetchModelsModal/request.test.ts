@@ -33,8 +33,14 @@ test('OpenAI-compatible and Anthropic discovery preserve base paths and omit que
   assert.equal(buildModelsUrl('', 'native', '@ai-sdk/google', 'key'), '');
 });
 
-test('Pi discovery keeps the raw config value template out of the previewed URL', () => {
-  assert.equal(resolveModelsUrlApiKey('$PI_KEY', 'pi'), undefined);
+test('config value modes keep raw provider config values out of the previewed URL', () => {
+  // Pi `$ENV_VAR` / `!command` templates and OMP env names / `!command` values
+  // are all resolved by the backend, so none of them belong in the URL preview.
+  for (const configValueMode of ['pi', 'omp'] as const) {
+    assert.equal(resolveModelsUrlApiKey('$PI_KEY', configValueMode), undefined);
+    assert.equal(resolveModelsUrlApiKey('MY_PROVIDER_KEY', configValueMode), undefined);
+    assert.equal(resolveModelsUrlApiKey('!bw get password provider-key', configValueMode), undefined);
+  }
   assert.equal(resolveModelsUrlApiKey('sk-live', undefined), 'sk-live');
 
   // Google native auth travels in the query string, so the backend completes it

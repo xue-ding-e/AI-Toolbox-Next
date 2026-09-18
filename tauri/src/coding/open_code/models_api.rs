@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::coding::pi_config_value::{self, ConfigValueHost};
-use crate::coding::runtime_location::{self, RuntimeLocationMode};
+use crate::coding::config_value_host::{config_value_host_from_location, ConfigValueHost};
+use crate::coding::omp_config_value;
+use crate::coding::pi_config_value;
+use crate::coding::runtime_location;
 use crate::db::SqliteDbState;
 use crate::http_client;
 use futures_util::StreamExt;
@@ -22,13 +24,15 @@ pub enum ApiType {
 
 /// Config value syntax a request opts into for its credential fields.
 ///
-/// Pi stores `$ENV_VAR` / `!command` templates in `models.json`, so Pi callers
+/// Pi stores `$ENV_VAR` / `!command` templates in `models.json` and OMP stores
+/// `!command` / environment-variable names in `models.yml`. Callers that opt in
 /// ask the shared discovery/connectivity commands to resolve them before the
-/// value reaches an HTTP request. Every other caller keeps sending raw literals.
+/// value reaches an HTTP request; every other caller keeps sending raw literals.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigValueMode {
     Pi,
+    Omp,
 }
 
 /// Request parameters for fetching models from provider API
@@ -271,17 +275,42 @@ fn resolve_provider_request(
     provider_id: Option<&str>,
     base_url: &str,
     api_key: Option<&str>,
+    allow_stored_credential_fallback: bool,
 ) -> ResolvedProviderRequest {
     let resolved_base_url = normalize_optional_string(Some(base_url))
         .or_else(|| provider_id.and_then(super::free_models::resolve_provider_api_base_url))
         .unwrap_or_default();
 
-    let resolved_api_key = normalize_optional_string(api_key)
-        .or_else(|| provider_id.and_then(super::free_models::resolve_auth_credential));
+    let resolved_api_key = normalize_optional_string(api_key).or_else(|| {
+        if allow_stored_credential_fallback {
+            provider_id.and_then(super::free_models::resolve_auth_credential)
+        } else {
+            None
+        }
+    });
 
     ResolvedProviderRequest {
         base_url: resolved_base_url,
         api_key: resolved_api_key,
+    }
+}
+
+/// Whether the shared command may fall back to a credential kept by another
+/// tool when this request resolved to no API key.
+///
+/// OMP omits an API key whose `!command` fails or prints nothing, and a
+/// configured key belongs to the OMP provider: replacing it with an entry from
+/// another tool's auth store (e.g. OpenCode `auth.json`) would authenticate the
+/// request with the wrong secret. Requests without a configured key keep the
+/// existing provider fallback.
+fn stored_credential_fallback_allowed(
+    config_value_mode: Option<ConfigValueMode>,
+    configured_api_key: Option<&str>,
+) -> bool {
+    let has_configured_key = configured_api_key.is_some_and(|key| !key.trim().is_empty());
+    match config_value_mode {
+        Some(ConfigValueMode::Omp) => !has_configured_key,
+        _ => true,
     }
 }
 
@@ -328,80 +357,118 @@ fn build_models_url(
 }
 
 // ============================================================================
-// Pi config value syntax
+// Provider config value syntax
 // ============================================================================
 
-/// Environment a Pi config value belongs to.
+/// Environment a config value belongs to.
 ///
-/// Pi resolves `$ENV_VAR` / `!command` inside its own runtime, so a WSL Direct
-/// Pi root has to be resolved inside that distribution instead of against the
-/// desktop process environment.
-async fn pi_config_value_host(state: &SqliteDbState) -> Result<ConfigValueHost, String> {
-    let location = runtime_location::get_pi_runtime_location_async(state).await?;
-    match (location.mode, location.wsl) {
-        (RuntimeLocationMode::WslDirect, Some(wsl)) => {
-            Ok(ConfigValueHost::Wsl { distro: wsl.distro })
+/// Pi and OMP resolve `!command` inside their own runtime, so a WSL Direct root
+/// has to be resolved inside that distribution instead of against the desktop
+/// process environment.
+async fn config_value_host(
+    state: &SqliteDbState,
+    mode: ConfigValueMode,
+) -> Result<ConfigValueHost, String> {
+    let location = match mode {
+        ConfigValueMode::Pi => runtime_location::get_pi_runtime_location_async(state).await?,
+        ConfigValueMode::Omp => {
+            runtime_location::get_oh_my_pi_runtime_location_async(state).await?
         }
-        _ => Ok(ConfigValueHost::Local),
-    }
+    };
+    Ok(config_value_host_from_location(&location))
+}
+
+/// Whether the mode resolves credential values in the tool's own runtime.
+fn resolves_config_values(config_value_mode: Option<ConfigValueMode>) -> bool {
+    matches!(
+        config_value_mode,
+        Some(ConfigValueMode::Pi | ConfigValueMode::Omp)
+    )
 }
 
 /// Resolve the credential fields a caller passed through.
 ///
-/// Only `ConfigValueMode::Pi` callers opt in, so every other tool keeps
-/// forwarding its provider-owned strings untouched. Unresolvable values fail
-/// the request instead of being sent upstream as literals, which would surface
-/// as a confusing authentication failure.
-async fn resolve_pi_credentials(
+/// Only callers that opt into a `ConfigValueMode` are touched, so every other
+/// tool keeps forwarding its provider-owned strings untouched. Pi reports an
+/// unresolvable value as an error; OMP omits it, the way its own runtime does.
+async fn resolve_credentials(
     state: &SqliteDbState,
     provider_id: Option<&str>,
     api_key: Option<&str>,
     headers: Option<&Value>,
     config_value_mode: Option<ConfigValueMode>,
 ) -> Result<(Option<String>, Option<Value>), String> {
-    if config_value_mode != Some(ConfigValueMode::Pi) {
+    let Some(mode) = config_value_mode else {
         return Ok((api_key.map(str::to_string), headers.cloned()));
-    }
+    };
 
     // Nothing to resolve: skip the runtime location lookup (and do not fail the
-    // request on an unrelated lookup error) when no credential field needs the
-    // Pi config value syntax.
-    if !has_pi_config_values(api_key, headers) {
+    // request on an unrelated lookup error) when no credential field needs
+    // resolution.
+    if !has_config_values(api_key, headers) {
         return Ok((None, headers.cloned()));
     }
 
-    let host = pi_config_value_host(state).await?;
-    let provider_label = provider_id.unwrap_or("pi");
+    let host = config_value_host(state, mode).await?;
+    let provider_label = provider_id.unwrap_or(match mode {
+        ConfigValueMode::Pi => "pi",
+        ConfigValueMode::Omp => "omp",
+    });
 
-    let resolved_api_key = match api_key {
-        Some(raw_api_key) => {
-            let label = format!("API key for provider \"{provider_label}\"");
-            Some(pi_config_value::resolve_config_value(raw_api_key, &label, &host).await?)
+    match mode {
+        ConfigValueMode::Pi => {
+            let resolved_api_key = match api_key {
+                Some(raw_api_key) => {
+                    let label = format!("API key for provider \"{provider_label}\"");
+                    Some(pi_config_value::resolve_config_value(raw_api_key, &label, &host).await?)
+                }
+                None => None,
+            };
+
+            let resolved_headers = match headers {
+                Some(Value::Object(header_map)) => Some(Value::Object(
+                    pi_config_value::resolve_header_values(header_map, provider_label, &host)
+                        .await?,
+                )),
+                other => other.cloned(),
+            };
+
+            Ok((resolved_api_key, resolved_headers))
         }
-        None => None,
-    };
+        ConfigValueMode::Omp => {
+            let resolved_api_key = match api_key {
+                Some(raw_api_key) => {
+                    omp_config_value::resolve_config_value(raw_api_key, &host).await
+                }
+                None => None,
+            };
 
-    let resolved_headers = match headers {
-        Some(Value::Object(header_map)) => Some(Value::Object(
-            pi_config_value::resolve_header_values(header_map, provider_label, &host).await?,
-        )),
-        other => other.cloned(),
-    };
+            let resolved_headers = match headers {
+                Some(Value::Object(header_map)) => Some(Value::Object(
+                    omp_config_value::resolve_header_values(header_map, &host).await,
+                )),
+                other => other.cloned(),
+            };
 
-    Ok((resolved_api_key, resolved_headers))
+            Ok((resolved_api_key, resolved_headers))
+        }
+    }
 }
 
-/// Whether a Pi-mode request carries any value that may need resolving.
+/// Whether a request carries any value that may need resolving.
 ///
-/// An empty header object is common (the modal always sends the provider header
-/// map), so it must not trigger a runtime location lookup on its own.
-fn has_pi_config_values(api_key: Option<&str>, headers: Option<&Value>) -> bool {
+/// An empty header object and a blank API key are both common (the modal always
+/// sends the provider header map, and the pages send an empty string when a
+/// provider has no credential), so neither may trigger a runtime location lookup
+/// on its own.
+fn has_config_values(api_key: Option<&str>, headers: Option<&Value>) -> bool {
     let has_header_values = match headers {
         Some(Value::Object(header_map)) => !header_map.is_empty(),
         Some(_) => true,
         None => false,
     };
-    api_key.is_some() || has_header_values
+    let has_api_key = api_key.is_some_and(|key| !key.trim().is_empty());
+    has_api_key || has_header_values
 }
 
 /// Append a resolved Google API key to a model-discovery URL.
@@ -426,10 +493,10 @@ pub async fn fetch_provider_models(
     state: tauri::State<'_, SqliteDbState>,
     request: FetchModelsRequest,
 ) -> Result<FetchModelsResponse, String> {
-    // Pi credentials are templates resolved in the Pi runtime, so they are
+    // Pi / OMP credentials are resolved in that tool's own runtime, so they are
     // resolved before the provider fallback to keep another tool's stored
-    // credential out of the Pi config value syntax.
-    let (api_key, headers) = resolve_pi_credentials(
+    // credential out of the config value syntax.
+    let (api_key, headers) = resolve_credentials(
         &state,
         request.provider_id.as_deref(),
         request.api_key.as_deref(),
@@ -442,6 +509,7 @@ pub async fn fetch_provider_models(
         request.provider_id.as_deref(),
         &request.base_url,
         api_key.as_deref(),
+        stored_credential_fallback_allowed(request.config_value_mode, request.api_key.as_deref()),
     );
 
     // Determine if this is Google Native (no Authorization header, key in URL)
@@ -479,9 +547,9 @@ pub async fn fetch_provider_models(
         )
     };
 
-    // A Pi caller cannot bake a runtime-resolved key into the discovery URL,
-    // so query-parameter auth is completed here instead.
-    let url = if request.config_value_mode == Some(ConfigValueMode::Pi) && is_google_native {
+    // A Pi / OMP caller cannot bake a runtime-resolved key into the discovery
+    // URL, so query-parameter auth is completed here instead.
+    let url = if resolves_config_values(request.config_value_mode) && is_google_native {
         append_google_native_key(url, resolved_request.api_key.as_deref())
     } else {
         url
@@ -1274,7 +1342,7 @@ pub async fn test_provider_model_connectivity(
     let timeout_secs = request.timeout_secs.unwrap_or(30);
     let client = http_client::client_with_timeout(&state, timeout_secs).await?;
     let mut request = request;
-    let (api_key, headers) = resolve_pi_credentials(
+    let (api_key, headers) = resolve_credentials(
         &state,
         request.provider_id.as_deref(),
         request.api_key.as_deref(),
@@ -1287,6 +1355,7 @@ pub async fn test_provider_model_connectivity(
         request.provider_id.as_deref(),
         &request.base_url,
         api_key.as_deref(),
+        stored_credential_fallback_allowed(request.config_value_mode, request.api_key.as_deref()),
     );
     request.base_url = resolved_request.base_url;
     request.api_key = resolved_request.api_key;
@@ -1416,11 +1485,49 @@ mod tests {
     }
 
     #[test]
-    fn empty_pi_credentials_do_not_need_config_value_resolution() {
-        assert!(!has_pi_config_values(None, None));
-        assert!(!has_pi_config_values(None, Some(&json!({}))));
-        assert!(has_pi_config_values(Some("sk-live"), None));
-        assert!(has_pi_config_values(None, Some(&json!({ "X-Test": "1" }))));
+    fn empty_credentials_do_not_need_config_value_resolution() {
+        assert!(!has_config_values(None, None));
+        assert!(!has_config_values(None, Some(&json!({}))));
+        // The pages send an empty string when a provider has no credential.
+        assert!(!has_config_values(Some(""), None));
+        assert!(!has_config_values(Some("   "), Some(&json!({}))));
+        assert!(has_config_values(Some("sk-live"), None));
+        assert!(has_config_values(None, Some(&json!({ "X-Test": "1" }))));
+    }
+
+    #[test]
+    fn only_pi_and_omp_modes_resolve_config_values() {
+        assert!(!resolves_config_values(None));
+        assert!(resolves_config_values(Some(ConfigValueMode::Pi)));
+        assert!(resolves_config_values(Some(ConfigValueMode::Omp)));
+    }
+
+    #[test]
+    fn omp_mode_does_not_borrow_another_tools_stored_credential() {
+        // Non-mode callers and Pi keep the provider credential fallback.
+        assert!(stored_credential_fallback_allowed(None, Some("sk-live")));
+        assert!(stored_credential_fallback_allowed(
+            Some(ConfigValueMode::Pi),
+            Some("sk-live")
+        ));
+
+        // An OMP provider that configured its own apiKey owns the result, even
+        // when the OMP runtime omits it.
+        assert!(!stored_credential_fallback_allowed(
+            Some(ConfigValueMode::Omp),
+            Some("!vault read omp-key")
+        ));
+
+        // Without a configured key the provider fallback still applies, and a
+        // blank key is the pages' "no credential" value.
+        assert!(stored_credential_fallback_allowed(
+            Some(ConfigValueMode::Omp),
+            None
+        ));
+        assert!(stored_credential_fallback_allowed(
+            Some(ConfigValueMode::Omp),
+            Some("")
+        ));
     }
 
     #[test]
@@ -1473,15 +1580,23 @@ mod tests {
         .expect("the pi config value mode must deserialize");
         assert_eq!(request.config_value_mode, Some(ConfigValueMode::Pi));
 
+        let request: FetchModelsRequest = serde_json::from_value(json!({
+            "baseUrl": "https://api.example.com",
+            "apiType": "openai_compat",
+            "configValueMode": "omp",
+        }))
+        .expect("the omp config value mode must deserialize");
+        assert_eq!(request.config_value_mode, Some(ConfigValueMode::Omp));
+
         let request: ConnectivityTestRequest = serde_json::from_value(json!({
             "npm": "@ai-sdk/openai-compatible",
             "baseUrl": "https://api.example.com",
             "prompt": "probe",
             "modelIds": ["model-a"],
-            "configValueMode": "pi",
+            "configValueMode": "omp",
         }))
-        .expect("connectivity requests must accept the pi config value mode");
-        assert_eq!(request.config_value_mode, Some(ConfigValueMode::Pi));
+        .expect("connectivity requests must accept the omp config value mode");
+        assert_eq!(request.config_value_mode, Some(ConfigValueMode::Omp));
     }
 
     #[test]
