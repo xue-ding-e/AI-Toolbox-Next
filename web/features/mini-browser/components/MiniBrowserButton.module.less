@@ -1,0 +1,35 @@
+.button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: color 0.3s, background 0.3s;
+  padding: 4px 12px;
+  border-radius: 4px;
+  height: 32px;
+  user-select: none;
+
+  &:hover {
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.06);
+  }
+
+  &:focus-visible {
+    outline: 2px solid #1890ff;
+    outline-offset: 2px;
+  }
+}
+
+.icon {
+  flex-shrink: 0;
+}
+
+.text {
+  font-size: 14px;
+}
+
+.hint {
+  margin-bottom: 12px;
+  font-size: 12px;
+}

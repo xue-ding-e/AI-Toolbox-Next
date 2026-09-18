@@ -28,6 +28,7 @@ pub mod db;
 pub mod http_client;
 pub mod keep_awake;
 pub mod lightweight;
+pub mod mini_browser;
 pub mod settings;
 pub mod single_instance;
 pub mod startup_recovery;
@@ -1901,6 +1902,15 @@ pub fn run() {
                     return;
                 }
 
+                // Only the main window participates in the minimize-to-tray /
+                // lightweight-on-close behaviour. Secondary windows (the mini
+                // browser) must close normally: without this guard, closing the
+                // browser would be swallowed and the app would hide or drop
+                // into lightweight mode instead.
+                if window.label() != "main" {
+                    return;
+                }
+
                 let app_handle = window.app_handle().clone();
 
                 if app_handle.try_state::<SqliteDbState>().is_none() {
@@ -1953,6 +1963,12 @@ pub fn run() {
             open_folder,
             open_existing_folder,
             set_window_background_color,
+            // Mini browser (relay dashboards / API balance)
+            mini_browser::mini_browser_open,
+            mini_browser::mini_browser_navigate,
+            mini_browser::mini_browser_current_url,
+            mini_browser::mini_browser_is_open,
+            mini_browser::mini_browser_close,
             // Update
             update::check_for_updates,
             update::install_update,

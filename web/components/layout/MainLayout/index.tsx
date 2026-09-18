@@ -17,6 +17,7 @@ import { SkillsButton } from '@/features/coding/skills';
 import { McpButton } from '@/features/coding/mcp';
 import { ImageButton } from '@/features/coding/image';
 import { GatewayButton } from '@/features/coding/gateway';
+import { MiniBrowserButton } from '@/features/mini-browser';
 import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
 import { PAGE_ROUTES } from '@/app/routeConfig';
 import { getRouteChrome, matchRouteEntry, resolveInitialTabPath, shouldShowRouteAppHeader } from '@/app/routeMatching';
@@ -290,6 +291,10 @@ const MainLayout: React.FC = () => {
 
               {/* MCP button */}
               <McpButton />
+              <div className={styles.actionsDivider} />
+
+              {/* Embedded browser (relay dashboards / API balance) */}
+              <MiniBrowserButton />
               <div className={styles.actionsDivider} />
 
               {isGatewayVisible && (

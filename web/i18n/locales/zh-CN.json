@@ -6007,5 +6007,19 @@
     "toPlaceholder": "上游模型，如 gpt-5-mini",
     "remove": "删除此规则",
     "add": "添加规则"
+  },
+  "miniBrowser": {
+    "button": "浏览器",
+    "tooltip": "打开内置浏览器，查看中转站后台与 API 余额",
+    "title": "内置浏览器",
+    "hint": "输入中转站后台地址（例如「站点域名 + /console」）。用独立的原生窗口打开，不影响主窗口状态，登录信息会被记住。",
+    "urlLabel": "网址",
+    "urlPlaceholder": "relay.example.com/console",
+    "urlRequired": "请先输入网址",
+    "urlInvalid": "请输入合法的 http/https 地址",
+    "open": "打开",
+    "cancel": "取消",
+    "closeWindow": "关闭浏览器窗口",
+    "openFailed": "打开失败：{{error}}"
   }
 }

@@ -6010,5 +6010,19 @@
     "toPlaceholder": "Upstream model, e.g. gpt-5-mini",
     "remove": "Remove this rule",
     "add": "Add rule"
+  },
+  "miniBrowser": {
+    "button": "Browser",
+    "tooltip": "Open the built-in browser to check a relay's console and API balance",
+    "title": "Built-in browser",
+    "hint": "Enter the relay console address (usually the site domain plus /console). It opens in a separate native window, leaves the main window untouched, and remembers your sign-in.",
+    "urlLabel": "Address",
+    "urlPlaceholder": "relay.example.com/console",
+    "urlRequired": "Enter an address first",
+    "urlInvalid": "Enter a valid http/https address",
+    "open": "Open",
+    "cancel": "Cancel",
+    "closeWindow": "Close browser window",
+    "openFailed": "Could not open: {{error}}"
   }
 }
