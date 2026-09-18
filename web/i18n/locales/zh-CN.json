@@ -305,6 +305,7 @@
     },
     "takeover": {
       "buttonTooltip": "查看或应用网关接管",
+      "statusButton": "网关接管状态",
       "officialBypassedTag": "不参与代理",
       "officialBypassedTooltip": "官方订阅使用 CLI 原生认证，不支持通过网关代理转发",
       "targets": "将写入的运行时配置",
@@ -381,6 +382,7 @@
     "aggregate": {
       "button": "聚合模式",
       "title": "聚合模式",
+      "routePreview": "路由预览",
       "cliLabel": "CLI",
       "enable": "启用聚合模式",
       "disable": "关闭聚合模式",
@@ -414,7 +416,8 @@
         "disableFailed": "关闭聚合模式失败：{{error}}",
         "enableFailed": "启用聚合模式失败：{{error}}",
         "disabled": "已关闭聚合模式",
-        "invalidConfig": "聚合配置无效，请检查站点选择与分隔符"
+        "invalidConfig": "聚合配置无效，请检查站点选择与分隔符",
+        "statusLoadFailed": "加载网关状态失败：{{error}}"
       },
       "effects": {
         "crossSiteList": "模型列表聚合所有已选站点，模型名带站点前缀。",

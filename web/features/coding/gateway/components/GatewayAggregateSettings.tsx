@@ -29,20 +29,24 @@ import {
   type GatewayAggregateNamingMode,
   type GatewayCliTakeoverStatus,
 } from '@/services';
+import { refreshTrayMenu } from '@/services/appApi';
 import { listCodexProviders } from '@/services/codexApi';
 import type { CodexProvider } from '@/types/codex';
 import { isCodexLocalProviderId } from '@/features/coding/codex/utils/localProvider';
 import { primaryCodexProviderNeedsGatewayProxy } from '@/features/coding/codex/utils/codexGatewayProxyNeed';
 import {
-  buildGatewayAggregateModelSlug,
+  buildGatewayAggregateSitePreviewSlug,
   getGatewayProviderProfilesVersion,
+  getGatewayAggregateConfigVersion,
+  notifyGatewayAggregateConfigChanged,
   isAggregateSiteId,
   moveAggregateSite,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
-  reconcileAggregateSiteSelection,
   restoreDirectUnavailableHintKey,
   subscribeGatewayProviderProfiles,
+  subscribeGatewayAggregateConfig,
+  runGatewayAggregateMutation,
   toAggregateSiteCandidates,
   validateGatewayAggregateSeparator,
   validateGatewayAggregateAlias,
@@ -87,6 +91,7 @@ interface SortableSiteRowProps {
   candidate: GatewayAggregateSiteCandidate;
   index: number;
   lastIndex: number;
+  routePreview: string;
   onToggleSite: (siteId: string, checked: boolean) => void;
   onMoveSite: (siteId: string, direction: 'up' | 'down') => void;
   alias: string;
@@ -103,6 +108,7 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
   candidate,
   index,
   lastIndex,
+  routePreview,
   onToggleSite,
   onMoveSite,
   alias,
@@ -138,6 +144,9 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
       />
       <span className={styles.siteName} title={candidate.name}>
         {candidate.name}
+        <span className={styles.siteRoute}>
+          {t('gateway.aggregate.routePreview')}: <code>{routePreview}</code>
+        </span>
       </span>
       <code className={styles.siteSlug} title={candidate.id}>
         {candidate.id}
@@ -205,8 +214,15 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const [notice, setNotice] = React.useState<{ kind: 'error' | 'success'; text: string } | null>(
     null,
   );
+  const aggregateConfigVersion = React.useSyncExternalStore(
+    subscribeGatewayAggregateConfig,
+    getGatewayAggregateConfigVersion,
+    getGatewayAggregateConfigVersion,
+  );
   const revisionRef = React.useRef(0);
-
+  const statusRequestRef = React.useRef(0);
+  const mutationRevisionRef = React.useRef(0);
+  const mountedRef = React.useRef(true);
   const selectedStatus = React.useMemo(
     () => cliStatuses.find((status) => status.cli_key === cliKey) ?? null,
     [cliKey, cliStatuses],
@@ -247,9 +263,24 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     () => candidates.map((candidate) => candidate.id),
     [candidates],
   );
+  const normalizedSiteIds = normalizeGatewayAggregateSiteIds(siteIds);
+  const staleSiteIds = React.useMemo(() => {
+    const addressable = new Set(candidateSiteIds);
+    return siteIds.filter((siteId) => !addressable.has(siteId));
+  }, [candidateSiteIds, siteIds]);
+  const staleAliasSiteIds = React.useMemo(() => {
+    const addressable = new Set(candidateSiteIds);
+    return Object.keys(aliases).filter((siteId) => !addressable.has(siteId));
+  }, [aliases, candidateSiteIds]);
+  const hasStaleConfig = staleSiteIds.length > 0 || staleAliasSiteIds.length > 0;
   const normalizedAliases = normalizeGatewayAggregateAliases(aliases, siteIds, candidateSiteIds);
   const canEngage =
-    running && siteIds.length > 0 && separatorError === null && normalizedAliases !== null && !busy;
+    running &&
+    normalizedSiteIds.length > 0 &&
+    !hasStaleConfig &&
+    separatorError === null &&
+    normalizedAliases !== null &&
+    !busy;
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -257,39 +288,51 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
 
   const applyCliStatuses = React.useCallback(
     (statuses: GatewayCliTakeoverStatus[]) => {
-      setCliStatuses(statuses);
+      if (mountedRef.current) {
+        setCliStatuses(statuses);
+      }
     },
     [],
   );
 
   const refreshCliStatuses = React.useCallback(async () => {
+    const request = statusRequestRef.current + 1;
+    statusRequestRef.current = request;
     const statuses = await getProxyGatewayCliStatuses();
-    applyCliStatuses(statuses);
+    if (mountedRef.current && statusRequestRef.current === request) {
+      applyCliStatuses(statuses);
+    }
     return statuses;
   }, [applyCliStatuses]);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      statusRequestRef.current += 1;
+      mutationRevisionRef.current += 1;
+    };
+  }, []);
 
   // Seed the takeover state from the backend manifest so reopening the settings
   // page shows what is actually routing, not an empty form.
   React.useEffect(() => {
-    let disposed = false;
-    const load = async () => {
-      try {
-        const statuses = await getProxyGatewayCliStatuses();
-        if (!disposed) {
-          applyCliStatuses(statuses);
-        }
-      } catch {
-        if (!disposed) {
-          applyCliStatuses([]);
-        }
+    void refreshCliStatuses().catch(() => {
+      if (mountedRef.current) {
+        applyCliStatuses([]);
       }
-    };
-    void load();
-    return () => {
-      disposed = true;
-    };
-  }, [applyCliStatuses]);
+    });
+  }, [applyCliStatuses, refreshCliStatuses]);
 
+  // Another editor (for example provider-save re-engagement) may rewrite the
+  // aggregate manifest while this drawer is mounted. Re-read canonical status
+  // so this draft cannot overwrite a newer configuration.
+  React.useEffect(() => {
+    if (aggregateConfigVersion === 0) {
+      return;
+    }
+    void refreshCliStatuses().catch(() => undefined);
+  }, [aggregateConfigVersion, refreshCliStatuses]);
   React.useEffect(() => {
     let disposed = false;
     const request = revisionRef.current + 1;
@@ -323,9 +366,9 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     };
   }, [cliKey]);
 
-  // Load the saved aggregate config for the selected CLI, and drop sites that
-  // are no longer proxyable instead of showing them as still selected. Keyed on
-  // the backend status so a re-engage round trip re-seeds the canonical list.
+  // Load the saved aggregate config for the selected CLI. Keep unavailable
+  // providers and aliases in the draft so reopening the drawer never silently
+  // rewrites a manifest with missing routing rules.
   React.useEffect(() => {
     const saved = selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null;
     setSeparator(
@@ -339,49 +382,83 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       setSiteIds([]);
       return;
     }
-    const { siteIds: nextSiteIds } = reconcileAggregateSiteSelection(
-      saved.provider_ids,
-      candidates,
-    );
-    const selectedIds = new Set(nextSiteIds);
-    // An alias keyed on a site that is no longer selectable (deleted or newly
-    // disabled provider) can never be edited — its row is not rendered — and
-    // `normalizeGatewayAggregateAliases` rejects the whole map for it, which
-    // would leave the form permanently un-engageable. Drop those keys instead.
-    setAliases(
-      Object.fromEntries(
-        Object.entries(saved.aliases ?? {}).filter(([siteId]) => selectedIds.has(siteId)),
-      ),
-    );
-    setSiteIds(nextSiteIds);
+    setAliases(saved.aliases ?? {});
+    setSiteIds(normalizeGatewayAggregateSiteIds(saved.provider_ids));
   }, [candidates, selectedStatus]);
 
+  const runGatewayOperation = React.useCallback(
+    async <T,>(
+      execute: () => Promise<T>,
+      successText: string,
+      failureKey: 'enableFailed' | 'disableFailed',
+    ) => {
+      const request = mutationRevisionRef.current + 1;
+      mutationRevisionRef.current = request;
+      setBusy(true);
+      setNotice(null);
+
+      let succeeded = false;
+      try {
+        await runGatewayAggregateMutation(async () => {
+          try {
+            const result = await execute();
+            // Refresh inside the lane so the next queued mutation cannot race
+            // this operation's canonical status read.
+            await refreshCliStatuses().catch(() => undefined);
+            succeeded = true;
+            return result;
+          } catch (error) {
+            // Failed commands can still leave a partial restore or stale local
+            // draft. Always re-read canonical status before the next mutation.
+            await refreshCliStatuses().catch(() => undefined);
+            throw error;
+          }
+        });
+        notifyGatewayAggregateConfigChanged();
+        void refreshTrayMenu().catch(() => undefined);
+      } catch (error) {
+        if (mountedRef.current && mutationRevisionRef.current === request) {
+          setNotice({
+            kind: 'error',
+            text: t(`gateway.aggregate.notice.${failureKey}`, { error: formatError(error) }),
+          });
+        }
+      } finally {
+        // The parent owns provider locks and must refresh on both success and
+        // failure; the child only lets the newest request update its notice.
+        onTakeoverChange?.();
+        if (mountedRef.current && mutationRevisionRef.current === request) {
+          if (succeeded) {
+            setNotice({ kind: 'success', text: successText });
+          }
+          setBusy(false);
+        }
+      }
+    },
+    [onTakeoverChange, refreshCliStatuses, t],
+  );
+
   const runEngage = React.useCallback(
-    async (
+    (
       nextSiteIds: string[],
       nextSeparator: string,
       nextAliases: Record<string, string>,
       nextNaming: GatewayAggregateNamingMode,
-    ) => {
-      setBusy(true);
-      setNotice(null);
-      try {
-        await engageProxyGatewayAggregate(cliKey, nextSiteIds, nextSeparator, nextAliases, nextNaming);
-        await refreshCliStatuses();
-        onTakeoverChange?.();
-        setNotice({ kind: 'success', text: t('gateway.aggregate.notice.enabled') });
-      } catch (error) {
-        setNotice({
-          kind: 'error',
-          text: t('gateway.aggregate.notice.enableFailed', { error: formatError(error) }),
-        });
-      } finally {
-        setBusy(false);
-      }
-    },
-    [cliKey, onTakeoverChange, refreshCliStatuses, t],
+    ) =>
+      runGatewayOperation(
+        () =>
+          engageProxyGatewayAggregate(
+            cliKey,
+            nextSiteIds,
+            nextSeparator,
+            nextAliases,
+            nextNaming,
+          ),
+        t('gateway.aggregate.notice.enabled'),
+        'enableFailed',
+      ),
+    [cliKey, runGatewayOperation, t],
   );
-
   const handleToggle = async (checked: boolean) => {
     setNotice(null);
     if (!checked) {
@@ -389,24 +466,18 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         setNotice({ kind: 'error', text: restoreDirectBlockedHint });
         return;
       }
-      setBusy(true);
-      try {
-        await restoreProxyGatewayCliDirect(cliKey);
-        await refreshCliStatuses();
-        onTakeoverChange?.();
-        setNotice({ kind: 'success', text: t('gateway.aggregate.notice.disabled') });
-      } catch (error) {
-        setNotice({
-          kind: 'error',
-          text: t('gateway.aggregate.notice.disableFailed', { error: formatError(error) }),
-        });
-      } finally {
-        setBusy(false);
-      }
+      await runGatewayOperation(
+        () => restoreProxyGatewayCliDirect(cliKey),
+        t('gateway.aggregate.notice.disabled'),
+        'disableFailed',
+      );
       return;
     }
 
-    const normalizedSiteIds = normalizeGatewayAggregateSiteIds(siteIds);
+    if (hasStaleConfig) {
+      setNotice({ kind: 'error', text: t('gateway.aggregate.notice.invalidConfig') });
+      return;
+    }
     if (normalizedSiteIds.length === 0) {
       setNotice({ kind: 'error', text: t('gateway.aggregate.sitesRequired') });
       return;
@@ -513,11 +584,21 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     .map((siteId) => candidates.find((candidate) => candidate.id === siteId))
     .filter((candidate): candidate is GatewayAggregateSiteCandidate => Boolean(candidate));
   const unselectedCandidates = candidates.filter((candidate) => !siteIds.includes(candidate.id));
-  const separatorExample = buildGatewayAggregateModelSlug(
-    aliases[candidates[0]?.id ?? ''] || candidates[0]?.id || 'site-id',
-    'model',
+  const separatorExample = buildGatewayAggregateSitePreviewSlug(
+    candidates[0]?.id || 'site-id',
     separatorError === null ? separator : DEFAULT_AGGREGATE_SEPARATOR,
     naming,
+    aliases,
+  );
+  const buildSiteRoutePreview = React.useCallback(
+    (siteId: string) =>
+      buildGatewayAggregateSitePreviewSlug(
+        siteId,
+        separatorError === null ? separator : DEFAULT_AGGREGATE_SEPARATOR,
+        naming,
+        aliases,
+      ),
+    [aliases, naming, separator, separatorError],
   );
   const invalidSiteIds = siteIds.filter((siteId) => !isAggregateSiteId(siteId));
 
@@ -569,16 +650,17 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
           <span className={styles.fieldHelp}>{t('gateway.aggregate.namingHint')}</span>
         </div>
         <div className={styles.fieldControl}>
-          <select
-            className={styles.select}
-            value={naming}
-            aria-label={t('gateway.aggregate.naming')}
-            onChange={(event) => {
-              const nextNaming = event.currentTarget.value as GatewayAggregateNamingMode;
-              setNaming(nextNaming);
-              if (engaged && normalizedAliases && siteIds.length > 0) {
-                void runEngage(siteIds, separator, normalizedAliases, nextNaming);
-              }
+           <select
+             className={styles.select}
+             value={naming}
+              disabled={busy}
+              aria-label={t('gateway.aggregate.naming')}
+             onChange={(event) => {
+               const nextNaming = event.currentTarget.value as GatewayAggregateNamingMode;
+               setNaming(nextNaming);
+               if (engaged && normalizedAliases && siteIds.length > 0) {
+                 void runEngage(siteIds, separator, normalizedAliases, nextNaming);
+               }
             }}
           >
             <option value="site_model">{t('gateway.aggregate.namingSiteModel')}</option>
@@ -588,21 +670,22 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         </div>
       </div>
 
-      <p className={styles.helper}>{t('gateway.aggregate.modeHint')}</p>
+       <p className={styles.helper}>{t('gateway.aggregate.modeHint')}</p>
       {restoreDirectBlocked ? <p className={styles.helper}>{restoreDirectBlockedHint}</p> : null}
       {!running ? <p className={styles.helper}>{t('gateway.aggregate.takeoverHint')}</p> : null}
 
       <div className={styles.fieldRow}>
         <div className={styles.fieldMeta}>
           <span className={styles.fieldLabel}>{t('gateway.aggregate.separator')}</span>
-          <span className={styles.fieldHelp}>
-            {t('gateway.aggregate.separatorHint', { example: separatorExample })}
-          </span>
+           <span className={styles.fieldHelp}>
+             {t('gateway.aggregate.separatorHint', { example: separatorExample })}
+           </span>
         </div>
         <div className={styles.fieldControl}>
           <input
-            className={styles.separatorInput}
-            value={separator}
+             className={styles.separatorInput}
+             value={separator}
+              disabled={busy}
             placeholder={t('gateway.aggregate.separatorPlaceholder')}
             aria-label={t('gateway.aggregate.separator')}
             aria-invalid={separatorError !== null}
@@ -630,81 +713,90 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         </div>
       ) : (
         <>
-          <div className={styles.listHeader}>
-            <span className={styles.listTitle}>
-              <Route size={12} aria-hidden="true" />
-              {t('gateway.aggregate.selectedCount', { count: siteIds.length })}
-            </span>
-            {siteIds.length > 0 ? (
-              <button
-                type="button"
-                className={styles.textButton}
-                onClick={handleClearSelection}
-              >
-                {t('gateway.aggregate.clearSelection')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className={styles.textButton}
-                onClick={() => setSiteIds(candidates.map((candidate) => candidate.id))}
-              >
-                {t('gateway.aggregate.selectAll')}
-              </button>
-            )}
-          </div>
+           <div className={styles.listHeader}>
+             <span className={styles.listTitle}>
+               <Route size={12} aria-hidden="true" />
+               {t('gateway.aggregate.selectedCount', { count: siteIds.length })}
+             </span>
+             <span className={styles.listActions}>
+                {siteIds.length > 0 ? (
+                  <button
+                   type="button"
+                   className={styles.textButton}
+                   onClick={handleClearSelection}
+                 >
+                   {t('gateway.aggregate.clearSelection')}
+                 </button>
+               ) : (
+                 <button
+                   type="button"
+                   className={styles.textButton}
+                   onClick={() => setSiteIds(candidates.map((candidate) => candidate.id))}
+                 >
+                   {t('gateway.aggregate.selectAll')}
+                 </button>
+                )}
+              </span>
+            </div>
 
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis]}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={siteIds} strategy={verticalListSortingStrategy}>
-              <ul className={styles.siteList}>
-                {selectedCandidates.map((candidate, index) => (
-                  <SortableSiteRow
-                    key={candidate.id}
-                    candidate={candidate}
-                    index={index}
-                    lastIndex={selectedCandidates.length - 1}
-                    onToggleSite={handleToggleSite}
-                    onMoveSite={handleMoveSite}
-                    alias={aliases[candidate.id] ?? ''}
-                    onAliasChange={(siteId, alias) => {
-                      const nextAliases = { ...aliases, [siteId]: alias };
-                      if (!alias.trim()) delete nextAliases[siteId];
-                      setAliases(nextAliases);
-                    }}
-                    onAliasCommit={handleAliasCommit}
-                  />
-                ))}
-              </ul>
-            </SortableContext>
-          </DndContext>
+            <>
+                <DndContext
+                 sensors={sensors}
+                 collisionDetection={closestCenter}
+                 modifiers={[restrictToVerticalAxis]}
+                 onDragEnd={handleDragEnd}
+               >
+                 <SortableContext items={siteIds} strategy={verticalListSortingStrategy}>
+                   <ul className={styles.siteList}>
+                     {selectedCandidates.map((candidate, index) => (
+                       <SortableSiteRow
+                         key={candidate.id}
+                         candidate={candidate}
+                         index={index}
+                         lastIndex={selectedCandidates.length - 1}
+                         routePreview={buildSiteRoutePreview(candidate.id)}
+                         onToggleSite={handleToggleSite}
+                         onMoveSite={handleMoveSite}
+                         alias={aliases[candidate.id] ?? ''}
+                         onAliasChange={(siteId, alias) => {
+                           const nextAliases = { ...aliases, [siteId]: alias };
+                           if (!alias.trim()) delete nextAliases[siteId];
+                           setAliases(nextAliases);
+                         }}
+                         onAliasCommit={handleAliasCommit}
+                       />
+                     ))}
+                   </ul>
+                 </SortableContext>
+               </DndContext>
 
-          {unselectedCandidates.length > 0 ? (
-            <ul className={styles.siteList}>
-              {unselectedCandidates.map((candidate) => (
-                <li key={candidate.id} className={styles.siteItem}>
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    aria-label={candidate.name}
-                    onChange={(event) =>
-                      handleToggleSite(candidate.id, event.currentTarget.checked)
-                    }
-                  />
-                  <span className={styles.siteName} title={candidate.name}>
-                    {candidate.name}
-                  </span>
-                  <code className={styles.siteSlug} title={candidate.id}>
-                    {candidate.id}
-                  </code>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+               {unselectedCandidates.length > 0 ? (
+                 <ul className={styles.siteList}>
+                   {unselectedCandidates.map((candidate) => (
+                     <li key={candidate.id} className={styles.siteItem}>
+                       <input
+                         type="checkbox"
+                         checked={false}
+                         aria-label={candidate.name}
+                         onChange={(event) =>
+                           handleToggleSite(candidate.id, event.currentTarget.checked)
+                         }
+                       />
+                       <span className={styles.siteName} title={candidate.name}>
+                         {candidate.name}
+                         <span className={styles.siteRoute}>
+                           {t('gateway.aggregate.routePreview')}:{' '}
+                           <code>{buildSiteRoutePreview(candidate.id)}</code>
+                         </span>
+                       </span>
+                       <code className={styles.siteSlug} title={candidate.id}>
+                         {candidate.id}
+                       </code>
+                     </li>
+                   ))}
+                 </ul>
+                ) : null}
+            </>
         </>
       )}
 

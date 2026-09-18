@@ -564,6 +564,10 @@ pub async fn engage_aggregate_cli(
     let available = load_candidate_providers(db, cli_key).await?;
     let mut ordered_ids = Vec::with_capacity(provider_ids.len());
     let mut ordered_providers = Vec::with_capacity(provider_ids.len());
+    let available_ids = available
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
     for id in &provider_ids {
         if ordered_ids.iter().any(|existing| existing == id) {
             return Err(format!("Aggregate site '{id}' is selected more than once"));
@@ -597,12 +601,8 @@ pub async fn engage_aggregate_cli(
     // addressable by its provider id as a fallback. Validate aliases against
     // that complete addressable set, not only the selected sites, so an alias
     // cannot shadow an unselected provider id.
-    let all_available_ids = available
-        .iter()
-        .map(|provider| provider.id.clone())
-        .collect::<Vec<_>>();
     crate::coding::proxy_gateway::aggregate_naming::validate_aggregate_site_prefixes(
-        &all_available_ids,
+        &available_ids,
         &aliases,
     )?;
 
@@ -626,9 +626,8 @@ pub async fn engage_aggregate_cli(
     let site_specs = load_aggregate_site_specs(db, &ordered_providers).await?;
     let slug_table =
         crate::coding::codex::commands::codex_aggregate_slug_table(&site_specs, &naming_config)?;
-    // The catalog and the manifest table come from the same allocation pass, so
-    // an empty table means the selected sites declare no models at all. Check it
-    // here, before anything is written, so the abort leaves the CLI untouched.
+    // The catalog and the manifest table come from the same allocation pass,
+    // so an empty table means the selected sites declare no models at all.
     if slug_table.is_empty() {
         return Err(
             "Selected sites declare no models, so no aggregate catalog was generated".to_string(),

@@ -305,6 +305,7 @@
     },
     "takeover": {
       "buttonTooltip": "View or apply gateway takeover",
+      "statusButton": "Gateway takeover status",
       "officialBypassedTag": "Gateway Bypassed",
       "officialBypassedTooltip": "Official subscription providers use CLI-native OAuth and cannot be routed through the gateway.",
       "targets": "Runtime config files to update",
@@ -381,6 +382,7 @@
     "aggregate": {
       "button": "Aggregate",
       "title": "Aggregate mode",
+      "routePreview": "Route preview",
       "cliLabel": "CLI",
       "enable": "Enable aggregate mode",
       "disable": "Disable aggregate mode",
@@ -414,7 +416,8 @@
         "disableFailed": "Failed to disable aggregate mode: {{error}}",
         "enableFailed": "Failed to enable aggregate mode: {{error}}",
         "disabled": "Aggregate mode disabled",
-        "invalidConfig": "Aggregate config is invalid. Check the site selection and separator."
+        "invalidConfig": "Aggregate config is invalid. Check the site selection and separator.",
+        "statusLoadFailed": "Failed to load gateway status: {{error}}"
       },
       "effects": {
         "crossSiteList": "The model list merges every selected site, with a site prefix on each model name.",

@@ -209,7 +209,9 @@ test('save provider reengage helper refuses aggregate without a selection', asyn
     /Aggregate gateway re-engage requires/,
   );
 
-  assert.deepEqual(calls, ['restore', 'status:direct', 'save']);
+  // Fail closed before touching the current provider config: an aggregate
+  // re-engage without its canonical selection would otherwise drop routing.
+  assert.deepEqual(calls, []);
 });
 
 test('save provider reengage helper still reengages aggregate when the save fails', async () => {

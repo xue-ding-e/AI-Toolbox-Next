@@ -161,10 +161,6 @@ pub enum GatewayProxyMode {
     Aggregate,
 }
 
-/// Aggregate routing details exposed in CLI takeover status responses.
-///
-/// Kept separate from the manifest type so the public status DTO does not
-/// create a module cycle with `cli_proxy::manifest`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayAggregateConfig {

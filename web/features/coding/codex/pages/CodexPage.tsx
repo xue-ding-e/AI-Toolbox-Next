@@ -1,7 +1,8 @@
 import React from 'react';
-import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Checkbox } from 'antd';
+import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Checkbox, Drawer } from 'antd';
 import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined, BulbOutlined, CheckSquareOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { listen } from '@tauri-apps/api/event';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -73,6 +74,7 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
 import CodexMemoriesPanel from '../components/CodexMemoriesPanel/CodexMemoriesPanel';
 import CodexHistorySyncModal from '../components/CodexHistorySyncModal';
+import GatewayAggregateSettings from '@/features/coding/gateway/components/GatewayAggregateSettings';
 import {
   CODEX_LOCAL_PROVIDER_ID,
   isCodexLocalProviderId,
@@ -98,6 +100,7 @@ import {
   areGatewayProviderProfilesInitialized,
   GatewayFailoverButton,
   getGatewayProviderProfilesVersion,
+  isGatewayProxyMode,
   resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
   subscribeGatewayProviderProfiles,
@@ -154,6 +157,8 @@ import {
   engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
   engageProxyGatewaySingle,
+  getProxyGatewayCliStatus,
+  getProxyGatewayStatus,
   restoreProxyGatewayCliDirect,
   type GatewayCliTakeoverStatus,
 } from '@/services';
@@ -252,7 +257,17 @@ const CodexPage: React.FC = () => {
   >({});
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
   const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
-  const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
+  const [aggregateSettingsOpen, setAggregateSettingsOpen] = React.useState(false);
+  const [aggregateSettingsOpening, setAggregateSettingsOpening] = React.useState(false);
+  const [aggregateGatewayRunning, setAggregateGatewayRunning] = React.useState(false);
+  const aggregateSettingsRequestRef = React.useRef(0);
+  const gatewayStatusRequestRef = React.useRef(0);
+  const gatewayStatusRevisionRef = React.useRef(0);
+  // `can_restore_direct` only describes whether the original files can be
+  // restored.  A manifest can still be actively routing through the gateway
+  // after its backups are unavailable, so the lock follows the explicit
+  // gateway proxy mode instead.
+  const gatewayTakeoverActive = isGatewayProxyMode(gatewayCliStatus?.mode);
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
     subscribeGatewayProviderProfiles,
     getGatewayProviderProfilesVersion,
@@ -272,6 +287,122 @@ const CodexPage: React.FC = () => {
       ),
     [gatewayCliStatus?.primary_provider_id, gatewayProviderProfilesVersion, providers],
   );
+
+  const applyGatewayCliStatus = React.useCallback((nextStatus: GatewayCliTakeoverStatus) => {
+    gatewayStatusRevisionRef.current += 1;
+    setGatewayCliStatus(nextStatus);
+  }, []);
+
+  const refreshGatewayCliStatus = React.useCallback(async () => {
+    const request = gatewayStatusRequestRef.current + 1;
+    gatewayStatusRequestRef.current = request;
+    const revision = gatewayStatusRevisionRef.current;
+    const nextStatus = await getProxyGatewayCliStatus('codex');
+    if (
+      isActive
+      && gatewayStatusRequestRef.current === request
+      && gatewayStatusRevisionRef.current === revision
+    ) {
+      applyGatewayCliStatus(nextStatus);
+    }
+    return nextStatus;
+  }, [applyGatewayCliStatus, isActive]);
+
+  const handleOpenAggregateSettings = React.useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (aggregateSettingsOpening) {
+        return;
+      }
+      const request = ++aggregateSettingsRequestRef.current;
+      setAggregateSettingsOpening(true);
+      void getProxyGatewayStatus()
+        .then((status) => {
+          if (aggregateSettingsRequestRef.current !== request) {
+            return;
+          }
+          setAggregateGatewayRunning(status.running);
+          setAggregateSettingsOpen(true);
+        })
+        .catch((error) => {
+          if (aggregateSettingsRequestRef.current !== request) {
+            return;
+          }
+          message.error(
+            t('gateway.aggregate.notice.statusLoadFailed', {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        })
+        .finally(() => {
+          if (aggregateSettingsRequestRef.current === request) {
+            setAggregateSettingsOpening(false);
+          }
+        });
+    },
+    [aggregateSettingsOpening, t],
+  );
+
+  const handleAggregateTakeoverChange = React.useCallback(() => {
+    const request = aggregateSettingsRequestRef.current;
+    void getProxyGatewayStatus()
+      .then((status) => {
+        if (isActive && aggregateSettingsRequestRef.current === request) {
+          setAggregateGatewayRunning(status.running);
+        }
+      })
+      .catch(() => undefined);
+    void refreshGatewayCliStatus().catch(() => undefined);
+  }, [isActive, refreshGatewayCliStatus]);
+
+  React.useEffect(() => {
+    if (!isActive) {
+      gatewayStatusRevisionRef.current += 1;
+      gatewayStatusRequestRef.current += 1;
+      return;
+    }
+    void refreshGatewayCliStatus().catch(() => undefined);
+  }, [isActive, refreshGatewayCliStatus]);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen<boolean>('gateway-running-changed', () => {
+      if (disposed || !isActive) {
+        return;
+      }
+      gatewayStatusRevisionRef.current += 1;
+      void refreshGatewayCliStatus().catch(() => undefined);
+      const request = aggregateSettingsRequestRef.current;
+      void getProxyGatewayStatus()
+        .then((status) => {
+          if (!disposed && isActive && aggregateSettingsRequestRef.current === request) {
+            setAggregateGatewayRunning(status.running);
+          }
+        })
+        .catch(() => undefined);
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+      } else {
+        unlisten = dispose;
+      }
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [isActive, refreshGatewayCliStatus]);
+
+  React.useEffect(() => {
+    if (isActive) {
+      return;
+    }
+    aggregateSettingsRequestRef.current += 1;
+    setAggregateSettingsOpening(false);
+    setAggregateSettingsOpen(false);
+  }, [isActive]);
   const [savingCodexUnifiedHistory, setSavingCodexUnifiedHistory] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
@@ -1338,7 +1469,7 @@ const CodexPage: React.FC = () => {
         engageFailover: () => engageProxyGatewayFailover('codex'),
         engageAggregate: ({ providerIds, separator, aliases, naming }) =>
           engageProxyGatewayAggregate('codex', providerIds, separator, aliases, naming),
-        onGatewayStatusChange: setGatewayCliStatus,
+        onGatewayStatusChange: applyGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {
             await saveCodexLocalConfig({ provider: providerInput });
@@ -1797,8 +1928,20 @@ const CodexPage: React.FC = () => {
                       status={gatewayCliStatus}
                       primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
                       primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
-                      onStatusChange={setGatewayCliStatus}
+                      onStatusChange={applyGatewayCliStatus}
                     />
+                    {gatewayTakeoverActive ? (
+                      <Button
+                        type="default"
+                        size="small"
+                        icon={<AppstoreOutlined />}
+                        style={{ fontSize: 12 }}
+                        loading={aggregateSettingsOpening}
+                        onClick={handleOpenAggregateSettings}
+                      >
+                        {t('gateway.aggregate.button')}
+                      </Button>
+                    ) : null}
                   </Space>
                 ),
                 extra: (
@@ -1935,7 +2078,7 @@ const CodexPage: React.FC = () => {
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}
                                 onGatewayStatusChange={async (status) => {
-                                  setGatewayCliStatus(status);
+                                  applyGatewayCliStatus(status);
                                   await loadConfig();
                                 }}
                                 selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
@@ -2102,6 +2245,23 @@ const CodexPage: React.FC = () => {
           onSaveDiagnostics={handleSaveConnectivityDiagnostics}
           onCancel={() => setConnectivityModalOpen(false)}
         />
+
+        <Drawer
+          title={t('gateway.aggregate.title')}
+          placement="right"
+          width="min(92vw, 920px)"
+          open={aggregateSettingsOpen}
+          destroyOnHidden
+          onClose={() => {
+            aggregateSettingsRequestRef.current += 1;
+            setAggregateSettingsOpen(false);
+          }}
+        >
+          <GatewayAggregateSettings
+            running={aggregateGatewayRunning}
+            onTakeoverChange={handleAggregateTakeoverChange}
+          />
+        </Drawer>
 
         <ImportProviderModal
           open={importModalOpen}

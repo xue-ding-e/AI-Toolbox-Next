@@ -47,6 +47,24 @@ const formatGatewayError = (error: unknown) =>
 const isGatewayProxyActive = (status: GatewayCliTakeoverStatus | null) =>
   isGatewayProxyMode(status?.mode);
 
+// Every status read carries both a request sequence and the revision that was
+// current when it started.  A newer read supersedes older reads by request
+// number; an authoritative command result or external status update supersedes
+// all in-flight reads by revision.
+const createGatewayStatusRevisionGuard = () => {
+  let request = 0;
+  let revision = 0;
+
+  return {
+    beginRequest: () => ({ request: ++request, revision }),
+    invalidate: () => {
+      revision += 1;
+    },
+    isCurrent: (token: { request: number; revision: number }) =>
+      token.request === request && token.revision === revision,
+  };
+};
+
 const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   cliKey,
   status: externalStatus,
@@ -59,15 +77,23 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   const [busyAction, setBusyAction] = React.useState<ActionKind | null>('load');
   const [open, setOpen] = React.useState(false);
   const [notice, setNotice] = React.useState<NoticeState | null>(null);
+  const statusGuardRef = React.useRef(createGatewayStatusRevisionGuard());
+  const actionRequestRef = React.useRef(0);
 
   React.useEffect(() => {
+    statusGuardRef.current.invalidate();
     setStatus(externalStatus ?? null);
+    setBusyAction((current) => (current === 'load' ? null : current));
   }, [externalStatus]);
 
   const refreshStatus = React.useCallback(async () => {
+    const token = statusGuardRef.current.beginRequest();
     const nextStatus = await getProxyGatewayCliStatus(cliKey);
-    setStatus(nextStatus);
-    onStatusChange?.(nextStatus);
+    if (statusGuardRef.current.isCurrent(token)) {
+      statusGuardRef.current.invalidate();
+      setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
+    }
     return nextStatus;
   }, [cliKey, onStatusChange]);
 
@@ -79,25 +105,30 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
 
   React.useEffect(() => {
     let disposed = false;
+    const token = statusGuardRef.current.beginRequest();
 
     const loadStatus = async () => {
-      setBusyAction('load');
+      if (!disposed && statusGuardRef.current.isCurrent(token)) {
+        setBusyAction('load');
+      }
       try {
         const nextStatus = await getProxyGatewayCliStatus(cliKey);
-        if (disposed) {
+        if (disposed || !statusGuardRef.current.isCurrent(token)) {
           return;
         }
+        statusGuardRef.current.invalidate();
         setStatus(nextStatus);
         onStatusChange?.(nextStatus);
+        setBusyAction(null);
       } catch (error) {
-        if (!disposed) {
+        if (!disposed && statusGuardRef.current.isCurrent(token)) {
           setNotice({
             kind: 'error',
             text: t('gateway.takeover.notice.loadFailed', { error: formatGatewayError(error) }),
           });
         }
       } finally {
-        if (!disposed) {
+        if (!disposed && statusGuardRef.current.isCurrent(token)) {
           setBusyAction(null);
         }
       }
@@ -107,6 +138,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
 
     return () => {
       disposed = true;
+      statusGuardRef.current.invalidate();
     };
   }, [cliKey, onStatusChange, t]);
 
@@ -120,9 +152,15 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
 
     return () => {
       disposed = true;
+      statusGuardRef.current.invalidate();
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [refreshStatus]);
+
+  React.useEffect(() => () => {
+    statusGuardRef.current.invalidate();
+    actionRequestRef.current += 1;
+  }, [cliKey]);
 
   const visible = isGatewayProxyActive(status);
   const failoverActive = status?.mode === 'failover';
@@ -140,7 +178,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   const actionLabel = failoverActive
     ? t('gateway.failover.disengageButton')
     : aggregateActive
-      ? t('gateway.aggregate.button')
+      ? t('gateway.takeover.statusButton')
       : t('gateway.failover.button');
   // Aggregate sites are addressed by model prefix; the label the model list
   // shows for each (site, model) pair is the concrete thing to display.
@@ -166,12 +204,18 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
     event.preventDefault();
     event.stopPropagation();
     const nextBusyAction: ActionKind = failoverActive ? 'disableFailover' : 'enableFailover';
+    const actionRequest = ++actionRequestRef.current;
+    statusGuardRef.current.invalidate();
     setBusyAction(nextBusyAction);
     setNotice(null);
     try {
       const nextStatus = failoverActive
         ? await disengageProxyGatewayFailover(cliKey)
         : await engageProxyGatewayFailover(cliKey);
+      if (actionRequest !== actionRequestRef.current) {
+        return;
+      }
+      statusGuardRef.current.invalidate();
       setStatus(nextStatus);
       onStatusChange?.(nextStatus);
       refreshTrayAfterGatewayChange();
@@ -183,6 +227,9 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       });
       setOpen(false);
     } catch (error) {
+      if (actionRequest !== actionRequestRef.current) {
+        return;
+      }
       setNotice({
         kind: 'error',
         text: failoverActive
@@ -191,7 +238,9 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       });
       await refreshStatus().catch(() => undefined);
     } finally {
-      setBusyAction(null);
+      if (actionRequest === actionRequestRef.current) {
+        setBusyAction(null);
+      }
     }
   };
 
@@ -205,10 +254,16 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       });
       return;
     }
+    const actionRequest = ++actionRequestRef.current;
+    statusGuardRef.current.invalidate();
     setBusyAction('restore');
     setNotice(null);
     try {
       const nextStatus = await restoreProxyGatewayCliDirect(cliKey);
+      if (actionRequest !== actionRequestRef.current) {
+        return;
+      }
+      statusGuardRef.current.invalidate();
       setStatus(nextStatus);
       onStatusChange?.(nextStatus);
       refreshTrayAfterGatewayChange();
@@ -218,13 +273,18 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       });
       setOpen(false);
     } catch (error) {
+      if (actionRequest !== actionRequestRef.current) {
+        return;
+      }
       setNotice({
         kind: 'error',
         text: t('gateway.proxy.notice.restoreFailed', { error: formatGatewayError(error) }),
       });
       await refreshStatus().catch(() => undefined);
     } finally {
-      setBusyAction(null);
+      if (actionRequest === actionRequestRef.current) {
+        setBusyAction(null);
+      }
     }
   };
 

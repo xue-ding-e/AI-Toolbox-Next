@@ -1053,24 +1053,41 @@ fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String>
         Value::Object(_) => Some(settings_config.clone()),
         _ => None,
     };
-    let Some(models) = settings_value
+    let mut out = Vec::new();
+    let catalog_models = settings_value
         .as_ref()
         .and_then(|value| value.get("modelCatalog"))
         .and_then(|catalog| catalog.get("models"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
+        .and_then(Value::as_array);
+    let root_models = settings_value
+        .as_ref()
+        .and_then(|value| value.get("models"))
+        .and_then(Value::as_array);
 
-    let mut out = Vec::new();
-    for model in models {
-        if let Some(model_id) = model
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|model_id| !model_id.is_empty())
-        {
-            push_unique_string(&mut out, model_id.to_string());
+    if let Some(models) = catalog_models {
+        for model in models {
+            if let Some(model_id) = model
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|model_id| !model_id.is_empty())
+                .map(str::to_string)
+            {
+                push_unique_string(&mut out, model_id);
+            }
+        }
+    } else if let Some(models) = root_models {
+        // Preserve the legacy fallback when modelCatalog is absent or malformed.
+        for model in models {
+            if let Some(model_id) = model
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|model_id| !model_id.is_empty())
+                .map(str::to_string)
+            {
+                push_unique_string(&mut out, model_id);
+            }
         }
     }
     out

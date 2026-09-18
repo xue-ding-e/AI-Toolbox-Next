@@ -110,9 +110,12 @@ export const toGatewayAggregateReengageConfig = (
   if (providerIds.length === 0 || validateGatewayAggregateSeparator(separator) !== null) {
     return null;
   }
-  const aliases = normalizeGatewayAggregateAliases(aggregate.aliases, providerIds);
   const naming: GatewayAggregateNamingMode = aggregate.naming ?? 'site_model';
-  if (!aliases || !['site_model', 'model_at_site', 'model_only'].includes(naming)) {
+  if (!['site_model', 'model_at_site', 'model_only'].includes(naming)) {
+    return null;
+  }
+  const aliases = normalizeGatewayAggregateAliases(aggregate.aliases, providerIds);
+  if (!aliases) {
     return null;
   }
   return { providerIds, separator, aliases, naming };

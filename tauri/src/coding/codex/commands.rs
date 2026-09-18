@@ -3172,7 +3172,7 @@ pub(crate) fn write_codex_aggregate_catalog(
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
     default_context_window: u64,
 ) -> Result<bool, String> {
-    let (entries, _slug_table) = codex_aggregate_catalog_entries(providers, naming)?;
+    let entries = codex_aggregate_catalog_entries(providers, naming)?.0;
     if entries.is_empty() {
         return Ok(false);
     }

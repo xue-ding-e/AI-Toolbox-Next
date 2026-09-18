@@ -40,6 +40,7 @@ export {
 } from './gatewayAggregateCandidates';
 export {
   buildGatewayAggregateModelSlug,
+  buildGatewayAggregateSitePreviewSlug,
   normalizeGatewayAggregateAliases,
   isAggregateSiteId,
   normalizeGatewayAggregateSiteIds,
@@ -49,6 +50,12 @@ export {
   validateGatewayAggregateAlias,
   type GatewayAggregateSeparatorInvalidReason,
 } from './gatewayAggregateConfig';
+export {
+  getGatewayAggregateConfigVersion,
+  notifyGatewayAggregateConfigChanged,
+  runGatewayAggregateMutation,
+  subscribeGatewayAggregateConfig,
+} from './gatewayAggregateMutation';
 export {
   isGatewayReengageMode,
   saveProviderWithGatewayReengage,

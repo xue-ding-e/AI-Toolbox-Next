@@ -1032,11 +1032,12 @@ async fn forward_to_upstream(
             };
         aggregate_upstream_model = Some(resolved.upstream_model.clone());
         aggregate_model_is_explicit = resolved.explicit;
-        // The slug or prefix named the site; a bare model name names only the
-        // model. Either way the site has to be an enabled candidate right now —
+        // The slug or prefix named the site/group; a bare model name names only
+        // the model. Either way the site has to be an enabled candidate right now —
         // a site that was disabled since engage keeps its published slug in the
         // Codex list, so fall back to whichever candidate still declares that
         // upstream model instead of failing the request outright.
+        //
         let target = resolved
             .site_id
             .as_deref()
