@@ -41,8 +41,14 @@
 - `pi-deck-*` 和 `ai-toolbox-*` 本地扩展按内置/受保护处理，页面不要提供直接删除入口。
 - 保存 Other Configuration 时不要清空或覆盖 `settings.json.packages`；扩展管理区已经负责 package 安装、列表和卸载入口。
 
+- `models.json` 的 provider `apiKey` 与自定义 header 值遵循 Pi 的配置值语法（`$ENV_VAR` / `${ENV_VAR}` 插值、`!command`、`$$` / `$!` 转义）。「拉取模型」和「连通性测试」必须先按 Pi 语义解析再发请求，否则会把 `$MY_API_KEY` 当字面量 Bearer 发出去（issue #355）。解析器镜像上游 `packages/coding-agent/src/core/resolve-config-value.ts`，实现在共享层 `tauri/src/coding/pi_config_value.rs`，由 `fetch_provider_models` / `test_provider_model_connectivity` 的可选 `configValueMode: "pi"` 显式开启；其它工具不传该字段，行为不变。
+  - 解析失败（变量缺失、命令非 0 退出或超时）直接让该次请求失败并报出字段名/变量名，不回退成字面量——继续发送只会以 401 的形式掩盖配置错误。
+  - WSL Direct 下 `$VAR` / `!cmd` 在目标发行版内解析（`wsl -d <distro> --exec printenv NAME` / `bash -c`），本机则用宿主进程环境与 Git Bash（缺失时 `cmd /C`）。已知边界：本机取 GUI 进程环境、WSL 取发行版默认环境，两者都不含只写在 shell rc/profile 里、未进入进程环境的变量；未命中会报出缺失变量名而不是回退成字面量，因此是可见的失败而不是静默 401。不要为此改成 `bash -lc`/`bash -ic` 取环境——交互式 rc 的 stdout 会污染凭证。
+  - Google native（`api: google-generative-ai`）把 key 放在查询串里，弹窗无法预填运行时解析结果：Pi 模式下前端不再把 key 拼进预览 URL，后端解析后用 `?key=` 补齐。
+
 ## 最小验证
 
+- 改动 Pi 配置值解析（`tauri/src/coding/pi_config_value.rs`）或共享命令的 `configValueMode` 后，运行 `cargo test --lib pi_config_value` 与 `cargo test --lib models_api`；前端契约改动同时跑 `node --test web/test/components/common/FetchModelsModal/request.test.ts` 与 `node --test web/test/features/coding/shared/providerConnectivity/batchTest.test.ts`。
 - `settings.defaultProvider = "anthropic"` 且 `auth.json`/`models.json` 没有 `anthropic` 时，provider view 应标记 built-in/default，不是 missing。
 - 同一个 key 同时存在 `auth.json` 和 `models.json.providers` 时，应合并成一条 provider view。
 - 保存 `models.json.providers.<key>` 只覆盖该 key，其他 providers 和 unknown top-level 字段原样保留。

@@ -29,6 +29,7 @@ interface ConnectivityTestModalProps {
   providerName: string;
   providerConfig: OpenCodeProvider;
   apiFormat?: ConnectivityTestRequest['apiFormat'];
+  configValueMode?: ConnectivityTestRequest['configValueMode'];
   /** Per-model connection overrides (OMP `models.yml` allows per-model api/baseUrl). */
   modelConnections?: ProviderModelConnections;
   modelIds: string[];
@@ -60,6 +61,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   providerName,
   providerConfig,
   apiFormat,
+  configValueMode,
   modelConnections,
   modelIds,
   removableModelIds,
@@ -228,6 +230,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       const baseRequest: ConnectivityTestRequest = {
         npm,
         ...(apiFormat ? { apiFormat } : {}),
+        ...(configValueMode ? { configValueMode } : {}),
         providerId,
         baseUrl: providerConfig.options?.baseURL || '',
         apiKey: providerConfig.options?.apiKey,
@@ -278,15 +281,18 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
             }
             return r;
           }));
-        } catch (error: any) {
+        } catch (error: unknown) {
           failedModelIds.push(modelId);
+          // Tauri rejects with the backend error string, so `error.message`
+          // alone would hide messages such as an unresolvable provider API key.
+          const errorMessage = error instanceof Error ? error.message : String(error);
           setResults(prev => prev.map(r => {
             if (r.modelId === modelId) {
               return {
                 key: modelId,
                 modelId,
                 status: 'error',
-                errorMessage: error.message || 'Unknown error',
+                errorMessage: errorMessage || 'Unknown error',
                 loading: false,
                 requestUrl: '',
                 requestHeaders: {},

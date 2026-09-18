@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import type { FetchModelsModalProps, FetchedModel, ApiType, FetchModelsResponse } from './types';
 import { createFetchedModelsComparator } from './sort';
-import { buildModelsUrl, getDefaultModelsApiType } from './request';
+import { buildModelsUrl, getDefaultModelsApiType, resolveModelsUrlApiKey } from './request';
 import styles from './index.module.less';
 
 const { Text } = Typography;
@@ -18,6 +18,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   apiKey,
   headers,
   sdkType,
+  configValueMode,
   existingModelIds,
   priorityOwnedBy,
   onCancel,
@@ -61,8 +62,8 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
 
   // Calculate the default URL based on baseUrl, apiType, and sdkType
   const calculatedUrl = React.useMemo(
-    () => buildModelsUrl(baseUrl, apiType, sdkType, apiKey),
-    [baseUrl, apiType, sdkType, apiKey],
+    () => buildModelsUrl(baseUrl, apiType, sdkType, resolveModelsUrlApiKey(apiKey, configValueMode)),
+    [baseUrl, apiType, sdkType, apiKey, configValueMode],
   );
 
   // The component stays mounted while providers and their SDKs can change.
@@ -102,6 +103,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
           headers,
           apiType,
           sdkType,
+          configValueMode,
           customUrl, // Use custom URL instead of calculated one
         },
       });

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::coding::pi_config_value::{self, ConfigValueHost};
+use crate::coding::runtime_location::{self, RuntimeLocationMode};
 use crate::db::SqliteDbState;
 use crate::http_client;
 use futures_util::StreamExt;
@@ -18,6 +20,17 @@ pub enum ApiType {
     OpenaiCompat,
 }
 
+/// Config value syntax a request opts into for its credential fields.
+///
+/// Pi stores `$ENV_VAR` / `!command` templates in `models.json`, so Pi callers
+/// ask the shared discovery/connectivity commands to resolve them before the
+/// value reaches an HTTP request. Every other caller keeps sending raw literals.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigValueMode {
+    Pi,
+}
+
 /// Request parameters for fetching models from provider API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +44,8 @@ pub struct FetchModelsRequest {
     pub sdk_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_value_mode: Option<ConfigValueMode>,
 }
 
 /// OpenAI compatible models list response
@@ -191,6 +206,8 @@ pub struct ConnectivityTestRequest {
     pub model_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_value_mode: Option<ConfigValueMode>,
 }
 
 impl ConnectivityTestRequest {
@@ -310,17 +327,126 @@ fn build_models_url(
     }
 }
 
+// ============================================================================
+// Pi config value syntax
+// ============================================================================
+
+/// Environment a Pi config value belongs to.
+///
+/// Pi resolves `$ENV_VAR` / `!command` inside its own runtime, so a WSL Direct
+/// Pi root has to be resolved inside that distribution instead of against the
+/// desktop process environment.
+async fn pi_config_value_host(state: &SqliteDbState) -> Result<ConfigValueHost, String> {
+    let location = runtime_location::get_pi_runtime_location_async(state).await?;
+    match (location.mode, location.wsl) {
+        (RuntimeLocationMode::WslDirect, Some(wsl)) => {
+            Ok(ConfigValueHost::Wsl { distro: wsl.distro })
+        }
+        _ => Ok(ConfigValueHost::Local),
+    }
+}
+
+/// Resolve the credential fields a caller passed through.
+///
+/// Only `ConfigValueMode::Pi` callers opt in, so every other tool keeps
+/// forwarding its provider-owned strings untouched. Unresolvable values fail
+/// the request instead of being sent upstream as literals, which would surface
+/// as a confusing authentication failure.
+async fn resolve_pi_credentials(
+    state: &SqliteDbState,
+    provider_id: Option<&str>,
+    api_key: Option<&str>,
+    headers: Option<&Value>,
+    config_value_mode: Option<ConfigValueMode>,
+) -> Result<(Option<String>, Option<Value>), String> {
+    if config_value_mode != Some(ConfigValueMode::Pi) {
+        return Ok((api_key.map(str::to_string), headers.cloned()));
+    }
+
+    // Nothing to resolve: skip the runtime location lookup (and do not fail the
+    // request on an unrelated lookup error) when no credential field needs the
+    // Pi config value syntax.
+    if !has_pi_config_values(api_key, headers) {
+        return Ok((None, headers.cloned()));
+    }
+
+    let host = pi_config_value_host(state).await?;
+    let provider_label = provider_id.unwrap_or("pi");
+
+    let resolved_api_key = match api_key {
+        Some(raw_api_key) => {
+            let label = format!("API key for provider \"{provider_label}\"");
+            Some(pi_config_value::resolve_config_value(raw_api_key, &label, &host).await?)
+        }
+        None => None,
+    };
+
+    let resolved_headers = match headers {
+        Some(Value::Object(header_map)) => Some(Value::Object(
+            pi_config_value::resolve_header_values(header_map, provider_label, &host).await?,
+        )),
+        other => other.cloned(),
+    };
+
+    Ok((resolved_api_key, resolved_headers))
+}
+
+/// Whether a Pi-mode request carries any value that may need resolving.
+///
+/// An empty header object is common (the modal always sends the provider header
+/// map), so it must not trigger a runtime location lookup on its own.
+fn has_pi_config_values(api_key: Option<&str>, headers: Option<&Value>) -> bool {
+    let has_header_values = match headers {
+        Some(Value::Object(header_map)) => !header_map.is_empty(),
+        Some(_) => true,
+        None => false,
+    };
+    api_key.is_some() || has_header_values
+}
+
+/// Append a resolved Google API key to a model-discovery URL.
+///
+/// Google native auth travels in the query string rather than an Authorization
+/// header, and a Pi caller cannot embed a runtime-resolved key into the URL the
+/// modal displays, so the resolved key is added here.
+fn append_google_native_key(url: String, api_key: Option<&str>) -> String {
+    let Some(api_key) = api_key.filter(|key| !key.is_empty()) else {
+        return url;
+    };
+    if url.contains("key=") {
+        return url;
+    }
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}key={api_key}")
+}
+
 /// Fetch models list from provider API
 #[tauri::command]
 pub async fn fetch_provider_models(
     state: tauri::State<'_, SqliteDbState>,
     request: FetchModelsRequest,
 ) -> Result<FetchModelsResponse, String> {
+    // Pi credentials are templates resolved in the Pi runtime, so they are
+    // resolved before the provider fallback to keep another tool's stored
+    // credential out of the Pi config value syntax.
+    let (api_key, headers) = resolve_pi_credentials(
+        &state,
+        request.provider_id.as_deref(),
+        request.api_key.as_deref(),
+        request.headers.as_ref(),
+        request.config_value_mode,
+    )
+    .await?;
+
     let resolved_request = resolve_provider_request(
         request.provider_id.as_deref(),
         &request.base_url,
-        request.api_key.as_deref(),
+        api_key.as_deref(),
     );
+
+    // Determine if this is Google Native (no Authorization header, key in URL)
+    let is_google_native = matches!(request.api_type, ApiType::Native)
+        && matches!(request.sdk_type.as_deref(), Some("@ai-sdk/google"));
 
     // Create HTTP client with timeout and proxy support
     let client = http_client::client_with_timeout(&state, 30).await?;
@@ -353,12 +479,16 @@ pub async fn fetch_provider_models(
         )
     };
 
+    // A Pi caller cannot bake a runtime-resolved key into the discovery URL,
+    // so query-parameter auth is completed here instead.
+    let url = if request.config_value_mode == Some(ConfigValueMode::Pi) && is_google_native {
+        append_google_native_key(url, resolved_request.api_key.as_deref())
+    } else {
+        url
+    };
+
     // Build request
     let mut req_builder = client.get(&url);
-
-    // Determine if this is Google Native (no Authorization header, key in URL)
-    let is_google_native = matches!(request.api_type, ApiType::Native)
-        && matches!(request.sdk_type.as_deref(), Some("@ai-sdk/google"));
 
     // Add authentication based on SDK type and API type
     match request.sdk_type.as_deref() {
@@ -390,8 +520,8 @@ pub async fn fetch_provider_models(
     }
 
     // Add custom headers
-    if let Some(headers) = &request.headers {
-        if let Some(obj) = headers.as_object() {
+    if let Some(resolved_headers) = &headers {
+        if let Some(obj) = resolved_headers.as_object() {
             for (key, value) in obj {
                 if let Some(v) = value.as_str() {
                     req_builder = req_builder.header(key, v);
@@ -1143,14 +1273,24 @@ pub async fn test_provider_model_connectivity(
 ) -> Result<ConnectivityTestResponse, String> {
     let timeout_secs = request.timeout_secs.unwrap_or(30);
     let client = http_client::client_with_timeout(&state, timeout_secs).await?;
+    let mut request = request;
+    let (api_key, headers) = resolve_pi_credentials(
+        &state,
+        request.provider_id.as_deref(),
+        request.api_key.as_deref(),
+        request.headers.as_ref(),
+        request.config_value_mode,
+    )
+    .await?;
+
     let resolved_request = resolve_provider_request(
         request.provider_id.as_deref(),
         &request.base_url,
-        request.api_key.as_deref(),
+        api_key.as_deref(),
     );
-    let mut request = request;
     request.base_url = resolved_request.base_url;
     request.api_key = resolved_request.api_key;
+    request.headers = headers;
 
     let mut results = Vec::new();
     for model_id in &request.model_ids {
@@ -1273,6 +1413,75 @@ mod tests {
             assert!(body.get("max_output_tokens").is_none());
             assert_eq!(result.status, expected_status, "{:?}", result.error_message);
         }
+    }
+
+    #[test]
+    fn empty_pi_credentials_do_not_need_config_value_resolution() {
+        assert!(!has_pi_config_values(None, None));
+        assert!(!has_pi_config_values(None, Some(&json!({}))));
+        assert!(has_pi_config_values(Some("sk-live"), None));
+        assert!(has_pi_config_values(None, Some(&json!({ "X-Test": "1" }))));
+    }
+
+    #[test]
+    fn google_native_discovery_key_is_appended_only_when_absent() {
+        assert_eq!(
+            append_google_native_key(
+                "https://g.example/v1beta/models".to_string(),
+                Some("sk-live")
+            ),
+            "https://g.example/v1beta/models?key=sk-live"
+        );
+        assert_eq!(
+            append_google_native_key("https://g.example/v1beta/models".to_string(), None),
+            "https://g.example/v1beta/models"
+        );
+        assert_eq!(
+            append_google_native_key("https://g.example/v1beta/models".to_string(), Some("")),
+            "https://g.example/v1beta/models"
+        );
+        assert_eq!(
+            append_google_native_key(
+                "https://g.example/v1beta/models?key=stored".to_string(),
+                Some("sk-live")
+            ),
+            "https://g.example/v1beta/models?key=stored"
+        );
+        assert_eq!(
+            append_google_native_key(
+                "https://g.example/v1beta/models?tenant=acme".to_string(),
+                Some("sk-live")
+            ),
+            "https://g.example/v1beta/models?tenant=acme&key=sk-live"
+        );
+    }
+
+    #[test]
+    fn config_value_mode_stays_optional_for_existing_callers() {
+        let request: FetchModelsRequest = serde_json::from_value(json!({
+            "baseUrl": "https://api.example.com",
+            "apiType": "openai_compat",
+        }))
+        .expect("requests without a config value mode must keep deserializing");
+        assert_eq!(request.config_value_mode, None);
+
+        let request: FetchModelsRequest = serde_json::from_value(json!({
+            "baseUrl": "https://api.example.com",
+            "apiType": "openai_compat",
+            "configValueMode": "pi",
+        }))
+        .expect("the pi config value mode must deserialize");
+        assert_eq!(request.config_value_mode, Some(ConfigValueMode::Pi));
+
+        let request: ConnectivityTestRequest = serde_json::from_value(json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "baseUrl": "https://api.example.com",
+            "prompt": "probe",
+            "modelIds": ["model-a"],
+            "configValueMode": "pi",
+        }))
+        .expect("connectivity requests must accept the pi config value mode");
+        assert_eq!(request.config_value_mode, Some(ConfigValueMode::Pi));
     }
 
     #[test]

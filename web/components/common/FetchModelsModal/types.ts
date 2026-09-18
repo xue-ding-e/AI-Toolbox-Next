@@ -5,6 +5,11 @@
 /** API type for fetching models */
 export type ApiType = 'native' | 'openai_compat';
 
+/** Config value syntax the backend resolves for this request.
+ * Pi resolves `apiKey` / header values itself, so the modal must not treat
+ * `apiKey` as a URL credential or as a plain literal. */
+export type ConfigValueMode = 'pi';
+
 /** Fetched model info from API */
 export interface FetchedModel {
   id: string;
@@ -38,6 +43,8 @@ export interface FetchModelsModalProps {
   apiKey?: string;
   headers?: Record<string, string>;
   sdkType?: string;
+  /** Opt in to the provider tool's own config value syntax (Pi `models.json`). */
+  configValueMode?: ConfigValueMode;
   existingModelIds: string[];
   /** Owner groups (ownedBy values) pinned to the front of the sorted list,
    * in order. Optional; defaults to plain alphabetical owner grouping. */

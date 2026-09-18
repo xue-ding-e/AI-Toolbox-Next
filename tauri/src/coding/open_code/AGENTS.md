@@ -62,6 +62,8 @@ sequenceDiagram
 - 共享 `fetch_provider_models` 的 Google Native 模型列表探测使用 Gemini API `models.list` 路径。传入的 Gemini base URL 如果不以 `v1` / `v1alpha` / `v1beta` 结尾，后端应只在探测时补 `/v1beta/models`；不要要求 Gemini CLI 的 `GOOGLE_GEMINI_BASE_URL` 持久化时必须包含版本路径。
 - 共享连通性请求的可选 `apiFormat=openai-codex-responses` 由 OMP 诊断显式传入，不从 URL 猜测。它使用 `/codex/responses`、Bearer 凭据、可选 JWT account id、`instructions`、`store=false` 和强制 SSE；不发送温度/输出上限。HTTP 200 仍须收到 `response.completed` 且没有错误终态才算成功。普通 OpenCode 诊断继续按 npm 选择既有协议。
 
+- 共享 `fetch_provider_models` / `test_provider_model_connectivity` 增加了可选 `configValueMode`：只有 Pi 调用方传 `"pi"` 时，后端才会在 Pi 运行时环境里解析 `apiKey`/headers 的配置值语法（`$ENV_VAR` 插值、`!command`、`$$`/`$!` 转义，实现在 `tauri/src/coding/pi_config_value.rs`）；不传时所有值仍按字面量直传，不要把这个开关变成全局默认行为。Pi 一侧的语义、失败语义与 WSL 边界见 `tauri/src/coding/pi/AGENTS.md`。
+
 ## 跨模块依赖
 
 - 依赖 `runtime_location`：决定 WSL 目标路径、prompt 路径和 Skills 目标目录。

@@ -21,6 +21,9 @@ pub mod oh_my_pi;
 pub mod open_claw;
 pub mod open_code;
 pub mod pi;
+// Shared resolver for Pi-style config values (env interpolation / !command) used by
+// the common model-discovery and connectivity commands.
+pub mod pi_config_value;
 pub mod preset_models;
 pub mod proxy_gateway;
 pub mod reapply_applied_runtime;

@@ -2,7 +2,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModelsUrl, getDefaultModelsApiType } from '../../../../components/common/FetchModelsModal/request.ts';
+import {
+  buildModelsUrl,
+  getDefaultModelsApiType,
+  resolveModelsUrlApiKey,
+} from '../../../../components/common/FetchModelsModal/request.ts';
 
 test('model discovery selects native mode only for SDKs with native support', () => {
   assert.equal(getDefaultModelsApiType('@ai-sdk/anthropic'), 'native');
@@ -27,4 +31,20 @@ test('OpenAI-compatible and Anthropic discovery preserve base paths and omit que
   assert.equal(buildModelsUrl('https://api.example.test/custom', 'openai_compat', '@ai-sdk/google', 'key'),
     'https://api.example.test/custom/models');
   assert.equal(buildModelsUrl('', 'native', '@ai-sdk/google', 'key'), '');
+});
+
+test('Pi discovery keeps the raw config value template out of the previewed URL', () => {
+  assert.equal(resolveModelsUrlApiKey('$PI_KEY', 'pi'), undefined);
+  assert.equal(resolveModelsUrlApiKey('sk-live', undefined), 'sk-live');
+
+  // Google native auth travels in the query string, so the backend completes it
+  // with the resolved key instead of the URL preview leaking the raw template.
+  assert.equal(
+    buildModelsUrl('https://gemini.example.test', 'native', '@ai-sdk/google', resolveModelsUrlApiKey('$PI_KEY', 'pi')),
+    'https://gemini.example.test/v1beta/models',
+  );
+  assert.equal(
+    buildModelsUrl('https://gemini.example.test', 'native', '@ai-sdk/google', resolveModelsUrlApiKey('sk-live', undefined)),
+    'https://gemini.example.test/v1beta/models?key=sk-live',
+  );
 });

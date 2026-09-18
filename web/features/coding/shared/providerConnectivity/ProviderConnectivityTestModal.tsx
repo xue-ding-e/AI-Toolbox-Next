@@ -30,6 +30,7 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
+  configValueMode?: 'pi';
   /** Models whose own api/baseUrl overrides the provider connection (OMP). */
   modelConnections?: ProviderModelConnections;
 }
@@ -230,6 +231,7 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       providerName={connectivityInfo.providerName}
       providerConfig={connectivityInfo.providerConfig}
       apiFormat={connectivityInfo.apiFormat}
+      configValueMode={connectivityInfo.configValueMode}
       modelConnections={connectivityInfo.modelConnections}
       modelIds={connectivityInfo.modelIds}
       removableModelIds={removableModelIds ?? connectivityInfo.modelIds}

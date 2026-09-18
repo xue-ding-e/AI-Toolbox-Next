@@ -788,6 +788,9 @@ const PiPage: React.FC = () => {
       apiKey: getStringField(providerConfig, 'apiKey'),
       headers: asStringRecord(providerConfig.headers),
       sdkName: piApiToSdkName(api),
+      // Pi resolves `apiKey` / header values itself; the shared commands must
+      // resolve the models.json config value syntax instead of sending templates.
+      configValueMode: 'pi' as const,
       existingModelIds: getProviderModelRecords(provider.modelsProvider).map((entry) => entry.id),
     };
   }, [fetchModelsProviderId, piProviders]);
@@ -807,6 +810,7 @@ const PiPage: React.FC = () => {
       providerName: provider.displayName,
       providerConfig: buildPiOpenCodeProvider(provider, providerConfig),
       modelIds,
+      configValueMode: 'pi' as const,
     };
   }, [connectivityProviderId, piProviders]);
 
@@ -1628,6 +1632,7 @@ const PiPage: React.FC = () => {
           providerName: provider.displayName,
           providerConfig,
           modelIds,
+          configValueMode: 'pi' as const,
         },
         {
           requireBaseUrl: true,
@@ -2533,6 +2538,7 @@ const PiPage: React.FC = () => {
             apiKey={fetchModelsProviderInfo.apiKey}
             headers={fetchModelsProviderInfo.headers}
             sdkType={fetchModelsProviderInfo.sdkName}
+            configValueMode={fetchModelsProviderInfo.configValueMode}
             existingModelIds={fetchModelsProviderInfo.existingModelIds}
             onCancel={() => setFetchModelsModalOpen(false)}
             onSuccess={handleFetchModelsSuccess}
