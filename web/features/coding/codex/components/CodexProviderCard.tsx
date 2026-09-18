@@ -49,6 +49,7 @@ import {
   shouldShowCodexOfficialAccounts,
 } from '../utils/localProvider';
 import { codexProviderNeedsGatewayProxy } from '../utils/codexGatewayProxyNeed';
+import { buildOfficialAccountResetLine } from '../utils/codexQuotaDisplay';
 
 const { Text } = Typography;
 
@@ -340,6 +341,18 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
   };
 
+  const renderOfficialAccountResetLine = (account: CodexOfficialAccount) => {
+    const resetLine = buildOfficialAccountResetLine(account, t);
+    if (!resetLine) {
+      return null;
+    }
+    return (
+      <Text type="secondary" style={{ fontSize: 10, flexBasis: '100%' }}>
+        {resetLine}
+      </Text>
+    );
+  };
+
   const renderOfficialAccounts = () => {
     if (!shouldShowOfficialAccounts) {
       return null;
@@ -472,6 +485,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                           {`${t('codex.provider.officialAccountMonthlyLimitLabel')}: ${account.limitMonthlyText}`}
                         </Text>
                       )}
+                      {renderOfficialAccountResetLine(account)}
                     </>
                   )}
                   {showOfficialRuntimeState && account.isApplied && (

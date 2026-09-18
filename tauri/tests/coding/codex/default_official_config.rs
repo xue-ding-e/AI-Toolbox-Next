@@ -98,6 +98,7 @@ fn save_official_account(db: &SqliteDbState, provider_id: &str) {
         limit_5h_reset_at: None,
         limit_weekly_reset_at: None,
         limit_monthly_reset_at: None,
+        reset_credits_available: None,
         last_limits_fetched_at: None,
         last_error: None,
         sort_index: Some(0),

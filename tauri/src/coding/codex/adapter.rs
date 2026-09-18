@@ -279,6 +279,9 @@ pub fn from_db_value_official_account(value: Value) -> CodexOfficialAccount {
         limit_5h_reset_at: value.get("limit_5h_reset_at").and_then(|v| v.as_i64()),
         limit_weekly_reset_at: value.get("limit_weekly_reset_at").and_then(|v| v.as_i64()),
         limit_monthly_reset_at: value.get("limit_monthly_reset_at").and_then(|v| v.as_i64()),
+        reset_credits_available: value
+            .get("reset_credits_available")
+            .and_then(|v| v.as_i64()),
         last_limits_fetched_at: value
             .get("last_limits_fetched_at")
             .and_then(|v| v.as_str())
@@ -380,6 +383,12 @@ pub fn to_db_value_official_account(content: &CodexOfficialAccountContent) -> Va
         map.insert(
             "limit_monthly_reset_at".to_string(),
             Value::Number(limit_monthly_reset_at.into()),
+        );
+    }
+    if let Some(reset_credits_available) = content.reset_credits_available {
+        map.insert(
+            "reset_credits_available".to_string(),
+            Value::Number(reset_credits_available.into()),
         );
     }
     if let Some(ref last_limits_fetched_at) = content.last_limits_fetched_at {

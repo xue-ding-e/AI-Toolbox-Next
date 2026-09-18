@@ -165,6 +165,7 @@ struct UsageSnapshot {
     limit_5h_reset_at: Option<i64>,
     limit_weekly_reset_at: Option<i64>,
     limit_monthly_reset_at: Option<i64>,
+    reset_credits_available: Option<i64>,
 }
 
 fn oauth_scopes() -> &'static str {
@@ -780,6 +781,7 @@ fn build_virtual_local_account(auth: &Value) -> CodexOfficialAccount {
         limit_5h_reset_at: None,
         limit_weekly_reset_at: None,
         limit_monthly_reset_at: None,
+        reset_credits_available: None,
         last_limits_fetched_at: None,
         last_error: None,
         sort_index: None,
@@ -1266,6 +1268,28 @@ fn usage_account_id_from_auth(auth_snapshot: &Value) -> Option<String> {
         })
 }
 
+fn extract_reset_credits_available(body: &Value) -> Option<i64> {
+    let container = body
+        .get("rate_limit_reset_credits")
+        .or_else(|| body.get("rateLimitResetCredits"))
+        .or_else(|| {
+            body.get("data").and_then(|data| {
+                data.get("rate_limit_reset_credits")
+                    .or_else(|| data.get("rateLimitResetCredits"))
+            })
+        })?;
+
+    container
+        .get("available_count")
+        .or_else(|| container.get("availableCount"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+        })
+        .filter(|count| *count >= 0)
+}
+
 fn parse_usage_snapshot(body: &Value, plan_type: Option<&str>) -> UsageSnapshot {
     let (short_window, weekly_window, monthly_window) = classify_rate_windows(body);
     let has_short_window = plan_type_has_short_window(plan_type);
@@ -1299,6 +1323,7 @@ fn parse_usage_snapshot(body: &Value, plan_type: Option<&str>) -> UsageSnapshot 
             .and_then(|window| extract_reset_timestamp(window.value)),
         limit_monthly_reset_at: monthly_window
             .and_then(|window| extract_reset_timestamp(window.value)),
+        reset_credits_available: extract_reset_credits_available(body),
     }
 }
 
@@ -1387,6 +1412,8 @@ fn build_account_content_from_auth_snapshot(
         limit_5h_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_5h_reset_at),
         limit_weekly_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_weekly_reset_at),
         limit_monthly_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_monthly_reset_at),
+        reset_credits_available: usage_snapshot
+            .and_then(|snapshot| snapshot.reset_credits_available),
         last_limits_fetched_at: usage_snapshot.map(|_| now.clone()),
         last_error: None,
         sort_index: None,
@@ -1504,6 +1531,13 @@ async fn persist_usage_snapshot(
                         .map(|value| serde_json::json!(value))
                         .unwrap_or(Value::Null),
                 ),
+                (
+                    "reset_credits_available",
+                    usage_snapshot
+                        .reset_credits_available
+                        .map(|value| serde_json::json!(value))
+                        .unwrap_or(Value::Null),
+                ),
                 ("last_limits_fetched_at", Value::String(now.clone())),
                 (
                     "last_error",
@@ -1542,6 +1576,7 @@ async fn persist_refreshed_account_snapshot(
         limit_5h_reset_at: account.limit_5h_reset_at,
         limit_weekly_reset_at: account.limit_weekly_reset_at,
         limit_monthly_reset_at: account.limit_monthly_reset_at,
+        reset_credits_available: account.reset_credits_available,
         last_limits_fetched_at: account.last_limits_fetched_at.clone(),
         last_error: account.last_error.clone(),
         sort_index: account.sort_index,
@@ -2169,6 +2204,7 @@ pub async fn refresh_codex_official_account_limits(
         account.limit_5h_reset_at = usage_snapshot.limit_5h_reset_at;
         account.limit_weekly_reset_at = usage_snapshot.limit_weekly_reset_at;
         account.limit_monthly_reset_at = usage_snapshot.limit_monthly_reset_at;
+        account.reset_credits_available = usage_snapshot.reset_credits_available;
         account.last_limits_fetched_at = Some(Local::now().to_rfc3339());
         return Ok(account);
     }
@@ -2621,6 +2657,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_usage_snapshot_reads_reset_credit_count() {
+        let body = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 10.0,
+                    "limit_window_seconds": FIVE_HOUR_WINDOW_SECONDS,
+                    "reset_at": 111
+                }
+            },
+            "rate_limit_reset_credits": { "available_count": 2 }
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.reset_credits_available, Some(2));
+    }
+
+    #[test]
+    fn parse_usage_snapshot_keeps_zero_reset_credit_count_and_camel_case_alias() {
+        let body = serde_json::json!({
+            "rateLimitResetCredits": { "availableCount": 0 }
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.reset_credits_available, Some(0));
+    }
+
+    #[test]
+    fn parse_usage_snapshot_leaves_reset_credit_count_absent_when_missing() {
+        let body = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 10.0,
+                    "limit_window_seconds": FIVE_HOUR_WINDOW_SECONDS,
+                    "reset_at": 111
+                }
+            }
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.reset_credits_available, None);
+    }
+
+    #[test]
     fn parse_usage_snapshot_uses_limit_reached_hint_when_percent_is_missing() {
         let body = serde_json::json!({
             "rate_limit": {
@@ -2687,6 +2769,7 @@ mod tests {
             limit_5h_reset_at: None,
             limit_weekly_reset_at: None,
             limit_monthly_reset_at: None,
+            reset_credits_available: None,
             last_limits_fetched_at: None,
             last_error: None,
             sort_index: None,
@@ -2743,6 +2826,7 @@ mod tests {
             limit_5h_reset_at: None,
             limit_weekly_reset_at: None,
             limit_monthly_reset_at: None,
+            reset_credits_available: None,
             last_limits_fetched_at: None,
             last_error: None,
             sort_index: None,

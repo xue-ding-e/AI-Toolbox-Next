@@ -61,6 +61,7 @@ import {
 import { codexPromptApi } from '@/services/codexPromptApi';
 import CodexDeviceAuthModal from '../components/CodexDeviceAuthModal';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
+import { formatQuotaResetRemainingText } from '../utils/codexQuotaDisplay';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constants/configEvents';
 import { useSettingsStore } from '@/stores';
@@ -831,6 +832,17 @@ const CodexPage: React.FC = () => {
     }
     return new Date(value * 1000).toLocaleString();
   }, []);
+
+  const formatResetMoment = React.useCallback((value?: number | null) => {
+    if (value == null) {
+      return ACCOUNT_DETAILS_EMPTY_VALUE;
+    }
+    const absolute = new Date(value * 1000).toLocaleString();
+    const remaining = formatQuotaResetRemainingText(value, {
+      expiredLabel: t('codex.provider.officialAccountResetDone'),
+    });
+    return remaining ? `${absolute} (${remaining})` : absolute;
+  }, [t]);
 
   // 拖拽排序处理
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -2257,13 +2269,20 @@ const CodexPage: React.FC = () => {
                 {officialAccountDetails.account.limitMonthlyText || ACCOUNT_DETAILS_EMPTY_VALUE}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountShortWindowResetAt')}>
-                {formatUnixTimestamp(officialAccountDetails.account.limit5hResetAt)}
+                {formatResetMoment(officialAccountDetails.account.limit5hResetAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountWeeklyResetAt')}>
-                {formatUnixTimestamp(officialAccountDetails.account.limitWeeklyResetAt)}
+                {formatResetMoment(officialAccountDetails.account.limitWeeklyResetAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountMonthlyResetAt')}>
-                {formatUnixTimestamp(officialAccountDetails.account.limitMonthlyResetAt)}
+                {formatResetMoment(officialAccountDetails.account.limitMonthlyResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountResetCreditsLabel')}>
+                {typeof officialAccountDetails.account.resetCreditsAvailable === 'number'
+                  ? t('codex.provider.officialAccountResetCredits', {
+                    count: officialAccountDetails.account.resetCreditsAvailable,
+                  })
+                  : ACCOUNT_DETAILS_EMPTY_VALUE}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountLastLimitRefreshAt')}>
                 {formatDateTime(officialAccountDetails.account.lastLimitsFetchedAt)}

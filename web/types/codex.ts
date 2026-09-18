@@ -158,6 +158,7 @@ export interface CodexOfficialAccount {
   limit5hResetAt?: number;
   limitWeeklyResetAt?: number;
   limitMonthlyResetAt?: number;
+  resetCreditsAvailable?: number;
   lastLimitsFetchedAt?: string;
   lastError?: string;
   sortIndex?: number;

@@ -257,6 +257,8 @@ pub struct CodexOfficialAccountRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_monthly_reset_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_credits_available: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_limits_fetched_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -307,6 +309,8 @@ pub struct CodexOfficialAccount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_monthly_reset_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_credits_available: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_limits_fetched_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -341,6 +345,7 @@ impl From<CodexOfficialAccountRecord> for CodexOfficialAccount {
             limit_5h_reset_at: record.limit_5h_reset_at,
             limit_weekly_reset_at: record.limit_weekly_reset_at,
             limit_monthly_reset_at: record.limit_monthly_reset_at,
+            reset_credits_available: record.reset_credits_available,
             last_limits_fetched_at: record.last_limits_fetched_at,
             last_error: record.last_error,
             sort_index: record.sort_index,
@@ -382,6 +387,8 @@ pub struct CodexOfficialAccountContent {
     pub limit_weekly_reset_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_monthly_reset_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_credits_available: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_limits_fetched_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
