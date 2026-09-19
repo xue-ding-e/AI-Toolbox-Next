@@ -1,5 +1,9 @@
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneServices';
+import { SyncDescriptor } from 'monaco-editor/esm/vs/platform/instantiation/common/descriptors.js';
+import { IClipboardService } from 'monaco-editor/esm/vs/platform/clipboard/common/clipboardService.js';
+import { TauriClipboardService } from './monacoClipboardService';
 
 type MonacoWorkerFactory = new () => Worker;
 
@@ -31,3 +35,19 @@ globalScope.MonacoEnvironment = {
     return new WorkerFactory();
   },
 };
+
+// Replace Monaco's clipboard service with one backed by the OS clipboard
+// (issue #369, implementation in `./monacoClipboardService`): Monaco's
+// context-menu copy/paste cannot use the browser's native clipboard events the
+// way Ctrl+C/Ctrl+V do, so it falls back to `navigator.clipboard`, which is
+// unavailable in the Tauri WebViews. The Web API remains the fallback of the
+// base service for plain-browser dev.
+//
+// `StandaloneServices.initialize` only takes effect on the first call and only
+// overrides services that have not been instantiated yet, so this module must
+// stay in the `main.tsx` import graph ahead of the first editor creation.
+StandaloneServices.initialize({
+  // IClipboardService's decorator stringifies to 'clipboardService' — the key
+  // `StandaloneServices.initialize` re-resolves via createDecorator.
+  [IClipboardService.toString()]: new SyncDescriptor(TauriClipboardService),
+});

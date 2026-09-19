@@ -23,6 +23,7 @@ use std::sync::Mutex as StdMutex;
 // Module declarations
 pub mod app_paths;
 pub mod auto_launch;
+pub mod clipboard;
 pub mod coding;
 pub mod db;
 pub mod http_client;
@@ -1963,6 +1964,9 @@ pub fn run() {
             open_folder,
             open_existing_folder,
             set_window_background_color,
+            // System clipboard (Monaco context menu + editor clipboard service)
+            clipboard::copy_text_to_clipboard,
+            clipboard::read_clipboard_text,
             // Mini browser (relay dashboards / API balance)
             mini_browser::mini_browser_open,
             mini_browser::mini_browser_navigate,
