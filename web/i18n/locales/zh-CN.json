@@ -405,8 +405,8 @@
       "noSites": "暂无可用站点",
       "noSitesHint": "此 CLI 没有可代理的站点。启用聚合模式前，请先在对应页面添加并启用供应商。",
       "sitesRequired": "至少选择 1 个站点才能启用聚合模式",
+      "lastSiteRequired": "至少保留 1 个站点；要关闭聚合模式请使用上方的开关。",
       "selectAll": "全选",
-      "clearSelection": "清空",
       "selectedCount": "已选 {{count}} 个",
       "moveUp": "上移一位",
       "moveDown": "下移一位",
@@ -417,6 +417,7 @@
         "enableFailed": "启用聚合模式失败：{{error}}",
         "disabled": "已关闭聚合模式",
         "invalidConfig": "聚合配置无效，请检查站点选择与分隔符",
+        "draftSaveFailed": "保存聚合配置失败：{{error}}",
         "statusLoadFailed": "加载网关状态失败：{{error}}"
       },
       "effects": {
@@ -425,6 +426,7 @@
         "applyDisabled": "聚合模式开启时，供应商应用按钮会被锁定。"
       },
       "modeHint": "聚合多个站点到一个模型列表，按模型名前缀路由到对应站点；站点失败时自动尝试其他声明了同一模型的站点。",
+      "draftSitesDropped": "上次保存的站点中有已不可用的项，已从选择中移除。",
       "takeoverHint": "聚合模式使用网关接管该 CLI，并重写它的模型列表。"
     },
     "privacy": {

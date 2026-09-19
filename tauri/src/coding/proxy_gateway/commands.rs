@@ -1,3 +1,4 @@
+use super::aggregate_draft;
 use super::aggregate_naming::AggregateNamingMode;
 use super::cli_proxy;
 use super::listen::check_port_available;
@@ -10,14 +11,14 @@ use super::runtime::ProxyGatewayState;
 use super::session_import;
 use super::settings;
 use super::types::{
-    DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayCliKey, GatewayCliTakeoverStatus,
-    GatewayConnectivityTestRequest, GatewayConnectivityTestResponse, GatewayModelHealthItem,
-    GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
-    GatewayRequestLogFilters, GatewaySessionUsageImportInput, GatewaySessionUsageImportResult,
-    GatewayUsageSummary, GatewayUsageSummaryByCli, GatewayUsageTool, GatewayUsageTrendPoint,
-    ModelPricing, ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput,
-    ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput, ProxyGatewaySettings,
-    ProxyGatewayStatus, ProxyGatewayStopPreflight,
+    DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayAggregateConfig, GatewayCliKey,
+    GatewayCliTakeoverStatus, GatewayConnectivityTestRequest, GatewayConnectivityTestResponse,
+    GatewayModelHealthItem, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
+    GatewayRequestLogDetail, GatewayRequestLogFilters, GatewaySessionUsageImportInput,
+    GatewaySessionUsageImportResult, GatewayUsageSummary, GatewayUsageSummaryByCli,
+    GatewayUsageTool, GatewayUsageTrendPoint, ModelPricing, ProxyGatewayHealthCheckResult,
+    ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
+    ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
 use super::usage_stats;
 use crate::db::helpers::db_list;
@@ -407,6 +408,49 @@ pub async fn proxy_gateway_engage_aggregate(
     gateway_state.clear_provider_cache()?;
     emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
+}
+
+/// Read the saved aggregate draft: the site selection the settings page shows
+/// while aggregate mode is not engaged.
+#[tauri::command]
+pub async fn proxy_gateway_aggregate_draft(
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+) -> Result<Option<GatewayAggregateConfig>, String> {
+    let paths = proxy_gateway_paths(&app)?;
+    Ok(aggregate_draft::load_aggregate_draft(&paths, cli_key))
+}
+
+/// Persist the aggregate draft without engaging the mode.
+///
+/// This is not an engage command: the gateway does not have to be running and no
+/// CLI runtime config is rewritten, so a user can prepare the site selection
+/// first and enable it later.
+#[tauri::command]
+pub async fn proxy_gateway_save_aggregate_draft(
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+    provider_ids: Vec<String>,
+    separator: Option<String>,
+    aliases: Option<BTreeMap<String, String>>,
+    naming: Option<AggregateNamingMode>,
+) -> Result<GatewayAggregateConfig, String> {
+    let paths = proxy_gateway_paths(&app)?;
+    let separator =
+        separator.unwrap_or_else(|| cli_proxy::manifest::AGGREGATE_DEFAULT_SEPARATOR.to_string());
+    cli_proxy::save_aggregate_draft(
+        db_state.db(),
+        &paths,
+        cli_key,
+        GatewayAggregateConfig {
+            provider_ids,
+            separator,
+            aliases: aliases.unwrap_or_default(),
+            naming: naming.unwrap_or_default(),
+        },
+    )
+    .await
 }
 
 #[tauri::command]

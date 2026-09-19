@@ -405,8 +405,8 @@
       "noSites": "No available sites",
       "noSitesHint": "This CLI has no proxyable sites yet. Add and enable providers on its page before enabling aggregate mode.",
       "sitesRequired": "Select at least one site to enable aggregate mode",
+      "lastSiteRequired": "Keep at least one site selected; use the switch above to leave aggregate mode.",
       "selectAll": "Select all",
-      "clearSelection": "Clear",
       "selectedCount": "{{count}} selected",
       "moveUp": "Move up",
       "moveDown": "Move down",
@@ -417,6 +417,7 @@
         "enableFailed": "Failed to enable aggregate mode: {{error}}",
         "disabled": "Aggregate mode disabled",
         "invalidConfig": "Aggregate config is invalid. Check the site selection and separator.",
+        "draftSaveFailed": "Failed to save the aggregate configuration: {{error}}",
         "statusLoadFailed": "Failed to load gateway status: {{error}}"
       },
       "effects": {
@@ -425,6 +426,7 @@
         "applyDisabled": "Provider apply buttons are locked while aggregate mode is on."
       },
       "modeHint": "Merges several sites into one model list and routes each request by its model-name prefix; a failing site falls back to other sites declaring the same model.",
+      "draftSitesDropped": "Some saved sites are no longer available and were removed from the selection.",
       "takeoverHint": "Aggregate mode takes over this CLI through the gateway and rewrites its model list."
     },
     "privacy": {

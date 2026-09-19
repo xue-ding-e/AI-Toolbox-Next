@@ -1994,6 +1994,8 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_engage_single,
             coding::proxy_gateway::proxy_gateway_engage_failover,
             coding::proxy_gateway::proxy_gateway_engage_aggregate,
+            coding::proxy_gateway::proxy_gateway_aggregate_draft,
+            coding::proxy_gateway::proxy_gateway_save_aggregate_draft,
             coding::proxy_gateway::proxy_gateway_disengage_failover,
             coding::proxy_gateway::proxy_gateway_restore_cli_direct,
             coding::proxy_gateway::proxy_gateway_switch_primary_provider,

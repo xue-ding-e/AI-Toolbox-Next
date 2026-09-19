@@ -694,7 +694,127 @@ pub async fn engage_aggregate_cli(
 
     sync_manifest_managed_fields(&mut manifest, &targets_for_apply);
     write_manifest(paths, cli_key, &manifest)?;
+    persist_aggregate_draft(
+        paths,
+        cli_key,
+        &GatewayAggregateConfig {
+            provider_ids: ordered_ids.clone(),
+            separator: separator.clone(),
+            aliases: aliases.clone(),
+            naming,
+        },
+    );
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
+}
+
+/// Save the aggregate *draft*: the site selection the settings page shows while
+/// aggregate mode is not engaged.
+///
+/// Unlike `engage_aggregate_cli` this only writes the draft file: it needs no
+/// running gateway and must not touch the CLI runtime config or the model
+/// catalog, because nothing is being routed yet. The selection is validated
+/// against the currently proxyable providers for the same reason engage is, so
+/// the draft can never name a site the gateway would refuse.
+pub async fn save_aggregate_draft(
+    db: &SqliteDbState,
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    config: GatewayAggregateConfig,
+) -> Result<GatewayAggregateConfig, String> {
+    if cli_key != GatewayCliKey::Codex {
+        return Err("Aggregate mode is currently supported for Codex only".to_string());
+    }
+    if !is_supported_cli(cli_key) {
+        return Err("This CLI is not supported by the gateway MVP".to_string());
+    }
+    let config = normalize_aggregate_draft_config(db, cli_key, config).await?;
+    super::aggregate_draft::write_aggregate_draft(paths, cli_key, &config)?;
+    Ok(config)
+}
+
+/// Best-effort draft write for paths that already know the selection is valid.
+///
+/// Failing to remember the draft must not fail an engage that succeeded.
+fn persist_aggregate_draft(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    config: &GatewayAggregateConfig,
+) {
+    if let Err(error) = super::aggregate_draft::write_aggregate_draft(paths, cli_key, config) {
+        log::warn!("Failed to persist gateway aggregate draft: {error}");
+    }
+}
+
+/// Validate and normalize a draft selection: trim ids/separator/aliases, require
+/// at least one site, and reuse the engage-time alias and prefix rules.
+async fn normalize_aggregate_draft_config(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    config: GatewayAggregateConfig,
+) -> Result<GatewayAggregateConfig, String> {
+    let separator = config.separator.trim();
+    let separator = if separator.is_empty() {
+        manifest::AGGREGATE_DEFAULT_SEPARATOR.to_string()
+    } else {
+        separator.to_string()
+    };
+    manifest::validate_aggregate_separator(&separator)?;
+
+    // Aggregate mode cannot represent an empty site list, so an empty draft is
+    // rejected instead of being stored as "nothing selected".
+    let mut provider_ids: Vec<String> = Vec::with_capacity(config.provider_ids.len());
+    for provider_id in &config.provider_ids {
+        let provider_id = provider_id.trim().to_string();
+        if provider_id.is_empty() || provider_ids.iter().any(|id| id == &provider_id) {
+            continue;
+        }
+        provider_ids.push(provider_id);
+    }
+    if provider_ids.is_empty() {
+        return Err("Select at least one site for aggregate mode".to_string());
+    }
+
+    let available = load_candidate_providers(db, cli_key).await?;
+    let available_ids = available
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
+    for provider_id in &provider_ids {
+        if !available_ids.iter().any(|id| id == provider_id) {
+            return Err(format!(
+                "Site '{provider_id}' is not available for Gateway proxy. {NO_PROXYABLE_PROVIDER_MESSAGE}"
+            ));
+        }
+    }
+
+    // Site ids are trimmed above, so alias keys must be trimmed too: a padded key
+    // would otherwise look like it addresses an unselected site.
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    for (provider_id, alias) in config.aliases {
+        let provider_id = provider_id.trim().to_string();
+        let alias = alias.trim().to_string();
+        if provider_id.is_empty() || alias.is_empty() {
+            continue;
+        }
+        aliases.insert(provider_id, alias);
+    }
+    if let Some(unknown_provider_id) = aliases
+        .keys()
+        .find(|provider_id| !provider_ids.iter().any(|id| id == *provider_id))
+    {
+        return Err(format!(
+            "Aggregate alias references unselected site '{unknown_provider_id}'"
+        ));
+    }
+    super::aggregate_naming::validate_aggregate_aliases(&aliases)?;
+    super::aggregate_naming::validate_aggregate_site_prefixes(&available_ids, &aliases)?;
+
+    Ok(GatewayAggregateConfig {
+        provider_ids,
+        separator,
+        aliases,
+        naming: config.naming,
+    })
 }
 
 /// Build and write the aggregate model catalog for the Codex runtime root.

@@ -1,3 +1,4 @@
+pub mod aggregate_draft;
 pub mod aggregate_naming;
 pub mod cli_proxy;
 pub mod commands;

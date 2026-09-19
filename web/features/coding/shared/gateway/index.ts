@@ -51,6 +51,12 @@ export {
   type GatewayAggregateSeparatorInvalidReason,
 } from './gatewayAggregateConfig';
 export {
+  aliasesForSelectedSites,
+  defaultAggregateSiteIds,
+  resolveAggregateFormSeed,
+  type GatewayAggregateFormSeed,
+} from './gatewayAggregateDraft';
+export {
   getGatewayAggregateConfigVersion,
   notifyGatewayAggregateConfigChanged,
   runGatewayAggregateMutation,

@@ -13,7 +13,9 @@
 - 模型定价管理入口放在统计页筛选栏右侧，前端通过 `get_model_pricing_list` / `upsert_model_pricing` / `delete_model_pricing` 操作后端 `model_pricing` 表；手动“同步官方价格”只调用后端远端同步命令并刷新列表；每 CLI 默认计费配置通过 `ProxyGatewaySettings.app_configs` 保存，不另建前端本地状态源。
 - 请求详情优先以后端 JSONL 文件详情命令为准；`body`、`headers`、`response` 和 attempt/failover 过程只在详情文件里读取，不进入列表/统计状态。若详情文件不存在，后端可以用 SQLite 摘要降级返回基础字段，前端应继续把 body/header 显示为空态。
 - 模型健康度仍以后端本地文件状态为准，前端只能通过后端命令读取。
-- 聚合模式（第三种网关模式）的接管状态以后端 `manifest.aggregate` 为准：前端通过 `engageProxyGatewayAggregate(cliKey, providerIds, separator, aliases, naming)` 调用 `proxy_gateway_engage_aggregate`，**不自行持久化勾选站点、分隔符、别名或模板**，也不根据本地 state 推断当前模式。别名限 1–32 个 `[A-Za-z0-9_-]`；唯一性判定与后端 `validate_aggregate_site_prefixes` 一致，比的是**每个候选的有效前缀**（有别名用别名，否则用 provider id），所以别名既不能与别的别名重合，也不能吃掉某个**未选中**兜底站点的 provider id。`normalizeGatewayAggregateAliases` 之外不要另写校验。三种模板为站点.模型、模型@站点、仅模型，后者同名由后端确定性显示为 `#2/#3`（编号由后端在接管时固化进 manifest）。修改后需重新接管，Codex 重启后刷新模型列表。模式判断统一走 `providerProtocol.ts` 的 `isGatewayProxyMode` / `isGatewayFailoverMode` / `isGatewayAggregateMode`，不要在组件里重写 `mode === 'single' || mode === 'failover'` 这类硬编码比较——那会把聚合模式误判成未接管。
+- 聚合模式（第三种网关模式）的**生效态**以后端 `manifest.aggregate` 为准：前端通过 `engageProxyGatewayAggregate(cliKey, providerIds, separator, aliases, naming)` 调用 `proxy_gateway_engage_aggregate`，**不在本地 state 里持久化勾选站点、分隔符、别名或模板**，也不根据本地 state 推断当前模式。未启用时的草稿另有后端事实源（见下一条）。别名限 1–32 个 `[A-Za-z0-9_-]`；唯一性判定与后端 `validate_aggregate_site_prefixes` 一致，比的是**每个候选的有效前缀**（有别名用别名，否则用 provider id），所以别名既不能与别的别名重合，也不能吃掉某个**未选中**兜底站点的 provider id。`normalizeGatewayAggregateAliases` 之外不要另写校验。三种模板为站点.模型、模型@站点、仅模型，后者同名由后端确定性显示为 `#2/#3`（编号由后端在接管时固化进 manifest）。修改后需重新接管，Codex 重启后刷新模型列表。模式判断统一走 `providerProtocol.ts` 的 `isGatewayProxyMode` / `isGatewayFailoverMode` / `isGatewayAggregateMode`，不要在组件里重写 `mode === 'single' || mode === 'failover'` 这类硬编码比较——那会把聚合模式误判成未接管。
+- 聚合**草稿**（未启用时的站点选择、分隔符、别名、模板）也以后端为准：读取走 `getProxyGatewayAggregateDraft` → `proxy_gateway_aggregate_draft`，保存走 `saveProxyGatewayAggregateDraft` → `proxy_gateway_save_aggregate_draft`（落 CLI manifest 同目录的 `aggregate-draft.json`，不要求网关在运行，也不改写 CLI 运行时配置）。表单种子优先级固定为：**已启用的 `manifest.aggregate` → 已保存草稿（按当前候选集清洗）→ 当前已应用供应商（`listCodexProviders()` 的 `isApplied`）→ 第一个候选站点**。已启用分支只做规范化、保留失效站点（暴露成 `invalidConfig`，不静默改写正在生效的接管）；未启用分支用 `reconcileAggregateSiteSelection` 丢弃失效站点并给出 `draftSitesDropped` 提示。种子逻辑集中在 `gatewayAggregateDraft.ts::resolveAggregateFormSeed`，不要在组件里各写一份。
+- 聚合表单**不允许空选择**：最后一个已选站点的勾选框禁用并提示（`lastSiteRequired`），`清空` 按钮已移除、`全选` 常驻；只要 CLI 还有可代理站点，种子就不会是空列表。退出聚合模式只能走开关（`恢复直连` 的门控不变）。取消勾选站点时必须同时丢弃该站点的别名，否则 `normalizeGatewayAggregateAliases` 会一直返回 `null`、开关被静默禁用——这正是用户反馈过的「点了没反应」。
 - `gatewayFailoverActive` 与聚合模式**语义不同**：aggregate 不是 failover 的一种。聚合模式下 `GatewayFailoverButton` 展示站点前缀说明并隐藏故障转移开关，只保留「恢复直连」，因为聚合没有 P0 主渠道可切、也没有单一渠道可故障转移。
 - 聚合模式的「恢复直连」在两个入口必须用同一门控：`primary_provider_id`（= 第一个选中站点）需要网关做协议转换时，`GatewayFailoverButton` 和设置页聚合开关都拒绝恢复直连并显示 `restoreDirectUnavailableHintProtocol`（`codexGatewayProxyNeed.ts::primaryCodexProviderNeedsGatewayProxy` 是唯一判定处，不要各写一份格式推断）。退路是先换掉/取消勾选该站点或禁用该 provider，而不是把开关放开写出一份 Codex 用不了的直连配置。
 - 接管弹窗里的 slug 预览必须走 `buildGatewayAggregateSitePreviewSlug`：有效前缀是 alias 或 provider id，并带 `naming` 模板；不能只拼 `<siteId><sep><model>`，否则 aliases、`model_at_site`、`model_only` 都会显示错。
@@ -47,6 +49,9 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 未启用聚合时，勾选站点/排序/改分隔符/改别名/换模板都必须落草稿（组件里唯一入口是 `applySiteSelection` 与 `persistAggregateDraft`）；否则关闭抽屉（Codex 页抽屉是 `destroyOnHidden`）或切到统计/明细 Tab（设置面板随 Tab 卸载）后选择就丢了。已启用时同一批改动必须重新接管，因为生效态只有 manifest。
+- 聚合表单种子的 effect 只能依赖「已启用配置的内容 key（`activeAggregateKey`）+ 候选集 + 草稿加载 revision + provider 列表」，**不能依赖 `selectedStatus` 对象身份**：状态每轮刷新都会换新对象，按身份重新种子会把用户刚改的内容回滚。同理，保存草稿成功后只更新 ref 与提示状态，不要重新种子。
+- 草稿写入必须串行化在 `runGatewayAggregateMutation` 通道内，避免慢的旧写入后到、把新选择覆盖回去；保存回调按 `draftRequestRef` 丢弃过期结果。
 - `transport=websocket` 的普通请求按 `stream_outcome` 显示业务终态，不展示内部 HTTP 占位 `0`，也不把握手 `101` 展示为模型成功。`websocket_handshake` 的 `426` 是 HTTP 回退提示，使用中性文本；真实握手错误仍展示状态。WS 标记和预热标记沿用现有紧凑副文本，主题状态色只作辅助。
 - WS/HTTP 标记反映每条请求的实际传输，不由当前设置或 provider 推断；不同 Codex 会话可以对同一 provider 使用不同传输。默认关闭的 Codex WebSocket 开关在设置页“转发与容错 / 传输方式”，不隐藏或改写历史 WS 明细；排查混合记录要核对详情中的 path、会话标识和终态，不能直接当成重复记账或同会话回退。
 - WS 握手不展示 Token/费用；预热只在后端有真实 Token 时展示用量。连接/response/previous/stream ID、握手状态/尝试和事件错误从 JSONL detail 读取，长 ID 要能悬停查看，回退原因允许换行；summary-only 不伪造这些详情。Headers tab 标明所显示的是客户端握手请求和网关握手响应。
@@ -118,3 +123,6 @@ sequenceDiagram
 - 至少验证：统计页从真实 SQLite 摘要/日聚合命令读取数据，空数据时显示空态，不伪造请求量。
 - 至少验证：请求页列表只拉数据库摘要，点击记录后弹出 80% 窗口级大弹窗再按 trace id 拉文件详情，并能展示未保存 body/headers 的空态。
 - 至少验证：设置 Tab 自动保存仍走原有后端保存命令，运行中保存会同步更新运行态共享 settings。
+- 至少验证：未启用聚合时勾选站点/改分隔符后关闭抽屉或切到其它 Tab 再回来，选择与分隔符仍在；应用重启后仍在。
+- 至少验证：没有草稿时打开聚合表单默认选中当前已应用的供应商；取消勾选最后一个站点被拒绝并提示，`全选` 仍可用。
+- 至少验证：草稿里存在已删除/已禁用的站点时，打开表单会丢弃它们、提示已移除，并把选择回落到当前已应用的供应商。

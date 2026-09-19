@@ -1,6 +1,7 @@
 use crate::db::SqliteDbState;
 use crate::http_client;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -42,6 +43,67 @@ fn get_bundled_preset_models() -> Option<Value> {
     } else {
         None
     }
+}
+
+// ============================================================================
+// Display-name lookup
+// ============================================================================
+
+/// Model id -> display name index built once from the bundled preset models.
+///
+/// Built from the compile-time bundled file instead of the app-data cache so
+/// callers stay deterministic and work offline; the cache is the frontend's
+/// remote-refresh target, not a backend read path.
+static PRESET_DISPLAY_NAMES: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+/// Display name the preset models declare for one model id.
+///
+/// Returns `None` for an unknown or blank id so callers keep their own fallback
+/// (normally the raw id).
+pub fn display_name_for_model_id(model_id: &str) -> Option<String> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    PRESET_DISPLAY_NAMES
+        .get_or_init(build_preset_display_name_index)
+        .get(model_id)
+        .cloned()
+}
+
+fn build_preset_display_name_index() -> HashMap<String, String> {
+    let mut index = HashMap::new();
+    let Ok(presets) = serde_json::from_str::<Value>(DEFAULT_PRESET_MODELS_JSON) else {
+        return index;
+    };
+    let Some(groups) = presets.as_object() else {
+        return index;
+    };
+    for models in groups.values() {
+        let Some(models) = models.as_array() else {
+            continue;
+        };
+        for model in models {
+            let id = model
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            let name = model
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            if let (Some(id), Some(name)) = (id, name) {
+                // First group wins if one id ever appears twice; the bundled file
+                // has no conflicting duplicates today.
+                index
+                    .entry(id.to_string())
+                    .or_insert_with(|| name.to_string());
+            }
+        }
+    }
+    index
 }
 
 // ============================================================================
@@ -144,6 +206,7 @@ pub async fn fetch_remote_preset_models(
 
 #[cfg(test)]
 mod tests {
+    use super::display_name_for_model_id;
     use super::DEFAULT_PRESET_MODELS_JSON;
     use serde_json::Value;
 
@@ -151,6 +214,38 @@ mod tests {
     const EXTENDED_ADAPTIVE_EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
     const LEGACY_THINKING_LEVELS: [(&str, u64); 3] =
         [("low", 5_000), ("medium", 13_000), ("high", 18_000)];
+
+    #[test]
+    fn display_name_lookup_covers_bundled_ids_and_rejects_unknown_ones() {
+        assert_eq!(
+            display_name_for_model_id("gpt-6-astra").as_deref(),
+            Some("GPT-6 Astra")
+        );
+        // Ids are trimmed before lookup.
+        assert_eq!(
+            display_name_for_model_id(" gpt-5.6-sol ").as_deref(),
+            Some("GPT-5.6 Sol")
+        );
+        // Unknown or blank ids stay unknown so callers keep their own fallback.
+        assert_eq!(display_name_for_model_id("no-such-model"), None);
+        assert_eq!(display_name_for_model_id("   "), None);
+
+        // Every bundled group's `id`/`name` pairs stay reachable through the
+        // index, so a new preset does not silently drop out of the lookup.
+        let presets: Value =
+            serde_json::from_str(DEFAULT_PRESET_MODELS_JSON).expect("bundled JSON should parse");
+        for models in presets.as_object().expect("preset groups").values() {
+            for model in models.as_array().expect("group is an array") {
+                let (Some(id), Some(name)) = (
+                    model.get("id").and_then(Value::as_str),
+                    model.get("name").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                assert_eq!(display_name_for_model_id(id).as_deref(), Some(name), "{id}");
+            }
+        }
+    }
 
     fn bundled_anthropic_models() -> Value {
         let presets: Value = serde_json::from_str(DEFAULT_PRESET_MODELS_JSON)

@@ -2870,17 +2870,30 @@ fn codex_catalog_model_specs(
     specs
 }
 
+/// Display name for one catalog entry: the user's explicit `displayName`, else the
+/// preset-models name registered for that model id, else the raw id.
+///
+/// The middle step matters for models that only exist as an id — a provider's own
+/// default model and mapping rows without a display name — because Codex's UIs
+/// otherwise list `gpt-6-astra` even though a readable name exists.
+fn codex_catalog_display_name(spec: &CodexCatalogModelSpec) -> String {
+    spec.display_name
+        .clone()
+        .or_else(|| crate::coding::preset_models::display_name_for_model_id(&spec.model))
+        .unwrap_or_else(|| spec.model.clone())
+}
+
 fn codex_model_catalog_entry(
     spec: &CodexCatalogModelSpec,
     index: usize,
     default_context_window: u64,
 ) -> Value {
-    let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+    let display_name = codex_catalog_display_name(spec);
     let context_window = spec.context_window.unwrap_or(default_context_window);
     let mut entry = serde_json::json!({
         "slug": spec.model.as_str(),
-        "display_name": display_name,
-        "description": display_name,
+        "display_name": display_name.as_str(),
+        "description": display_name.as_str(),
         "default_reasoning_level": "medium",
         "supported_reasoning_levels": [
             { "effort": "low", "description": "Fast responses with lighter reasoning" },
@@ -3005,11 +3018,48 @@ fn aggregate_catalog_from_entries(
     serde_json::json!({ "models": models })
 }
 
+/// Model specs one aggregate site contributes to the catalog.
+///
+/// Reuses the single-provider spec builder so a site publishes the same models
+/// in aggregate mode as it does when applied alone: its `modelCatalog` mapping
+/// rows, plus the default model its own `config` points at.
+///
+/// The site's own default model is added unconditionally, not only through the
+/// auto-review seeding inside `codex_catalog_model_specs`: single-provider mode
+/// sends that model verbatim, so aggregate mode must not hide it just because the
+/// site declares no auto-review override.
+fn aggregate_site_model_specs(settings_config: &Value) -> Vec<CodexCatalogModelSpec> {
+    let site_config_toml = settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut specs = codex_catalog_model_specs(settings_config, site_config_toml);
+    if let Some(default_model) = extract_codex_top_level_model(site_config_toml) {
+        if !specs.iter().any(|spec| spec.model == default_model) {
+            specs.push(CodexCatalogModelSpec {
+                model: default_model,
+                display_name: None,
+                context_window: None,
+                auto_review_model_override: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
+                service_tiers: None,
+            });
+        }
+    }
+    specs
+}
+
 /// Collect one aggregate entry per `(site, model)` pair across `sites`.
 ///
 /// `sites` is `(site_id, site_label, settings_config)` in the user's display
 /// order; the order of the produced entries follows it, so the Codex model list
 /// mirrors the order the user arranged in the settings panel.
+///
+/// The models of one site are exactly the ones its single-provider catalog would
+/// publish (`aggregate_site_model_specs`): the `modelCatalog` mapping rows plus
+/// the site's own default model. Selecting a site in aggregate mode therefore
+/// never hides a model the user can pick when that provider is applied alone.
 ///
 /// Also returns the `(site, upstream model) -> slug` table that was allocated
 /// alongside the catalog. The caller persists it in the manifest so request-time
@@ -3029,84 +3079,32 @@ fn codex_aggregate_catalog_entries(
         if site_id.trim().is_empty() {
             continue;
         }
-        let Some(models) = settings_config
-            .get("modelCatalog")
-            .and_then(|catalog| catalog.get("models"))
-            .and_then(|models| models.as_array())
-        else {
-            continue;
-        };
 
-        // Mirror the single-provider catalog's naming helpers so a mapped model
-        // keeps its display name and context window in aggregate mode too.
-        for item in models {
-            let Some(model) = item
-                .get("model")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|model| !model.is_empty())
-            else {
-                continue;
-            };
-            let Some(slug) = naming.allocate(&mut allocator, site_id, model)? else {
+        // Reuse the single-provider spec builder so the aggregate list exposes
+        // everything that site can actually serve — the mapping rows plus the
+        // default model its own config points at — instead of only the mapping.
+        for spec in aggregate_site_model_specs(settings_config) {
+            let Some(slug) = naming.allocate(&mut allocator, site_id, &spec.model)? else {
                 continue;
             };
             slug_table.push(AggregateSlugEntry {
                 site_id: site_id.clone(),
-                upstream_model: model.to_string(),
+                upstream_model: spec.model.clone(),
                 slug: slug.clone(),
             });
 
-            let model_display_name = item
-                .get("displayName")
-                .or_else(|| item.get("display_name"))
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or(model);
+            let model_display_name = codex_catalog_display_name(&spec);
 
             entries.push(AggregateCatalogEntry {
                 slug,
                 display_name: format!("{site_label} · {model_display_name}"),
-                context_window: parse_codex_positive_u64(
-                    item.get("contextWindow")
-                        .or_else(|| item.get("context_window")),
-                ),
-                reasoning_levels: item
-                    .get("reasoningLevels")
-                    .or_else(|| item.get("reasoning_levels"))
-                    .and_then(|value| value.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str())
-                            .map(str::trim)
-                            .filter(|level| !level.is_empty())
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|levels| !levels.is_empty()),
-                default_reasoning_level: item
-                    .get("defaultReasoningLevel")
-                    .or_else(|| item.get("default_reasoning_level"))
-                    .and_then(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|level| !level.is_empty())
-                    .map(str::to_string),
-                service_tiers: item
-                    .get("serviceTiers")
-                    .or_else(|| item.get("service_tiers"))
-                    .and_then(|value| value.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str())
-                            .map(str::trim)
-                            .filter(|tier| !tier.is_empty())
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|tiers| !tiers.is_empty()),
+                context_window: spec.context_window,
+                reasoning_levels: spec.reasoning_levels,
+                default_reasoning_level: spec.default_reasoning_level,
+                service_tiers: spec.service_tiers,
+                // The provider-level auto-review override names a bare upstream
+                // model, which aggregate mode only addresses through a site
+                // prefix, so the aggregate entries never advertise it.
                 auto_review_model_override: None,
             });
         }
@@ -4553,15 +4551,16 @@ pub async fn read_codex_settings(
 mod tests {
     use super::{
         aggregate_catalog_from_entries, append_toml_configs, build_written_codex_config_toml,
-        codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_model_specs,
-        ensure_codex_model_catalog_pointer, extract_codex_common_config_from_settings_toml,
-        extract_provider_settings_for_storage, fill_template_fields_from_static,
-        heal_dangling_codex_model_provider, infer_codex_provider_category_from_settings,
-        merge_codex_auth_json, merge_remote_codex_official_models, normalize_codex_model_tier,
+        codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_display_name,
+        codex_catalog_model_specs, ensure_codex_model_catalog_pointer,
+        extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
+        fill_template_fields_from_static, heal_dangling_codex_model_provider,
+        infer_codex_provider_category_from_settings, merge_codex_auth_json,
+        merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
         read_codex_aggregate_selection, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, write_codex_aggregate_catalog,
+        strip_codex_common_config_from_toml, write_codex_aggregate_catalog, CodexCatalogModelSpec,
         CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
         RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
@@ -5107,6 +5106,67 @@ approval_policy = "never"
     }
 
     #[test]
+    fn catalog_display_name_falls_back_to_preset_models_then_raw_id() {
+        let spec = |model: &str, display_name: Option<&str>| CodexCatalogModelSpec {
+            model: model.to_string(),
+            display_name: display_name.map(str::to_string),
+            context_window: None,
+            auto_review_model_override: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
+            service_tiers: None,
+        };
+
+        // An explicit user value always wins over the preset name.
+        assert_eq!(
+            codex_catalog_display_name(&spec("gpt-6-astra", Some("6 Astra"))),
+            "6 Astra"
+        );
+        // A bare id picks up the preset-models name ...
+        assert_eq!(
+            codex_catalog_display_name(&spec("gpt-6-astra", None)),
+            "GPT-6 Astra"
+        );
+        // ... and an id the bundled presets do not know keeps the raw id.
+        assert_eq!(
+            codex_catalog_display_name(&spec("my-relay-model", None)),
+            "my-relay-model"
+        );
+    }
+
+    #[test]
+    fn single_provider_catalog_uses_preset_display_name_for_a_bare_model_id() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "gpt-6-astra" }] }
+        });
+
+        prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model = \"gpt-6-astra\"\n",
+        )
+        .expect("catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        assert_eq!(
+            catalog["models"][0]["display_name"].as_str(),
+            Some("GPT-6 Astra")
+        );
+        assert_eq!(
+            catalog["models"][0]["description"].as_str(),
+            Some("GPT-6 Astra")
+        );
+        assert_eq!(catalog["models"][0]["slug"].as_str(), Some("gpt-6-astra"));
+    }
+
+    #[test]
     fn codex_model_catalog_seeds_default_model_when_only_auto_review_override_is_set() {
         let settings = json!({
             "autoReviewModelOverride": "gpt-5.5"
@@ -5293,6 +5353,153 @@ approval_policy = "never"
     }
 
     #[test]
+    fn aggregate_catalog_includes_each_sites_own_default_model() {
+        let sites = vec![
+            (
+                "site-a".to_string(),
+                "AxonHub-6 Astra".to_string(),
+                json!({
+                    "config": "model = \"gpt-6-astra\"\nmodel_provider = \"custom\"\n",
+                    "modelCatalog": {
+                        "models": [
+                            { "model": "deepseek-v4.1-flash", "displayName": "DeepSeek V4.1 Flash" }
+                        ]
+                    },
+                    "autoReviewModelOverride": "deepseek-v4.1-flash"
+                }),
+            ),
+            (
+                "site-b".to_string(),
+                "AxonHub-5.6 Sol".to_string(),
+                json!({
+                    "config": "model = \"gpt-5.6-sol\"\n",
+                    "modelCatalog": {
+                        "models": [{ "model": "kimi-k3", "displayName": "Kimi K3" }]
+                    }
+                }),
+            ),
+        ];
+
+        let (entries, slug_table) =
+            codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        let slugs: Vec<&str> = entries.iter().map(|entry| entry.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            vec![
+                "site-a.deepseek-v4.1-flash",
+                "site-a.gpt-6-astra",
+                "site-b.kimi-k3",
+                "site-b.gpt-5.6-sol",
+            ]
+        );
+        // The site's own model keeps its raw id as display name, like the
+        // single-provider catalog does for the seeded default model.
+        assert_eq!(entries[1].display_name, "AxonHub-6 Astra · GPT-6 Astra");
+        // Site b declares no auto-review override; its own model is still listed.
+        assert_eq!(entries[3].display_name, "AxonHub-5.6 Sol · GPT-5.6 Sol");
+        // Catalog and slug table come from the same allocation pass.
+        assert_eq!(slug_table.len(), entries.len());
+        assert_eq!(slug_table[1].site_id, "site-a");
+        assert_eq!(slug_table[1].upstream_model, "gpt-6-astra");
+    }
+
+    #[test]
+    fn aggregate_catalog_models_match_the_single_provider_catalog() {
+        // Parity invariant: picking a provider on its own and picking it as an
+        // aggregate site must offer the same upstream models. `gpt-6-astra` is
+        // the provider's own default (`config.model`), which single-provider mode
+        // seeds into its catalog and aggregate mode now mirrors.
+        let config_toml = "model = \"gpt-6-astra\"\nmodel_provider = \"custom\"\n";
+        let settings = json!({
+            "config": config_toml,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4.1-flash", "displayName": "DeepSeek V4.1 Flash" }
+                ]
+            },
+            "autoReviewModelOverride": "deepseek-v4.1-flash"
+        });
+        let sites = vec![(
+            "site-a".to_string(),
+            "AxonHub-6 Astra".to_string(),
+            settings.clone(),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let aggregate_models: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry.slug.trim_start_matches("site-a."))
+            .collect();
+        let single_specs = codex_catalog_model_specs(&settings, config_toml);
+        let single_models: Vec<&str> = single_specs
+            .iter()
+            .map(|spec| spec.model.as_str())
+            .collect();
+
+        assert_eq!(aggregate_models, single_models);
+        assert!(single_models.contains(&"gpt-6-astra"));
+    }
+
+    #[test]
+    fn aggregate_catalog_does_not_duplicate_default_model_without_display_name() {
+        // Same as above but the mapping row carries no display name: the row's
+        // entry (raw model id as display name) must still be the only one.
+        let sites = vec![(
+            "site-a".to_string(),
+            "Site A".to_string(),
+            json!({
+                "config": "model = \"gpt-6-astra\"\n",
+                "modelCatalog": { "models": [{ "model": "gpt-6-astra" }] }
+            }),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].slug, "site-a.gpt-6-astra");
+        assert_eq!(entries[0].display_name, "Site A · GPT-6 Astra");
+    }
+
+    #[test]
+    fn aggregate_catalog_lists_default_model_without_any_mapping() {
+        let sites = vec![(
+            "site-a".to_string(),
+            "Site A".to_string(),
+            json!({ "config": "model = \"gpt-6-astra\"\n" }),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].slug, "site-a.gpt-6-astra");
+    }
+
+    #[test]
+    fn aggregate_catalog_keeps_mapping_row_metadata_for_the_default_model() {
+        // When the mapping already declares the default model, the mapping row
+        // (display name and context window) wins and no duplicate is appended.
+        let sites = vec![(
+            "site-a".to_string(),
+            "Site A".to_string(),
+            json!({
+                "config": "model = \"gpt-6-astra\"\n",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "gpt-6-astra", "displayName": "6 Astra", "contextWindow": 300000 }
+                    ]
+                }
+            }),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].display_name, "Site A · 6 Astra");
+        assert_eq!(entries[0].context_window, Some(300_000));
+    }
+
+    #[test]
     fn aggregate_catalog_entry_reuses_neutral_template_fields() {
         let sites = vec![aggregate_site(
             "site1",
@@ -5378,7 +5585,7 @@ approval_policy = "never"
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
 
         assert_eq!(entries[0].slug, "deepseek-v4-flash@unsee");
-        assert_eq!(entries[0].display_name, "Unsee Relay · deepseek-v4-flash");
+        assert_eq!(entries[0].display_name, "Unsee Relay · DeepSeek V4 Flash");
     }
 
     #[test]

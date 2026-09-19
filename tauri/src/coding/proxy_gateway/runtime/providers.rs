@@ -1038,10 +1038,13 @@ fn provider_meta_from_record(
 /// fallback or as a bare-model target. Providers without a declared catalog
 /// return an empty list, which callers treat as "offers nothing" and exclude.
 ///
-/// The extraction must stay identical to the one that publishes the Codex
-/// catalog (`codex::commands::codex_aggregate_catalog_entries`), or the router
-/// would resolve slugs that the model list never shows: the `modelCatalog.models`
-/// array only, keyed on `model`, which is also what the single-provider catalog
+/// Deliberately narrower than the published Codex aggregate catalog: that catalog
+/// also lists each site's own default model (`codex::commands::aggregate_site_model_specs`),
+/// and those entries are addressed by their published slug or a
+/// `<site><sep><model>` prefix, both of which are resolved before this list is
+/// consulted. Keep this to the `modelCatalog.models` array only, keyed on
+/// `model`, so a *bare* model name falls back only to a site that explicitly
+/// declares it — the same array the single-provider catalog
 /// (`codex_catalog_model_specs`) reads. Do not widen this to `model_catalog_model_id`
 /// (it also accepts `id`/`name`/`modelId`) or to a root-level `models` array.
 fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String> {

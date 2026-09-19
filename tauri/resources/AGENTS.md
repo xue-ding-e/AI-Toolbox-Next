@@ -60,6 +60,7 @@ sequenceDiagram
 ## 跨模块依赖
 
 - `tauri/src/coding/preset_models.rs` 依赖 `preset_models.json` 作为编译期默认数据，并向前端暴露加载缓存与远端刷新命令。
+- `tauri/src/coding/codex/commands.rs` 通过 `coding::preset_models::display_name_for_model_id` 用 bundled 预设的 `id -> name` 生成 Codex model catalog 的 `display_name` 回退（显式 `displayName` → 预设名称 → 原始 id）。该查询只读编译期 bundled 文件，不读 app data 缓存，保证 catalog 生成确定且离线可用；重复 id 按 JSON 分组顺序取先出现的 name。
 - `tauri/src/coding/open_code/free_models.rs` 依赖 `models.dev.json` 作为 OpenCode 默认模型数据。
 - `tauri/src/db/model_pricing_seed.rs` 依赖 `model_pricing.json` 作为 Gateway 官方模型定价默认数据；运行时远端同步只增量插入缺失行，不覆盖用户已有价格。
 - `web/app/providers.tsx` 在启动时先加载 preset models / Gateway provider profiles 本地缓存，再异步拉远端并更新前端内存态。
@@ -88,5 +89,6 @@ sequenceDiagram
 - 修改 GPT-5.6 预设或共享思考等级时，至少确认三个 canonical ID 的顺序与 `none/low/medium/high/xhigh/max` variants，并确认 Pi 前后端仍能保留 `max`、拒绝把 `ultra` 当成普通 thinking level。
 - 修改 Grok 4.5 预设时，至少确认它位于 `@ai-sdk/xai`，只展示 canonical ID，保留 500K context、500K compatibility output limit 与 `low/medium/high` 三档 reasoning。
 - 修改 `@ai-sdk/anthropic` Claude 预设后，至少运行 `cargo test coding::preset_models::tests`，确认 adaptive、effort-only 与固定 budget 三类模型没有互相串用参数。
+- 修改 `preset_models.json` 的 `id` / `name` 后至少跑 `cargo test --lib preset_models`：`display_name_lookup_covers_bundled_ids_and_rejects_unknown_ones` 会逐个断言每个 bundled id 仍能查到自己的 name，重复 id 或漏写 `name` 会直接暴露。
 - 修改 `model_pricing.json` 后，至少跑一次 `cargo test model_pricing_seed` 或等价测试，确认 bundled JSON 可解析且 seed 仍是 `INSERT OR IGNORE` 语义。
 - 如果本轮同时改了缓存/远端刷新链路，还要额外区分 bundled defaults、app data cache 和 remote fetch 三条路径分别验证。

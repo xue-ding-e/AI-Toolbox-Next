@@ -579,6 +579,37 @@ export const engageProxyGatewayAggregate = async (
   });
 };
 
+/**
+ * Read the saved aggregate draft: the site selection the settings page shows
+ * while aggregate mode is not engaged.
+ */
+export const getProxyGatewayAggregateDraft = async (
+  cliKey: GatewayCliKey,
+): Promise<GatewayAggregateConfig | null> => {
+  return invoke<GatewayAggregateConfig | null>('proxy_gateway_aggregate_draft', { cliKey });
+};
+
+/**
+ * Persist the aggregate draft without engaging the mode, so the selection
+ * survives closing the editor. No CLI runtime config is rewritten and the
+ * gateway does not have to be running.
+ */
+export const saveProxyGatewayAggregateDraft = async (
+  cliKey: GatewayCliKey,
+  providerIds: string[],
+  separator: string,
+  aliases?: Record<string, string>,
+  naming: GatewayAggregateNamingMode = 'site_model',
+): Promise<GatewayAggregateConfig> => {
+  return invoke<GatewayAggregateConfig>('proxy_gateway_save_aggregate_draft', {
+    cliKey,
+    providerIds,
+    separator,
+    aliases: aliases ?? {},
+    naming,
+  });
+};
+
 export const disengageProxyGatewayFailover = async (
   cliKey: GatewayCliKey
 ): Promise<GatewayCliTakeoverStatus> => {

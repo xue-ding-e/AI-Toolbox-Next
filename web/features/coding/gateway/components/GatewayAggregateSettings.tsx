@@ -23,8 +23,11 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   DEFAULT_AGGREGATE_SEPARATOR,
   engageProxyGatewayAggregate,
+  getProxyGatewayAggregateDraft,
   getProxyGatewayCliStatuses,
   restoreProxyGatewayCliDirect,
+  saveProxyGatewayAggregateDraft,
+  type GatewayAggregateConfig,
   type GatewayCliKey,
   type GatewayAggregateNamingMode,
   type GatewayCliTakeoverStatus,
@@ -35,6 +38,7 @@ import type { CodexProvider } from '@/types/codex';
 import { isCodexLocalProviderId } from '@/features/coding/codex/utils/localProvider';
 import { primaryCodexProviderNeedsGatewayProxy } from '@/features/coding/codex/utils/codexGatewayProxyNeed';
 import {
+  aliasesForSelectedSites,
   buildGatewayAggregateSitePreviewSlug,
   getGatewayProviderProfilesVersion,
   getGatewayAggregateConfigVersion,
@@ -43,6 +47,7 @@ import {
   moveAggregateSite,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
+  resolveAggregateFormSeed,
   restoreDirectUnavailableHintKey,
   subscribeGatewayProviderProfiles,
   subscribeGatewayAggregateConfig,
@@ -91,6 +96,8 @@ interface SortableSiteRowProps {
   candidate: GatewayAggregateSiteCandidate;
   index: number;
   lastIndex: number;
+  /** Aggregate mode cannot be empty, so the only selected site stays selected. */
+  canDeselect: boolean;
   routePreview: string;
   onToggleSite: (siteId: string, checked: boolean) => void;
   onMoveSite: (siteId: string, direction: 'up' | 'down') => void;
@@ -108,6 +115,7 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
   candidate,
   index,
   lastIndex,
+  canDeselect,
   routePreview,
   onToggleSite,
   onMoveSite,
@@ -139,7 +147,9 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
       <input
         type="checkbox"
         checked
+        disabled={!canDeselect}
         aria-label={candidate.name}
+        title={canDeselect ? undefined : t('gateway.aggregate.lastSiteRequired')}
         onChange={(event) => onToggleSite(candidate.id, event.currentTarget.checked)}
       />
       <span className={styles.siteName} title={candidate.name}>
@@ -211,6 +221,11 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const [naming, setNaming] = React.useState<GatewayAggregateNamingMode>('site_model');
   const [cliStatuses, setCliStatuses] = React.useState<GatewayCliTakeoverStatus[]>([]);
   const [busy, setBusy] = React.useState(false);
+  // Bumped when the persisted draft has been (re)loaded, so the seed effect can
+  // pick up a fresh draft without re-seeding on every unrelated status refresh —
+  // re-seeding mid-edit would revert what the user just changed.
+  const [draftLoadRevision, setDraftLoadRevision] = React.useState(0);
+  const [droppedDraftSites, setDroppedDraftSites] = React.useState(false);
   const [notice, setNotice] = React.useState<{ kind: 'error' | 'success'; text: string } | null>(
     null,
   );
@@ -222,6 +237,8 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const revisionRef = React.useRef(0);
   const statusRequestRef = React.useRef(0);
   const mutationRevisionRef = React.useRef(0);
+  const draftRequestRef = React.useRef(0);
+  const savedDraftRef = React.useRef<GatewayAggregateConfig | null>(null);
   const mountedRef = React.useRef(true);
   const selectedStatus = React.useMemo(
     () => cliStatuses.find((status) => status.cli_key === cliKey) ?? null,
@@ -341,16 +358,24 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
 
     const load = async () => {
       try {
-        const next = await loadProviders(cliKey);
+        // The draft is a convenience file: a failed read must not block the site
+        // list, it only means the form falls back to the applied provider.
+        const [next, draft] = await Promise.all([
+          loadProviders(cliKey),
+          getProxyGatewayAggregateDraft(cliKey).catch(() => null),
+        ]);
         if (disposed || revisionRef.current !== request) {
           return;
         }
         setProviders(next.providers);
         setCandidates(next.candidates);
+        savedDraftRef.current = draft;
+        setDraftLoadRevision((revision) => revision + 1);
       } catch (error) {
         if (!disposed && revisionRef.current === request) {
           setProviders([]);
           setCandidates([]);
+          savedDraftRef.current = null;
           setNotice({ kind: 'error', text: formatError(error) });
         }
       } finally {
@@ -366,25 +391,41 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     };
   }, [cliKey]);
 
-  // Load the saved aggregate config for the selected CLI. Keep unavailable
-  // providers and aliases in the draft so reopening the drawer never silently
-  // rewrites a manifest with missing routing rules.
+  // Seed the form for the selected CLI. An engaged manifest wins because it is
+  // what is actually routing (and keeps unavailable sites visible as an invalid
+  // config instead of silently rewriting a running takeover); otherwise the
+  // persisted draft is used, and an empty draft falls back to the CLI's
+  // currently applied provider. Aggregate mode cannot represent "no site", so the
+  // form is never seeded empty while the CLI has an eligible site.
+  //
+  // The seed deliberately keys off the manifest's *content* (`activeAggregateKey`)
+  // rather than the status object identity: statuses are re-fetched on unrelated
+  // refreshes, and re-seeding on those would revert edits the user just made.
+  const activeAggregateKey = React.useMemo(
+    () =>
+      JSON.stringify(
+        selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null,
+      ),
+    [selectedStatus],
+  );
   React.useEffect(() => {
-    const saved = selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null;
-    setSeparator(
-      saved?.separator && validateGatewayAggregateSeparator(saved.separator) === null
-        ? saved.separator
-        : DEFAULT_AGGREGATE_SEPARATOR,
-    );
-    setNaming(saved?.naming ?? 'site_model');
-    if (!saved) {
-      setAliases({});
-      setSiteIds([]);
-      return;
-    }
-    setAliases(saved.aliases ?? {});
-    setSiteIds(normalizeGatewayAggregateSiteIds(saved.provider_ids));
-  }, [candidates, selectedStatus]);
+    const seed = resolveAggregateFormSeed({
+      activeConfig:
+        selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null,
+      draftConfig: savedDraftRef.current,
+      candidates,
+      appliedProviderId: providers.find((provider) => provider.isApplied)?.id ?? null,
+    });
+    setSeparator(seed.separator);
+    setNaming(seed.naming);
+    setAliases(seed.aliases);
+    setSiteIds(seed.siteIds);
+    setDroppedDraftSites(seed.droppedDraftSites);
+    // `selectedStatus` is intentionally absent: its identity changes on every
+    // status refresh, while `activeAggregateKey` only changes when the engaged
+    // configuration actually changed. Re-seeding on a refresh would revert the
+    // user's in-progress edits.
+  }, [activeAggregateKey, candidates, draftLoadRevision, providers]);
 
   const runGatewayOperation = React.useCallback(
     async <T,>(
@@ -434,18 +475,19 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
           setBusy(false);
         }
       }
+      return succeeded;
     },
     [onTakeoverChange, refreshCliStatuses, t],
   );
 
   const runEngage = React.useCallback(
-    (
+    async (
       nextSiteIds: string[],
       nextSeparator: string,
       nextAliases: Record<string, string>,
       nextNaming: GatewayAggregateNamingMode,
-    ) =>
-      runGatewayOperation(
+    ) => {
+      const succeeded = await runGatewayOperation(
         () =>
           engageProxyGatewayAggregate(
             cliKey,
@@ -456,9 +498,88 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
           ),
         t('gateway.aggregate.notice.enabled'),
         'enableFailed',
-      ),
+      );
+      if (succeeded) {
+        // The backend persists the accepted selection to the draft file too; keep
+        // the in-memory copy in step so leaving aggregate mode re-seeds this form
+        // with the last engaged selection instead of an older draft.
+        savedDraftRef.current = {
+          provider_ids: [...nextSiteIds],
+          separator: nextSeparator,
+          aliases: { ...nextAliases },
+          naming: nextNaming,
+        };
+      }
+      return succeeded;
+    },
     [cliKey, runGatewayOperation, t],
   );
+
+  /**
+   * Persist the form as the aggregate draft, so the selection survives closing
+   * this editor. Only used while the mode is not engaged: an engaged takeover
+   * re-engages instead, because the manifest is what actually routes.
+   */
+  const persistAggregateDraft = React.useCallback(
+    (next: {
+      siteIds: string[];
+      separator: string;
+      aliases: Record<string, string>;
+      naming: GatewayAggregateNamingMode;
+    }) => {
+      const request = draftRequestRef.current + 1;
+      draftRequestRef.current = request;
+      // Serialized through the aggregate mutation lane so a slow, older write
+      // cannot land after a newer one and resurrect a stale selection.
+      void runGatewayAggregateMutation(() =>
+        saveProxyGatewayAggregateDraft(
+          cliKey,
+          next.siteIds,
+          next.separator,
+          aliasesForSelectedSites(next.aliases, next.siteIds),
+          next.naming,
+        ),
+      )
+        .then((saved) => {
+          if (mountedRef.current && draftRequestRef.current === request) {
+            savedDraftRef.current = saved;
+            setDroppedDraftSites(false);
+          }
+        })
+        .catch((error) => {
+          if (mountedRef.current && draftRequestRef.current === request) {
+            setNotice({
+              kind: 'error',
+              text: t('gateway.aggregate.notice.draftSaveFailed', { error: formatError(error) }),
+            });
+          }
+        });
+    },
+    [cliKey, t],
+  );
+
+  /**
+   * Apply a new site selection or order. Engaged: re-engage so the running
+   * takeover follows immediately. Not engaged: save the draft, which is what
+   * makes the selection survive leaving this editor.
+   */
+  const applySiteSelection = (nextSiteIds: string[]) => {
+    setSiteIds(nextSiteIds);
+    setDroppedDraftSites(false);
+    // Aliases only address selected sites (the backend refuses anything else), so
+    // deselecting a site drops its alias. Keeping it would leave the form
+    // permanently invalid and disable the switch without any visible reason.
+    setAliases((current) => aliasesForSelectedSites(current, nextSiteIds));
+    if (!engaged) {
+      persistAggregateDraft({ siteIds: nextSiteIds, separator, aliases, naming });
+      return;
+    }
+    const nextAliases = normalizeGatewayAggregateAliases(aliases, nextSiteIds, candidateSiteIds);
+    if (nextSiteIds.length > 0 && separatorError === null && nextAliases) {
+      void runEngage(nextSiteIds, separator, nextAliases, naming);
+    }
+  };
+
   const handleToggle = async (checked: boolean) => {
     setNotice(null);
     if (!checked) {
@@ -493,41 +614,21 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     await runEngage(normalizedSiteIds, separator, normalizedAliases, naming);
   };
 
-  const handleToggleSite = async (siteId: string, checked: boolean) => {
+  const handleToggleSite = (siteId: string, checked: boolean) => {
     const nextSiteIds = checked
       ? normalizeGatewayAggregateSiteIds([...siteIds, siteId])
       : siteIds.filter((item) => item !== siteId);
-    // Dropping the last site leaves aggregate mode, and that exit is refused
-    // while the primary still needs the gateway. Bail out before writing the
-    // form: the backend stays on the old selection, so showing an emptied list
-    // would describe a state that is not running.
-    if (engaged && nextSiteIds.length === 0 && restoreDirectBlocked) {
-      setNotice({ kind: 'error', text: restoreDirectBlockedHint });
-      return;
-    }
-    setSiteIds(nextSiteIds);
-    // Auto-save: a running aggregate takeover must follow the new site list.
-    if (!engaged) {
-      return;
-    }
+    // Aggregate mode cannot represent an empty site list, so the last selected
+    // site stays selected; leaving aggregate mode is the switch's job.
     if (nextSiteIds.length === 0) {
-      // Aggregate mode cannot represent an empty site list. Restoring direct
-      // mode is safer than leaving the backend on the stale selection.
-      await handleToggle(false);
+      setNotice({ kind: 'error', text: t('gateway.aggregate.lastSiteRequired') });
       return;
     }
-    const nextAliases = normalizeGatewayAggregateAliases(aliases, nextSiteIds, candidateSiteIds);
-    if (separatorError === null && nextAliases) {
-      void runEngage(nextSiteIds, separator, nextAliases, naming);
-    }
+    applySiteSelection(nextSiteIds);
   };
 
   const handleMoveSite = (siteId: string, direction: 'up' | 'down') => {
-    const nextSiteIds = moveAggregateSite(siteIds, siteId, direction);
-    setSiteIds(nextSiteIds);
-    if (engaged && nextSiteIds.length > 0 && separatorError === null && normalizedAliases) {
-      void runEngage(nextSiteIds, separator, normalizedAliases, naming);
-    }
+    applySiteSelection(moveAggregateSite(siteIds, siteId, direction));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -540,29 +641,33 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     if (oldIndex < 0 || newIndex < 0) {
       return;
     }
-    const nextSiteIds = arrayMove(siteIds, oldIndex, newIndex);
-    setSiteIds(nextSiteIds);
-    if (engaged && nextSiteIds.length > 0 && separatorError === null && normalizedAliases) {
-      void runEngage(nextSiteIds, separator, normalizedAliases, naming);
-    }
+    applySiteSelection(arrayMove(siteIds, oldIndex, newIndex));
   };
 
   const handleSeparatorCommit = () => {
     if (validateGatewayAggregateSeparator(separator) !== null) {
       return;
     }
-    if (engaged && siteIds.length > 0 && normalizedAliases) {
+    if (!engaged) {
+      persistAggregateDraft({ siteIds, separator, aliases, naming });
+      return;
+    }
+    if (siteIds.length > 0 && normalizedAliases) {
       void runEngage(siteIds, separator, normalizedAliases, naming);
     }
   };
 
   const handleAliasCommit = () => {
-    if (!engaged || siteIds.length === 0) {
-      return;
-    }
     const nextAliases = normalizeGatewayAggregateAliases(aliases, siteIds, candidateSiteIds);
     if (!nextAliases) {
       setNotice({ kind: 'error', text: t('gateway.aggregate.aliasInvalid') });
+      return;
+    }
+    if (!engaged) {
+      persistAggregateDraft({ siteIds, separator, aliases, naming });
+      return;
+    }
+    if (siteIds.length === 0) {
       return;
     }
     if (separatorError === null) {
@@ -570,14 +675,12 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     }
   };
 
-  const handleClearSelection = () => {
-    if (engaged) {
-      // Clearing the last aggregate site is equivalent to leaving aggregate
-      // mode; keep the backend and the visible form in sync.
-      void handleToggle(false);
+  const handleSelectAllSites = () => {
+    const nextSiteIds = candidates.map((candidate) => candidate.id);
+    if (nextSiteIds.length === 0) {
       return;
     }
-    setSiteIds([]);
+    applySiteSelection(nextSiteIds);
   };
 
   const selectedCandidates = siteIds
@@ -658,7 +761,9 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
              onChange={(event) => {
                const nextNaming = event.currentTarget.value as GatewayAggregateNamingMode;
                setNaming(nextNaming);
-               if (engaged && normalizedAliases && siteIds.length > 0) {
+               if (!engaged) {
+                 persistAggregateDraft({ siteIds, separator, aliases, naming: nextNaming });
+               } else if (normalizedAliases && siteIds.length > 0) {
                  void runEngage(siteIds, separator, normalizedAliases, nextNaming);
                }
             }}
@@ -671,6 +776,9 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       </div>
 
        <p className={styles.helper}>{t('gateway.aggregate.modeHint')}</p>
+      {droppedDraftSites ? (
+        <p className={styles.helper}>{t('gateway.aggregate.draftSitesDropped')}</p>
+      ) : null}
       {restoreDirectBlocked ? <p className={styles.helper}>{restoreDirectBlockedHint}</p> : null}
       {!running ? <p className={styles.helper}>{t('gateway.aggregate.takeoverHint')}</p> : null}
 
@@ -719,23 +827,15 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
                {t('gateway.aggregate.selectedCount', { count: siteIds.length })}
              </span>
              <span className={styles.listActions}>
-                {siteIds.length > 0 ? (
+                {selectedCandidates.length < candidates.length ? (
                   <button
-                   type="button"
-                   className={styles.textButton}
-                   onClick={handleClearSelection}
-                 >
-                   {t('gateway.aggregate.clearSelection')}
-                 </button>
-               ) : (
-                 <button
-                   type="button"
-                   className={styles.textButton}
-                   onClick={() => setSiteIds(candidates.map((candidate) => candidate.id))}
-                 >
-                   {t('gateway.aggregate.selectAll')}
-                 </button>
-                )}
+                    type="button"
+                    className={styles.textButton}
+                    onClick={handleSelectAllSites}
+                  >
+                    {t('gateway.aggregate.selectAll')}
+                  </button>
+                ) : null}
               </span>
             </div>
 
@@ -754,6 +854,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
                          candidate={candidate}
                          index={index}
                          lastIndex={selectedCandidates.length - 1}
+                         canDeselect={selectedCandidates.length > 1}
                          routePreview={buildSiteRoutePreview(candidate.id)}
                          onToggleSite={handleToggleSite}
                          onMoveSite={handleMoveSite}

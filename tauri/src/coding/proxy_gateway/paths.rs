@@ -25,6 +25,15 @@ impl ProxyGatewayPaths {
         self.cli_proxy_dir(cli_key).join("manifest.json")
     }
 
+    /// Draft aggregate selection shown while aggregate mode is not engaged.
+    /// Lives beside the manifest because both describe the same CLI's aggregate
+    /// configuration, but stays a separate file: manifest.json is the enabled
+    /// takeover's source of truth (backups, mode, managed files) and must never
+    /// be rewritten by draft edits.
+    pub fn aggregate_draft_path(&self, cli_key: GatewayCliKey) -> PathBuf {
+        self.cli_proxy_dir(cli_key).join("aggregate-draft.json")
+    }
+
     pub fn backup_dir(&self, cli_key: GatewayCliKey) -> PathBuf {
         self.cli_proxy_dir(cli_key).join("backups")
     }
@@ -69,6 +78,18 @@ mod tests {
                 .join("cli-proxy")
                 .join("gemini")
                 .join("manifest.json")
+        );
+    }
+
+    #[test]
+    fn aggregate_draft_paths_sit_next_to_the_manifest() {
+        let paths = ProxyGatewayPaths::new(PathBuf::from("app-data"));
+
+        assert_eq!(
+            paths.aggregate_draft_path(GatewayCliKey::Codex),
+            paths
+                .manifest_path(GatewayCliKey::Codex)
+                .with_file_name("aggregate-draft.json")
         );
     }
 }
