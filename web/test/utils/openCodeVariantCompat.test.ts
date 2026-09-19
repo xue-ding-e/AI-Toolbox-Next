@@ -48,6 +48,31 @@ test('normalizeVariantsForProviderNpm keeps thinkingConfig for non-openai-compat
   assert.strictEqual(normalizeVariantsForProviderNpm(variants), variants);
 });
 
+test('normalizeVariantsForProviderNpm maps a zero thinking budget to none', () => {
+  const variants = { 'no-thinking': { thinkingConfig: { thinkingBudget: 0 } } };
+
+  assert.deepStrictEqual(normalizeVariantsForProviderNpm(variants, '@ai-sdk/openai-compatible'), {
+    'no-thinking': { reasoningEffort: 'none' },
+  });
+});
+
+test('normalizeVariantsForProviderNpm maps positive thinking budgets to effort thresholds', () => {
+  const variants = { custom: { thinkingConfig: { thinkingBudget: 4096 } } };
+
+  assert.deepStrictEqual(normalizeVariantsForProviderNpm(variants, '@ai-sdk/openai-compatible'), {
+    custom: { reasoningEffort: 'low' },
+  });
+});
+
+test('normalizeVariantsForProviderNpm leaves dynamic budgets and unknown levels untouched', () => {
+  const variants = {
+    auto: { thinkingConfig: { includeThoughts: true, thinkingBudget: -1 } },
+    turbo: { thinkingConfig: { thinkingLevel: 'turbo' } },
+  };
+
+  assert.strictEqual(normalizeVariantsForProviderNpm(variants, '@ai-sdk/openai-compatible'), variants);
+});
+
 test('normalizeVariantsForProviderNpm returns reasoningEffort-style variants untouched and handles empty input', () => {
   const variants = { high: { reasoningEffort: 'high' } };
 

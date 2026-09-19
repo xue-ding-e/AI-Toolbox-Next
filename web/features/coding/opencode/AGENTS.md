@@ -51,7 +51,7 @@ sequenceDiagram
 - 不要把模型选项只按 `model_id` 处理。页面、后端和 tray 共享的契约是完整 `provider_id/model_id`，否则选中态、保存值和 tray 菜单会分叉。
 - 不要从模型 ID 后缀推断 experimental mode；真实模型名也可能包含 `fast` 等片段。只信任后端返回的 `baseModelId` / `experimentalMode` 元数据。
 - `baseModelId` 本身也可能包含 `/`，例如 ZenMux 的 `openai/gpt-5.5`。做 preset variants 继承时应先按完整 base id 匹配，再兜底匹配最后一段模型 id，不能假设 base id 一定是裸模型名。
-- 预设模型匹配是跨 npm 组回退的（`findPresetModelById`）：openai-compatible 供应商可能命中 `@ai-sdk/google` 组的预设，其 variants 是 `thinkingConfig` 写法。把预设 variants 拷进供应商配置（`buildOpenCodeModelFromPreset`、模型弹窗 `handlePresetSelect`）前必须经 `normalizeVariantsForProviderNpm` 按目标 npm 转换（openai-compatible → `reasoningEffort`）。OpenCode 1.x 靠合并内置 effort 变体掩盖坏写法，OpenCode 2.x 原样使用并丢弃 `thinkingConfig`，思考度会静默丢失。
+- 预设模型匹配是跨 npm 组回退的（`findPresetModelById`）：openai-compatible 供应商可能命中 `@ai-sdk/google` 组的预设，其 variants 是 `thinkingConfig` 写法。把预设 variants 拷进供应商配置（`buildOpenCodeModelFromPreset`、模型弹窗 `handlePresetSelect`）前必须经 `normalizeVariantsForProviderNpm` 按目标 npm 转换（openai-compatible → `reasoningEffort`）。OpenCode 1.x 靠合并内置 effort 变体掩盖坏写法，OpenCode 2.x 原样使用并丢弃 `thinkingConfig`，思考度会静默丢失。档位优先级是 `thinkingLevel` > 变体名 > `thinkingBudget`（0→none，正数按网关阈值映射 minimal/low/medium/high/xhigh，负数=动态思考，无等价档位）；推导不出等价档位时必须保持该变体原样，不能用变体名硬凑出 `auto`/`no-thinking` 这类非法 `reasoningEffort`。
 - OpenCode v1 模型配置中的 `limit` 整体可选，但一旦存在，必须同时包含 `context` 和 `output`；新增、编辑和保存模型时必须保证两个字段要么同时为空、要么同时有值，不能生成只有单侧限制的配置。
 - `favorite provider` 页内列表的语义是“使用过的供应商”和诊断缓存，不是“当前配置中的 provider 列表”；删除当前 provider 前后保留它是可能的预期行为。
 - 改模型刷新或 provider 导入时，不要忘了托盘刷新和 favorite provider 辅助状态更新。

@@ -266,6 +266,55 @@ fn dedupe_favorite_plugin_records(records: Vec<Value>) -> Vec<Value> {
 /// npm package whose request schema only understands `reasoningEffort`.
 const OPENAI_COMPATIBLE_NPM: &str = "@ai-sdk/openai-compatible";
 
+/// Reasoning effort spellings that OpenCode and `@ai-sdk/openai-compatible`
+/// upstreams understand. Anything else has no `reasoningEffort` equivalent and
+/// must not be invented.
+fn canonical_reasoning_effort(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "none" | "off" | "disabled" => Some("none".to_string()),
+        "minimal" | "min" => Some("minimal".to_string()),
+        "low" | "medium" | "high" | "xhigh" | "max" => Some(normalized),
+        _ => None,
+    }
+}
+
+/// Gemini thinking budgets only partly map onto `reasoningEffort`: `0` disables
+/// thinking, positive budgets use the same thresholds as the gateway
+/// transformer, and negative budgets mean dynamic thinking, which has no
+/// equivalent and must stay unset.
+fn reasoning_effort_from_thinking_budget(budget: i64) -> Option<&'static str> {
+    Some(match budget {
+        0 => "none",
+        1..=1024 => "minimal",
+        1025..=4096 => "low",
+        4097..=10240 => "medium",
+        10241..=32768 => "high",
+        32769.. => "xhigh",
+        _ => return None,
+    })
+}
+
+/// Effort level implied by one variant, preferring explicit labels
+/// (`thinkingLevel`, then the variant name the user picks in the UI) over the
+/// derived thinking budget. Returns `None` when nothing equivalent can be
+/// derived, so callers keep the variant untouched instead of inventing a value.
+fn variant_reasoning_effort(variant_name: &str, thinking: &Value) -> Option<String> {
+    if let Some(level) = thinking.get("thinkingLevel").and_then(Value::as_str) {
+        if let Some(effort) = canonical_reasoning_effort(level) {
+            return Some(effort);
+        }
+    }
+    if let Some(effort) = canonical_reasoning_effort(variant_name) {
+        return Some(effort);
+    }
+    thinking
+        .get("thinkingBudget")
+        .and_then(Value::as_i64)
+        .and_then(reasoning_effort_from_thinking_budget)
+        .map(str::to_string)
+}
+
 /// Rewrite Google-SDK-style `thinkingConfig` variant options into the
 /// `reasoningEffort` spelling on `@ai-sdk/openai-compatible` providers.
 ///
@@ -274,9 +323,8 @@ const OPENAI_COMPATIBLE_NPM: &str = "@ai-sdk/openai-compatible";
 /// auto-generated `reasoningEffort` variants with the configured ones, but
 /// OpenCode 2.x uses configured variants verbatim and silently drops
 /// `thinkingConfig` on the OpenAI-compatible path, so the thinking level
-/// disappeared from upstream requests. The effort level comes from
-/// `thinkingLevel`, falling back to the variant name (presets name variants
-/// after effort levels).
+/// disappeared from upstream requests. Variants without a derivable equivalent
+/// (budget-only dynamic-thinking variants) stay untouched.
 fn normalize_openai_compatible_variants(config: &mut OpenCodeConfig) {
     let Some(providers) = config.provider.as_mut() else {
         return;
@@ -293,20 +341,30 @@ fn normalize_openai_compatible_variants(config: &mut OpenCodeConfig) {
                 let Some(options) = options.as_object_mut() else {
                     continue;
                 };
-                let level = options
-                    .get("thinkingConfig")
-                    .and_then(|thinking| thinking.get("thinkingLevel"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|level| !level.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| variant_name.clone());
-                if options.remove("thinkingConfig").is_some() {
-                    options.insert("reasoningEffort".to_string(), Value::String(level));
-                }
+                let Some(thinking) = options.get("thinkingConfig") else {
+                    continue;
+                };
+                let Some(effort) = variant_reasoning_effort(variant_name, thinking) else {
+                    continue;
+                };
+                options.remove("thinkingConfig");
+                options.insert("reasoningEffort".to_string(), Value::String(effort));
             }
         }
     }
+}
+
+/// Sanitize a config before it is written to disk or mirrored into the
+/// favorite-provider snapshot, so both carry the same normalized spellings.
+fn sanitize_opencode_config(config: &OpenCodeConfig) -> OpenCodeConfig {
+    let mut sanitized_config = config.clone();
+    normalize_openai_compatible_variants(&mut sanitized_config);
+    sanitized_config.plugin = sanitized_config
+        .plugin
+        .as_ref()
+        .map(|plugin_names| sanitize_opencode_plugin_list(plugin_names))
+        .filter(|plugin_names| !plugin_names.is_empty());
+    sanitized_config
 }
 
 async fn write_opencode_config_file(
@@ -323,15 +381,7 @@ async fn write_opencode_config_file(
         }
     }
 
-    let mut sanitized_config = config.clone();
-    normalize_openai_compatible_variants(&mut sanitized_config);
-    sanitized_config.plugin = sanitized_config
-        .plugin
-        .as_ref()
-        .map(|plugin_names| sanitize_opencode_plugin_list(plugin_names))
-        .filter(|plugin_names| !plugin_names.is_empty());
-
-    let json_content = serde_json::to_string_pretty(&sanitized_config)
+    let json_content = serde_json::to_string_pretty(&sanitize_opencode_config(config))
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     fs::write(config_path, json_content)
@@ -385,7 +435,8 @@ mod tests {
         normalize_openai_compatible_variants(&mut config);
 
         let serialized = serde_json::to_value(&config).expect("config should serialize");
-        let variants = &serialized["provider"]["cpa"]["models"]["gemini-3.8-flash-high"]["variants"];
+        let variants =
+            &serialized["provider"]["cpa"]["models"]["gemini-3.8-flash-high"]["variants"];
         assert_eq!(
             variants["low"],
             json!({ "reasoningEffort": "low" }),
@@ -434,6 +485,77 @@ mod tests {
             "sibling options survive and a missing thinkingLevel falls back to the variant name"
         );
         assert_eq!(variants["custom"], json!("not-an-object"));
+    }
+
+    #[test]
+    fn normalize_variants_map_budget_only_variants_to_effort() {
+        let config = json!({
+            "provider": {
+                "cpa": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "gemini-2.5-flash": {
+                            "variants": {
+                                "no-thinking": { "thinkingConfig": { "thinkingBudget": 0 } },
+                                "custom": { "thinkingConfig": { "thinkingBudget": 4096 } },
+                                "auto": { "thinkingConfig": { "includeThoughts": true, "thinkingBudget": -1 } }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+
+        normalize_openai_compatible_variants(&mut config);
+
+        let serialized = serde_json::to_value(&config).expect("config should serialize");
+        let variants = &serialized["provider"]["cpa"]["models"]["gemini-2.5-flash"]["variants"];
+        assert_eq!(
+            variants["no-thinking"],
+            json!({ "reasoningEffort": "none" }),
+            "a zero thinking budget disables thinking"
+        );
+        assert_eq!(
+            variants["custom"],
+            json!({ "reasoningEffort": "low" }),
+            "positive thinking budgets reuse the gateway thresholds"
+        );
+        assert_eq!(
+            variants["auto"],
+            json!({ "thinkingConfig": { "includeThoughts": true, "thinkingBudget": -1 } }),
+            "dynamic thinking has no effort equivalent and stays untouched"
+        );
+    }
+
+    #[test]
+    fn normalize_variants_leave_unknown_spellings_untouched() {
+        let config = json!({
+            "provider": {
+                "cpa": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "gemini-3.7-flash": {
+                            "variants": {
+                                "turbo": { "thinkingConfig": { "thinkingLevel": "turbo" } }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+
+        normalize_openai_compatible_variants(&mut config);
+
+        let serialized = serde_json::to_value(&config).expect("config should serialize");
+        assert_eq!(
+            serialized["provider"]["cpa"]["models"]["gemini-3.7-flash"]["variants"]["turbo"],
+            json!({ "thinkingConfig": { "thinkingLevel": "turbo" } }),
+            "an unknown effort must not be rewritten into an invented reasoningEffort"
+        );
     }
 
     #[test]
@@ -943,10 +1065,13 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     #[cfg(target_os = "windows")]
     let _ = app.emit("wsl-sync-request-opencode", ());
 
-    // Async sync providers to favorite DB in background (non-blocking)
+    // Async sync providers to favorite DB in background (non-blocking). Use the
+    // same sanitized config that was written to disk so the snapshot cannot
+    // reintroduce spellings the file has already normalized away.
+    let favorite_provider_config = sanitize_opencode_config(&config);
     let db = state.db().clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = sync_providers_from_config(&db, &config).await {
+        if let Err(e) = sync_providers_from_config(&db, &favorite_provider_config).await {
             eprintln!("Background sync_providers_from_config failed: {}", e);
         }
     });
