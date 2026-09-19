@@ -3424,6 +3424,109 @@ pub(crate) fn remove_codex_aggregate_catalog(config_dir: &Path) -> Result<(), St
     Ok(())
 }
 
+/// Capture the Codex catalog state an aggregate takeover is about to overwrite.
+///
+/// Aggregate mode rewrites both config.toml's `model_catalog_json` pointer and
+/// the AI Toolbox-managed catalog file that pointer names. The manifest stores
+/// this snapshot so every path that leaves aggregate mode can replay it instead
+/// of merely dropping our own pointer; without it a user's single-site
+/// mappings or self-owned external pointer would silently disappear.
+pub(crate) fn capture_codex_pre_aggregate_catalog(
+    config_dir: &Path,
+) -> Result<crate::coding::proxy_gateway::cli_proxy::manifest::PreAggregateCodexCatalog, String> {
+    let pointer = read_codex_model_catalog_pointer(config_dir)?;
+    let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+    let file_content = if catalog_path.exists() {
+        Some(fs::read_to_string(&catalog_path).map_err(|error| {
+            format!(
+                "Failed to read Codex model catalog before aggregate takeover {}: {}",
+                catalog_path.display(),
+                error
+            )
+        })?)
+    } else {
+        None
+    };
+    Ok(
+        crate::coding::proxy_gateway::cli_proxy::manifest::PreAggregateCodexCatalog {
+            pointer,
+            file_content,
+        },
+    )
+}
+
+fn read_codex_model_catalog_pointer(config_dir: &Path) -> Result<Option<String>, String> {
+    let config_path = config_dir.join("config.toml");
+    if !config_path.exists() {
+        return Ok(None);
+    }
+    let config_toml = fs::read_to_string(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))?;
+    let document = parse_toml_document(&config_toml, "managed config")?;
+    Ok(document
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+/// Restore the pointer and catalog file captured by
+/// `capture_codex_pre_aggregate_catalog`.
+///
+/// A snapshot without a pointer removes only our own pointer (the legacy
+/// behavior); a snapshot without file content removes the file aggregate mode
+/// created. Both `None` cases restore the exact pre-takeover state.
+pub(crate) fn restore_codex_pre_aggregate_catalog(
+    config_dir: &Path,
+    snapshot: &crate::coding::proxy_gateway::cli_proxy::manifest::PreAggregateCodexCatalog,
+) -> Result<(), String> {
+    match snapshot.pointer.as_deref() {
+        Some(pointer) => write_codex_model_catalog_pointer(config_dir, pointer)?,
+        None => remove_codex_aggregate_catalog(config_dir)?,
+    }
+
+    let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+    match snapshot.file_content.as_deref() {
+        Some(content) => fs::write(&catalog_path, content).map_err(|error| {
+            format!(
+                "Failed to restore Codex model catalog {}: {}",
+                catalog_path.display(),
+                error
+            )
+        })?,
+        None => {
+            if catalog_path.exists() {
+                fs::remove_file(&catalog_path).map_err(|error| {
+                    format!(
+                        "Failed to remove aggregate Codex model catalog {}: {}",
+                        catalog_path.display(),
+                        error
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_codex_model_catalog_pointer(config_dir: &Path, pointer: &str) -> Result<(), String> {
+    let config_path = config_dir.join("config.toml");
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let config_toml = fs::read_to_string(&config_path)
+        .map_err(|error| format!("Failed to read config.toml: {error}"))?;
+    let mut document = parse_toml_document(&config_toml, "managed config")?;
+    document["model_catalog_json"] = toml_edit::value(pointer);
+    let updated = document.to_string();
+    if updated != config_toml {
+        fs::write(&config_path, updated)
+            .map_err(|error| format!("Failed to write config.toml: {error}"))?;
+    }
+    Ok(())
+}
+
 /// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
 /// catalog (models.json) that AI Toolbox mirrors verbatim. Matched against
 /// the parsed `base_url` host ONLY — deliberately NOT by model brand: official
@@ -4784,14 +4887,16 @@ mod tests {
     use super::{
         aggregate_catalog_from_entries, append_toml_configs, build_written_codex_config_toml,
         codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_display_name,
-        codex_catalog_model_specs, ensure_codex_model_catalog_pointer,
+        capture_codex_pre_aggregate_catalog, codex_catalog_model_specs,
+        ensure_codex_model_catalog_pointer,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         fill_template_fields_from_static, heal_dangling_codex_model_provider,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
-        read_codex_aggregate_selection, remove_codex_aggregate_catalog,
-        resolve_local_provider_meta, static_codex_official_models,
+        read_codex_aggregate_selection,
+        remove_codex_aggregate_catalog, resolve_local_provider_meta,
+        restore_codex_pre_aggregate_catalog, static_codex_official_models,
         strip_codex_common_config_from_toml, write_codex_aggregate_catalog, AggregateCatalogEntry,
         CodexCatalogModelSpec, CodexHistoryRuntimeSource, CodexHistorySourceCandidate,
         CodexHistorySourceMode, RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
@@ -6045,6 +6150,128 @@ approval_policy = "never"
 
         assert!(remove_codex_aggregate_catalog(temp_dir.path()).is_ok());
     }
+    #[test]
+    fn pre_aggregate_catalog_snapshot_restores_pointer_and_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        std::fs::write(
+            &config_path,
+            format!(
+                "model_provider = \"custom\"\nmodel_catalog_json = \"{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME}\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(&catalog_path, "{\"models\":[{\"slug\":\"single-site\"}]}").unwrap();
+
+        let snapshot = capture_codex_pre_aggregate_catalog(temp_dir.path()).unwrap();
+        assert_eq!(
+            snapshot.pointer.as_deref(),
+            Some(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        assert!(snapshot
+            .file_content
+            .as_deref()
+            .unwrap()
+            .contains("single-site"));
+
+        // Aggregate engage overwrites the pointer and the shared catalog file.
+        std::fs::write(&catalog_path, "{\"models\":[{\"slug\":\"site-a.m1\"}]}").unwrap();
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+
+        restore_codex_pre_aggregate_catalog(temp_dir.path(), &snapshot).unwrap();
+
+        let restored_config = std::fs::read_to_string(&config_path).unwrap();
+        assert!(restored_config.contains(&format!(
+            "model_catalog_json = \"{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME}\""
+        )));
+        let restored_catalog = std::fs::read_to_string(&catalog_path).unwrap();
+        assert!(restored_catalog.contains("single-site"));
+        assert!(!restored_catalog.contains("site-a.m1"));
+    }
+
+    #[test]
+    fn pre_aggregate_catalog_snapshot_restores_an_external_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, "model_catalog_json = \"external.json\"\n").unwrap();
+
+        let snapshot = capture_codex_pre_aggregate_catalog(temp_dir.path()).unwrap();
+        assert_eq!(snapshot.pointer.as_deref(), Some("external.json"));
+        assert!(snapshot.file_content.is_none());
+
+        // Aggregate engage claims the pointer and creates the shared file.
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        std::fs::write(&catalog_path, "{\"models\":[]}").unwrap();
+
+        restore_codex_pre_aggregate_catalog(temp_dir.path(), &snapshot).unwrap();
+
+        let restored_config = std::fs::read_to_string(&config_path).unwrap();
+        assert!(restored_config.contains("external.json"));
+        assert!(!restored_config.contains(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME));
+        // The shared file did not exist before the takeover, so it is removed.
+        assert!(!catalog_path.exists());
+    }
+
+    #[test]
+    fn pre_aggregate_catalog_snapshot_without_pointer_keeps_a_leftover_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        std::fs::write(&config_path, "model_provider = \"custom\"\n").unwrap();
+        std::fs::write(&catalog_path, "{\"models\":[{\"slug\":\"leftover\"}]}").unwrap();
+
+        let snapshot = capture_codex_pre_aggregate_catalog(temp_dir.path()).unwrap();
+        assert!(snapshot.pointer.is_none());
+        assert!(snapshot
+            .file_content
+            .as_deref()
+            .unwrap()
+            .contains("leftover"));
+
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+        std::fs::write(&catalog_path, "{\"models\":[{\"slug\":\"site-a.m1\"}]}").unwrap();
+
+        restore_codex_pre_aggregate_catalog(temp_dir.path(), &snapshot).unwrap();
+
+        let restored_config = std::fs::read_to_string(&config_path).unwrap();
+        assert!(!restored_config.contains("model_catalog_json"));
+        let restored_catalog = std::fs::read_to_string(&catalog_path).unwrap();
+        assert!(restored_catalog.contains("leftover"));
+        assert!(!restored_catalog.contains("site-a.m1"));
+    }
+
+    #[test]
+    fn pre_aggregate_catalog_snapshot_of_a_bare_config_removes_the_created_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, "model_provider = \"custom\"\n").unwrap();
+
+        let snapshot = capture_codex_pre_aggregate_catalog(temp_dir.path()).unwrap();
+        assert!(snapshot.pointer.is_none());
+        assert!(snapshot.file_content.is_none());
+
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        std::fs::write(&catalog_path, "{\"models\":[]}").unwrap();
+        ensure_codex_model_catalog_pointer(temp_dir.path()).unwrap();
+
+        restore_codex_pre_aggregate_catalog(temp_dir.path(), &snapshot).unwrap();
+
+        assert!(!std::fs::read_to_string(&config_path)
+            .unwrap()
+            .contains("model_catalog_json"));
+        assert!(!catalog_path.exists());
+    }
+
 
     #[test]
     fn ensure_catalog_pointer_sets_and_restores_the_managed_pointer() {

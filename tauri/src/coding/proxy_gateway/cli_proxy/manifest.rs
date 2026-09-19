@@ -62,6 +62,25 @@ impl AggregateSubagentDefaults {
     }
 }
 
+/// Codex model catalog state captured right before aggregate mode overwrote it.
+///
+/// Aggregate mode rewrites both config.toml's `model_catalog_json` pointer and
+/// the AI Toolbox-managed catalog file that pointer names, so leaving aggregate
+/// mode must replay this snapshot. Without it the user's pre-takeover catalog
+/// (single-site mappings, or a self-owned external file) is silently lost.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PreAggregateCodexCatalog {
+    /// config.toml's top-level `model_catalog_json` before the engage, when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<String>,
+    /// Raw content of `ai-toolbox-codex-model-catalog.json` before the engage,
+    /// when the file existed. `None` means aggregate mode created the file, so
+    /// restoring removes it instead of leaving a stale aggregate catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_content: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AggregateManifestConfig {
@@ -92,6 +111,11 @@ pub struct AggregateManifestConfig {
     /// manifest predates the feature and owns no `[agents]` keys.
     #[serde(default, skip_serializing_if = "AggregateSubagentDefaults::is_empty")]
     pub subagent: AggregateSubagentDefaults,
+    /// Codex catalog state captured before aggregate mode overwrote it. Absent
+    /// in manifests written before the snapshot existed; those keep the legacy
+    /// "drop our own pointer" cleanup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_aggregate_catalog: Option<PreAggregateCodexCatalog>,
 }
 
 fn default_aggregate_separator() -> String {
@@ -107,6 +131,7 @@ impl Default for AggregateManifestConfig {
             naming: AggregateNamingMode::default(),
             slug_table: Vec::new(),
             subagent: AggregateSubagentDefaults::default(),
+            pre_aggregate_catalog: None,
         }
     }
 }
@@ -205,6 +230,7 @@ impl CliProxyManifest {
             naming,
             slug_table,
             subagent: AggregateSubagentDefaults::default(),
+            pre_aggregate_catalog: None,
         });
         self
     }
@@ -213,6 +239,18 @@ impl CliProxyManifest {
     pub fn with_aggregate_subagent_defaults(mut self, subagent: AggregateSubagentDefaults) -> Self {
         if let Some(aggregate) = self.aggregate.as_mut() {
             aggregate.subagent = subagent;
+        }
+        self
+    }
+
+    /// Attach the pre-aggregate Codex catalog snapshot so leaving aggregate
+    /// mode restores it. `None` keeps the legacy pointer-only cleanup.
+    pub fn with_pre_aggregate_catalog(
+        mut self,
+        snapshot: Option<PreAggregateCodexCatalog>,
+    ) -> Self {
+        if let Some(aggregate) = self.aggregate.as_mut() {
+            aggregate.pre_aggregate_catalog = snapshot;
         }
         self
     }
@@ -301,5 +339,29 @@ mod tests {
         assert_eq!(parsed.naming, AggregateNamingMode::SiteModel);
         // No persisted table: routing rebuilds it from `provider_ids` + `naming`.
         assert!(parsed.slug_table.is_empty());
+        assert!(parsed.pre_aggregate_catalog.is_none());
+    }
+
+    #[test]
+    fn aggregate_manifest_round_trips_the_pre_aggregate_catalog_snapshot() {
+        let snapshot = PreAggregateCodexCatalog {
+            pointer: Some("ai-toolbox-codex-model-catalog.json".to_string()),
+            file_content: Some("{\"models\":[]}".to_string()),
+        };
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["pointer"], "ai-toolbox-codex-model-catalog.json");
+
+        let parsed: AggregateManifestConfig = serde_json::from_value(serde_json::json!({
+            "provider_ids": ["site-a"],
+            "separator": ".",
+            "pre_aggregate_catalog": {
+                "pointer": "external.json",
+                "file_content": null
+            }
+        }))
+        .unwrap();
+        let restored = parsed.pre_aggregate_catalog.unwrap();
+        assert_eq!(restored.pointer.as_deref(), Some("external.json"));
+        assert!(restored.file_content.is_none());
     }
 }
