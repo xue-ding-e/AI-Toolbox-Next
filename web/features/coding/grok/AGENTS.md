@@ -27,6 +27,7 @@
 - 自定义渠道的「服务端搜索」是渠道级总开关：勾选后 `buildGrokSettingsConfig` / 表单保存必须把 `supportsBackendSearch=true` **覆盖写入**全部 `modelCatalog.models[]`（含自动创建的默认映射）；取消则写 `false`。它走结构化 modelCatalog → `[model.<key>].supports_backend_search`，不要写进供应商高级 `config.toml` 或 Common Config。官方渠道不展示该开关。
 - 自定义渠道的模型组织对齐 OpenCode 交互、保留 Grok 数据：卡片下独立「模型列表」支持新增/编辑/删除/设默认/批量删除；catalog key **不再强制 `custom`**。渠道弹窗只管 Key/Base URL/API 格式等共享字段；模型级字段（含思考菜单）走 `GrokModelFormModal`。
 - 模型列表标题栏操作顺序对齐 OpenCode：`批量删除` → `模型测试` → `获取模型` → `添加模型`。模型测试不再放在卡片头部摘要行。
+- `GrokModelFormModal` 里「默认思考档位必须属于已勾选档位」的清理只能挂在 `reasoningEfforts` Select 的 `onChange` 上，不能写成依赖 `reasoningEfforts` 的 `useEffect`：打开弹窗时回填 effect 与校验 effect 在同一轮 commit 里执行，校验 effect 的闭包仍持有打开前的空 `reasoningEfforts`，会把刚回填的 `reasoningEffort` 清掉或改写（Codex 弹窗有同一竞态，已同样方式修复）。
 - 模型测试弹窗与 OpenCode 一样支持测试后「移除选中 (N)」删除失效模型；删除回调必须同时按 catalog key 与上游 model id 匹配，因为连通性测试只发送上游 id。
 - 「思考等级」只写官方 Grok Build 字段，不在 AI Toolbox 做 Claude/Gemini 协议转换：
   - 官方：`settingsConfig.defaultReasoningEffort` → `[models].default_reasoning_effort`。

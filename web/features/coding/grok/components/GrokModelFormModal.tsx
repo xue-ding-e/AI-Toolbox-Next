@@ -126,18 +126,24 @@ const GrokModelFormModal: React.FC<GrokModelFormModalProps> = ({
     setPresetsExpanded(false);
   }, [form, initialValues, open]);
 
-  React.useEffect(() => {
-    if (!open) {
+  /**
+   * Keep the default effort inside the selected list, but only on explicit user
+   * edits. Cleaning this up from an effect races the open-time backfill: the
+   * first render still sees an empty `reasoningEfforts` watch value and wipes
+   * the restored default effort.
+   */
+  const handleReasoningEffortsChange = (efforts: string[] | undefined) => {
+    const current = form.getFieldValue('reasoningEffort') as string | undefined;
+    if (!efforts || efforts.length === 0) {
+      if (current) {
+        form.setFieldValue('reasoningEffort', undefined);
+      }
       return;
     }
-    const current = form.getFieldValue('reasoningEffort') as string | undefined;
-    if (current && reasoningEfforts && reasoningEfforts.length > 0 && !reasoningEfforts.includes(current)) {
-      form.setFieldValue('reasoningEffort', pickDefaultReasoningEffort(reasoningEfforts));
+    if (current && !efforts.includes(current)) {
+      form.setFieldValue('reasoningEffort', pickDefaultReasoningEffort(efforts));
     }
-    if ((!reasoningEfforts || reasoningEfforts.length === 0) && current) {
-      form.setFieldValue('reasoningEffort', undefined);
-    }
-  }, [form, open, reasoningEfforts]);
+  };
 
   const applyPreset = (preset: PresetModel) => {
     // Parse every effort-like token from variants and select ALL of them.
@@ -330,6 +336,7 @@ const GrokModelFormModal: React.FC<GrokModelFormModalProps> = ({
               value,
               label: value,
             }))}
+            onChange={handleReasoningEffortsChange}
           />
         </Form.Item>
 
