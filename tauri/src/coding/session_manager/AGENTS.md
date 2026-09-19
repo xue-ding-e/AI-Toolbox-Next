@@ -81,6 +81,10 @@ sequenceDiagram
 - 搜索分两层：先用已加载/缓存的 metadata 字段加速，包括 `session_id`、标题、摘要、项目目录、`source_path`、runtime source/distro；只有 `full/refresh/auto` 深搜时才允许扫描消息正文。`cache-first` 搜索不能为了正文搜索放大全库 I/O。
 - 搜索完整 `session_id` 必须优先精确匹配并短路正文扫描；这是粘贴会话 ID 定位的高频路径，不能被“全文搜索更完整”的想法破坏。
 - 搜索等待语义由返回字段表达：metadata 不完整时 `partial/meta_complete=false` 让前端后台补齐完整列表；正文未搜索完成时 `message_search_complete=false` 让前端只提示搜索仍在继续。后端不要用 `has_more=true` 暗示继续翻页，也不要让正文深搜阻塞 `cache-first` 首屏。
+- 时间过滤（`time_range` 参数，issue #372）是 metadata 纯过滤：预设 `all/today/7d/30d/older_30d` 由 `SessionTimeRange` 解析，在 collapse + 排序之后、派生 `available_paths` 之前按 `session_activity_ts`（`last_active_at ?? created_at`）应用，保证目录下拉与当前视图一致。口径是"最近活跃"，不是创建时间。
+- `last_30d` 与 `older_30d` 共用同一个 cutoff（一个下界、一个上界），两视图互补切分完整列表；今天按后端本地时区零点（`local_day_start_ms`）。
+- 两个时间字段都缺失（ts<=0）的会话在选了具体时间档时一律排除（无法证明在范围内），只在 `all` 视图可见；不要把它们归入"更早"。
+- Auto 模式的 quick 首屏守卫包含 `time_range == All`：选了时间档后 auto 等价 full collect。`cache-first` + 时间档仍可用：fresh 完整缓存直接返回过滤后完整列表，未命中则 quick recent 过滤后 `partial=true` 由前端后台 `full` 补全，最终列表一定是全量过滤结果。
 
 ## 跨模块依赖
 

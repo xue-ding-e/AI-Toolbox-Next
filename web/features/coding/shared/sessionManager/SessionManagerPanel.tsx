@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  CalendarOutlined,
   CheckOutlined,
   CloseOutlined,
   DeleteOutlined,
@@ -46,6 +47,7 @@ import type {
   SessionPathOption,
   SessionSourceMode,
   SessionSourceOption,
+  SessionTimeRange,
   SessionTool,
 } from './types';
 import {
@@ -57,6 +59,7 @@ import {
   advanceVisibleContextId,
   formatSessionTitle,
   resolveEffectiveSessionSourceMode,
+  SESSION_TIME_RANGE_OPTIONS,
   shouldShowVisibleFeedback as shouldShowVisibleFeedbackForContext,
 } from './utils';
 import SessionList from './SessionList';
@@ -79,6 +82,7 @@ const PAGE_SIZE = 10;
 const ALL_PATHS_VALUE = '__all_paths__';
 const SESSION_MANAGER_DEBUG_STORAGE_KEY = 'ai-toolbox.sessionManager.debug';
 let rememberedSessionSourceMode: SessionSourceMode = 'all';
+let rememberedSessionTimeRange: SessionTimeRange = 'all';
 
 type MetadataRefreshReason = 'manual-refresh' | null;
 
@@ -118,11 +122,13 @@ const buildCompleteAllSessionsKey = (
   query: string,
   pathFilter: string,
   refreshNonce: number,
+  timeRange: SessionTimeRange,
 ) => [
   tool,
   query,
   pathFilter,
   refreshNonce,
+  timeRange,
 ].join('\u001f');
 
 const sessionMatchesSourceMode = (session: SessionMeta, sourceMode: SessionSourceMode) => {
@@ -180,6 +186,7 @@ interface SessionManagerContentProps {
   refreshNonce?: number;
   manualRefreshNonce?: number;
   sourceMode: SessionSourceMode;
+  timeRange: SessionTimeRange;
   showRuntimeSourceTag: boolean;
   onAvailableSourcesChange: (sources: SessionSourceOption[]) => void;
   onMetadataRefreshStateChange: (reason: MetadataRefreshReason) => void;
@@ -191,6 +198,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   refreshNonce = 0,
   manualRefreshNonce = 0,
   sourceMode,
+  timeRange,
   showRuntimeSourceTag,
   onAvailableSourcesChange,
   onMetadataRefreshStateChange,
@@ -310,7 +318,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       showFullListLoading = false,
       trigger = 'unknown',
     } = options;
-    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce);
+    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce, timeRange);
     const visibleContextId = captureVisibleContextId();
     const requestContextId = background ? listContextIdRef.current : listContextIdRef.current + 1;
     const requestId = listReplaceRequestIdRef.current + 1;
@@ -355,6 +363,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         showFullListLoading,
         query: debouncedQuery,
         pathFilter,
+        timeRange,
         requestContextId,
         requestId,
       });
@@ -381,6 +390,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         showFullListLoading,
         query: debouncedQuery,
         pathFilter,
+        timeRange,
         requestContextId,
         requestId,
       });
@@ -406,6 +416,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         forceRefresh,
         sourceMode,
         loadMode,
+        timeRange,
       });
 
       if (!isCurrentRequest()) {
@@ -452,6 +463,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           query: debouncedQuery,
           pathFilter,
           refreshNonce,
+          timeRange,
           itemCount: result.items.length,
           trigger,
           loadMode,
@@ -510,6 +522,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     shouldShowVisibleFeedback,
     sourceMode,
     t,
+    timeRange,
     tool,
     onAvailableSourcesChange,
   ]);
@@ -519,10 +532,11 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       return;
     }
 
-    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce);
+    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce, timeRange);
     const initialLoadKey = [
       tool,
       sourceMode,
+      timeRange,
       debouncedQuery,
       pathFilter,
       refreshNonce,
@@ -533,6 +547,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         sourceMode,
         query: debouncedQuery,
         pathFilter,
+        timeRange,
         refreshNonce,
         initialLoadKey,
       });
@@ -551,6 +566,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         sourceMode,
         query: debouncedQuery,
         pathFilter,
+        timeRange,
         refreshNonce,
         initialLoadKey,
         snapshotKey,
@@ -578,6 +594,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     debugSessionManager('initial:run', {
       tool,
       sourceMode,
+      timeRange,
       query: debouncedQuery,
       pathFilter,
       refreshNonce,
@@ -594,6 +611,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     refreshNonce,
     sourceMode,
     t,
+    timeRange,
     tool,
   ]);
 
@@ -611,6 +629,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     const backgroundKey = [
       tool,
       sourceMode,
+      timeRange,
       debouncedQuery,
       pathFilter,
       needsFullMetadata ? 'meta' : 'search',
@@ -634,6 +653,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       sourceMode,
       query: debouncedQuery,
       pathFilter,
+      timeRange,
       backgroundKey,
       needsFullMetadata,
       needsMessageSearch,
@@ -662,6 +682,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     partial,
     pathFilter,
     sourceMode,
+    timeRange,
     tool,
   ]);
 
@@ -1038,6 +1059,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const showListOverlay = loading && (
     items.length === 0 || metadataRefreshReason === 'manual-refresh'
   );
+  const hasActiveFilters = Boolean(debouncedQuery || pathFilter) || timeRange !== 'all';
   const statusHint = debouncedQuery
     ? !metaComplete
       ? t('sessionManager.searchWaitingForFullList')
@@ -1149,8 +1171,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         <Spin spinning={showListOverlay}>
           {items.length === 0 ? (
             <div className={styles.emptyState}>
-              <Empty description={t(debouncedQuery || pathFilter ? 'sessionManager.emptyFiltered' : 'sessionManager.empty')} />
-              {(debouncedQuery || pathFilter) ? (
+              <Empty description={t(hasActiveFilters ? 'sessionManager.emptyFiltered' : 'sessionManager.empty')} />
+              {hasActiveFilters ? (
                 <Text className={styles.emptyHint}>
                   {t('sessionManager.emptyFilteredHint')}
                 </Text>
@@ -1196,11 +1218,17 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
   const [uncontrolledSourceMode, setUncontrolledSourceMode] = React.useState<SessionSourceMode>(() => rememberedSessionSourceMode);
+  const [timeRange, setTimeRange] = React.useState<SessionTimeRange>(() => rememberedSessionTimeRange);
   const [availableSources, setAvailableSources] = React.useState<SessionSourceOption[]>([]);
   const [availableSourcesResolved, setAvailableSourcesResolved] = React.useState(false);
   const [metadataRefreshReason, setMetadataRefreshReason] = React.useState<MetadataRefreshReason>(null);
   const [manualRefreshNonce, setManualRefreshNonce] = React.useState(0);
   const sourceMode = controlledSourceMode ?? uncontrolledSourceMode;
+
+  const handleTimeRangeChange = React.useCallback((value: SessionTimeRange) => {
+    rememberedSessionTimeRange = value;
+    setTimeRange(value);
+  }, []);
 
   const handleAvailableSourcesChange = React.useCallback((sources: SessionSourceOption[]) => {
     setAvailableSources(sources);
@@ -1252,6 +1280,29 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
     { label: t('sessionManager.sourceMode.local'), value: 'local' as const },
     { label: t('sessionManager.sourceMode.wsl'), value: 'wsl' as const },
   ], [t]);
+
+  const timeRangeOptions = React.useMemo(
+    () => SESSION_TIME_RANGE_OPTIONS.map(({ value, labelKey }) => ({ label: t(labelKey), value })),
+    [t],
+  );
+
+  const timeRangeFilter = (
+    // Select options render in a body portal but bubble through the React
+    // tree; the extra span mirrors the ProviderSortDropdown double guard so
+    // picking an option cannot collapse the panel.
+    <span onClick={(event) => event.stopPropagation()}>
+      <Select
+        className={styles.timeFilterSelect}
+        size="small"
+        prefix={<CalendarOutlined />}
+        popupMatchSelectWidth={false}
+        value={timeRange}
+        options={timeRangeOptions}
+        onChange={handleTimeRangeChange}
+        aria-label={t('sessionManager.timeRange.label')}
+      />
+    </span>
+  );
 
   const sourceSwitcher = showSourceSwitcher ? (
     <div className={styles.sourceSegmented} role="tablist" aria-label={t('sessionManager.title')}>
@@ -1307,13 +1358,14 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
     </div>
   );
 
-  const headerExtra = sourceSwitcher || extra || refreshControl ? (
+  const headerExtra = sourceSwitcher || extra || refreshControl || timeRangeFilter ? (
     <div
       className={styles.headerExtra}
       onClick={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {extra}
+      {timeRangeFilter}
       {sourceSwitcher}
       {refreshControl}
     </div>
@@ -1349,6 +1401,7 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
               refreshNonce={refreshNonce}
               manualRefreshNonce={manualRefreshNonce}
               sourceMode={effectiveSourceMode}
+              timeRange={timeRange}
               showRuntimeSourceTag={showSourceSwitcher && effectiveSourceMode === 'all'}
               onAvailableSourcesChange={handleAvailableSourcesChange}
               onMetadataRefreshStateChange={setMetadataRefreshReason}

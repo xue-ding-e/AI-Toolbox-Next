@@ -13,6 +13,7 @@ export type SessionTool =
   | 'dsh';
 
 export type SessionSourceMode = 'all' | 'local' | 'wsl';
+export type SessionTimeRange = 'all' | 'today' | '7d' | '30d' | 'older_30d';
 export type SessionListLoadMode = 'auto' | 'cache-first' | 'full' | 'refresh';
 export type SessionListCacheState = 'none' | 'quick' | 'stale' | 'fresh';
 export type SessionExportFormat = 'ai_toolbox' | 'grok_markdown' | 'grok_native';

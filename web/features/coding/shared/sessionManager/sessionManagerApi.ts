@@ -8,6 +8,7 @@ import type {
   SessionListLoadMode,
   SessionSourceMode,
   SessionSubagentMeta,
+  SessionTimeRange,
   SessionTool,
   SessionExportFormat,
 } from './types';
@@ -21,6 +22,7 @@ interface ListToolSessionsInput {
   forceRefresh?: boolean;
   sourceMode?: SessionSourceMode;
   loadMode?: SessionListLoadMode;
+  timeRange?: SessionTimeRange;
 }
 
 const pendingListToolSessions = new Map<string, Promise<SessionListPage>>();
@@ -36,6 +38,7 @@ export const listToolSessions = async ({
   forceRefresh = false,
   sourceMode = 'all',
   loadMode = 'auto',
+  timeRange = 'all',
 }: ListToolSessionsInput): Promise<SessionListPage> => {
   const input = {
     tool,
@@ -46,6 +49,7 @@ export const listToolSessions = async ({
     forceRefresh,
     sourceMode,
     loadMode,
+    timeRange,
   };
   const pendingKey = buildListToolSessionsKey(input);
   const pendingRequest = pendingListToolSessions.get(pendingKey);
@@ -62,6 +66,7 @@ export const listToolSessions = async ({
     forceRefresh: input.forceRefresh,
     sourceMode: input.sourceMode,
     loadMode: input.loadMode,
+    timeRange: input.timeRange === 'all' ? undefined : input.timeRange,
   }).finally(() => {
     pendingListToolSessions.delete(pendingKey);
   });

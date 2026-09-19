@@ -1710,7 +1710,15 @@
     "grokExportFormatTitle": "选择 Grok 会话导出格式",
     "grokExportAiToolbox": "AI Toolbox JSON（消息与原生快照）",
     "grokExportMarkdown": "Grok 官方 Markdown",
-    "grokExportNative": "Grok 原生目录快照 JSON"
+    "grokExportNative": "Grok 原生目录快照 JSON",
+    "timeRange": {
+      "label": "时间筛选",
+      "all": "全部",
+      "today": "今天",
+      "last7Days": "最近 7 天",
+      "last30Days": "最近 30 天",
+      "older30Days": "30 天前"
+    }
   },
   "notes": {
     "title": "笔记"

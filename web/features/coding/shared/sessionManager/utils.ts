@@ -5,8 +5,22 @@ import type {
   SessionMeta,
   SessionSourceMode,
   SessionSourceOption,
+  SessionTimeRange,
   SessionTocItem,
 } from './types';
+
+// Wire values must mirror the backend `SessionTimeRange::parse` presets
+// (all / today / 7d / 30d / older_30d) one to one.
+export const SESSION_TIME_RANGE_OPTIONS: ReadonlyArray<{
+  value: SessionTimeRange;
+  labelKey: string;
+}> = [
+  { value: 'all', labelKey: 'sessionManager.timeRange.all' },
+  { value: 'today', labelKey: 'sessionManager.timeRange.today' },
+  { value: '7d', labelKey: 'sessionManager.timeRange.last7Days' },
+  { value: '30d', labelKey: 'sessionManager.timeRange.last30Days' },
+  { value: 'older_30d', labelKey: 'sessionManager.timeRange.older30Days' },
+];
 
 export function advanceVisibleContextId(
   currentVisibleContextId: number,

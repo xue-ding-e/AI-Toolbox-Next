@@ -28,6 +28,21 @@
   color: var(--color-text-secondary);
 }
 
+.timeFilterSelect {
+  flex: 0 0 auto;
+  min-width: 110px;
+
+  // antd 6 的 Select 没有 .ant-select-selector：边框与内边距都挂在根元素上，
+  // 高度由 padding 撑出，small 变体不控制字号。用更高 specificity 的根元素
+  // 覆盖稳定加高，并保持与分段控件一致的 12px 字号。
+  &:global(.ant-select) {
+    height: 28px;
+    align-items: center;
+    padding-block: 0;
+    font-size: 12px;
+  }
+}
+
 .sourceSegmented {
   display: inline-flex;
   flex: 0 0 auto;

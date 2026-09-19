@@ -1713,7 +1713,15 @@
     "grokExportFormatTitle": "Select Grok session export format",
     "grokExportAiToolbox": "AI Toolbox JSON (messages and native snapshot)",
     "grokExportMarkdown": "Official Grok Markdown",
-    "grokExportNative": "Grok native directory snapshot JSON"
+    "grokExportNative": "Grok native directory snapshot JSON",
+    "timeRange": {
+      "label": "Time range",
+      "all": "All",
+      "today": "Today",
+      "last7Days": "Last 7 days",
+      "last30Days": "Last 30 days",
+      "older30Days": "Older than 30 days"
+    }
   },
   "notes": {
     "title": "Notes"

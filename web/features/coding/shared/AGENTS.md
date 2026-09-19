@@ -79,6 +79,7 @@ sequenceDiagram
 - `SessionManagerPanel` 在 KeepAlive 隐藏页里即使放弃提示或结果回写，也不能漏掉本地 loading 收尾。尤其是列表请求失败后，路径筛选器这类局部 loading 必须按请求代次自行复位，不能完全绑在“当前页面仍可见”这个条件上。
 - `SessionManagerPanel` 做整页 reload 时，不要把“刷新列表”和“刷新路径下拉”拆成两次 `forceRefresh` 请求去重扫同一份会话索引。优先复用同一次列表结果里派生出的 path options，避免一次删除/导入/手动刷新触发两轮整库扫描。
 - `SessionManagerPanel` 的产品理念是“先让用户看到最近会话，再后台补齐完整事实源”，不是分页列表。首屏 `cache-first` 只是快速快照，不代表第一页；后台 `full` 完成后必须一次性替换成完整列表；`hasMore` 只能作为旧 API 兼容字段，不能驱动 UI。
+- `SessionManagerPanel` 的时间筛选（issue #372）是 Collapse 头部 `headerExtra` 里“全部/本机/WSL”分段控件左侧的紧凑 `Select`（日历 prefix，默认“全部”），预设与后端 `SessionTimeRange` 一一对应（`SESSION_TIME_RANGE_OPTIONS` 是两侧契约，`web/test/.../sessionTimeRange.test.ts` 守护）。选中具体时间档后最终列表一定是后端按 `last_active_at` 过滤的全量结果：cache-first 命中 fresh 完整缓存立即得到过滤后完整列表，否则 quick recent 只是 partial 过渡态，由既有后台 `full` 机制补全；不要为此新增“先只出首屏再等手动刷新”的分叉语义。`timeRange` 必须参与首屏去重 key、完整快照 key 和后台补全 key，快照本身存的是时间过滤后的列表，切换本机/WSL 从它本地派生。时间筛选状态用模块级 remembered 变量（进程内记住、重启回“全部”），不落库。
 - `SessionManagerPanel` 禁止出现“加载更多”按钮或滚动翻页 sentinel。首屏加载时，如果还没有任何可展示列表，可以显示内容区全局 loading；首屏已有快照后，后台完整补全只能在列表底部显示轻量 loading 文案，不能遮罩已展示内容；`full` 完成后底部 loading 必须消失，也不能再显示任何“更多”入口。
 - 会话列表的完整数据与可见 DOM 必须分开：`SessionList` 复用单列 `management/VirtualGrid`，只挂载可见行和 overscan；完整结果仍留在面板中用于筛选、计数和批量操作。“选择已加载”必须覆盖完整过滤结果，不能缩成屏幕内的行。选择以 `sourcePath` 为身份，使用集合查询；后台替换结果也要清理不再存在的选中项。搜索框状态不能让全部卡片重新渲染，列表/卡片和传入回调需保持稳定。长路径允许换行并由虚拟行实测高度，继续消费外层 `main` 滚动容器和 KeepAlive 的返回位置。
 - `SessionManagerPanel` 的用户主动刷新和后台补全必须区分。用户点击标题右侧刷新按钮时才进入可感知的完整刷新，可以显示标题刷新状态和内容区 loading；自动后台 `full`、正文深搜、导入/删除后的静默收敛不能把已显示列表盖住。折叠关闭时要清理刷新 nonce/loading，避免下次普通展开重放旧的手动刷新。

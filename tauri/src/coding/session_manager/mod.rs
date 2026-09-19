@@ -407,6 +407,78 @@ impl SessionListLoadMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionTimeRange {
+    All,
+    Today,
+    Last7Days,
+    Last30Days,
+    OlderThan30Days,
+}
+
+impl SessionTimeRange {
+    fn parse(raw: Option<String>) -> Result<Self, String> {
+        match raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("all")
+        {
+            "all" => Ok(Self::All),
+            "today" => Ok(Self::Today),
+            "7d" => Ok(Self::Last7Days),
+            "30d" => Ok(Self::Last30Days),
+            "older_30d" => Ok(Self::OlderThan30Days),
+            value => Err(format!("Unsupported session time range: {value}")),
+        }
+    }
+
+    /// Inclusive-lower / exclusive-upper activity-time bounds in epoch millis.
+    /// `None` means the unfiltered `all` view. Last-30-days and older-than-30
+    /// days share one cutoff so the two views partition the full list.
+    fn bounds(self, now_ms: i64) -> Option<SessionTimeBounds> {
+        const DAY_MS: i64 = 86_400_000;
+        match self {
+            Self::All => None,
+            Self::Today => Some(SessionTimeBounds {
+                min_ts: Some(local_day_start_ms(now_ms)),
+                max_ts: None,
+            }),
+            Self::Last7Days => Some(SessionTimeBounds {
+                min_ts: Some(now_ms - 7 * DAY_MS),
+                max_ts: None,
+            }),
+            Self::Last30Days => Some(SessionTimeBounds {
+                min_ts: Some(now_ms - 30 * DAY_MS),
+                max_ts: None,
+            }),
+            Self::OlderThan30Days => Some(SessionTimeBounds {
+                min_ts: None,
+                max_ts: Some(now_ms - 30 * DAY_MS),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionTimeBounds {
+    min_ts: Option<i64>,
+    max_ts: Option<i64>,
+}
+
+/// Start of the local calendar day (00:00) containing `now_ms`, in epoch
+/// millis. Derived by subtracting the wall-clock offset from local midnight;
+/// on DST-shift days it degrades to the first instant of the day.
+fn local_day_start_ms(now_ms: i64) -> i64 {
+    use chrono::{Local, TimeZone, Timelike};
+    let Some(now) = Local.timestamp_millis_opt(now_ms).single() else {
+        return now_ms;
+    };
+    let elapsed_since_midnight_ms = i64::from(now.time().num_seconds_from_midnight()) * 1000
+        + i64::from(now.timestamp_subsec_millis());
+    now_ms - elapsed_since_midnight_ms
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionListCacheState {
     None,
     Quick,
@@ -552,6 +624,7 @@ pub async fn list_tool_sessions(
     force_refresh: Option<bool>,
     source_mode: Option<String>,
     load_mode: Option<String>,
+    time_range: Option<String>,
 ) -> Result<SessionListPage, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
     let query = normalize_query(query);
@@ -561,6 +634,8 @@ pub async fn list_tool_sessions(
     let force_refresh = force_refresh.unwrap_or(false);
     let source_mode = SessionSourceMode::parse(source_mode)?;
     let load_mode = SessionListLoadMode::parse(load_mode)?;
+    let time_range = SessionTimeRange::parse(time_range)?;
+    let now_ms = Utc::now().timestamp_millis();
     let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -573,6 +648,8 @@ pub async fn list_tool_sessions(
             page_size as usize,
             force_refresh,
             load_mode,
+            time_range,
+            now_ms,
         )
     })
     .await
@@ -924,6 +1001,30 @@ fn session_activity_ts(meta: &SessionMeta) -> i64 {
     meta.last_active_at.or(meta.created_at).unwrap_or(0)
 }
 
+/// A session passes a specific time range only when its activity timestamp is
+/// inside the bounds. Sessions without any parseable timestamp are excluded
+/// from filtered views; they remain visible under `all`.
+fn session_activity_in_range(meta: &SessionMeta, bounds: Option<&SessionTimeBounds>) -> bool {
+    let Some(bounds) = bounds else {
+        return true;
+    };
+    let ts = session_activity_ts(meta);
+    if ts <= 0 {
+        return false;
+    }
+    if let Some(min_ts) = bounds.min_ts {
+        if ts < min_ts {
+            return false;
+        }
+    }
+    if let Some(max_ts) = bounds.max_ts {
+        if ts >= max_ts {
+            return false;
+        }
+    }
+    true
+}
+
 /// Collapse the artifacts of one logical session into a single row.
 ///
 /// Several runtimes keep one session as more than one on-disk artifact: Codex
@@ -1178,9 +1279,15 @@ fn list_sessions_blocking(
     page_size: usize,
     force_refresh: bool,
     load_mode: SessionListLoadMode,
+    time_range: SessionTimeRange,
+    now_ms: i64,
 ) -> Result<SessionListPage, String> {
-    let use_quick_initial_page =
-        page == 1 && page_size <= 10 && query.is_none() && path_filter.is_none() && !force_refresh;
+    let use_quick_initial_page = page == 1
+        && page_size <= 10
+        && query.is_none()
+        && path_filter.is_none()
+        && time_range == SessionTimeRange::All
+        && !force_refresh;
     let (sessions, partial, cache_state, meta_complete) = match load_mode {
         SessionListLoadMode::CacheFirst => {
             let (mut cached_sessions, cache_partial, cache_state) =
@@ -1239,11 +1346,20 @@ fn list_sessions_blocking(
         session_activity_ts(&right.meta).cmp(&session_activity_ts(&left.meta))
     });
 
-    let available_paths = build_session_paths_from_contexts(&sessions, DEFAULT_SESSION_PATH_LIMIT);
+    // Time filter runs before `available_paths` is derived, so the path
+    // dropdown only offers directories that exist in the currently filtered
+    // view.
+    let time_bounds = time_range.bounds(now_ms);
+    let time_filtered_sessions: Vec<SessionWithContext> = sessions
+        .into_iter()
+        .filter(|session| session_activity_in_range(&session.meta, time_bounds.as_ref()))
+        .collect();
+
+    let available_paths = build_session_paths_from_contexts(&time_filtered_sessions, DEFAULT_SESSION_PATH_LIMIT);
     let path_filtered_sessions = if let Some(path_filter_text) = path_filter.as_deref() {
-        filter_sessions_by_path_with_context(sessions, path_filter_text)
+        filter_sessions_by_path_with_context(time_filtered_sessions, path_filter_text)
     } else {
-        sessions
+        time_filtered_sessions
     };
     let (filtered_sessions, exact_session_id_match) = if let Some(query_text) = query.as_deref() {
         filter_sessions_by_query_with_context(
@@ -3168,6 +3284,237 @@ mod tests {
         assert_eq!(filtered[0].meta.session_id, exact_session_id);
     }
 
+    fn time_filter_meta(last_active_at: Option<i64>) -> SessionMeta {
+        SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "time-filter-session".to_string(),
+            title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at,
+            source_path: "time-filter-session.jsonl".to_string(),
+            resume_command: None,
+            runtime_source: None,
+            runtime_distro: None,
+        }
+    }
+
+    #[test]
+    fn session_time_range_parse_accepts_presets_and_rejects_unknown() {
+        assert_eq!(SessionTimeRange::parse(None).unwrap(), SessionTimeRange::All);
+        assert_eq!(
+            SessionTimeRange::parse(Some(String::new())).unwrap(),
+            SessionTimeRange::All
+        );
+        assert_eq!(
+            SessionTimeRange::parse(Some("today".to_string())).unwrap(),
+            SessionTimeRange::Today
+        );
+        assert_eq!(
+            SessionTimeRange::parse(Some("7d".to_string())).unwrap(),
+            SessionTimeRange::Last7Days
+        );
+        assert_eq!(
+            SessionTimeRange::parse(Some("30d".to_string())).unwrap(),
+            SessionTimeRange::Last30Days
+        );
+        assert_eq!(
+            SessionTimeRange::parse(Some("older_30d".to_string())).unwrap(),
+            SessionTimeRange::OlderThan30Days
+        );
+        assert!(SessionTimeRange::parse(Some("yesterday".to_string())).is_err());
+    }
+
+    #[test]
+    fn session_time_range_last30_and_older30_partition_on_same_cutoff() {
+        const DAY_MS: i64 = 86_400_000;
+        let now_ms = 1_800_000_000_000;
+
+        assert!(SessionTimeRange::All.bounds(now_ms).is_none());
+
+        let last7 = SessionTimeRange::Last7Days
+            .bounds(now_ms)
+            .expect("7d should have bounds");
+        assert_eq!(last7.min_ts, Some(now_ms - 7 * DAY_MS));
+        assert!(last7.max_ts.is_none());
+
+        let last30 = SessionTimeRange::Last30Days
+            .bounds(now_ms)
+            .expect("30d should have bounds");
+        let older30 = SessionTimeRange::OlderThan30Days
+            .bounds(now_ms)
+            .expect("older_30d should have bounds");
+        assert_eq!(last30.min_ts, Some(now_ms - 30 * DAY_MS));
+        assert!(last30.max_ts.is_none());
+        assert!(older30.min_ts.is_none());
+        assert_eq!(older30.max_ts, last30.min_ts, "the two views share one cutoff");
+    }
+
+    #[test]
+    fn session_activity_in_range_keeps_boundary_and_excludes_missing_timestamp() {
+        const DAY_MS: i64 = 86_400_000;
+        let now_ms = 1_800_000_000_000;
+        let cutoff = now_ms - 30 * DAY_MS;
+
+        let last30 = SessionTimeRange::Last30Days.bounds(now_ms);
+        let older30 = SessionTimeRange::OlderThan30Days.bounds(now_ms);
+
+        // Exactly on the cutoff: inside "last 30 days", outside "older than 30 days".
+        assert!(session_activity_in_range(&time_filter_meta(Some(cutoff)), last30.as_ref()));
+        assert!(!session_activity_in_range(
+            &time_filter_meta(Some(cutoff)),
+            older30.as_ref()
+        ));
+        assert!(!session_activity_in_range(
+            &time_filter_meta(Some(cutoff - 1)),
+            last30.as_ref()
+        ));
+        assert!(session_activity_in_range(
+            &time_filter_meta(Some(cutoff - 1)),
+            older30.as_ref()
+        ));
+
+        // Sessions without any parseable time are hidden from filtered views
+        // and stay visible under `all`.
+        assert!(session_activity_in_range(&time_filter_meta(None), None));
+        assert!(session_activity_in_range(&time_filter_meta(Some(0)), None));
+        assert!(!session_activity_in_range(&time_filter_meta(None), last30.as_ref()));
+        assert!(!session_activity_in_range(&time_filter_meta(Some(0)), older30.as_ref()));
+    }
+
+    #[test]
+    fn local_day_start_ms_lands_on_local_midnight_of_same_day() {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let day_start = local_day_start_ms(now_ms);
+
+        assert!(day_start <= now_ms);
+        assert!(now_ms - day_start < 86_400_000);
+        assert_eq!(local_day_start_ms(day_start), day_start);
+
+        let today_bounds = SessionTimeRange::Today
+            .bounds(now_ms)
+            .expect("today should have bounds");
+        assert_eq!(today_bounds.min_ts, Some(day_start));
+    }
+
+    #[test]
+    fn list_sessions_time_filter_scopes_items_and_paths_and_disables_quick_initial_page() {
+        let test_root = TestDir::new("time-filter");
+        let sessions_root = test_root.path().join("sessions");
+        let recent_project_dir = test_root.path().join("recent-project");
+        let old_project_dir = test_root.path().join("old-project");
+
+        let now = Utc::now();
+        let recent_rollout_dir = sessions_root
+            .join(now.format("%Y").to_string())
+            .join(now.format("%m").to_string())
+            .join(now.format("%d").to_string());
+        write_text_file(
+            &recent_rollout_dir.join("rollout-2026-01-01T00-00-00-recent-session.jsonl"),
+            &json!({
+                "timestamp": now.to_rfc3339(),
+                "type": "session_meta",
+                "payload": {
+                    "id": "recent-session",
+                    "timestamp": now.to_rfc3339(),
+                    "cwd": recent_project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+        write_text_file(
+            &sessions_root
+                .join("2024")
+                .join("01")
+                .join("01")
+                .join("rollout-2024-01-01T00-00-00-old-session.jsonl"),
+            &json!({
+                "timestamp": "2024-01-01T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "old-session",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "cwd": old_project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+
+        let contexts = SessionContextSet {
+            entries: vec![SessionContextEntry {
+                context: ToolSessionContext::Codex {
+                    sessions_root,
+                    codex_home: None,
+                },
+                source: SessionRuntimeSource::Local,
+                distro: None,
+            }],
+            available_sources: Vec::new(),
+        };
+        let now_ms = now.timestamp_millis();
+
+        let last30 = list_sessions_blocking(
+            contexts.clone(),
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::Full,
+            SessionTimeRange::Last30Days,
+            now_ms,
+        )
+        .expect("last-30d list should succeed");
+        assert_eq!(last30.total, 1);
+        assert_eq!(last30.items[0].session_id, "recent-session");
+        assert_eq!(
+            last30.available_paths,
+            Some(vec![recent_project_dir.to_string_lossy().to_string()]),
+            "path options must follow the time-filtered view"
+        );
+
+        let older30 = list_sessions_blocking(
+            contexts.clone(),
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::Full,
+            SessionTimeRange::OlderThan30Days,
+            now_ms,
+        )
+        .expect("older-30d list should succeed");
+        assert_eq!(older30.total, 1);
+        assert_eq!(older30.items[0].session_id, "old-session");
+        assert_eq!(
+            older30.available_paths,
+            Some(vec![old_project_dir.to_string_lossy().to_string()])
+        );
+
+        // The quick initial-page guard must not apply when a time range is set:
+        // auto mode with a time filter behaves like a full collect.
+        let auto_with_time = list_sessions_blocking(
+            contexts,
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::Auto,
+            SessionTimeRange::Last30Days,
+            now_ms,
+        )
+        .expect("auto list with time filter should succeed");
+        assert!(!auto_with_time.partial);
+        assert!(auto_with_time.meta_complete);
+        assert_eq!(auto_with_time.total, 1);
+    }
+
     #[test]
     fn cache_first_skips_uncached_wsl_context_for_initial_page() {
         let test_root = TestDir::new("cache-first-skips-uncached-wsl");
@@ -3243,6 +3590,8 @@ mod tests {
             10,
             false,
             SessionListLoadMode::CacheFirst,
+            SessionTimeRange::All,
+            0,
         )
         .expect("cache-first list should succeed");
 
@@ -3264,6 +3613,8 @@ mod tests {
             10,
             false,
             SessionListLoadMode::Full,
+            SessionTimeRange::All,
+            0,
         )
         .expect("full list should succeed");
 
@@ -3373,6 +3724,8 @@ mod tests {
             10,
             false,
             SessionListLoadMode::Full,
+            SessionTimeRange::All,
+            0,
         )
         .expect("full list should succeed");
 
@@ -3465,6 +3818,8 @@ mod tests {
             10,
             false,
             SessionListLoadMode::Full,
+            SessionTimeRange::All,
+            0,
         )
         .expect("full list should succeed");
 
@@ -3526,6 +3881,8 @@ mod tests {
             10,
             false,
             SessionListLoadMode::Full,
+            SessionTimeRange::All,
+            0,
         )
         .expect("full list should succeed");
 
@@ -3594,6 +3951,8 @@ mod tests {
             500,
             false,
             SessionListLoadMode::Full,
+            SessionTimeRange::All,
+            0,
         )
         .expect("full list should succeed");
 
