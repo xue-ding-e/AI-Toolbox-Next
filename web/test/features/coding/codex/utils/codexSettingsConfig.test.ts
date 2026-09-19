@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCodexSettingsConfig } from '../../../../../features/coding/codex/utils/codexSettingsConfig.ts';
+import { resolveCodexDefaultReasoningEffort } from '../../../../../features/coding/codex/utils/codexCatalogModels.ts';
 import {
   extractCodexModel,
   extractCodexReasoningEffort,
@@ -46,4 +47,22 @@ test('missing main-model reasoning effort keeps the stored config.toml value', (
 
   assert.equal(extractCodexModel(settings.config), 'glm-5.3');
   assert.equal(extractCodexReasoningEffort(settings.config), 'high');
+});
+
+test('main model without a declared level falls back to xhigh in config.toml', () => {
+  const catalogModels = [{ model: 'glm-5.3', displayName: 'GLM 5.3' }];
+  const raw = buildCodexSettingsConfig({
+    category: 'custom',
+    apiKey: 'sk-test',
+    baseUrl: 'https://example.com/v1',
+    model: 'glm-5.3',
+    reasoningEffort: resolveCodexDefaultReasoningEffort(catalogModels, 'glm-5.3'),
+    config: CUSTOM_CONFIG,
+    catalogModels,
+    auth: {},
+  });
+  const settings = JSON.parse(raw) as { config: string };
+
+  assert.equal(extractCodexModel(settings.config), 'glm-5.3');
+  assert.equal(extractCodexReasoningEffort(settings.config), 'xhigh');
 });

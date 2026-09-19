@@ -124,8 +124,9 @@ test('resolves the config.toml reasoning effort from the primary catalog row', (
 
   assert.equal(resolveCodexDefaultReasoningEffort(catalog, 'gpt-5.5'), 'high');
   assert.equal(resolveCodexDefaultReasoningEffort(catalog, ' glm-5.3 '), 'max');
-  // No declared default level means the caller must leave config.toml untouched.
-  assert.equal(resolveCodexDefaultReasoningEffort(catalog, 'deepseek-v4-flash'), undefined);
+  // A main model without a declared default level falls back to xhigh.
+  assert.equal(resolveCodexDefaultReasoningEffort(catalog, 'deepseek-v4-flash'), 'xhigh');
+  // A main model missing from the catalog must leave config.toml untouched.
   assert.equal(resolveCodexDefaultReasoningEffort(catalog, 'missing'), undefined);
   assert.equal(resolveCodexDefaultReasoningEffort(catalog, ''), undefined);
 });

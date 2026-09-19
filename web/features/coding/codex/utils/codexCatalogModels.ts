@@ -4,6 +4,9 @@ import type { PresetModel } from '../../../../constants/presetModels';
 /** Modalities Codex understands; preset values outside this set are dropped. */
 export const CODEX_SUPPORTED_MODALITIES = ['text', 'image', 'audio'] as const;
 
+/** config.toml fallback used when the main model declares no default level. */
+export const CODEX_FALLBACK_REASONING_EFFORT = 'xhigh';
+
 /** Canonical efforts understood by the Codex catalog generator. */
 export const CODEX_REASONING_LEVELS = [
   'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
@@ -334,8 +337,9 @@ export function buildCodexConnectivityModelIds(
 /**
  * The reasoning effort config.toml should carry for the current default model.
  *
- * Rows without an explicit default level return undefined so callers leave the
- * existing `model_reasoning_effort` value untouched instead of clearing it.
+ * A main-model row without an explicit default level falls back to
+ * `CODEX_FALLBACK_REASONING_EFFORT`; an unknown main model returns undefined so
+ * callers leave the existing `model_reasoning_effort` value untouched.
  */
 export function resolveCodexDefaultReasoningEffort(
   models: CodexCatalogModel[],
@@ -346,7 +350,10 @@ export function resolveCodexDefaultReasoningEffort(
     return undefined;
   }
   const row = models.find((item) => item.model.trim() === modelId);
-  return row?.defaultReasoningLevel?.trim() || undefined;
+  if (!row) {
+    return undefined;
+  }
+  return row.defaultReasoningLevel?.trim() || CODEX_FALLBACK_REASONING_EFFORT;
 }
 
 /** Three-state image-input choice: unset (auto), explicit true, explicit false. */
