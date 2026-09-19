@@ -51,7 +51,8 @@ sequenceDiagram
 - dsh/Hermes 也消费同一 `moduleStatuses`，不能因工具自行解析配置目录而漏掉 Direct 状态。保存/清除目录会发出 `wsl-config-changed` 刷新设置页；后端在同步开始时仍会重读 Direct 集合，首次启用不能依赖 UI 快照。
 - SSH 设置页可以显示 WSL UNC 本地路径，但这只是展示优化，不代表 SSH 模块也具备 WSL 那套自动同步语义。
 - `skipModules` 在两个页面里的来源不同。WSL 的 `skipModules` 包含 WSL Direct 模块，SSH 的 `skipModules` 只反映当前不可见模块；不要把一边的 hook 逻辑复制到另一边。
-- `visibleTabs` 现在可能包含 `gateway` 和 `image`。它们只控制顶栏 `网关` / `Image` 入口是否显示，不是可同步 runtime 模块；WSL/SSH 的 `skipModules`、模块状态和 mappings 仍只围绕 coding runtime（OpenCode / Claude Code / Codex / Grok CLI / OpenClaw / Gemini CLI）+ WSL/SSH 自身语义，不要把 `gateway` 或 `image` 塞进去。
+- `visibleTabs` 现在可能包含 `gateway`、`image` 和 `miniBrowser`。它们只控制顶栏 `网关` / `Image` / `浏览器` 入口是否显示，不是可同步 runtime 模块；WSL/SSH 的 `skipModules`、模块状态和 mappings 仍只围绕 coding runtime（OpenCode / Claude Code / Codex / Grok CLI / OpenClaw / Gemini CLI）+ WSL/SSH 自身语义，不要把 `gateway`、`image` 或 `miniBrowser` 塞进去。
+- “模块显示”右侧那一行（`GeneralSettingsPage.tsx::OTHER_TABS`）的 chips 顺序要和顶栏工具条顺序一致，新增入口在这里追加即可，`handleOtherTabToggle` 只做 append/remove，不参与左侧编码工具的 `reorderMode`。`miniBrowser` 是**可选开通**项：它只控制 `MainLayout` 里的内置浏览器入口，没有自己的路由，也**不能**加进后端默认 `visible_tabs`（`tauri/src/settings/types.rs`）或 `adapter.rs` 的历史默认基线——历史默认只用于“整份匹配就全量替换”，一旦写进基线，用户显式关掉的浏览器入口会在下次读取时被加回来。默认不显示由「两边默认值都不含该 key」保证，边界回归见 `web/test/components/layout/MainLayout/index.test.ts`。
 - 同步文案翻译要走 `syncMessageTranslator`，不要在组件里硬编码后端错误文本。
 - Skills 目标既可能是链接，也可能是带归属标记的复制目录；警告统一称“同步目标”，翻译解析仍兼容已持久化的旧“链接”警告。
 - Skills 警告需要先按完整文案解析，再处理通用的 `; ` 错误拼接；技能名/路径本身允许分号和引号，命令诊断可能包含换行，不能先拆分或使用不匹配换行的表达式。`lastSyncWarnings` 表示最近一次 Skills 同步，普通文件/MCP 同步不清空它；开始新的手动同步或 Skills 阶段时清理旧实时警告，状态读回已有同条常驻警告时移除重复实时提示。
@@ -87,4 +88,5 @@ sequenceDiagram
 - 防休眠改动验证 `web/test/stores/keepAwakeSettings.test.ts` 和 Rust `keep_awake::tests` / `keep_awake_preference_round_trips_and_old_records_default_to_disabled`；覆盖连续开关、保存失败、系统失败后重试、跨线程释放和旧配置的默认值。
 - 至少验证：打开设置页能正常加载 config、status 和默认 mappings。
 - 至少验证：WSL Direct 模块在 WSL 设置页被置灰，但在 SSH 设置页仅改变本地路径显示。
+- 至少验证：默认设置下顶栏没有内置浏览器入口；在“模块显示 / 右侧”打开 `浏览器` 后入口出现，关闭后消失，且开关状态在重启后保持。
 - 至少验证：手动点击 Sync Now 时能看到进度和完成状态更新。

@@ -1,25 +1,7 @@
 import React from 'react';
 import { Switch } from 'antd';
-import { ArrowDown, ArrowUp, GripVertical, Loader2, Route } from 'lucide-react';
+import { Loader2, Route } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { CSS } from '@dnd-kit/utilities';
 import {
   DEFAULT_AGGREGATE_SEPARATOR,
   engageProxyGatewayAggregate,
@@ -39,17 +21,20 @@ import { isCodexLocalProviderId } from '@/features/coding/codex/utils/localProvi
 import { primaryCodexProviderNeedsGatewayProxy } from '@/features/coding/codex/utils/codexGatewayProxyNeed';
 import {
   aliasesForSelectedSites,
+  aggregateEngageErrorNoticeKey,
+  aggregateEngageRequiresDirectRestore,
   buildGatewayAggregateSitePreviewSlug,
   getGatewayProviderProfilesVersion,
   getGatewayAggregateConfigVersion,
   notifyGatewayAggregateConfigChanged,
   isAggregateSiteId,
-  moveAggregateSite,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
+  orderAggregateSiteIdsByCandidates,
   resolveAggregateFormSeed,
   resolveGatewayAggregateEffectiveAliases,
   restoreDirectUnavailableHintKey,
+  shortAggregateSiteId,
   subscribeGatewayProviderProfiles,
   subscribeGatewayAggregateConfig,
   runGatewayAggregateMutation,
@@ -93,15 +78,23 @@ const loadProviders = async (
 const formatError = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-interface SortableSiteRowProps {
+/**
+ * Failure notices the engage flow can show. `enableFailedAfterRestore` exists
+ * because the primary switch first restores direct mode: if the engage then
+ * fails, the user needs to know the CLI was left in direct mode, not that
+ * "nothing happened".
+ */
+type AggregateFailureNoticeKey =
+  | 'enableFailed'
+  | 'enableFailedAfterRestore'
+  | 'disableFailed';
+
+interface SelectedSiteRowProps {
   candidate: GatewayAggregateSiteCandidate;
-  index: number;
-  lastIndex: number;
   /** Aggregate mode cannot be empty, so the only selected site stays selected. */
   canDeselect: boolean;
   routePreview: string;
   onToggleSite: (siteId: string, checked: boolean) => void;
-  onMoveSite: (siteId: string, direction: 'up' | 'down') => void;
   alias: string;
   separator: string;
   onAliasChange: (siteId: string, alias: string) => void;
@@ -109,44 +102,25 @@ interface SortableSiteRowProps {
 }
 
 /**
- * Selected site row. Order is the aggregate fallback priority, so it is
- * reorderable by drag handle and by keyboard-accessible up/down buttons
- * (DESIGN.md requires an equivalent non-drag path).
+ * Selected site row. Order is the aggregate fallback priority, but it is not a
+ * panel-local choice: rows render in the CLI provider-list order, and that list
+ * is the only place a site can be moved (see `orderAggregateSiteIdsByCandidates`).
+ * So this row exposes no drag handle and no up/down buttons.
  */
-const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
+const SelectedSiteRow: React.FC<SelectedSiteRowProps> = ({
   candidate,
-  index,
-  lastIndex,
   canDeselect,
   routePreview,
   onToggleSite,
-  onMoveSite,
   alias,
   separator,
   onAliasChange,
   onAliasCommit,
 }) => {
   const { t } = useTranslation();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: candidate.id,
-  });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : undefined,
-  };
 
   return (
-    <li ref={setNodeRef} style={style} className={styles.siteItem}>
-      <span
-        className={styles.dragHandle}
-        title={t('gateway.aggregate.reorderHint')}
-        aria-label={t('gateway.aggregate.reorderHint')}
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={13} aria-hidden="true" />
-      </span>
+    <li className={styles.siteItem}>
       <input
         type="checkbox"
         checked
@@ -162,7 +136,7 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
         </span>
       </span>
       <code className={styles.siteSlug} title={candidate.id}>
-        {candidate.id}
+        {shortAggregateSiteId(candidate.id)}
       </code>
       <input
         className={styles.aliasInput}
@@ -174,26 +148,6 @@ const SortableSiteRow: React.FC<SortableSiteRowProps> = ({
         onChange={(event) => onAliasChange(candidate.id, event.currentTarget.value)}
         onBlur={onAliasCommit}
       />
-      <span className={styles.siteActions}>
-        <button
-          type="button"
-          className={styles.iconButton}
-          disabled={index === 0}
-          aria-label={`${candidate.name}: ${t('gateway.aggregate.moveUp')}`}
-          onClick={() => onMoveSite(candidate.id, 'up')}
-        >
-          <ArrowUp size={13} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={styles.iconButton}
-          disabled={index === lastIndex}
-          aria-label={`${candidate.name}: ${t('gateway.aggregate.moveDown')}`}
-          onClick={() => onMoveSite(candidate.id, 'down')}
-        >
-          <ArrowDown size={13} aria-hidden="true" />
-        </button>
-      </span>
     </li>
   );
 };
@@ -288,6 +242,18 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     [candidates],
   );
   const normalizedSiteIds = normalizeGatewayAggregateSiteIds(siteIds);
+  // The backend refuses to change the primary provider while a manifest is
+  // enabled (`prepare_manifest`), so an engage whose first site differs has to
+  // restore direct first — the same round trip the provider list uses when it
+  // switches the primary of a single/failover takeover.
+  const engageRequiresDirectRestore = aggregateEngageRequiresDirectRestore(
+    normalizedSiteIds,
+    selectedStatus,
+  );
+  // Restoring direct is only safe while the provider it falls back to can run
+  // without the gateway; otherwise the user has to change or disable that site
+  // first instead of us writing a config Codex cannot call.
+  const engageBlockedByProtocol = engageRequiresDirectRestore && primaryNeedsProxy.needsProxy;
   const staleSiteIds = React.useMemo(() => {
     const addressable = new Set(candidateSiteIds);
     return siteIds.filter((siteId) => !addressable.has(siteId));
@@ -310,10 +276,6 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     separatorError === null &&
     normalizedAliases !== null &&
     !busy;
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
 
   const applyCliStatuses = React.useCallback(
     (statuses: GatewayCliTakeoverStatus[]) => {
@@ -449,7 +411,12 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     async <T,>(
       execute: () => Promise<T>,
       successText: string,
-      failureKey: 'enableFailed' | 'disableFailed',
+      /**
+       * Resolved *after* the failure, because the same engage reports differently
+       * depending on how far it got: a failed engage that already restored direct
+       * mode leaves the CLI in a different state than one that failed outright.
+       */
+      failureKey: () => AggregateFailureNoticeKey,
     ) => {
       const request = mutationRevisionRef.current + 1;
       mutationRevisionRef.current = request;
@@ -477,9 +444,15 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         void refreshTrayMenu().catch(() => undefined);
       } catch (error) {
         if (mountedRef.current && mutationRevisionRef.current === request) {
+          const message = formatError(error);
+          // A known backend rule is shown as a translated hint instead of the raw
+          // English sentence; every other failure keeps the backend detail.
+          const mappedNoticeKey = aggregateEngageErrorNoticeKey(message);
           setNotice({
             kind: 'error',
-            text: t(`gateway.aggregate.notice.${failureKey}`, { error: formatError(error) }),
+            text: mappedNoticeKey
+              ? t(mappedNoticeKey)
+              : t(`gateway.aggregate.notice.${failureKey()}`, { error: message }),
           });
         }
       } finally {
@@ -505,9 +478,27 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       nextAliases: Record<string, string>,
       nextNaming: GatewayAggregateNamingMode,
     ) => {
+      const requiresDirectRestore = aggregateEngageRequiresDirectRestore(
+        nextSiteIds,
+        selectedStatus,
+      );
+      if (requiresDirectRestore && primaryNeedsProxy.needsProxy) {
+        setNotice({ kind: 'error', text: restoreDirectBlockedHint });
+        return false;
+      }
+      // Only set once the restore actually succeeded, so the failure notice can
+      // tell "the CLI is back on direct now" apart from "nothing changed".
+      let restoredDirect = false;
       const succeeded = await runGatewayOperation(
-        () =>
-          engageProxyGatewayAggregate(
+        async () => {
+          if (requiresDirectRestore) {
+            // Switching the primary of an enabled takeover is only supported as
+            // restore direct -> engage again; engaging straight away would be
+            // rejected by the backend guard.
+            await restoreProxyGatewayCliDirect(cliKey);
+            restoredDirect = true;
+          }
+          return engageProxyGatewayAggregate(
             cliKey,
             nextSiteIds,
             nextSeparator,
@@ -515,9 +506,10 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
             nextNaming,
             subagentModel,
             subagentReasoningEffort,
-          ),
+          );
+        },
         t('gateway.aggregate.notice.enabled'),
-        'enableFailed',
+        () => (restoredDirect ? 'enableFailedAfterRestore' : 'enableFailed'),
       );
       if (succeeded) {
         // The backend persists the accepted selection to the draft file too; keep
@@ -532,7 +524,16 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       }
       return succeeded;
     },
-    [cliKey, runGatewayOperation, subagentModel, subagentReasoningEffort, t],
+    [
+      cliKey,
+      primaryNeedsProxy.needsProxy,
+      restoreDirectBlockedHint,
+      runGatewayOperation,
+      selectedStatus,
+      subagentModel,
+      subagentReasoningEffort,
+      t,
+    ],
   );
 
   /**
@@ -579,29 +580,34 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   );
 
   /**
-   * Apply a new site selection or order. Engaged: re-engage so the running
+   * Apply a new site selection. Engaged: re-engage so the running
    * takeover follows immediately. Not engaged: save the draft, which is what
    * makes the selection survive leaving this editor.
+   *
+   * The selection is always normalised to the CLI provider-list order before it
+   * is stored, rendered or written: that list is the single source of the site
+   * order, so the panel must never persist a second, panel-local ordering.
    */
   const applySiteSelection = (nextSiteIds: string[]) => {
-    setSiteIds(nextSiteIds);
+    const orderedSiteIds = orderAggregateSiteIdsByCandidates(nextSiteIds, candidates);
+    setSiteIds(orderedSiteIds);
     setDroppedDraftSites(false);
     // Aliases only address selected sites (the backend refuses anything else), so
     // deselecting a site drops its alias. Keeping it would leave the form
     // permanently invalid and disable the switch without any visible reason.
-    setAliases((current) => aliasesForSelectedSites(current, nextSiteIds));
+    setAliases((current) => aliasesForSelectedSites(current, orderedSiteIds));
     if (!engaged) {
-      persistAggregateDraft({ siteIds: nextSiteIds, separator, aliases, naming });
+      persistAggregateDraft({ siteIds: orderedSiteIds, separator, aliases, naming });
       return;
     }
     const nextAliases = normalizeGatewayAggregateAliases(
       aliases,
-      nextSiteIds,
+      orderedSiteIds,
       candidateSiteIds,
       separatorError === null ? separator : DEFAULT_AGGREGATE_SEPARATOR,
     );
-    if (nextSiteIds.length > 0 && separatorError === null && nextAliases) {
-      void runEngage(nextSiteIds, separator, nextAliases, naming);
+    if (orderedSiteIds.length > 0 && separatorError === null && nextAliases) {
+      void runEngage(orderedSiteIds, separator, nextAliases, naming);
     }
   };
 
@@ -615,7 +621,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       await runGatewayOperation(
         () => restoreProxyGatewayCliDirect(cliKey),
         t('gateway.aggregate.notice.disabled'),
-        'disableFailed',
+        () => 'disableFailed',
       );
       return;
     }
@@ -650,23 +656,6 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       return;
     }
     applySiteSelection(nextSiteIds);
-  };
-
-  const handleMoveSite = (siteId: string, direction: 'up' | 'down') => {
-    applySiteSelection(moveAggregateSite(siteIds, siteId, direction));
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) {
-      return;
-    }
-    const oldIndex = siteIds.indexOf(String(active.id));
-    const newIndex = siteIds.indexOf(String(over.id));
-    if (oldIndex < 0 || newIndex < 0) {
-      return;
-    }
-    applySiteSelection(arrayMove(siteIds, oldIndex, newIndex));
   };
 
   const handleSeparatorCommit = () => {
@@ -706,17 +695,20 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   };
 
   const handleSelectAllSites = () => {
-    const nextSiteIds = candidates.map((candidate) => candidate.id);
-    if (nextSiteIds.length === 0) {
+    if (candidates.length === 0) {
       return;
     }
-    applySiteSelection(nextSiteIds);
+    applySiteSelection(candidates.map((candidate) => candidate.id));
   };
 
-  const selectedCandidates = siteIds
+  // Render from the normalised selection so what the user sees is exactly the
+  // order that will be sent to the backend.
+  const selectedCandidates = normalizedSiteIds
     .map((siteId) => candidates.find((candidate) => candidate.id === siteId))
     .filter((candidate): candidate is GatewayAggregateSiteCandidate => Boolean(candidate));
-  const unselectedCandidates = candidates.filter((candidate) => !siteIds.includes(candidate.id));
+  const unselectedCandidates = candidates.filter(
+    (candidate) => !normalizedSiteIds.includes(candidate.id),
+  );
   // Mirrors the backend `resolve_effective_site_aliases`: a site without an
   // explicit alias is addressed by its normalised display name, so the preview
   // shows `思源888 pro.<model>` rather than the opaque provider id.
@@ -822,7 +814,9 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       {droppedDraftSites ? (
         <p className={styles.helper}>{t('gateway.aggregate.draftSitesDropped')}</p>
       ) : null}
-      {restoreDirectBlocked ? <p className={styles.helper}>{restoreDirectBlockedHint}</p> : null}
+      {restoreDirectBlocked || engageBlockedByProtocol ? (
+        <p className={styles.helper}>{restoreDirectBlockedHint}</p>
+      ) : null}
       {!running ? <p className={styles.helper}>{t('gateway.aggregate.takeoverHint')}</p> : null}
 
       <div className={styles.fieldRow}>
@@ -918,7 +912,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
            <div className={styles.listHeader}>
              <span className={styles.listTitle}>
                <Route size={12} aria-hidden="true" />
-               {t('gateway.aggregate.selectedCount', { count: siteIds.length })}
+               {t('gateway.aggregate.selectedCount', { count: normalizedSiteIds.length })}
              </span>
              <span className={styles.listActions}>
                 {selectedCandidates.length < candidates.length ? (
@@ -932,67 +926,54 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
                 ) : null}
               </span>
             </div>
+            <p className={styles.helper}>{t('gateway.aggregate.orderHint')}</p>
 
-            <>
-                <DndContext
-                 sensors={sensors}
-                 collisionDetection={closestCenter}
-                 modifiers={[restrictToVerticalAxis]}
-                 onDragEnd={handleDragEnd}
-               >
-                 <SortableContext items={siteIds} strategy={verticalListSortingStrategy}>
-                   <ul className={styles.siteList}>
-                     {selectedCandidates.map((candidate, index) => (
-                       <SortableSiteRow
-                         key={candidate.id}
-                         candidate={candidate}
-                         index={index}
-                         lastIndex={selectedCandidates.length - 1}
-                         canDeselect={selectedCandidates.length > 1}
-                         routePreview={buildSiteRoutePreview(candidate.id)}
-                         onToggleSite={handleToggleSite}
-                         onMoveSite={handleMoveSite}
-                         alias={aliases[candidate.id] ?? ''}
-                         separator={separatorError === null ? separator : DEFAULT_AGGREGATE_SEPARATOR}
-                         onAliasChange={(siteId, alias) => {
-                           const nextAliases = { ...aliases, [siteId]: alias };
-                           if (!alias.trim()) delete nextAliases[siteId];
-                           setAliases(nextAliases);
-                         }}
-                         onAliasCommit={handleAliasCommit}
-                       />
-                     ))}
-                   </ul>
-                 </SortableContext>
-               </DndContext>
+            <ul className={styles.siteList}>
+              {selectedCandidates.map((candidate) => (
+                <SelectedSiteRow
+                  key={candidate.id}
+                  candidate={candidate}
+                  canDeselect={selectedCandidates.length > 1}
+                  routePreview={buildSiteRoutePreview(candidate.id)}
+                  onToggleSite={handleToggleSite}
+                  alias={aliases[candidate.id] ?? ''}
+                  separator={separatorError === null ? separator : DEFAULT_AGGREGATE_SEPARATOR}
+                  onAliasChange={(siteId, alias) => {
+                    const nextAliases = { ...aliases, [siteId]: alias };
+                    if (!alias.trim()) delete nextAliases[siteId];
+                    setAliases(nextAliases);
+                  }}
+                  onAliasCommit={handleAliasCommit}
+                />
+              ))}
+            </ul>
 
-               {unselectedCandidates.length > 0 ? (
-                 <ul className={styles.siteList}>
-                   {unselectedCandidates.map((candidate) => (
-                     <li key={candidate.id} className={styles.siteItem}>
-                       <input
-                         type="checkbox"
-                         checked={false}
-                         aria-label={candidate.name}
-                         onChange={(event) =>
-                           handleToggleSite(candidate.id, event.currentTarget.checked)
-                         }
-                       />
-                       <span className={styles.siteName} title={candidate.name}>
-                         {candidate.name}
-                         <span className={styles.siteRoute}>
-                           {t('gateway.aggregate.routePreview')}:{' '}
-                           <code>{buildSiteRoutePreview(candidate.id)}</code>
-                         </span>
-                       </span>
-                       <code className={styles.siteSlug} title={candidate.id}>
-                         {candidate.id}
-                       </code>
-                     </li>
-                   ))}
-                 </ul>
-                ) : null}
-            </>
+            {unselectedCandidates.length > 0 ? (
+              <ul className={styles.siteList}>
+                {unselectedCandidates.map((candidate) => (
+                  <li key={candidate.id} className={styles.siteItem}>
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      aria-label={candidate.name}
+                      onChange={(event) =>
+                        handleToggleSite(candidate.id, event.currentTarget.checked)
+                      }
+                    />
+                    <span className={styles.siteName} title={candidate.name}>
+                      {candidate.name}
+                      <span className={styles.siteRoute}>
+                        {t('gateway.aggregate.routePreview')}:{' '}
+                        <code>{buildSiteRoutePreview(candidate.id)}</code>
+                      </span>
+                    </span>
+                    <code className={styles.siteSlug} title={candidate.id}>
+                      {shortAggregateSiteId(candidate.id)}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
         </>
       )}
 

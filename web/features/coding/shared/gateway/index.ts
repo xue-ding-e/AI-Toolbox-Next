@@ -33,8 +33,9 @@ export {
   type GatewayProviderProfileReference,
 } from './providerProfiles';
 export {
-  moveAggregateSite,
+  orderAggregateSiteIdsByCandidates,
   reconcileAggregateSiteSelection,
+  shortAggregateSiteId,
   toAggregateSiteCandidates,
   type GatewayAggregateProviderLike,
   type GatewayAggregateSiteCandidate,
@@ -59,6 +60,10 @@ export {
   resolveAggregateFormSeed,
   type GatewayAggregateFormSeed,
 } from './gatewayAggregateDraft';
+export {
+  aggregateEngageErrorNoticeKey,
+  aggregateEngageRequiresDirectRestore,
+} from './gatewayAggregateEngage';
 export {
   getGatewayAggregateConfigVersion,
   notifyGatewayAggregateConfigChanged,

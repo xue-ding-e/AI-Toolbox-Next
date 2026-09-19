@@ -89,6 +89,9 @@ const MainLayout: React.FC = () => {
   const contentTopOffset = showAppHeader ? CONTENT_TOP_OFFSET : DRAG_BAR_HEIGHT;
   const isGatewayVisible = visibleTabs.includes('gateway');
   const isImageVisible = visibleTabs.includes('image');
+  // The embedded browser has no route of its own, so its visibility is the only
+  // gate on the toolbar entry. It is off by default: the tab is opt-in.
+  const isMiniBrowserVisible = visibleTabs.includes('miniBrowser');
   const isStandalonePage = isSettingsPage || isSkillsPage || isMcpPage || isGatewayPage || isImagePage;
   const isNonTabPage = isStandalonePage || routeChrome.mode !== 'default';
   const showCodingTabs = showAppHeader && routeChrome.mode === 'default';
@@ -294,8 +297,12 @@ const MainLayout: React.FC = () => {
               <div className={styles.actionsDivider} />
 
               {/* Embedded browser (relay dashboards / API balance) */}
-              <MiniBrowserButton />
-              <div className={styles.actionsDivider} />
+              {isMiniBrowserVisible && (
+                <>
+                  <MiniBrowserButton />
+                  <div className={styles.actionsDivider} />
+                </>
+              )}
 
               {isGatewayVisible && (
                 <>

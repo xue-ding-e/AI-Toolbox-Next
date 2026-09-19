@@ -4,6 +4,7 @@ import {
   validateGatewayAggregateSeparator,
 } from './gatewayAggregateConfig';
 import {
+  orderAggregateSiteIdsByCandidates,
   reconcileAggregateSiteSelection,
   type GatewayAggregateSiteCandidate,
 } from './gatewayAggregateCandidates';
@@ -90,8 +91,12 @@ export const resolveAggregateFormSeed = (params: {
   if (activeConfig) {
     // Engaged: the manifest is what is actually routing. Stale ids stay in the
     // form on purpose so they surface as an invalid config instead of being
-    // silently rewritten out of a running takeover.
-    const siteIds = normalizeGatewayAggregateSiteIds(activeConfig.provider_ids);
+    // silently rewritten out of a running takeover. Site order is never a
+    // panel-local choice: it is read from the CLI provider list.
+    const siteIds = orderAggregateSiteIdsByCandidates(
+      normalizeGatewayAggregateSiteIds(activeConfig.provider_ids),
+      candidates,
+    );
     return {
       siteIds,
       separator: resolveDraftSeparator(activeConfig.separator),
@@ -106,7 +111,7 @@ export const resolveAggregateFormSeed = (params: {
     : { siteIds: [], droppedStaleSites: false };
   const siteIds =
     reconciled.siteIds.length > 0
-      ? reconciled.siteIds
+      ? orderAggregateSiteIdsByCandidates(reconciled.siteIds, candidates)
       : defaultAggregateSiteIds(candidates, appliedProviderId);
 
   return {

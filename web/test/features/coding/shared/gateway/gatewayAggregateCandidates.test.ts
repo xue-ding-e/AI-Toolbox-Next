@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  moveAggregateSite,
+  orderAggregateSiteIdsByCandidates,
   reconcileAggregateSiteSelection,
+  shortAggregateSiteId,
   toAggregateSiteCandidates,
 } from '../../../../../features/coding/shared/gateway/gatewayAggregateCandidates.ts';
 
@@ -45,11 +46,34 @@ test('reconcile keeps saved priority order and reports dropped stale sites', () 
   });
 });
 
-test('moveAggregateSite swaps adjacent entries and clamps at the edges', () => {
-  assert.deepEqual(moveAggregateSite(['a', 'b', 'c'], 'b', 'up'), ['b', 'a', 'c']);
-  assert.deepEqual(moveAggregateSite(['a', 'b', 'c'], 'b', 'down'), ['a', 'c', 'b']);
-  assert.deepEqual(moveAggregateSite(['a', 'b', 'c'], 'a', 'up'), ['a', 'b', 'c']);
-  assert.deepEqual(moveAggregateSite(['a', 'b', 'c'], 'c', 'down'), ['a', 'b', 'c']);
-  assert.deepEqual(moveAggregateSite(['a', 'b'], 'missing', 'up'), ['a', 'b']);
-  assert.deepEqual(moveAggregateSite([], 'a', 'up'), []);
+test('orderAggregateSiteIdsByCandidates follows the provider list order', () => {
+  const candidates = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
+
+  // A saved priority that differs from the provider list is rewritten to the
+  // provider list order: the CLI list stays the only source of site order.
+  assert.deepEqual(orderAggregateSiteIdsByCandidates(['c', 'a', 'b'], candidates), [
+    'a',
+    'b',
+    'c',
+  ]);
+  assert.deepEqual(orderAggregateSiteIdsByCandidates(['b', 'c'], candidates), ['b', 'c']);
+  assert.deepEqual(orderAggregateSiteIdsByCandidates([], candidates), []);
+
+  // Sites that are no longer candidates keep their relative order at the end so
+  // the form still names them and the engage fails loudly instead of silently
+  // rewriting a running takeover.
+  assert.deepEqual(orderAggregateSiteIdsByCandidates(['gone-1', 'a', 'gone-2'], candidates), [
+    'a',
+    'gone-1',
+    'gone-2',
+  ]);
+});
+
+test('shortAggregateSiteId renders a readable eight-character handle', () => {
+  // Site ids are 32-character UUIDs, so the panel shows a stable prefix and keeps
+  // the full id in the tooltip. Display only: what is written to the backend uses
+  // the untouched provider id.
+  assert.equal(shortAggregateSiteId('fa0c3840846b4bd2ba5b1a2c3d4e5f60'), 'fa0c3840');
+  assert.equal(shortAggregateSiteId('provider-1'), 'provider');
+  assert.equal(shortAggregateSiteId('ab'), 'ab');
 });

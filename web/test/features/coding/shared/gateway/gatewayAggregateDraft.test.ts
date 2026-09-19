@@ -77,7 +77,7 @@ test('the default falls back to the first site when the applied provider is not 
   assert.deepEqual(defaultAggregateSiteIds([], 'site-a'), []);
 });
 
-test('a saved draft wins over the default selection', () => {
+test('a saved draft wins over the default selection but is re-ordered by the provider list', () => {
   const seed = resolveAggregateFormSeed({
     activeConfig: null,
     draftConfig: {
@@ -90,13 +90,30 @@ test('a saved draft wins over the default selection', () => {
     appliedProviderId: 'site-a',
   });
 
+  // The selection survives, but its order is the CLI provider list order: the
+  // provider list is the single source of the site priority order.
   assert.deepEqual(seed, {
-    siteIds: ['site-b', 'site-a'],
+    siteIds: ['site-a', 'site-b'],
     separator: '@',
     aliases: { 'site-a': 'a' },
     naming: 'model_only',
     droppedDraftSites: false,
   });
+});
+
+test('an engaged manifest order is rewritten to the provider list order', () => {
+  const seed = resolveAggregateFormSeed({
+    activeConfig: {
+      provider_ids: ['site-b', 'site-a'],
+      separator: '|',
+      aliases: { 'site-b': 'b' },
+      naming: 'site_model',
+    },
+    draftConfig: null,
+    candidates,
+  });
+
+  assert.deepEqual(seed.siteIds, ['site-a', 'site-b']);
 });
 
 test('unavailable draft sites are dropped and reported', () => {
