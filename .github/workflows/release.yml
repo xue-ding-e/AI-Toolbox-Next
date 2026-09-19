@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Beta release tag, e.g. v1.2.3-beta1'
+        description: 'Beta release tag, e.g. v1.2.3-beta or v1.2.3-beta1'
         required: true
         type: string
 
@@ -34,8 +34,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta[0-9]+$ ]]; then
-            echo "::error::Manual release only accepts beta tags like v1.2.3-beta1"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta[0-9]*$ ]]; then
+            echo "::error::Manual release only accepts beta tags like v1.2.3-beta or v1.2.3-beta1"
             exit 1
           fi
           echo "Manual beta release tag validated: $RELEASE_TAG"
