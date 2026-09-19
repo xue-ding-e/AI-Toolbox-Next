@@ -12,6 +12,7 @@
 - 当前运行时根目录由 `runtime_location` 按应用内 `root_dir`、`KIMI_CODE_HOME`、shell 配置、`~/.kimi-code` 的顺序解析。
 - 备份/恢复链路归属于 DB 型 CLI（`OPTIONAL_BACKUP_CLI_TOOLS`），受 `backup_cli_config_files_enabled` 门控；备份时打包 `config.toml`、`AGENTS.md`、`credentials/` 官方凭据和 `plugins/`，恢复时由 `settings::backup` 恢复或由 `reapply_applied_runtime` 从 SQLite 重新应用。
 - MCP 主数据属于中央 MCP 模块；Plugins 和 Sessions 的事实源分别是 Kimi CLI 与 `<root>/sessions/`。
+- Kimi Code CLI 的 MCP server 声明文件是 `<root>/mcp.json`（JSON `mcpServers`，判别字段 `transport`、毫秒超时），**不是 config.toml 的 `[mcp_servers]` 表**（CLI 不消费它）。同步/导入/WSL/SSH 细节见 `coding/mcp/AGENTS.md`；`get_tool_mcp_config_path_*` 对 kimi 返回 `<root>/mcp.json`（`get_kimi_mcp_config_path_*`），不要改回 config.toml。
 
 ## 核心设计决策
 

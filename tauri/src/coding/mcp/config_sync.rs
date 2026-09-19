@@ -135,6 +135,50 @@ fn expand_stdio_paths(server: &McpServer) -> McpServer {
     expanded
 }
 
+/// Earlier ai-toolbox versions synced Kimi MCP servers into the
+/// `[mcp_servers]` table of config.toml, but Kimi Code CLI only reads
+/// `<root>/mcp.json`. Remove the dead table whenever we touch kimi's MCP
+/// config so stale entries do not linger. Best-effort hygiene: the delete is
+/// idempotent, and a concurrent Kimi projection write (which preserves unknown
+/// tables) would simply re-add it for the next sync to clean up.
+fn remove_legacy_kimi_toml_mcp_table(mcp_config_path: &Path) {
+    let Some(parent) = mcp_config_path.parent() else {
+        return;
+    };
+    let config_toml_path = parent.join("config.toml");
+    if !config_toml_path.exists() {
+        return;
+    }
+
+    let cleanup = || -> Result<bool, String> {
+        let content = std::fs::read_to_string(&config_toml_path)
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse TOML config: {}", e))?;
+        if doc.get("mcp_servers").and_then(|item| item.as_table()).is_none() {
+            return Ok(false);
+        }
+        doc.remove("mcp_servers");
+        std::fs::write(&config_toml_path, doc.to_string())
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
+        Ok(true)
+    };
+
+    match cleanup() {
+        Ok(true) => log::info!(
+            "Removed legacy [mcp_servers] table from {}",
+            config_toml_path.display()
+        ),
+        Ok(false) => {}
+        Err(e) => log::warn!(
+            "Failed to remove legacy [mcp_servers] table from {}: {}",
+            config_toml_path.display(),
+            e
+        ),
+    }
+}
+
 fn sync_server_to_path(
     tool: &RuntimeTool,
     config_path: &PathBuf,
@@ -145,6 +189,10 @@ fn sync_server_to_path(
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
     let format_config = get_format_config(&tool.key);
     let should_wrap_cmd = should_wrap_cmd_for_config_path(config_path);
+
+    if tool.key == "kimi" {
+        remove_legacy_kimi_toml_mcp_table(config_path);
+    }
 
     // Expand `~/`, `$HOME`, `%APPDATA%`, etc. in stdio command/args to absolute
     // paths before writing to the local tool config file. CLI runners (Claude Code,
@@ -222,6 +270,10 @@ fn remove_server_from_path(
 ) -> Result<(), String> {
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
+
+    if tool.key == "kimi" {
+        remove_legacy_kimi_toml_mcp_table(config_path);
+    }
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
@@ -501,8 +553,10 @@ fn build_toml_edit_server_config(
                 (command.to_string(), args)
             };
 
-            // Insert in order: type -> command -> args -> env
-            t["type"] = toml_edit::value("stdio");
+            // Codex/Kimi TOML schemas have no `type` key: Codex infers the
+            // transport from `command`/`url` (RawMcpServerConfig), and Kimi
+            // Code CLI discriminates on `transport` instead. Writing `type`
+            // makes Codex report an unrecognized-setting warning.
             t["command"] = toml_edit::value(&final_command);
 
             // Build args array (inline format)
@@ -537,8 +591,9 @@ fn build_toml_edit_server_config(
                     server.server_type
                 ))?;
 
-            // Insert in order: type -> url -> http_headers
-            t["type"] = toml_edit::value(&server.server_type);
+            // See the stdio branch: no `type` key. Codex only has a
+            // streamable_http transport inferred from `url` (no `sse`);
+            // Kimi discriminates on `transport` and auto-detects `http`.
             t["url"] = toml_edit::value(url);
 
             // Build http_headers as sub-table (Codex uses http_headers, not headers)
@@ -799,6 +854,10 @@ fn build_stdio_config(
         return Ok(Value::Object(result));
     }
 
+    if tool_key == "kimi" {
+        return build_kimi_stdio_config(server, command, args, env, enabled, should_wrap_cmd);
+    }
+
     // Apply format conversion if config is provided
     if let Some(config) = format_config {
         let mut result = serde_json::Map::new();
@@ -934,6 +993,10 @@ fn build_http_config(
         return Ok(Value::Object(result));
     }
 
+    if tool_key == "kimi" {
+        return build_kimi_http_config(server, url, headers, enabled);
+    }
+
     // Apply format conversion if config is provided
     if let Some(config) = format_config {
         let mut result = serde_json::Map::new();
@@ -990,6 +1053,144 @@ fn build_http_config(
     }
 }
 
+/// Kimi Code CLI uses millisecond timeout fields (`startupTimeoutMs` /
+/// `toolTimeoutMs`, clamped to 1..=2147483647); the central store keeps the
+/// Codex/Grok-style second-based `startup_timeout_sec` / `tool_timeout_sec`.
+const KIMI_MAX_TIMEOUT_MS: i64 = 2_147_483_647;
+
+fn kimi_timeout_ms_value_from_seconds(config: &Value, field: &str) -> Option<Value> {
+    let seconds = config.get(field)?.as_f64()?;
+    let millis = (seconds * 1000.0).round() as i64;
+    if !(1..=KIMI_MAX_TIMEOUT_MS).contains(&millis) {
+        return None;
+    }
+    Some(Value::Number(millis.into()))
+}
+
+/// Inverse of [`kimi_timeout_ms_value_from_seconds`]: convert a Kimi
+/// millisecond value back into the central second-based field. Whole seconds
+/// stay integers so round trips keep the stored shape stable.
+fn kimi_seconds_value_from_ms(ms: f64) -> Value {
+    if ms % 1000.0 == 0.0 {
+        Value::from((ms / 1000.0) as i64)
+    } else {
+        Value::from(ms / 1000.0)
+    }
+}
+
+/// Build a Kimi Code CLI stdio entry for `<root>/mcp.json`.
+///
+/// Kimi's schema infers `transport: "stdio"` from the `command` field, so the
+/// discriminator is omitted. `enabled` and the millisecond timeouts are written
+/// explicitly; `cwd` is passed through when the central config carries one.
+fn build_kimi_stdio_config(
+    server: &McpServer,
+    command: &str,
+    args: Vec<String>,
+    env: Option<Value>,
+    enabled: bool,
+    should_wrap_cmd: bool,
+) -> Result<Value, String> {
+    let temp_result = serde_json::json!({
+        "command": command,
+        "args": args,
+    });
+    let wrapped = command_normalize::wrap_cmd_c_for_target(&temp_result, should_wrap_cmd);
+
+    let mut result = serde_json::Map::new();
+    result.insert(
+        "command".to_string(),
+        wrapped
+            .get("command")
+            .cloned()
+            .unwrap_or(Value::String(command.to_string())),
+    );
+    result.insert(
+        "args".to_string(),
+        wrapped
+            .get("args")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(vec![])),
+    );
+
+    if let Some(env_val) = env {
+        if env_val.is_object() && !env_val.as_object().is_some_and(|o| o.is_empty()) {
+            result.insert("env".to_string(), env_val);
+        }
+    }
+
+    if let Some(cwd) = server
+        .server_config
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|cwd| !cwd.is_empty())
+    {
+        result.insert("cwd".to_string(), Value::String(cwd.to_string()));
+    }
+
+    result.insert("enabled".to_string(), Value::Bool(enabled));
+    for (target, source) in [
+        ("startupTimeoutMs", "startup_timeout_sec"),
+        ("toolTimeoutMs", "tool_timeout_sec"),
+    ] {
+        if let Some(ms) = kimi_timeout_ms_value_from_seconds(&server.server_config, source) {
+            result.insert(target.to_string(), ms);
+        }
+    }
+
+    Ok(Value::Object(result))
+}
+
+/// Build a Kimi Code CLI HTTP/SSE entry for `<root>/mcp.json`.
+///
+/// Kimi infers `transport: "http"` from `url`, but has no `url` -> `sse`
+/// inference, so SSE entries must carry the explicit discriminator.
+fn build_kimi_http_config(
+    server: &McpServer,
+    url: &str,
+    headers: Option<Value>,
+    enabled: bool,
+) -> Result<Value, String> {
+    let mut result = serde_json::Map::new();
+    if server.server_type == "sse" {
+        result.insert(
+            "transport".to_string(),
+            Value::String("sse".to_string()),
+        );
+    }
+    result.insert("url".to_string(), Value::String(url.to_string()));
+
+    if let Some(headers_val) = headers {
+        if headers_val.is_object() && !headers_val.as_object().is_some_and(|o| o.is_empty()) {
+            result.insert("headers".to_string(), headers_val);
+        }
+    }
+
+    if let Some(bearer_env) = server
+        .server_config
+        .get("bearer_token_env_var")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+    {
+        result.insert(
+            "bearerTokenEnvVar".to_string(),
+            Value::String(bearer_env.to_string()),
+        );
+    }
+
+    result.insert("enabled".to_string(), Value::Bool(enabled));
+    for (target, source) in [
+        ("startupTimeoutMs", "startup_timeout_sec"),
+        ("toolTimeoutMs", "tool_timeout_sec"),
+    ] {
+        if let Some(ms) = kimi_timeout_ms_value_from_seconds(&server.server_config, source) {
+            result.insert(target.to_string(), ms);
+        }
+    }
+
+    Ok(Value::Object(result))
+}
+
 /// Import MCP servers from a tool's config file
 pub fn import_servers_from_tool(
     db: &crate::db::SqliteDbState,
@@ -1024,6 +1225,7 @@ pub(crate) fn import_servers_from_path(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
+        "json" | "jsonc" if tool.key == "kimi" => import_servers_from_kimi(config_path),
         "json" | "jsonc" => import_servers_from_json(config_path, field, format_config),
         "toml" => import_servers_from_toml(config_path, field, &tool.key),
         "yaml" => match tool.key.as_str() {
@@ -1036,6 +1238,148 @@ pub(crate) fn import_servers_from_path(
         },
         _ => Err(format!("Unsupported config format: {}", format)),
     }
+}
+
+/// Import MCP servers from Kimi Code CLI's `<root>/mcp.json`.
+///
+/// Differences from the standard Claude-style parser:
+/// - the transport discriminator is `transport` (with `command`/`url` fallback
+///   inference), not `type`;
+/// - millisecond timeouts (`startupTimeoutMs`/`toolTimeoutMs`) convert back to
+///   the central second-based fields;
+/// - `enabled`, `cwd`, and `bearerTokenEnvVar` are kept in `server_config` so
+///   re-syncing does not drop them.
+fn import_servers_from_kimi(config_path: &PathBuf) -> Result<Vec<McpServer>, String> {
+    let content = std::fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content = content.trim();
+    if content.is_empty() {
+        return Ok(vec![]);
+    }
+    let config: Value =
+        json5::from_str(content).map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    let Some(servers_obj) = config
+        .get("mcpServers")
+        .and_then(Value::as_object)
+    else {
+        return Ok(vec![]);
+    };
+
+    let now = now_ms();
+    let mut servers = Vec::new();
+
+    for (name, entry) in servers_obj {
+        let Some(server) = parse_kimi_server_config(name, entry, now) else {
+            continue;
+        };
+        servers.push(server);
+    }
+
+    Ok(servers)
+}
+
+fn kimi_transport_to_server_type(entry: &Value) -> Option<String> {
+    if let Some(transport) = entry.get("transport").and_then(Value::as_str) {
+        return match transport {
+            "stdio" | "http" | "sse" => Some(transport.to_string()),
+            _ => None,
+        };
+    }
+    if entry.get("command").is_some() {
+        return Some("stdio".to_string());
+    }
+    if entry.get("url").is_some() {
+        return Some("http".to_string());
+    }
+    None
+}
+
+fn kimi_copy_seconds_timeouts(entry: &Value, unified: &mut serde_json::Map<String, Value>) {
+    for (target, source) in [
+        ("startup_timeout_sec", "startupTimeoutMs"),
+        ("tool_timeout_sec", "toolTimeoutMs"),
+    ] {
+        if let Some(ms) = entry.get(source).and_then(Value::as_f64) {
+            unified.insert(target.to_string(), kimi_seconds_value_from_ms(ms));
+        }
+    }
+}
+
+fn parse_kimi_server_config(name: &str, entry: &Value, now: i64) -> Option<McpServer> {
+    let server_type = kimi_transport_to_server_type(entry)?;
+
+    let mut unified_config = serde_json::Map::new();
+    match server_type.as_str() {
+        "stdio" => {
+            let command = entry.get("command").and_then(Value::as_str)?;
+            unified_config.insert("command".to_string(), Value::String(command.to_string()));
+            if let Some(args) = entry.get("args").and_then(Value::as_array) {
+                if !args.is_empty() {
+                    unified_config.insert("args".to_string(), Value::Array(args.clone()));
+                }
+            }
+            if let Some(env_val) = entry.get("env") {
+                if env_val.as_object().is_some_and(|o| !o.is_empty()) {
+                    unified_config.insert("env".to_string(), env_val.clone());
+                }
+            }
+            if let Some(cwd) = entry.get("cwd").and_then(Value::as_str) {
+                if !cwd.is_empty() {
+                    unified_config.insert("cwd".to_string(), Value::String(cwd.to_string()));
+                }
+            }
+            // Normalize for database storage (strip any cmd /c wrapper).
+            let Value::Object(unwrapped) =
+                command_normalize::unwrap_cmd_c(&Value::Object(unified_config))
+            else {
+                return None;
+            };
+            unified_config = unwrapped;
+        }
+        "http" | "sse" => {
+            let url = entry.get("url").and_then(Value::as_str)?;
+            unified_config.insert("url".to_string(), Value::String(url.to_string()));
+            if let Some(headers_val) = entry.get("headers") {
+                if headers_val.as_object().is_some_and(|o| !o.is_empty()) {
+                    unified_config.insert("headers".to_string(), headers_val.clone());
+                }
+            }
+            if let Some(bearer_env) = entry.get("bearerTokenEnvVar").and_then(Value::as_str) {
+                if !bearer_env.is_empty() {
+                    unified_config.insert(
+                        "bearer_token_env_var".to_string(),
+                        Value::String(bearer_env.to_string()),
+                    );
+                }
+            }
+        }
+        _ => return None,
+    }
+
+    if let Some(enabled) = entry.get("enabled").and_then(Value::as_bool) {
+        unified_config.insert("enabled".to_string(), Value::Bool(enabled));
+    }
+    kimi_copy_seconds_timeouts(entry, &mut unified_config);
+
+    Some(McpServer {
+        id: String::new(),
+        name: name.to_string(),
+        server_type,
+        server_config: Value::Object(unified_config),
+        enabled_tools: vec![],
+        sync_details: None,
+        description: None,
+        user_group: None,
+        user_note: None,
+        tags: vec![],
+        timeout: None,
+        sort_index: 0,
+        management_enabled: true,
+        disabled_previous_tools: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    })
 }
 
 /// Import servers from JSON/JSONC config file (using json5 for parsing)
@@ -1665,7 +2009,7 @@ mod tests {
 
         let table = build_toml_edit_server_config(&server, false).expect("build Codex MCP");
 
-        assert_eq!(table["type"].as_str(), Some("stdio"));
+        assert!(table.get("type").is_none());
         assert_eq!(table["command"].as_str(), Some("npx"));
         assert_eq!(table["startup_timeout_sec"].as_integer(), Some(120));
         assert_eq!(table["tool_timeout_sec"].as_integer(), Some(300));
@@ -1724,6 +2068,141 @@ X-Test = "yes"
         assert_eq!(remote.server_config["headers"]["X-Test"], "yes");
         assert_eq!(remote.server_config["startup_timeout_sec"], 25);
         assert_eq!(remote.server_config["tool_timeout_sec"], 1800);
+    }
+
+    #[test]
+    fn kimi_json_config_writes_official_fields_without_type() {
+        let mut server = build_npx_stdio_server();
+        server.server_config["env"] = json!({ "API_KEY": "k-123" });
+        server.server_config["cwd"] = json!("/workspace");
+        server.server_config["startup_timeout_sec"] = json!(120);
+        server.server_config["tool_timeout_sec"] = json!(0.5);
+
+        let config =
+            build_json_server_config(&server, None, false, "kimi", false).expect("build Kimi MCP");
+
+        // Kimi's schema has no `type` key and infers stdio from `command`.
+        assert!(config.get("type").is_none());
+        assert!(config.get("transport").is_none());
+        assert_eq!(config["command"], "npx");
+        assert_eq!(config["args"], json!(["-y", "--prefer-online", "@sammysnake/fast-context-mcp"]));
+        assert_eq!(config["env"], json!({ "API_KEY": "k-123" }));
+        assert_eq!(config["cwd"], "/workspace");
+        assert_eq!(config["enabled"], false);
+        // Central second-based timeouts convert to Kimi's millisecond fields.
+        assert_eq!(config["startupTimeoutMs"], 120_000);
+        assert_eq!(config["toolTimeoutMs"], 500);
+    }
+
+    #[test]
+    fn kimi_json_http_omits_transport_but_sse_keeps_it() {
+        let mut http = build_http_server();
+        http.server_config["startup_timeout_sec"] = json!(30);
+
+        let http_config =
+            build_json_server_config(&http, None, true, "kimi", false).expect("build Kimi HTTP");
+
+        // `url` alone already implies `transport: "http"`.
+        assert!(http_config.get("transport").is_none());
+        assert_eq!(http_config["url"], "https://example.com/mcp");
+        assert_eq!(http_config["enabled"], true);
+        assert_eq!(http_config["startupTimeoutMs"], 30_000);
+
+        let mut sse = build_http_server();
+        sse.server_type = "sse".to_string();
+        let sse_config =
+            build_json_server_config(&sse, None, true, "kimi", false).expect("build Kimi SSE");
+
+        // Kimi has no url -> sse inference; the discriminator is required.
+        assert_eq!(sse_config["transport"], "sse");
+        assert_eq!(sse_config["url"], "https://example.com/mcp");
+    }
+
+    #[test]
+    fn kimi_json_import_converts_transport_and_ms_timeouts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let config_path = temp_dir.path().join("mcp.json");
+        std::fs::write(
+            &config_path,
+            r#"
+{
+  "mcpServers": {
+    "local": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "pkg"],
+      "env": { "API_KEY": "k-123" },
+      "cwd": "/workspace",
+      "enabled": false,
+      "startupTimeoutMs": 120000,
+      "toolTimeoutMs": 12500
+    },
+    "remote": {
+      "transport": "sse",
+      "url": "https://example.com/mcp",
+      "headers": { "X-Test": "yes" },
+      "bearerTokenEnvVar": "MY_TOKEN_VAR"
+    }
+  }
+}
+"#,
+        )
+        .expect("write fixture");
+
+        let servers = import_servers_from_kimi(&config_path).expect("import Kimi MCP");
+        let local = servers
+            .iter()
+            .find(|server| server.name == "local")
+            .expect("local server");
+        assert_eq!(local.server_type, "stdio");
+        assert_eq!(local.server_config["command"], "npx");
+        assert_eq!(local.server_config["env"], json!({ "API_KEY": "k-123" }));
+        assert_eq!(local.server_config["cwd"], "/workspace");
+        assert_eq!(local.server_config["enabled"], false);
+        assert_eq!(local.server_config["startup_timeout_sec"], 120);
+        assert_eq!(local.server_config["tool_timeout_sec"], 12.5);
+
+        let remote = servers
+            .iter()
+            .find(|server| server.name == "remote")
+            .expect("remote server");
+        assert_eq!(remote.server_type, "sse");
+        assert_eq!(remote.server_config["url"], "https://example.com/mcp");
+        assert_eq!(remote.server_config["headers"], json!({ "X-Test": "yes" }));
+        assert_eq!(remote.server_config["bearer_token_env_var"], "MY_TOKEN_VAR");
+    }
+
+    #[test]
+    fn kimi_cleanup_removes_legacy_toml_mcp_table() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mcp_path = temp_dir.path().join("mcp.json");
+        let config_toml_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_toml_path,
+            r#"
+model = "kimi-for-coding"
+
+[mcp_servers.old-server]
+command = "npx"
+args = ["-y", "pkg"]
+
+[providers.official]
+api_key = "sk-test"
+"#,
+        )
+        .expect("write fixture");
+
+        remove_legacy_kimi_toml_mcp_table(&mcp_path);
+
+        let cleaned = std::fs::read_to_string(&config_toml_path).expect("read cleaned config");
+        assert!(!cleaned.contains("mcp_servers"));
+        assert!(cleaned.contains("[providers.official]"));
+        assert!(cleaned.contains("model = \"kimi-for-coding\""));
+        // Idempotent: second run is a no-op.
+        remove_legacy_kimi_toml_mcp_table(&mcp_path);
+        assert_eq!(
+            std::fs::read_to_string(&config_toml_path).expect("read cleaned config"),
+            cleaned
+        );
     }
 
     #[test]

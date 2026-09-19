@@ -1142,6 +1142,22 @@ pub async fn get_kimi_config_path_async(db: &crate::db::SqliteDbState) -> Result
         .join(kimi::constants::KIMI_CONFIG_FILE))
 }
 
+/// Kimi Code CLI reads MCP servers from `<root>/mcp.json`, not config.toml.
+pub fn get_kimi_mcp_config_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_sync(db)?
+        .host_path
+        .join(kimi::constants::KIMI_MCP_CONFIG_FILE))
+}
+
+pub async fn get_kimi_mcp_config_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_kimi_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(kimi::constants::KIMI_MCP_CONFIG_FILE))
+}
+
 pub fn get_kimi_prompt_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
     Ok(get_kimi_runtime_location_sync(db)?
         .host_path
@@ -1778,7 +1794,7 @@ pub fn get_tool_mcp_config_path_sync(
         "claude_code" => get_claude_mcp_config_path_sync(db).ok(),
         "codex" => get_codex_config_path_sync(db).ok(),
         "grok" => get_grok_config_path_sync(db).ok(),
-        "kimi" => get_kimi_config_path_sync(db).ok(),
+        "kimi" => get_kimi_mcp_config_path_sync(db).ok(),
         "opencode" => get_opencode_runtime_location_sync(db)
             .ok()
             .map(|location| location.host_path),
@@ -1803,7 +1819,7 @@ pub async fn get_tool_mcp_config_path_async(
         "claude_code" => get_claude_mcp_config_path_async(db).await.ok(),
         "codex" => get_codex_config_path_async(db).await.ok(),
         "grok" => get_grok_config_path_async(db).await.ok(),
-        "kimi" => get_kimi_config_path_async(db).await.ok(),
+        "kimi" => get_kimi_mcp_config_path_async(db).await.ok(),
         "opencode" => get_opencode_runtime_location_async(db)
             .await
             .ok()

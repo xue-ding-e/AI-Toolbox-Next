@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to WSL for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex/Gemini CLI/Pi: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI/Kimi/Pi: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -102,20 +102,20 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
         }
     }
 
-    // Emit progress for OpenCode/Codex/Grok/Gemini CLI/Pi
+    // Emit progress for OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi
     let _ = app.emit(
         "wsl-sync-progress",
         SyncProgress {
             phase: "mcp".to_string(),
-            current_item: "OpenCode/Codex/Grok/Gemini CLI/Pi MCP".to_string(),
+            current_item: "OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi MCP".to_string(),
             current: 2,
             total: 2,
-            message: "MCP 同步: OpenCode/Codex/Grok/Gemini CLI/Pi...".to_string(),
+            message: "MCP 同步: OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi...".to_string(),
             current_file: None,
         },
     );
 
-    // 2. OpenCode/Codex/Grok/Gemini CLI/Pi: sync config files via file mappings
+    // 2. OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi: sync config files via file mappings
     match get_file_mappings(state).await {
         Ok(file_mappings) => {
             let mcp_mappings = filter_mcp_file_mappings(file_mappings, &direct_modules);
@@ -126,11 +126,11 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
-                    all_errors.push(format!("OpenCode/Codex/Grok/Gemini CLI/Pi: {}", msg));
+                    all_errors.push(format!("OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi: {}", msg));
                     let _ = app.emit(
                         "wsl-sync-warning",
                         format!(
-                            "OpenCode/Codex/Grok/Gemini CLI/Pi 配置同步部分失败：{}",
+                            "OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi 配置同步部分失败：{}",
                             msg
                         ),
                     );
@@ -160,11 +160,11 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
             }
         }
         Err(e) => {
-            log::warn!("Skipped OpenCode/Codex/Grok/Gemini CLI/Pi MCP sync: {}", e);
-            all_errors.push(format!("OpenCode/Codex/Grok/Gemini CLI/Pi: {}", e));
+            log::warn!("Skipped OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi: {}", e));
             let _ = app.emit(
                 "wsl-sync-warning",
-                format!("OpenCode/Codex/Grok/Gemini CLI/Pi MCP 同步已跳过：{}", e),
+                format!("OpenCode/Codex/Grok/Gemini CLI/Kimi/Pi MCP 同步已跳过：{}", e),
             );
         }
     }
@@ -325,6 +325,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "geminicli-settings"
             | "pi-mcp"
             | "omp-mcp"
+            | "kimi-mcp"
             | "hermes-config"
             | "dsh-mcp"
     )
@@ -371,6 +372,9 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
         // parser: the cmd /c strip is a no-op for Grok, and the path transform
         // converts any Windows full-path command to /mnt for the WSL target.
         "grok" => command_normalize::process_codex_toml(&content, false, &to_wsl)?,
+        // Kimi carries MCP servers in mcp.json (standard mcpServers JSON);
+        // config.toml is synced by the kimi-config mapping, not this path.
+        "kimi" => command_normalize::process_claude_json(&content, false, &to_wsl)?,
         "geminicli" | "pi" | "oh_my_pi" => {
             command_normalize::process_claude_json(&content, false, &to_wsl)?
         }

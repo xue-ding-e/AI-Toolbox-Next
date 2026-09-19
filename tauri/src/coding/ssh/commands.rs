@@ -1145,7 +1145,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 16;
+    const CURRENT_DEFAULTS_VERSION: u64 = 17;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1169,6 +1169,7 @@ async fn backfill_default_file_mappings(
         "kimi-plugins",
     ];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] = &["omp-agents-dir"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V17: &[&str] = &["kimi-mcp"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1229,6 +1230,11 @@ async fn backfill_default_file_mappings(
                 16,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V16,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                17,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V17,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1537,6 +1543,13 @@ pub async fn resolve_dynamic_paths_with_db(
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
                         runtime_location::get_kimi_wsl_target_path_async(db, "config.toml").await;
+                }
+            }
+            "kimi-mcp" => {
+                if let Ok(path) = runtime_location::get_kimi_mcp_config_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_kimi_wsl_target_path_async(db, "mcp.json").await;
                 }
             }
             "kimi-prompt" => {
@@ -2344,6 +2357,19 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             module: "kimi".to_string(),
             local_path: "~/.kimi-code/config.toml".to_string(),
             remote_path: "~/.kimi-code/config.toml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // Kimi MCP servers live in <root>/mcp.json (not config.toml).
+        SSHFileMapping {
+            id: "kimi-mcp".to_string(),
+            name: "Kimi Code CLI MCP 配置".to_string(),
+            module: "kimi".to_string(),
+            local_path: "~/.kimi-code/mcp.json".to_string(),
+            remote_path: "~/.kimi-code/mcp.json".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

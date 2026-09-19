@@ -1,6 +1,9 @@
 pub const KIMI_HOME_ENV_KEY: &str = "KIMI_CODE_HOME";
 pub const KIMI_LOCAL_PROVIDER_ID: &str = "__local__";
 pub const KIMI_CONFIG_FILE: &str = "config.toml";
+/// Kimi Code CLI declares MCP servers in `<root>/mcp.json` (JSON `mcpServers`),
+/// not in config.toml. The `[mcp_servers]` TOML table is not read by the CLI.
+pub const KIMI_MCP_CONFIG_FILE: &str = "mcp.json";
 pub const KIMI_PROMPT_FILE: &str = "AGENTS.md";
 pub const KIMI_SKILLS_DIR: &str = "skills";
 pub const KIMI_PLUGINS_DIR: &str = "plugins";

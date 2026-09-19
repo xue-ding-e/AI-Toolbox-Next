@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to remote Linux server for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex/Gemini CLI/Pi: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI/Kimi/Pi: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -101,10 +101,10 @@ pub async fn sync_mcp_to_ssh(
         "ssh-sync-progress",
         SyncProgress {
             phase: "mcp".to_string(),
-            current_item: "OpenCode/Codex/Gemini CLI MCP".to_string(),
+            current_item: "OpenCode/Codex/Gemini CLI/Kimi MCP".to_string(),
             current: 2,
             total: 2,
-            message: "MCP 同步: OpenCode/Codex/Gemini CLI...".to_string(),
+            message: "MCP 同步: OpenCode/Codex/Gemini CLI/Kimi...".to_string(),
             current_file: None,
         },
     );
@@ -183,11 +183,11 @@ pub async fn sync_mcp_to_ssh(
             }
         }
         Err(e) => {
-            log::warn!("Skipped OpenCode/Codex/Gemini CLI MCP sync: {}", e);
+            log::warn!("Skipped OpenCode/Codex/Gemini CLI/Kimi MCP sync: {}", e);
             all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", e));
             let _ = app.emit(
                 "ssh-sync-warning",
-                format!("OpenCode/Codex/Gemini CLI MCP 同步已跳过：{}", e),
+                format!("OpenCode/Codex/Gemini CLI/Kimi MCP 同步已跳过：{}", e),
             );
         }
     }
@@ -339,6 +339,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "geminicli-settings"
             | "pi-mcp"
             | "omp-mcp"
+            | "kimi-mcp"
             | "hermes-config"
             | "dsh-mcp"
             | "claude-desktop-config"
@@ -372,6 +373,9 @@ async fn strip_cmd_c_from_remote_mcp_file(
         "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
             command_normalize::process_claude_json(&content, false, &identity)?
         }
+        // Kimi carries MCP servers in mcp.json (standard mcpServers JSON);
+        // config.toml is synced by the kimi-config mapping, not this path.
+        "kimi" => command_normalize::process_claude_json(&content, false, &identity)?,
         // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
         // (also YAML). Both carry `cmd /c` on Windows and need it stripped
         // for the Linux SSH target.

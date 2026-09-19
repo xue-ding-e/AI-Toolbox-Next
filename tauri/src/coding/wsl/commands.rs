@@ -953,7 +953,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 17;
+    const CURRENT_DEFAULTS_VERSION: u64 = 18;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -976,6 +976,7 @@ async fn backfill_default_mappings(
         "kimi-plugins",
     ];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V17: &[&str] = &["omp-agents-dir"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V18: &[&str] = &["kimi-mcp"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1036,6 +1037,11 @@ async fn backfill_default_mappings(
                 17,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V17,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                18,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V18,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1330,6 +1336,13 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
                         runtime_location::get_kimi_wsl_target_path_async(db, "config.toml").await;
+                }
+            }
+            "kimi-mcp" => {
+                if let Ok(path) = runtime_location::get_kimi_mcp_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_kimi_wsl_target_path_async(db, "mcp.json").await;
                 }
             }
             "kimi-prompt" => {
@@ -2172,6 +2185,19 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "kimi".to_string(),
             windows_path: "~/.kimi-code/config.toml".to_string(),
             wsl_path: "~/.kimi-code/config.toml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // Kimi MCP servers live in <root>/mcp.json (not config.toml).
+        FileMapping {
+            id: "kimi-mcp".to_string(),
+            name: "Kimi Code CLI MCP 配置".to_string(),
+            module: "kimi".to_string(),
+            windows_path: "~/.kimi-code/mcp.json".to_string(),
+            wsl_path: "~/.kimi-code/mcp.json".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,
