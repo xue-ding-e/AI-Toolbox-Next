@@ -161,9 +161,29 @@ test('import uses exact bundled presets for the displayed Claude model and saves
   }));
   assert.deepEqual(settings.modelCatalog.models, [{
     model: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', contextWindow: 1000000,
+    modalities: { input: ['text', 'image'], output: ['text'] },
     reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningLevel: 'high',
   }]);
   assert.deepEqual(rows[0], fillCodexCatalogModelFromPreset({ model: 'claude-opus-4-8' }, findPresetModelById('claude-opus-4-8')));
+});
+
+test('preset modalities fill input/output and drop values Codex cannot carry', () => {
+  const row = fillCodexCatalogModelFromPreset({ model: 'gemini-3-pro' }, {
+    id: 'gemini-3-pro',
+    name: 'Gemini 3 Pro',
+    modalities: { input: ['text', 'image', 'video', 'pdf'], output: ['text', 'image'] },
+  });
+  assert.deepEqual(row.modalities, { input: ['text', 'image'], output: ['text', 'image'] });
+
+  const existing = { model: 'gemini-3-pro', displayName: 'My Gemini', modalities: { input: ['text'] } };
+  assert.deepEqual(
+    fillCodexCatalogModelFromPreset(existing, {
+      id: 'gemini-3-pro',
+      name: 'Gemini 3 Pro',
+      modalities: { input: ['text', 'image'], output: ['text'] },
+    }),
+    existing,
+  );
 });
 
 test('preset enrichment preserves explicit row settings and does not invent speed tiers', () => {

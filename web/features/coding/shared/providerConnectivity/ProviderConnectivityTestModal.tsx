@@ -6,6 +6,7 @@ import type { KimiProvider } from '@/types/kimi';
 import type { OpenCodeProvider } from '@/types/opencode';
 import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
+import { buildCodexConnectivityModelIds } from '@/features/coding/codex/utils/codexCatalogModels';
 import {
   extractGrokSettingsBaseUrl,
   extractGrokSettingsModel,
@@ -109,7 +110,9 @@ export function buildCodexProviderConnectivityInfo(provider: CodexProvider): Pro
   const reasoningEffort = extractCodexReasoningEffort(settingsConfig.config)?.trim();
   const apiKey = settingsConfig.auth?.OPENAI_API_KEY?.trim();
   const baseUrl = extractCodexBaseUrl(settingsConfig.config)?.trim() || DEFAULT_CODEX_BASE_URL;
-  const modelIds = modelId ? [modelId] : [];
+  // The catalog is the provider's real model list, so the test covers every
+  // catalog row in addition to the config.toml default.
+  const modelIds = buildCodexConnectivityModelIds(modelId, settingsConfig.modelCatalog?.models);
 
   return {
     providerId: provider.id,

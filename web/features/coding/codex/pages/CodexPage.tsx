@@ -22,6 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import type {
+  CodexCatalogModel,
   CodexProvider,
   CodexOfficialAccount,
   CodexProviderFormValues,
@@ -68,6 +69,7 @@ import { TRAY_CONFIG_REFRESH_EVENT, DEEP_LINK_IMPORT_COMPLETED } from '@/constan
 import { useSettingsStore } from '@/stores';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
+import CodexModelFormModal from '../components/CodexModelFormModal';
 import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
@@ -86,6 +88,9 @@ import {
 } from '../utils/codexGatewayProxyNeed';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
+import FetchModelsModal from '@/components/common/FetchModelsModal';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
+import { findPresetModelById } from '@/constants/presetModels';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
@@ -154,7 +159,22 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
-import { parseCodexSettingsConfig } from '../utils/codexSettingsConfig';
+import {
+  buildCodexSettingsConfig,
+  parseCodexSettingsConfig,
+  resolveCodexAutoReviewModelOverride,
+} from '../utils/codexSettingsConfig';
+import {
+  codexCatalogRowKey,
+  findCodexCatalogRowIndex,
+  importModelsIntoCatalog,
+  removeCodexCatalogModels,
+  reorderCodexCatalogModels,
+  resolveCodexDefaultReasoningEffort,
+  upsertCodexCatalogModel,
+  type CodexCatalogPresetResolver,
+} from '../utils/codexCatalogModels';
+import { saveCodexProviderCatalogWithGatewayReengage } from '../utils/codexProviderCatalogSave';
 import {
   engageProxyGatewayAggregate,
   engageProxyGatewayFailover,
@@ -192,6 +212,28 @@ function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
       ...(provider.notes ? { notes: provider.notes } : {}),
     } satisfies CodexFavoriteProviderPayload,
   );
+}
+
+/** Catalog rows persisted on a Codex provider, ignoring blank entries. */
+function getCodexProviderCatalogModels(provider: CodexProvider): CodexCatalogModel[] {
+  const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig);
+  const rawModels = settingsConfig.modelCatalog?.models;
+  if (!Array.isArray(rawModels)) {
+    return [];
+  }
+  return rawModels.filter((item) => Boolean(item?.model?.trim()));
+}
+
+/** Discovery SDK for a saved provider, derived from its stored API format. */
+function getCodexProviderSdkType(provider: CodexProvider): string {
+  const apiFormat = typeof provider.meta?.apiFormat === 'string' ? provider.meta.apiFormat : undefined;
+  if (apiFormat === 'anthropic_messages') {
+    return '@ai-sdk/anthropic';
+  }
+  if (apiFormat === 'gemini_native') {
+    return '@ai-sdk/google';
+  }
+  return '@ai-sdk/openai';
 }
 
 const ACCOUNT_DETAILS_EMPTY_VALUE = '-';
@@ -433,6 +475,14 @@ const CodexPage: React.FC = () => {
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
   const [connectivityUsesGateway, setConnectivityUsesGateway] = React.useState(false);
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [modelModalOpen, setModelModalOpen] = React.useState(false);
+  const [modelModalProviderId, setModelModalProviderId] = React.useState<string | null>(null);
+  const [modelModalRowKey, setModelModalRowKey] = React.useState('');
+  const [modelModalInitialValues, setModelModalInitialValues] = React.useState<CodexCatalogModel | undefined>(undefined);
+  const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string | null>(null);
+  const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
+  const [modelBatchDeleteProviderId, setModelBatchDeleteProviderId] = React.useState<string | null>(null);
+  const [selectedModelRowKeysByProvider, setSelectedModelRowKeysByProvider] = React.useState<Record<string, string[]>>({});
   const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
   const [importModalOpen, setImportModalOpen] = React.useState(false);
@@ -1051,6 +1101,454 @@ const CodexPage: React.FC = () => {
     setConnectivityUsesGateway(codexProviderNeedsGatewayProxy(provider));
     setConnectivityModalOpen(true);
   };
+
+  /**
+   * Persist catalog edits on a saved provider.
+   *
+   * Model rows are catalog-only, so the config.toml model name is passed in
+   * explicitly and only written when the caller changes it. Applied providers
+   * replay their active gateway takeover (single / failover / aggregate).
+   */
+  const persistProviderCatalog = React.useCallback(async (
+    provider: CodexProvider,
+    models: CodexCatalogModel[],
+    options?: {
+      defaultModel?: string;
+      autoReviewModelOverride?: string | null;
+      /** Default level to project into config.toml; omit to keep the current value. */
+      defaultReasoningEffort?: string;
+    },
+  ) => {
+    const settings = parseCodexSettingsConfig(provider.settingsConfig);
+    const defaultModel = options?.defaultModel !== undefined
+      ? options.defaultModel
+      : (extractCodexModel(settings.config) || '');
+    const autoReviewModelOverride = options?.autoReviewModelOverride === undefined
+      ? resolveCodexAutoReviewModelOverride(settings)
+      : (options.autoReviewModelOverride?.trim() || undefined);
+    const settingsConfig = buildCodexSettingsConfig({
+      category: provider.category,
+      apiKey: settings.auth?.OPENAI_API_KEY || '',
+      baseUrl: extractCodexBaseUrl(settings.config) || '',
+      model: defaultModel,
+      reasoningEffort: options?.defaultReasoningEffort,
+      config: settings.config || '',
+      catalogModels: models,
+      autoReviewModelOverride,
+      auth: settings.auth ?? {},
+    });
+
+    const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
+    const shouldReengageGateway = Boolean(provider.isApplied) && gatewayModeBeforeSave !== null;
+    const savedProvider = await saveCodexProviderCatalogWithGatewayReengage({
+      provider,
+      settingsConfig,
+      gatewayMode: shouldReengageGateway ? gatewayModeBeforeSave : null,
+      aggregateConfig: shouldReengageGateway
+        ? toGatewayAggregateReengageConfig(gatewayCliStatus)
+        : null,
+      updateProvider: (nextProvider) => updateCodexProvider(nextProvider),
+      restoreDirect: () => restoreProxyGatewayCliDirect('codex'),
+      engageSingle: () => engageProxyGatewaySingle('codex', provider.id),
+      engageFailover: () => engageProxyGatewayFailover('codex'),
+      engageAggregate: ({
+        providerIds,
+        separator,
+        aliases,
+        naming,
+        subagentModel,
+        subagentReasoningEffort,
+      }) =>
+        engageProxyGatewayAggregate(
+          'codex',
+          providerIds,
+          separator,
+          aliases,
+          naming,
+          subagentModel,
+          subagentReasoningEffort,
+        ),
+      onGatewayStatusChange: applyGatewayCliStatus,
+    });
+
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('codex', savedProvider.id),
+        buildCodexFavoriteProviderConfig(savedProvider),
+      );
+      await loadFavoriteProviders();
+    } catch (error) {
+      console.error('Failed to refresh Codex favorite provider after a model change:', error);
+    }
+
+    await loadConfig(true);
+    await refreshTrayMenu();
+    return savedProvider;
+  }, [applyGatewayCliStatus, gatewayCliStatus, loadConfig, loadFavoriteProviders]);
+
+  const modelModalProvider = React.useMemo(
+    () => providers.find((provider) => provider.id === modelModalProviderId) ?? null,
+    [modelModalProviderId, providers],
+  );
+  // The preset library is provider-aware: a saved provider knows its SDK from
+  // the stored API format.
+  const resolveModelCatalogPreset = React.useCallback<CodexCatalogPresetResolver>(
+    (modelId) => (modelModalProvider
+      ? findPresetModelById(modelId, getCodexProviderSdkType(modelModalProvider))
+      : undefined),
+    [modelModalProvider],
+  );
+
+  const handleAddModel = React.useCallback((provider: CodexProvider) => {
+    if (provider.category === 'official' || isCodexLocalProviderId(provider.id)) {
+      return;
+    }
+    setModelModalProviderId(provider.id);
+    setModelModalRowKey('');
+    setModelModalInitialValues(undefined);
+    setModelModalOpen(true);
+  }, []);
+
+  const handleEditModel = React.useCallback((provider: CodexProvider, modelRowKey: string) => {
+    const models = getCodexProviderCatalogModels(provider);
+    const rowIndex = findCodexCatalogRowIndex(models, modelRowKey);
+    if (rowIndex < 0) {
+      return;
+    }
+    setModelModalProviderId(provider.id);
+    setModelModalRowKey(modelRowKey);
+    setModelModalInitialValues(models[rowIndex]);
+    setModelModalOpen(true);
+  }, []);
+
+  const handleCopyModel = React.useCallback((provider: CodexProvider, modelRowKey: string) => {
+    const models = getCodexProviderCatalogModels(provider);
+    const rowIndex = findCodexCatalogRowIndex(models, modelRowKey);
+    if (rowIndex < 0) {
+      return;
+    }
+    const source = models[rowIndex];
+    setModelModalProviderId(provider.id);
+    setModelModalRowKey('');
+    setModelModalInitialValues({
+      ...source,
+      displayName: `${source.displayName?.trim() || source.model.trim()} copy`,
+    });
+    setModelModalOpen(true);
+  }, []);
+
+  const handleModelFormSubmit = React.useCallback(async (model: CodexCatalogModel) => {
+    if (!modelModalProvider) {
+      return;
+    }
+    try {
+      const models = getCodexProviderCatalogModels(modelModalProvider);
+      const currentDefault = extractCodexModel(
+        parseCodexSettingsConfig(modelModalProvider.settingsConfig).config,
+      ) || '';
+      const editedRowModel = modelModalRowKey
+        ? models.find((item) => codexCatalogRowKey(item) === modelModalRowKey)?.model.trim() ?? ''
+        : '';
+      const nextModels = upsertCodexCatalogModel(models, model, modelModalRowKey || undefined);
+      // Renaming the row that config.toml points at must keep that pointer valid;
+      // a provider with no default model adopts its first catalog row.
+      let nextDefault = currentDefault;
+      if (editedRowModel && currentDefault === editedRowModel) {
+        nextDefault = model.model.trim();
+      }
+      if (!nextDefault) {
+        nextDefault = nextModels[0]?.model.trim() ?? '';
+      }
+      // The main model's reasoning level follows the same config.toml pointer as
+      // `model`: project it when this row is (or becomes) the main model.
+      const editedPrimaryModel = Boolean(nextDefault) && nextDefault === model.model.trim();
+      const primaryModelChanged = nextDefault !== currentDefault;
+      await persistProviderCatalog(modelModalProvider, nextModels, {
+        defaultModel: nextDefault,
+        ...(editedPrimaryModel || primaryModelChanged
+          ? { defaultReasoningEffort: resolveCodexDefaultReasoningEffort(nextModels, nextDefault) }
+          : {}),
+      });
+      setModelModalOpen(false);
+      setModelModalProviderId(null);
+      setModelModalRowKey('');
+      setModelModalInitialValues(undefined);
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to save Codex catalog model:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [modelModalProvider, modelModalRowKey, persistProviderCatalog, t]);
+
+  const handleDeleteModel = React.useCallback(async (provider: CodexProvider, modelRowKey: string) => {
+    try {
+      const models = getCodexProviderCatalogModels(provider);
+      const deletedModel = models.find((item) => codexCatalogRowKey(item) === modelRowKey)?.model.trim() ?? '';
+      const currentDefault = extractCodexModel(parseCodexSettingsConfig(provider.settingsConfig).config) || '';
+      const nextModels = removeCodexCatalogModels(models, [modelRowKey]);
+      const nextDefault = currentDefault === deletedModel
+        ? (nextModels[0]?.model.trim() ?? '')
+        : currentDefault;
+      await persistProviderCatalog(provider, nextModels, {
+        defaultModel: nextDefault,
+        ...(nextDefault !== currentDefault
+          ? { defaultReasoningEffort: resolveCodexDefaultReasoningEffort(nextModels, nextDefault) }
+          : {}),
+      });
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to delete Codex catalog model:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleSetPrimaryModel = React.useCallback(async (provider: CodexProvider, modelRowKey: string) => {
+    try {
+      const models = getCodexProviderCatalogModels(provider);
+      const row = models.find((item) => codexCatalogRowKey(item) === modelRowKey);
+      if (!row) {
+        return;
+      }
+      await persistProviderCatalog(provider, models, {
+        defaultModel: row.model.trim(),
+        defaultReasoningEffort: resolveCodexDefaultReasoningEffort(models, row.model.trim()),
+      });
+      message.success(t('codex.model.setAsPrimarySuccess', {
+        name: row.displayName?.trim() || row.model.trim(),
+      }));
+    } catch (error) {
+      console.error('Failed to set Codex default model:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleSetAutoReviewModel = React.useCallback(async (provider: CodexProvider, modelRowKey: string) => {
+    try {
+      const models = getCodexProviderCatalogModels(provider);
+      const row = models.find((item) => codexCatalogRowKey(item) === modelRowKey);
+      if (!row) {
+        return;
+      }
+      await persistProviderCatalog(provider, models, { autoReviewModelOverride: row.model.trim() });
+      message.success(t('codex.model.setAutoReviewSuccess', {
+        name: row.displayName?.trim() || row.model.trim(),
+      }));
+    } catch (error) {
+      console.error('Failed to set Codex auto-review model:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleClearAutoReviewModel = React.useCallback(async (provider: CodexProvider) => {
+    try {
+      await persistProviderCatalog(provider, getCodexProviderCatalogModels(provider), {
+        autoReviewModelOverride: null,
+      });
+      message.success(t('codex.model.clearAutoReviewSuccess'));
+    } catch (error) {
+      console.error('Failed to clear Codex auto-review model:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleReorderModels = React.useCallback(async (
+    provider: CodexProvider,
+    orderedModelRowKeys: string[],
+  ) => {
+    try {
+      const models = reorderCodexCatalogModels(
+        getCodexProviderCatalogModels(provider),
+        orderedModelRowKeys,
+      );
+      await persistProviderCatalog(provider, models);
+    } catch (error) {
+      console.error('Failed to reorder Codex catalog models:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [persistProviderCatalog, t]);
+
+  const handleToggleModelBatchDeleteMode = React.useCallback((provider: CodexProvider) => {
+    if (modelBatchDeleteProviderId === provider.id) {
+      setSelectedModelRowKeysByProvider({});
+      setModelBatchDeleteProviderId(null);
+      return;
+    }
+    setSelectedModelRowKeysByProvider({});
+    setModelBatchDeleteProviderId(provider.id);
+  }, [modelBatchDeleteProviderId]);
+
+  const handleToggleModelSelection = React.useCallback((
+    provider: CodexProvider,
+    modelRowKey: string,
+    selected: boolean,
+  ) => {
+    setSelectedModelRowKeysByProvider((previous) => {
+      const current = previous[provider.id] ?? [];
+      const next = selected
+        ? Array.from(new Set([...current, modelRowKey]))
+        : current.filter((key) => key !== modelRowKey);
+      if (next.length === 0) {
+        const nextState = { ...previous };
+        delete nextState[provider.id];
+        return nextState;
+      }
+      return { ...previous, [provider.id]: next };
+    });
+  }, []);
+
+  const handleBatchDeleteModels = React.useCallback((provider: CodexProvider) => {
+    const selectedRowKeys = selectedModelRowKeysByProvider[provider.id] ?? [];
+    if (selectedRowKeys.length === 0) {
+      return;
+    }
+    Modal.confirm({
+      title: t('codex.model.batchDeleteConfirmTitle'),
+      content: t('codex.model.batchDeleteConfirmContent', { count: selectedRowKeys.length }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          const models = getCodexProviderCatalogModels(provider);
+          const removedModels = models
+            .filter((item) => selectedRowKeys.includes(codexCatalogRowKey(item)))
+            .map((item) => item.model.trim());
+          const currentDefault = extractCodexModel(
+            parseCodexSettingsConfig(provider.settingsConfig).config,
+          ) || '';
+          const nextModels = removeCodexCatalogModels(models, selectedRowKeys);
+          const nextDefault = removedModels.includes(currentDefault)
+            ? (nextModels[0]?.model.trim() ?? '')
+            : currentDefault;
+          await persistProviderCatalog(provider, nextModels, {
+            defaultModel: nextDefault,
+            ...(nextDefault !== currentDefault
+              ? { defaultReasoningEffort: resolveCodexDefaultReasoningEffort(nextModels, nextDefault) }
+              : {}),
+          });
+          setSelectedModelRowKeysByProvider((previous) => {
+            if (!(provider.id in previous)) {
+              return previous;
+            }
+            const nextState = { ...previous };
+            delete nextState[provider.id];
+            return nextState;
+          });
+          setModelBatchDeleteProviderId((current) => (current === provider.id ? null : current));
+          message.success(t('codex.model.batchDeleteSuccess', { count: selectedRowKeys.length }));
+        } catch (error) {
+          console.error('Failed to batch delete Codex catalog models:', error);
+          message.error(error instanceof Error ? error.message : String(error));
+        }
+      },
+    });
+  }, [persistProviderCatalog, selectedModelRowKeysByProvider, t]);
+
+  const handleOpenFetchModels = React.useCallback((provider: CodexProvider) => {
+    if (provider.category === 'official' || isCodexLocalProviderId(provider.id)) {
+      return;
+    }
+    setFetchModelsProviderId(provider.id);
+    setFetchModelsModalOpen(true);
+  }, []);
+
+  const fetchModelsProvider = React.useMemo(
+    () => providers.find((provider) => provider.id === fetchModelsProviderId) ?? null,
+    [fetchModelsProviderId, providers],
+  );
+  const fetchModelsProviderInfo = React.useMemo(() => {
+    if (!fetchModelsProvider) {
+      return null;
+    }
+    const settings = parseCodexSettingsConfig(fetchModelsProvider.settingsConfig);
+    return {
+      providerId: fetchModelsProvider.id,
+      name: fetchModelsProvider.name,
+      baseUrl: extractCodexBaseUrl(settings.config) || '',
+      apiKey: settings.auth?.OPENAI_API_KEY || '',
+      sdkType: getCodexProviderSdkType(fetchModelsProvider),
+      existingModelIds: getCodexProviderCatalogModels(fetchModelsProvider)
+        .map((item) => item.model.trim()),
+    };
+  }, [fetchModelsProvider]);
+
+  const handleFetchModelsApply = React.useCallback(async (result: FetchModelsApplyResult) => {
+    if (!fetchModelsProvider) {
+      return;
+    }
+    try {
+      const models = importModelsIntoCatalog(
+        getCodexProviderCatalogModels(fetchModelsProvider),
+        result.selectedModels,
+        result.removedModelIds,
+        result.orderedModelIds,
+        (modelId) => findPresetModelById(modelId, getCodexProviderSdkType(fetchModelsProvider)),
+      );
+      const currentDefault = extractCodexModel(
+        parseCodexSettingsConfig(fetchModelsProvider.settingsConfig).config,
+      ) || '';
+      const nextDefault = currentDefault || (models[0]?.model.trim() ?? '');
+      await persistProviderCatalog(fetchModelsProvider, models, {
+        defaultModel: nextDefault,
+        ...(nextDefault !== currentDefault
+          ? { defaultReasoningEffort: resolveCodexDefaultReasoningEffort(models, nextDefault) }
+          : {}),
+      });
+      setFetchModelsModalOpen(false);
+      setFetchModelsProviderId(null);
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to apply fetched Codex models:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [fetchModelsProvider, persistProviderCatalog, t]);
+
+  /** Remove catalog rows selected after a failed connectivity test. */
+  const handleRemoveConnectivityModels = React.useCallback(async (modelIds: string[]) => {
+    if (!connectivityInfo || modelIds.length === 0) {
+      return;
+    }
+    const provider = providers.find((item) => item.id === connectivityInfo.providerId);
+    if (!provider) {
+      return;
+    }
+    try {
+      const models = getCodexProviderCatalogModels(provider);
+      const failedModels = new Set(modelIds);
+      const rowKeys = models
+        .filter((item) => failedModels.has(item.model.trim()))
+        .map((item) => codexCatalogRowKey(item));
+      const currentDefault = extractCodexModel(
+        parseCodexSettingsConfig(provider.settingsConfig).config,
+      ) || '';
+      const nextModels = removeCodexCatalogModels(models, rowKeys);
+      const nextDefault = failedModels.has(currentDefault)
+        ? (nextModels[0]?.model.trim() ?? '')
+        : currentDefault;
+      await persistProviderCatalog(provider, nextModels, {
+        defaultModel: nextDefault,
+        ...(nextDefault !== currentDefault
+          ? { defaultReasoningEffort: resolveCodexDefaultReasoningEffort(nextModels, nextDefault) }
+          : {}),
+      });
+      message.success(t('common.success'));
+    } catch (error) {
+      console.error('Failed to remove Codex models after connectivity test:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [connectivityInfo, persistProviderCatalog, providers, t]);
+
+  const connectivityRemovableModelIds = React.useMemo(() => {
+    if (!connectivityInfo) {
+      return [];
+    }
+    const provider = providers.find((item) => item.id === connectivityInfo.providerId);
+    if (!provider) {
+      return [];
+    }
+    return [...new Set(
+      getCodexProviderCatalogModels(provider).map((item) => item.model.trim()),
+    )];
+  }, [connectivityInfo, providers]);
 
   const handleSaveConnectivityDiagnostics = React.useCallback(async (diagnostics: OpenCodeDiagnosticsConfig) => {
     if (!connectivityInfo) {
@@ -2078,6 +2576,20 @@ const CodexPage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                onAddModel={handleAddModel}
+                                onEditModel={handleEditModel}
+                                onCopyModel={handleCopyModel}
+                                onDeleteModel={handleDeleteModel}
+                                onSetPrimaryModel={handleSetPrimaryModel}
+                                onSetAutoReviewModel={handleSetAutoReviewModel}
+                                onClearAutoReviewModel={handleClearAutoReviewModel}
+                                onFetchModels={handleOpenFetchModels}
+                                onReorderModels={handleReorderModels}
+                                onToggleBatchDeleteMode={handleToggleModelBatchDeleteMode}
+                                onBatchDeleteModels={handleBatchDeleteModels}
+                                modelSelectionMode={modelBatchDeleteProviderId === provider.id}
+                                selectedModelRowKeys={selectedModelRowKeysByProvider[provider.id] ?? []}
+                                onToggleModelSelection={handleToggleModelSelection}
                                 onOfficialAccountLogin={handleStartOfficialAccountOauth}
                                 onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}
                                 onOfficialAccountApply={handleApplyOfficialAccount}
@@ -2255,8 +2767,45 @@ const CodexPage: React.FC = () => {
           useGateway={connectivityUsesGateway}
           diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'codex', connectivityInfo.providerId) : undefined}
           onSaveDiagnostics={handleSaveConnectivityDiagnostics}
+          removableModelIds={connectivityRemovableModelIds}
+          onRemoveModels={handleRemoveConnectivityModels}
           onCancel={() => setConnectivityModalOpen(false)}
         />
+
+        {modelModalProvider && (
+          <CodexModelFormModal
+            open={modelModalOpen}
+            isEdit={Boolean(modelModalRowKey)}
+            presetNpmType={getCodexProviderSdkType(modelModalProvider)}
+            resolvePreset={resolveModelCatalogPreset}
+            initialValues={modelModalInitialValues}
+            onCancel={() => {
+              setModelModalOpen(false);
+              setModelModalProviderId(null);
+              setModelModalRowKey('');
+              setModelModalInitialValues(undefined);
+            }}
+            onSubmit={handleModelFormSubmit}
+          />
+        )}
+
+        {fetchModelsProviderInfo && (
+          <FetchModelsModal
+            open={fetchModelsModalOpen}
+            providerId={fetchModelsProviderInfo.providerId}
+            providerName={fetchModelsProviderInfo.name}
+            baseUrl={fetchModelsProviderInfo.baseUrl}
+            apiKey={fetchModelsProviderInfo.apiKey || undefined}
+            sdkType={fetchModelsProviderInfo.sdkType}
+            existingModelIds={fetchModelsProviderInfo.existingModelIds}
+            priorityOwnedBy={['openai']}
+            onCancel={() => {
+              setFetchModelsModalOpen(false);
+              setFetchModelsProviderId(null);
+            }}
+            onSuccess={handleFetchModelsApply}
+          />
+        )}
 
         <Drawer
           title={t('gateway.aggregate.title')}

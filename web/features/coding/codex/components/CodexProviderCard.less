@@ -1,0 +1,14 @@
+/* The model list lives inside the provider card, so every antd Collapse layer
+   must stay transparent: the card's selected / gateway-primary tint has to show
+   through instead of the default white panel background. */
+.codex-model-list-collapse {
+  background: transparent !important;
+}
+.codex-model-list-collapse .ant-collapse-item,
+.codex-model-list-collapse .ant-collapse-header,
+.codex-model-list-collapse .ant-collapse-content,
+.codex-model-list-collapse .ant-collapse-content-box,
+.codex-model-list-collapse .ant-collapse-panel,
+.codex-model-list-collapse .ant-collapse-body {
+  background: transparent !important;
+}

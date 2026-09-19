@@ -26,6 +26,10 @@ interface ModelItemProps {
   selected?: boolean;
   onSelectChange?: (selected: boolean) => void;
 
+  /** Optional row action rendered before the built-in actions (e.g. Codex
+   *  "set as auto-review model"). Hidden while a selection mode is active. */
+  extraActions?: React.ReactNode;
+
   /** i18n prefix for translations */
   i18nPrefix?: I18nPrefix;
   /**
@@ -49,6 +53,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
   selectionMode = false,
   selected = false,
   onSelectChange,
+  extraActions,
   i18nPrefix = 'settings',
   transparentBackground = false,
 }) => {
@@ -136,6 +141,11 @@ const ModelItem: React.FC<ModelItemProps> = ({
       </div>
 
       <Space>
+        {!selectionMode && extraActions && (
+          // Same hover-reveal as the primary action: the row stays quiet until
+          // the pointer is over it.
+          <span className={styles.primaryAction}>{extraActions}</span>
+        )}
         {showPrimaryAction && (
           <Button
             className={styles.primaryAction}

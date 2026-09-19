@@ -6,10 +6,12 @@ import assert from 'node:assert/strict';
 import {
   canToggleCodexRemoteCompaction,
   extractCodexBaseUrl,
+  extractCodexReasoningEffort,
   getCodexIgnoredCommonConfigKeys,
   isCodexGoalModeEnabled,
   isCodexRemoteCompactionEnabled,
   setCodexGoalMode,
+  setCodexReasoningEffort,
   setCodexRemoteCompaction,
 } from '../../../../../utils/codexConfigUtils.ts';
 
@@ -146,4 +148,25 @@ test('setCodexRemoteCompaction ignores reserved built-in provider ids', () => {
 
   assert.equal(canToggleCodexRemoteCompaction(config), false);
   assert.equal(setCodexRemoteCompaction(config, true), config);
+});
+
+test('setCodexReasoningEffort replaces the top-level default effort', () => {
+  const config = 'model_provider = "custom"\nmodel_reasoning_effort = "high"\n';
+  const nextConfig = setCodexReasoningEffort(config, 'max');
+
+  assert.equal(extractCodexReasoningEffort(nextConfig), 'max');
+  assert.match(nextConfig, /model_reasoning_effort = "max"/);
+  assert.doesNotMatch(nextConfig, /"high"/);
+});
+
+test('setCodexReasoningEffort inserts before model_provider when missing', () => {
+  const nextConfig = setCodexReasoningEffort('model_provider = "custom"\n', 'medium');
+
+  assert.equal(extractCodexReasoningEffort(nextConfig), 'medium');
+  assert.match(nextConfig, /^model_reasoning_effort = "medium"\nmodel_provider = "custom"/);
+});
+
+test('setCodexReasoningEffort ignores blank values', () => {
+  const config = 'model_reasoning_effort = "high"\n';
+  assert.equal(setCodexReasoningEffort(config, '   '), config);
 });

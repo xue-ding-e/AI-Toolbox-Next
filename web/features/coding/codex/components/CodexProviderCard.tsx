@@ -1,5 +1,6 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, message } from 'antd';
+import './CodexProviderCard.less';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, Collapse, Empty, message } from 'antd';
 import {
   ApiOutlined,
   CheckOutlined,
@@ -13,14 +14,38 @@ import {
   LinkOutlined,
   SyncOutlined,
   EyeOutlined,
+  PlusOutlined,
+  CloudDownloadOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { useSortable } from '@dnd-kit/sortable';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import type { CodexOfficialAccount, CodexProvider, CodexSettingsConfig } from '@/types/codex';
+import type {
+  CodexCatalogModel,
+  CodexOfficialAccount,
+  CodexProvider,
+  CodexSettingsConfig,
+} from '@/types/codex';
 import {
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -32,6 +57,8 @@ import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } f
 import AppliedTag from '@/components/common/AppliedTag';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
+import ModelItem from '@/components/common/ModelItem';
+import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
 import {
   canApplyProviderWithGatewayProxy,
   getGatewayProviderProfilesVersion,
@@ -50,6 +77,7 @@ import {
 } from '../utils/localProvider';
 import { codexProviderNeedsGatewayProxy } from '../utils/codexGatewayProxyNeed';
 import { buildOfficialAccountResetLine } from '../utils/codexQuotaDisplay';
+import { codexCatalogRowKey } from '../utils/codexCatalogModels';
 
 const { Text } = Typography;
 
@@ -63,6 +91,26 @@ interface CodexProviderCardProps {
   onTest: (provider: CodexProvider) => void;
   onSelect: (provider: CodexProvider) => void;
   onToggleDisabled: (provider: CodexProvider, isDisabled: boolean) => void;
+
+  /** Model catalog actions. Custom providers only; official and local bridges
+   *  have no persisted catalog. */
+  onAddModel?: (provider: CodexProvider) => void;
+  onEditModel?: (provider: CodexProvider, modelRowKey: string) => void;
+  onCopyModel?: (provider: CodexProvider, modelRowKey: string) => void;
+  onDeleteModel?: (provider: CodexProvider, modelRowKey: string) => void;
+  onSetPrimaryModel?: (provider: CodexProvider, modelRowKey: string) => void;
+  onSetAutoReviewModel?: (provider: CodexProvider, modelRowKey: string) => void;
+  onClearAutoReviewModel?: (provider: CodexProvider) => void;
+  onFetchModels?: (provider: CodexProvider) => void;
+  onReorderModels?: (provider: CodexProvider, orderedModelRowKeys: string[]) => void;
+  /** Enter/exit batch-delete selection mode for this provider's model list. */
+  onToggleBatchDeleteMode?: (provider: CodexProvider) => void;
+  /** Confirm delete of currently selected models (caller shows the confirm dialog). */
+  onBatchDeleteModels?: (provider: CodexProvider) => void;
+  modelSelectionMode?: boolean;
+  selectedModelRowKeys?: string[];
+  onToggleModelSelection?: (provider: CodexProvider, modelRowKey: string, selected: boolean) => void;
+
   officialAccounts?: CodexOfficialAccount[];
   onOfficialAccountLogin?: (provider: CodexProvider) => void;
   onOfficialLocalAccountSave?: (provider: CodexProvider, account: CodexOfficialAccount) => void;
@@ -91,6 +139,20 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onTest,
   onSelect,
   onToggleDisabled,
+  onAddModel,
+  onEditModel,
+  onCopyModel,
+  onDeleteModel,
+  onSetPrimaryModel,
+  onSetAutoReviewModel,
+  onClearAutoReviewModel,
+  onFetchModels,
+  onReorderModels,
+  onToggleBatchDeleteMode,
+  onBatchDeleteModels,
+  modelSelectionMode = false,
+  selectedModelRowKeys = [],
+  onToggleModelSelection,
   officialAccounts = [],
   onOfficialAccountLogin,
   onOfficialLocalAccountSave,
@@ -161,6 +223,69 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   }, [settingsConfig.config]);
   const isOfficialProvider = provider.category === 'official';
   const isLocalProvider = isCodexLocalProviderId(provider.id);
+  const showModelList = !isOfficialProvider && !isLocalProvider;
+
+  // Catalog rows keep their stored shape; the list only needs display data plus
+  // the raw row for row-scoped actions.
+  const catalogModels = React.useMemo<CodexCatalogModel[]>(() => {
+    const rawModels = settingsConfig.modelCatalog?.models;
+    if (!Array.isArray(rawModels)) {
+      return [];
+    }
+    return rawModels.filter((item) => Boolean(item?.model?.trim()));
+  }, [settingsConfig.modelCatalog?.models]);
+  const codexAutoReviewModelOverride = React.useMemo(
+    () => (typeof settingsConfig.autoReviewModelOverride === 'string'
+      ? settingsConfig.autoReviewModelOverride.trim()
+      : ''),
+    [settingsConfig.autoReviewModelOverride],
+  );
+  const modelRows = React.useMemo(() => {
+    const defaultModelId = modelName?.trim() ?? '';
+    return catalogModels.map((item) => {
+      const upstreamModelId = item.model.trim();
+      const rawContextWindow = typeof item.contextWindow === 'number'
+        ? item.contextWindow
+        : Number.parseInt(String(item.contextWindow ?? '').replace(/[^\d]/g, ''), 10);
+      return {
+        item,
+        // Row identity may differ from the displayed model id: one upstream
+        // model can appear several times under different menu names.
+        rowKey: codexCatalogRowKey(item),
+        display: {
+          id: upstreamModelId,
+          name: item.displayName?.trim() || upstreamModelId,
+          contextLimit: Number.isFinite(rawContextWindow) && rawContextWindow > 0
+            ? rawContextWindow
+            : undefined,
+          isPrimary: Boolean(defaultModelId) && upstreamModelId === defaultModelId,
+        } satisfies ModelDisplayData,
+      };
+    });
+  }, [catalogModels, modelName]);
+
+  const modelSensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleModelDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+    const rowKeys = modelRows.map((row) => row.rowKey);
+    const oldIndex = rowKeys.indexOf(String(active.id));
+    const newIndex = rowKeys.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) {
+      return;
+    }
+    onReorderModels?.(provider, arrayMove(rowKeys, oldIndex, newIndex));
+  };
+
+  const canFetchModels = !isOfficialProvider
+    && Boolean(apiKey?.trim())
+    && Boolean(baseUrl?.trim());
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showRuntimeApplied = isApplied && !isLocalProvider;
   // The protocol check reads the gateway provider profile store, which updates
@@ -196,10 +321,12 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     ? `${modelName} (${reasoningEffort})`
     : modelName;
   const requiresExplicitBaseUrl = !isOfficialProvider;
+  // The catalog can hold models even when config.toml declares no model, so the
+  // test is enabled whenever there is something to send.
   const canRunConnectivityTest =
     !isOfficialProvider &&
     Boolean(apiKey?.trim()) &&
-    Boolean(modelName?.trim()) &&
+    (Boolean(modelName?.trim()) || catalogModels.length > 0) &&
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
   const showProxyTag = showRuntimeApplied && gatewayProxyActive;
   const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
@@ -562,6 +689,204 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     );
   };
 
+  const renderModelList = () => {
+    if (!showModelList) {
+      return null;
+    }
+
+    const rows = modelRows.map(({ item, rowKey, display }) => {
+      const isAutoReviewRow = Boolean(codexAutoReviewModelOverride)
+        && item.model.trim() === codexAutoReviewModelOverride;
+      return (
+        <ModelItem
+          key={rowKey}
+          model={display}
+          i18nPrefix="codex"
+          transparentBackground
+          draggable={!modelSelectionMode}
+          sortableId={rowKey}
+          selectionMode={modelSelectionMode}
+          selected={selectedModelRowKeys.includes(rowKey)}
+          onSelectChange={onToggleModelSelection
+            ? (selected) => onToggleModelSelection(provider, rowKey, selected)
+            : undefined}
+          onEdit={!modelSelectionMode && onEditModel
+            ? () => onEditModel(provider, rowKey)
+            : undefined}
+          onCopy={!modelSelectionMode && onCopyModel
+            ? () => onCopyModel(provider, rowKey)
+            : undefined}
+          onDelete={!modelSelectionMode && onDeleteModel
+            ? () => onDeleteModel(provider, rowKey)
+            : undefined}
+          onSetPrimary={!modelSelectionMode && onSetPrimaryModel
+            ? () => onSetPrimaryModel(provider, rowKey)
+            : undefined}
+          extraActions={!modelSelectionMode && onSetAutoReviewModel ? (
+            <Button
+              size="small"
+              type="text"
+              icon={<SafetyOutlined />}
+              disabled={isAutoReviewRow}
+              onClick={() => onSetAutoReviewModel(provider, rowKey)}
+            >
+              {isAutoReviewRow
+                ? t('codex.model.alreadyAutoReview')
+                : t('codex.model.autoReview')}
+            </Button>
+          ) : undefined}
+        />
+      );
+    });
+
+    return (
+      <Collapse
+        ghost
+        className="codex-model-list-collapse"
+        defaultActiveKey={[]}
+        style={{ marginTop: 12, background: 'transparent' }}
+        items={[{
+          key: `codex-models-${provider.id}`,
+          label: (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                width: '100%',
+                background: 'transparent',
+              }}
+            >
+              <Text strong style={{ fontSize: 13 }}>
+                {t('codex.model.title')} ({modelRows.length})
+              </Text>
+              <Space size={0} onClick={(event) => event.stopPropagation()}>
+                {onToggleBatchDeleteMode && (
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<DeleteOutlined />}
+                    style={{ fontSize: 12 }}
+                    onClick={() => onToggleBatchDeleteMode(provider)}
+                  >
+                    {modelSelectionMode
+                      ? t('codex.model.cancelBatchDelete')
+                      : t('codex.model.batchDelete')}
+                  </Button>
+                )}
+                {modelSelectionMode && onBatchDeleteModels && (
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    style={{ fontSize: 12 }}
+                    disabled={selectedModelRowKeys.length === 0}
+                    onClick={() => onBatchDeleteModels(provider)}
+                  >
+                    {t('codex.model.deleteSelected', { count: selectedModelRowKeys.length })}
+                  </Button>
+                )}
+                <Tooltip
+                  title={
+                    !canRunConnectivityTest
+                      ? isOfficialProvider
+                        ? t('codex.provider.officialConnectivityHint')
+                        : t('common.modelMissing')
+                      : ''
+                  }
+                >
+                  <span>
+                    <Button
+                      size="small"
+                      type="text"
+                      style={{ fontSize: 12 }}
+                      onClick={() => onTest(provider)}
+                      disabled={!canRunConnectivityTest}
+                    >
+                      <ApiOutlined style={{ marginRight: 4 }} />
+                      {t('opencode.connectivity.button')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                {onFetchModels && (
+                  <Tooltip title={canFetchModels ? '' : t('opencode.provider.completeUrlAndKey')}>
+                    <span>
+                      <Button
+                        size="small"
+                        type="text"
+                        style={{ fontSize: 12 }}
+                        onClick={() => onFetchModels(provider)}
+                        disabled={!canFetchModels}
+                      >
+                        <CloudDownloadOutlined style={{ marginRight: 4 }} />
+                        {t('codex.fetchModels.button')}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
+                {onAddModel && (
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ fontSize: 12 }}
+                    onClick={() => onAddModel(provider)}
+                  >
+                    <PlusOutlined style={{ marginRight: 0 }} />
+                    {t('codex.model.addModel')}
+                  </Button>
+                )}
+              </Space>
+            </div>
+          ),
+          children: (
+            <div style={{ paddingLeft: 18, background: 'transparent' }}>
+              {codexAutoReviewModelOverride && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 10 }}>
+                    {t('codex.model.autoReviewCurrent')}: {codexAutoReviewModelOverride}
+                  </Text>
+                  {onClearAutoReviewModel && (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ height: 'auto', padding: 0, fontSize: 10 }}
+                      onClick={() => onClearAutoReviewModel(provider)}
+                    >
+                      {t('codex.model.clearAutoReview')}
+                    </Button>
+                  )}
+                </div>
+              )}
+              {modelRows.length > 0 ? (
+                <DndContext
+                  sensors={modelSensors}
+                  collisionDetection={closestCenter}
+                  modifiers={[restrictToVerticalAxis]}
+                  onDragEnd={handleModelDragEnd}
+                >
+                  <SortableContext
+                    items={modelRows.map((row) => row.rowKey)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <Space orientation="vertical" style={{ width: '100%' }} size={4}>
+                      {rows}
+                    </Space>
+                  </SortableContext>
+                </DndContext>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={t('codex.model.emptyText')}
+                  style={{ margin: '8px 0' }}
+                />
+              )}
+            </div>
+          ),
+        }]}
+      />
+    );
+  };
+
   const menuItems: MenuProps['items'] = [
     ...(!isLocalProvider ? [{
       key: 'toggle',
@@ -921,6 +1246,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
           </div>
       </div>
         {renderOfficialAccounts()}
+        {renderModelList()}
     </Card>
     </div>
   );

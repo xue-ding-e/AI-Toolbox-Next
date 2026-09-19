@@ -18,6 +18,12 @@ const SERVICE_TIER_LABELS: Record<string, string> = {
   ultrafast: 'Ultrafast',
 };
 
+/** Canonical tier ids with their display names, shared with the model dialog. */
+export const CODEX_SERVICE_TIER_OPTIONS = CODEX_SERVICE_TIERS.map((tier) => ({
+  value: tier as string,
+  label: SERVICE_TIER_LABELS[tier] ?? tier,
+}));
+
 interface ServiceTiersEditorProps {
   tiers?: string[];
   onTiersChange: (tiers: string[] | undefined) => void;

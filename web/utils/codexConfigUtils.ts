@@ -360,6 +360,38 @@ export function extractCodexReasoningEffort(
 }
 
 /**
+ * 在 TOML 配置文本中写入或更新顶层 model_reasoning_effort
+ * 如果已存在则替换，不存在则插到 model_provider 之前（与 model 的插入策略一致）
+ * @param configText - 原始 TOML 配置文本
+ * @param effort - 默认思考档位值
+ * @returns 更新后的 TOML 配置文本
+ */
+export function setCodexReasoningEffort(configText: string, effort: string): string {
+  const trimmed = effort.trim();
+  if (!trimmed) {
+    return configText;
+  }
+
+  const normalizedText = normalizeQuotes(configText);
+  const replacementLine = `model_reasoning_effort = "${trimmed}"`;
+  const topLevelPattern = /^model_reasoning_effort\s*=\s*(['"])([^'"]+)\1/m;
+
+  if (topLevelPattern.test(normalizedText)) {
+    return normalizedText.replace(topLevelPattern, replacementLine);
+  }
+
+  const modelProviderPattern = /(model_provider\s*=\s*(['"])[^'"]+\2)/;
+  if (modelProviderPattern.test(normalizedText)) {
+    return normalizedText.replace(modelProviderPattern, `${replacementLine}\n$1`);
+  }
+
+  const prefix = normalizedText && !normalizedText.endsWith('\n')
+    ? `${normalizedText}\n`
+    : normalizedText;
+  return `${prefix}${replacementLine}\n`;
+}
+
+/**
  * 在 TOML 配置文本中写入或更新 model
  * 优先更新已存在的 model（无论在 [chat] section 还是顶层）
  * 如果都不存在，则在顶层添加（不创建 [chat] section）

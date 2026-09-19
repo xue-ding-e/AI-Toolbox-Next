@@ -9,6 +9,7 @@ import {
   removeCodexModel,
   setCodexBaseUrl,
   setCodexModel,
+  setCodexReasoningEffort,
 } from '../../../../utils/codexConfigUtils';
 import { isJsonObject } from '../../../../utils/json';
 import { normalizeCodexCatalogModels } from './codexCatalogModels';
@@ -19,6 +20,8 @@ export interface BuildCodexSettingsConfigInput {
   baseUrl: string;
   model: string;
   config: string;
+  /** Explicit default reasoning level for the main model; omitted means keep. */
+  reasoningEffort?: string;
   catalogModels: CodexCatalogModel[];
   autoReviewModelOverride?: string;
   auth: Record<string, unknown>;
@@ -86,6 +89,7 @@ export function buildCodexSettingsConfig({
   baseUrl,
   model,
   config,
+  reasoningEffort,
   catalogModels,
   autoReviewModelOverride,
   auth,
@@ -107,6 +111,11 @@ export function buildCodexSettingsConfig({
   finalConfig = model
     ? setCodexModel(finalConfig, model)
     : removeCodexModel(finalConfig);
+  // Only projected when the caller explicitly resolves a level for the main
+  // model; a row without a default level must not clear config.toml.
+  if (reasoningEffort?.trim()) {
+    finalConfig = setCodexReasoningEffort(finalConfig, reasoningEffort);
+  }
 
   const finalAuth = { ...auth };
   if (category === 'custom' && normalizedApiKey) {

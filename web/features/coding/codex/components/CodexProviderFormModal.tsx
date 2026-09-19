@@ -2,13 +2,8 @@ import React from 'react';
 import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
 import {
   CloudDownloadOutlined,
-  DeleteOutlined,
-  DownOutlined,
   EyeInvisibleOutlined,
   EyeOutlined,
-  ImportOutlined,
-  PlusOutlined,
-  RightOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -21,9 +16,6 @@ import BillingConfigCollapse from '@/features/coding/shared/providerBilling/Bill
 import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
 import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
-import ReasoningLevelsEditor from './ReasoningLevelsEditor';
-import ServiceTiersEditor from './ServiceTiersEditor';
-import { findPresetModelById } from '@/constants/presetModels';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -58,14 +50,7 @@ import {
   extractCodexModel,
 } from '@/utils/codexConfigUtils';
 import TomlEditor from '@/components/common/TomlEditor';
-import FetchModelsModal from '@/components/common/FetchModelsModal';
-import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import { getDefaultModelsApiType } from '@/components/common/FetchModelsModal/request';
-import {
-  fillCodexCatalogModelFromPreset,
-  importModelsIntoCatalog,
-  type CodexCatalogPresetResolver,
-} from '../utils/codexCatalogModels';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 import styles from './CodexProviderFormModal.module.less';
@@ -89,9 +74,6 @@ const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
 
 const DEFAULT_CODEX_API_FORMAT: CodexApiFormat = 'openai_responses';
 const OFFICIAL_PROVIDER_ENDPOINT_KEY = '__official__:';
-
-// Codex 的模型选择器把 openai 渠道的模型置顶展示（stable reference for React memo deps）。
-const CODEX_PRIORITY_OWNED_BY = ['openai'];
 
 function normalizeCodexApiFormat(value?: string): CodexApiFormat {
   if (value === 'openai_chat' || value === 'anthropic_messages' || value === 'gemini_native') {
@@ -286,8 +268,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
-  const [importModelsModalOpen, setImportModelsModalOpen] = React.useState(false);
-  const [modelMappingExpanded, setModelMappingExpanded] = React.useState(false);
   // 当前表单的 baseUrl（仅用于辅助匹配 OpenCode 导入候选）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
@@ -333,7 +313,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
-    handleAutoReviewModelOverrideChange,
     handleProviderCategoryChange,
     setCodexCatalogModels,
     resetFromSettingsConfig,
@@ -349,10 +328,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const modelsSdkType = selectedApiFormat === 'anthropic_messages'
     ? '@ai-sdk/anthropic'
     : selectedApiFormat === 'gemini_native' ? '@ai-sdk/google' : '@ai-sdk/openai';
-  const existingCatalogModelIds = React.useMemo(
-    () => [...new Set(codexCatalogModels.map((item) => item.model.trim()).filter(Boolean))],
-    [codexCatalogModels],
-  );
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
 
@@ -383,19 +358,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     ];
   }, [canSelectProviderCategory, gatewayProviderProfilesVersion, isOfficialMode, t]);
 
-  const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
-    if (!settingsConfig) {
-      return false;
-    }
-    try {
-      const parsed = JSON.parse(settingsConfig);
-      const models = parsed?.modelCatalog?.models;
-      return Array.isArray(models) && models.some((item) => typeof item?.model === 'string' && item.model.trim());
-    } catch {
-      return false;
-    }
-  }, []);
-
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
     if (mode === 'import' || isEdit) {
@@ -413,9 +375,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const formInitializedRef = React.useRef(false);
   React.useEffect(() => {
     if (!open) {
-      formInitializedRef.current = false;
-      setImportModelsModalOpen(false);
-      return;
+
     }
 
     resetFromSettingsConfig(provider?.settingsConfig);
@@ -492,14 +452,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setSelectedProvider(null);
     setAvailableModels([]);
     setFetchedModels([]);
-    setImportModelsModalOpen(false);
-    setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
     setProcessedBaseUrl('');
     if (!provider) {
       setCurrentBaseUrl('');
     }
     formInitializedRef.current = true;
-  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, providerHasModelMapping, resetFromSettingsConfig]);
+  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, resetFromSettingsConfig]);
 
   React.useEffect(() => {
     if (!open || !formInitializedRef.current) {
@@ -543,15 +501,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     open,
     provider,
   ]);
-
-  React.useEffect(() => {
-    if (!open || mode !== 'manual' || isOfficialMode) {
-      return;
-    }
-    if (normalizeCodexApiFormat(selectedApiFormat) !== DEFAULT_CODEX_API_FORMAT) {
-      setModelMappingExpanded(true);
-    }
-  }, [isOfficialMode, mode, open, selectedApiFormat]);
 
   // 同步 Hook 的 codexConfig 到 Form 的 configToml 字段
   // 当用户在 baseUrl 或 model 输入框输入时，需要实时更新 TOML 编辑器
@@ -695,13 +644,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       handleModelChange(nextModel);
     }
 
-    if (catalogModels.length > 0) {
-      setCodexCatalogModels(catalogModels);
-      setModelMappingExpanded(true);
-    } else {
-      setCodexCatalogModels([]);
-      setModelMappingExpanded(false);
-    }
+    // Built-in channel presets still seed the initial catalog; editing now
+    // happens on the provider card.
+    setCodexCatalogModels(catalogModels);
   };
 
   const shouldConfirmOpenAiBaseUrlV1 = (
@@ -922,53 +867,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
   };
 
-  const resolveCatalogPreset = React.useCallback<CodexCatalogPresetResolver>(
-    (modelId) => findPresetModelById(modelId, modelsSdkType),
-    [modelsSdkType],
-  );
-
-  const handleImportModelsSuccess = React.useCallback(({ selectedModels, removedModelIds, orderedModelIds }: FetchModelsApplyResult) => {
-    setImportModelsModalOpen(false);
-    setCodexCatalogModels((prev) => importModelsIntoCatalog(prev, selectedModels, removedModelIds, orderedModelIds, resolveCatalogPreset));
-    setModelMappingExpanded(true);
-    if (selectedModels.length > 0) {
-      message.success(t('codex.provider.modelMappingImportSuccess', { count: selectedModels.length }));
-    }
-  }, [resolveCatalogPreset, setCodexCatalogModels, t]);
-
-  const handleAddModelMapping = React.useCallback(() => {
-    setModelMappingExpanded(true);
-    setCodexCatalogModels((prev) => [
-      ...prev,
-      {
-        model: '',
-        displayName: '',
-        contextWindow: '',
-      },
-    ]);
-  }, [setCodexCatalogModels]);
-
-  const handleUpdateModelMapping = React.useCallback((
-    index: number,
-    patch: Partial<CodexCatalogModel>,
-  ) => {
-    setCodexCatalogModels((prev) => prev.map((item, itemIndex) => (
-      itemIndex === index ? { ...item, ...patch } : item
-    )));
-  }, [setCodexCatalogModels]);
-
-  const handleUseDefaultModelAsAutoReviewOverride = React.useCallback(() => {
-    const model = (form.getFieldValue('model') as string | undefined)?.trim() || codexModel.trim();
-    if (!model) {
-      return;
-    }
-    handleAutoReviewModelOverrideChange(model);
-  }, [codexModel, form, handleAutoReviewModelOverrideChange]);
-
-  const handleRemoveModelMapping = React.useCallback((index: number) => {
-    setCodexCatalogModels((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
-  }, [setCodexCatalogModels]);
-
   // 根据 baseUrl 辅助匹配 OpenCode 导入候选的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
@@ -1022,8 +920,23 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       }
     });
 
+    // Saved catalog rows are valid default-model values too, so a provider whose
+    // catalog was edited on the card keeps suggesting its own model ids.
+    codexCatalogModels.forEach((catalogModel) => {
+      const modelId = catalogModel.model.trim();
+      if (!modelId || seenIds.has(modelId)) {
+        return;
+      }
+      seenIds.add(modelId);
+      const displayName = catalogModel.displayName?.trim();
+      options.push({
+        label: displayName && displayName !== modelId ? `${displayName} (${modelId})` : modelId,
+        value: modelId,
+      });
+    });
+
     return options;
-  }, [fetchedModels, matchedProviderModels]);
+  }, [codexCatalogModels, fetchedModels, matchedProviderModels]);
 
   const renderManualTab = () => (
     <Form
@@ -1149,27 +1062,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
               />
             </Form.Item>
           </div>
-          <Button
-            icon={<CloudDownloadOutlined />}
-            loading={loadingModels}
-            onClick={handleFetchModels}
-          >
-            {t('codex.fetchModels.button')}
-          </Button>
-          {!isOfficialMode && (
+          {isOfficialMode && (
             <Button
-              icon={<ImportOutlined />}
-              onClick={() => setImportModelsModalOpen(true)}
+              icon={<CloudDownloadOutlined />}
+              loading={loadingModels}
+              onClick={handleFetchModels}
             >
-              {t('codex.provider.modelMappingImport')}
-            </Button>
-          )}
-          {!isOfficialMode && (
-            <Button
-              icon={modelMappingExpanded ? <DownOutlined /> : <RightOutlined />}
-              onClick={() => setModelMappingExpanded((prev) => !prev)}
-            >
-              {t('codex.provider.modelMapping')}
+              {t('codex.fetchModels.button')}
             </Button>
           )}
           {fetchedModels.length > 0 && (
@@ -1178,118 +1077,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             </Text>
           )}
         </div>
-        {!isOfficialMode && modelMappingExpanded && (
-          <div
-            style={{
-              marginTop: 12,
-              border: '1px solid var(--color-border)',
-              borderRadius: 8,
-              background: 'var(--color-bg-elevated)',
-              padding: 12,
-            }}
-          >
-            <Space direction="vertical" size={10} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('codex.provider.modelMappingHint')}
-              </Text>
-              {codexCatalogModels.map((item, index) => (
-                <div
-                  key={index}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(110px, 1fr) minmax(140px, 1.2fr) 110px minmax(130px, 1fr) minmax(120px, 1fr) 28px',
-                    gap: 8,
-                    alignItems: 'center',
-                  }}
-                >
-                  <Input
-                    value={item.displayName ?? ''}
-                    placeholder={t('codex.provider.modelMappingDisplayNamePlaceholder')}
-                    aria-label={t('codex.provider.modelMappingDisplayName')}
-                    onChange={(event) => handleUpdateModelMapping(index, { displayName: event.target.value })}
-                  />
-                  <AutoComplete
-                    value={item.model}
-                    options={modelOptions}
-                    placeholder={t('codex.provider.modelMappingModelPlaceholder')}
-                    aria-label={t('codex.provider.modelMappingModel')}
-                    filterOption={(inputValue, option) =>
-                      (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-                      option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
-                    }
-                    onChange={(value) => {
-                      handleUpdateModelMapping(index, fillCodexCatalogModelFromPreset(
-                        { ...item, model: value },
-                        resolveCatalogPreset(value),
-                      ));
-                    }}
-                  />
-                  <Input
-                    value={item.contextWindow ?? ''}
-                    inputMode="numeric"
-                    placeholder={t('codex.provider.modelMappingContextWindowPlaceholder')}
-                    aria-label={t('codex.provider.modelMappingContextWindow')}
-                    onChange={(event) => handleUpdateModelMapping(index, {
-                      contextWindow: event.target.value.replace(/[^\d]/g, ''),
-                    })}
-                  />
-                  <ReasoningLevelsEditor
-                    levels={item.reasoningLevels}
-                    defaultLevel={item.defaultReasoningLevel}
-                    onLevelsChange={(levels) => handleUpdateModelMapping(index, { reasoningLevels: levels })}
-                    onDefaultLevelChange={(level) => handleUpdateModelMapping(index, { defaultReasoningLevel: level })}
-                  />
-                  <ServiceTiersEditor
-                    tiers={item.serviceTiers}
-                    onTiersChange={(tiers) => handleUpdateModelMapping(index, { serviceTiers: tiers })}
-                  />
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    aria-label={t('codex.provider.modelMappingRemove')}
-                    onClick={() => handleRemoveModelMapping(index)}
-                  />
-                </div>
-              ))}
-              <Button
-                type="dashed"
-                icon={<PlusOutlined />}
-                onClick={handleAddModelMapping}
-              >
-                {t('codex.provider.modelMappingAdd')}
-              </Button>
-              <div>
-                <Text style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                  {t('codex.provider.autoReviewModel')}
-                </Text>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <AutoComplete
-                      value={codexAutoReviewModelOverride}
-                      options={modelOptions}
-                      placeholder={t('codex.provider.autoReviewModelPlaceholder')}
-                      style={{ width: '100%' }}
-                      filterOption={(inputValue, option) =>
-                        (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-                        option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
-                      }
-                      onChange={(value) => handleAutoReviewModelOverrideChange(value)}
-                    />
-                  </div>
-                  <Button
-                    onClick={handleUseDefaultModelAsAutoReviewOverride}
-                    disabled={!(form.getFieldValue('model') as string | undefined)?.trim() && !codexModel.trim()}
-                  >
-                    {t('codex.provider.autoReviewModelUseSelf')}
-                  </Button>
-                </div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
-                  {t('codex.provider.autoReviewModelHelp')}
-                </Text>
-              </div>
-            </Space>
-          </div>
+        {!isOfficialMode && (
+          <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+            {t('codex.provider.modelMappingMovedHint')}
+          </Text>
         )}
       </Form.Item>
 
@@ -1488,18 +1279,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       cancelText={t('common.cancel')}
     >
       {isEdit || mode === 'manual' ? renderManualTab() : renderImportTab()}
-      <FetchModelsModal
-        open={open && importModelsModalOpen}
-        providerId={provider?.id ?? ''}
-        providerName={provider?.name ?? (form.getFieldValue('name') as string | undefined) ?? ''}
-        baseUrl={(form.getFieldValue('baseUrl') as string | undefined) ?? codexBaseUrl}
-        apiKey={(form.getFieldValue('apiKey') as string | undefined) ?? codexApiKey}
-        sdkType={modelsSdkType}
-        existingModelIds={existingCatalogModelIds}
-        priorityOwnedBy={CODEX_PRIORITY_OWNED_BY}
-        onCancel={() => setImportModelsModalOpen(false)}
-        onSuccess={handleImportModelsSuccess}
-      />
     </Modal>
   );
 };
