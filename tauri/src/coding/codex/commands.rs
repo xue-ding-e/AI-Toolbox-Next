@@ -2267,7 +2267,12 @@ fn resolve_codex_auto_review_model_override(
     None
 }
 
-fn extract_codex_top_level_model(config_toml: &str) -> Option<String> {
+/// Top-level `model` of a Codex `config.toml`.
+///
+/// `pub(crate)` because the gateway router has to know a site's own default
+/// model for the same reason the catalog publishes it: a bare request for that
+/// model must reach the site that actually serves it.
+pub(crate) fn extract_codex_top_level_model(config_toml: &str) -> Option<String> {
     let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
     document
         .get("model")
@@ -3137,8 +3142,8 @@ fn codex_aggregate_catalog_entries(
                 auto_review_model_override: None,
             });
 
-            if !bare_models.iter().any(|existing| existing == model) {
-                bare_models.push(model.to_string());
+            if !bare_models.iter().any(|existing| existing == &spec.model) {
+                bare_models.push(spec.model.clone());
             }
         }
     }
@@ -4644,9 +4649,9 @@ mod tests {
         read_codex_aggregate_selection, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, static_codex_official_models,
         strip_codex_common_config_from_toml, write_codex_aggregate_catalog, AggregateCatalogEntry,
-        CodexCatalogModelSpec,
-        CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
-        RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
+        CodexCatalogModelSpec, CodexHistoryRuntimeSource, CodexHistorySourceCandidate,
+        CodexHistorySourceMode, RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
+        CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
@@ -5476,7 +5481,8 @@ approval_policy = "never"
         let (entries, slug_table) =
             codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        let slugs: Vec<&str> = entries.iter().map(|entry| entry.slug.as_str()).collect();
+        let visible = visible_entries(&entries);
+        let slugs: Vec<&str> = visible.iter().map(|entry| entry.slug.as_str()).collect();
         assert_eq!(
             slugs,
             vec![
@@ -5488,11 +5494,29 @@ approval_policy = "never"
         );
         // The site's own model keeps its raw id as display name, like the
         // single-provider catalog does for the seeded default model.
-        assert_eq!(entries[1].display_name, "AxonHub-6 Astra · GPT-6 Astra");
+        assert_eq!(visible[1].display_name, "AxonHub-6 Astra · GPT-6 Astra");
         // Site b declares no auto-review override; its own model is still listed.
-        assert_eq!(entries[3].display_name, "AxonHub-5.6 Sol · GPT-5.6 Sol");
+        assert_eq!(visible[3].display_name, "AxonHub-5.6 Sol · GPT-5.6 Sol");
+        // Every listed model also keeps its bare upstream name addressable: Codex
+        // sends bare names for `spawn_agent`, `[agents]` defaults, auto-review and
+        // memory extraction, so those entries are published as hidden aliases
+        // after the whole visible table.
+        let hidden: Vec<&str> = entries
+            .iter()
+            .filter(|entry| entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect();
+        assert_eq!(
+            hidden,
+            vec![
+                "deepseek-v4.1-flash",
+                "gpt-6-astra",
+                "kimi-k3",
+                "gpt-5.6-sol"
+            ]
+        );
         // Catalog and slug table come from the same allocation pass.
-        assert_eq!(slug_table.len(), entries.len());
+        assert_eq!(slug_table.len(), visible.len());
         assert_eq!(slug_table[1].site_id, "site-a");
         assert_eq!(slug_table[1].upstream_model, "gpt-6-astra");
     }
@@ -5520,7 +5544,7 @@ approval_policy = "never"
         )];
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
-        let aggregate_models: Vec<&str> = entries
+        let aggregate_models: Vec<&str> = visible_entries(&entries)
             .iter()
             .map(|entry| entry.slug.trim_start_matches("site-a."))
             .collect();
@@ -5549,9 +5573,12 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].slug, "site-a.gpt-6-astra");
-        assert_eq!(entries[0].display_name, "Site A · GPT-6 Astra");
+        // The mapping row is the only *visible* entry: the default model is
+        // already declared there, so nothing is appended.
+        let visible = visible_entries(&entries);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].slug, "site-a.gpt-6-astra");
+        assert_eq!(visible[0].display_name, "Site A · GPT-6 Astra");
     }
 
     #[test]
@@ -5564,8 +5591,9 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].slug, "site-a.gpt-6-astra");
+        let visible = visible_entries(&entries);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].slug, "site-a.gpt-6-astra");
     }
 
     #[test]
@@ -5587,9 +5615,10 @@ approval_policy = "never"
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
 
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].display_name, "Site A · 6 Astra");
-        assert_eq!(entries[0].context_window, Some(300_000));
+        let visible = visible_entries(&entries);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].display_name, "Site A · 6 Astra");
+        assert_eq!(visible[0].context_window, Some(300_000));
     }
 
     #[test]
@@ -5754,7 +5783,10 @@ approval_policy = "never"
         let (entries, table) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
 
         assert_eq!(entries[0].slug, "思源888-pro.gpt-5.6-luna");
-        assert_eq!(entries[0].display_name, "思源888 pro · gpt-5.6-luna");
+        // The mapping row declares no displayName, so the catalog names the
+        // model the same way the single-provider catalog does: the bundled
+        // preset-models name for that id, not the raw id.
+        assert_eq!(entries[0].display_name, "思源888 pro · GPT-5.6 Luna");
         // The published slug must round-trip back to (site, model) so the
         // router can address it: the multi-byte prefix is cut on a char
         // boundary, not in the middle of a character.

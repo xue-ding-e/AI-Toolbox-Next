@@ -856,6 +856,9 @@ pub async fn engage_aggregate_cli(
             separator: separator.clone(),
             aliases: aliases.clone(),
             naming,
+            // The draft remembers the selection only; the `[agents]` defaults
+            // are engage-time state the manifest owns.
+            subagent: None,
         },
     );
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
@@ -960,7 +963,7 @@ async fn normalize_aggregate_draft_config(
             "Aggregate alias references unselected site '{unknown_provider_id}'"
         ));
     }
-    super::aggregate_naming::validate_aggregate_aliases(&aliases)?;
+    super::aggregate_naming::validate_aggregate_aliases(&aliases, &separator)?;
     super::aggregate_naming::validate_aggregate_site_prefixes(&available_ids, &aliases)?;
 
     Ok(GatewayAggregateConfig {
@@ -968,6 +971,9 @@ async fn normalize_aggregate_draft_config(
         separator,
         aliases,
         naming: config.naming,
+        // A draft never carries the engage-time `[agents]` defaults, so the
+        // settings form shows them as unmanaged while the mode is off.
+        subagent: None,
     })
 }
 

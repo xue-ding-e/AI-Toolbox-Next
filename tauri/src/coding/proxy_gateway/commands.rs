@@ -459,6 +459,9 @@ pub async fn proxy_gateway_save_aggregate_draft(
             separator,
             aliases: aliases.unwrap_or_default(),
             naming: naming.unwrap_or_default(),
+            // The draft stores the site selection; the `[agents]` defaults are
+            // only written when the mode is actually engaged.
+            subagent: None,
         },
     )
     .await

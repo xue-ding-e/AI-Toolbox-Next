@@ -1032,21 +1032,21 @@ fn provider_meta_from_record(
     meta
 }
 
-/// Read the upstream model ids a provider declares in its `modelCatalog`.
+/// Read the upstream model ids a provider declares: its `modelCatalog.models`
+/// mapping rows, plus the default model its own Codex `config` points at.
 ///
 /// Used by aggregate mode to decide which sites may serve a given model, as a
 /// fallback or as a bare-model target. Providers without a declared catalog
-/// return an empty list, which callers treat as "offers nothing" and exclude.
+/// (and without their own default model) return an empty list, which callers
+/// treat as "offers nothing" and exclude.
 ///
-/// Deliberately narrower than the published Codex aggregate catalog: that catalog
-/// also lists each site's own default model (`codex::commands::aggregate_site_model_specs`),
-/// and those entries are addressed by their published slug or a
-/// `<site><sep><model>` prefix, both of which are resolved before this list is
-/// consulted. Keep this to the `modelCatalog.models` array only, keyed on
-/// `model`, so a *bare* model name falls back only to a site that explicitly
-/// declares it — the same array the single-provider catalog
-/// (`codex_catalog_model_specs`) reads. Do not widen this to `model_catalog_model_id`
-/// (it also accepts `id`/`name`/`modelId`) or to a root-level `models` array.
+/// This list is kept in step with the published Codex aggregate catalog
+/// (`codex::commands::aggregate_site_model_specs`) on purpose: every model the
+/// catalog publishes — including the hidden bare-name aliases Codex's
+/// `spawn_agent` / `[agents]` defaults send — has to be accepted here, or Codex
+/// would list a name this router then rejects. Do not widen it further to
+/// `model_catalog_model_id` (it also accepts `id`/`name`/`modelId`) or to a
+/// root-level `models` array: those are not part of the published catalog.
 fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String> {
     let Some(settings_config) = settings_config else {
         return Vec::new();
@@ -1092,6 +1092,19 @@ fn declared_models_from_settings(settings_config: Option<&Value>) -> Vec<String>
                 push_unique_string(&mut out, model_id);
             }
         }
+    }
+
+    // A Codex site's own default model is part of its published catalog in both
+    // single and aggregate mode, so a bare request for it has to reach that
+    // site. Read through the same helper the catalog uses so the two lists
+    // cannot drift apart.
+    if let Some(default_model) = settings_value
+        .as_ref()
+        .and_then(|value| value.get("config"))
+        .and_then(Value::as_str)
+        .and_then(crate::coding::codex::commands::extract_codex_top_level_model)
+    {
+        push_unique_string(&mut out, default_model);
     }
     out
 }
@@ -2023,6 +2036,34 @@ mod tests {
             aggregate_naming: AggregateNamingMode::default(),
             aggregate_slug_table: Vec::new(),
         }
+    }
+
+    #[test]
+    fn declared_models_follow_the_published_codex_catalog() {
+        // The aggregate catalog publishes each site's own default model as a
+        // hidden bare-name alias, so the router has to accept that name here or
+        // Codex would offer a name that then 404s.
+        let settings = serde_json::json!({
+            "config": "model = \"gpt-6-astra\"\nmodel_provider = \"custom\"\n",
+            "modelCatalog": { "models": [{ "model": "deepseek-v4.1-flash" }] },
+        });
+        assert_eq!(
+            declared_models_from_settings(Some(&settings)),
+            vec!["deepseek-v4.1-flash", "gpt-6-astra"]
+        );
+
+        // A mapping row that already declares the default model is not repeated.
+        let mapped = serde_json::json!({
+            "config": "model = \"gpt-6-astra\"\n",
+            "modelCatalog": { "models": [{ "model": "gpt-6-astra" }] },
+        });
+        assert_eq!(
+            declared_models_from_settings(Some(&mapped)),
+            vec!["gpt-6-astra"]
+        );
+
+        // No mapping and no default model still means "offers nothing".
+        assert!(declared_models_from_settings(Some(&serde_json::json!({}))).is_empty());
     }
 
     #[test]

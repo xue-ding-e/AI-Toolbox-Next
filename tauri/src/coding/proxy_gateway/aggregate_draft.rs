@@ -24,7 +24,9 @@ use std::io::ErrorKind;
 
 /// On-disk shape of a draft. Mirrors `GatewayAggregateConfig` but tolerates
 /// hand-edited or older files that omit fields, and never carries the
-/// engage-time `slug_table` (that is allocated when the mode is engaged).
+/// engage-time fields: `slug_table` is allocated when the mode is engaged, and
+/// the `[agents]` subagent defaults only exist while the mode is engaged, so a
+/// draft must not make them look managed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 struct AggregateDraftRecord {
@@ -46,6 +48,7 @@ impl From<AggregateDraftRecord> for GatewayAggregateConfig {
             },
             aliases: record.aliases,
             naming: record.naming,
+            subagent: None,
         }
     }
 }
@@ -125,6 +128,7 @@ mod tests {
             separator: separator.to_string(),
             aliases: BTreeMap::from([("site-a".to_string(), "a".to_string())]),
             naming: AggregateNamingMode::ModelAtSite,
+            subagent: None,
         }
     }
 

@@ -64,6 +64,7 @@ fn draft(
             .map(|(site_id, alias)| ((*site_id).to_string(), (*alias).to_string()))
             .collect::<BTreeMap<_, _>>(),
         naming: AggregateNamingMode::ModelAtSite,
+        subagent: None,
     }
 }
 
@@ -91,6 +92,7 @@ async fn draft_round_trips_and_rejects_an_empty_selection() {
             separator: "|".to_string(),
             aliases: BTreeMap::from([("site-a".to_string(), "a".to_string())]),
             naming: AggregateNamingMode::ModelAtSite,
+            subagent: None,
         }
     );
     // What the settings page reads back is what the gateway accepted.
