@@ -2435,6 +2435,109 @@ fn normalize_codex_model_catalog_string_array(value: Option<&serde_json::Value>)
     Some(Value::Array(normalized))
 }
 
+/// Modalities Codex's `InputModality` enum can deserialize; anything else is
+/// dropped at generation time so a typo can never make Codex reject the whole
+/// catalog file.
+const CODEX_CATALOG_INPUT_MODALITIES: &[&str] = &["text", "image", "audio"];
+
+/// Per-row `input_modalities` override from a mapping row's `modalities.input`
+/// (camelCase `modalities` only — DB is the SSOT). Unknown values are dropped
+/// and lowercased; an empty remainder means the row did not declare anything
+/// usable, so the vendor/template default stays in effect.
+fn codex_catalog_input_modalities_override(
+    value: Option<&serde_json::Value>,
+) -> Option<Vec<String>> {
+    let items = value?.as_array()?;
+    let recognized: Vec<String> = items
+        .iter()
+        .filter_map(|item| item.as_str().map(str::trim))
+        .filter(|item| !item.is_empty())
+        .filter(|item| {
+            CODEX_CATALOG_INPUT_MODALITIES
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(item))
+        })
+        .map(|item| item.to_ascii_lowercase())
+        .collect();
+
+    if recognized.is_empty() {
+        return None;
+    }
+
+    Some(recognized)
+}
+
+/// Effective `input_modalities` for one generated catalog entry, resolved
+/// through a four-step chain (issue #368):
+///
+/// 1. The user's explicit per-row `modalities.input` declaration wins — it is
+///    the only user-facing way to force text-only.
+/// 2. When the bundled preset models declare image input for the id, that
+///    declaration is kept verbatim (image, plus any other modality like
+///    audio).
+/// 3. Same for a matched official vendor entry: an image declaration wins over
+///    the other source's possibly stale text-only snapshot, because a visible
+///    upstream error beats silently stripping user images.
+/// 4. A known-but-text-only id (presets double as the confirmed-text-only
+///    registry, e.g. `deepseek-chat`) keeps that declaration; a fully unknown
+///    id fails open to text+image, matching Codex's own
+///    `default_input_modalities` (the field omitted defaults to text+image).
+///
+/// Backend preset lookups read the compile-time bundled file only, so BOTH
+/// data sources have the same release-time freshness — no source can claim
+/// authority, which is why "any source declaring image wins" instead of a
+/// linear priority that would let a stale snapshot re-strip user images.
+fn codex_catalog_effective_input_modalities(
+    spec: &CodexCatalogModelSpec,
+    vendor_declared: Option<&serde_json::Value>,
+) -> Vec<String> {
+    // 1. Explicit per-row declaration wins.
+    if let Some(declared) = spec.input_modalities.as_deref() {
+        return declared.to_vec();
+    }
+
+    let declares_image = |modalities: &[String]| {
+        modalities
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case("image"))
+    };
+
+    let preset_declared =
+        crate::coding::preset_models::input_modalities_for_model_id(&spec.model);
+    let vendor_declared = vendor_declared.and_then(|value| {
+        let items = value.as_array()?;
+        let modalities: Vec<String> = items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::trim))
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect();
+        (!modalities.is_empty()).then_some(modalities)
+    });
+
+    // 2/3. A source that declares image wins over the other source's
+    // text-only snapshot.
+    if let Some(preset) = preset_declared.as_ref() {
+        if declares_image(preset) {
+            return preset.clone();
+        }
+    }
+    if let Some(vendor) = vendor_declared.as_ref() {
+        if declares_image(vendor) {
+            return vendor.clone();
+        }
+    }
+
+    // 4. Known text-only id keeps its declaration; fully unknown fails open.
+    if let Some(preset) = preset_declared {
+        return preset;
+    }
+    if let Some(vendor) = vendor_declared {
+        return vendor;
+    }
+    vec!["text".to_string(), "image".to_string()]
+}
+
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
     for protected_key in PROTECTED_TOP_LEVEL_TOML_KEYS {
         document.as_table_mut().remove(protected_key);
@@ -2610,6 +2713,12 @@ struct CodexCatalogModelSpec {
     /// matching cc-switch's safe default); official vendor entries keep the
     /// vendor's declared tiers.
     service_tiers: Option<Vec<String>>,
+    /// Per-row override for the generated catalog's `input_modalities`,
+    /// sourced from the mapping row's `modalities.input`. `Some` values are
+    /// pre-filtered to modalities Codex understands; when omitted the entry
+    /// keeps whatever the neutral template or the official vendor entry
+    /// declares.
+    input_modalities: Option<Vec<String>>,
 }
 
 /// Canonical reasoning effort levels Codex understands, in ascending depth
@@ -2840,6 +2949,10 @@ fn codex_catalog_model_specs(
                 })
                 .filter(|tiers| !tiers.is_empty());
 
+            let input_modalities = codex_catalog_input_modalities_override(
+                item.get("modalities").and_then(|modalities| modalities.get("input")),
+            );
+
             specs.push(CodexCatalogModelSpec {
                 model: model.to_string(),
                 display_name,
@@ -2848,6 +2961,7 @@ fn codex_catalog_model_specs(
                 reasoning_levels,
                 default_reasoning_level,
                 service_tiers,
+                input_modalities,
             });
         }
     }
@@ -2868,6 +2982,7 @@ fn codex_catalog_model_specs(
                 reasoning_levels: None,
                 default_reasoning_level: None,
                 service_tiers: None,
+                input_modalities: None,
             });
         }
     }
@@ -2946,10 +3061,14 @@ fn codex_model_catalog_entry(
             serde_json::Value::String(auto_review_model_override.clone());
     }
 
-    // Per-model reasoning-level override: when the spec declares levels they
-    // replace the neutral template's default set; otherwise the 6-level
-    // default above survives untouched.
+    // Per-row modality override through the shared four-step chain; absent
+    // per-row/preset declarations keep the neutral template's fail-open
+    // text+image default.
     if let Some(entry_obj) = entry.as_object_mut() {
+        entry_obj.insert(
+            "input_modalities".to_string(),
+            serde_json::json!(codex_catalog_effective_input_modalities(spec, None)),
+        );
         apply_codex_reasoning_level_override(entry_obj, Some("medium"), spec);
         // Per-model service (speed) tiers: when the spec declares tiers they
         // are emitted as full {id,name,description} objects; otherwise the
@@ -2995,6 +3114,7 @@ struct AggregateCatalogEntry {
     reasoning_levels: Option<Vec<String>>,
     default_reasoning_level: Option<String>,
     service_tiers: Option<Vec<String>>,
+    input_modalities: Option<Vec<String>>,
     auto_review_model_override: Option<String>,
 }
 
@@ -3023,6 +3143,7 @@ fn aggregate_catalog_from_entries(
                 reasoning_levels: entry.reasoning_levels.clone(),
                 default_reasoning_level: entry.default_reasoning_level.clone(),
                 service_tiers: entry.service_tiers.clone(),
+                input_modalities: entry.input_modalities.clone(),
             };
             let mut value = codex_model_catalog_entry(&spec, index, default_context_window);
             if entry.hidden {
@@ -3070,6 +3191,7 @@ fn aggregate_site_model_specs(settings_config: &Value) -> Vec<CodexCatalogModelS
                 reasoning_levels: None,
                 default_reasoning_level: None,
                 service_tiers: None,
+                input_modalities: None,
             });
         }
     }
@@ -3136,6 +3258,7 @@ fn codex_aggregate_catalog_entries(
                 reasoning_levels: spec.reasoning_levels,
                 default_reasoning_level: spec.default_reasoning_level,
                 service_tiers: spec.service_tiers,
+                input_modalities: spec.input_modalities,
                 // The provider-level auto-review override names a bare upstream
                 // model, which aggregate mode only addresses through a site
                 // prefix, so the aggregate entries never advertise it.
@@ -3179,6 +3302,7 @@ fn codex_aggregate_catalog_entries(
             reasoning_levels: None,
             default_reasoning_level: None,
             service_tiers: None,
+            input_modalities: None,
             auto_review_model_override: None,
         });
     }
@@ -3410,6 +3534,12 @@ fn codex_vendor_catalog_model_entry(
     }
     if matched.is_none() {
         entry_obj.insert("priority".to_string(), serde_json::json!(1000 + priority));
+        // Unknown model: the flagship's `input_modalities` are NOT inherited —
+        // `codex_catalog_effective_input_modalities` receives no vendor
+        // declaration for unmatched ids, so presets and the fail-open default
+        // decide instead (a vision-capable id the vendor catalog doesn't know
+        // yet, e.g. a renamed flagship, must not be declared text-only merely
+        // because the stale flagship entry is).
     }
 
     // Explicit user overrides win over the official entry; absent values keep
@@ -3428,6 +3558,20 @@ fn codex_vendor_catalog_model_entry(
             serde_json::json!(context_window),
         );
     }
+    // Input modalities resolve through the shared four-step chain: explicit
+    // per-row declaration > image-capable source > known text-only source >
+    // fail-open default. Unmatched ids pass no vendor declaration so a stale
+    // flagship entry cannot drag them to text-only.
+    let vendor_input_modalities = matched
+        .and_then(|entry| entry.get("input_modalities"))
+        .cloned();
+    entry_obj.insert(
+        "input_modalities".to_string(),
+        serde_json::json!(codex_catalog_effective_input_modalities(
+            spec,
+            vendor_input_modalities.as_ref(),
+        )),
+    );
     if let Some(auto_review_model_override) = spec.auto_review_model_override.as_deref() {
         entry_obj.insert(
             "auto_review_model_override".to_string(),
@@ -5204,6 +5348,7 @@ approval_policy = "never"
             reasoning_levels: None,
             default_reasoning_level: None,
             service_tiers: None,
+            input_modalities: None,
         };
 
         // An explicit user value always wins over the preset name.
@@ -6017,11 +6162,15 @@ wire_api = "responses"
         // verbatim instead of the stripped neutral template — the harness
         // tells the model to use apply_patch, so stripping the tool while
         // keeping the harness would be self-inconsistent.
+        //
+        // `deepseek-flash` is the official v1.3.0 slug (renamed from
+        // `deepseek-v4-flash`) and the official entry declares
+        // text+image input — the matched vendor declaration must survive.
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let settings = json!({
             "modelCatalog": {
                 "models": [
-                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" },
+                    { "model": "deepseek-flash", "displayName": "DeepSeek Flash" },
                     { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
                 ]
             }
@@ -6042,7 +6191,7 @@ wire_api = "responses"
         let flash = &catalog["models"][0];
         assert_eq!(
             flash.get("slug").and_then(|v| v.as_str()),
-            Some("deepseek-v4-flash")
+            Some("deepseek-flash")
         );
         assert_eq!(
             flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
@@ -6063,7 +6212,13 @@ wire_api = "responses"
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
         assert_eq!(efforts, vec!["low", "high", "max"]);
-        assert_eq!(flash.get("input_modalities"), Some(&json!(["text"])));
+        // The official deepseek-flash entry declares text+image (the renamed
+        // flagship supports image input); the matched vendor declaration must
+        // reach the generated catalog verbatim.
+        assert_eq!(
+            flash.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
         assert!(
             flash.get("model_messages").is_some(),
             "official entries are mirrored verbatim, incl. model_messages"
@@ -6077,7 +6232,7 @@ wire_api = "responses"
         // Explicit user display name still wins over the official one.
         assert_eq!(
             flash.get("display_name").and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Flash")
+            Some("DeepSeek Flash")
         );
 
         let pro = &catalog["models"][1];
@@ -6091,6 +6246,9 @@ wire_api = "responses"
             pro.get("display_name").and_then(|v| v.as_str()),
             Some("DeepSeek-V4-Pro")
         );
+        // The official pro entry is text-only (confirmed by the preset registry
+        // too), and must stay text-only.
+        assert_eq!(pro.get("input_modalities"), Some(&json!(["text"])));
         // Explicit user context window override wins over the official 1m.
         assert_eq!(
             pro.get("context_window").and_then(|v| v.as_u64()),
@@ -6103,11 +6261,17 @@ wire_api = "responses"
     }
 
     #[test]
-    fn deepseek_unknown_model_clones_flagship_capabilities_without_impersonation() {
+    fn deepseek_unknown_model_clones_flagship_tools_but_not_its_modalities() {
         // A user model that does not match any official slug (e.g.
-        // `deepseek-reasoner`) clones the flagship entry for its capability
-        // profile but must NOT keep the flagship's display name / description —
+        // `deepseek-reasoner`) clones the flagship entry for its tool profile
+        // but must NOT keep the flagship's display name / description —
         // it would show the wrong model name in the Codex model selector.
+        //
+        // The flagship's `input_modalities` are NOT inherited either:
+        // `deepseek-reasoner` is a known text-only preset model, so the
+        // preset registry decides (issue #368: an unmatched id must not be
+        // dragged to text-only by a stale flagship entry — and a
+        // known-text-only id must not fail open either).
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let settings = json!({
             "modelCatalog": {
@@ -6145,12 +6309,141 @@ wire_api = "responses"
             entry.get("description").and_then(|v| v.as_str()),
             Some("deepseek-reasoner")
         );
-        // Capability profile still inherited from the flagship.
+        // Tool profile still inherited from the flagship.
         assert_eq!(
             entry.get("apply_patch_tool_type").and_then(|v| v.as_str()),
             Some("freeform")
         );
+        // Known text-only preset model: text-only, not the flagship's profile
+        // and not a fail-open image grant.
         assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
+    }
+
+    #[test]
+    fn deepseek_unknown_model_with_preset_image_support_advertises_image() {
+        // Issue #368 regression: the official catalog renamed
+        // `deepseek-v4-flash` to `deepseek-flash`, and `deepseek-v4.1-flash`
+        // is the stale preset-side spelling of the same model — neither
+        // matches an official slug in the bundled vendor snapshot. The
+        // bundled presets declare text+image for that id, and an image
+        // declaration from EITHER source must win — the id must not be
+        // declared text-only merely because the vendor snapshot predates the
+        // rename.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4.1-flash" }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "preset image declaration must win over the missing vendor slug"
+        );
+    }
+
+    #[test]
+    fn deepseek_fully_unknown_model_fails_open_to_text_and_image() {
+        // An id neither the vendor catalog nor the bundled presets know fails
+        // open to text+image, matching Codex's own `default_input_modalities`
+        // (the field omitted defaults to text+image): a visible upstream error
+        // beats silently stripping user images.
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "my-custom-vision-model" }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
+    }
+
+    #[test]
+    fn deepseek_user_row_modalities_override_wins_over_everything() {
+        // The per-row `modalities.input` declaration is the only user-facing
+        // way to force a modality set: it beats the vendor's image grant
+        // (forcing text-only) and beats the preset text-only registry (forcing
+        // image on).
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-flash",
+                        "modalities": { "input": ["text"] }
+                    },
+                    {
+                        "model": "deepseek-v4-pro",
+                        "modalities": { "input": ["text", "image"] }
+                    }
+                ]
+            }
+        });
+
+        let _rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            DEEPSEEK_NATIVE_CONFIG,
+        )
+        .expect("vendor catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        let flash = &catalog["models"][0];
+        assert_eq!(
+            flash.get("input_modalities"),
+            Some(&json!(["text"])),
+            "explicit text-only row declaration must beat the vendor image grant"
+        );
+        let pro = &catalog["models"][1];
+        assert_eq!(
+            pro.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "explicit image row declaration must beat the vendor text-only declaration"
+        );
     }
 
     #[test]
@@ -6213,11 +6506,17 @@ wire_api = "responses"
         // official freeform apply_patch / image-free catalog: wrongly granting
         // freeform apply_patch to an aggregator that does not honor it would
         // reintroduce the custom-tool rejection bug.
+        //
+        // Modality-wise the neutral path still resolves through the shared
+        // chain: a preset-known text-only id (deepseek-v4-flash) stays
+        // text-only even here, while an id nothing knows fails open to
+        // text+image.
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let settings = json!({
             "modelCatalog": {
                 "models": [
-                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek Flash" }
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek Flash" },
+                    { "model": "my-relay-model" }
                 ]
             }
         });
@@ -6249,17 +6548,21 @@ wire_api = "responses"
             entry.get("slug").and_then(|v| v.as_str()),
             Some("deepseek-v4-flash")
         );
-        // Neutral template: image-friendly input modalities, search tool on.
+        // Preset-known text-only id: the neutral template's fail-open default
+        // does NOT override the preset's confirmed declaration.
+        assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
+        // Fully unknown id: fail open, image-friendly.
+        let relay = &catalog["models"][1];
         assert_eq!(
-            entry.get("input_modalities"),
+            relay.get("input_modalities"),
             Some(&json!(["text", "image"]))
         );
         assert_eq!(
-            entry.get("web_search_tool_type").and_then(|v| v.as_str()),
+            relay.get("web_search_tool_type").and_then(|v| v.as_str()),
             Some("text_and_image")
         );
         assert_eq!(
-            entry.get("context_window").and_then(|v| v.as_u64()),
+            relay.get("context_window").and_then(|v| v.as_u64()),
             Some(272_000)
         );
 
@@ -6283,10 +6586,7 @@ wire_api = "chat"
         .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
         let entry = &catalog["models"][0];
-        assert_eq!(
-            entry.get("input_modalities"),
-            Some(&json!(["text", "image"]))
-        );
+        assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
 
         // Host that merely CONTAINS "deepseek.com" as a substring is not the
         // official gateway — must stay neutral to avoid granting the official
@@ -6310,14 +6610,9 @@ wire_api = "responses"
         .unwrap();
         let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
         let entry = &catalog["models"][0];
-        // Substring host must NOT trigger the official DeepSeek mirror: keep
-        // the neutral image-friendly template and the neutral 272k default,
-        // not the official text-only modality / 1m window.
-        assert_eq!(
-            entry.get("input_modalities"),
-            Some(&json!(["text", "image"])),
-            "substring host must not trigger the official DeepSeek mirror"
-        );
+        // Substring host must NOT trigger the official DeepSeek mirror: the
+        // modality stays the preset's text-only and the neutral 272k window.
+        assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
         assert_eq!(
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(272_000),

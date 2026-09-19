@@ -107,6 +107,78 @@ fn build_preset_display_name_index() -> HashMap<String, String> {
 }
 
 // ============================================================================
+// Input-modality lookup
+// ============================================================================
+
+/// Model id -> declared `modalities.input` index built once from the bundled
+/// preset models.
+///
+/// Same read path as `PRESET_DISPLAY_NAMES`: compile-time bundled file only,
+/// so callers stay deterministic and work offline; the app-data cache is the
+/// frontend's remote-refresh target, not a backend read path.
+static PRESET_INPUT_MODALITIES: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+
+/// Input modalities the preset models declare for one model id.
+///
+/// Returns `None` for an unknown id or an entry without a usable
+/// `modalities.input` array, so callers keep their own fallback (the entry for
+/// `gpt-5.4-nano`, which ships no modalities at all, lands here too).
+pub fn input_modalities_for_model_id(model_id: &str) -> Option<Vec<String>> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    PRESET_INPUT_MODALITIES
+        .get_or_init(build_preset_input_modalities_index)
+        .get(model_id)
+        .cloned()
+}
+
+fn build_preset_input_modalities_index() -> HashMap<String, Vec<String>> {
+    let mut index = HashMap::new();
+    let Ok(presets) = serde_json::from_str::<Value>(DEFAULT_PRESET_MODELS_JSON) else {
+        return index;
+    };
+    let Some(groups) = presets.as_object() else {
+        return index;
+    };
+    for models in groups.values() {
+        let Some(models) = models.as_array() else {
+            continue;
+        };
+        for model in models {
+            let Some(id) = model
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            let Some(modalities) = model
+                .pointer("/modalities/input")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::trim))
+                        .filter(|item| !item.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|items| !items.is_empty())
+            else {
+                continue;
+            };
+            // First group wins if one id ever appears twice; the bundled file
+            // has no conflicting duplicates today.
+            index.entry(id.to_string()).or_insert(modalities);
+        }
+    }
+    index
+}
+
+// ============================================================================
 // File-based cache read / write
 // ============================================================================
 
@@ -207,6 +279,7 @@ pub async fn fetch_remote_preset_models(
 #[cfg(test)]
 mod tests {
     use super::display_name_for_model_id;
+    use super::input_modalities_for_model_id;
     use super::DEFAULT_PRESET_MODELS_JSON;
     use serde_json::Value;
 
@@ -243,6 +316,57 @@ mod tests {
                     continue;
                 };
                 assert_eq!(display_name_for_model_id(id).as_deref(), Some(name), "{id}");
+            }
+        }
+    }
+
+    #[test]
+    fn input_modalities_lookup_covers_bundled_declarations_and_rejects_unknown_ones() {
+        // A text-only preset stays text-only (the Codex catalog generator uses
+        // this as its confirmed-text-only registry).
+        assert_eq!(
+            input_modalities_for_model_id("deepseek-chat"),
+            Some(vec!["text".to_string()])
+        );
+        // An image-capable preset keeps its full declared set.
+        assert_eq!(
+            input_modalities_for_model_id("deepseek-v4.1-flash"),
+            Some(vec!["text".to_string(), "image".to_string()])
+        );
+        // Non-text modalities survive verbatim (Gemini presets declare audio).
+        let gemini = input_modalities_for_model_id("gemini-2.5-flash")
+            .expect("gemini-2.5-flash declares modalities");
+        assert!(gemini.contains(&"audio".to_string()), "{gemini:?}");
+
+        // Unknown or blank ids stay unknown so callers keep their own fallback.
+        assert_eq!(input_modalities_for_model_id("no-such-model"), None);
+        assert_eq!(input_modalities_for_model_id("   "), None);
+
+        // Every bundled group's id with a `modalities.input` array stays
+        // reachable through the index; entries without one (gpt-5.4-nano) must
+        // stay unknown rather than resolving to an empty set.
+        let presets: Value =
+            serde_json::from_str(DEFAULT_PRESET_MODELS_JSON).expect("bundled JSON should parse");
+        for models in presets.as_object().expect("preset groups").values() {
+            for model in models.as_array().expect("group is an array") {
+                let Some(id) = model.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let declared: Option<Vec<String>> = model
+                    .pointer("/modalities/input")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .filter(|items: &Vec<String>| !items.is_empty());
+                assert_eq!(
+                    input_modalities_for_model_id(id),
+                    declared,
+                    "{id} modality lookup must mirror the bundled declaration"
+                );
             }
         }
     }
