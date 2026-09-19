@@ -377,6 +377,10 @@ skills-git-cache/
 - 使用 `OnceLock<Mutex<()>>` 全局锁
 - 防止多个请求同时操作同一缓存目录
 
+**控制台窗口隐藏：**
+- git_fetcher 所有 git 子进程（`git_cmd()` 与 `git_bin_works()`）必须保留 `apply_create_no_window`（`crate::coding::cli_resolver`）。
+- Tauri 是 GUI 子系统进程；Windows 上 spawn git 若缺 `CREATE_NO_WINDOW`，每条命令都会闪一个控制台窗口，且手动更新、一键更新、定时自动更新三条链路全部触发（issue #362），与是否 emit UI 进度事件无关。
+
 ### 4.6 技能更新流程
 
 从源重新拉取技能内容并更新。

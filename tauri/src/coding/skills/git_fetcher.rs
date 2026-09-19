@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
+use crate::coding::cli_resolver::apply_create_no_window;
+
 #[derive(Debug, Clone)]
 pub enum GitProxyMode {
     Direct,
@@ -122,8 +124,9 @@ fn resolve_git_bin() -> Option<String> {
 }
 
 fn git_bin_works(bin: &str) -> bool {
-    Command::new(bin)
-        .arg("--version")
+    let mut cmd = Command::new(bin);
+    apply_create_no_window(&mut cmd);
+    cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -158,6 +161,9 @@ fn git_cmd() -> Command {
         }
         GitProxyMode::System => {}
     }
+
+    // Hide the console window when spawning git from a GUI process (Windows console flash).
+    apply_create_no_window(&mut cmd);
 
     cmd
 }
