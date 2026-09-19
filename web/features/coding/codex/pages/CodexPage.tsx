@@ -98,8 +98,10 @@ import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import {
   areGatewayProviderProfilesInitialized,
+  GatewayAggregateButton,
   GatewayFailoverButton,
   getGatewayProviderProfilesVersion,
+  isGatewayAggregateMode,
   isGatewayProxyMode,
   resolveGatewayReengageMode,
   saveProviderWithGatewayReengage,
@@ -1946,16 +1948,11 @@ const CodexPage: React.FC = () => {
                       onStatusChange={applyGatewayCliStatus}
                     />
                     {gatewayTakeoverActive ? (
-                      <Button
-                        type="default"
-                        size="small"
-                        icon={<AppstoreOutlined />}
-                        style={{ fontSize: 12 }}
+                      <GatewayAggregateButton
+                        current={isGatewayAggregateMode(gatewayCliStatus?.mode)}
                         loading={aggregateSettingsOpening}
                         onClick={handleOpenAggregateSettings}
-                      >
-                        {t('gateway.aggregate.button')}
-                      </Button>
+                      />
                     ) : null}
                   </Space>
                 ),

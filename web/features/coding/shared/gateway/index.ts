@@ -1,4 +1,5 @@
 export { default as GatewayFailoverButton } from './GatewayFailoverButton';
+export { default as GatewayAggregateButton } from './GatewayAggregateButton';
 export {
   isGatewayAggregateMode,
   isGatewayFailoverMode,

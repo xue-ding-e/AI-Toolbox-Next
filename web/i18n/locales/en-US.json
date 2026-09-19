@@ -381,6 +381,7 @@
     },
     "aggregate": {
       "button": "Aggregate",
+      "buttonTooltip": "Open aggregate mode settings",
       "title": "Aggregate mode",
       "routePreview": "Route preview",
       "cliLabel": "CLI",

@@ -381,6 +381,7 @@
     },
     "aggregate": {
       "button": "聚合模式",
+      "buttonTooltip": "打开聚合模式设置",
       "title": "聚合模式",
       "routePreview": "路由预览",
       "cliLabel": "CLI",

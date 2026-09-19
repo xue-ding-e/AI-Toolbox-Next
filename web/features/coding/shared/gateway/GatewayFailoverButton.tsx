@@ -20,6 +20,7 @@ import {
 } from './providerProtocol';
 import { buildGatewayAggregateSitePreviewSlug } from './gatewayAggregateConfig';
 import styles from './GatewayFailoverButton.module.less';
+import chipStyles from './gatewayStatusChip.module.less';
 
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'>;
 type ActionKind = 'load' | 'enableFailover' | 'disableFailover' | 'restore';
@@ -293,14 +294,14 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
   }
 
   return (
-    <span className={styles.shell} onClick={(event) => event.stopPropagation()}>
+    <span className={chipStyles.shell} onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
-        className={joinClassNames(styles.button, failoverActive && styles.buttonActive)}
+        className={joinClassNames(chipStyles.chip, failoverActive && chipStyles.chipActive)}
         title={statusMessage}
         onClick={handleOpen}
       >
-        <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
+        <span className={joinClassNames(chipStyles.dot, chipStyles[`dot_${dot}`])} aria-hidden="true" />
         <span>{actionLabel}</span>
       </button>
 
@@ -340,7 +341,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
             <div className={styles.dialogBody}>
               {(failoverActive || aggregateActive) && (
                 <div className={styles.stateRow}>
-                  <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
+                  <span className={joinClassNames(chipStyles.dot, chipStyles[`dot_${dot}`])} aria-hidden="true" />
                   <span>{t(`gateway.takeover.state.${status?.state ?? 'direct'}`)}</span>
                   {status?.mode ? (
                     <span className={styles.modeLabel}>

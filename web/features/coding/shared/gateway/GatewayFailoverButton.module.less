@@ -1,10 +1,3 @@
-.shell {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.button,
 .iconButton,
 .secondaryButton,
 .primaryButton {
@@ -14,74 +7,6 @@
     outline: 2px solid var(--color-border-secondary);
     outline-offset: 2px;
   }
-}
-
-.button {
-  display: inline-flex;
-  height: 22px;
-  min-height: 22px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: none;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 22px;
-  white-space: nowrap;
-  transition:
-    background 0.16s ease,
-    color 0.16s ease,
-    opacity 0.16s ease;
-
-  &:hover {
-    background: color-mix(in srgb, var(--color-text-secondary) 20%, transparent);
-    color: var(--color-text-primary);
-  }
-}
-
-.buttonActive {
-  background: color-mix(in srgb, var(--color-status-success) 14%, transparent);
-  color: var(--color-status-success);
-
-  &:hover {
-    background: color-mix(in srgb, var(--color-status-success) 22%, transparent);
-    color: var(--color-status-success);
-  }
-}
-
-.dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
-}
-
-.dot_gray {
-  background: var(--color-text-tertiary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
-}
-
-.dot_green {
-  background: var(--color-status-success);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-success) 25%, transparent);
-}
-
-.dot_orange {
-  background: var(--color-status-warning);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-warning) 25%, transparent);
-}
-
-.dot_red {
-  background: var(--color-status-error);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-error) 25%, transparent);
 }
 
 .overlay {
@@ -391,7 +316,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button,
   .iconButton,
   .secondaryButton,
   .primaryButton,
