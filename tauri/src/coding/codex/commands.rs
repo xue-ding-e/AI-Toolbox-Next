@@ -491,7 +491,97 @@ async fn read_codex_settings_from_disk(
         None
     };
 
-    Ok(CodexSettings { auth, config })
+    let catalog_preview = read_codex_catalog_preview(&config_path, config.as_deref()).await;
+    let model_catalog_active = if catalog_preview.content.is_some() || catalog_preview.pointer_active
+    {
+        Some(catalog_preview.pointer_active)
+    } else {
+        None
+    };
+
+    Ok(CodexSettings {
+        auth,
+        config,
+        model_catalog: catalog_preview.content,
+        model_catalog_active,
+    })
+}
+
+/// Model catalog state for the read-only config preview.
+struct CodexCatalogPreview {
+    /// Raw catalog file text when a readable file was found.
+    content: Option<String>,
+    /// Whether config.toml's top-level `model_catalog_json` pointer is set
+    /// (i.e. Codex actually reads the catalog). `true` even when the named
+    /// file is missing so the preview can surface the dangling pointer.
+    pointer_active: bool,
+}
+
+/// Read the model catalog for the config preview tab.
+///
+/// With config.toml's `model_catalog_json` pointer set, the pointed file is
+/// read (relative pointers resolve against config.toml's directory, absolute
+/// pointers as-is) — this covers user-owned external catalogs too, so the
+/// preview shows exactly what Codex reads. Without a usable pointer, the
+/// AI Toolbox-managed catalog file is shown as a fallback when it exists: the
+/// pointer is removed whenever mappings are cleared or aggregate mode leaves,
+/// but the file is intentionally kept, and that leftover state is exactly
+/// what needs diagnosing ("why is the model list missing?"). Read errors and
+/// missing files degrade to `content: None` (with a warning) so a catalog
+/// problem never fails the whole preview. File I/O goes through
+/// `coding::file_io` because the Codex root may be a WSL UNC / network path.
+async fn read_codex_catalog_preview(
+    config_path: &Path,
+    config_text: Option<&str>,
+) -> CodexCatalogPreview {
+    let none_preview = CodexCatalogPreview {
+        content: None,
+        pointer_active: false,
+    };
+    let Some(root_dir) = config_path.parent() else {
+        return none_preview;
+    };
+    let pointer = config_text
+        .and_then(|text| parse_toml_document(text, "config.toml catalog preview").ok())
+        .and_then(|document| {
+            document
+                .as_table()
+                .get("model_catalog_json")
+                .and_then(toml_edit::Item::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+
+    let catalog_path = match pointer.as_deref() {
+        Some(pointer) => {
+            if Path::new(pointer).is_absolute() {
+                PathBuf::from(pointer)
+            } else {
+                root_dir.join(pointer)
+            }
+        }
+        // No usable pointer: fall back to the AI Toolbox catalog file.
+        None => root_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+    };
+    let content =
+        match crate::coding::file_io::read_optional_text_file_with_timeout(
+            catalog_path,
+            "Codex model catalog",
+        )
+        .await
+        {
+            Ok(content) => content,
+            Err(error) => {
+                log::warn!("Failed to read Codex model catalog for preview: {error}");
+                None
+            }
+        };
+
+    CodexCatalogPreview {
+        content,
+        pointer_active: pointer.is_some(),
+    }
 }
 
 /// Remove a dangling top-level `model_provider` when it points to a
@@ -4894,7 +4984,7 @@ mod tests {
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
-        read_codex_aggregate_selection,
+        read_codex_aggregate_selection, read_codex_catalog_preview,
         remove_codex_aggregate_catalog, resolve_local_provider_meta,
         restore_codex_pre_aggregate_catalog, static_codex_official_models,
         strip_codex_common_config_from_toml, write_codex_aggregate_catalog, AggregateCatalogEntry,
@@ -6150,6 +6240,7 @@ approval_policy = "never"
 
         assert!(remove_codex_aggregate_catalog(temp_dir.path()).is_ok());
     }
+
     #[test]
     fn pre_aggregate_catalog_snapshot_restores_pointer_and_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -6271,7 +6362,6 @@ approval_policy = "never"
             .contains("model_catalog_json"));
         assert!(!catalog_path.exists());
     }
-
 
     #[test]
     fn ensure_catalog_pointer_sets_and_restores_the_managed_pointer() {
@@ -6876,6 +6966,120 @@ wire_api = "responses"
             doc["model_catalog_json"].as_str(),
             Some("external-catalog.json")
         );
+    }
+
+    #[test]
+    fn catalog_preview_follows_pointer_and_returns_file_text() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        let config_text =
+            format!("model_provider = \"custom\"\nmodel_catalog_json = \"{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME}\"\n");
+        std::fs::write(&config_path, &config_text).unwrap();
+        std::fs::write(
+            temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+            "{\"models\":[]}",
+        )
+        .unwrap();
+
+        let preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some(&config_text),
+        ));
+
+        assert_eq!(preview.content.as_deref(), Some("{\"models\":[]}"));
+        assert!(preview.pointer_active);
+    }
+
+    #[test]
+    fn catalog_preview_resolves_subdirectory_and_absolute_pointers() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let root = temp_dir.path();
+        std::fs::create_dir(root.join("catalogs")).unwrap();
+        std::fs::write(root.join("catalogs").join("sub.json"), "{}").unwrap();
+        let outside_dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(outside_dir.path().join("outside.json"), "[]").unwrap();
+        let config_path = root.join("config.toml");
+
+        let relative_config = "model_catalog_json = \"catalogs/sub.json\"\n";
+        let sub_preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some(relative_config),
+        ));
+        assert_eq!(sub_preview.content.as_deref(), Some("{}"));
+        assert!(sub_preview.pointer_active);
+
+        let absolute_pointer = outside_dir.path().join("outside.json");
+        // Single-quoted TOML literal string: Windows absolute paths contain
+        // backslashes that a basic string would treat as escapes.
+        let absolute_config = format!("model_catalog_json = '{}'", absolute_pointer.display());
+        let absolute_preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some(&absolute_config),
+        ));
+        assert_eq!(absolute_preview.content.as_deref(), Some("[]"));
+        assert!(absolute_preview.pointer_active);
+    }
+
+    #[test]
+    fn catalog_preview_falls_back_to_ai_toolbox_catalog_without_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            temp_dir.path().join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+            "{\"models\":[{\"slug\":\"leftover\"}]}",
+        )
+        .unwrap();
+
+        // A provider applied without model mappings removes the pointer but
+        // keeps the file; the preview must still surface that leftover.
+        let preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some("model_provider = \"custom\"\n"),
+        ));
+
+        assert_eq!(
+            preview.content.as_deref(),
+            Some("{\"models\":[{\"slug\":\"leftover\"}]}")
+        );
+        assert!(!preview.pointer_active);
+    }
+
+    #[test]
+    fn catalog_preview_degrades_without_pointer_or_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = temp_dir.path().join("config.toml");
+
+        // No pointer and no leftover AI Toolbox file: nothing to show.
+        let no_pointer = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some("model_provider = \"custom\"\n"),
+        ));
+        assert_eq!(no_pointer.content, None);
+        assert!(!no_pointer.pointer_active);
+
+        // Empty or non-string pointer values are not usable file names; they
+        // fall into the same no-pointer fallback (still nothing on disk here).
+        for config_text in [
+            "model_catalog_json = \"\"\n",
+            "model_catalog_json = [\"a.json\"]\n",
+            "model_catalog_json = [\"unterminated",
+        ] {
+            let preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+                &config_path,
+                Some(config_text),
+            ));
+            assert_eq!(preview.content, None, "config: {config_text}");
+            assert!(!preview.pointer_active, "config: {config_text}");
+        }
+
+        // Dangling pointer: the pointer counts as active so the preview can
+        // surface the missing file, but there is no content to show.
+        let dangling_preview = tauri::async_runtime::block_on(read_codex_catalog_preview(
+            &config_path,
+            Some("model_catalog_json = \"missing-catalog.json\"\n"),
+        ));
+        assert_eq!(dangling_preview.content, None);
+        assert!(dangling_preview.pointer_active);
     }
 
     #[test]

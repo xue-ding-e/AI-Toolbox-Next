@@ -3074,7 +3074,10 @@
     "preview": {
       "currentConfigTitle": "Current Config Preview",
       "authJsonTitle": "auth.json",
-      "configTomlTitle": "config.toml"
+      "configTomlTitle": "config.toml",
+      "modelCatalogJsonTitle": "model_catalog_json",
+      "modelCatalogInactiveHint": "config.toml has no model_catalog_json pointer, so Codex does not read this file; shown from the retained AI Toolbox catalog file.",
+      "modelCatalogMissing": "The file named by model_catalog_json does not exist"
     },
     "historySync": {
       "menu": "Sync History Sessions",

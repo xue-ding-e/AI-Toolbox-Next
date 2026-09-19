@@ -25,7 +25,11 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
 
   const authValue = data?.auth ?? null;
   const configValue = data?.config ?? null;
+  const modelCatalogValue = data?.modelCatalog ?? null;
+  const modelCatalogActive = data?.modelCatalogActive ?? null;
+  const showModelCatalogTab = modelCatalogValue !== null || modelCatalogActive === true;
   const editorHeight = 'calc(75vh - 190px)';
+  const editorHeightWithHint = 'calc(75vh - 212px)';
 
   const items: TabsProps['items'] = [];
 
@@ -61,6 +65,43 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
             showMainMenuBar={false}
             showStatusBar={false}
           />
+        </div>
+      ),
+    });
+  }
+
+  if (showModelCatalogTab) {
+    items.push({
+      key: 'modelCatalog',
+      label: t('codex.preview.modelCatalogJsonTitle'),
+      children: (
+        <div style={{ padding: '4px 0' }}>
+          {modelCatalogValue !== null ? (
+            <>
+              {modelCatalogActive === false && (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 10, display: 'block', marginBottom: 4 }}
+                >
+                  {t('codex.preview.modelCatalogInactiveHint')}
+                </Typography.Text>
+              )}
+              <JsonEditor
+                value={modelCatalogValue}
+                readOnly
+                mode="text"
+                height={modelCatalogActive === false ? editorHeightWithHint : editorHeight}
+                resizable={false}
+                showMainMenuBar={false}
+                showStatusBar={false}
+              />
+            </>
+          ) : (
+            <Empty
+              description={t('codex.preview.modelCatalogMissing')}
+              style={{ marginTop: 48 }}
+            />
+          )}
         </div>
       ),
     });

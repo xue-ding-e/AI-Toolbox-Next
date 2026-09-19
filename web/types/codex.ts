@@ -134,6 +134,10 @@ export interface ConfigPathInfo {
 export interface CodexSettings {
   auth?: Record<string, unknown>;
   config?: string;
+  /** Raw text of the model catalog file named by config.toml's `model_catalog_json` pointer (or the leftover AI Toolbox catalog file when the pointer is absent). */
+  modelCatalog?: string;
+  /** Whether config.toml's `model_catalog_json` pointer is set, i.e. Codex actually reads the catalog. */
+  modelCatalogActive?: boolean;
 }
 
 export type CodexOfficialAccountKind = 'oauth' | 'local';

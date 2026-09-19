@@ -213,12 +213,27 @@ pub struct CodexLocalConfigInput {
 
 /// Codex settings structure (for reading/writing config files)
 /// auth.json + config.toml combined
+// Frontend-facing wire type: the web side consumes camelCase keys, matching
+// the other command response types in this module. `auth`/`config` are single
+// words so this only renames `model_catalog`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<String>,
+    /// Raw text of the model catalog file for the read-only config preview:
+    /// the file named by config.toml's `model_catalog_json` pointer, or —
+    /// when the pointer is absent — the AI Toolbox-managed catalog file as a
+    /// leftover fallback. `None` when neither is readable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_catalog: Option<String>,
+    /// Whether config.toml's `model_catalog_json` pointer is set (Codex
+    /// actually reads the catalog). Present whenever the preview tab is
+    /// rendered (catalog content shown or a dangling pointer exists).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_catalog_active: Option<bool>,
 }
 
 // ============================================================================

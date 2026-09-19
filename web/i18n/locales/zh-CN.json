@@ -3071,7 +3071,10 @@
     "preview": {
       "currentConfigTitle": "当前配置预览",
       "authJsonTitle": "auth.json",
-      "configTomlTitle": "config.toml"
+      "configTomlTitle": "config.toml",
+      "modelCatalogJsonTitle": "model_catalog_json",
+      "modelCatalogInactiveHint": "config.toml 未设置 model_catalog_json 指针，Codex 当前不会读取此文件；内容来自保留的 AI Toolbox 目录文件。",
+      "modelCatalogMissing": "model_catalog_json 指针指向的文件不存在"
     },
     "historySync": {
       "menu": "同步历史会话",
