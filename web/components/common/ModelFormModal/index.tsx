@@ -17,6 +17,7 @@ import {
 } from '@/utils/piModelMetadata';
 import { buildOmpThinkingFromPreset } from '@/utils/ompModelMetadata';
 import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
+import { normalizeVariantsForProviderNpm } from '@/utils/openCodeVariantCompat';
 
 const { Text } = Typography;
 
@@ -249,7 +250,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
     // Set variants if present
     if (showVariants && preset.variants && Object.keys(preset.variants).length > 0) {
-      setJsonVariants(preset.variants);
+      setJsonVariants(normalizeVariantsForProviderNpm(preset.variants, npmType));
       setVariantsValid(true);
       // Auto expand advanced settings if variants has content
       setAdvancedExpanded(true);

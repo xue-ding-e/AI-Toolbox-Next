@@ -49,7 +49,7 @@ import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPath
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
-import type { OpenCodeConfig, OpenCodeModel, OpenCodePluginEntry, OpenCodeProvider } from '@/types/opencode';
+import type { OpenCodeConfig, OpenCodeModel, OpenCodeModelVariant, OpenCodePluginEntry, OpenCodeProvider } from '@/types/opencode';
 import {
   PRESET_MODELS,
   findPresetModelById,
@@ -74,6 +74,7 @@ import FetchModelsModal from '@/components/common/FetchModelsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
+import { normalizeVariantsForProviderNpm } from '@/utils/openCodeVariantCompat';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
@@ -276,7 +277,7 @@ const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'opencode-session-manager': <MessageOutlined />,
 };
 
-const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string): OpenCodeModel => ({
+const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string, providerNpm?: string): OpenCodeModel => ({
   name: preset.name || fallbackName,
   ...(hasCompleteModelLimitPair(preset.contextLimit, preset.outputLimit)
     && preset.contextLimit !== undefined
@@ -294,7 +295,10 @@ const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string)
   ...(preset.tool_call !== undefined ? { tool_call: preset.tool_call } : {}),
   ...(preset.temperature !== undefined ? { temperature: preset.temperature } : {}),
   ...(preset.options && Object.keys(preset.options).length > 0 ? { options: preset.options } : {}),
-  ...(preset.variants && Object.keys(preset.variants).length > 0 ? { variants: preset.variants } : {}),
+  ...((): { variants?: Record<string, OpenCodeModelVariant> } => {
+    const variants = normalizeVariantsForProviderNpm(preset.variants, providerNpm);
+    return variants && Object.keys(variants).length > 0 ? { variants } : {};
+  })(),
 });
 
 const buildFetchedOpenCodeModel = (
@@ -304,7 +308,7 @@ const buildFetchedOpenCodeModel = (
   const matchedPresetModel = findPresetModelById(fetchedModel.id, providerNpm);
 
   if (matchedPresetModel) {
-    return buildOpenCodeModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
+    return buildOpenCodeModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id, providerNpm);
   }
 
   return {

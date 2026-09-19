@@ -263,6 +263,52 @@ fn dedupe_favorite_plugin_records(records: Vec<Value>) -> Vec<Value> {
     deduped_records
 }
 
+/// npm package whose request schema only understands `reasoningEffort`.
+const OPENAI_COMPATIBLE_NPM: &str = "@ai-sdk/openai-compatible";
+
+/// Rewrite Google-SDK-style `thinkingConfig` variant options into the
+/// `reasoningEffort` spelling on `@ai-sdk/openai-compatible` providers.
+///
+/// `thinkingConfig` is the `@ai-sdk/google` package's option and never reaches
+/// an OpenAI-compatible upstream. OpenCode 1.x masked the mistake by merging
+/// auto-generated `reasoningEffort` variants with the configured ones, but
+/// OpenCode 2.x uses configured variants verbatim and silently drops
+/// `thinkingConfig` on the OpenAI-compatible path, so the thinking level
+/// disappeared from upstream requests. The effort level comes from
+/// `thinkingLevel`, falling back to the variant name (presets name variants
+/// after effort levels).
+fn normalize_openai_compatible_variants(config: &mut OpenCodeConfig) {
+    let Some(providers) = config.provider.as_mut() else {
+        return;
+    };
+    for provider in providers.values_mut() {
+        if provider.npm.as_deref() != Some(OPENAI_COMPATIBLE_NPM) {
+            continue;
+        }
+        for model in provider.models.values_mut() {
+            let Some(variants) = model.variants.as_mut().and_then(Value::as_object_mut) else {
+                continue;
+            };
+            for (variant_name, options) in variants.iter_mut() {
+                let Some(options) = options.as_object_mut() else {
+                    continue;
+                };
+                let level = options
+                    .get("thinkingConfig")
+                    .and_then(|thinking| thinking.get("thinkingLevel"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| variant_name.clone());
+                if options.remove("thinkingConfig").is_some() {
+                    options.insert("reasoningEffort".to_string(), Value::String(level));
+                }
+            }
+        }
+    }
+}
+
 async fn write_opencode_config_file(
     state: tauri::State<'_, SqliteDbState>,
     config: &OpenCodeConfig,
@@ -278,6 +324,7 @@ async fn write_opencode_config_file(
     }
 
     let mut sanitized_config = config.clone();
+    normalize_openai_compatible_variants(&mut sanitized_config);
     sanitized_config.plugin = sanitized_config
         .plugin
         .as_ref()
@@ -296,10 +343,137 @@ async fn write_opencode_config_file(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_opencode_plugin_equivalent, opencode_plugin_package_name, sanitize_opencode_plugin_list,
+        is_opencode_plugin_equivalent, normalize_openai_compatible_variants,
+        opencode_plugin_package_name, sanitize_opencode_plugin_list,
     };
     use crate::coding::open_code::types::OpenCodePluginEntry;
     use serde_json::json;
+
+    #[test]
+    fn normalize_variants_rewrite_thinking_config_for_openai_compatible_providers() {
+        let config = json!({
+            "provider": {
+                "cpa": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "gemini-3.8-flash-high": {
+                            "name": "Gemini 3.8 Flash",
+                            "reasoning": true,
+                            "variants": {
+                                "low": { "thinkingConfig": { "includeThoughts": true, "thinkingLevel": "low" } },
+                                "high": { "thinkingConfig": { "includeThoughts": true, "thinkingLevel": "high" } },
+                                "max": { "thinkingConfig": { "includeThoughts": true, "thinkingBudget": 32768 } }
+                            }
+                        }
+                    }
+                },
+                "google": {
+                    "npm": "@ai-sdk/google",
+                    "models": {
+                        "gemini-3.7-flash": {
+                            "variants": {
+                                "high": { "thinkingConfig": { "includeThoughts": true, "thinkingLevel": "high" } }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+
+        normalize_openai_compatible_variants(&mut config);
+
+        let serialized = serde_json::to_value(&config).expect("config should serialize");
+        let variants = &serialized["provider"]["cpa"]["models"]["gemini-3.8-flash-high"]["variants"];
+        assert_eq!(
+            variants["low"],
+            json!({ "reasoningEffort": "low" }),
+            "thinkingLevel is carried over as reasoningEffort"
+        );
+        assert_eq!(variants["high"], json!({ "reasoningEffort": "high" }));
+        assert_eq!(
+            variants["max"],
+            json!({ "reasoningEffort": "max" }),
+            "budget-only variants fall back to the variant name"
+        );
+        assert_eq!(
+            serialized["provider"]["google"]["models"]["gemini-3.7-flash"]["variants"]["high"],
+            json!({ "thinkingConfig": { "includeThoughts": true, "thinkingLevel": "high" } }),
+            "native Google package providers keep thinkingConfig"
+        );
+    }
+
+    #[test]
+    fn normalize_variants_keep_other_options_and_handle_missing_thinking_level() {
+        let config = json!({
+            "provider": {
+                "cpa": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "gemini-flash": {
+                            "variants": {
+                                "high": { "thinkingConfig": { "includeThoughts": true }, "reasoningSummary": "auto" },
+                                "custom": "not-an-object"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+
+        normalize_openai_compatible_variants(&mut config);
+
+        let serialized = serde_json::to_value(&config).expect("config should serialize");
+        let variants = &serialized["provider"]["cpa"]["models"]["gemini-flash"]["variants"];
+        assert_eq!(
+            variants["high"],
+            json!({ "reasoningEffort": "high", "reasoningSummary": "auto" }),
+            "sibling options survive and a missing thinkingLevel falls back to the variant name"
+        );
+        assert_eq!(variants["custom"], json!("not-an-object"));
+    }
+
+    #[test]
+    fn normalize_variants_without_provider_or_variants_is_noop() {
+        let config = json!({
+            "model": "cpa/gemini-flash",
+            "provider": {
+                "cpa": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "gpt-5.5": {
+                            "variants": {
+                                "high": { "reasoningEffort": "high" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let before = config.clone();
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+
+        normalize_openai_compatible_variants(&mut config);
+
+        let serialized = serde_json::to_value(&config).expect("config should serialize");
+        assert_eq!(
+            serialized, before,
+            "reasoningEffort-style variants must stay untouched"
+        );
+    }
+
+    #[test]
+    fn normalize_is_noop_without_providers() {
+        let config = json!({ "model": "opencode/gpt-5.5" });
+        let mut config: crate::coding::open_code::types::OpenCodeConfig =
+            serde_json::from_value(config).expect("config should deserialize");
+        assert!(config.provider.is_none());
+        normalize_openai_compatible_variants(&mut config);
+    }
 
     #[test]
     fn opencode_plugin_package_name_keeps_scoped_package_name() {
