@@ -32,6 +32,18 @@ export interface GatewayAggregateConfig {
   aliases?: Record<string, string>;
   /** Template used to name each selected `(site, model)` pair. */
   naming?: GatewayAggregateNamingMode;
+  /**
+   * Codex `[agents]` defaults this aggregate takeover owns, if any.
+   *
+   * Aggregate mode replaces the model list, so a bare-name default such as
+   * `gpt-5.6-luna` resolves through the published catalog. Absent when the
+   * takeover wrote no `[agents]` keys, which is also how the restore knows to
+   * leave the user's own settings alone.
+   */
+  subagent?: {
+    model?: string;
+    reasoning_effort?: string;
+  };
 }
 
 /** Default separator between site id and upstream model name in aggregate mode. */
@@ -569,6 +581,8 @@ export const engageProxyGatewayAggregate = async (
   separator: string,
   aliases?: Record<string, string>,
   naming: GatewayAggregateNamingMode = 'site_model',
+  subagentModel?: string,
+  subagentReasoningEffort?: string,
 ): Promise<GatewayCliTakeoverStatus> => {
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_aggregate', {
     cliKey,
@@ -576,6 +590,8 @@ export const engageProxyGatewayAggregate = async (
     separator,
     aliases: aliases ?? {},
     naming,
+    subagentModel,
+    subagentReasoningEffort,
   });
 };
 

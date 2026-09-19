@@ -104,6 +104,14 @@ const CLAUDE_LEGACY_REASONING_MODEL_POINTER: &str = "/env/ANTHROPIC_REASONING_MO
 const DEFAULT_CODEX_PROVIDER_ID: &str = "custom";
 
 const CODEX_AUTH_MANAGED_FIELDS: [&str; 2] = ["OPENAI_API_KEY", "auth_mode"];
+/// "No `[agents]` keys are managed": the value every non-aggregate manifest
+/// resolves to, so single/failover restores never touch that section.
+static DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS:
+    crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults =
+    crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults {
+        model: None,
+        reasoning_effort: None,
+    };
 const GROK_CONFIG_MANAGED_FIELDS: [&str; 2] = ["models.default", "model.ai-toolbox-gateway"];
 
 /// Default Kimi provider table key (official managed provider). Custom applied
@@ -149,6 +157,125 @@ fn codex_config_managed_fields_for_provider(provider_id: &str) -> Vec<String> {
         format!("model_providers.{provider_id}.supports_websockets"),
         format!("model_providers.{provider_id}.experimental_bearer_token"),
     ]
+}
+
+/// Write the `[agents]` defaults an aggregate takeover manages.
+///
+/// Only the two allowlisted keys are touched; every other `[agents]` entry
+/// (`enabled`, `max_concurrent_threads_per_session`, …) is preserved verbatim,
+/// because the user's own settings live in the same table. An empty
+/// `defaults` is a no-op, so single and failover takeovers never see this
+/// section change at all.
+fn patch_codex_agent_defaults(
+    path: &Path,
+    defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
+) -> Result<(), String> {
+    use crate::coding::proxy_gateway::cli_proxy::manifest::{
+        CODEX_AGENT_EFFORT_KEY, CODEX_AGENT_MODEL_KEY,
+    };
+    if defaults.is_empty() {
+        return Ok(());
+    }
+    let mut document = read_or_new_toml_document(path)?;
+    let agents = document
+        .as_table_mut()
+        .entry("agents")
+        .or_insert(Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| "Codex [agents] must be a table".to_string())?;
+    if let Some(model) = &defaults.model {
+        agents.insert(CODEX_AGENT_MODEL_KEY, value(model.as_str()));
+    }
+    if let Some(effort) = &defaults.reasoning_effort {
+        agents.insert(CODEX_AGENT_EFFORT_KEY, value(effort.as_str()));
+    }
+    write_toml_file(path, &document)
+}
+
+/// Reconcile the `[agents]` keys a takeover managed against the pre-takeover
+/// backup.
+///
+/// Per-key, not section-wide: a key the takeover never wrote is left alone, and
+/// a key that existed before the takeover gets its original value back. A key
+/// the takeover introduced is removed rather than blanked, so restoring direct
+/// mode leaves `config.toml` byte-identical to the pre-takeover state for the
+/// fields this feature owns.
+fn restore_codex_agent_defaults(
+    document: &mut DocumentMut,
+    backup: Option<&DocumentMut>,
+    managed: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
+) {
+    use crate::coding::proxy_gateway::cli_proxy::manifest::{
+        CODEX_AGENT_EFFORT_KEY, CODEX_AGENT_MODEL_KEY,
+    };
+    if managed.is_empty() {
+        return;
+    }
+    let backup_agents = backup
+        .and_then(|backup_document| backup_document.as_table().get("agents"))
+        .and_then(Item::as_table);
+
+    let Some(agents) = document
+        .as_table_mut()
+        .get_mut("agents")
+        .and_then(Item::as_table_mut)
+    else {
+        return;
+    };
+    for key in [CODEX_AGENT_MODEL_KEY, CODEX_AGENT_EFFORT_KEY] {
+        if !managed.manages(key) {
+            continue;
+        }
+        match backup_agents
+            .and_then(|table| table.get(key))
+            .and_then(Item::as_str)
+        {
+            Some(previous) => {
+                agents.insert(key, value(previous));
+            }
+            None => {
+                agents.remove(key);
+            }
+        }
+    }
+}
+
+/// Reconcile the `[agents]` keys an aggregate takeover manages without going
+/// through a full direct restore.
+///
+/// Used by the aggregate → single disengage path, which keeps the gateway
+/// takeover but must stop owning `[agents]` — leaving the keys behind would
+/// point the subagent default at an aggregate slug that nothing routes once the
+/// aggregate catalog is retired.
+fn reconcile_codex_agent_defaults_on_leave(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    targets: &CliProxyTargets,
+    manifest: &CliProxyManifest,
+) -> Result<(), String> {
+    let Some(managed) = manifest
+        .aggregate
+        .as_ref()
+        .map(|aggregate| &aggregate.subagent)
+    else {
+        return Ok(());
+    };
+    if managed.is_empty() || cli_key != GatewayCliKey::Codex {
+        return Ok(());
+    }
+    let path = required_target_path(targets, CODEX_CONFIG_KIND)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup_content = backup_content(paths, cli_key, manifest, CODEX_CONFIG_KIND)?;
+    let backup = backup_content
+        .as_deref()
+        .map(|content| parse_toml_document(content, "Codex gateway backup"))
+        .transpose()?;
+    let mut document = read_or_new_toml_document(path)?;
+    restore_codex_agent_defaults(&mut document, backup.as_ref(), managed);
+    remove_empty_toml_table(&mut document, "agents");
+    write_toml_file(path, &document)
 }
 
 fn is_codex_gateway_managed_fields(managed_fields: &[String]) -> bool {
@@ -200,6 +327,9 @@ impl GatewayStatusProxyDetails {
                     separator: aggregate.separator.clone(),
                     aliases: aggregate.aliases.clone(),
                     naming: aggregate.naming,
+                    subagent: (!aggregate.subagent.is_empty()).then(|| {
+                        super::types::GatewayAggregateSubagentDefaults::from(&aggregate.subagent)
+                    }),
                 }),
             provider_priorities: Vec::new(),
         }
@@ -515,6 +645,7 @@ pub async fn engage_single_cli(
         None,
         codex_auth_backup_content.as_deref(),
         codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+        &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
     ) {
         // Early enabled manifest protects the original .bak, but a failed apply must not leave
         // the CLI looking "taken over" with a half-patched runtime config.
@@ -544,6 +675,7 @@ pub async fn engage_aggregate_cli(
     separator: String,
     aliases: BTreeMap<String, String>,
     naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
+    subagent_defaults: crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<GatewayCliTakeoverStatus, String> {
     if cli_key != GatewayCliKey::Codex {
         return Err("Aggregate mode is currently supported for Codex only".to_string());
@@ -661,13 +793,15 @@ pub async fn engage_aggregate_cli(
         GatewayProxyMode::Aggregate,
         &primary_provider_id,
     )?;
-    manifest = manifest.with_aggregate(
-        ordered_ids.clone(),
-        separator.clone(),
-        aliases.clone(),
-        naming,
-        slug_table,
-    );
+    manifest = manifest
+        .with_aggregate(
+            ordered_ids.clone(),
+            separator.clone(),
+            aliases.clone(),
+            naming,
+            slug_table,
+        )
+        .with_aggregate_subagent_defaults(subagent_defaults.clone());
     sync_manifest_managed_fields(&mut manifest, &targets);
     write_manifest(paths, cli_key, &manifest)?;
 
@@ -683,6 +817,7 @@ pub async fn engage_aggregate_cli(
         None,
         codex_auth_backup_content.as_deref(),
         codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+        &subagent_defaults,
     ) {
         let _ = restore_gateway_config(cli_key, paths, &targets_for_apply, &manifest);
         manifest.enabled = false;
@@ -936,6 +1071,7 @@ pub async fn engage_failover_cli(
             None,
             codex_auth_backup_content.as_deref(),
             codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
         ) {
             // Roll back half-applied failover fields to the single-mode gateway config.
             let _ = apply_gateway_config(
@@ -948,6 +1084,7 @@ pub async fn engage_failover_cli(
                 None,
                 codex_auth_backup_content.as_deref(),
                 codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+                &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
             );
             return Err(error);
         }
@@ -1002,7 +1139,13 @@ pub async fn disengage_failover_cli(
             claude_backup_content.as_deref(),
             codex_auth_backup_content.as_deref(),
             codex_auth_preservation_enabled_for_cli(db, cli_key)?,
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
         )?;
+        // Stop owning the `[agents]` keys this takeover wrote. Runs before
+        // `manifest.aggregate` is cleared below, because that block is what
+        // records which keys we manage. Leaving them behind would point the
+        // subagent default at a slug the retired catalog no longer publishes.
+        reconcile_codex_agent_defaults_on_leave(paths, cli_key, &targets, &manifest)?;
         sync_manifest_managed_fields(&mut manifest, &targets);
         manifest.mode = GatewayProxyMode::Single;
         manifest.aggregate = None;
@@ -1930,6 +2073,7 @@ fn apply_gateway_config(
     claude_backup_content: Option<&str>,
     codex_auth_backup_content: Option<&str>,
     preserve_codex_official_auth: bool,
+    codex_agent_defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<(), String> {
     match cli_key {
         GatewayCliKey::Claude => {
@@ -1966,11 +2110,17 @@ fn apply_gateway_config(
             result
         }
         GatewayCliKey::Codex => {
+            let config_path = required_target_path(targets, CODEX_CONFIG_KIND)?;
             let provider_id = patch_codex_config(
-                required_target_path(targets, CODEX_CONFIG_KIND)?,
+                config_path,
                 &cli_gateway_endpoint(cli_key, base_origin),
                 preserve_codex_official_auth,
             )?;
+            // `[agents]` defaults only exist for aggregate mode; the empty value
+            // every other mode passes makes this a no-op.
+            if !codex_agent_defaults.is_empty() {
+                patch_codex_agent_defaults(config_path, codex_agent_defaults)?;
+            }
             if let Some(target) = targets
                 .files
                 .iter_mut()
@@ -2045,6 +2195,11 @@ fn restore_gateway_config(
                 restore_codex_config(
                     config_path,
                     backup_content(paths, cli_key, manifest, CODEX_CONFIG_KIND)?.as_deref(),
+                    manifest
+                        .aggregate
+                        .as_ref()
+                        .map(|aggregate| &aggregate.subagent)
+                        .unwrap_or(&DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS),
                 )?;
             }
             let auth_path = required_target_path(targets, CODEX_AUTH_KIND)?;
@@ -2931,7 +3086,11 @@ fn restore_grok_config(path: &Path, backup_content: Option<&str>) -> Result<(), 
     write_toml_file(path, &current)
 }
 
-fn restore_codex_config(path: &Path, backup_content: Option<&str>) -> Result<(), String> {
+fn restore_codex_config(
+    path: &Path,
+    backup_content: Option<&str>,
+    managed_agent_defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
+) -> Result<(), String> {
     let mut current = read_or_new_toml_document(path)?;
     let backup = backup_content
         .map(|content| parse_toml_document(content, "Codex gateway backup"))
@@ -2992,6 +3151,12 @@ fn restore_codex_config(path: &Path, backup_content: Option<&str>) -> Result<(),
         &managed_provider_id,
         &backup_provider_keys,
     );
+
+    // Reconcile the `[agents]` keys an aggregate takeover introduced. Reading
+    // the pre-takeover value out of the same backup keeps the rollback exact
+    // without persisting a second copy of the user's settings.
+    restore_codex_agent_defaults(&mut current, backup.as_ref(), managed_agent_defaults);
+    remove_empty_toml_table(&mut current, "agents");
 
     // Restore each backup provider table (includes pre-takeover base_url).
     for (provider_key, provider_item) in backup_provider_items {
@@ -3945,7 +4110,8 @@ mod tests {
             );
             assert!(codex_config_managed_fields_for_provider("custom")
                 .contains(&"model_providers.custom.supports_websockets".to_string()));
-            restore_codex_config(&path, Some(&backup)).unwrap();
+            restore_codex_config(&path, Some(&backup), &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS)
+                .unwrap();
             let restored = parse_toml_file(&path).unwrap();
             assert_eq!(
                 restored["model_providers"]["custom"]
@@ -4006,7 +4172,12 @@ command = "node"
             Some("node")
         );
 
-        restore_codex_config(&config_path, Some(&backup)).unwrap();
+        restore_codex_config(
+            &config_path,
+            Some(&backup),
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
+        )
+        .unwrap();
         let restored = parse_toml_file(&config_path).unwrap();
         assert_eq!(restored["model_provider"].as_str(), Some("custom"));
         assert_eq!(
@@ -4046,7 +4217,12 @@ command = "node"
             Some("http://127.0.0.1:37123/openai/v1")
         );
 
-        restore_codex_config(&config_path, Some(&backup)).unwrap();
+        restore_codex_config(
+            &config_path,
+            Some(&backup),
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
+        )
+        .unwrap();
         let restored = parse_toml_file(&config_path).unwrap();
         assert!(restored.as_table().get("model_provider").is_none());
         assert!(restored.as_table().get("model_providers").is_none());
@@ -4065,10 +4241,149 @@ command = "node"
             patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
         assert_eq!(provider_id, "custom");
 
-        restore_codex_config(&config_path, None).unwrap();
+        restore_codex_config(&config_path, None, &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS).unwrap();
         let restored = parse_toml_file(&config_path).unwrap();
         assert!(restored.as_table().get("model_provider").is_none());
         assert!(restored.as_table().get("model_providers").is_none());
+    }
+
+    /// B8: the `[agents]` keys aggregate mode writes are an explicit allowlist.
+    /// Everything else in that table (`enabled`, concurrency, …) belongs to the
+    /// user and must survive the takeover byte-for-byte.
+    #[test]
+    fn aggregate_subagent_patch_writes_only_the_managed_agents_keys() {
+        use crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        write_text_file(
+            &config_path,
+            r#"
+model = "gpt-5.6-luna"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 20
+default_subagent_model = "gpt-5.6-terra"
+"#,
+        )
+        .unwrap();
+
+        patch_codex_agent_defaults(
+            &config_path,
+            &AggregateSubagentDefaults {
+                model: Some("luna".to_string()),
+                reasoning_effort: Some("xhigh".to_string()),
+            },
+        )
+        .unwrap();
+
+        let patched = parse_toml_file(&config_path).unwrap();
+        let agents = patched["agents"].as_table().unwrap();
+        assert_eq!(agents["default_subagent_model"].as_str(), Some("luna"));
+        assert_eq!(
+            agents["default_subagent_reasoning_effort"].as_str(),
+            Some("xhigh")
+        );
+        // Untouched user settings.
+        assert_eq!(agents["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            agents["max_concurrent_threads_per_session"].as_integer(),
+            Some(20)
+        );
+        // The top-level model is not part of this feature.
+        assert_eq!(patched["model"].as_str(), Some("gpt-5.6-luna"));
+    }
+
+    /// B8: a key the takeover introduced is *removed* on restore, and a key the
+    /// user already had comes back with its original value. Restoring direct
+    /// mode must not leave the aggregate slug behind.
+    #[test]
+    fn aggregate_subagent_restore_replays_the_pre_takeover_values_per_key() {
+        use crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        // The user had a subagent model but no effort key.
+        write_text_file(
+            &config_path,
+            r#"
+[agents]
+enabled = true
+default_subagent_model = "gpt-5.6-terra"
+"#,
+        )
+        .unwrap();
+        let backup = fs::read_to_string(&config_path).unwrap();
+        let backup_document = parse_toml_document(&backup, "backup").unwrap();
+
+        let managed = AggregateSubagentDefaults {
+            model: Some("luna".to_string()),
+            reasoning_effort: Some("xhigh".to_string()),
+        };
+        patch_codex_agent_defaults(&config_path, &managed).unwrap();
+
+        let mut restored = parse_toml_file(&config_path).unwrap();
+        restore_codex_agent_defaults(&mut restored, Some(&backup_document), &managed);
+        remove_empty_toml_table(&mut restored, "agents");
+
+        let agents = restored["agents"].as_table().unwrap();
+        // Pre-existing key: original value back.
+        assert_eq!(
+            agents["default_subagent_model"].as_str(),
+            Some("gpt-5.6-terra")
+        );
+        // Key the takeover introduced: gone, not blanked.
+        assert!(agents.get("default_subagent_reasoning_effort").is_none());
+        // Still nothing else disturbed.
+        assert_eq!(agents["enabled"].as_bool(), Some(true));
+    }
+
+    /// A takeover that managed no `[agents]` key must leave the section exactly
+    /// as it found it — this is the single/failover path.
+    #[test]
+    fn aggregate_subagent_restore_is_a_noop_when_nothing_was_managed() {
+        use crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        write_text_file(
+            &config_path,
+            "[agents]\ndefault_subagent_model = \"user-choice\"\n",
+        )
+        .unwrap();
+        let backup = fs::read_to_string(&config_path).unwrap();
+        let backup_document = parse_toml_document(&backup, "backup").unwrap();
+
+        // Nothing managed → nothing written by the patch either.
+        let empty = AggregateSubagentDefaults::default();
+        patch_codex_agent_defaults(&config_path, &empty).unwrap();
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), backup);
+
+        let mut restored = parse_toml_file(&config_path).unwrap();
+        restore_codex_agent_defaults(&mut restored, Some(&backup_document), &empty);
+        assert_eq!(
+            restored["agents"]["default_subagent_model"].as_str(),
+            Some("user-choice")
+        );
+    }
+
+    /// Blank form values mean "leave the user's config alone", so clearing the
+    /// fields cannot write an empty model name into `config.toml`.
+    #[test]
+    fn aggregate_subagent_defaults_normalize_blanks_away() {
+        use crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults;
+
+        let normalized = AggregateSubagentDefaults {
+            model: Some("  ".to_string()),
+            reasoning_effort: Some("  xhigh  ".to_string()),
+        }
+        .normalized();
+        assert_eq!(normalized.model, None);
+        assert_eq!(normalized.reasoning_effort.as_deref(), Some("xhigh"));
+        assert!(normalized.manages("default_subagent_reasoning_effort"));
+        assert!(!normalized.manages("default_subagent_model"));
+        assert!(!normalized.manages("enabled"));
     }
 
     #[test]
@@ -4105,7 +4420,12 @@ base_url = "http://127.0.0.1:9999/openai/v1"
             Some("http://127.0.0.1:37123/openai/v1")
         );
 
-        restore_codex_config(&config_path, Some(&backup)).unwrap();
+        restore_codex_config(
+            &config_path,
+            Some(&backup),
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
+        )
+        .unwrap();
         let restored = parse_toml_file(&config_path).unwrap();
         assert_eq!(restored["model_provider"].as_str(), Some("custom"));
         assert!(restored["model_providers"]
@@ -4370,6 +4690,7 @@ base_url = "http://127.0.0.1:9999/openai/v1"
             None,
             None,
             false,
+            &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
         )
         .unwrap();
         write_manifest(&paths, GatewayCliKey::Claude, &single_manifest).unwrap();

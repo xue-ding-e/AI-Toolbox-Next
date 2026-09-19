@@ -169,6 +169,34 @@ pub struct GatewayAggregateConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, String>,
     pub naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
+    /// Codex `[agents]` defaults this takeover owns, if any. Absent means the
+    /// takeover wrote none, so the settings form must show the fields as
+    /// unmanaged rather than as blank values it would then write back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<GatewayAggregateSubagentDefaults>,
+}
+
+/// The `[agents]` defaults shown back to the settings form.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayAggregateSubagentDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+impl From<&crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults>
+    for GatewayAggregateSubagentDefaults
+{
+    fn from(
+        defaults: &crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
+    ) -> Self {
+        Self {
+            model: defaults.model.clone(),
+            reasoning_effort: defaults.reasoning_effort.clone(),
+        }
+    }
 }
 
 impl GatewayProxyMode {

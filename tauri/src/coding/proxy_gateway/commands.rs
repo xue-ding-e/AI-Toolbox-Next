@@ -379,6 +379,8 @@ pub async fn proxy_gateway_engage_aggregate(
     separator: Option<String>,
     aliases: Option<BTreeMap<String, String>>,
     naming: Option<AggregateNamingMode>,
+    subagent_model: Option<String>,
+    subagent_reasoning_effort: Option<String>,
 ) -> Result<GatewayCliTakeoverStatus, String> {
     let _data_dir_transition = crate::app_paths::DATA_DIR_CHANGE_LOCK.lock().await;
     crate::app_paths::ensure_no_pending_data_dir_change()?;
@@ -394,6 +396,14 @@ pub async fn proxy_gateway_engage_aggregate(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| cli_proxy::manifest::AGGREGATE_DEFAULT_SEPARATOR.to_string());
+    // Opt-in Codex `[agents]` defaults. Blank values mean "leave the user's
+    // config alone", so an untouched form never writes these keys.
+    let subagent_defaults =
+        crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults {
+            model: subagent_model,
+            reasoning_effort: subagent_reasoning_effort,
+        }
+        .normalized();
     let next_status = cli_proxy::engage_aggregate_cli(
         db_state.db(),
         &paths,
@@ -403,6 +413,7 @@ pub async fn proxy_gateway_engage_aggregate(
         separator,
         aliases.unwrap_or_default(),
         naming.unwrap_or_default(),
+        subagent_defaults,
     )
     .await?;
     gateway_state.clear_provider_cache()?;

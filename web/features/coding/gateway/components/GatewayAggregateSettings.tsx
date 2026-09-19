@@ -222,6 +222,10 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
   const [separator, setSeparator] = React.useState<string>(DEFAULT_AGGREGATE_SEPARATOR);
   const [aliases, setAliases] = React.useState<Record<string, string>>({});
   const [naming, setNaming] = React.useState<GatewayAggregateNamingMode>('site_model');
+  // Optional Codex `[agents]` defaults. Blank means "don't manage this key", so
+  // an untouched form never writes to the user's `[agents]` section.
+  const [subagentModel, setSubagentModel] = React.useState('');
+  const [subagentReasoningEffort, setSubagentReasoningEffort] = React.useState('');
   const [cliStatuses, setCliStatuses] = React.useState<GatewayCliTakeoverStatus[]>([]);
   const [busy, setBusy] = React.useState(false);
   // Bumped when the persisted draft has been (re)loaded, so the seed effect can
@@ -417,9 +421,10 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     [selectedStatus],
   );
   React.useEffect(() => {
+    const activeConfig =
+      selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null;
     const seed = resolveAggregateFormSeed({
-      activeConfig:
-        selectedStatus?.mode === 'aggregate' ? selectedStatus.aggregate ?? null : null,
+      activeConfig,
       draftConfig: savedDraftRef.current,
       candidates,
       appliedProviderId: providers.find((provider) => provider.isApplied)?.id ?? null,
@@ -429,6 +434,11 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
     setAliases(seed.aliases);
     setSiteIds(seed.siteIds);
     setDroppedDraftSites(seed.droppedDraftSites);
+    // The `[agents]` defaults are engage-time state, so they are only shown back
+    // from a running takeover: seeding them from the draft would make keys this
+    // takeover does not manage look managed.
+    setSubagentModel(activeConfig?.subagent?.model ?? '');
+    setSubagentReasoningEffort(activeConfig?.subagent?.reasoning_effort ?? '');
     // `selectedStatus` is intentionally absent: its identity changes on every
     // status refresh, while `activeAggregateKey` only changes when the engaged
     // configuration actually changed. Re-seeding on a refresh would revert the
@@ -503,6 +513,8 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
             nextSeparator,
             nextAliases,
             nextNaming,
+            subagentModel,
+            subagentReasoningEffort,
           ),
         t('gateway.aggregate.notice.enabled'),
         'enableFailed',
@@ -520,7 +532,7 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       }
       return succeeded;
     },
-    [cliKey, runGatewayOperation, t],
+    [cliKey, runGatewayOperation, subagentModel, subagentReasoningEffort, t],
   );
 
   /**
@@ -812,6 +824,57 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
       ) : null}
       {restoreDirectBlocked ? <p className={styles.helper}>{restoreDirectBlockedHint}</p> : null}
       {!running ? <p className={styles.helper}>{t('gateway.aggregate.takeoverHint')}</p> : null}
+
+      <div className={styles.fieldRow}>
+        <div className={styles.fieldMeta}>
+          <span className={styles.fieldLabel}>{t('gateway.aggregate.subagentModel')}</span>
+          <span className={styles.fieldHelp}>{t('gateway.aggregate.subagentModelHint')}</span>
+        </div>
+        <div className={styles.fieldControl}>
+          <input
+            className={styles.separatorInput}
+            value={subagentModel}
+            disabled={busy}
+            placeholder={t('gateway.aggregate.subagentModelPlaceholder')}
+            aria-label={t('gateway.aggregate.subagentModel')}
+            onChange={(event) => setSubagentModel(event.currentTarget.value)}
+            onBlur={() => {
+              if (engaged && normalizedAliases && siteIds.length > 0 && separatorError === null) {
+                void runEngage(siteIds, separator, normalizedAliases, naming);
+              }
+            }}
+          />
+        </div>
+      </div>
+
+      <div className={styles.fieldRow}>
+        <div className={styles.fieldMeta}>
+          <span className={styles.fieldLabel}>{t('gateway.aggregate.subagentEffort')}</span>
+          <span className={styles.fieldHelp}>{t('gateway.aggregate.subagentEffortHint')}</span>
+        </div>
+        <div className={styles.fieldControl}>
+          <select
+            className={styles.select}
+            value={subagentReasoningEffort}
+            disabled={busy}
+            aria-label={t('gateway.aggregate.subagentEffort')}
+            onChange={(event) => {
+              const nextEffort = event.currentTarget.value;
+              setSubagentReasoningEffort(nextEffort);
+              if (engaged && normalizedAliases && siteIds.length > 0 && separatorError === null) {
+                void runEngage(siteIds, separator, normalizedAliases, naming);
+              }
+            }}
+          >
+            <option value="">{t('gateway.aggregate.subagentEffortUnset')}</option>
+            {['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div className={styles.fieldRow}>
         <div className={styles.fieldMeta}>

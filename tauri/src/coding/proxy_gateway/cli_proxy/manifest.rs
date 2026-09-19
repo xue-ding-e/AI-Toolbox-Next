@@ -6,6 +6,62 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
+/// Codex `[agents]` keys aggregate mode may write, and only these.
+///
+/// `[agents]` also carries user settings (`enabled`,
+/// `max_concurrent_threads_per_session`, …) that must survive both the takeover
+/// and the restore untouched, so the managed set is an explicit allowlist.
+pub const CODEX_AGENT_MODEL_KEY: &str = "default_subagent_model";
+pub const CODEX_AGENT_EFFORT_KEY: &str = "default_subagent_reasoning_effort";
+
+/// The `[agents]` defaults an aggregate takeover writes.
+///
+/// Aggregate mode replaces the model list, so a bare-name default such as
+/// `gpt-5.6-luna` must resolve through the published catalog (the hidden
+/// bare-name aliases). This is opt-in: an all-`None` value leaves `[agents]`
+/// exactly as the user wrote it, which is what single/failover mode does.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AggregateSubagentDefaults {
+    /// `[agents] default_subagent_model`. `None` leaves the key alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `[agents] default_subagent_reasoning_effort`. `None` leaves it alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+impl AggregateSubagentDefaults {
+    /// Whether this configuration manages `key`, i.e. whether the restore must
+    /// put it back to its pre-takeover state.
+    pub fn manages(&self, key: &str) -> bool {
+        match key {
+            CODEX_AGENT_MODEL_KEY => self.model.is_some(),
+            CODEX_AGENT_EFFORT_KEY => self.reasoning_effort.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Whether any `[agents]` key is managed at all.
+    pub fn is_empty(&self) -> bool {
+        self.model.is_none() && self.reasoning_effort.is_none()
+    }
+
+    /// Drop blank values so a cleared form field means "leave it alone" instead
+    /// of writing an empty model name into the user's config.
+    pub fn normalized(mut self) -> Self {
+        self.model = self
+            .model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.reasoning_effort = self
+            .reasoning_effort
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AggregateManifestConfig {
@@ -31,6 +87,11 @@ pub struct AggregateManifestConfig {
     /// for manifests written before this field existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slug_table: Vec<AggregateSlugEntry>,
+    /// `[agents]` defaults the takeover wrote, if any. Persisted so the restore
+    /// knows exactly which keys to reconcile — an absent field means this
+    /// manifest predates the feature and owns no `[agents]` keys.
+    #[serde(default, skip_serializing_if = "AggregateSubagentDefaults::is_empty")]
+    pub subagent: AggregateSubagentDefaults,
 }
 
 fn default_aggregate_separator() -> String {
@@ -45,6 +106,7 @@ impl Default for AggregateManifestConfig {
             aliases: BTreeMap::new(),
             naming: AggregateNamingMode::default(),
             slug_table: Vec::new(),
+            subagent: AggregateSubagentDefaults::default(),
         }
     }
 }
@@ -142,7 +204,16 @@ impl CliProxyManifest {
             aliases,
             naming,
             slug_table,
+            subagent: AggregateSubagentDefaults::default(),
         });
+        self
+    }
+
+    /// Set the `[agents]` defaults this aggregate takeover manages.
+    pub fn with_aggregate_subagent_defaults(mut self, subagent: AggregateSubagentDefaults) -> Self {
+        if let Some(aggregate) = self.aggregate.as_mut() {
+            aggregate.subagent = subagent;
+        }
         self
     }
 }

@@ -297,3 +297,53 @@ test('effective alias map round-trips a saved aggregate manifest', () => {
     },
   );
 });
+
+// ---- managed [agents] subagent defaults ------------------------------------
+
+test('managed subagent defaults survive the re-engage config round trip', () => {
+  // Restoring direct mode drops the keys, so a provider save must replay them
+  // or the user's subagent default would be silently unset.
+  const config = toGatewayAggregateReengageConfig(
+    status({
+      mode: 'aggregate',
+      aggregate: {
+        provider_ids: ['site1'],
+        separator: '.',
+        subagent: { model: 'gpt-5.6-luna', reasoning_effort: 'xhigh' },
+      },
+    }),
+  );
+  assert.deepEqual(config, {
+    providerIds: ['site1'],
+    separator: '.',
+    aliases: {},
+    naming: 'site_model',
+    subagentModel: 'gpt-5.6-luna',
+    subagentReasoningEffort: 'xhigh',
+  });
+});
+
+test('a takeover that manages no [agents] keys stays that way', () => {
+  // No `subagent` block → the form must not claim ownership of any key, so the
+  // re-engage config carries neither field and the user's own [agents] settings
+  // are never written.
+  const config = toGatewayAggregateReengageConfig(
+    status({ mode: 'aggregate', aggregate: { provider_ids: ['site1'], separator: '.' } }),
+  );
+  assert.equal(config && 'subagentModel' in config, false);
+  assert.equal(config && 'subagentReasoningEffort' in config, false);
+
+  // Blank values inside the block are equally "unmanaged".
+  const blank = toGatewayAggregateReengageConfig(
+    status({
+      mode: 'aggregate',
+      aggregate: {
+        provider_ids: ['site1'],
+        separator: '.',
+        subagent: { model: '   ', reasoning_effort: '' },
+      },
+    }),
+  );
+  assert.equal(blank && 'subagentModel' in blank, false);
+  assert.equal(blank && 'subagentReasoningEffort' in blank, false);
+});

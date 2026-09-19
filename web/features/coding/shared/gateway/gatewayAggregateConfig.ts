@@ -209,7 +209,22 @@ export const toGatewayAggregateReengageConfig = (
   if (!aliases) {
     return null;
   }
-  return { providerIds, separator, aliases, naming };
+  // Carry the managed Codex `[agents]` defaults through the re-engage round
+  // trip. Restoring direct drops them, so without this a provider save would
+  // silently unset the user's subagent default.
+  const subagentModel = aggregate.subagent?.model?.trim();
+  const subagentReasoningEffort = aggregate.subagent?.reasoning_effort?.trim();
+  return {
+    providerIds,
+    separator,
+    aliases,
+    naming,
+    // Only present when the takeover actually manages the key: an explicit
+    // `undefined` would read as "managed but blank" to callers that inspect the
+    // object's own keys.
+    ...(subagentModel ? { subagentModel } : {}),
+    ...(subagentReasoningEffort ? { subagentReasoningEffort } : {}),
+  };
 };
 
 /**

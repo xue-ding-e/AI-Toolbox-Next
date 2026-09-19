@@ -12,6 +12,16 @@ export interface GatewayAggregateReengageConfig {
   separator: string;
   aliases?: Record<string, string>;
   naming?: GatewayAggregateNamingMode;
+  /**
+   * Codex `[agents]` defaults the takeover owns.
+   *
+   * The re-engage round trip restores direct first, which drops these keys, so
+   * they must be replayed here or a provider save would silently unset the
+   * user's subagent default. `undefined` means the takeover owns no such key
+   * and the user's own `[agents]` settings must be left alone.
+   */
+  subagentModel?: string;
+  subagentReasoningEffort?: string;
 }
 
 export interface GatewayReengageSnapshot {

@@ -1467,8 +1467,23 @@ const CodexPage: React.FC = () => {
         restoreDirect: () => restoreProxyGatewayCliDirect('codex'),
         engageSingle: () => engageProxyGatewaySingle('codex', savedProviderId),
         engageFailover: () => engageProxyGatewayFailover('codex'),
-        engageAggregate: ({ providerIds, separator, aliases, naming }) =>
-          engageProxyGatewayAggregate('codex', providerIds, separator, aliases, naming),
+        engageAggregate: ({
+          providerIds,
+          separator,
+          aliases,
+          naming,
+          subagentModel,
+          subagentReasoningEffort,
+        }) =>
+          engageProxyGatewayAggregate(
+            'codex',
+            providerIds,
+            separator,
+            aliases,
+            naming,
+            subagentModel,
+            subagentReasoningEffort,
+          ),
         onGatewayStatusChange: applyGatewayCliStatus,
         saveProvider: async () => {
           if (isLocalTemp) {
