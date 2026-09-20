@@ -433,9 +433,11 @@
         "settingsManaged": "Site selection and separator are managed in this settings section.",
         "applyDisabled": "Provider apply buttons are locked while aggregate mode is on."
       },
-      "modeHint": "Merges several sites into one model list and routes each request by its model-name prefix; a failing site falls back to other sites declaring the same model.",
+      "modeHint": "Merges several sites into one model list and routes each request by its model-name prefix. Whether a failing site falls back to another site declaring the same model is controlled by the cross-site failover switch below.",
       "draftSitesDropped": "Some saved sites are no longer available and were removed from the selection.",
-      "takeoverHint": "Aggregate mode takes over this CLI through the gateway and rewrites its model list."
+      "takeoverHint": "Aggregate mode takes over this CLI through the gateway and rewrites its model list.",
+      "crossSiteFailover": "Allow cross-site failover",
+      "crossSiteFailoverHint": "Off (default): a request only goes to the site its model name addresses; a failure returns an error instead of spending another site balance. On: a failing site falls back to another site that declares the same model."
     },
     "privacy": {
       "title": "Data redaction",

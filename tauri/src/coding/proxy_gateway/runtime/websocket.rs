@@ -6,7 +6,7 @@ use super::http_io::{
     empty_response, header_value, write_response, DebugHttpRequest, DebugHttpResponse,
 };
 use super::observability::record_gateway_observability_with_transport;
-use super::providers::UpstreamProvider;
+use super::providers::{GatewayProviderSelection, UpstreamProvider};
 use super::routes::{match_gateway_route, GatewayRoute};
 use super::{upstream, GatewayRuntimeContext, NEXT_REQUEST_ID};
 use crate::coding::proxy_gateway::model_health::GatewayFailureKind;
@@ -269,6 +269,22 @@ async fn connect_upstream(
     ))
 }
 
+/// 判定本次握手是否属于“单渠道部署”，即是否可以跳过冷却/健康过滤。
+///
+/// 与 HTTP 通道 `runtime/upstream.rs` 的 `is_single_provider` 保持同一语义：
+/// 只有候选数恰好为 1，且（不是聚合模式，或聚合模式打开了跨站故障转移）时，
+/// 才把唯一候选无条件尝试。聚合模式 + 跨站开关关闭时候选被有意收窄到一个
+/// 站点，此时冷却过滤必须继续生效，不能硬打冷却中的站点。
+fn is_single_provider_deployment(
+    candidate_count: usize,
+    selection: Option<&GatewayProviderSelection>,
+) -> bool {
+    candidate_count == 1
+        && selection
+            .filter(|selection| selection.mode == GatewayProxyMode::Aggregate)
+            .is_none_or(|selection| selection.cross_site_failover)
+}
+
 pub(super) async fn handle_upgrade(
     stream: &mut TcpStream,
     mut request: DebugHttpRequest,
@@ -343,7 +359,7 @@ pub(super) async fn handle_upgrade(
         )
         .await;
     };
-    let candidates = match context
+    let mut candidates = match context
         .load_candidate_providers(db, GatewayCliKey::Codex)
         .await
     {
@@ -362,18 +378,30 @@ pub(super) async fn handle_upgrade(
             .await
         }
     };
+    // 跨站故障转移关闭时，本次握手只能尝试首选站点：把候选截断为第一个，
+    // 后面按候选顺序做的每一次重试/换站都随之失效。
+    // (The WebSocket lane resolves no aggregate model slug — `response.create`
+    // arrives after the handshake — so the gate can only narrow the list to the
+    // single highest-priority candidate.)
+    if candidates.selection.as_ref().is_some_and(|selection| {
+        selection.mode == GatewayProxyMode::Aggregate && !selection.cross_site_failover
+    }) {
+        candidates.providers.truncate(1);
+    }
     let apply_mapping = !candidates
         .selection
         .as_ref()
         .is_some_and(|selection| selection.mode == GatewayProxyMode::Single);
     let settings = context.settings_snapshot();
     let app_config = settings.effective_app_config(GatewayCliKey::Codex);
-    let single = candidates.providers.len() == 1;
+    let is_single_provider =
+        is_single_provider_deployment(candidates.providers.len(), candidates.selection.as_ref());
     upstream::refresh_health_registry(context);
     let mut last_failure = HandshakeFailure::local(503, "No available Codex provider");
     let mut last_provider = None;
     let mut shutdown = context.websocket_shutdown.subscribe();
     let mut attempts = Vec::new();
+    let mut skipped_by_health = 0_u32;
     let retryable_status_codes =
         crate::coding::proxy_gateway::retryable_status::retryable_status_code_set(
             &settings.retryable_status_codes,
@@ -402,7 +430,8 @@ pub(super) async fn handle_upgrade(
                 )
             })
             .unwrap_or(true);
-        if !single && !provider_available {
+        if !is_single_provider && !provider_available {
+            skipped_by_health = skipped_by_health.saturating_add(1);
             continue;
         }
         if let Some(reason) = fallback_reason(&provider) {
@@ -554,6 +583,14 @@ pub(super) async fn handle_upgrade(
                 }
             }
         }
+    }
+    // 所有候选都被健康过滤跳过且没有发起任何握手时，用与 HTTP 503
+    // `cooling_down` 相同的语义说明原因，而不是笼统的“没有可用渠道”。
+    if attempts.is_empty() && skipped_by_health > 0 {
+        last_failure = HandshakeFailure::local(
+            503,
+            "All provider candidates are cooling down; no upstream handshake was attempted.",
+        );
     }
     last_failure.attempts = attempts;
     write_handshake_failure(

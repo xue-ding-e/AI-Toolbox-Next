@@ -330,6 +330,7 @@ impl GatewayStatusProxyDetails {
                     separator: aggregate.separator.clone(),
                     aliases: aggregate.aliases.clone(),
                     naming: aggregate.naming,
+                    cross_site_failover: aggregate.cross_site_failover,
                     subagent: (!aggregate.subagent.is_empty()).then(|| {
                         super::types::GatewayAggregateSubagentDefaults::from(&aggregate.subagent)
                     }),
@@ -679,6 +680,7 @@ pub async fn engage_aggregate_cli(
     separator: String,
     aliases: BTreeMap<String, String>,
     naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
+    cross_site_failover: bool,
     subagent_defaults: crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<GatewayCliTakeoverStatus, String> {
     if cli_key != GatewayCliKey::Codex {
@@ -820,6 +822,7 @@ pub async fn engage_aggregate_cli(
             separator.clone(),
             aliases.clone(),
             naming,
+            cross_site_failover,
             slug_table,
         )
         .with_aggregate_subagent_defaults(subagent_defaults.clone())
@@ -882,6 +885,7 @@ pub async fn engage_aggregate_cli(
             separator: separator.clone(),
             aliases: aliases.clone(),
             naming,
+            cross_site_failover,
             // The draft remembers the selection only; the `[agents]` defaults
             // are engage-time state the manifest owns.
             subagent: None,
@@ -997,6 +1001,7 @@ async fn normalize_aggregate_draft_config(
         separator,
         aliases,
         naming: config.naming,
+        cross_site_failover: config.cross_site_failover,
         // A draft never carries the engage-time `[agents]` defaults, so the
         // settings form shows them as unmanaged while the mode is off.
         subagent: None,
@@ -1742,6 +1747,7 @@ async fn proxy_details_for_manifest(
         aggregate_aliases: aggregate.aliases,
         aggregate_naming: aggregate.naming,
         aggregate_slug_table: aggregate.slug_table,
+        cross_site_failover: aggregate.cross_site_failover,
     };
     match load_candidate_providers_with_settings_and_selection(db, cli_key, None, Some(&selection))
         .await
@@ -4871,6 +4877,7 @@ base_url = "http://127.0.0.1:9999/openai/v1"
                 ".".to_string(),
                 BTreeMap::new(),
                 AggregateNamingMode::SiteModel,
+                false,
                 Vec::new(),
             )
             .with_pre_aggregate_catalog(Some(snapshot.clone()));
@@ -4907,6 +4914,7 @@ base_url = "http://127.0.0.1:9999/openai/v1"
             ".".to_string(),
             BTreeMap::new(),
             AggregateNamingMode::SiteModel,
+            false,
             Vec::new(),
         )
         .with_pre_aggregate_catalog(Some(snapshot.clone()));
@@ -4977,6 +4985,7 @@ base_url = "http://127.0.0.1:9999/openai/v1"
             ".".to_string(),
             BTreeMap::new(),
             AggregateNamingMode::SiteModel,
+            false,
             Vec::new(),
         );
         write_manifest(&paths, GatewayCliKey::Codex, &aggregate).unwrap();

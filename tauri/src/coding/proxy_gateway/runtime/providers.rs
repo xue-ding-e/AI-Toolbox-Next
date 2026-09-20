@@ -94,6 +94,10 @@ pub(crate) struct GatewayProviderSelection {
     /// manifest predates it, in which case routing rebuilds the table from the
     /// live candidates (`aggregate_provider_ids` + `aggregate_naming`).
     pub(crate) aggregate_slug_table: Vec<AggregateSlugEntry>,
+    /// Aggregate mode only: whether a failed request may be retried on another
+    /// selected site. `false` (also the value for manifests written before the
+    /// field existed) pins each request to the single site it names.
+    pub(crate) cross_site_failover: bool,
 }
 
 pub(crate) async fn load_candidate_providers(
@@ -237,6 +241,7 @@ pub(crate) fn load_gateway_provider_selection(
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
                 aggregate_slug_table: aggregate.slug_table,
+                cross_site_failover: aggregate.cross_site_failover,
             })
         }
     };
@@ -308,6 +313,7 @@ pub(crate) async fn load_gateway_provider_selection_async(
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
                 aggregate_slug_table: aggregate.slug_table,
+                cross_site_failover: aggregate.cross_site_failover,
             })
         }
     };
@@ -446,6 +452,8 @@ pub(crate) fn resolve_aggregate_route(
         aggregate_aliases: std::collections::BTreeMap::new(),
         aggregate_naming: AggregateNamingMode::SiteModel,
         aggregate_slug_table: Vec::new(),
+        // Route resolution does not consult the failover policy.
+        cross_site_failover: true,
     };
     resolve_aggregate_route_with_selection(requested_model, &selection, providers).unwrap_or_else(
         |_| AggregateRoute {
@@ -2006,6 +2014,10 @@ mod tests {
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
             aggregate_slug_table: Vec::new(),
+            // Single/failover selections never reach the aggregate gate, so the
+            // value is irrelevant; `true` keeps the helper reading as "no
+            // aggregate policy applied".
+            cross_site_failover: true,
         }
     }
 
@@ -2035,6 +2047,7 @@ mod tests {
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
             aggregate_slug_table: Vec::new(),
+            cross_site_failover: true,
         }
     }
 

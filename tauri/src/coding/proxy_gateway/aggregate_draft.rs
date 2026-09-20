@@ -34,6 +34,9 @@ struct AggregateDraftRecord {
     separator: String,
     aliases: BTreeMap<String, String>,
     naming: AggregateNamingMode,
+    /// Whether a request may move to another selected site on failure. Absent
+    /// in older draft files, which therefore default to `false`.
+    cross_site_failover: bool,
 }
 
 impl From<AggregateDraftRecord> for GatewayAggregateConfig {
@@ -47,6 +50,7 @@ impl From<AggregateDraftRecord> for GatewayAggregateConfig {
                 separator.to_string()
             },
             aliases: record.aliases,
+            cross_site_failover: record.cross_site_failover,
             naming: record.naming,
             subagent: None,
         }
@@ -60,6 +64,7 @@ impl From<&GatewayAggregateConfig> for AggregateDraftRecord {
             separator: config.separator.clone(),
             aliases: config.aliases.clone(),
             naming: config.naming,
+            cross_site_failover: config.cross_site_failover,
         }
     }
 }
@@ -128,6 +133,9 @@ mod tests {
             separator: separator.to_string(),
             aliases: BTreeMap::from([("site-a".to_string(), "a".to_string())]),
             naming: AggregateNamingMode::ModelAtSite,
+            // Deliberately non-default so the round trip proves the new field
+            // is persisted instead of silently collapsing to its default.
+            cross_site_failover: true,
             subagent: None,
         }
     }

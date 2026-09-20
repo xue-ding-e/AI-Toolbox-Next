@@ -33,6 +33,13 @@ export interface GatewayAggregateFormSeed {
   aliases: Record<string, string>;
   naming: GatewayAggregateNamingMode;
   /**
+   * Whether the takeover may move a request to another selected site when the
+   * addressed site fails. A stored value that is absent or `false` means the
+   * backend default: the request stays on one site, so a failure never spends
+   * another site's balance.
+   */
+  crossSiteFailover: boolean;
+  /**
    * True when the stored draft named sites that are no longer selectable
    * (deleted, disabled or official). The caller surfaces it so a silently
    * shortened selection is never mistaken for the user's saved config.
@@ -102,6 +109,7 @@ export const resolveAggregateFormSeed = (params: {
       separator: resolveDraftSeparator(activeConfig.separator),
       aliases: aliasesForSelectedSites(activeConfig.aliases, siteIds),
       naming: activeConfig.naming ?? 'site_model',
+      crossSiteFailover: activeConfig.cross_site_failover === true,
       droppedDraftSites: false,
     };
   }
@@ -119,6 +127,7 @@ export const resolveAggregateFormSeed = (params: {
     separator: resolveDraftSeparator(draftConfig?.separator),
     aliases: aliasesForSelectedSites(draftConfig?.aliases, siteIds),
     naming: draftConfig?.naming ?? 'site_model',
+    crossSiteFailover: draftConfig?.cross_site_failover === true,
     // A draft whose sites all disappeared is replaced by the default selection;
     // the caller tells the user instead of silently swapping their selection.
     droppedDraftSites: reconciled.droppedStaleSites,

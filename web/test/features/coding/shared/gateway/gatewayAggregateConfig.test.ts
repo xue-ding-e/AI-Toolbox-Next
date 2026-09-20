@@ -140,7 +140,13 @@ test('aggregate reengage config is only built for a valid aggregate manifest', (
         aggregate: { provider_ids: ['b', 'a', 'b'], separator: '::' },
       }),
     ),
-    { providerIds: ['b', 'a'], separator: '::', aliases: {}, naming: 'site_model' },
+    {
+      providerIds: ['b', 'a'],
+      separator: '::',
+      aliases: {},
+      naming: 'site_model',
+      crossSiteFailover: false,
+    },
   );
 });
 
@@ -294,6 +300,10 @@ test('effective alias map round-trips a saved aggregate manifest', () => {
       separator: '.',
       aliases: { '76a6ef74': '思源888' },
       naming: 'site_model',
+      // The failover policy is replayed explicitly: a manifest that predates
+      // the field means `false`, and dropping the key would let a provider save
+      // flip the safety switch back on.
+      crossSiteFailover: false,
     },
   );
 });
@@ -320,7 +330,42 @@ test('managed subagent defaults survive the re-engage config round trip', () => 
     naming: 'site_model',
     subagentModel: 'gpt-5.6-luna',
     subagentReasoningEffort: 'xhigh',
+    crossSiteFailover: false,
   });
+});
+
+// ---- cross-site failover ---------------------------------------------------
+
+test('an enabled cross-site failover survives the re-engage round trip', () => {
+  // Restoring direct mode drops the routing policy, so a provider save must
+  // replay it; a `false` that is dropped would silently re-enable cross-site
+  // spending, and a `true` that is dropped would break failover.
+  const config = toGatewayAggregateReengageConfig(
+    status({
+      mode: 'aggregate',
+      aggregate: {
+        provider_ids: ['site1'],
+        separator: '.',
+        cross_site_failover: true,
+      },
+    }),
+  );
+  assert.deepEqual(config, {
+    providerIds: ['site1'],
+    separator: '.',
+    aliases: {},
+    naming: 'site_model',
+    crossSiteFailover: true,
+  });
+});
+
+test('a manifest without the failover field replays the safe default', () => {
+  // Manifests written before the field existed mean `false`; the re-engage has
+  // to say so explicitly instead of omitting the key.
+  const config = toGatewayAggregateReengageConfig(
+    status({ mode: 'aggregate', aggregate: { provider_ids: ['site1'], separator: '.' } }),
+  );
+  assert.equal(config?.crossSiteFailover, false);
 });
 
 test('a takeover that manages no [agents] keys stays that way', () => {

@@ -214,6 +214,9 @@ export const toGatewayAggregateReengageConfig = (
   // silently unset the user's subagent default.
   const subagentModel = aggregate.subagent?.model?.trim();
   const subagentReasoningEffort = aggregate.subagent?.reasoning_effort?.trim();
+  // The failover policy is always replayed: a dropped `false` would silently
+  // re-enable cross-site spending on the next provider save.
+  const crossSiteFailover = aggregate.cross_site_failover === true;
   return {
     providerIds,
     separator,
@@ -224,6 +227,7 @@ export const toGatewayAggregateReengageConfig = (
     // object's own keys.
     ...(subagentModel ? { subagentModel } : {}),
     ...(subagentReasoningEffort ? { subagentReasoningEffort } : {}),
+    crossSiteFailover,
   };
 };
 

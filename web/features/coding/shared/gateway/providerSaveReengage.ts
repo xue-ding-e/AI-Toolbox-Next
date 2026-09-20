@@ -13,6 +13,14 @@ export interface GatewayAggregateReengageConfig {
   aliases?: Record<string, string>;
   naming?: GatewayAggregateNamingMode;
   /**
+   * Whether the takeover may fail a request over to another selected site.
+   *
+   * `undefined` keeps the backend default, which refuses cross-site failover;
+   * an engaged takeover must still replay its stored value so a provider save
+   * cannot flip the safety switch.
+   */
+  crossSiteFailover?: boolean;
+  /**
    * Codex `[agents]` defaults the takeover owns.
    *
    * The re-engage round trip restores direct first, which drops these keys, so

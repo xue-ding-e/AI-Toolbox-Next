@@ -169,6 +169,16 @@ pub struct GatewayAggregateConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, String>,
     pub naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
+    /// Whether one request may be retried on *another* selected site when the
+    /// site its slug or `<site><sep><model>` prefix names fails.
+    ///
+    /// `false` (the value every manifest written before this field existed
+    /// deserializes to) pins the request to the single site the model name
+    /// addresses: a failing or cooling site surfaces its own error instead of
+    /// spending another site's balance. `true` restores the historical
+    /// "sites declaring the same upstream model back each other up" behavior.
+    #[serde(default)]
+    pub cross_site_failover: bool,
     /// Codex `[agents]` defaults this takeover owns, if any. Absent means the
     /// takeover wrote none, so the settings form must show the fields as
     /// unmanaged rather than as blank values it would then write back.

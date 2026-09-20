@@ -33,6 +33,14 @@ export interface GatewayAggregateConfig {
   /** Template used to name each selected `(site, model)` pair. */
   naming?: GatewayAggregateNamingMode;
   /**
+   * Whether a request may fail over to another selected site when the site its
+   * slug names fails.
+   *
+   * Absent means the backend default, which refuses cross-site failover: the
+   * request fails instead of spending another site's balance.
+   */
+  cross_site_failover?: boolean;
+  /**
    * Codex `[agents]` defaults this aggregate takeover owns, if any.
    *
    * Aggregate mode replaces the model list, so a bare-name default such as
@@ -583,6 +591,7 @@ export const engageProxyGatewayAggregate = async (
   naming: GatewayAggregateNamingMode = 'site_model',
   subagentModel?: string,
   subagentReasoningEffort?: string,
+  crossSiteFailover?: boolean,
 ): Promise<GatewayCliTakeoverStatus> => {
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_aggregate', {
     cliKey,
@@ -592,6 +601,7 @@ export const engageProxyGatewayAggregate = async (
     naming,
     subagentModel,
     subagentReasoningEffort,
+    crossSiteFailover: crossSiteFailover ?? false,
   });
 };
 
@@ -616,6 +626,7 @@ export const saveProxyGatewayAggregateDraft = async (
   separator: string,
   aliases?: Record<string, string>,
   naming: GatewayAggregateNamingMode = 'site_model',
+  crossSiteFailover?: boolean,
 ): Promise<GatewayAggregateConfig> => {
   return invoke<GatewayAggregateConfig>('proxy_gateway_save_aggregate_draft', {
     cliKey,
@@ -623,6 +634,7 @@ export const saveProxyGatewayAggregateDraft = async (
     separator,
     aliases: aliases ?? {},
     naming,
+    crossSiteFailover: crossSiteFailover ?? false,
   });
 };
 

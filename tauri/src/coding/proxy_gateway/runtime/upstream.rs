@@ -1053,32 +1053,52 @@ async fn forward_to_upstream(
             aggregate_model_is_explicit,
             allow_provider_model_mapping,
         );
-        if let Some(target) = target {
-            let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
-            ordered.push(target);
-            ordered.append(&mut fallbacks);
-            providers = ordered;
-        } else {
-            providers = fallbacks;
-            if providers.is_empty() {
-                let mut response = json_response(
-                    404,
-                    "Not Found",
-                    json!({
-                        "error": "gateway_aggregate_model_unknown",
-                        "message": format!(
-                            "No enabled aggregate site declares model '{model}'. Pick a model from the Codex model list.",
-                        ),
-                    }),
-                    route.route_name,
-                    None,
-                    "aggregate model did not match any declared catalog",
-                );
-                response.cli_key = Some(route.cli_key);
-                response.requested_model = Some(requested_model);
-                response.error_category = Some("model_not_found".to_string());
-                return response;
+        // 跨站故障转移开关：关闭时本次请求只能由一个站点服务，绝不把请求转给
+        // 其它站点；开启时保留“声明同一上游模型的站点互为兜底”的原有行为。
+        //
+        // The cross-site gate is applied here, before the retry loop, so the
+        // narrowed list also governs the health filter and every failover
+        // branch below: with a single candidate they can no longer reach
+        // another site. Same-site retries (`per_provider_retry_count`) are
+        // unaffected.
+        providers = if selection.cross_site_failover {
+            match target {
+                Some(target) => {
+                    let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
+                    ordered.push(target);
+                    ordered.append(&mut fallbacks);
+                    ordered
+                }
+                None => fallbacks,
             }
+        } else {
+            match target {
+                Some(target) => vec![target],
+                // Nothing was named, or the named site is disabled or no longer
+                // a candidate: this request has no authorised site, so it fails
+                // instead of being handed to whichever site happens to declare
+                // the same model.
+                None => Vec::new(),
+            }
+        };
+        if providers.is_empty() {
+            let mut response = json_response(
+                404,
+                "Not Found",
+                json!({
+                    "error": "gateway_aggregate_model_unknown",
+                    "message": format!(
+                        "No enabled aggregate site declares model '{model}'. Pick a model from the Codex model list.",
+                    ),
+                }),
+                route.route_name,
+                None,
+                "aggregate model did not match any declared catalog",
+            );
+            response.cli_key = Some(route.cli_key);
+            response.requested_model = Some(requested_model);
+            response.error_category = Some("model_not_found".to_string());
+            return response;
         }
     }
 
@@ -1106,7 +1126,15 @@ async fn forward_to_upstream(
     let mut last_failure_response = None;
     let mut provider_attempts = Vec::new();
     let mut skipped_by_health = Vec::new();
-    let is_single_provider = providers.len() == 1;
+    // The single-provider shortcut below means "this deployment has one
+    // candidate site", not "the cross-site gate pinned *this* request to one
+    // site". With cross-site failover disabled the list is narrowed on purpose,
+    // so the cooldown filter has to stay on: otherwise a cooling site would be
+    // hammered with requests it is expected to fail, instead of answering
+    // `model_temporarily_unavailable` (`error_category: cooling_down`) as the
+    // request-level policy intends.
+    let is_single_provider = providers.len() == 1
+        && aggregate_selection.is_none_or(|selection| selection.cross_site_failover);
 
     'providers: for provider in providers {
         // Aggregate mode never runs the per-CLI default/family mapping: the
@@ -1134,7 +1162,8 @@ async fn forward_to_upstream(
             upstream_model_id: upstream_model_id.clone(),
         };
 
-        // 单渠道代理跳过健康过滤，始终尝试转发。
+        // 单渠道代理跳过健康过滤，始终尝试转发；但“跨站故障转移已禁用”把本次
+        // 请求收窄到单站点时不算单渠道部署，冷却过滤必须继续生效（见上）。
         if !is_single_provider && !is_model_available(context, &health_key) {
             skipped_by_health.push(provider.name.clone());
             continue;

@@ -379,6 +379,7 @@ pub async fn proxy_gateway_engage_aggregate(
     separator: Option<String>,
     aliases: Option<BTreeMap<String, String>>,
     naming: Option<AggregateNamingMode>,
+    cross_site_failover: Option<bool>,
     subagent_model: Option<String>,
     subagent_reasoning_effort: Option<String>,
 ) -> Result<GatewayCliTakeoverStatus, String> {
@@ -413,6 +414,7 @@ pub async fn proxy_gateway_engage_aggregate(
         separator,
         aliases.unwrap_or_default(),
         naming.unwrap_or_default(),
+        cross_site_failover.unwrap_or(false),
         subagent_defaults,
     )
     .await?;
@@ -446,6 +448,7 @@ pub async fn proxy_gateway_save_aggregate_draft(
     separator: Option<String>,
     aliases: Option<BTreeMap<String, String>>,
     naming: Option<AggregateNamingMode>,
+    cross_site_failover: Option<bool>,
 ) -> Result<GatewayAggregateConfig, String> {
     let paths = proxy_gateway_paths(&app)?;
     let separator =
@@ -459,6 +462,7 @@ pub async fn proxy_gateway_save_aggregate_draft(
             separator,
             aliases: aliases.unwrap_or_default(),
             naming: naming.unwrap_or_default(),
+            cross_site_failover: cross_site_failover.unwrap_or(false),
             // The draft stores the site selection; the `[agents]` defaults are
             // only written when the mode is actually engaged.
             subagent: None,

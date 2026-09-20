@@ -33,8 +33,50 @@ test('an engaged manifest seeds the form and keeps stale sites visible', () => {
     separator: '|',
     aliases: { 'site-b': 'b', gone: 'g' },
     naming: 'model_at_site',
+    crossSiteFailover: false,
     droppedDraftSites: false,
   });
+});
+
+test('the engaged manifest seeds the failover policy', () => {
+  const seed = resolveAggregateFormSeed({
+    activeConfig: {
+      provider_ids: ['site-a'],
+      separator: '.',
+      naming: 'site_model',
+      cross_site_failover: true,
+    },
+    draftConfig: null,
+    candidates,
+  });
+
+  assert.equal(seed.crossSiteFailover, true);
+});
+
+test('a draft carries the failover policy into the form seed', () => {
+  const seed = resolveAggregateFormSeed({
+    activeConfig: null,
+    draftConfig: {
+      provider_ids: ['site-a'],
+      separator: '.',
+      naming: 'site_model',
+      cross_site_failover: true,
+    },
+    candidates,
+  });
+
+  assert.equal(seed.crossSiteFailover, true);
+});
+
+test('a missing failover policy seeds the safe default', () => {
+  // Old drafts and manifests predate the field, so it has to read as "off".
+  const seed = resolveAggregateFormSeed({
+    activeConfig: null,
+    draftConfig: { provider_ids: ['site-a'], separator: '.', naming: 'site_model' },
+    candidates,
+  });
+
+  assert.equal(seed.crossSiteFailover, false);
 });
 
 test('an engaged manifest drops aliases that address unselected sites only', () => {
@@ -97,6 +139,7 @@ test('a saved draft wins over the default selection but is re-ordered by the pro
     separator: '@',
     aliases: { 'site-a': 'a' },
     naming: 'model_only',
+    crossSiteFailover: false,
     droppedDraftSites: false,
   });
 });

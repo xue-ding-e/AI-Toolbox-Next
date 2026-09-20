@@ -1,14 +1,23 @@
 use ai_toolbox_lib::coding::proxy_gateway::{
     aggregate_naming::{AggregateNamingMode, AggregateSlugEntry},
     cli_proxy::manifest::CliProxyManifest,
+    model_health::{GatewayFailureKind, ModelHealthRegistry},
     paths::ProxyGatewayPaths,
-    types::{GatewayCliKey, GatewayProxyMode, ProxyGatewaySettings},
+    types::{GatewayCliKey, GatewayProxyMode, ProviderModelHealthKey, ProxyGatewaySettings},
     ProxyGatewayState,
 };
 use ai_toolbox_lib::db::{helpers::db_put, schema::DbTable, SqliteDbState};
 use ai_toolbox_lib::http_client;
+use chrono::Utc;
 use serde_json::{json, Value};
-use std::{fs, time::Duration};
+use std::{
+    fs,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tempfile::TempDir;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,12 +39,16 @@ impl RunningAggregateGateway {
         mode: GatewayProxyMode,
         selected_sites: &[&str],
     ) -> Self {
+        // Legacy callers keep the historical "sites backing each other up"
+        // behavior; the gate has its own dedicated cases below.
         Self::new_with_slug_table(
             providers,
             mode,
             selected_sites,
             AggregateNamingMode::default(),
             Vec::new(),
+            true,
+            &[],
         )
     }
 
@@ -46,6 +59,8 @@ impl RunningAggregateGateway {
         selected_sites: &[&str],
         naming: AggregateNamingMode,
         slug_table: Vec<AggregateSlugEntry>,
+        cross_site_failover: bool,
+        cooling_sites: &[&str],
     ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let db = SqliteDbState::in_memory_for_test().unwrap();
@@ -93,6 +108,7 @@ impl RunningAggregateGateway {
                 ".".to_string(),
                 std::collections::BTreeMap::new(),
                 naming,
+                cross_site_failover,
                 slug_table,
             );
         }
@@ -119,6 +135,26 @@ impl RunningAggregateGateway {
             store_response_body: false,
             ..ProxyGatewaySettings::default()
         };
+        // Seed the persisted health snapshot *before* the runtime loads it, so a
+        // request that must be refused by the cooldown filter never reaches the
+        // upstream socket. `Auth` is provider-scoped (score 5 = the default
+        // threshold), i.e. one call cools the whole site.
+        if !cooling_sites.is_empty() {
+            let mut registry = ModelHealthRegistry::new(settings.clone());
+            let now = Utc::now();
+            for site_id in cooling_sites {
+                registry.record_failure(
+                    &ProviderModelHealthKey {
+                        cli_key: GatewayCliKey::Codex,
+                        provider_id: (*site_id).to_string(),
+                        upstream_model_id: String::new(),
+                    },
+                    GatewayFailureKind::Auth,
+                    now,
+                );
+            }
+            registry.save(&paths.model_health_path()).unwrap();
+        }
         let state = ProxyGatewayState::default();
         let status = state
             .manager
@@ -284,6 +320,34 @@ async fn abort_if_idle(mut task: JoinHandle<Option<Value>>) -> Option<Value> {
     }
 }
 
+/// Accept connections for a bounded window and count them.
+///
+/// A stronger form of `abort_if_idle`: it proves how many times a site was
+/// contacted (expected: zero), instead of only that nothing happened to arrive
+/// within one short window.
+fn spawn_upstream_counter(listener: TcpListener) -> (Arc<AtomicUsize>, JoinHandle<()>) {
+    let count = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&count);
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok(Ok((mut socket, _))) =
+                tokio::time::timeout(REQUEST_TIMEOUT, listener.accept()).await
+            else {
+                return;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            let _ = read_http_json(&mut socket).await;
+            write_http_json(&mut socket, 200, &responses_success("modelX", "unexpected")).await;
+        }
+    });
+    (count, task)
+}
+
+/// Wait past the point where a cross-site attempt would have been observable.
+async fn settle_cross_site_window() {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
 async fn send_request(gateway_url: &str, model: &str) -> (reqwest::StatusCode, Vec<u8>) {
     let client = http_client::create_client_no_proxy(10).unwrap();
     let response = client
@@ -340,13 +404,19 @@ async fn aggregate_site_model_prefix_routes_only_to_site_b_and_strips_prefix() {
         spawn_upstream_capture(site_a, 500, responses_success("modelY", "unexpected A"));
     let site_b_task = spawn_upstream_capture(site_b, 200, responses_success("modelY", "from B"));
 
-    let gateway = RunningAggregateGateway::new(
+    // 跨站故障转移关闭时，点名站点仍然照常服务：闸门只禁止"换站"，不禁止
+    // "访问 slug 点名的站点"。这是关闭开关后的正常路径。
+    let gateway = RunningAggregateGateway::new_with_slug_table(
         &[
             ("siteA", "Site A", &site_a_url, &["modelX"]),
             ("siteB", "Site B", &site_b_url, &["modelY"]),
         ],
         GatewayProxyMode::Aggregate,
         &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
     );
     let (status, bytes) = send_request(&gateway.url, "siteB.modelY").await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
@@ -373,13 +443,18 @@ async fn aggregate_model_not_found_on_site_a_fails_over_to_site_b_with_same_mode
     let site_b_task =
         spawn_upstream_capture(site_b, 200, responses_success("modelX", "fallback B"));
 
-    let gateway = RunningAggregateGateway::new(
+    // 跨站故障转移开启：这是它的历史契约，站点 A 失败时站点 B 顶上。
+    let gateway = RunningAggregateGateway::new_with_slug_table(
         &[
             ("siteA", "Site A", &site_a_url, &["modelX"]),
             ("siteB", "Site B", &site_b_url, &["modelX"]),
         ],
         GatewayProxyMode::Aggregate,
         &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        true,
+        &[],
     );
     let (status, bytes) = send_request(&gateway.url, "siteA.modelX").await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
@@ -461,6 +536,8 @@ async fn aggregate_replays_the_persisted_table_when_a_site_is_no_longer_enabled(
                 slug: "modelX#2".to_string(),
             },
         ],
+        true,
+        &[],
     );
 
     let (status, bytes) = send_request(&gateway.url, "modelX#2").await;
@@ -475,6 +552,137 @@ async fn aggregate_replays_the_persisted_table_when_a_site_is_no_longer_enabled(
         .expect("site B request should be captured");
     // The slug resolved back to the upstream model id before forwarding.
     assert_eq!(captured["model"], "modelX");
+}
+
+/// The persisted table still names siteA for `modelX`; with the gate **off** that
+/// slug has no live site behind it, so the request must 404 instead of being
+/// handed to siteB just because it declares the same model.
+#[tokio::test]
+async fn aggregate_gate_off_serves_a_disabled_sites_slug_only_from_the_named_site() {
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let site_b_task = spawn_upstream_capture(site_b, 200, responses_success("modelX", "from B"));
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[("siteB", "Site B", &site_b_url, &["modelX"])],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::ModelOnly,
+        vec![
+            AggregateSlugEntry {
+                site_id: "siteA".to_string(),
+                upstream_model: "modelX".to_string(),
+                slug: "modelX".to_string(),
+            },
+            AggregateSlugEntry {
+                site_id: "siteB".to_string(),
+                upstream_model: "modelX".to_string(),
+                slug: "modelX#2".to_string(),
+            },
+        ],
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "modelX").await;
+    assert_eq!(status, 404, "{}", String::from_utf8_lossy(&bytes));
+    // With the gate off the unnamed-model branch refuses instead of silently
+    // picking a site, so the body is the "no enabled site declares" envelope.
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["error"], "gateway_aggregate_model_unknown");
+
+    assert_eq!(abort_if_idle(site_b_task).await, None);
+}
+
+// ---- 跨站故障转移开关 (cross_site_failover) ---------------------------------
+
+#[tokio::test]
+async fn aggregate_gate_off_keeps_a_failing_site_a_request_on_site_a() {
+    let site_a = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a.local_addr().unwrap());
+    let site_a_task = spawn_upstream_capture(site_a, 404, model_not_found_response("modelX"));
+
+    // Site B must not receive *any* request, not merely "no request within one
+    // short window": it runs for the whole test and counts every connection.
+    let site_b_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b_url = format!("http://{}", site_b_listener.local_addr().unwrap());
+    let (site_b_hits, site_b_counter) = spawn_upstream_counter(site_b_listener);
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["modelX"]),
+            ("siteB", "Site B", &site_b_url, &["modelX"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "siteA.modelX").await;
+    // Site A's own failure surfaces verbatim; no cross-site attempt happens, so
+    // another site's balance is never spent on this request.
+    assert_eq!(status, 404, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["error"]["code"], "model_not_found");
+    assert_eq!(response["error"]["message"], "model modelX not found");
+
+    let captured_a = tokio::time::timeout(REQUEST_TIMEOUT, site_a_task)
+        .await
+        .expect("site A request should arrive")
+        .unwrap()
+        .expect("site A request should be captured");
+    assert_eq!(captured_a["model"], "modelX");
+
+    settle_cross_site_window().await;
+    assert_eq!(
+        site_b_hits.load(Ordering::SeqCst),
+        0,
+        "site B must never be contacted while the cross-site gate is off"
+    );
+    site_b_counter.abort();
+}
+
+/// Gate fully off + the named site is cooling down: the request is refused with
+/// a 503 rather than quietly served by the other site.
+#[tokio::test]
+async fn aggregate_gate_off_reports_a_cooling_site_without_crossing_over() {
+    let site_a_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b_listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a_listener.local_addr().unwrap());
+    let site_b_url = format!("http://{}", site_b_listener.local_addr().unwrap());
+    // Neither listener may be contacted: the only permitted site is cooling.
+    let (site_a_hits, site_a_counter) = spawn_upstream_counter(site_a_listener);
+    let (site_b_hits, site_b_counter) = spawn_upstream_counter(site_b_listener);
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["modelX"]),
+            ("siteB", "Site B", &site_b_url, &["modelX"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &["siteA"],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "siteA.modelX").await;
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    // `error_category: cooling_down` is not part of the wire body, so the
+    // observable contract is this envelope plus the skipped site list.
+    assert_eq!(response["error"], "model_temporarily_unavailable");
+    assert_eq!(response["skipped_providers"], json!(["Site A"]));
+
+    settle_cross_site_window().await;
+    assert_eq!(site_a_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(site_b_hits.load(Ordering::SeqCst), 0);
+    site_a_counter.abort();
+    site_b_counter.abort();
 }
 
 #[tokio::test]
