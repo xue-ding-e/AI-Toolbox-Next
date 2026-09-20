@@ -3194,6 +3194,11 @@ fn codex_model_catalog_from_specs(
 struct AggregateCatalogEntry {
     /// The configured aggregate slug — what Codex shows and sends back verbatim.
     slug: String,
+    /// Site that owns this entry; `None` for the hidden bare-name aliases, which
+    /// are addressable but advertise no auto-review override. Used while
+    /// building the catalog to turn the provider-level bare auto-review model id
+    /// into the exact aggregate slug the same site publishes for that model.
+    site_id: Option<String>,
     /// `<site label> · <model>` for the model picker.
     display_name: String,
     /// Hidden entries are addressable but never listed: Codex's spawn_agent
@@ -3303,6 +3308,11 @@ fn aggregate_site_model_specs(settings_config: &Value) -> Vec<CodexCatalogModelS
 /// alongside the catalog. The caller persists it in the manifest so request-time
 /// routing replays this exact table instead of rebuilding one that could
 /// renumber `model_only` `#N` slugs.
+///
+/// Visible rows also carry the site's `auto_review_model_override`, translated
+/// from the provider-level bare id into that same site's published slug; rows
+/// whose site does not publish the configured review model stay `None` rather
+/// than borrowing another site's slug.
 fn codex_aggregate_catalog_entries(
     sites: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
@@ -3342,6 +3352,7 @@ fn codex_aggregate_catalog_entries(
 
             entries.push(AggregateCatalogEntry {
                 slug,
+                site_id: Some(site_id.clone()),
                 hidden: false,
                 display_name: format!("{site_label} · {model_display_name}"),
                 context_window: spec.context_window,
@@ -3349,16 +3360,53 @@ fn codex_aggregate_catalog_entries(
                 default_reasoning_level: spec.default_reasoning_level,
                 service_tiers: spec.service_tiers,
                 input_modalities: spec.input_modalities,
-                // The provider-level auto-review override names a bare upstream
-                // model, which aggregate mode only addresses through a site
-                // prefix, so the aggregate entries never advertise it.
-                auto_review_model_override: None,
+                // Still the provider-level bare upstream id here; rewritten to
+                // this site's exact aggregate slug once every slug is allocated.
+                auto_review_model_override: spec.auto_review_model_override,
             });
 
             if !bare_models.iter().any(|existing| existing == &spec.model) {
                 bare_models.push(spec.model.clone());
             }
         }
+    }
+
+    // Single-provider catalogs advertise the provider-level
+    // `auto_review_model_override` on every model row, so a request that starts
+    // from any row keeps its review/guardian calls pinned to the configured
+    // model. Aggregate mode used to drop the field entirely, which sent those
+    // background requests back to Codex's built-in review model — a name old
+    // aggregate catalogs did not publish at all, so guardian and session-summary
+    // generation could not start.
+    //
+    // The override is a bare upstream id, but aggregate mode addresses a model
+    // only through the slug its own site publishes, so advertise that exact
+    // slug: `<site>` must stay the site that declared the override. A bare name
+    // that another site's hidden alias happens to serve would silently move the
+    // request to that other site.
+    let slug_by_pair = slug_table
+        .iter()
+        .map(|entry| {
+            (
+                (entry.site_id.as_str(), entry.upstream_model.as_str()),
+                entry.slug.as_str(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for entry in &mut entries {
+        let Some(raw_override) = entry.auto_review_model_override.clone() else {
+            continue;
+        };
+        let Some(site_id) = entry.site_id.as_deref() else {
+            continue;
+        };
+        // No fallback on purpose: if this site does not publish the configured
+        // review model, there is no slug that may serve it. Leave the row empty
+        // so Codex keeps its built-in review model instead of advertising a
+        // model the gateway would 404 or route to a different site.
+        entry.auto_review_model_override = slug_by_pair
+            .get(&(site_id, raw_override.as_str()))
+            .map(|slug| (*slug).to_string());
     }
 
     // Hidden bare-name aliases go *after* the whole visible table: the order is
@@ -3386,6 +3434,7 @@ fn codex_aggregate_catalog_entries(
         }
         entries.push(AggregateCatalogEntry {
             slug: model.clone(),
+            site_id: None,
             hidden: true,
             display_name: model,
             context_window: None,
@@ -3393,6 +3442,9 @@ fn codex_aggregate_catalog_entries(
             default_reasoning_level: None,
             service_tiers: None,
             input_modalities: None,
+            // Bare-name aliases exist so Codex's bare spawn/subagent/review
+            // names stay addressable; they advertise no override, exactly as
+            // before this change.
             auto_review_model_override: None,
         });
     }
@@ -6100,6 +6152,135 @@ approval_policy = "never"
             // Hidden entries must never occupy a visible picker/hint slot.
             assert!(entry["priority"].as_u64().unwrap() >= 9000);
         }
+    }
+
+    #[test]
+    fn aggregate_catalog_preserves_auto_review_as_an_exact_same_site_slug() {
+        let sites = vec![
+            (
+                "site-a".to_string(),
+                "Site A".to_string(),
+                json!({
+                    "autoReviewModelOverride": "codex-auto-review",
+                    "modelCatalog": {
+                        "models": [
+                            { "model": "gpt-5.6-luna" },
+                            { "model": "codex-auto-review" }
+                        ]
+                    }
+                }),
+            ),
+            aggregate_site(
+                "site-b",
+                "Site B",
+                json!([
+                    { "model": "gpt-5.6-luna" },
+                    { "model": "codex-auto-review" }
+                ]),
+            ),
+        ];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let catalog = aggregate_catalog_from_entries(&entries, 200000);
+        let models = catalog["models"].as_array().unwrap();
+
+        // Every visible row of the declaring site points at that site's own
+        // published slug for the review model.
+        let site_a_main = models
+            .iter()
+            .find(|model| model["slug"] == "site-a.gpt-5.6-luna")
+            .unwrap();
+        assert_eq!(
+            site_a_main["auto_review_model_override"].as_str(),
+            Some("site-a.codex-auto-review")
+        );
+        let site_a_review = models
+            .iter()
+            .find(|model| model["slug"] == "site-a.codex-auto-review")
+            .unwrap();
+        assert_eq!(
+            site_a_review["auto_review_model_override"].as_str(),
+            Some("site-a.codex-auto-review")
+        );
+
+        // Site B declares the same review model but configures no override, so it
+        // must not inherit site A's — neither as site A's slug nor as a bare name.
+        let site_b_main = models
+            .iter()
+            .find(|model| model["slug"] == "site-b.gpt-5.6-luna")
+            .unwrap();
+        assert!(site_b_main.get("auto_review_model_override").is_none());
+
+        // Hidden bare-name aliases keep advertising no override: they exist for
+        // spawning, not for review routing.
+        for slug in ["gpt-5.6-luna", "codex-auto-review"] {
+            let bare = models.iter().find(|model| model["slug"] == slug).unwrap();
+            assert_eq!(bare["visibility"], "hide");
+            assert!(bare.get("auto_review_model_override").is_none());
+        }
+    }
+
+    #[test]
+    fn aggregate_catalog_never_borrows_another_sites_auto_review_slug() {
+        // Site B is the only site that publishes `codex-auto-review`, but site A
+        // is the site whose config asks for it. Site A has no slug that serves
+        // that model, so its rows must stay empty instead of drifting to B.
+        let sites = vec![
+            (
+                "site-a".to_string(),
+                "Site A".to_string(),
+                json!({
+                    "config": "model = \"gpt-5.6-luna\"",
+                    "autoReviewModelOverride": "codex-auto-review",
+                    "modelCatalog": { "models": [{ "model": "gpt-5.6-luna" }] }
+                }),
+            ),
+            aggregate_site(
+                "site-b",
+                "Site B",
+                json!([{ "model": "gpt-5.6-luna" }, { "model": "codex-auto-review" }]),
+            ),
+        ];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let catalog = aggregate_catalog_from_entries(&entries, 200000);
+        let models = catalog["models"].as_array().unwrap();
+
+        let site_a_main = models
+            .iter()
+            .find(|model| model["slug"] == "site-a.gpt-5.6-luna")
+            .unwrap();
+        assert!(site_a_main.get("auto_review_model_override").is_none());
+
+        // Site B's own rows are untouched: it configures no override.
+        let site_b_review = models
+            .iter()
+            .find(|model| model["slug"] == "site-b.codex-auto-review")
+            .unwrap();
+        assert!(site_b_review.get("auto_review_model_override").is_none());
+    }
+
+    #[test]
+    fn aggregate_catalog_omits_an_auto_review_model_no_site_declares() {
+        let sites = vec![(
+            "site-a".to_string(),
+            "Site A".to_string(),
+            json!({
+                "config": "model = \"gpt-5.6-luna\"",
+                "autoReviewModelOverride": "missing-review-model",
+                "modelCatalog": {
+                    "models": [{ "model": "gpt-5.6-luna" }]
+                }
+            }),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &aggregate_naming(".")).unwrap();
+        let catalog = aggregate_catalog_from_entries(&entries, 200000);
+        let models = catalog["models"].as_array().unwrap();
+
+        assert!(models
+            .iter()
+            .all(|model| model.get("auto_review_model_override").is_none()));
     }
 
     #[test]
