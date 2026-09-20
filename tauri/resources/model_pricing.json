@@ -696,6 +696,22 @@
     "cache_creation_cost_per_million": "0"
   },
   {
+    "model_id": "gemini-3.8-flash",
+    "display_name": "Gemini 3.8 Flash",
+    "input_cost_per_million": "1.50",
+    "output_cost_per_million": "7.50",
+    "cache_read_cost_per_million": "0.15",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
+    "model_id": "gemini-3.5-flash-lite",
+    "display_name": "Gemini 3.5 Flash Lite",
+    "input_cost_per_million": "0.30",
+    "output_cost_per_million": "2.50",
+    "cache_read_cost_per_million": "0.03",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
     "model_id": "gemini-3.1-flash-lite",
     "display_name": "Gemini 3.1 Flash Lite",
     "input_cost_per_million": "0.25",
@@ -1152,6 +1168,22 @@
     "cache_creation_cost_per_million": "0"
   },
   {
+    "model_id": "grok-4.6",
+    "display_name": "Grok 4.6",
+    "input_cost_per_million": "2",
+    "output_cost_per_million": "6",
+    "cache_read_cost_per_million": "0.50",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
+    "model_id": "grok-4.6-latest",
+    "display_name": "Grok 4.6",
+    "input_cost_per_million": "2",
+    "output_cost_per_million": "6",
+    "cache_read_cost_per_million": "0.50",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
     "model_id": "grok-4.5",
     "display_name": "Grok 4.5",
     "input_cost_per_million": "2",
@@ -1173,6 +1205,14 @@
     "input_cost_per_million": "2",
     "output_cost_per_million": "6",
     "cache_read_cost_per_million": "0.50",
+    "cache_creation_cost_per_million": "0"
+  },
+  {
+    "model_id": "agnes-3.0-flash",
+    "display_name": "Agnes 3.0 Flash",
+    "input_cost_per_million": "0.05",
+    "output_cost_per_million": "0.15",
+    "cache_read_cost_per_million": "0.005",
     "cache_creation_cost_per_million": "0"
   },
   {
