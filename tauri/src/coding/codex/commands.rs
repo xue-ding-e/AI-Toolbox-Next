@@ -2530,25 +2530,44 @@ fn normalize_codex_model_catalog_string_array(value: Option<&serde_json::Value>)
 /// catalog file.
 const CODEX_CATALOG_INPUT_MODALITIES: &[&str] = &["text", "image", "audio"];
 
+/// Keep only the values Codex's `InputModality` enum can deserialize,
+/// lowercased and trimmed; declaration order is preserved.
+fn recognized_codex_catalog_input_modalities(modalities: &[String]) -> Vec<String> {
+    modalities
+        .iter()
+        .map(|item| item.trim().to_ascii_lowercase())
+        .filter(|item| CODEX_CATALOG_INPUT_MODALITIES.contains(&item.as_str()))
+        .collect()
+}
+
+/// Final `input_modalities` for one generated catalog entry. Values Codex
+/// cannot deserialize (the `video`/`pdf` some bundled presets declare) are
+/// dropped so a single unknown value can never make Codex reject the whole
+/// catalog file; an empty remainder falls back to the same text+image default
+/// Codex applies when the field is omitted.
+fn sanitize_codex_catalog_input_modalities(modalities: &[String]) -> Vec<String> {
+    let recognized = recognized_codex_catalog_input_modalities(modalities);
+
+    if recognized.is_empty() {
+        return vec!["text".to_string(), "image".to_string()];
+    }
+
+    recognized
+}
+
 /// Per-row `input_modalities` override from a mapping row's `modalities.input`
 /// (camelCase `modalities` only — DB is the SSOT). Unknown values are dropped
 /// and lowercased; an empty remainder means the row did not declare anything
-/// usable, so the vendor/template default stays in effect.
+/// usable, so the preset/vendor chain stays in effect.
 fn codex_catalog_input_modalities_override(
     value: Option<&serde_json::Value>,
 ) -> Option<Vec<String>> {
     let items = value?.as_array()?;
-    let recognized: Vec<String> = items
+    let declared: Vec<String> = items
         .iter()
-        .filter_map(|item| item.as_str().map(str::trim))
-        .filter(|item| !item.is_empty())
-        .filter(|item| {
-            CODEX_CATALOG_INPUT_MODALITIES
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(item))
-        })
-        .map(|item| item.to_ascii_lowercase())
+        .filter_map(|item| item.as_str().map(str::to_string))
         .collect();
+    let recognized = recognized_codex_catalog_input_modalities(&declared);
 
     if recognized.is_empty() {
         return None;
@@ -2563,8 +2582,8 @@ fn codex_catalog_input_modalities_override(
 /// 1. The user's explicit per-row `modalities.input` declaration wins — it is
 ///    the only user-facing way to force text-only.
 /// 2. When the bundled preset models declare image input for the id, that
-///    declaration is kept verbatim (image, plus any other modality like
-///    audio).
+///    declaration wins, still filtered down to Codex-supported modalities on
+///    the way out (preset-only `video`/`pdf` values never reach the catalog).
 /// 3. Same for a matched official vendor entry: an image declaration wins over
 ///    the other source's possibly stale text-only snapshot, because a visible
 ///    upstream error beats silently stripping user images.
@@ -2583,7 +2602,7 @@ fn codex_catalog_effective_input_modalities(
 ) -> Vec<String> {
     // 1. Explicit per-row declaration wins.
     if let Some(declared) = spec.input_modalities.as_deref() {
-        return declared.to_vec();
+        return sanitize_codex_catalog_input_modalities(declared);
     }
 
     let declares_image = |modalities: &[String]| {
@@ -2609,21 +2628,21 @@ fn codex_catalog_effective_input_modalities(
     // text-only snapshot.
     if let Some(preset) = preset_declared.as_ref() {
         if declares_image(preset) {
-            return preset.clone();
+            return sanitize_codex_catalog_input_modalities(preset);
         }
     }
     if let Some(vendor) = vendor_declared.as_ref() {
         if declares_image(vendor) {
-            return vendor.clone();
+            return sanitize_codex_catalog_input_modalities(vendor);
         }
     }
 
     // 4. Known text-only id keeps its declaration; fully unknown fails open.
     if let Some(preset) = preset_declared {
-        return preset;
+        return sanitize_codex_catalog_input_modalities(&preset);
     }
     if let Some(vendor) = vendor_declared {
-        return vendor;
+        return sanitize_codex_catalog_input_modalities(&vendor);
     }
     vec!["text".to_string(), "image".to_string()]
 }
@@ -2806,8 +2825,8 @@ struct CodexCatalogModelSpec {
     /// Per-row override for the generated catalog's `input_modalities`,
     /// sourced from the mapping row's `modalities.input`. `Some` values are
     /// pre-filtered to modalities Codex understands; when omitted the entry
-    /// keeps whatever the neutral template or the official vendor entry
-    /// declares.
+    /// falls back to the preset/vendor chain, also filtered to Codex-supported
+    /// modalities before the catalog is written.
     input_modalities: Option<Vec<String>>,
 }
 
@@ -5035,7 +5054,8 @@ mod tests {
         aggregate_catalog_from_entries, aggregate_site_model_specs, append_toml_configs,
         build_written_codex_config_toml, capture_codex_pre_aggregate_catalog,
         codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_display_name,
-        codex_catalog_model_specs, ensure_codex_model_catalog_pointer,
+        codex_catalog_effective_input_modalities, codex_catalog_model_specs,
+        ensure_codex_model_catalog_pointer,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         fill_template_fields_from_static, heal_dangling_codex_model_provider,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
@@ -5043,7 +5063,8 @@ mod tests {
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
         read_codex_aggregate_selection, read_codex_catalog_preview, remove_codex_aggregate_catalog,
         resolve_local_provider_meta, restore_codex_pre_aggregate_catalog,
-        static_codex_official_models, strip_codex_common_config_from_toml,
+        sanitize_codex_catalog_input_modalities, static_codex_official_models,
+        strip_codex_common_config_from_toml,
         write_codex_aggregate_catalog, AggregateCatalogEntry, CodexCatalogModelSpec,
         CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
         RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
@@ -7068,6 +7089,109 @@ wire_api = "responses"
             pro.get("input_modalities"),
             Some(&json!(["text", "image"])),
             "explicit image row declaration must beat the vendor text-only declaration"
+        );
+    }
+
+    #[test]
+    fn codex_catalog_drops_modalities_codex_cannot_deserialize() {
+        // Preset and vendor data can declare values the Codex `InputModality`
+        // enum does not know (models.dev ships video/pdf); shipping them makes
+        // Codex reject the whole catalog file when it loads the config.
+        assert_eq!(
+            sanitize_codex_catalog_input_modalities(&[
+                "text".to_string(),
+                "image".to_string(),
+                "video".to_string(),
+                "pdf".to_string(),
+            ]),
+            vec!["text", "image"]
+        );
+        // Audio is a real Codex modality and survives.
+        assert_eq!(
+            sanitize_codex_catalog_input_modalities(&[
+                "text".to_string(),
+                "image".to_string(),
+                "audio".to_string(),
+                "video".to_string(),
+            ]),
+            vec!["text", "image", "audio"]
+        );
+        // Case and whitespace are normalized; a fully unusable declaration
+        // falls back to Codex's own text+image default instead of an empty
+        // array.
+        assert_eq!(
+            sanitize_codex_catalog_input_modalities(&[
+                " TEXT ".to_string(),
+                "Image".to_string(),
+                "VIDEO".to_string(),
+            ]),
+            vec!["text", "image"]
+        );
+        assert_eq!(
+            sanitize_codex_catalog_input_modalities(&["video".to_string(), "pdf".to_string()]),
+            vec!["text", "image"]
+        );
+
+        // The vendor branch goes through the same filter: an unknown id with a
+        // matched vendor entry keeps its image grant but loses video.
+        let spec = CodexCatalogModelSpec {
+            model: "my-relay-model".to_string(),
+            display_name: None,
+            context_window: None,
+            auto_review_model_override: None,
+            reasoning_levels: None,
+            default_reasoning_level: None,
+            service_tiers: None,
+            input_modalities: None,
+        };
+        assert_eq!(
+            codex_catalog_effective_input_modalities(
+                &spec,
+                Some(&json!(["text", "image", "video"]))
+            ),
+            vec!["text", "image"]
+        );
+    }
+
+    #[test]
+    fn preset_video_modalities_are_dropped_from_the_generated_catalog() {
+        // End-to-end through the user path: a mapping row whose model id the
+        // bundled presets know used to emit the preset's full modality list,
+        // including video/pdf (issue #218 comment: Codex failed to load).
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gemini-2.5-flash" },
+                    { "model": "kimi-k2.5" }
+                ]
+            }
+        });
+
+        prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model = \"gemini-2.5-flash\"\n",
+        )
+        .expect("catalog generation should not error");
+        let catalog_text = std::fs::read_to_string(
+            temp_dir
+                .path()
+                .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME),
+        )
+        .unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        // gemini-2.5-flash declares text/image/audio/video/pdf: video and pdf
+        // are dropped, audio (a real Codex modality) is kept.
+        assert_eq!(
+            catalog["models"][0].get("input_modalities"),
+            Some(&json!(["text", "image", "audio"]))
+        );
+        // kimi-k2.5 declares text/image/video: video is dropped.
+        assert_eq!(
+            catalog["models"][1].get("input_modalities"),
+            Some(&json!(["text", "image"]))
         );
     }
 
