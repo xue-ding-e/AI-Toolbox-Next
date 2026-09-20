@@ -13,20 +13,47 @@
 //!
 //! Security: this window loads third-party pages, so it must never be able to
 //! reach the app's own commands. Two properties hold that line:
-//! 1. It is created from Rust, and its label (`mini-browser`) is deliberately
+//! 1. It is created from Rust, and its labels (`mini-browser` and every
+//!    `mini-browser-<profile>` derived from a saved account) are deliberately
 //!    absent from `capabilities/default.json`, whose `windows` list is
 //!    `["main"]`. The app's ACL therefore grants it no command access.
 //! 2. Navigation is restricted to `http`/`https` by [`is_navigable_url`], so a
 //!    page cannot walk the window into `file://` or `javascript:` territory.
+//!
+//! Multiple accounts: every saved account gets its own window and its own
+//! webview data directory, so two logins for the same relay never share cookies.
+//! The profile id is part of both the window label and the directory name, so it
+//! is validated before either is built (see [`validate_profile`]).
+//! That directory is handed to the platform webview as its own profile, and
+//! WebView2 (Windows) and WKWebView (macOS) honour it differently: per-account
+//! isolation is verified on Windows only, is unverified on macOS, and Windows
+//! stays the acceptance target for this feature.
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// Window label. Doubles as the singleton key: opening the browser twice
-/// navigates the existing window instead of stacking duplicates.
+/// Window label used when a caller passes no profile id. Opening the browser
+/// twice without a profile navigates that one window instead of stacking
+/// duplicates, which keeps the legacy single-window behaviour.
 pub const MINI_BROWSER_LABEL: &str = "mini-browser";
+
+/// Prefix for profile-scoped labels: `mini-browser-<profile>`. One window and
+/// one data directory per saved account.
+pub const MINI_BROWSER_LABEL_PREFIX: &str = "mini-browser-";
 
 /// Saved-page list is bounded so a runaway caller cannot grow it forever.
 const MAX_URL_LEN: usize = 2048;
+
+/// Profile ids become window labels *and* directory names, so they are limited
+/// to the characters that are safe in both.
+const MAX_PROFILE_LEN: usize = 64;
+
+const INVALID_PROFILE_MESSAGE: &str = "Invalid browser profile id";
+
+/// Bounded retry budget for deleting a profile directory. Windows keeps
+/// WebView2's files locked briefly after its window is destroyed, so an
+/// immediate `remove_dir_all` fails on any profile that has actually been used.
+const PROFILE_CLEAR_ATTEMPTS: u32 = 20;
+const PROFILE_CLEAR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Normalise user input into an absolute `http`/`https` URL.
 ///
@@ -78,18 +105,100 @@ fn is_navigable_url(url: &tauri::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
 
-/// Isolated profile directory so relay cookies survive restarts without mixing
-/// with the toolbox's own webview storage.
+/// Base profile directory so relay cookies survive restarts without mixing with
+/// the toolbox's own webview storage. Per-account directories are children of
+/// this folder.
 fn browser_data_dir() -> std::path::PathBuf {
     crate::app_paths::resolved_data_dir().join("mini-browser")
 }
 
+/// Reject anything that is not a plain lowercase id.
+///
+/// The profile id is concatenated into a window label and a directory name, so
+/// this is the guard that keeps `../` (and Windows separators, reserved device
+/// names' punctuation, and absolute paths) out of both.
+fn validate_profile(profile: &str) -> Result<(), String> {
+    let valid_length = !profile.is_empty() && profile.len() <= MAX_PROFILE_LEN;
+    let valid_chars = profile
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if valid_length && valid_chars {
+        Ok(())
+    } else {
+        Err(INVALID_PROFILE_MESSAGE.to_string())
+    }
+}
+
+/// `mini-browser-<profile>`, or the legacy `mini-browser` when no profile is
+/// given. Callers must validate `profile` first.
+fn window_label(profile: Option<&str>) -> String {
+    match profile {
+        Some(profile) => format!("{MINI_BROWSER_LABEL_PREFIX}{profile}"),
+        None => MINI_BROWSER_LABEL.to_string(),
+    }
+}
+
+/// Validate an optional profile coming from the frontend.
+fn checked_profile(profile: Option<&str>) -> Result<Option<&str>, String> {
+    if let Some(profile) = profile {
+        validate_profile(profile)?;
+    }
+    Ok(profile)
+}
+
+/// Per-account webview data directory (cookies, storage, cache).
+fn profile_data_dir(profile: &str) -> std::path::PathBuf {
+    browser_data_dir().join(profile)
+}
+
+/// What the frontend needs to render one tab in its tab strip.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MiniBrowserWindowInfo {
+    pub profile_id: Option<String>,
+    pub label: String,
+    pub title: String,
+    pub url: String,
+}
+
+/// Every open mini browser window, profile-scoped and legacy alike.
+fn open_window_infos<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<MiniBrowserWindowInfo> {
+    let mut windows = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with(MINI_BROWSER_LABEL))
+        .map(|(label, window)| {
+            let url = window.url().map(|url| url.to_string()).unwrap_or_default();
+            // A loaded page may have replaced the title; fall back to the
+            // address so the tab strip never renders an empty row.
+            let title = window.title().unwrap_or_else(|_| url.clone());
+            let profile_id = label
+                .strip_prefix(MINI_BROWSER_LABEL_PREFIX)
+                .map(|profile| profile.to_string());
+            MiniBrowserWindowInfo {
+                profile_id,
+                label,
+                title,
+                url,
+            }
+        })
+        .collect::<Vec<_>>();
+    windows.sort_by(|left, right| left.label.cmp(&right.label));
+    windows
+}
+
+/// Bring an existing window forward, or create it with its own data directory.
 fn open_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     url: tauri::Url,
+    profile: Option<&str>,
 ) -> Result<(), String> {
-    // Reuse the existing window when present: one browser, not a pile of them.
-    if let Some(existing) = app.get_webview_window(MINI_BROWSER_LABEL) {
+    let profile = checked_profile(profile)?;
+    let label = window_label(profile);
+
+    // Reuse the existing window when present: one window per account, and the
+    // legacy no-profile window keeps its old single-window semantics.
+    if let Some(existing) = app.get_webview_window(&label) {
         existing
             .navigate(url)
             .map_err(|error| format!("Failed to navigate the browser window: {error}"))?;
@@ -99,12 +208,17 @@ fn open_window<R: tauri::Runtime>(
         return Ok(());
     }
 
-    let builder = WebviewWindowBuilder::new(app, MINI_BROWSER_LABEL, WebviewUrl::External(url))
+    let data_directory = match profile {
+        Some(profile) => profile_data_dir(profile),
+        None => browser_data_dir(),
+    };
+
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
         .title("AI Toolbox Browser")
         .inner_size(1100.0, 800.0)
         .min_inner_size(480.0, 360.0)
         .center()
-        .data_directory(browser_data_dir())
+        .data_directory(data_directory)
         // Reject non-web schemes here too: this also covers redirects and
         // `target=_blank` handled by the webview itself, so a page cannot walk
         // the window into `file://` or `javascript:`.
@@ -117,15 +231,33 @@ fn open_window<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Close one window by its validated profile label.
+fn close_profile_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    let profile = checked_profile(profile)?;
+    if let Some(window) = app.get_webview_window(&window_label(profile)) {
+        window
+            .close()
+            .map_err(|error| format!("Failed to close the browser window: {error}"))?;
+    }
+    Ok(())
+}
+
 /// Open a page in the embedded browser, creating the window if needed.
+///
+/// `profile_id` selects the account: each profile gets its own window and its
+/// own login state. Omitting it keeps the legacy single-window behaviour.
 #[tauri::command]
 pub async fn mini_browser_open<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     url: String,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
     let normalised = normalise_browser_url(&url)?;
     let parsed = tauri::Url::parse(&normalised).map_err(|error| format!("Invalid URL: {error}"))?;
-    open_window(&app, parsed)
+    open_window(&app, parsed, profile_id.as_deref())
 }
 
 /// Navigate the already-open browser window.
@@ -133,16 +265,19 @@ pub async fn mini_browser_open<R: tauri::Runtime>(
 pub async fn mini_browser_navigate<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     url: String,
+    profile_id: Option<String>,
 ) -> Result<(), String> {
-    mini_browser_open(app, url).await
+    mini_browser_open(app, url, profile_id).await
 }
 
 /// Address currently shown, or `None` when the window is not open.
 #[tauri::command]
 pub fn mini_browser_current_url<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    profile_id: Option<String>,
 ) -> Result<Option<String>, String> {
-    let Some(window) = app.get_webview_window(MINI_BROWSER_LABEL) else {
+    let profile = checked_profile(profile_id.as_deref())?;
+    let Some(window) = app.get_webview_window(&window_label(profile)) else {
         return Ok(None);
     };
     window
@@ -151,21 +286,102 @@ pub fn mini_browser_current_url<R: tauri::Runtime>(
         .map_err(|error| format!("Failed to read the browser address: {error}"))
 }
 
-/// Whether the browser window currently exists.
+/// Whether the browser window for this profile currently exists.
 #[tauri::command]
-pub fn mini_browser_is_open<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> bool {
-    app.get_webview_window(MINI_BROWSER_LABEL).is_some()
+pub fn mini_browser_is_open<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: Option<String>,
+) -> bool {
+    checked_profile(profile_id.as_deref())
+        .map(|profile| app.get_webview_window(&window_label(profile)).is_some())
+        .unwrap_or(false)
 }
 
-/// Close the browser window. No-op when it is not open.
+/// Close every mini browser window (legacy semantics: "close the browser").
 #[tauri::command]
 pub fn mini_browser_close<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(MINI_BROWSER_LABEL) {
-        window
-            .close()
-            .map_err(|error| format!("Failed to close the browser window: {error}"))?;
+    let labels = app
+        .webview_windows()
+        .into_keys()
+        .filter(|label| label.starts_with(MINI_BROWSER_LABEL))
+        .collect::<Vec<_>>();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            window
+                .close()
+                .map_err(|error| format!("Failed to close the browser window: {error}"))?;
+        }
     }
     Ok(())
+}
+
+/// Close the window belonging to one account.
+#[tauri::command]
+pub fn mini_browser_close_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> Result<(), String> {
+    close_profile_window(&app, Some(&profile_id))
+}
+
+/// Show and focus the window belonging to one account.
+#[tauri::command]
+pub fn mini_browser_focus_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> Result<(), String> {
+    let profile = checked_profile(Some(&profile_id))?;
+    let Some(window) = app.get_webview_window(&window_label(profile)) else {
+        return Ok(());
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// Every open mini browser window, so the panel can render its tab strip.
+#[tauri::command]
+pub fn mini_browser_list_windows<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Vec<MiniBrowserWindowInfo> {
+    open_window_infos(&app)
+}
+
+/// Forget an account's login state: close its window, then delete its profile
+/// directory. A missing directory counts as success.
+///
+/// Async so the retries below never block the UI thread: after the window is
+/// destroyed Windows still holds WebView2's files for a moment, and a single
+/// immediate delete fails on every profile that has actually been used.
+#[tauri::command]
+pub async fn mini_browser_clear_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> Result<(), String> {
+    let profile = checked_profile(Some(&profile_id))?;
+    close_profile_window(&app, profile)?;
+    let directory = profile_data_dir(&profile_id);
+    let mut last_error = None;
+    for attempt in 0..PROFILE_CLEAR_ATTEMPTS {
+        match std::fs::remove_dir_all(&directory) {
+            Ok(()) => return Ok(()),
+            // Already gone (never opened, or cleared before): success.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 < PROFILE_CLEAR_ATTEMPTS {
+                    tokio::time::sleep(PROFILE_CLEAR_RETRY_DELAY).await;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "Failed to clear the browser profile: {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "the directory is still in use".to_string())
+    ))
 }
 
 #[cfg(test)]
@@ -229,5 +445,55 @@ mod tests {
         assert!(!is_navigable_url(
             &tauri::Url::parse("javascript:alert(1)").unwrap()
         ));
+    }
+
+    #[test]
+    fn validate_profile_accepts_lowercase_ids() {
+        assert!(validate_profile("a").is_ok());
+        assert!(validate_profile("site-1").is_ok());
+        assert!(validate_profile("1234567890").is_ok());
+        assert!(validate_profile("relay-account-2").is_ok());
+        // Exactly at the boundary.
+        assert!(validate_profile(&"a".repeat(MAX_PROFILE_LEN)).is_ok());
+    }
+
+    #[test]
+    fn validate_profile_rejects_traversal_and_other_unsafe_ids() {
+        // The reason this guard exists: the id is concatenated into a path.
+        assert!(validate_profile("../escape").is_err());
+        assert!(validate_profile("..").is_err());
+        assert!(validate_profile("a/../b").is_err());
+        assert!(validate_profile("a/b").is_err());
+        assert!(validate_profile("a\\b").is_err());
+        assert!(validate_profile("C:\\Windows").is_err());
+        assert!(validate_profile("").is_err());
+        assert!(validate_profile("UPPER").is_err());
+        assert!(validate_profile("with space").is_err());
+        assert!(validate_profile("under_score").is_err());
+        assert!(validate_profile("has.dot").is_err());
+        assert!(validate_profile("null\0byte").is_err());
+        assert!(validate_profile("站点").is_err());
+        // One past the boundary.
+        assert!(validate_profile(&"a".repeat(MAX_PROFILE_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn window_label_keeps_the_legacy_name_without_a_profile() {
+        assert_eq!(window_label(None), MINI_BROWSER_LABEL);
+        assert_eq!(window_label(Some("site-1")), "mini-browser-site-1");
+        assert_eq!(
+            window_label(Some("site-1")),
+            format!("{MINI_BROWSER_LABEL_PREFIX}site-1")
+        );
+    }
+
+    #[test]
+    fn checked_profile_rejects_invalid_ids_before_use() {
+        assert_eq!(checked_profile(None).unwrap(), None);
+        assert_eq!(checked_profile(Some("site-1")).unwrap(), Some("site-1"));
+        assert_eq!(
+            checked_profile(Some("../escape")).unwrap_err(),
+            INVALID_PROFILE_MESSAGE
+        );
     }
 }

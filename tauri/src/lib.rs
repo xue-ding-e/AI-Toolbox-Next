@@ -1973,6 +1973,10 @@ pub fn run() {
             mini_browser::mini_browser_current_url,
             mini_browser::mini_browser_is_open,
             mini_browser::mini_browser_close,
+            mini_browser::mini_browser_close_window,
+            mini_browser::mini_browser_focus_window,
+            mini_browser::mini_browser_list_windows,
+            mini_browser::mini_browser_clear_profile,
             // Update
             update::check_for_updates,
             update::install_update,

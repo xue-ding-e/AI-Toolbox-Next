@@ -9,9 +9,184 @@
  * dashboards normally send `X-Frame-Options: DENY` (or `frame-ancestors 'none'`
  * in their CSP), which would render an empty frame. It also reuses the webview
  * engine the app already ships, so there is no extra runtime cost.
+ *
+ * Multiple accounts: a site can be saved once and opened as any number of
+ * accounts. Each account is identified by a `profileId`; the backend gives every
+ * profile its own window and its own webview data directory, so two logins for
+ * the same relay keep separate cookies and stay logged in independently.
  */
 
 import { invoke } from '@tauri-apps/api/core';
+
+export interface MiniBrowserSite {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface MiniBrowserAccount {
+  id: string;
+  siteId: string;
+  label: string;
+}
+
+/** One native window currently open in the backend. */
+export interface MiniBrowserWindowInfo {
+  profile_id: string | null;
+  label: string;
+  title: string;
+  url: string;
+}
+
+export const MINI_BROWSER_SITES_STORAGE_KEY = 'ai-router.mini-browser.sites';
+
+export const MINI_BROWSER_ACCOUNTS_STORAGE_KEY = 'ai-router.mini-browser.accounts';
+
+/** Keeps stored values usable even when a previous version wrote something else. */
+const parseMiniBrowserSites = (raw: unknown): MiniBrowserSite[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is MiniBrowserSite =>
+      Boolean(item) &&
+      typeof item.id === 'string' &&
+      typeof item.name === 'string' &&
+      typeof item.url === 'string',
+  );
+};
+
+const parseMiniBrowserAccounts = (raw: unknown): MiniBrowserAccount[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is MiniBrowserAccount =>
+      Boolean(item) &&
+      typeof item.id === 'string' &&
+      typeof item.siteId === 'string' &&
+      typeof item.label === 'string',
+  );
+};
+
+const readStoredJson = (key: string): unknown => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const loadMiniBrowserSites = (): MiniBrowserSite[] =>
+  parseMiniBrowserSites(readStoredJson(MINI_BROWSER_SITES_STORAGE_KEY));
+
+export const saveMiniBrowserSites = (sites: MiniBrowserSite[]): void => {
+  localStorage.setItem(MINI_BROWSER_SITES_STORAGE_KEY, JSON.stringify(sites));
+};
+
+/**
+ * Longest profile id accepted by the backend. Kept in sync with
+ * `MAX_PROFILE_LEN` in `tauri/src/mini_browser.rs`.
+ */
+export const MINI_BROWSER_MAX_PROFILE_LENGTH = 64;
+
+/**
+ * Coerce a candidate into a profile id the backend accepts: lowercase ASCII
+ * letters, digits and `-`, at most 64 characters.
+ *
+ * Returns `null` when nothing usable survives, so callers never send an id the
+ * backend would reject.
+ */
+export const toMiniBrowserProfileId = (raw: string): string | null => {
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .slice(0, MINI_BROWSER_MAX_PROFILE_LENGTH);
+  return cleaned.length > 0 ? cleaned : null;
+};
+
+/** Stable new profile id for an account the user just created. */
+export const createMiniBrowserProfileId = (): string => {
+  const generated = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return toMiniBrowserProfileId(generated) ?? `${Date.now()}`;
+};
+
+/**
+ * Derive a profile id from an existing stored id, deterministically.
+ *
+ * A site id written by an older version is a UUID, so this returns it
+ * unchanged. If the stored id contains characters the backend rejects, the
+ * fallback is a hash rather than a random value: the same stored id must always
+ * map to the same profile, otherwise the account would lose its login state on
+ * every reload.
+ */
+export const stableMiniBrowserProfileId = (rawId: string): string => {
+  const cleaned = toMiniBrowserProfileId(rawId);
+  if (cleaned) return cleaned;
+  let hash = 2166136261;
+  for (let index = 0; index < rawId.length; index += 1) {
+    hash ^= rawId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `s${hash.toString(16).padStart(8, '0')}`;
+};
+
+/**
+ * Reconcile stored accounts with stored sites.
+ *
+ * Two rules, both pure so they can be tested without a browser:
+ * - every site without an account gets one default account whose id is the site
+ *   id, so a site saved by an older version keeps a stable profile;
+ * - accounts pointing at a site that no longer exists are dropped.
+ */
+export const ensureMiniBrowserAccounts = (
+  sites: MiniBrowserSite[],
+  accounts: MiniBrowserAccount[],
+): MiniBrowserAccount[] => {
+  const siteIds = new Set(sites.map((site) => site.id));
+  const kept = accounts.filter((account) => siteIds.has(account.siteId));
+  const sitesWithAccounts = new Set(kept.map((account) => account.siteId));
+
+  const defaults = sites
+    .filter((site) => !sitesWithAccounts.has(site.id))
+    .map((site) => ({
+      id: stableMiniBrowserProfileId(site.id),
+      siteId: site.id,
+      label: site.name,
+    }));
+
+  // Defaults go last so previously saved accounts keep their order.
+  return [...kept, ...defaults];
+};
+
+/**
+ * Default label for the next account of a site: `站点名-1`, `站点名-2`, ...
+ *
+ * Picks the lowest unused number so a freshly added account is named `-1` when
+ * the site has none. The label is only a display name — the backend profile is
+ * a separate stable id — so reusing the number of a deleted account is safe.
+ */
+export const nextMiniBrowserAccountLabel = (
+  site: MiniBrowserSite,
+  accounts: MiniBrowserAccount[],
+): string => {
+  const existing = new Set(
+    accounts.filter((account) => account.siteId === site.id).map((account) => account.label),
+  );
+  let index = 1;
+  while (existing.has(`${site.name}-${index}`)) index += 1;
+  return `${site.name}-${index}`;
+};
+
+/** Accounts for the saved sites, including the legacy-site migration. */
+export const loadMiniBrowserAccounts = (): MiniBrowserAccount[] =>
+  ensureMiniBrowserAccounts(
+    loadMiniBrowserSites(),
+    parseMiniBrowserAccounts(readStoredJson(MINI_BROWSER_ACCOUNTS_STORAGE_KEY)),
+  );
+
+export const saveMiniBrowserAccounts = (accounts: MiniBrowserAccount[]): void => {
+  localStorage.setItem(MINI_BROWSER_ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+};
 
 /** Longest address accepted, mirroring the backend guard. */
 export const MINI_BROWSER_MAX_URL_LENGTH = 2048;
@@ -44,27 +219,67 @@ export const normaliseMiniBrowserUrl = (raw: string): string | null => {
   }
 };
 
-/** Open a URL in the embedded browser, creating its window on first use. */
-export const openMiniBrowser = async (url: string): Promise<void> => {
-  await invoke('mini_browser_open', { url });
+/**
+ * Tauri serialises command arguments in camelCase, so `profile_id` in Rust is
+ * `profileId` here. Omit the key entirely when there is no profile: the backend
+ * argument is `Option<String>`, and this keeps the legacy no-profile window.
+ */
+const profileArgs = (profileId?: string): { profileId?: string } =>
+  profileId ? { profileId } : {};
+
+/**
+ * Open a URL in the embedded browser, creating its window on first use.
+ *
+ * Passing `profileId` opens (or reuses) that account's own window and login
+ * state; omitting it keeps the original single shared window.
+ */
+export const openMiniBrowser = async (url: string, profileId?: string): Promise<void> => {
+  await invoke('mini_browser_open', { url, ...profileArgs(profileId) });
 };
 
 /** Navigate the embedded browser to another URL, opening it when necessary. */
-export const navigateMiniBrowser = async (url: string): Promise<void> => {
-  await invoke('mini_browser_navigate', { url });
+export const navigateMiniBrowser = async (url: string, profileId?: string): Promise<void> => {
+  await invoke('mini_browser_navigate', { url, ...profileArgs(profileId) });
 };
 
 /** Address currently shown, or `null` when the browser window is closed. */
-export const getMiniBrowserCurrentUrl = async (): Promise<string | null> => {
-  return await invoke<string | null>('mini_browser_current_url');
+export const getMiniBrowserCurrentUrl = async (profileId?: string): Promise<string | null> => {
+  return await invoke<string | null>('mini_browser_current_url', profileArgs(profileId));
 };
 
 /** Whether the embedded browser window currently exists. */
-export const isMiniBrowserOpen = async (): Promise<boolean> => {
-  return await invoke<boolean>('mini_browser_is_open');
+export const isMiniBrowserOpen = async (profileId?: string): Promise<boolean> => {
+  return await invoke<boolean>('mini_browser_is_open', profileArgs(profileId));
 };
 
-/** Close the embedded browser window. No-op when it is not open. */
+/**
+ * Close every mini browser window. No-op when none is open.
+ *
+ * Legacy semantics: it closes all accounts, not just one.
+ */
 export const closeMiniBrowser = async (): Promise<void> => {
   await invoke('mini_browser_close');
+};
+
+/** Close the window belonging to one account. No-op when it is not open. */
+export const closeMiniBrowserWindow = async (profileId: string): Promise<void> => {
+  await invoke('mini_browser_close_window', { profileId });
+};
+
+/** Show and focus the window belonging to one account. */
+export const focusMiniBrowserWindow = async (profileId: string): Promise<void> => {
+  await invoke('mini_browser_focus_window', { profileId });
+};
+
+/** Every open mini browser window, for the panel's tab strip. */
+export const listMiniBrowserWindows = async (): Promise<MiniBrowserWindowInfo[]> => {
+  return await invoke<MiniBrowserWindowInfo[]>('mini_browser_list_windows');
+};
+
+/**
+ * Forget an account's login state: close its window and delete its webview data
+ * directory. The saved account itself stays in localStorage.
+ */
+export const clearMiniBrowserProfile = async (profileId: string): Promise<void> => {
+  await invoke('mini_browser_clear_profile', { profileId });
 };
