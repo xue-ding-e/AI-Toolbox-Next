@@ -21,6 +21,15 @@ export interface GatewayAggregateReengageConfig {
    */
   crossSiteFailover?: boolean;
   /**
+   * Bare upstream model names the takeover keeps publishing as programmable
+   * hidden aliases.
+   *
+   * `undefined` keeps the backend default, which publishes every bare model;
+   * and because an empty array means the same thing, a narrowed set has to be
+   * replayed explicitly or a provider save would silently widen the catalog.
+   */
+  subagentExposedModels?: string[];
+  /**
    * Codex `[agents]` defaults the takeover owns.
    *
    * The re-engage round trip restores direct first, which drops these keys, so

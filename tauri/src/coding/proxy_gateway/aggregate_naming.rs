@@ -90,6 +90,14 @@ pub struct AggregateNamingConfig {
     /// provider id -> user alias. Missing/blank entries fall back to the id.
     pub aliases: BTreeMap<String, String>,
     pub naming: AggregateNamingMode,
+    /// Bare upstream model names still published as hidden aliases.
+    ///
+    /// Empty (the default) keeps the historical behavior of publishing every
+    /// bare model name the selected sites declare. A non-empty set narrows the
+    /// hidden aliases to exactly these names; every other name stays reachable
+    /// through its `<site><sep><model>` slug.
+    #[serde(default)]
+    pub subagent_exposed_models: BTreeSet<String>,
 }
 
 impl Default for AggregateNamingConfig {
@@ -98,11 +106,26 @@ impl Default for AggregateNamingConfig {
             separator: ".".to_string(),
             aliases: BTreeMap::new(),
             naming: AggregateNamingMode::SiteModel,
+            subagent_exposed_models: BTreeSet::new(),
         }
     }
 }
 
 impl AggregateNamingConfig {
+    /// Whether every declared bare model is published as a hidden alias.
+    ///
+    /// An empty exposed set is the default: the catalog keeps publishing every
+    /// bare name, so aggregate mode stays a drop-in for Codex's `spawn_agent`,
+    /// `[agents]` defaults and auto-review.
+    pub fn exposes_every_bare_model(&self) -> bool {
+        self.subagent_exposed_models.is_empty()
+    }
+
+    /// Whether the hidden-alias table may publish this bare model name.
+    pub fn exposes_bare_model(&self, model: &str) -> bool {
+        self.subagent_exposed_models.is_empty() || self.subagent_exposed_models.contains(model)
+    }
+
     /// Prefix token that addresses one site: its alias, else its provider id.
     pub fn prefix_for(&self, site_id: &str) -> String {
         aggregate_site_prefix(site_id, &self.aliases).to_string()
@@ -123,6 +146,55 @@ impl AggregateNamingConfig {
             &self.prefix_for(site_id),
         )
     }
+}
+
+/// One bare upstream model name and the site that publishes it first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregateBareModelSource {
+    pub site_id: String,
+    pub model: String,
+}
+
+/// Every bare upstream model name the ordered sites declare, first site wins.
+///
+/// This is the drawer's "universe", and it deliberately ignores
+/// `AggregateNamingConfig::subagent_exposed_models`: narrowing the exposed set
+/// only removes hidden aliases from the published catalog, so the full list has
+/// to stay available — otherwise a name the user removed could never be added
+/// back without switching the whole takeover to "expose everything".
+pub fn build_aggregate_bare_model_universe(
+    sites: &[(String, Vec<String>)],
+) -> Vec<AggregateBareModelSource> {
+    let mut seen = BTreeSet::new();
+    let mut universe = Vec::new();
+    for (site_id, models) in sites {
+        if site_id.trim().is_empty() {
+            continue;
+        }
+        for model in models {
+            let model = model.trim();
+            if model.is_empty() || !seen.insert(model.to_string()) {
+                continue;
+            }
+            universe.push(AggregateBareModelSource {
+                site_id: site_id.clone(),
+                model: model.to_string(),
+            });
+        }
+    }
+    universe
+}
+
+/// Trim bare model names and drop blanks, mirroring the frontend normalizer.
+pub fn normalize_bare_model_names<I>(models: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .collect()
 }
 
 /// Turn a provider's user-facing name into a usable prefix token.
@@ -771,6 +843,75 @@ mod tests {
         assert!(allocator
             .allocate("site-b", "m", ".", AggregateNamingMode::SiteModel, "same")
             .is_err());
+    }
+
+    #[test]
+    fn bare_model_universe_keeps_the_first_site_and_ignores_the_exposure_set() {
+        let declared = sites(&[
+            ("site-a", &["gpt-5.6-luna", "glm-5"]),
+            ("site-b", &["gpt-5.6-luna", "deepseek-v4-flash"]),
+            ("  ", &["ignored"]),
+        ]);
+
+        let universe = build_aggregate_bare_model_universe(&declared);
+
+        // Names follow first-appearance order and the first declaring site wins,
+        // mirroring the published hidden aliases. The universe is the drawer's
+        // candidate list, so it must not depend on the exposure set: a narrowed
+        // set would otherwise make a removed name impossible to tick again.
+        assert_eq!(
+            universe,
+            vec![
+                AggregateBareModelSource {
+                    site_id: "site-a".to_string(),
+                    model: "gpt-5.6-luna".to_string(),
+                },
+                AggregateBareModelSource {
+                    site_id: "site-a".to_string(),
+                    model: "glm-5".to_string(),
+                },
+                AggregateBareModelSource {
+                    site_id: "site-b".to_string(),
+                    model: "deepseek-v4-flash".to_string(),
+                },
+            ]
+        );
+        assert!(build_aggregate_bare_model_universe(&[]).is_empty());
+    }
+
+    #[test]
+    fn empty_exposure_set_publishes_every_bare_model() {
+        let config = AggregateNamingConfig::default();
+        assert!(config.exposes_every_bare_model());
+        assert!(config.exposes_bare_model("gpt-5.6-luna"));
+        assert!(config.exposes_bare_model("anything-else"));
+    }
+
+    #[test]
+    fn non_empty_exposure_set_publishes_only_the_selected_bare_models() {
+        let config = AggregateNamingConfig {
+            subagent_exposed_models: BTreeSet::from(["gpt-5.6-luna".to_string()]),
+            ..AggregateNamingConfig::default()
+        };
+        assert!(!config.exposes_every_bare_model());
+        assert!(config.exposes_bare_model("gpt-5.6-luna"));
+        // A name the user unticked must drop out of the hidden aliases; it stays
+        // reachable through its `<site><sep><model>` slug.
+        assert!(!config.exposes_bare_model("gpt-5.6-terra"));
+    }
+
+    #[test]
+    fn normalize_bare_model_names_trims_and_drops_blanks() {
+        assert_eq!(
+            normalize_bare_model_names(vec![
+                " gpt-5.6-luna ".to_string(),
+                "".to_string(),
+                "glm-5".to_string(),
+                "gpt-5.6-luna".to_string(),
+            ]),
+            BTreeSet::from(["gpt-5.6-luna".to_string(), "glm-5".to_string()])
+        );
+        assert!(normalize_bare_model_names(Vec::<String>::new()).is_empty());
     }
 
     #[test]

@@ -41,6 +41,18 @@ export interface GatewayAggregateConfig {
    */
   cross_site_failover?: boolean;
   /**
+   * Bare upstream model names the generated Codex catalog keeps publishing as
+   * hidden aliases.
+   *
+   * Those entries never appear in Codex's native model picker; they stay
+   * addressable by exact slug (`spawn_agent`, `[agents]` defaults, auto-review)
+   * and are how aggregate mode stays a drop-in replacement for the bare names
+   * the single-provider catalog used to expose. Absent or empty keeps the
+   * default of publishing every declared bare model, so an empty list must
+   * never be read as "publish none".
+   */
+  subagent_exposed_models?: string[];
+  /**
    * Codex `[agents]` defaults this aggregate takeover owns, if any.
    *
    * Aggregate mode replaces the model list, so a bare-name default such as
@@ -52,6 +64,32 @@ export interface GatewayAggregateConfig {
     model?: string;
     reasoning_effort?: string;
   };
+}
+
+/**
+ * One bare model name available to the aggregate catalog's programmable
+ * aliases, with the site that declares it.
+ */
+export interface GatewayAggregateBareModel {
+  model: string;
+  provider_id: string;
+  provider_name: string;
+}
+
+/**
+ * Read-only catalog view behind the aggregate drawer's exposure block.
+ *
+ * `entries` are the hidden aliases the generated catalog currently publishes.
+ * `bare_models` is the full universe the selected sites declare: it is the
+ * candidate list precisely because a name dropped by a narrowed exposure set
+ * must stay selectable again. Older backends omit it, hence the fallback in
+ * `resolveSubagentExposureCandidates`.
+ */
+export interface GatewaySubagentCatalog {
+  cli_key: GatewayCliKey;
+  aggregate_mode: boolean;
+  entries: GatewayAggregateBareModel[];
+  bare_models?: GatewayAggregateBareModel[];
 }
 
 /** Default separator between site id and upstream model name in aggregate mode. */
@@ -592,6 +630,7 @@ export const engageProxyGatewayAggregate = async (
   subagentModel?: string,
   subagentReasoningEffort?: string,
   crossSiteFailover?: boolean,
+  subagentExposedModels?: string[],
 ): Promise<GatewayCliTakeoverStatus> => {
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_aggregate', {
     cliKey,
@@ -602,6 +641,9 @@ export const engageProxyGatewayAggregate = async (
     subagentModel,
     subagentReasoningEffort,
     crossSiteFailover: crossSiteFailover ?? false,
+    // Always a concrete set: an empty array is the backend's "publish every
+    // bare model" default and is exactly what "expose all" sends.
+    subagentExposedModels: subagentExposedModels ?? [],
   });
 };
 
@@ -616,6 +658,18 @@ export const getProxyGatewayAggregateDraft = async (
 };
 
 /**
+ * Read the hidden bare-name aliases the aggregate catalog publishes, plus the
+ * full universe the selected sites declare.
+ *
+ * Read-only and local-only: it reads the engaged manifest, the generated
+ * catalog file and the selected providers' declared models.
+ */
+export const getProxyGatewaySubagentCatalog = async (
+  cliKey: GatewayCliKey,
+): Promise<GatewaySubagentCatalog> =>
+  invoke<GatewaySubagentCatalog>('proxy_gateway_subagent_catalog', { cliKey });
+
+/**
  * Persist the aggregate draft without engaging the mode, so the selection
  * survives closing the editor. No CLI runtime config is rewritten and the
  * gateway does not have to be running.
@@ -627,6 +681,7 @@ export const saveProxyGatewayAggregateDraft = async (
   aliases?: Record<string, string>,
   naming: GatewayAggregateNamingMode = 'site_model',
   crossSiteFailover?: boolean,
+  subagentExposedModels?: string[],
 ): Promise<GatewayAggregateConfig> => {
   return invoke<GatewayAggregateConfig>('proxy_gateway_save_aggregate_draft', {
     cliKey,
@@ -635,6 +690,7 @@ export const saveProxyGatewayAggregateDraft = async (
     aliases: aliases ?? {},
     naming,
     crossSiteFailover: crossSiteFailover ?? false,
+    subagentExposedModels: subagentExposedModels ?? [],
   });
 };
 

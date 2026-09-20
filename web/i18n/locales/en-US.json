@@ -426,7 +426,8 @@
         "disabled": "Aggregate mode disabled",
         "invalidConfig": "Aggregate config is invalid. Check the site selection and separator.",
         "draftSaveFailed": "Failed to save the aggregate configuration: {{error}}",
-        "statusLoadFailed": "Failed to load gateway status: {{error}}"
+        "statusLoadFailed": "Failed to load gateway status: {{error}}",
+        "subagentExposedLoadFailed": "Failed to read the programmable bare-name catalog: {{error}}"
       },
       "effects": {
         "crossSiteList": "The model list merges every selected site, with a site prefix on each model name.",
@@ -437,7 +438,18 @@
       "draftSitesDropped": "Some saved sites are no longer available and were removed from the selection.",
       "takeoverHint": "Aggregate mode takes over this CLI through the gateway and rewrites its model list.",
       "crossSiteFailover": "Allow cross-site failover",
-      "crossSiteFailoverHint": "Off (default): a request only goes to the site its model name addresses; a failure returns an error instead of spending another site balance. On: a failing site falls back to another site that declares the same model."
+      "crossSiteFailoverHint": "Off (default): a request only goes to the site its model name addresses; a failure returns an error instead of spending another site balance. On: a failing site falls back to another site that declares the same model.",
+      "subagentExposedTitle": "Programmable subagent models (bare names)",
+      "subagentExposedHint": "Bare-name entries are hidden in Codex: they are reachable only by exact slug (spawn_agent, [agents] defaults, auto-review) and never appear in the native model picker. Restart Codex after changing this so the model list refreshes.",
+      "subagentExposedRequiresEngaged": "Enable aggregate mode first to read the bare names that can be exposed.",
+      "subagentExposedMode": "Exposure scope",
+      "subagentExposedModeAll": "Expose all (default)",
+      "subagentExposedModeSelected": "Only selected",
+      "subagentExposedAllHint": "Every bare model declared by the selected sites stays callable by exact slug, matching the previous behavior.",
+      "subagentExposedSelectedHint": "Only the checked bare names are published to the catalog; the rest can no longer be called by exact slug.",
+      "subagentExposedEmpty": "The current catalog lists no hidden bare names to choose from.",
+      "subagentExposedRequired": "Select at least one bare model; switch back to Expose all to publish every bare model.",
+      "subagentExposedCount": "{{count}} selected"
     },
     "privacy": {
       "title": "Data redaction",

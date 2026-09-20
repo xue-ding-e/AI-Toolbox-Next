@@ -10,7 +10,7 @@ use ai_toolbox_lib::coding::proxy_gateway::{
 };
 use ai_toolbox_lib::db::{helpers::db_put, schema::DbTable, SqliteDbState};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn codex_provider_record(name: &str, sort_index: i64) -> Value {
     json!({
@@ -67,6 +67,9 @@ fn draft(
         // Deliberately non-default so the round trip proves the new field is
         // persisted instead of silently collapsing back to `false`.
         cross_site_failover: true,
+        // Deliberately non-default so the round trip proves the field is
+        // persisted instead of silently collapsing to "expose everything".
+        subagent_exposed_models: BTreeSet::from(["gpt-5.6-luna".to_string()]),
         subagent: None,
     }
 }
@@ -96,6 +99,7 @@ async fn draft_round_trips_and_rejects_an_empty_selection() {
             aliases: BTreeMap::from([("site-a".to_string(), "a".to_string())]),
             naming: AggregateNamingMode::ModelAtSite,
             cross_site_failover: true,
+            subagent_exposed_models: BTreeSet::from(["gpt-5.6-luna".to_string()]),
             subagent: None,
         }
     );

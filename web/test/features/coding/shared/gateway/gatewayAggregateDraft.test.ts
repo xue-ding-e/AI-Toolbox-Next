@@ -34,6 +34,7 @@ test('an engaged manifest seeds the form and keeps stale sites visible', () => {
     aliases: { 'site-b': 'b', gone: 'g' },
     naming: 'model_at_site',
     crossSiteFailover: false,
+    subagentExposedModels: [],
     droppedDraftSites: false,
   });
 });
@@ -127,6 +128,9 @@ test('a saved draft wins over the default selection but is re-ordered by the pro
       separator: '@',
       aliases: { 'site-a': 'a' },
       naming: 'model_only',
+      // The exposure set is draft state too: a narrowed set has to survive the
+      // editor being closed, or re-opening it would silently publish everything.
+      subagent_exposed_models: [' gpt-5.6-luna ', 'gpt-5.6-luna'],
     },
     candidates,
     appliedProviderId: 'site-a',
@@ -140,6 +144,7 @@ test('a saved draft wins over the default selection but is re-ordered by the pro
     aliases: { 'site-a': 'a' },
     naming: 'model_only',
     crossSiteFailover: false,
+    subagentExposedModels: ['gpt-5.6-luna'],
     droppedDraftSites: false,
   });
 });

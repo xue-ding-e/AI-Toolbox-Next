@@ -3417,6 +3417,11 @@ fn codex_aggregate_catalog_entries(
         .map(|entry| (entry.slug.as_str(), entry.upstream_model.as_str()))
         .collect::<std::collections::BTreeMap<_, _>>();
     for model in bare_models {
+        // The exposure set narrows which bare names get a hidden alias at all.
+        // An empty set is the default and keeps publishing every one of them.
+        if !naming.exposes_bare_model(&model) {
+            continue;
+        }
         match visible_slugs.get(model.as_str()) {
             // `model_only` (or a user alias) already publishes this exact slug
             // for the same upstream model, so the bare name is already
@@ -5027,22 +5032,21 @@ pub async fn read_codex_settings(
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_catalog_from_entries, append_toml_configs, build_written_codex_config_toml,
+        aggregate_catalog_from_entries, aggregate_site_model_specs, append_toml_configs,
+        build_written_codex_config_toml, capture_codex_pre_aggregate_catalog,
         codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_display_name,
-        capture_codex_pre_aggregate_catalog, codex_catalog_model_specs,
-        ensure_codex_model_catalog_pointer,
+        codex_catalog_model_specs, ensure_codex_model_catalog_pointer,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         fill_template_fields_from_static, heal_dangling_codex_model_provider,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
-        read_codex_aggregate_selection, read_codex_catalog_preview,
-        remove_codex_aggregate_catalog, resolve_local_provider_meta,
-        restore_codex_pre_aggregate_catalog, static_codex_official_models,
-        strip_codex_common_config_from_toml, write_codex_aggregate_catalog, AggregateCatalogEntry,
-        CodexCatalogModelSpec, CodexHistoryRuntimeSource, CodexHistorySourceCandidate,
-        CodexHistorySourceMode, RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
-        CODEX_BUILTIN_IMAGE_MODEL_ID,
+        read_codex_aggregate_selection, read_codex_catalog_preview, remove_codex_aggregate_catalog,
+        resolve_local_provider_meta, restore_codex_pre_aggregate_catalog,
+        static_codex_official_models, strip_codex_common_config_from_toml,
+        write_codex_aggregate_catalog, AggregateCatalogEntry, CodexCatalogModelSpec,
+        CodexHistoryRuntimeSource, CodexHistorySourceCandidate, CodexHistorySourceMode,
+        RemoteCodexModel, AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
@@ -6094,6 +6098,7 @@ approval_policy = "never"
             separator: "@".to_string(),
             aliases,
             naming: AggregateNamingMode::ModelAtSite,
+            ..AggregateNamingConfig::default()
         };
 
         let (entries, _) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
@@ -6299,6 +6304,7 @@ approval_policy = "never"
             separator: ".".to_string(),
             aliases,
             naming: AggregateNamingMode::SiteModel,
+            ..AggregateNamingConfig::default()
         };
 
         let (entries, table) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
@@ -6324,6 +6330,126 @@ approval_policy = "never"
         );
     }
 
+    fn aggregate_naming_with_exposed(models: &[&str]) -> AggregateNamingConfig {
+        AggregateNamingConfig {
+            subagent_exposed_models: models.iter().map(|model| (*model).to_string()).collect(),
+            ..AggregateNamingConfig::default()
+        }
+    }
+
+    #[test]
+    fn aggregate_catalog_default_exposure_set_publishes_every_bare_model() {
+        let sites = vec![
+            aggregate_site(
+                "site1",
+                "Site 1",
+                json!([{ "model": "gpt-5.6-luna" }, { "model": "gpt-5.6-terra" }]),
+            ),
+            aggregate_site("site2", "Site 2", json!([{ "model": "glm-5" }])),
+        ];
+
+        // An empty exposure set is the default and must behave exactly as before
+        // this feature existed: every declared bare name stays callable.
+        let naming = aggregate_naming(".");
+        assert!(naming.exposes_every_bare_model());
+        let (entries, _) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();
+        let hidden = entries
+            .iter()
+            .filter(|entry| entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(hidden, vec!["gpt-5.6-luna", "gpt-5.6-terra", "glm-5"]);
+    }
+
+    #[test]
+    fn aggregate_catalog_narrowed_exposure_set_publishes_only_the_selected_bare_names() {
+        let sites = vec![
+            aggregate_site(
+                "site1",
+                "Site 1",
+                json!([{ "model": "gpt-5.6-luna" }, { "model": "gpt-5.6-terra" }]),
+            ),
+            aggregate_site("site2", "Site 2", json!([{ "model": "glm-5" }])),
+        ];
+
+        let (entries, _) =
+            codex_aggregate_catalog_entries(&sites, &aggregate_naming_with_exposed(&["glm-5"]))
+                .unwrap();
+        let hidden = entries
+            .iter()
+            .filter(|entry| entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(hidden, vec!["glm-5"]);
+        // The visible `<site><sep><model>` table is untouched by the exposure
+        // set: only the extra bare-name aliases are filtered.
+        let visible = entries
+            .iter()
+            .filter(|entry| !entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            visible,
+            vec!["site1.gpt-5.6-luna", "site1.gpt-5.6-terra", "site2.glm-5"]
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_keeps_narrowed_out_names_addressable_by_slug() {
+        use crate::coding::proxy_gateway::aggregate_naming::build_aggregate_bare_model_universe;
+
+        let sites = vec![
+            aggregate_site(
+                "site1",
+                "Site 1",
+                json!([{ "model": "gpt-5.6-luna" }, { "model": "gpt-5.6-terra" }]),
+            ),
+            aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-luna" }])),
+        ];
+
+        // Debt #2: narrowing the exposure set removes the *hidden alias*, but the
+        // drawer's universe (the site-declared models, first site wins) must keep
+        // reporting the dropped name so it can be ticked back on later.
+        let declared = sites
+            .iter()
+            .map(|(site_id, _, settings_config)| {
+                let models = aggregate_site_model_specs(settings_config)
+                    .into_iter()
+                    .map(|spec| spec.model)
+                    .collect::<Vec<_>>();
+                (site_id.clone(), models)
+            })
+            .collect::<Vec<_>>();
+        let universe = build_aggregate_bare_model_universe(&declared);
+        assert_eq!(
+            universe
+                .iter()
+                .map(|entry| (entry.site_id.as_str(), entry.model.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("site1", "gpt-5.6-luna"), ("site1", "gpt-5.6-terra"),]
+        );
+
+        // Only the ticked name is published as a hidden alias; the other keeps
+        // working through its `<site><sep><model>` slug.
+        let (entries, _) = codex_aggregate_catalog_entries(
+            &sites,
+            &aggregate_naming_with_exposed(&["gpt-5.6-terra"]),
+        )
+        .unwrap();
+        let hidden = entries
+            .iter()
+            .filter(|entry| entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(hidden, vec!["gpt-5.6-terra"]);
+        let visible = entries
+            .iter()
+            .filter(|entry| !entry.hidden)
+            .map(|entry| entry.slug.as_str())
+            .collect::<Vec<_>>();
+        assert!(visible.contains(&"site1.gpt-5.6-luna"));
+    }
+
     #[test]
     fn aggregate_catalog_model_only_numbering_ignores_hidden_aliases() {
         let sites = vec![
@@ -6334,6 +6460,7 @@ approval_policy = "never"
             separator: ".".to_string(),
             aliases: std::collections::BTreeMap::new(),
             naming: AggregateNamingMode::ModelOnly,
+            ..AggregateNamingConfig::default()
         };
 
         let (entries, table) = codex_aggregate_catalog_entries(&sites, &naming).unwrap();

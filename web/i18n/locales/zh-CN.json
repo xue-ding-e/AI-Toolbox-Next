@@ -426,7 +426,8 @@
         "disabled": "已关闭聚合模式",
         "invalidConfig": "聚合配置无效，请检查站点选择与分隔符",
         "draftSaveFailed": "保存聚合配置失败：{{error}}",
-        "statusLoadFailed": "加载网关状态失败：{{error}}"
+        "statusLoadFailed": "加载网关状态失败：{{error}}",
+        "subagentExposedLoadFailed": "读取可编程裸名目录失败：{{error}}"
       },
       "effects": {
         "crossSiteList": "模型列表聚合所有已选站点，模型名带站点前缀。",
@@ -437,7 +438,18 @@
       "draftSitesDropped": "上次保存的站点中有已不可用的项，已从选择中移除。",
       "takeoverHint": "聚合模式使用网关接管该 CLI，并重写它的模型列表。",
       "crossSiteFailover": "允许跨站故障转移",
-      "crossSiteFailoverHint": "关闭（默认）：请求只发给模型名点名的那个站点，站点失败直接报错，不会消耗其它站点的余额。开启：站点失败时自动改用另一个声明了同一模型的站点。"
+      "crossSiteFailoverHint": "关闭（默认）：请求只发给模型名点名的那个站点，站点失败直接报错，不会消耗其它站点的余额。开启：站点失败时自动改用另一个声明了同一模型的站点。",
+      "subagentExposedTitle": "可编程子代理模型（裸名）",
+      "subagentExposedHint": "裸名条目在 Codex 里是隐藏项：只能被精确 slug 调用（spawn_agent、[agents] 默认、auto-review），不出现在原生模型选择器里。修改后需要重启 Codex 才会刷新模型列表。",
+      "subagentExposedRequiresEngaged": "请先启用聚合模式，再读取当前可暴露的裸名模型。",
+      "subagentExposedMode": "暴露范围",
+      "subagentExposedModeAll": "全部暴露（默认）",
+      "subagentExposedModeSelected": "仅暴露选中",
+      "subagentExposedAllHint": "所有已选站点声明的裸名都保持可被精确 slug 调用，与改动前一致。",
+      "subagentExposedSelectedHint": "只有勾选的裸名会写入 catalog，其余裸名无法被精确 slug 调用。",
+      "subagentExposedEmpty": "当前目录里没有可选的裸名模型（隐藏条目为空）。",
+      "subagentExposedRequired": "至少勾选 1 个裸名模型；要暴露全部请切回「全部暴露」。",
+      "subagentExposedCount": "已选 {{count}} 个"
     },
     "privacy": {
       "title": "数据脱敏",

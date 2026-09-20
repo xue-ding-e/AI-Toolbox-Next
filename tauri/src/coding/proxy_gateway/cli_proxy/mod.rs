@@ -331,6 +331,7 @@ impl GatewayStatusProxyDetails {
                     aliases: aggregate.aliases.clone(),
                     naming: aggregate.naming,
                     cross_site_failover: aggregate.cross_site_failover,
+                    subagent_exposed_models: aggregate.subagent_exposed_models.clone(),
                     subagent: (!aggregate.subagent.is_empty()).then(|| {
                         super::types::GatewayAggregateSubagentDefaults::from(&aggregate.subagent)
                     }),
@@ -681,6 +682,7 @@ pub async fn engage_aggregate_cli(
     aliases: BTreeMap<String, String>,
     naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode,
     cross_site_failover: bool,
+    subagent_exposed_models: std::collections::BTreeSet<String>,
     subagent_defaults: crate::coding::proxy_gateway::cli_proxy::manifest::AggregateSubagentDefaults,
 ) -> Result<GatewayCliTakeoverStatus, String> {
     if cli_key != GatewayCliKey::Codex {
@@ -776,7 +778,20 @@ pub async fn engage_aggregate_cli(
         separator: separator.clone(),
         aliases: aliases.clone(),
         naming,
+        subagent_exposed_models:
+            crate::coding::proxy_gateway::aggregate_naming::normalize_bare_model_names(
+                subagent_exposed_models.iter().cloned(),
+            ),
     };
+    // "Expose only the selected names" with nothing selected would be stored as
+    // the empty set, which means "expose everything" — the exact opposite of the
+    // request. Refuse it instead of silently publishing a wider catalog.
+    if !subagent_exposed_models.is_empty() && naming_config.subagent_exposed_models.is_empty() {
+        return Err(
+            "Select at least one bare model to expose, or switch back to exposing all of them"
+                .to_string(),
+        );
+    }
     // Allocate the slug table before the manifest is written: the manifest is
     // the router's source of truth, so it must carry the same table the catalog
     // below is generated from.
@@ -825,6 +840,7 @@ pub async fn engage_aggregate_cli(
             cross_site_failover,
             slug_table,
         )
+        .with_aggregate_subagent_exposed_models(naming_config.subagent_exposed_models.clone())
         .with_aggregate_subagent_defaults(subagent_defaults.clone())
         .with_pre_aggregate_catalog(pre_aggregate_catalog);
     sync_manifest_managed_fields(&mut manifest, &targets);
@@ -886,6 +902,7 @@ pub async fn engage_aggregate_cli(
             aliases: aliases.clone(),
             naming,
             cross_site_failover,
+            subagent_exposed_models: naming_config.subagent_exposed_models.clone(),
             // The draft remembers the selection only; the `[agents]` defaults
             // are engage-time state the manifest owns.
             subagent: None,
@@ -1002,6 +1019,7 @@ async fn normalize_aggregate_draft_config(
         aliases,
         naming: config.naming,
         cross_site_failover: config.cross_site_failover,
+        subagent_exposed_models: config.subagent_exposed_models,
         // A draft never carries the engage-time `[agents]` defaults, so the
         // settings form shows them as unmanaged while the mode is off.
         subagent: None,
@@ -1746,6 +1764,7 @@ async fn proxy_details_for_manifest(
         aggregate_separator: aggregate.separator,
         aggregate_aliases: aggregate.aliases,
         aggregate_naming: aggregate.naming,
+        aggregate_subagent_exposed_models: aggregate.subagent_exposed_models,
         aggregate_slug_table: aggregate.slug_table,
         cross_site_failover: aggregate.cross_site_failover,
     };
@@ -1860,6 +1879,18 @@ fn read_manifest(
         }
     })?;
     Ok(Some(manifest))
+}
+
+/// Read the manifest for read-only inspection (the subagent-catalog drawer).
+///
+/// Unlike `read_manifest_for_reengage` this never repairs or writes anything:
+/// browsing the catalog is a pure read, so a legacy manifest must surface as an
+/// error instead of being silently rewritten.
+pub(crate) fn read_manifest_for_catalog(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+) -> Result<Option<CliProxyManifest>, String> {
+    read_manifest(paths, cli_key).map_err(|error| error.to_string())
 }
 
 fn read_manifest_for_reengage(

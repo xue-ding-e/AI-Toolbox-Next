@@ -11,14 +11,16 @@ use super::runtime::ProxyGatewayState;
 use super::session_import;
 use super::settings;
 use super::types::{
-    DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayAggregateConfig, GatewayCliKey,
-    GatewayCliTakeoverStatus, GatewayConnectivityTestRequest, GatewayConnectivityTestResponse,
-    GatewayModelHealthItem, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
+    DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayAggregateBareModel,
+    GatewayAggregateConfig, GatewayCliKey, GatewayCliTakeoverStatus,
+    GatewayConnectivityTestRequest, GatewayConnectivityTestResponse, GatewayModelHealthItem,
+    GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayProxyMode,
     GatewayRequestLogDetail, GatewayRequestLogFilters, GatewaySessionUsageImportInput,
-    GatewaySessionUsageImportResult, GatewayUsageSummary, GatewayUsageSummaryByCli,
-    GatewayUsageTool, GatewayUsageTrendPoint, ModelPricing, ProxyGatewayHealthCheckResult,
-    ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
-    ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
+    GatewaySessionUsageImportResult, GatewaySubagentCatalog, GatewayUsageSummary,
+    GatewayUsageSummaryByCli, GatewayUsageTool, GatewayUsageTrendPoint, ModelPricing,
+    ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult,
+    ProxyGatewayRequestLogListInput, ProxyGatewaySettings, ProxyGatewayStatus,
+    ProxyGatewayStopPreflight,
 };
 use super::usage_stats;
 use crate::db::helpers::db_list;
@@ -380,6 +382,7 @@ pub async fn proxy_gateway_engage_aggregate(
     aliases: Option<BTreeMap<String, String>>,
     naming: Option<AggregateNamingMode>,
     cross_site_failover: Option<bool>,
+    subagent_exposed_models: Option<std::collections::BTreeSet<String>>,
     subagent_model: Option<String>,
     subagent_reasoning_effort: Option<String>,
 ) -> Result<GatewayCliTakeoverStatus, String> {
@@ -415,6 +418,7 @@ pub async fn proxy_gateway_engage_aggregate(
         aliases.unwrap_or_default(),
         naming.unwrap_or_default(),
         cross_site_failover.unwrap_or(false),
+        subagent_exposed_models.unwrap_or_default(),
         subagent_defaults,
     )
     .await?;
@@ -449,6 +453,7 @@ pub async fn proxy_gateway_save_aggregate_draft(
     aliases: Option<BTreeMap<String, String>>,
     naming: Option<AggregateNamingMode>,
     cross_site_failover: Option<bool>,
+    subagent_exposed_models: Option<std::collections::BTreeSet<String>>,
 ) -> Result<GatewayAggregateConfig, String> {
     let paths = proxy_gateway_paths(&app)?;
     let separator =
@@ -463,12 +468,151 @@ pub async fn proxy_gateway_save_aggregate_draft(
             aliases: aliases.unwrap_or_default(),
             naming: naming.unwrap_or_default(),
             cross_site_failover: cross_site_failover.unwrap_or(false),
+            subagent_exposed_models: subagent_exposed_models.unwrap_or_default(),
             // The draft stores the site selection; the `[agents]` defaults are
             // only written when the mode is actually engaged.
             subagent: None,
         },
     )
     .await
+}
+
+/// Read the aggregate catalog's programmable bare names for the settings drawer.
+///
+/// Read-only and local-only: it reads the manifest plus, when an aggregate
+/// takeover is enabled, the generated catalog file and the selected providers'
+/// declared models. It never contacts an upstream endpoint and never writes.
+///
+/// `bare_models` is the full universe the selected sites declare, which is
+/// deliberately *not* the same as `entries` (the names the catalog publishes as
+/// hidden aliases): narrowing the exposure set removes entries, and only the
+/// universe keeps a removed name selectable again.
+#[tauri::command]
+pub async fn proxy_gateway_subagent_catalog(
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+) -> Result<GatewaySubagentCatalog, String> {
+    if cli_key != GatewayCliKey::Codex {
+        return Ok(GatewaySubagentCatalog {
+            cli_key,
+            aggregate_mode: false,
+            entries: Vec::new(),
+            bare_models: Vec::new(),
+        });
+    }
+    let empty = |aggregate_mode: bool| GatewaySubagentCatalog {
+        cli_key,
+        aggregate_mode,
+        entries: Vec::new(),
+        bare_models: Vec::new(),
+    };
+    let paths = proxy_gateway_paths(&app)?;
+    let Some(manifest) = cli_proxy::read_manifest_for_catalog(&paths, cli_key)? else {
+        return Ok(empty(false));
+    };
+    if !manifest.enabled || manifest.mode != GatewayProxyMode::Aggregate {
+        return Ok(empty(false));
+    }
+    let aggregate = manifest.aggregate.clone().unwrap_or_default();
+    let providers = super::runtime::load_candidate_providers(db_state.db(), cli_key).await?;
+    // Universe: the models the selected sites declare, first site wins. This is
+    // the same source the published catalog is built from, so the two can never
+    // describe different name sets.
+    let selected_sites = aggregate
+        .provider_ids
+        .iter()
+        .filter_map(|site_id| {
+            providers
+                .iter()
+                .find(|provider| &provider.id == site_id)
+                .map(|provider| (provider.id.clone(), provider.meta.declared_models.clone()))
+        })
+        .collect::<Vec<_>>();
+    let universe = super::aggregate_naming::build_aggregate_bare_model_universe(&selected_sites);
+    let describe = |site_id: &str, model: &str| GatewayAggregateBareModel {
+        model: model.to_string(),
+        provider_id: site_id.to_string(),
+        provider_name: providers
+            .iter()
+            .find(|provider| provider.id == site_id)
+            .map(|provider| provider.name.clone())
+            .unwrap_or_default(),
+    };
+    // The hidden aliases the generated catalog currently publishes, read from
+    // the catalog file instead of re-derived: the exposure set (or a hand-edited
+    // catalog) is what Codex actually sees. Names the universe does not know
+    // are still reported, with no owning site.
+    let published = read_generated_hidden_alias_models(db_state.db())
+        .await
+        .into_iter()
+        .map(|model| {
+            universe
+                .iter()
+                .find(|entry| entry.model == model)
+                .map(|entry| describe(&entry.site_id, &entry.model))
+                .unwrap_or(GatewayAggregateBareModel {
+                    model,
+                    provider_id: String::new(),
+                    provider_name: String::new(),
+                })
+        })
+        .collect::<Vec<_>>();
+    // A legacy manifest whose selected sites cannot be resolved right now has no
+    // universe; fall back to the published names so the drawer still lists what
+    // can be selected instead of looking empty.
+    let bare_models = if universe.is_empty() {
+        published
+            .iter()
+            .map(|entry| GatewayAggregateBareModel {
+                model: entry.model.clone(),
+                provider_id: String::new(),
+                provider_name: String::new(),
+            })
+            .collect::<Vec<_>>()
+    } else {
+        universe
+            .iter()
+            .map(|entry| describe(&entry.site_id, &entry.model))
+            .collect::<Vec<_>>()
+    };
+    Ok(GatewaySubagentCatalog {
+        cli_key,
+        aggregate_mode: true,
+        entries: published,
+        bare_models,
+    })
+}
+
+/// Hidden bare-name alias slugs of the currently generated Codex catalog.
+///
+/// Best-effort: a missing or unreadable catalog file yields an empty list, so
+/// browsing the drawer can never fail the settings page.
+async fn read_generated_hidden_alias_models(db: &SqliteDbState) -> Vec<String> {
+    use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
+
+    let Ok(config_dir) =
+        crate::coding::codex::commands::get_codex_config_dir_from_db_async(db).await
+    else {
+        return Vec::new();
+    };
+    let Ok(content) =
+        std::fs::read_to_string(config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME))
+    else {
+        return Vec::new();
+    };
+    let Ok(catalog) = serde_json::from_str::<Value>(&content) else {
+        return Vec::new();
+    };
+    catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("visibility").and_then(Value::as_str) == Some("hide"))
+        .filter_map(|item| item.get("slug").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect()
 }
 
 #[tauri::command]

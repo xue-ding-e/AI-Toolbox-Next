@@ -90,6 +90,9 @@ pub(crate) struct GatewayProviderSelection {
     pub(crate) aggregate_aliases: std::collections::BTreeMap<String, String>,
     /// Aggregate mode only: template used by the Codex catalog and router.
     pub(crate) aggregate_naming: AggregateNamingMode,
+    /// Aggregate mode only: bare model names the catalog still publishes as
+    /// hidden aliases. Empty means "every bare model", matching the manifest.
+    pub(crate) aggregate_subagent_exposed_models: std::collections::BTreeSet<String>,
     /// Aggregate mode only: slug table persisted at engage time. Empty when the
     /// manifest predates it, in which case routing rebuilds the table from the
     /// live candidates (`aggregate_provider_ids` + `aggregate_naming`).
@@ -240,6 +243,7 @@ pub(crate) fn load_gateway_provider_selection(
                 aggregate_separator: aggregate.separator,
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
+                aggregate_subagent_exposed_models: aggregate.subagent_exposed_models,
                 aggregate_slug_table: aggregate.slug_table,
                 cross_site_failover: aggregate.cross_site_failover,
             })
@@ -312,6 +316,7 @@ pub(crate) async fn load_gateway_provider_selection_async(
                 aggregate_separator: aggregate.separator,
                 aggregate_aliases: aggregate.aliases,
                 aggregate_naming: aggregate.naming,
+                aggregate_subagent_exposed_models: aggregate.subagent_exposed_models,
                 aggregate_slug_table: aggregate.slug_table,
                 cross_site_failover: aggregate.cross_site_failover,
             })
@@ -451,6 +456,7 @@ pub(crate) fn resolve_aggregate_route(
         aggregate_separator: separator.to_string(),
         aggregate_aliases: std::collections::BTreeMap::new(),
         aggregate_naming: AggregateNamingMode::SiteModel,
+        aggregate_subagent_exposed_models: std::collections::BTreeSet::new(),
         aggregate_slug_table: Vec::new(),
         // Route resolution does not consult the failover policy.
         cross_site_failover: true,
@@ -473,6 +479,7 @@ pub(crate) fn resolve_aggregate_route_with_selection(
         separator: selection.aggregate_separator.clone(),
         aliases: selection.aggregate_aliases.clone(),
         naming: selection.aggregate_naming,
+        subagent_exposed_models: selection.aggregate_subagent_exposed_models.clone(),
     };
     // Prefer the table the catalog was published from; only rebuild it (from
     // whichever selected sites are still enabled candidates) for manifests that
@@ -2013,6 +2020,7 @@ mod tests {
                     .to_string(),
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
+            aggregate_subagent_exposed_models: std::collections::BTreeSet::new(),
             aggregate_slug_table: Vec::new(),
             // Single/failover selections never reach the aggregate gate, so the
             // value is irrelevant; `true` keeps the helper reading as "no
@@ -2046,6 +2054,7 @@ mod tests {
             aggregate_separator: separator.to_string(),
             aggregate_aliases: std::collections::BTreeMap::new(),
             aggregate_naming: AggregateNamingMode::default(),
+            aggregate_subagent_exposed_models: std::collections::BTreeSet::new(),
             aggregate_slug_table: Vec::new(),
             cross_site_failover: true,
         }

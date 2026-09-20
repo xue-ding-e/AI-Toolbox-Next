@@ -18,7 +18,7 @@ use super::cli_proxy::manifest::AGGREGATE_DEFAULT_SEPARATOR;
 use super::paths::ProxyGatewayPaths;
 use super::types::{GatewayAggregateConfig, GatewayCliKey};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 
@@ -37,6 +37,10 @@ struct AggregateDraftRecord {
     /// Whether a request may move to another selected site on failure. Absent
     /// in older draft files, which therefore default to `false`.
     cross_site_failover: bool,
+    /// Bare model names the catalog keeps publishing as hidden aliases. Empty
+    /// keeps the backend default of publishing every bare model.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    subagent_exposed_models: BTreeSet<String>,
 }
 
 impl From<AggregateDraftRecord> for GatewayAggregateConfig {
@@ -52,6 +56,7 @@ impl From<AggregateDraftRecord> for GatewayAggregateConfig {
             aliases: record.aliases,
             cross_site_failover: record.cross_site_failover,
             naming: record.naming,
+            subagent_exposed_models: record.subagent_exposed_models,
             subagent: None,
         }
     }
@@ -65,6 +70,7 @@ impl From<&GatewayAggregateConfig> for AggregateDraftRecord {
             aliases: config.aliases.clone(),
             naming: config.naming,
             cross_site_failover: config.cross_site_failover,
+            subagent_exposed_models: config.subagent_exposed_models.clone(),
         }
     }
 }
@@ -136,6 +142,9 @@ mod tests {
             // Deliberately non-default so the round trip proves the new field
             // is persisted instead of silently collapsing to its default.
             cross_site_failover: true,
+            // Deliberately non-default: a round trip that collapsed this to the
+            // empty "publish everything" set would go unnoticed otherwise.
+            subagent_exposed_models: BTreeSet::from(["gpt-5.6-luna".to_string()]),
             subagent: None,
         }
     }
@@ -171,6 +180,9 @@ mod tests {
         assert_eq!(loaded.separator, AGGREGATE_DEFAULT_SEPARATOR);
         assert!(loaded.aliases.is_empty());
         assert_eq!(loaded.naming, AggregateNamingMode::SiteModel);
+        // A draft written before the exposure set existed keeps the default of
+        // publishing every bare model instead of failing to load.
+        assert!(loaded.subagent_exposed_models.is_empty());
     }
 
     #[test]

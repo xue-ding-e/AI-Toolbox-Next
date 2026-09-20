@@ -9,8 +9,11 @@ import {
   isAggregateSiteId,
   normalizeGatewayAggregateAliases,
   normalizeGatewayAggregateSiteIds,
+  normalizeSubagentExposedModels,
   resolveGatewayAggregateEffectiveAliases,
   resolveGatewayReengageMode,
+  resolveSubagentExposureCandidates,
+  resolveSubagentExposureMode,
   toGatewayAggregateReengageConfig,
   validateGatewayAggregateAlias,
   validateGatewayAggregateSeparator,
@@ -391,4 +394,87 @@ test('a takeover that manages no [agents] keys stays that way', () => {
   );
   assert.equal(blank && 'subagentModel' in blank, false);
   assert.equal(blank && 'subagentReasoningEffort' in blank, false);
+});
+
+// ---- programmable bare-name exposure ---------------------------------------
+
+test('a narrowed exposure set survives the re-engage config round trip', () => {
+  // "Expose only these" and "expose everything" are both valid states of the
+  // same field ([] is the publish-all default), so a provider save that dropped
+  // the narrowed set would silently widen the catalog again.
+  const narrowed = toGatewayAggregateReengageConfig(
+    status({
+      mode: 'aggregate',
+      aggregate: {
+        provider_ids: ['site1'],
+        separator: '.',
+        subagent_exposed_models: [' gpt-5.6-luna ', 'gpt-5.6-luna', 'glm-5'],
+      },
+    }),
+  );
+  assert.deepEqual(narrowed && narrowed.subagentExposedModels, [
+    'gpt-5.6-luna',
+    'glm-5',
+  ]);
+
+  // Publish-all stays publish-all: the field is absent rather than an explicit
+  // empty list, so callers keep the backend default.
+  const all = toGatewayAggregateReengageConfig(
+    status({
+      mode: 'aggregate',
+      aggregate: {
+        provider_ids: ['site1'],
+        separator: '.',
+        subagent_exposed_models: [],
+      },
+    }),
+  );
+  assert.equal(all && 'subagentExposedModels' in all, false);
+});
+
+test('exposure mode is read from the value, not the field presence', () => {
+  assert.equal(resolveSubagentExposureMode(undefined), 'all');
+  assert.equal(resolveSubagentExposureMode([]), 'all');
+  assert.equal(resolveSubagentExposureMode(['  ']), 'all');
+  assert.equal(resolveSubagentExposureMode(['gpt-5.6-luna']), 'selected');
+});
+
+test('exposure candidates prefer the universe so a removed name can return', () => {
+  // The published `entries` only carry the names the catalog still hides. The
+  // `bare_models` universe is what keeps a name that was narrowed away tickable
+  // again — without it the user could only switch back to "expose all".
+  const candidates = resolveSubagentExposureCandidates(
+    {
+      entries: [{ model: 'glm-5', provider_id: 'site1', provider_name: 'Site 1' }],
+      bare_models: [
+        { model: 'gpt-5.6-luna', provider_id: 'site1', provider_name: 'Site 1' },
+        { model: 'glm-5', provider_id: 'site1', provider_name: 'Site 1' },
+      ],
+    },
+    ['site1'],
+  );
+  assert.deepEqual(candidates.map((entry) => entry.model), ['gpt-5.6-luna', 'glm-5']);
+
+  // Older payloads omit the universe: fall back to the published hidden
+  // aliases, and drop entries belonging to sites this takeover no longer routes.
+  const fallback = resolveSubagentExposureCandidates(
+    {
+      entries: [
+        { model: 'gpt-5.6-luna', provider_id: 'site1', provider_name: 'Site 1' },
+        { model: 'stale-model', provider_id: 'gone', provider_name: 'Gone' },
+      ],
+    },
+    ['site1'],
+  );
+  assert.deepEqual(fallback.map((entry) => entry.model), ['gpt-5.6-luna']);
+
+  assert.deepEqual(resolveSubagentExposureCandidates(null, ['site1']), []);
+});
+
+test('exposed model names are trimmed, de-duplicated and drop blanks', () => {
+  assert.deepEqual(
+    normalizeSubagentExposedModels([' gpt-5.6-luna ', '', 'gpt-5.6-luna', 'glm-5']),
+    ['gpt-5.6-luna', 'glm-5'],
+  );
+  assert.deepEqual(normalizeSubagentExposedModels(null), []);
 });

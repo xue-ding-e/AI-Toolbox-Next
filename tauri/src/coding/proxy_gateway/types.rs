@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -179,11 +179,50 @@ pub struct GatewayAggregateConfig {
     /// "sites declaring the same upstream model back each other up" behavior.
     #[serde(default)]
     pub cross_site_failover: bool,
+    /// Bare upstream model names published as hidden aliases.
+    ///
+    /// Absent or empty keeps the historical default of publishing every bare
+    /// model name the selected sites declare; a non-empty set narrows the hidden
+    /// alias table to exactly those names.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub subagent_exposed_models: BTreeSet<String>,
     /// Codex `[agents]` defaults this takeover owns, if any. Absent means the
     /// takeover wrote none, so the settings form must show the fields as
     /// unmanaged rather than as blank values it would then write back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<GatewayAggregateSubagentDefaults>,
+}
+
+/// One bare model name the drawer may publish as a programmable hidden alias.
+///
+/// Carries its declaring site so the settings form can show where a name comes
+/// from even when it is currently *not* published (the debt this fixes: a name
+/// removed from the exposure set has to stay selectable).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayAggregateBareModel {
+    pub model: String,
+    pub provider_id: String,
+    pub provider_name: String,
+}
+
+/// Read-only view of the aggregate catalog's programmable bare names.
+///
+/// `entries` are the names the generated catalog currently publishes as hidden
+/// aliases; `bare_models` is the full universe the selected sites declare, so a
+/// name that was narrowed out of the catalog can still be chosen again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewaySubagentCatalog {
+    pub cli_key: GatewayCliKey,
+    /// True while an aggregate manifest is enabled for this CLI.
+    pub aggregate_mode: bool,
+    #[serde(default)]
+    pub entries: Vec<GatewayAggregateBareModel>,
+    /// Absent in payloads written before this field existed; the drawer then
+    /// falls back to `entries` alone.
+    #[serde(default)]
+    pub bare_models: Vec<GatewayAggregateBareModel>,
 }
 
 /// The `[agents]` defaults shown back to the settings form.

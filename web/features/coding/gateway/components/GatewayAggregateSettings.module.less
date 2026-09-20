@@ -289,6 +289,82 @@
   color: var(--color-status-error);
 }
 
+/*
+ * Programmable bare-name exposure. Kept visually separate from the site list
+ * because it changes which names the generated catalog publishes, not which
+ * sites route.
+ */
+.subagentExposed {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 6px;
+}
+
+.subagentExposedSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 580;
+}
+
+.subagentExposedModes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 6px 0 4px;
+}
+
+.subagentExposedMode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.subagentExposedList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.subagentExposedItem {
+  display: flex;
+  min-width: 0;
+}
+
+.subagentExposedOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.subagentExposedModel {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.subagentExposedProvider {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .success {
   color: var(--color-status-success);
 }

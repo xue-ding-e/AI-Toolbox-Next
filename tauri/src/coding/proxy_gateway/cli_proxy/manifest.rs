@@ -3,7 +3,7 @@ use crate::coding::proxy_gateway::{
     types::{GatewayCliKey, GatewayProxyMode},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
 /// Codex `[agents]` keys aggregate mode may write, and only these.
@@ -102,6 +102,11 @@ pub struct AggregateManifestConfig {
     /// field) means `false`: the request stays on the single named site.
     #[serde(default)]
     pub cross_site_failover: bool,
+    /// Bare upstream model names the generated catalog still publishes as
+    /// hidden aliases. Absent or empty keeps the historical default of
+    /// publishing every bare name the selected sites declare.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub subagent_exposed_models: BTreeSet<String>,
     /// Slug table the Codex catalog was generated from, in publication order.
     ///
     /// Persisted so routing replays the exact table instead of re-deriving it
@@ -135,6 +140,7 @@ impl Default for AggregateManifestConfig {
             aliases: BTreeMap::new(),
             naming: AggregateNamingMode::default(),
             cross_site_failover: false,
+            subagent_exposed_models: BTreeSet::new(),
             slug_table: Vec::new(),
             subagent: AggregateSubagentDefaults::default(),
             pre_aggregate_catalog: None,
@@ -236,10 +242,30 @@ impl CliProxyManifest {
             aliases,
             naming,
             cross_site_failover,
+            // `with_aggregate` keeps the historical "publish every bare model"
+            // default; callers narrow it through
+            // `with_aggregate_subagent_exposed_models`.
+            subagent_exposed_models: BTreeSet::new(),
             slug_table,
             subagent: AggregateSubagentDefaults::default(),
             pre_aggregate_catalog: None,
         });
+        self
+    }
+
+    /// Set the bare model names the generated catalog keeps publishing as
+    /// hidden aliases. Empty (the default) publishes every bare model.
+    ///
+    /// Mirrors `with_aggregate_subagent_defaults`: `with_aggregate` keeps its
+    /// call sites untouched, and the exposure set is attached separately so a
+    /// manifest written without it means "expose everything".
+    pub fn with_aggregate_subagent_exposed_models(
+        mut self,
+        subagent_exposed_models: BTreeSet<String>,
+    ) -> Self {
+        if let Some(aggregate) = self.aggregate.as_mut() {
+            aggregate.subagent_exposed_models = subagent_exposed_models;
+        }
         self
     }
 

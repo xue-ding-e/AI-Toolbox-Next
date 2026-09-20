@@ -141,6 +141,85 @@ export const normalizeGatewayAggregateSiteIds = (siteIds: readonly string[]): st
 };
 
 /**
+ * Drop blank and duplicate bare model names, keeping the first occurrence.
+ *
+ * An empty result is the backend's "publish every bare model" default, never
+ * "publish none", so callers must not read `[]` as a narrowed selection.
+ */
+export const normalizeSubagentExposedModels = (
+  models?: readonly string[] | null,
+): string[] => {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const model of models ?? []) {
+    const trimmed = model.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
+};
+
+/**
+ * Candidate bare names the exposure block may offer.
+ *
+ * The backend's `bare_models` universe is the primary source because it is what
+ * keeps a name selectable again after the exposure set narrowed it out of the
+ * published catalog. Only when the backend omits it (older build, or a catalog
+ * read that could not resolve the sites) does this fall back to the published
+ * hidden aliases, filtered to the configured takeover's selected sites so a
+ * stale catalog entry cannot be offered.
+ */
+export const resolveSubagentExposureCandidates = (
+  catalog:
+    | {
+        entries?: readonly { model: string; provider_id: string; provider_name: string }[];
+        bare_models?: readonly { model: string; provider_id: string; provider_name: string }[];
+      }
+    | null
+    | undefined,
+  selectedSiteIds: readonly string[] = [],
+): { model: string; provider_id: string; provider_name: string }[] => {
+  if (!catalog) {
+    return [];
+  }
+  const selected = new Set(selectedSiteIds);
+  const source =
+    catalog.bare_models && catalog.bare_models.length > 0
+      ? catalog.bare_models
+      : (catalog.entries ?? []).filter(
+          (entry) =>
+            entry.provider_id.length === 0 ||
+            selected.size === 0 ||
+            selected.has(entry.provider_id),
+        );
+  const seen = new Set<string>();
+  const candidates: { model: string; provider_id: string; provider_name: string }[] = [];
+  for (const entry of source) {
+    const model = entry.model.trim();
+    if (!model || seen.has(model)) {
+      continue;
+    }
+    seen.add(model);
+    candidates.push({ ...entry, model });
+  }
+  return candidates;
+};
+
+/**
+ * Which exposure mode a stored value represents.
+ *
+ * The backend stores "publish every bare model" as an empty set, so the mode
+ * cannot be inferred from the field's presence alone.
+ */
+export const resolveSubagentExposureMode = (
+  models?: readonly string[] | null,
+): 'all' | 'selected' =>
+  normalizeSubagentExposedModels(models).length > 0 ? 'selected' : 'all';
+
+/**
  * Mirror of the backend `resolve_effective_site_aliases`.
  *
  * Explicit aliases win unchanged. A selected site without one falls back to its
@@ -217,6 +296,12 @@ export const toGatewayAggregateReengageConfig = (
   // The failover policy is always replayed: a dropped `false` would silently
   // re-enable cross-site spending on the next provider save.
   const crossSiteFailover = aggregate.cross_site_failover === true;
+  // A narrowed exposure set must be replayed verbatim: `[]` means "publish
+  // every bare model", so dropping it here would silently widen the catalog on
+  // the next provider save — the user would think they had restricted it.
+  const subagentExposedModels = normalizeSubagentExposedModels(
+    aggregate.subagent_exposed_models,
+  );
   return {
     providerIds,
     separator,
@@ -228,6 +313,7 @@ export const toGatewayAggregateReengageConfig = (
     ...(subagentModel ? { subagentModel } : {}),
     ...(subagentReasoningEffort ? { subagentReasoningEffort } : {}),
     crossSiteFailover,
+    ...(subagentExposedModels.length > 0 ? { subagentExposedModels } : {}),
   };
 };
 

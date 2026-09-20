@@ -1,5 +1,6 @@
 import type { GatewayAggregateConfig, GatewayAggregateNamingMode } from '@/services';
 import {
+  normalizeSubagentExposedModels,
   normalizeGatewayAggregateSiteIds,
   validateGatewayAggregateSeparator,
 } from './gatewayAggregateConfig';
@@ -39,6 +40,12 @@ export interface GatewayAggregateFormSeed {
    * another site's balance.
    */
   crossSiteFailover: boolean;
+  /**
+   * Bare model names the takeover keeps publishing as programmable hidden
+   * aliases. An empty list is the backend's "publish every bare model" default,
+   * never "publish none".
+   */
+  subagentExposedModels: string[];
   /**
    * True when the stored draft named sites that are no longer selectable
    * (deleted, disabled or official). The caller surfaces it so a silently
@@ -110,6 +117,9 @@ export const resolveAggregateFormSeed = (params: {
       aliases: aliasesForSelectedSites(activeConfig.aliases, siteIds),
       naming: activeConfig.naming ?? 'site_model',
       crossSiteFailover: activeConfig.cross_site_failover === true,
+      subagentExposedModels: normalizeSubagentExposedModels(
+        activeConfig.subagent_exposed_models,
+      ),
       droppedDraftSites: false,
     };
   }
@@ -128,6 +138,9 @@ export const resolveAggregateFormSeed = (params: {
     aliases: aliasesForSelectedSites(draftConfig?.aliases, siteIds),
     naming: draftConfig?.naming ?? 'site_model',
     crossSiteFailover: draftConfig?.cross_site_failover === true,
+    subagentExposedModels: normalizeSubagentExposedModels(
+      draftConfig?.subagent_exposed_models,
+    ),
     // A draft whose sites all disappeared is replaced by the default selection;
     // the caller tells the user instead of silently swapping their selection.
     droppedDraftSites: reconciled.droppedStaleSites,
