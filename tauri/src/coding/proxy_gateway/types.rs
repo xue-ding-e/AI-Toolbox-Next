@@ -656,6 +656,19 @@ pub struct GatewayConnectivityTestResult {
     pub response_headers: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<serde_json::Value>,
+    /// Client-facing status the gateway answered with. Recorded separately from
+    /// the response headers so a failure whose body was empty or truncated still
+    /// shows why the test failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_text: Option<String>,
+    /// Real upstream status when the gateway substituted a synthetic one
+    /// (e.g. an empty 200 stream rewritten into a local 502).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_status_code: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

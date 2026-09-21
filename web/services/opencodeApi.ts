@@ -543,6 +543,13 @@ export interface ConnectivityTestResult {
   requestBody: Record<string, unknown>;
   responseHeaders?: Record<string, unknown>;
   responseBody?: unknown;
+  /** Status the gateway answered with. Gateway tests only. */
+  statusCode?: number;
+  statusText?: string;
+  /** Real upstream status/URL the gateway forwarded to; kept even when the gateway
+   * replaced the status with its own 502, so failures stay explainable. */
+  upstreamStatusCode?: number;
+  upstreamUrl?: string;
 }
 
 export interface ConnectivityTestResponse {

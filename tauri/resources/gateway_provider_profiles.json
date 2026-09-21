@@ -286,8 +286,30 @@
           ]
         },
         "codex": {
-          "defaultEndpointId": "openai_chat",
+          "defaultEndpointId": "openai_responses",
           "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://open.bigmodel.cn/api/v1",
+              "configProviderId": "zhipu_glm",
+              "model": "glm-5.3",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "glm-5.3",
+                    "displayName": "GLM-5.3",
+                    "contextWindow": 1048576
+                  },
+                  {
+                    "model": "glm-5-turbo",
+                    "displayName": "GLM-5 Turbo",
+                    "contextWindow": 204800
+                  }
+                ]
+              }
+            },
             {
               "id": "openai_chat",
               "label": "OpenAI Chat",
@@ -437,8 +459,30 @@
           ]
         },
         "codex": {
-          "defaultEndpointId": "openai_chat",
+          "defaultEndpointId": "openai_responses",
           "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.z.ai/api/v1",
+              "configProviderId": "zhipu_glm_en",
+              "model": "glm-5.3",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "glm-5.3",
+                    "displayName": "GLM-5.3",
+                    "contextWindow": 1048576
+                  },
+                  {
+                    "model": "glm-5-turbo",
+                    "displayName": "GLM-5 Turbo",
+                    "contextWindow": 204800
+                  }
+                ]
+              }
+            },
             {
               "id": "openai_chat",
               "label": "OpenAI Chat",

@@ -2851,6 +2851,80 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
     }
 
     #[test]
+    fn gateway_connectivity_test_runs_native_protocol_passthrough() {
+        // A Codex provider whose wire_api already is Responses is a passthrough route:
+        // the gateway forwards it unchanged. The test must still run it (it used to
+        // fail with "does not require Gateway protocol conversion") and must report the
+        // client status, the upstream status and the upstream URL.
+        let (base_url, captured_rx) = start_test_upstream();
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let provider_id = tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "auth": { "OPENAI_API_KEY": "native-key" },
+                "config": format!(
+                    "model_provider = \"custom\"\nmodel = \"glm-5.3\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n"
+                ),
+            })
+            .to_string();
+            db.with_conn(|conn| {
+                db_create(
+                    conn,
+                    DbTable::CodexProvider,
+                    &json!({
+                        "name": "Native Responses Upstream",
+                        "category": "custom",
+                        "settings_config": settings_config,
+                        "extra_settings_config": "{}",
+                        "is_applied": false,
+                        "is_disabled": false,
+                        "meta": { "apiFormat": "openai_responses" },
+                    }),
+                )
+            })
+            .expect("insert provider")
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("provider id")
+            .to_string()
+        });
+
+        let response = tauri::async_runtime::block_on(test_gateway_provider_model_connectivity(
+            ProxyGatewaySettings::default(),
+            db,
+            GatewayConnectivityTestRequest {
+                cli_key: GatewayCliKey::Codex,
+                provider_id,
+                prompt: "say hi".to_string(),
+                stream: Some(false),
+                model_ids: vec!["glm-5.3".to_string()],
+                timeout_secs: Some(5),
+            },
+        ))
+        .expect("native provider connectivity test");
+
+        assert_eq!(response.results.len(), 1);
+        let result = &response.results[0];
+        assert_eq!(result.status, "success", "{:?}", result.error_message);
+        assert_eq!(result.status_code, Some(200));
+        assert_eq!(result.status_text.as_deref(), Some("OK"));
+        // The upstream status stays visible even though the gateway forwarded it as-is.
+        assert_eq!(result.upstream_status_code, Some(200));
+        assert!(result
+            .upstream_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with("/v1/responses")));
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        assert!(captured.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(captured
+            .to_ascii_lowercase()
+            .contains("authorization: bearer native-key"));
+        assert!(captured.contains(r#""model":"glm-5.3""#));
+    }
+
+    #[test]
     fn gateway_connectivity_options_do_not_mutate_model_health() {
         let (base_url, captured_rx) =
             start_test_upstream_with_response(429, "Too Many Requests", br#"{"error":"limited"}"#);

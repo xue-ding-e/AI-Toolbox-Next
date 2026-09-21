@@ -92,6 +92,25 @@ pub struct GoogleModel {
     pub output_token_limit: Option<i64>,
 }
 
+/// Codex model catalog response: `{"models":[{"slug": "...", ...}]}`.
+///
+/// Zhipu GLM 的 Codex 原生 Responses 端点 `/api/v1/models` 与 Codex 官方
+/// `models.json` 使用同一 schema；OpenAI `data[]` 和 Google `models[].name`
+/// 都解析不到 `slug`，必须单独识别，否则整个模型列表会被拒绝。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexCatalogModelsResponse {
+    pub models: Vec<CodexCatalogModel>,
+}
+
+/// Codex model catalog entry; unknown metadata fields are ignored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexCatalogModel {
+    #[serde(default, alias = "id")]
+    pub slug: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
 /// Anthropic models list response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnthropicModelsResponse {
@@ -659,52 +678,80 @@ pub async fn fetch_provider_models(
                 .await
                 .map_err(|e| format!("Failed to read response: {}", e))?;
 
-            // Try OpenAI format first, then Google format as fallback
-            if let Ok(openai_response) =
-                serde_json::from_str::<OpenAIModelsResponse>(&response_text)
-            {
-                openai_response
-                    .data
-                    .into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.id.clone(),
-                        name: Some(m.id),
-                        owned_by: m.owned_by,
-                        created: m.created.and_then(|v| v.as_i64()),
-                    })
-                    .collect()
-            } else if let Ok(google_response) =
-                serde_json::from_str::<GoogleModelsResponse>(&response_text)
-            {
-                google_response
-                    .models
-                    .into_iter()
-                    .map(|m| {
-                        let id = m
-                            .name
-                            .strip_prefix("models/")
-                            .unwrap_or(&m.name)
-                            .to_string();
-                        FetchedModel {
-                            id: id.clone(),
-                            name: m.display_name.or(Some(id)),
-                            owned_by: None,
-                            created: None,
-                        }
-                    })
-                    .collect()
-            } else {
-                return Err(format!(
-                    "Failed to parse models response. Response was: {}",
-                    response_text
-                ));
-            }
+            parse_generic_models_response(&response_text)?
         }
     };
 
     let total = models.len();
 
     Ok(FetchModelsResponse { models, total })
+}
+
+/// Parse the model-list schemas accepted for OpenAI-compatible discovery.
+///
+/// Order matters: OpenAI `data[]` first, then Google `models[].name`, then the
+/// Codex catalog schema (`models[].slug`) used by Codex-native endpoints such
+/// as Zhipu GLM `/api/v1`. A response that matches none of them keeps the
+/// original diagnostic text so users can see the raw payload.
+fn parse_generic_models_response(response_text: &str) -> Result<Vec<FetchedModel>, String> {
+    if let Ok(openai_response) = serde_json::from_str::<OpenAIModelsResponse>(response_text) {
+        return Ok(openai_response
+            .data
+            .into_iter()
+            .map(|m| FetchedModel {
+                id: m.id.clone(),
+                name: Some(m.id),
+                owned_by: m.owned_by,
+                created: m.created.and_then(|v| v.as_i64()),
+            })
+            .collect());
+    }
+    if let Ok(google_response) = serde_json::from_str::<GoogleModelsResponse>(response_text) {
+        return Ok(google_response
+            .models
+            .into_iter()
+            .map(|m| {
+                let id = m
+                    .name
+                    .strip_prefix("models/")
+                    .unwrap_or(&m.name)
+                    .to_string();
+                FetchedModel {
+                    id: id.clone(),
+                    name: m.display_name.or(Some(id)),
+                    owned_by: None,
+                    created: None,
+                }
+            })
+            .collect());
+    }
+    if let Ok(codex_response) = serde_json::from_str::<CodexCatalogModelsResponse>(response_text) {
+        return Ok(codex_response
+            .models
+            .into_iter()
+            .filter_map(|m| {
+                let id = m.slug.trim().to_string();
+                if id.is_empty() {
+                    return None;
+                }
+                let name = m
+                    .display_name
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| id.clone());
+                Some(FetchedModel {
+                    id,
+                    name: Some(name),
+                    owned_by: None,
+                    created: None,
+                })
+            })
+            .collect());
+    }
+    Err(format!(
+        "Failed to parse models response. Response was: {}",
+        response_text
+    ))
 }
 
 // ============================================================================
@@ -1752,6 +1799,54 @@ mod tests {
         assert_eq!(models[0].name.as_deref(), Some("claude-sonnet-4-6"));
         assert_eq!(models[0].owned_by.as_deref(), Some("claude"));
         assert_eq!(models[0].created, Some(1626777600));
+    }
+
+    #[test]
+    fn test_parse_codex_catalog_models_response() {
+        // Zhipu GLM `/api/v1/models` and Codex `models.json` share the `slug` schema.
+        let models = parse_generic_models_response(
+            r#"{
+                "models": [{
+                    "slug": "glm-5.3",
+                    "display_name": "GLM-5.3",
+                    "apply_patch_tool_type": "freeform",
+                    "context_window": 1048576
+                }, {
+                    "slug": "glm-5-turbo"
+                }, {
+                    "slug": "   "
+                }]
+            }"#,
+        )
+        .expect("Codex catalog model list should parse");
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "glm-5.3");
+        assert_eq!(models[0].name.as_deref(), Some("GLM-5.3"));
+        assert_eq!(models[1].id, "glm-5-turbo");
+        assert_eq!(models[1].name.as_deref(), Some("glm-5-turbo"));
+    }
+
+    #[test]
+    fn test_generic_models_response_keeps_openai_and_google_schemas() {
+        let openai_models = parse_generic_models_response(
+            r#"{"object":"list","data":[{"id":"gpt-4o","owned_by":"openai","created":1626777600}]}"#,
+        )
+        .expect("OpenAI model list should parse");
+        assert_eq!(openai_models[0].id, "gpt-4o");
+        assert_eq!(openai_models[0].owned_by.as_deref(), Some("openai"));
+        assert_eq!(openai_models[0].created, Some(1626777600));
+
+        let google_models = parse_generic_models_response(
+            r#"{"models":[{"name":"models/gemini-2.5-pro","displayName":"Gemini 2.5 Pro"}]}"#,
+        )
+        .expect("Google model list should parse");
+        assert_eq!(google_models[0].id, "gemini-2.5-pro");
+        assert_eq!(google_models[0].name.as_deref(), Some("Gemini 2.5 Pro"));
+
+        let error =
+            parse_generic_models_response(r#"{"foo":"bar"}"#).expect_err("unknown schema");
+        assert!(error.contains("Failed to parse models response"));
     }
 
     #[test]

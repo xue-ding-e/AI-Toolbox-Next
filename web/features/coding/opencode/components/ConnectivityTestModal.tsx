@@ -757,6 +757,14 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                   body: selectedResult.requestBody,
                 },
                 response: {
+                  // Gateway tests report the client status and, when the gateway
+                  // forwarded the request, the real upstream status/URL. Without them
+                  // a failed test with an empty body gave no clue where it broke.
+                  status: selectedResult.statusCode === undefined
+                    ? undefined
+                    : `${selectedResult.statusCode} ${selectedResult.statusText ?? ''}`.trim(),
+                  upstreamStatusCode: selectedResult.upstreamStatusCode,
+                  upstreamUrl: selectedResult.upstreamUrl,
                   headers: selectedResult.responseHeaders,
                   body: selectedResult.responseBody,
                 }

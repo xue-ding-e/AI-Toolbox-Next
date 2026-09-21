@@ -381,7 +381,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 | profile | providerType | compat 声明 | 当前 endpoint 摘要 |
 |---|---|---|---|
 | `deepseek` | `deepseek` | DeepSeek Chat/Anthropic | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_responses*`/`openai_chat`/`anthropic_messages` |
-| `zai_cn` / `zai_en` | `zai` | Z.ai Chat | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_chat*`/`anthropic_messages` |
+| `zai_cn` / `zai_en` | `zai` | Z.ai Chat | Claude `anthropic*`/`openai_chat`；Codex `openai_responses*`/`openai_chat`/`anthropic_messages`；Gemini/Grok `openai_chat*`/`anthropic_messages` |
 | `doubao` | `doubao` | Doubao metadata | Claude `anthropic*`/`openai_responses`；Codex/Gemini/Grok `openai_responses*`/`anthropic_messages` |
 | `bailian` / `bailian_coding` | `bailian` | Bailian tool merge/SSE filter | Claude `anthropic*`/`openai_responses`；Codex/Gemini/Grok `openai_responses*`/`anthropic_messages` |
 | `moonshot` / `kimi_coding` | `moonshot` | Moonshot Chat/Anthropic | Claude `anthropic*`/`openai_chat`；Codex/Gemini/Grok `openai_chat*`/`anthropic_messages` |
@@ -586,6 +586,15 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 触发条件：
 
 - `providerType=zai|zhipu|glm|chatglm|bigmodel|big-model`。
+
+端点（官方按 CLI 拆成三条互不通用的路径，内置 profile `zai_cn` / `zai_en` 与之对齐）：
+
+- Claude Code：`/api/anthropic`（Anthropic Messages，`claude` 默认 endpoint `anthropic`）。
+- 通用 OpenAI Chat：`/api/coding/paas/v4`（`codex`/`gemini`/`grok` 的历史 endpoint `openai_chat`）。
+- Codex：`/api/v1`（OpenAI Responses，CN `https://open.bigmodel.cn/api/v1`、EN `https://api.z.ai/api/v1`），是 `codex` 的默认 endpoint `openai_responses`。官方 Codex 接入文档（`docs.bigmodel.cn/cn/coding-plan/tool/codex.md`）要求 `wire_api = "responses"`，并用 Codex catalog 形状的 `model_catalog_json`。
+- 内置 `openai_responses` endpoint 的模型目录是 `glm-5.3`（1M 上下文，默认模型）和 `glm-5-turbo`（200k）。用户已保存的旧 provider 仍持有 `endpointId=openai_chat` 引用，runtime 按引用解析，不会自动迁移到新默认 endpoint。
+- 同一个 `/api/v1` 前缀还提供 Codex catalog 形状的模型列表 `GET /models`（`{"models":[{"slug":...}]}`）；模型发现必须识别该 schema（`tauri/src/coding/open_code/models_api.rs::parse_generic_models_response`，模块规则见 `tauri/src/coding/open_code/AGENTS.md`）。
+- issue #381 的两处现象都来自这里的错配：Codex 用 Chat endpoint 让网关做 Responses -> Chat 转换时「模型测试」失败；改成 `/api/v1` 后「获取模型」又因 catalog schema 不被 `fetch_provider_models` 识别而报 `Failed to parse models response`。
 
 请求侧，OpenAI Chat：
 
@@ -1111,7 +1120,7 @@ inferred provider：
   - 校验用 `parse_header_override_name`（`HeaderName::from_bytes`）与 `parse_header_override_value`（`http::HeaderValue::from_str` 字节规则：可见 ASCII / 非 ASCII / `\t` 合法，其余控制字符非法），非法 name/value 运行时静默跳过不阻断请求；前端 `headerValidation`（`isValidHeaderName` RFC 7230 token 规则 + `isValidHeaderValue` 字节规则）与之对齐并给非阻断红字提示。
   - Copilot provider 避让：`ProviderBodyCompat::Copilot` 判定命中时，凡 `name`/`from`/`to` 落入 `COPILOT_MANAGED_HEADERS`（含 `user-agent` 等指纹头）的操作整条跳过，指纹 UA（`GitHubCopilotChat/0.38.2`）由 `inject_copilot_headers` 独占管理，不可被覆盖。
   - `HeaderMap` 与 preserved vec 必须同时移除旧值，保证 header-preserving 裸客户端只写出预期条数；rename/copy 的多值用 `append_preserved_header_value`（append 语义）追加，避免 `insert` 丢值。
-  - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom headers，可在表单内预验上游请求头白名单。
+  - 连通性测试（`connectivity_test.rs`）走 `route_request_with_options` -> `build_upstream_headers`，自动继承 custom headers，可在表单内预验上游请求头白名单。它也覆盖 target protocol 与 CLI 原生协议一致的直通 provider，并在结果里回报 client `statusCode`/`statusText` 与真实 `upstreamStatusCode`/`upstreamUrl`（网关合成 502 时保留真实上游状态）。
   - 切换网关 profile 时 `customHeaders` 保留（`mergeGatewayProfileReferenceIntoMeta` 的 delete 白名单不含该 key），与 billing 字段同等待遇。
   - 旧 `data.meta.customUserAgent`（字符串）已下线；读取侧在 `provider_meta_from_record` 做只读回退——若 `customHeaders` 缺失而 `customUserAgent` 存在，合成一行 `set User-Agent`。前端 `getCustomHeadersFromMeta` 同样回退旧字段以便用户查看/清理。写入侧只写 `customHeaders`，且 `mergeCustomHeadersIntoMeta` 同时删除旧 `customUserAgent`/`custom_user_agent` 与 `custom_headers`，故保存后旧 key 不再落盘。
 

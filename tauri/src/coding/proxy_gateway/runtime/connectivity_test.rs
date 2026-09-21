@@ -19,16 +19,16 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
     db: SqliteDbState,
     request: GatewayConnectivityTestRequest,
 ) -> Result<GatewayConnectivityTestResponse, String> {
-    let Some(native_protocol) =
-        super::super::provider_protocol::native_cli_protocol(request.cli_key)
-    else {
+    if super::super::provider_protocol::native_cli_protocol(request.cli_key).is_none() {
         return Err(format!(
             "{} does not support Gateway connectivity testing",
             request.cli_key.as_str()
         ));
-    };
+    }
 
-    let provider = providers::load_provider_by_id_for_connectivity_test(
+    // Resolve (and validate) the provider up front so a missing, disabled or
+    // official provider fails with a clear message before any model loop runs.
+    providers::load_provider_by_id_for_connectivity_test(
         &db,
         request.cli_key,
         &request.provider_id,
@@ -36,13 +36,10 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
     )
     .await?;
 
-    if provider.target_protocol == native_protocol {
-        return Err(format!(
-            "Provider '{}' does not require Gateway protocol conversion",
-            provider.name
-        ));
-    }
-
+    // A provider whose target protocol already matches the CLI's native protocol is
+    // an identity/passthrough route: takeover, provider compat and forwarding still
+    // apply, so the test runs it instead of refusing with "does not require
+    // protocol conversion".
     let stream = request.stream.unwrap_or(true);
     let timeout_secs = request.timeout_secs.unwrap_or(30).max(1);
     let mut test_settings = settings;
@@ -82,6 +79,10 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
                 request_body: json!({}),
                 response_headers: None,
                 response_body: None,
+                status_code: None,
+                status_text: None,
+                upstream_status_code: None,
+                upstream_url: None,
             });
             continue;
         }
@@ -283,6 +284,12 @@ async fn run_gateway_connectivity_request(
             })
     });
 
+    // Keep the real upstream code visible even when the gateway did not substitute a
+    // synthetic status (same fallback upstream.rs applies before rewriting a failure).
+    let upstream_status_code = response
+        .upstream_status_code
+        .or_else(|| response.upstream_url.as_ref().map(|_| response.status_code));
+
     GatewayConnectivityTestResult {
         model_id: model_id.to_string(),
         status: status.to_string(),
@@ -294,6 +301,10 @@ async fn run_gateway_connectivity_request(
         request_body,
         response_headers: Some(header_pairs_to_value(&response.headers)),
         response_body: Some(parse_json_or_raw(&response.body)),
+        status_code: Some(response.status_code),
+        status_text: Some(response.status_text.clone()),
+        upstream_status_code,
+        upstream_url: response.upstream_url.clone(),
     }
 }
 
