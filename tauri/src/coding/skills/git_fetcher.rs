@@ -138,6 +138,10 @@ fn git_bin_works(bin: &str) -> bool {
 fn git_cmd() -> Command {
     let bin = resolve_git_bin().unwrap_or_else(|| "git".to_string());
     let mut cmd = Command::new(bin);
+    // Windows MAX_PATH (260) breaks checkouts of repos with long paths;
+    // core.longpaths switches git to \\?\-prefixed paths.
+    #[cfg(target_os = "windows")]
+    cmd.args(["-c", "core.longpaths=true"]);
     // Never block on interactive auth prompts
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "echo");
@@ -273,6 +277,9 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
         )?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
+            // A failed clone leaves a partial working tree behind; remove it so
+            // the next attempt clones cleanly instead of fetching into the mess.
+            let _ = std::fs::remove_dir_all(dest);
             anyhow::bail!("GIT_CLONE_FAILED|{}|{}", repo_url, stderr);
         }
     }

@@ -371,7 +371,11 @@ skills-git-cache/
 **缓存清理：**
 - 定时任务：根据 git_cache_cleanup_days 清理过期缓存
 - 手动清理：调用 `skills_clear_git_cache` 立即清空
-- 损坏恢复：如果 clone/pull 失败，删除缓存目录后重试
+- 损坏恢复：如果 clone/pull 失败，删除缓存目录后重试；`git_fetcher` 在 clone 失败时会自行清理半成品 dest 目录（避免下次误走 fetch/checkout 分支报 untracked overwritten），`clone_to_cache` 的失败清理保留作为 fetch/reset 路径的兜底
+
+**Windows 长路径约束：**
+- 所有 skills 的 git 调用必须经 `git_cmd()` 统一构造；Windows 上它注入 `-c core.longpaths=true`，否则 MAX_PATH 260 会让 playwright 这类含超长路径文件的仓库在 clone/checkout 阶段报 `Filename too long`
+- 不要在 skills 模块内新增绕开 `git_cmd()` 的直接 git spawn
 
 **并发控制：**
 - 使用 `OnceLock<Mutex<()>>` 全局锁
