@@ -6858,6 +6858,16 @@ wire_api = "responses"
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
         assert_eq!(efforts, vec!["low", "high", "max"]);
+
+        // DeepSeek has no Responses `tool_search` support, so the vendor entry
+        // must not advertise it: Codex gates deferred/namespaced MCP tools on
+        // this flag and would hide every MCP tool behind a tool_search the
+        // native provider cannot serve (cc-switch 5a040348, #6647).
+        assert_eq!(
+            flash.get("supports_search_tool"),
+            Some(&json!(false)),
+            "the DeepSeek vendor entry must list MCP tools inline"
+        );
         // The official deepseek-flash entry declares text+image (the renamed
         // flagship supports image input); the matched vendor declaration must
         // reach the generated catalog verbatim.
@@ -7314,6 +7324,11 @@ wire_api = "responses"
             relay.get("context_window").and_then(|v| v.as_u64()),
             Some(272_000)
         );
+        // The neutral template keeps `supports_search_tool: true` on purpose:
+        // cross-protocol targets are proxied by the gateway, which flattens
+        // `tool_search`/namespace tools for Chat/Anthropic upstreams. Only the
+        // native DeepSeek Responses mirror above turns it off.
+        assert_eq!(relay.get("supports_search_tool"), Some(&json!(true)));
 
         // DeepSeek host but non-native target (chat): also neutral template.
         let chat_config = r#"model = "deepseek-v4-flash"

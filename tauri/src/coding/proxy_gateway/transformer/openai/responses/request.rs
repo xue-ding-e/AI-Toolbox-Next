@@ -11,6 +11,14 @@ use std::collections::HashMap;
 
 use super::shared::*;
 
+/// The Responses API rejects `max_output_tokens` below 16 ("The number must be
+/// `>= 16`"), while Anthropic clients legitimately send tiny probe budgets
+/// (the Claude Desktop model-availability probe sends `max_tokens=1`).
+/// Sub-floor budgets are clamped up to the minimum instead of failing the
+/// whole request; `0` and other pass-through values keep their existing
+/// semantics.
+const RESPONSES_MIN_MAX_OUTPUT_TOKENS: i64 = 16;
+
 pub fn responses_request_to_llm(body: Value) -> Request {
     let mut request = Request {
         model: body
@@ -207,6 +215,11 @@ pub fn llm_request_to_responses(request: Request) -> Value {
         body["instructions"] = json!(instructions.join("\n\n"));
     }
     if let Some(max_tokens) = request.max_tokens.or(request.max_completion_tokens) {
+        let max_tokens = if (1..RESPONSES_MIN_MAX_OUTPUT_TOKENS).contains(&max_tokens) {
+            RESPONSES_MIN_MAX_OUTPUT_TOKENS
+        } else {
+            max_tokens
+        };
         body["max_output_tokens"] = json!(max_tokens);
     }
     if let Some(temperature) = request.temperature {

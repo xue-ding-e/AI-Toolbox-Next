@@ -756,6 +756,41 @@ fn request_reasoning_context_only_without_effort_is_preserved() {
 }
 
 #[test]
+fn responses_writer_clamps_sub_floor_max_output_tokens() {
+    // The Responses API rejects `max_output_tokens < 16`; Anthropic clients send
+    // tiny probe budgets (max_tokens=1), so sub-floor budgets are clamped up
+    // instead of failing the whole request (cc-switch 6e4b0e6e, #7103).
+    for (budget, expected) in [(1_i64, 16_i64), (8, 16), (15, 16), (16, 16), (1024, 1024)] {
+        let responses = llm_request_to_responses(Request {
+            model: "gpt-5".to_string(),
+            max_tokens: Some(budget),
+            ..Default::default()
+        });
+        assert_eq!(
+            responses["max_output_tokens"],
+            json!(expected),
+            "budget {budget}"
+        );
+    }
+
+    // `0` keeps its existing pass-through semantics; the upstream decides.
+    let zero = llm_request_to_responses(Request {
+        model: "gpt-5".to_string(),
+        max_tokens: Some(0),
+        ..Default::default()
+    });
+    assert_eq!(zero["max_output_tokens"], json!(0));
+
+    // The `max_completion_tokens` alias goes through the same floor.
+    let aliased = llm_request_to_responses(Request {
+        model: "gpt-5".to_string(),
+        max_completion_tokens: Some(3),
+        ..Default::default()
+    });
+    assert_eq!(aliased["max_output_tokens"], json!(16));
+}
+
+#[test]
 fn responses_namespace_tools_expand_into_ir_functions() {
     // AxonHub 7d095b63: namespace children become function tools with ns__name.
     let body = json!({

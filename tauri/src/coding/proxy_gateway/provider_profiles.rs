@@ -48,7 +48,7 @@ const SUPPORTED_COMPAT_RULES: [CompatRuleRegistration; 25] = [
     CompatRuleRegistration {
         name: "codex_chat_reasoning_low_high_effort",
         runtime_owner: "runtime::upstream::map_codex_chat_reasoning_effort",
-        test_name: "provider_compat_stepfun_only_supports_low_high_effort_for_2603_models",
+        test_name: "provider_compat_stepfun_uses_per_model_effort_tiers",
     },
     CompatRuleRegistration {
         name: "codex_chat_reasoning_split",

@@ -1312,6 +1312,30 @@ fn reference_anthropic_request_semantics_convert_exactly() {
 }
 
 #[test]
+fn anthropic_probe_max_tokens_is_clamped_to_responses_floor() {
+    // Claude Desktop probes model availability with `max_tokens=1`; the
+    // Responses API rejects `max_output_tokens < 16`, so the Anthropic ->
+    // Responses conversion clamps sub-floor budgets instead of failing the
+    // probe (cc-switch 6e4b0e6e, #7103).
+    for (budget, expected) in [(1_i64, 16_i64), (15, 16), (16, 16), (2048, 2048)] {
+        let responses = convert_request_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiResponses),
+            json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": budget,
+                "messages": [{"role": "user", "content": "ping"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            responses["max_output_tokens"],
+            json!(expected),
+            "anthropic max_tokens {budget} must convert to {expected}"
+        );
+    }
+}
+
+#[test]
 fn anthropic_url_image_source_converts_both_directions() {
     let chat = convert_request_value(
         ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),

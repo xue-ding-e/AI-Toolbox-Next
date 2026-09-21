@@ -8504,13 +8504,30 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
+    // StepFun tiers (vendor reasoning guide plus both model pages):
+    // step-3.5-flash-2603 supports low/high, step-3.7-flash supports
+    // low/medium/high (vendor default medium), and the suffix-less
+    // step-3.5-flash exposes no effort. 2603 keeps the low_high collapsing
+    // map; 3.7-flash passes the effort through verbatim because reusing
+    // low_high would collapse medium into high and create a tier with no wire
+    // difference. No StepFun model exposes a thinking switch, so thinking_param
+    // stays none. The rule stays in this inference table: a provider-wide
+    // codexChatReasoning declaration would lose the per-model gating
+    // (cc-switch 3f75bbdf).
     if platform.contains("stepfun") {
         return Some(CodexChatReasoningMeta {
             supports_thinking: Some(true),
-            supports_effort: Some(model.contains("2603")),
+            supports_effort: Some(model.contains("2603") || model.contains("step-3.7-flash")),
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
-            effort_value_mode: Some("low_high".to_string()),
+            effort_value_mode: Some(
+                if model.contains("2603") {
+                    "low_high"
+                } else {
+                    "passthrough"
+                }
+                .to_string(),
+            ),
             output_format: Some("reasoning".to_string()),
         });
     }
@@ -14895,10 +14912,21 @@ data: {data}\r\n\r\n"
     }
 
     #[test]
-    fn provider_compat_stepfun_only_supports_low_high_effort_for_2603_models() {
-        for (model, expected_effort) in [("step-3.5-2603", Some("high")), ("step-3.5", None)] {
+    fn provider_compat_stepfun_uses_per_model_effort_tiers() {
+        // StepFun tiers (cc-switch 3f75bbdf): step-3.5-flash-2603 supports
+        // low/high, so a medium request collapses to high; step-3.7-flash
+        // supports low/medium/high and must pass the effort through verbatim
+        // (collapsing medium into high would create a tier with no wire
+        // difference); the suffix-less step-3.5-flash exposes no effort at all.
+        for (model, requested, expected_effort) in [
+            ("step-3.5-2603", "medium", Some("high")),
+            ("step-3.5-2603", "low", Some("low")),
+            ("step-3.7-flash", "medium", Some("medium")),
+            ("step-3.7-flash", "low", Some("low")),
+            ("step-3.5", "medium", None),
+        ] {
             let body = format!(
-                r#"{{"model":"{model}","reasoning_effort":"medium","messages":[{{"role":"user","content":"hi"}}]}}"#
+                r#"{{"model":"{model}","reasoning_effort":"{requested}","messages":[{{"role":"user","content":"hi"}}]}}"#
             );
             let converted = apply_outbound_adapter_compat_for_provider_type(
                 body.into_bytes(),
@@ -14911,7 +14939,8 @@ data: {data}\r\n\r\n"
 
             assert_eq!(
                 value.get("reasoning_effort").and_then(Value::as_str),
-                expected_effort
+                expected_effort,
+                "model {model} with requested effort {requested}"
             );
             assert!(value.get("thinking").is_none());
             assert!(value.get("enable_thinking").is_none());

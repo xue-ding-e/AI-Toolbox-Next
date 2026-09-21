@@ -516,6 +516,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - profile `deepseek` 的 Codex/Gemini/Grok 默认 endpoint 自 2026-08-01 切到 `openai_responses`（官方新增 Responses API 支持），保留 `openai_chat` 与 `anthropic_messages` 作可选 fallback。Responses target 走通用 OpenAI Responses 直通，无 DeepSeek 专用 body compat（compat 规则 `deepseek_json_schema`/`deepseek_thinking`/`deepseek_disabled_strip_effort` 仅作用于 `openaiChat`/`anthropicMessages`）。
 - `openai_responses` endpoint 的 `baseUrl` 用官方值 `https://api.deepseek.com`（不带 `/v1`，与 DeepSeek 官方 Codex 接入脚本一致）。DeepSeek 服务端对 `/responses` 与 `/v1/responses` 双路径兼容，Codex/Grok CLI 直连按 `base_url + /responses` 可直接命中；走网关时 `build_target_url`（`runtime/routes.rs`）对 OpenAiResponses 固定拼 `/v1/responses` 也能命中。内置官方渠道的 baseUrl 由 profile 提供且已验证可用，因此 Codex/Grok 表单的 `/v1` 软确认对内置 endpoint 跳过（仅对自定义手填地址保留）。
 - Codex provider 生成 `ai-toolbox-codex-model-catalog.json` 时，`wire_api="responses"`（native Responses）且 `base_url` 命中 `deepseek.com` 的渠道镜像内置的 DeepSeek 官方 models.json（`tauri/resources/codex_deepseek_catalog_template.json`：freeform `apply_patch`、GPT-5 harness base_instructions、low/high/max reasoning、1m context），不套 neutral 模板的 image/text_and_image 声明；用户显式 `displayName` / `contextWindow` 仍优先，未知模型克隆官方旗舰条目。非 `deepseek.com` host 或非 Responses target（chat/anthropic）仍用 neutral 模板。实现在 `codex/commands.rs`，不进入 runtime/transformer。
+- Codex catalog：`deepseek.com` native `/responses` 渠道的 vendor mirror 把 `supports_search_tool` 设为 `false`（DeepSeek Responses API 无 `tool_search`，Codex 会据此把 MCP 工具藏在 tool_search 后面导致调不到；参考 cc-switch `5a040348`）。neutral 模板保留 `true`，因为跨协议目标由网关展平 `tool_search`/namespace 后下发。
 
 请求侧，OpenAI Chat：
 
@@ -728,8 +729,8 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 
 - `thinkingParam=none`。
 - `effortParam=reasoning_effort`。
-- `effortValueMode=low_high`，`minimal/low -> low`，其它 -> `high`。
-- 模型名只在已识别 providerType 为 StepFun 后用于能力细分，例如 `2603`；自定义 provider 不会因为模型名包含 stepfun/2603 自动套规则。
+- `effortValueMode` 按模型分档：`step-3.5-flash-2603` 用 `low_high`（`minimal/low -> low`，其它 -> `high`）；`step-3.7-flash` 用 `passthrough`（low/medium/high 原样下发，套 `low_high` 会把 medium 塌成 high）；无后缀 `step-3.5-flash` 与其它 step 模型不下发 effort。
+- `supportsEffort` 仅在模型含 `2603` 或 `step-3.7-flash` 时为真；模型名只在已识别 providerType 为 StepFun 后用于能力细分；自定义 provider 不会因为模型名包含 stepfun/2603 自动套规则（参考项目 `haystack.contains("step-3.5-flash-2603")` 的聚合渠道分支明确不吸收）。
 
 响应侧：
 
@@ -738,7 +739,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 测试：
 
 - `codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat`
-- `provider_compat_stepfun_only_supports_low_high_effort_for_2603_models`
+- `provider_compat_stepfun_uses_per_model_effort_tiers`
 - `codex_chat_reasoning_explicit_meta_overrides_inference`
 
 ### 5.11 MiniMax
@@ -1037,7 +1038,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 1. explicit `meta.codexChatReasoning/codex_chat_reasoning`。
 2. 缺 explicit 时，根据明确 effective `providerType/apiFormat` fallback。
 3. 自定义 provider 不能因为 body `model` 字符串像某供应商而触发 fallback。
-4. 模型名只允许在已识别 provider 内做能力细分，例如 StepFun 的 `2603`。
+4. 模型名只允许在已识别 provider 内做能力细分，例如 StepFun 的 `2603`（low_high 收敛）与 `step-3.7-flash`（passthrough）。
 
 当前支持：
 
@@ -1068,7 +1069,7 @@ inferred provider：
 - OpenRouter -> `reasoning.effort`，openrouter mode。
 - SiliconFlow -> `enable_thinking`，不支持 effort，output `reasoning_content`。
 - DeepSeek -> `thinking`，支持 effort，deepseek mode。
-- StepFun -> 只有 provider 已识别后，模型含 `2603` 才 supports effort，low_high mode。
+- StepFun -> 只有 provider 已识别后按模型分档：模型含 `2603` 用 low_high 收敛，`step-3.7-flash` 用 passthrough，其余不发 effort。
 - Kimi/Moonshot -> `thinking`，不支持 effort，output `reasoning_content`。
 - GLM/Z.ai/Zhipu -> `thinking`，不支持 effort。
 - Qwen/DashScope/Bailian -> `enable_thinking`。
@@ -1093,7 +1094,7 @@ inferred provider：
 - `codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat`
 - `codex_chat_reasoning_explicit_meta_overrides_inference`
 - `provider_compat_siliconflow_uses_enable_thinking_without_reasoning_effort`
-- `provider_compat_stepfun_only_supports_low_high_effort_for_2603_models`
+- `provider_compat_stepfun_uses_per_model_effort_tiers`
 - `provider_compat_minimax_uses_reasoning_split_and_reasoning_details_output`
 
 ## 7. Header、path、auth 兼容
