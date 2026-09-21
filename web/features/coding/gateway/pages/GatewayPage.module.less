@@ -6,12 +6,18 @@
 }
 
 .header {
+  position: sticky;
+  top: 0;
+  z-index: 7;
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+  padding: 8px 0;
+  background: var(--color-bg-layout);
+  box-shadow: 0 1px 0 var(--color-border-card);
 }
 
 .headerControls {

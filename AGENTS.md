@@ -448,6 +448,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - 弹窗内使用 `<Collapse>` 做 section 时，必须传 `bordered={false}` 或 `ghost`，否则 Ant Design CSS-in-JS 的默认白色 header/content 和边框会覆盖模块样式。
 - 自定义 collapse section 时，`.ant-collapse-content` 和 `.ant-collapse-content-box` 都需要显式设置 `background: transparent !important`，避免默认 `colorBgContainer` 破坏 section 背景。
 - 折叠内容不能只通过 `opacity`、`max-height` 或 `overflow` 视觉隐藏后继续保留可聚焦控件；收起态必须避免键盘焦点进入隐藏内容。
+- 页面级工具栏冻结必须用 `position: sticky` 配对解冻，不要用 `position: fixed`。`--content-top-offset` 只作为 `main` 的 `padding-top`；sticky 的 `top` 相对这块已垫过的内容区是 `0`（二级栏再加自身高度），不要再叠一次 offset，否则顶栏下方会空出一截。所属 Collapse/页面滚出视口后必须自动解冻。全局 `.ant-collapse` 的 `overflow` 必须保持 `visible`，否则 sticky 会被裁掉；嵌套 Collapse、Modal、Drawer 内的 header 必须保持 `position: static`，避免叠两层冻结栏。Skills/MCP 工具栏、会话搜索栏、Gateway/Image 顶栏、侧栏导航都走同一套规则。
 - 复用现有 modal 表单模式时，保留 `<div className={styles.content}>` 和 `className={styles.form}` 这类已有结构，避免 alert、form item、输入框边距在同类弹窗中漂移。
 
 ### Styling

@@ -124,28 +124,56 @@ body {
   background-color: transparent;
 }
 
-/* Global Collapse card style */
+/* Global Collapse card style.
+   overflow must stay visible on page-level cards so section headers can
+   `position: sticky`. Hidden overflow clips the sticky containing block,
+   which is why provider/session toolbars used to scroll away. Modal and
+   drawer collapses keep hidden overflow so radius clipping still works. */
 .ant-collapse {
   background: var(--color-bg-container);
   border: none;
   border-radius: 12px;
   box-shadow: var(--shadow-container);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .ant-collapse > .ant-collapse-item {
   border-bottom: none;
+  overflow: visible;
 }
 
 .ant-collapse .ant-collapse-panel {
   border-top: 1px solid var(--color-border) !important;
 }
 
+/* Freeze the section toolbar while its card is in view. `main` already
+   pads by `--content-top-offset`, so sticky `top` is 0 relative to that
+   content box — adding the offset again leaves a blank band under the
+   app header. Native sticky unfreezes when the item scrolls out.
+   Nested / modal / drawer headers stay in flow so they do not stack. */
 .ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   background: var(--color-bg-container);
+  box-shadow: 0 1px 0 var(--color-border-card);
 }
 
-.ant-collapse > .ant-collapse-item > .ant-collapse-content {
+.ant-collapse .ant-collapse > .ant-collapse-item > .ant-collapse-header,
+.ant-modal .ant-collapse > .ant-collapse-item > .ant-collapse-header,
+.ant-drawer .ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  position: static;
+  box-shadow: none;
+}
+
+.ant-modal .ant-collapse,
+.ant-drawer .ant-collapse {
+  overflow: hidden;
+}
+
+.ant-collapse > .ant-collapse-item > .ant-collapse-content,
+.ant-collapse > .ant-collapse-item > .ant-collapse-panel {
+  overflow: visible;
   border-top: 1px solid var(--color-border-card-subtle);
 }
 

@@ -149,6 +149,8 @@ AI Toolbox 的核心页面应当像工作台，而不是内容网站。
 
 固定格式 UI 必须有稳定尺寸。工具栏、图标按钮、计数器、标签、卡片标题、表格单元格和加载态不应因为 hover、动态内容或文字长度导致布局跳动。
 
+浏览长列表时，页面级工具栏应冻结在固定顶栏正下方，使用 `position: sticky` 和内容区 `top: 0`，并带不透明背景。`--content-top-offset` 只负责 `main` 的顶部留白，不要再写进 sticky `top`。冻结范围只属于当前分区或当前页；分区滚出视口后必须自动解冻。不要用 `position: fixed` 把工具栏钉死在窗口上，也不要让嵌套 Collapse、弹窗或抽屉里的工具栏再叠一层冻结栏。
+
 ## 弹窗
 
 默认使用 Ant Design Modal 原生 chrome。不要重度覆盖 `.ant-modal-content`、`.ant-modal-header`、`.ant-modal-footer` 或 `.ant-modal-close`。

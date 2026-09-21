@@ -22,6 +22,7 @@
 - MCP 卡片采用与 Skills 同款三区布局（`McpCard.module.less`）：头部行 = 状态槽 + 名称 + hover 渐显操作簇（复制命令/地址 + 刷新 + 更多）；主体 = 描述 + 单行标签行（tags → group → note），三者皆无时整行不渲染；底部 meta 栏 = 来源按钮 + 工具同步 icon pill，不展示最后编辑时间。`onEdit` 编辑服务器配置收进更多菜单，不在头部单独放铅笔按钮。
 - MCP 详情采用右侧 `Drawer`（宽度 `min(60vw, 760px)`，`destroyOnHidden`、`closable={false}`、body padding 0 + flex column），由 `McpDetailPanel` 渲染只读派生视图；卡片正文点击仅在浏览模式打开，选择模式和拖拽手柄通过 `data-mcp-card-no-detail` 排除。
 - MCP 标签系统复用 Skills 标签工具（`web/features/coding/skills/utils/skillTags.ts`，经 `mcp/utils/mcpTags.ts` 转发）：工具栏 `TagFilterDropdown` 支持搜索/多选/未打标签哨兵；搜索关键词同时匹配 tags；卡片只展示标签行；详情面板通过行内 add/remove 编辑，persist 走 `mcp_update_metadata` 的 `tags` 参数。
+- MCP 顶部工具栏必须和 Skills 一样冻结：`position: sticky; top: 0`（相对已垫过的 `main` 内容区），滚动浏览时钉在固定顶栏正下方，页面滚出后自动解冻；不要改成 `fixed`，也不要把 `--content-top-offset` 再写进 sticky `top`。
 - MCP 顶部工具栏与 Skills 对齐：主视图切换（平铺/分组）仍作为工具栏表面的 shared `ManagementSegmented`，平铺排序、浏览/选择、组工具等辅助配置收进 sliders 选项浮层（antd `Popover`，click / bottomRight / 无箭头，模块样式只负责内部布局）。浮层固定两分区「视图与筛选 / 数据管理」：即时生效的模式切换用 `ManagementSegmented`，打开 modal 的数据管理动作（导入现有 MCP / 导入 JSON / 设置）用 `ToolbarActionItem` 按钮，点击时先关浮层再进流程。只要浮层内存在非默认状态，触发按钮就带 `.toolbarOptionsTriggerActive` 的可见 active feedback（含 `::after` 圆点）；禁用原因要在浮层内有 `.toolbarOptionHint` 轻量可见提示，不能只依赖 hover title。
 
 ## 关键流程

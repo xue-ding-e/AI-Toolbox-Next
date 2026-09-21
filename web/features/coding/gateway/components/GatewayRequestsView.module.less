@@ -39,6 +39,9 @@
 }
 
 .filterBar {
+  position: sticky;
+  top: 64px;
+  z-index: 6;
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -49,6 +52,7 @@
   border: 1px solid var(--color-border);
   border-radius: 10px;
   background: var(--color-bg-container);
+  box-shadow: 0 1px 0 var(--color-border-card);
   scrollbar-width: none;
 
   &::-webkit-scrollbar {

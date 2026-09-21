@@ -26,13 +26,18 @@
 }
 
 .filterBar {
+  position: sticky;
+  top: 64px;
+  z-index: 6;
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   overflow: visible;
-  padding: 0;
+  padding: 8px 0;
+  background: var(--color-bg-layout);
+  box-shadow: 0 1px 0 var(--color-border-card);
   scrollbar-width: none;
 
   &::-webkit-scrollbar {
