@@ -9,21 +9,31 @@
 //! the Web API.
 
 use arboard::Clipboard;
+use log::warn;
+
+/// Clipboard failures are silent in the WebView (the frontend swallows them and
+/// falls back to the Web API), so they are logged here: when a user reports that
+/// paste or copy does nothing, the app log has to say which side failed
+/// (issue #384).
+fn log_failure(message: String) -> String {
+    warn!("{message}");
+    message
+}
 
 fn copy_text_sync(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new()
-        .map_err(|error| format!("Failed to access system clipboard: {error}"))?;
+        .map_err(|error| log_failure(format!("Failed to access system clipboard: {error}")))?;
     clipboard
         .set_text(text.to_string())
-        .map_err(|error| format!("Failed to copy text to clipboard: {error}"))
+        .map_err(|error| log_failure(format!("Failed to copy text to clipboard: {error}")))
 }
 
 fn read_text_sync() -> Result<String, String> {
     let mut clipboard = Clipboard::new()
-        .map_err(|error| format!("Failed to access system clipboard: {error}"))?;
+        .map_err(|error| log_failure(format!("Failed to access system clipboard: {error}")))?;
     clipboard
         .get_text()
-        .map_err(|error| format!("Failed to read clipboard text: {error}"))
+        .map_err(|error| log_failure(format!("Failed to read clipboard text: {error}")))
 }
 
 #[tauri::command]

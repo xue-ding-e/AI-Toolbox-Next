@@ -8,7 +8,7 @@
 
 - Monaco Monarch tokenizer 在 WebView 主线程执行。字符串规则必须保持线性时间；正则分支不能重叠消费同一字符，否则包含大量转义符的配置行会触发灾难性回溯并冻结整个主窗口。
 - 编辑器组件一律 `import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'`（核心 API 入口，不自动注册语言），按需 `import 'monaco-editor/esm/vs/language/json/monaco.contribution'` 只注册 JSON。**不要**改回 `from 'monaco-editor'`（`editor.main` 入口会全量注册 css/html/typescript 语言并拉入对应 worker bundle，~8.7 MB JS 常驻 webview 内存，而这些编辑器从不使用 css/html/ts 语言）。`web/app/monaco.ts` 的 `MonacoEnvironment.getWorker` 也只注册 `editor` 与 `json` 两个 worker；新增语言 worker 时需同步在 workerFactories 里登记，并确认确有编辑器用到该 language。
-- Monaco 的剪贴板服务在 `web/app/monaco.ts` 里被全局替换为 Tauri 后端实现（`StandaloneServices.initialize` + arboard 命令，issue #369）：右键菜单 paste 没有原生剪贴板事件可用，只能走 `navigator.clipboard.readText`，该 API 在 WebKitGTK（WSLg 桥）下不可用、在 WebView2 中即使已授权限也仍会失败，而 Monaco 对失败的处理是返回空串静默粘贴。Ctrl+C/V 走浏览器原生剪贴板事件、不受该服务影响，也不要去拦截它们。`StandaloneServices.initialize` 只在首次调用生效且只覆盖未实例化的服务，因此该初始化必须保持在 `main.tsx` 的 import 图中先于首个编辑器创建执行。新增编辑器组件默认继承该服务，**不要**绕过服务直接调 `navigator.clipboard.readText`；剪贴板命令封装在 `web/services/clipboardApi.ts`（Tauri 后端优先、Web API 兜底）。
+- Monaco 的剪贴板服务在 `web/app/monaco.ts` 里被全局替换为 Tauri 后端实现（`StandaloneServices.initialize` + arboard 命令，issue #369）：右键菜单 paste 没有原生剪贴板事件可用，只能走 `navigator.clipboard.readText`，该 API 在 WebKitGTK（WSLg 桥）下不可用、在 WebView2 中即使已授权限也仍会失败，而 Monaco 对失败的处理是返回空串静默粘贴。Ctrl+C/V 走浏览器原生剪贴板事件、不受该服务影响，也不要去拦截它们；唯一例外是原生 paste 事件**带空 `clipboardData`** 时的兜底重放（`web/utils/emptyPasteFallback.ts`，issue #384）：只在「原生粘贴什么都没带 + 焦点在 Monaco 编辑器内」时用后端文本重放一次，带文本的粘贴、普通 input/textarea、失焦编辑器一律不碰，不要把它扩大成无条件拦截。`StandaloneServices.initialize` 只在首次调用生效且只覆盖未实例化的服务，因此该初始化必须保持在 `main.tsx` 的 import 图中先于首个编辑器创建执行。新增编辑器组件默认继承该服务，**不要**绕过服务直接调 `navigator.clipboard.readText`；剪贴板命令封装在 `web/services/clipboardApi.ts`（Tauri 后端优先、Web API 兜底）。
 
 ## 易错点与历史坑（Gotchas）
 
@@ -24,6 +24,7 @@
 ## 最小验证
 
 - 修改 TOML tokenizer 后，运行 `web/test/components/common/TomlEditor/invalidDoubleQuoteStringPattern.test.ts`。
+- 修改空粘贴兜底（`web/utils/emptyPasteFallback.ts`）后，运行 `web/test/utils/emptyPasteFallback.test.ts`，覆盖「原生带文本/空 `clipboardData`/无焦点编辑器/后端失败/后端空串」五种分支。
 - 语义覆盖要同时包含：未闭合串、普通 closed 串、真实 Codex `notify` 风格 Windows 路径 closed 串，以及会触发指数回溯的 adversarial closed 串。
 - 指数回溯回归必须在可终止的 Worker 中执行（超时即失败），避免危险正则重新出现时把完整测试进程永久卡住。
 - 修改 `FetchModelsModal` 排序或 `onSuccess` 契约后，运行 `web/test/components/common/FetchModelsModal/sort.test.ts`；改动 URL/请求契约（如 `configValueMode`）后，同时运行 `web/test/components/common/FetchModelsModal/request.test.ts`，并确认 `onSuccess` 新增字段对所有消费方（OpenCode/Grok/Pi/DSH/Hermes/OhMyPi/OpenClaw 页面与 Codex 表单）是纯增量。
