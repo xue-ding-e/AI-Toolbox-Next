@@ -63,6 +63,24 @@ pub struct ToolCall {
 pub enum ToolChoice {
     String(String),
     Named(NamedToolChoice),
+    /// OpenAI `allowed_tools` choice: the caller's mode plus the permitted
+    /// tool subset. Chat Completions nests both under an `allowed_tools`
+    /// object, while Responses keeps `mode`/`tools` at the top level.
+    AllowedTools(AllowedTools),
+}
+
+/// Subset of an OpenAI `allowed_tools` tool choice.
+///
+/// Selector entries stay as wire objects because the two wire shapes differ
+/// for function selectors: Chat uses `{type, function:{name}}` and Responses
+/// uses `{type, name}`. Selectors that are not plain function names (for
+/// example MCP `{type:"mcp", server_label:"local"}`) are forwarded unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AllowedTools {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

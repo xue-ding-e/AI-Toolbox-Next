@@ -122,7 +122,7 @@ Claude Desktop 使用独立 `/claude-desktop` 前缀和自己的 provider 表，
 12. target OpenAI Chat 时先缓存被 strip 前的 `prompt_cache_key`，再跑 provider pipeline。
 13. target OpenAI Chat 后置 `prompt_cache_key` allowlist reinject。
 14. xAI native Responses passthrough gate 命中时执行 namespace flatten 和 sanitize。
-15. target Anthropic 且 `cache_injection_enabled=true` 时注入 cache_control。
+15. target Anthropic 且 `cache_injection_enabled=true` 时注入 cache_control（`runtime/cache_injector.rs`）。注入必须先做 `normalize_message_contents` + `sanitize_unsupported_cache_controls`，再按 Anthropic 的 4 断点上限裁剪（先丢最早的 message 断点，再丢最早的 tools/system 断点）；结构断点只在缺失时补，且按剩余预算补（tools 优先于 system，总数绝不越过 4 个上限），message anchor 只在客户端一个断点都没给时才规划。客户端已自规划的断点位置跨轮稳定，重新规划会让前缀 hash 每轮变化、每次请求都付满额 cache write（AxonHub `7444f537`）。回归：`preserves_client_structural_breakpoints_and_fills_message_anchors`、`keeps_client_message_breakpoints_without_replanning`、`trims_excess_client_breakpoints_deterministically`、`keeps_structural_anchors_within_breakpoint_limit`、`keeps_string_system_untouched_when_budget_is_spent`。
 
 ### 2.1 outbound adapter 顺序
 
@@ -157,6 +157,8 @@ Claude Desktop 使用独立 `/claude-desktop` 前缀和自己的 provider 表，
 - 删除空 assistant message。
 
 这些是 runtime provider compat，不属于 transformer roundtrip 语义。
+
+跨协议 `tool_choice` 的通用保真规则属于 transformer，不在本层：OpenAI `allowed_tools`（Chat 嵌套 `allowed_tools.mode/tools`、Responses 顶层 `mode`/`tools`）按 `ToolChoice::AllowedTools` 保留 mode 与工具子集，Chat/Responses writer 各写回本协议形态，非 function selector（如 MCP `server_label`）原样转发；Anthropic/Gemini target 没有白名单形态，只保留 mode（AxonHub `d5237439`，细节与回归见 `docs/gateway-protocol-conversion.md` §19.4）。本层的 `remove_tool_controls_without_tools`（无 tools 时清空 `tool_choice`）与 §5.5 的 Z.ai `force_tool_choice_auto` 仍按各自既有触发条件优先，不被该保真规则改写。
 
 Responses source 转 Chat 时有两条有意区分的 transformer 输入形态：custom-only 请求保留 `responses_custom_tool` Chat 兼容扩展，到本层再按第三方 Chat wire 能力过滤；请求包含 `tool_search`、namespace 或历史 `tool_search_output` 时，transformer 使用 request-scoped Codex context，提前把这些扩展和同请求 custom tool 投影成普通 Chat function，本层不会再把它们当成 `response_custom_tool` 删除。两条路径都必须保留现有回归，不能无条件构造完整 Codex context 把 custom-only roundtrip 静默降级成普通 function。
 
@@ -414,7 +416,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 请求侧：
 
 - Codex official Responses body 强制 `stream=true`、`store=false`、`parallel_tool_calls=true`。
-- 移除 `max_tokens`、`max_completion_tokens`、`metadata`。
+- 移除 `max_tokens`、`max_completion_tokens`、`metadata`、`user`（Chat 侧客户端可能带顶层 `user`，ChatGPT Codex 后端对该字段返回 400；AxonHub `147e6791`）。
 - 确保 `include` 包含 `reasoning.encrypted_content`。
 - 确保 `reasoning.summary="auto"`。
 - headers 补 `Accept: text/event-stream`。
@@ -605,6 +607,7 @@ xAI native Responses passthrough 不是用户开关控制，而是严格自动�
 - 有 `tool_choice` 时强制为 `auto`。
 - 按 `reasoning_effort` 写 `thinking.type`。
 - Codex -> Chat reasoning 矩阵可写 `thinking`。
+- **待处理（需要跨层方案）**：AxonHub `834eea2b` 的 GLM-5.2+ `reasoning_effort` 与 GLM-5.3 恒开思考（其 #2314）。本仓 Z.ai Chat 的 `thinking.type` 有两个写入点：`runtime/upstream.rs::apply_zai_openai_chat_thinking_compat`（body compat 层）与 Codex -> Chat reasoning 矩阵 `apply_codex_chat_reasoning_config`（有 provider meta 时后者会在 `reasoning_enabled == false` 时清 `reasoning_effort`、写 `reasoning.effort`/`thinking_param`，可能覆盖前者）。只改 body compat 层会让“有 provider meta”与“无 provider meta”两条路径分叉，本轮完整回退、不落地半成品；吸收必须在 reasoning 矩阵内统一决定 `thinking.type` 的最终值，并补 GLM-5.2+/5.3 与 GLM-4.x 的档位回归。结论记录见 `docs/gateway-protocol-conversion.md` 的 2026-09-22 AxonHub 条目。
 
 响应侧：
 

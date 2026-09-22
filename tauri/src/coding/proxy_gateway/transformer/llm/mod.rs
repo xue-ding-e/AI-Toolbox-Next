@@ -12,6 +12,6 @@ pub use model::{
     ResponseError, Stop, StreamOptions, Usage,
 };
 pub use tools::{
-    Function, FunctionCall, GoogleTools, NamedToolChoice, ResponseCustomTool,
+    AllowedTools, Function, FunctionCall, GoogleTools, NamedToolChoice, ResponseCustomTool,
     ResponseCustomToolCall, Tool, ToolCall, ToolChoice, ToolFunction,
 };

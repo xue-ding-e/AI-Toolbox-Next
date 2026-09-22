@@ -1,4 +1,4 @@
-use super::super::llm::{NamedToolChoice, Stop, ToolChoice, ToolFunction};
+use super::super::llm::{AllowedTools, NamedToolChoice, Stop, ToolChoice, ToolFunction};
 use serde_json::{json, Value};
 
 pub fn content_text(value: Option<&Value>) -> String {
@@ -419,6 +419,27 @@ pub fn tool_choice_from_openai(value: Option<&Value>) -> Option<ToolChoice> {
     match value {
         Some(Value::String(text)) if !text.is_empty() => Some(ToolChoice::String(text.clone())),
         Some(Value::Object(object)) => {
+            // An `allowed_tools` choice carries the caller's permitted tool
+            // subset: Chat nests mode/tools under `allowed_tools` while
+            // Responses keeps them at the top level (AxonHub d5237439).
+            // Keeping only the mode would silently lift the restriction.
+            if object.get("type").and_then(Value::as_str) == Some("allowed_tools") {
+                let source = object
+                    .get("allowed_tools")
+                    .and_then(Value::as_object)
+                    .unwrap_or(object);
+                return Some(ToolChoice::AllowedTools(AllowedTools {
+                    mode: source
+                        .get("mode")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    tools: source
+                        .get("tools")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default(),
+                }));
+            }
             if let Some(mode) = object.get("mode").and_then(Value::as_str) {
                 return Some(ToolChoice::String(mode.to_string()));
             }
@@ -482,6 +503,18 @@ pub fn tool_choice_to_anthropic(choice: Option<ToolChoice>) -> Option<Value> {
                 _ => "auto",
             }
         })),
+        // Anthropic has no subset-aware tool choice; keep the caller's mode
+        // and drop the permitted subset (AxonHub d5237439). A subset without a
+        // mode carries no Anthropic instruction and is dropped.
+        Some(ToolChoice::AllowedTools(allowed)) => allowed.mode.map(|mode| {
+            json!({
+                "type": match mode.as_str() {
+                    "required" | "any" => "any",
+                    "none" => "none",
+                    _ => "auto",
+                }
+            })
+        }),
         // Anthropic `tool` tool_choice requires a name; a type-only choice
         // (e.g. "image_generation") has no Anthropic equivalent and is dropped.
         Some(ToolChoice::Named(named)) if !named.function.name.is_empty() => Some(json!({
@@ -499,6 +532,7 @@ pub fn tool_choice_to_openai(choice: Option<ToolChoice>) -> Option<Value> {
         } else {
             choice.as_str()
         })),
+        Some(ToolChoice::AllowedTools(allowed)) => Some(allowed_tools_json(&allowed, true)),
         // OpenAI Chat tool_choice always needs `function.name`; a type-only
         // choice cannot be expressed in the Chat shape and is dropped.
         Some(ToolChoice::Named(named)) if !named.function.name.is_empty() => Some(json!({
@@ -518,6 +552,7 @@ pub fn tool_choice_to_responses(choice: Option<ToolChoice>) -> Option<Value> {
         } else {
             choice.as_str()
         })),
+        Some(ToolChoice::AllowedTools(allowed)) => Some(allowed_tools_json(&allowed, false)),
         // Preserve the real `type` and omit `name` when empty so type-only
         // Responses tool choices (e.g. "image_generation") round-trip cleanly.
         Some(ToolChoice::Named(named)) => {
@@ -532,6 +567,64 @@ pub fn tool_choice_to_responses(choice: Option<ToolChoice>) -> Option<Value> {
     }
 }
 
+/// Rebuild an `allowed_tools` choice for its Chat or Responses wire shape.
+///
+/// Chat Completions nests `mode`/`tools` under `allowed_tools`; Responses
+/// keeps them next to `type` (AxonHub d5237439).
+fn allowed_tools_json(allowed: &AllowedTools, chat_shape: bool) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("type".to_string(), json!("allowed_tools"));
+    let mut payload = serde_json::Map::new();
+    if let Some(mode) = &allowed.mode {
+        payload.insert("mode".to_string(), json!(mode));
+    }
+    if !allowed.tools.is_empty() {
+        payload.insert(
+            "tools".to_string(),
+            Value::Array(
+                allowed
+                    .tools
+                    .iter()
+                    .map(|tool| allowed_tool_json(tool, chat_shape))
+                    .collect(),
+            ),
+        );
+    }
+    if chat_shape {
+        object.insert("allowed_tools".to_string(), Value::Object(payload));
+    } else {
+        object.extend(payload);
+    }
+    Value::Object(object)
+}
+
+/// Rewrite one `allowed_tools` selector between the Chat
+/// `{type, function:{name}}` and Responses `{type, name}` shapes. Selectors
+/// without a function name (for example MCP `server_label`) have no shape
+/// difference and are forwarded exactly as they arrived.
+fn allowed_tool_json(tool: &Value, chat_shape: bool) -> Value {
+    let Some(object) = tool.as_object() else {
+        return tool.clone();
+    };
+    let name = object
+        .get("function")
+        .and_then(|function| function.get("name"))
+        .or_else(|| object.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    let Some(name) = name else {
+        return tool.clone();
+    };
+    let tool_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("function");
+    if chat_shape {
+        json!({ "type": tool_type, "function": { "name": name } })
+    } else {
+        json!({ "type": tool_type, "name": name })
+    }
+}
 pub fn tool_choice_from_gemini(value: Option<&Value>) -> Option<ToolChoice> {
     let config = value?;
     let mode = config.get("mode").and_then(Value::as_str);
@@ -671,6 +764,93 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tool_choice_from_openai_preserves_allowed_tools_subsets() {
+        // Chat Completions nests mode/tools under `allowed_tools`.
+        let chat = json!({
+            "type": "allowed_tools",
+            "allowed_tools": {
+                "mode": "required",
+                "tools": [{"type": "function", "function": {"name": "tool_a"}}]
+            }
+        });
+        let allowed = match tool_choice_from_openai(Some(&chat)) {
+            Some(ToolChoice::AllowedTools(allowed)) => allowed,
+            other => panic!("expected AllowedTools, got {other:?}"),
+        };
+        assert_eq!(allowed.mode.as_deref(), Some("required"));
+        assert_eq!(
+            allowed.tools,
+            vec![json!({"type": "function", "function": {"name": "tool_a"}})]
+        );
+
+        // Responses keeps mode/tools at the top level next to `type`.
+        let responses = json!({
+            "type": "allowed_tools",
+            "mode": "auto",
+            "tools": [{"type": "mcp", "server_label": "local"}]
+        });
+        let allowed = match tool_choice_from_openai(Some(&responses)) {
+            Some(ToolChoice::AllowedTools(allowed)) => allowed,
+            other => panic!("expected AllowedTools, got {other:?}"),
+        };
+        assert_eq!(allowed.mode.as_deref(), Some("auto"));
+        assert_eq!(
+            allowed.tools,
+            vec![json!({"type": "mcp", "server_label": "local"})]
+        );
+
+        // A bare mode without `type` keeps the existing string mapping.
+        assert_eq!(
+            tool_choice_from_openai(Some(&json!({"mode": "auto"}))),
+            Some(ToolChoice::String("auto".to_string()))
+        );
+    }
+
+    #[test]
+    fn tool_choice_allowed_tools_rebuilds_each_wire_shape() {
+        let choice = ToolChoice::AllowedTools(AllowedTools {
+            mode: Some("required".to_string()),
+            tools: vec![
+                json!({"type": "function", "name": "tool_a"}),
+                json!({"type": "mcp", "server_label": "local"}),
+            ],
+        });
+
+        // Chat nests the subset and wraps function selectors under `function`.
+        assert_eq!(
+            tool_choice_to_openai(Some(choice.clone())),
+            Some(json!({
+                "type": "allowed_tools",
+                "allowed_tools": {
+                    "mode": "required",
+                    "tools": [
+                        {"type": "function", "function": {"name": "tool_a"}},
+                        {"type": "mcp", "server_label": "local"}
+                    ]
+                }
+            }))
+        );
+
+        // Responses keeps mode/tools flat and names the selector directly.
+        assert_eq!(
+            tool_choice_to_responses(Some(choice.clone())),
+            Some(json!({
+                "type": "allowed_tools",
+                "mode": "required",
+                "tools": [
+                    {"type": "function", "name": "tool_a"},
+                    {"type": "mcp", "server_label": "local"}
+                ]
+            }))
+        );
+
+        // Anthropic has no subset shape; only the caller's mode survives.
+        assert_eq!(
+            tool_choice_to_anthropic(Some(choice)),
+            Some(json!({"type": "any"}))
+        );
+    }
     #[test]
     fn tool_choice_to_openai_and_anthropic_drop_type_only_choice() {
         let type_only = ToolChoice::Named(NamedToolChoice {

@@ -7,18 +7,94 @@ pub(super) fn inject_cache_control(body: &mut Value) -> bool {
     let original = body.clone();
 
     normalize_message_contents(body);
-    clear_cache_controls(body);
+    sanitize_unsupported_cache_controls(body);
+    trim_cache_controls_to_limit(body, MAX_CACHE_CONTROL_BREAKPOINTS);
 
-    let structural = ensure_structural_cache_controls(body);
-    let remaining = MAX_CACHE_CONTROL_BREAKPOINTS.saturating_sub(structural);
+    let mut remaining = remaining_cache_control_budget(body);
     if remaining > 0 {
-        let refs = collect_cacheable_message_block_refs(body);
-        let message_anchors = desired_message_cache_anchors(refs.len()).min(remaining);
-        inject_planned_message_cache_controls(body, &refs, message_anchors);
+        // Structural anchors are only added when the client has not placed one
+        // on tools/system already, and never beyond the Anthropic limit.
+        remaining = ensure_structural_cache_controls(body, remaining);
+
+        // A client that planned its own message breakpoints keeps them: its
+        // anchors are prefix-stable, while our distance-from-end window moves
+        // with every turn and changes the serialized prefix hash, which makes
+        // every request pay a full cache write (AxonHub 7444f537).
+        if count_message_breakpoints(body) == 0 {
+            let refs = collect_cacheable_message_block_refs(body);
+            let message_anchors = desired_message_cache_anchors(refs.len()).min(remaining);
+            inject_planned_message_cache_controls(body, &refs, message_anchors);
+        }
     }
 
-    sanitize_unsupported_cache_controls(body);
     *body != original
+}
+
+fn remaining_cache_control_budget(body: &Value) -> usize {
+    MAX_CACHE_CONTROL_BREAKPOINTS.saturating_sub(count_cache_controls(body))
+}
+
+fn count_message_breakpoints(body: &Value) -> usize {
+    let Some(messages) = body.get("messages").and_then(Value::as_array) else {
+        return 0;
+    };
+    messages
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|block| block.get("cache_control").is_some())
+        .count()
+}
+
+/// Trims client breakpoints down to Anthropic limit, dropping the earliest
+/// message breakpoint first and only then the earliest structural one.
+fn trim_cache_controls_to_limit(body: &mut Value, limit: usize) {
+    while count_cache_controls(body) > limit {
+        if !remove_earliest_message_breakpoint(body) && !remove_earliest_structural_breakpoint(body)
+        {
+            return;
+        }
+    }
+}
+
+fn remove_earliest_message_breakpoint(body: &mut Value) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    for message in messages {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for block in content {
+            if block.get("cache_control").is_some() {
+                remove_cache_control(block);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn remove_earliest_structural_breakpoint(body: &mut Value) -> bool {
+    if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+        for tool in tools {
+            if tool.get("cache_control").is_some() {
+                remove_cache_control(tool);
+                return true;
+            }
+        }
+    }
+
+    if let Some(system) = body.get_mut("system").and_then(Value::as_array_mut) {
+        for block in system {
+            if block.get("cache_control").is_some() {
+                remove_cache_control(block);
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn normalize_message_contents(body: &mut Value) {
@@ -36,46 +112,34 @@ fn normalize_message_contents(body: &mut Value) {
     }
 }
 
-fn clear_cache_controls(body: &mut Value) {
-    if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
-        for tool in tools {
-            remove_cache_control(tool);
-        }
-    }
-
-    if let Some(system) = body.get_mut("system").and_then(Value::as_array_mut) {
-        for block in system {
-            remove_cache_control(block);
-        }
-    }
-
-    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
-        for message in messages {
-            if let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) {
-                for block in content {
-                    remove_cache_control(block);
-                }
-            }
-        }
-    }
-}
-
 fn remove_cache_control(value: &mut Value) {
     if let Some(object) = value.as_object_mut() {
         object.remove("cache_control");
     }
 }
 
-fn ensure_structural_cache_controls(body: &mut Value) -> usize {
-    let mut count = 0;
+/// Injects the tools/system anchors the client did not provide and returns the
+/// breakpoint budget left for message anchors. The budget is never exceeded:
+/// Anthropic rejects more than four breakpoints per request.
+fn ensure_structural_cache_controls(body: &mut Value, budget: usize) -> usize {
+    let mut remaining = budget;
 
     if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
-        if let Some(last_tool) = tools.last_mut() {
-            inject_block(last_tool);
-            count += 1;
+        if remaining > 0 && !tools.iter().any(|tool| tool.get("cache_control").is_some()) {
+            if let Some(last_tool) = tools.last_mut() {
+                if inject_block(last_tool) {
+                    remaining -= 1;
+                }
+            }
         }
     }
 
+    if remaining == 0 {
+        return remaining;
+    }
+
+    // A string system prompt must become a block array before an anchor can be
+    // attached to its last block.
     if body.get("system").and_then(Value::as_str).is_some() {
         let text = body["system"].as_str().unwrap_or_default().to_string();
         if !text.is_empty() {
@@ -84,13 +148,19 @@ fn ensure_structural_cache_controls(body: &mut Value) -> usize {
     }
 
     if let Some(system) = body.get_mut("system").and_then(Value::as_array_mut) {
-        if let Some(last_block) = system.last_mut() {
-            inject_block(last_block);
-            count += 1;
+        if !system
+            .iter()
+            .any(|block| block.get("cache_control").is_some())
+        {
+            if let Some(last_block) = system.last_mut() {
+                if inject_block(last_block) {
+                    remaining -= 1;
+                }
+            }
         }
     }
 
-    count
+    remaining
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,14 +268,14 @@ fn is_cacheable_message_block(block: &Value) -> bool {
     }
 }
 
-fn inject_block(block: &mut Value) {
+fn inject_block(block: &mut Value) -> bool {
     let Some(object) = block.as_object_mut() else {
-        return;
+        return false;
     };
     object.insert("cache_control".to_string(), json!({ "type": "ephemeral" }));
+    true
 }
 
-#[cfg(test)]
 fn count_cache_controls(value: &Value) -> usize {
     let mut count = 0;
     if let Some(tools) = value.get("tools").and_then(Value::as_array) {
@@ -383,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_mode_rebuilds_four_planned_breakpoints() {
+    fn preserves_client_structural_breakpoints_and_fills_message_anchors() {
         let mut body = json!({
             "tools": [
                 stale_cached_tool(),
@@ -401,13 +471,117 @@ mod tests {
 
         assert!(inject_cache_control(&mut body));
 
+        // Client anchors stay where they were; the planner only adds the
+        // missing message anchors within the remaining budget.
         assert_cache_control_count(&body, 4);
-        assert!(!tool_has_cache_control(&body, 0));
-        assert!(tool_has_cache_control(&body, 1));
-        assert!(!system_has_cache_control(&body, 0));
-        assert!(system_has_cache_control(&body, 1));
+        assert!(tool_has_cache_control(&body, 0));
+        assert!(!tool_has_cache_control(&body, 1));
+        assert!(system_has_cache_control(&body, 0));
+        assert!(!system_has_cache_control(&body, 1));
         assert!(message_block_has_cache_control(&body, 0, 4));
         assert!(message_block_has_cache_control(&body, 0, 24));
+    }
+
+    #[test]
+    fn keeps_client_message_breakpoints_without_replanning() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role":"user",
+                    "content": [{"type":"text","text":"first","cache_control":{"type":"ephemeral"}}]
+                },
+                {
+                    "role":"user",
+                    "content": text_blocks(25)
+                }
+            ]
+        });
+
+        // Nothing to do: the client already planned message breakpoints, so no
+        // distance-from-end anchor is added (AxonHub 7444f537) and the body
+        // stays byte-identical upstream.
+        assert!(!inject_cache_control(&mut body));
+        assert_cache_control_count(&body, 1);
+        assert!(message_block_has_cache_control(&body, 0, 0));
+        for block_index in 0..25 {
+            assert!(!message_block_has_cache_control(&body, 1, block_index));
+        }
+    }
+
+    #[test]
+    fn keeps_structural_anchors_within_breakpoint_limit() {
+        let mut body = json!({
+            "tools": [tool("unmarked")],
+            "system": [{"type":"text","text":"unmarked system"}],
+            "messages": [{
+                "role":"user",
+                "content": [
+                    {"type":"text","text":"client-1","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"client-2","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"client-3","cache_control":{"type":"ephemeral"}}
+                ]
+            }]
+        });
+
+        assert!(inject_cache_control(&mut body));
+
+        // Three client breakpoints leave a single free slot: tools is filled
+        // first and the unmarked system block stays unmarked instead of
+        // pushing the request over Anthropic's four-breakpoint limit.
+        assert_cache_control_count(&body, 4);
+        assert!(tool_has_cache_control(&body, 0));
+        assert!(!system_has_cache_control(&body, 0));
+        assert!(message_block_has_cache_control(&body, 0, 0));
+        assert!(message_block_has_cache_control(&body, 0, 1));
+        assert!(message_block_has_cache_control(&body, 0, 2));
+    }
+
+    #[test]
+    fn keeps_string_system_untouched_when_budget_is_spent() {
+        let mut body = json!({
+            "system": "You are helpful",
+            "messages": [{
+                "role":"user",
+                "content": [
+                    {"type":"text","text":"client-1","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"client-2","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"client-3","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"client-4","cache_control":{"type":"ephemeral"}}
+                ]
+            }]
+        });
+
+        // The client already spent the whole budget, so normalizing the string
+        // system prompt would only churn the upstream bytes.
+        assert!(!inject_cache_control(&mut body));
+        assert_eq!(body["system"], json!("You are helpful"));
+        assert_cache_control_count(&body, 4);
+    }
+    #[test]
+    fn trims_excess_client_breakpoints_deterministically() {
+        let mut body = json!({
+            "tools": [stale_cached_tool()],
+            "system": [stale_cached_system_block("kept")],
+            "messages": [{
+                "role":"user",
+                "content": [
+                    {"type":"text","text":"dropped","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"kept-1","cache_control":{"type":"ephemeral"}},
+                    {"type":"text","text":"kept-2","cache_control":{"type":"ephemeral"}}
+                ]
+            }]
+        });
+
+        assert!(inject_cache_control(&mut body));
+
+        // Anthropic allows four breakpoints: the earliest message breakpoint is
+        // dropped first, structural anchors and later message anchors survive.
+        assert_cache_control_count(&body, 4);
+        assert!(tool_has_cache_control(&body, 0));
+        assert!(system_has_cache_control(&body, 0));
+        assert!(!message_block_has_cache_control(&body, 0, 0));
+        assert!(message_block_has_cache_control(&body, 0, 1));
+        assert!(message_block_has_cache_control(&body, 0, 2));
     }
 
     #[test]

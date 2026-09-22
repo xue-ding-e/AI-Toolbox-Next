@@ -6926,6 +6926,9 @@ fn apply_codex_official_responses_body_compat(object: &mut serde_json::Map<Strin
     object.remove("max_tokens");
     object.remove("max_completion_tokens");
     object.remove("metadata");
+    // The ChatGPT Codex backend rejects `user` with a 400 Bad Request
+    // (AxonHub 147e6791); Chat-source clients may still set it.
+    object.remove("user");
 
     let include_value = object
         .entry("include".to_string())
@@ -15879,6 +15882,7 @@ data: {data}\r\n\r\n"
             "max_tokens":2048,
             "max_completion_tokens":4096,
             "metadata":{"session_id":"session-a"},
+            "user":"user-123",
             "include":["file_search_call.results"],
             "reasoning":{"effort":"high"}
         });
@@ -15897,6 +15901,8 @@ data: {data}\r\n\r\n"
         assert!(value.get("max_tokens").is_none());
         assert!(value.get("max_completion_tokens").is_none());
         assert!(value.get("metadata").is_none());
+        // The ChatGPT Codex backend rejects `user` with a 400 (AxonHub 147e6791).
+        assert!(value.get("user").is_none());
         assert_eq!(
             value["include"],
             json!(["file_search_call.results", "reasoning.encrypted_content"])

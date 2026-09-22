@@ -1132,6 +1132,19 @@ fn gemini_tool_config(choice: Option<ToolChoice>) -> Option<Value> {
                 }
             }
         })),
+        // Gemini has no subset-aware tool choice; keep the caller's mode and
+        // drop the permitted subset (AxonHub d5237439). A subset without a
+        // mode behaves like a type-only choice: ANY without pinned names.
+        Some(ToolChoice::AllowedTools(allowed)) => Some(json!({
+            "functionCallingConfig": {
+                "mode": match allowed.mode.as_deref() {
+                    Some("none") => "NONE",
+                    Some("required") | Some("any") => "ANY",
+                    Some("auto") => "AUTO",
+                    _ => "ANY",
+                }
+            }
+        })),
         // A type-only tool choice (e.g. "image_generation") has no function
         // name to constrain; emit ANY so Gemini still requires a tool call
         // without pinning to an empty/invalid function name.

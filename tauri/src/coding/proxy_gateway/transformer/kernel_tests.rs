@@ -1874,6 +1874,80 @@ fn anthropic_string_tool_choice_any_maps_to_openai_required() {
 }
 
 #[test]
+fn allowed_tools_tool_choice_keeps_subset_across_openai_routes() {
+    // The model may only call the caller's permitted subset; dropping it (or
+    // emitting an empty function name) would silently lift the restriction.
+    let responses = json!({
+        "model": "gpt-5",
+        "input": "hi",
+        "tool_choice": {
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [
+                {"type": "function", "name": "tool_a"},
+                {"type": "mcp", "server_label": "local"}
+            ]
+        },
+        "tools": [{
+            "type": "function",
+            "name": "tool_a",
+            "parameters": {"type": "object"}
+        }]
+    });
+
+    let chat = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+        responses.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        chat["tool_choice"],
+        json!({
+            "type": "allowed_tools",
+            "allowed_tools": {
+                "mode": "required",
+                "tools": [
+                    {"type": "function", "function": {"name": "tool_a"}},
+                    {"type": "mcp", "server_label": "local"}
+                ]
+            }
+        })
+    );
+
+    let responses_again = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+        chat,
+    )
+    .unwrap();
+    assert_eq!(
+        responses_again["tool_choice"],
+        json!({
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [
+                {"type": "function", "name": "tool_a"},
+                {"type": "mcp", "server_label": "local"}
+            ]
+        })
+    );
+
+    // Anthropic/Gemini cannot express the subset, so only the mode survives.
+    let anthropic = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+        responses.clone(),
+    )
+    .unwrap();
+    assert_eq!(anthropic["tool_choice"], json!({"type": "any"}));
+
+    let gemini = convert_request_value(
+        ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+        responses,
+    )
+    .unwrap();
+    assert_eq!(gemini["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+}
+
+#[test]
 fn anthropic_tools_without_strict_omit_strict_for_openai_targets() {
     let source = json!({
         "model": "gpt-5",
