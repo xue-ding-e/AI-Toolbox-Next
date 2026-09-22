@@ -1360,14 +1360,16 @@
       "updateComplete": "更新完成",
       "updateCompleteRestart": "应用将自动重启以完成更新",
       "updateFailed": "更新失败",
-      "updateFailedMessage": "自动更新失败，请前往 GitHub Actions 下载最新版本",
-      "goToGitHubActions": "前往 GitHub Actions",
+      "updateFailedMessage": "自动更新失败，请前往下载页获取最新版本",
       "downloadingUpdate": "正在下载并安装更新...",
       "downloadingComplete": "下载完成，正在安装...",
       "installingUpdate": "正在安装更新...",
       "viewReleaseNotes": "查看更新内容",
       "autoCheckUpdate": "自动检查更新",
-      "scoopUpdateHint": "发现新版本 {{version}}。当前应用通过 Scoop 安装，请使用 `scoop update ai-toolbox` 升级"
+      "scoopUpdateHint": "发现新版本 {{version}}。当前应用通过 Scoop 安装，请使用 `scoop update ai-toolbox` 升级",
+      "debUpdateHint": "发现新版本 {{version}}。当前应用由 deb 包安装，无法在应用内升级，请下载新的 .deb 重新安装，或改用 AppImage 版本",
+      "updateFailedReason": "失败原因",
+      "openDownloadPage": "打开下载页"
     },
     "dataDir": {
       "title": "数据目录",
@@ -6080,7 +6082,9 @@
     "retry": "重试",
     "newVersionAvailable": "发现新版本 {{version}}，点击下方按钮进行升级。",
     "checkFailed": "检查更新失败，请重试或前往下载页。",
-    "scoopUpdateHint": "发现新版本 {{version}}。当前应用通过 Scoop 安装，请使用 `scoop update ai-toolbox` 升级后重启应用"
+    "scoopUpdateHint": "发现新版本 {{version}}。当前应用通过 Scoop 安装，请使用 `scoop update ai-toolbox` 升级后重启应用",
+    "debUpdateHint": "发现新版本 {{version}}。当前应用由 deb 包安装，无法在应用内升级，请下载新的 .deb 重新安装，或改用 AppImage 版本后重启应用",
+    "updateFailedReason": "失败原因"
   },
   "providerModelRewrites": {
     "title": "模型改写",

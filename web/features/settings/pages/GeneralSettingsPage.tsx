@@ -63,13 +63,14 @@ import {
   openGitHubPage,
   openExternalUrl,
   installUpdate,
+  LATEST_RELEASE_URL,
   testProxyConnection,
   type UpdateInfo,
   type AppDataDirInfo,
   getAppDataDirInfo,
   setAppDataDirOverride,
-  GITHUB_REPO,
 } from '@/services';
+import { formatUpdateFailureReason } from '@/utils/updateFailureReason';
 import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
 import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
@@ -359,6 +360,8 @@ const GeneralSettingsPage: React.FC = () => {
       if (!silent) {
         if (info.hasUpdate && info.scoopInstall) {
           message.info(t('settings.about.scoopUpdateHint', { version: info.latestVersion }));
+        } else if (info.hasUpdate && info.debInstall) {
+          message.info(t('settings.about.debUpdateHint', { version: info.latestVersion }));
         } else if (info.hasUpdate) {
           message.info(t('settings.about.updateAvailable', { version: info.latestVersion }));
         } else {
@@ -410,16 +413,23 @@ const GeneralSettingsPage: React.FC = () => {
         console.error('Failed to install update:', error);
         setUpdateModalOpen(false);
 
-        // 下载失败，提示去 GitHub Actions 下载
-        const githubActionsUrl = `https://github.com/${GITHUB_REPO}/actions`;
+        // 安装失败：给出后端的具体原因，并指向下载页而不是 GitHub Actions
+        const reason = formatUpdateFailureReason(error);
         Modal.error({
           title: t('settings.about.updateFailed'),
           content: (
             <div>
               <p>{t('settings.about.updateFailedMessage')}</p>
-              <p style={{ marginTop: 8 }}>
-                <Typography.Link onClick={() => openExternalUrl(githubActionsUrl)}>
-                  {t('settings.about.goToGitHubActions')}
+              {reason && (
+                <p style={{ marginTop: 8, marginBottom: 0, wordBreak: 'break-word' }}>
+                  <Text type="secondary">
+                    {t('settings.about.updateFailedReason')}: {reason}
+                  </Text>
+                </p>
+              )}
+              <p style={{ marginTop: 8, marginBottom: 0 }}>
+                <Typography.Link onClick={() => openExternalUrl(updateInfo.releaseUrl)}>
+                  {t('settings.about.openDownloadPage')}
                 </Typography.Link>
               </p>
             </div>
@@ -434,6 +444,14 @@ const GeneralSettingsPage: React.FC = () => {
       } catch (error) {
         console.error('Failed to open release page:', error);
       }
+    }
+  };
+
+  const handleOpenReleasePage = async () => {
+    try {
+      await openExternalUrl(updateInfo?.releaseUrl || LATEST_RELEASE_URL);
+    } catch (error) {
+      console.error('Failed to open release page:', error);
     }
   };
 
@@ -1099,7 +1117,7 @@ const GeneralSettingsPage: React.FC = () => {
                 >
                   {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
                 </Button>
-                {updateInfo?.hasUpdate && !updateInfo.scoopInstall && (
+                {updateInfo?.hasUpdate && !updateInfo.scoopInstall && !updateInfo.debInstall && (
                   <Button type="primary" onClick={handleGoToDownload}>
                     {t('settings.about.goToDownload')} (v{updateInfo.latestVersion})
                   </Button>
@@ -1107,6 +1125,14 @@ const GeneralSettingsPage: React.FC = () => {
                 {updateInfo?.hasUpdate && updateInfo.scoopInstall && (
                   <Typography.Text type="warning">
                     {t('settings.about.scoopUpdateHint', { version: updateInfo.latestVersion })}
+                  </Typography.Text>
+                )}
+                {updateInfo?.hasUpdate && updateInfo.debInstall && (
+                  <Typography.Text type="warning">
+                    {t('settings.about.debUpdateHint', { version: updateInfo.latestVersion })}{' '}
+                    <Typography.Link onClick={handleOpenReleasePage}>
+                      {t('settings.about.openDownloadPage')}
+                    </Typography.Link>
                   </Typography.Text>
                 )}
                 <Button icon={<GithubOutlined />} onClick={handleOpenGitHub}>

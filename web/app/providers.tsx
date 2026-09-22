@@ -20,10 +20,10 @@ import {
   loadCachedGatewayProviderProfiles,
   fetchRemoteGatewayProviderProfiles,
   fetchRemoteModelPricing,
-  GITHUB_REPO,
   type UpdateInfo,
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
+import { formatUpdateFailureReason } from '@/utils/updateFailureReason';
 import i18n from '@/i18n';
 
 interface ProvidersProps {
@@ -125,15 +125,24 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
         console.error('Failed to install update:', error);
         setUpdateModalOpen(false);
 
-        const githubActionsUrl = `https://github.com/${GITHUB_REPO}/actions`;
+        // Install failed: show the backend's reason instead of swallowing it,
+        // and point at the release page rather than the Actions tab.
+        const reason = formatUpdateFailureReason(error);
         Modal.error({
           title: i18n.t('settings.about.updateFailed'),
           content: (
             <div>
               <p>{i18n.t('settings.about.updateFailedMessage')}</p>
-              <p style={{ marginTop: 8 }}>
-                <Typography.Link onClick={() => openExternalUrl(githubActionsUrl)}>
-                  {i18n.t('settings.about.goToGitHubActions')}
+              {reason && (
+                <p style={{ marginTop: 8, marginBottom: 0, wordBreak: 'break-word' }}>
+                  <Typography.Text type="secondary">
+                    {i18n.t('settings.about.updateFailedReason')}: {reason}
+                  </Typography.Text>
+                </p>
+              )}
+              <p style={{ marginTop: 8, marginBottom: 0 }}>
+                <Typography.Link onClick={() => openExternalUrl(info.releaseUrl)}>
+                  {i18n.t('settings.about.openDownloadPage')}
                 </Typography.Link>
               </p>
             </div>
@@ -170,7 +179,9 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
             message: i18n.t('settings.about.newVersion'),
             description: info.scoopInstall
               ? i18n.t('settings.about.scoopUpdateHint', { version: info.latestVersion })
-              : i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
+              : info.debInstall
+                ? i18n.t('settings.about.debUpdateHint', { version: info.latestVersion })
+                : i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
             btn: (
               <Space>
                 <Button
@@ -182,7 +193,7 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
                 >
                   {i18n.t('settings.about.viewReleaseNotes')}
                 </Button>
-                {!info.scoopInstall && (
+                {!info.scoopInstall && !info.debInstall && (
                   <Button type="primary" size="small" onClick={() => handleInstallUpdate(info)}>
                     {i18n.t('settings.about.goToDownload')}
                   </Button>

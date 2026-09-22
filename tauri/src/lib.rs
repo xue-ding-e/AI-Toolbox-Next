@@ -209,9 +209,15 @@ fn init_logging() -> Option<std::path::PathBuf> {
         }
     };
 
+    // `add_filter_allow_str` keeps only records whose target starts with one of
+    // the listed prefixes. `tauri_plugin_updater` is allowed on purpose: the
+    // updater is the one subsystem users can only diagnose through logs, and its
+    // install failures (invalid payload, temp-dir/mount-point mismatch, elevation
+    // refused) are otherwise unreachable — the UI has no room for them.
     let file_config = ConfigBuilder::new()
         .set_max_level(LevelFilter::Warn)
         .add_filter_allow_str("ai_toolbox")
+        .add_filter_allow_str("tauri_plugin_updater")
         .build();
 
     if CombinedLogger::init(vec![WriteLogger::new(LevelFilter::Info, file_config, file)]).is_err() {

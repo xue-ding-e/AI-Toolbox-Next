@@ -13,6 +13,7 @@ import {
   LATEST_RELEASE_URL,
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
+import { formatUpdateFailureReason } from '@/utils/updateFailureReason';
 import UpdateProgressModal from '@/components/common/UpdateProgressModal';
 
 const { Title, Paragraph } = Typography;
@@ -126,6 +127,8 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
   >('checking');
   const [latestVersion, setLatestVersion] = React.useState<string>('');
   const [scoopManaged, setScoopManaged] = React.useState(false);
+  const [debManaged, setDebManaged] = React.useState(false);
+  const [installError, setInstallError] = React.useState('');
 
   const runCheck = React.useCallback(async () => {
     setPhase('checking');
@@ -135,10 +138,11 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
         setLatestVersion(info.latestVersion);
         setPhase('ready');
       } else {
-        // A Scoop-managed install reports hasUpdate but no installer payload
-        // (dropped by the backend); surface a Scoop-specific hint instead of
-        // the misleading "already latest" message.
+        // Package-managed installs (Scoop / deb) report hasUpdate but no
+        // installer payload (dropped by the backend); surface a package-specific
+        // hint instead of the misleading "already latest" message.
         setScoopManaged(Boolean(info.hasUpdate && info.scoopInstall));
+        setDebManaged(Boolean(info.hasUpdate && info.debInstall));
         setPhase('noUpdate');
       }
     } catch (error) {
@@ -174,6 +178,7 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
     } catch (error) {
       console.error('Recovery auto-update failed:', error);
       setModalOpen(false);
+      setInstallError(formatUpdateFailureReason(error));
       setPhase('installFailed');
     }
   }, []);
@@ -215,12 +220,14 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
 
       {phase === 'noUpdate' && (
         <Paragraph
-          type={scoopManaged ? 'warning' : 'secondary'}
+          type={scoopManaged || debManaged ? 'warning' : 'secondary'}
           style={{ textAlign: 'center', marginBottom: 0 }}
         >
           {scoopManaged
             ? i18n.t('recovery.scoopUpdateHint', { version: latestVersion })
-            : i18n.t('recovery.alreadyLatest')}
+            : debManaged
+              ? i18n.t('recovery.debUpdateHint', { version: latestVersion })
+              : i18n.t('recovery.alreadyLatest')}
         </Paragraph>
       )}
 
@@ -233,6 +240,11 @@ const RecoveryUpdateScreen: React.FC<{ errorMessage: string }> = ({ errorMessage
       {phase === 'installFailed' && (
         <Paragraph type="danger" style={{ textAlign: 'center', marginBottom: 0 }}>
           {i18n.t('recovery.updateFailedMessage')}
+          {installError && (
+            <span style={{ display: 'block', marginTop: 8, wordBreak: 'break-word' }}>
+              {i18n.t('recovery.updateFailedReason')}: {installError}
+            </span>
+          )}
         </Paragraph>
       )}
 

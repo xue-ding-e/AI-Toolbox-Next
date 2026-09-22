@@ -1360,14 +1360,16 @@
       "updateComplete": "Update complete",
       "updateCompleteRestart": "The app will restart automatically to complete the update",
       "updateFailed": "Update failed",
-      "updateFailedMessage": "Auto-update failed, please go to GitHub Actions to download the latest version",
-      "goToGitHubActions": "Go to GitHub Actions",
+      "updateFailedMessage": "Auto-update failed. Please get the latest version from the download page.",
       "downloadingUpdate": "Downloading and installing update...",
       "downloadingComplete": "Download complete, installing...",
       "installingUpdate": "Installing update...",
       "viewReleaseNotes": "View Release Notes",
       "autoCheckUpdate": "Auto check for updates",
-      "scoopUpdateHint": "New version {{version}} found. This app is installed via Scoop; run `scoop update ai-toolbox` to upgrade."
+      "scoopUpdateHint": "New version {{version}} found. This app is installed via Scoop; run `scoop update ai-toolbox` to upgrade.",
+      "debUpdateHint": "New version {{version}} is available. This app was installed from a .deb package and cannot self-update; reinstall the new .deb or switch to the AppImage build.",
+      "updateFailedReason": "Reason",
+      "openDownloadPage": "Open download page"
     },
     "dataDir": {
       "title": "Data Directory",
@@ -6083,7 +6085,9 @@
     "retry": "Retry",
     "newVersionAvailable": "New version {{version}} available. Click below to upgrade.",
     "checkFailed": "Update check failed. Please retry or open the download page.",
-    "scoopUpdateHint": "New version {{version}} available. This app is installed via Scoop; run `scoop update ai-toolbox` and restart the app."
+    "scoopUpdateHint": "New version {{version}} available. This app is installed via Scoop; run `scoop update ai-toolbox` and restart the app.",
+    "debUpdateHint": "New version {{version}} is available. This app was installed from a .deb package and cannot self-update; reinstall the new .deb or switch to the AppImage build, then restart the app.",
+    "updateFailedReason": "Reason"
   },
   "providerModelRewrites": {
     "title": "Model rewrites",

@@ -37,6 +37,10 @@ pub struct UpdateCheckResult {
     /// installer payload is dropped (see `check_for_updates`) and the user
     /// must upgrade via `scoop update ai-toolbox`.
     pub scoop_install: bool,
+    /// Whether the running app was installed from the release `.deb`. When true
+    /// the in-app installer payload is dropped (see `check_for_updates`) and the
+    /// user must reinstall the package or switch to the AppImage build.
+    pub deb_install: bool,
 }
 
 /// Check for updates from GitHub releases.
@@ -99,12 +103,18 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResul
         .filter(|s| !s.is_empty());
 
     let scoop_install = is_scoop_install();
+    let deb_install = is_deb_install_async().await;
 
-    // A Scoop-managed install lives under `<scoop>\apps\...`; running the
-    // in-app NSIS updater would create a second copy outside Scoop's control
-    // while the Scoop-managed copy stays stale. Drop the installer payload so
-    // every frontend path degrades to opening the release page instead.
-    if scoop_install {
+    // Package-managed installs cannot be replaced by the in-app updater:
+    // - Scoop lives under `<scoop>\apps\...`; running the in-app NSIS updater
+    //   would create a second copy outside Scoop's control while the
+    //   Scoop-managed copy stays stale.
+    // - A dpkg install lives at `/usr/bin/...`, which makes
+    //   `tauri-plugin-updater` take its deb branch and reject the AppImage
+    //   bytes that `latest.json` publishes under `linux-x86_64`.
+    // Drop the installer payload so every frontend path degrades to opening
+    // the release page instead.
+    if scoop_install || deb_install {
         signature = None;
         url = None;
     }
@@ -121,6 +131,7 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateCheckResul
         signature,
         url,
         scoop_install,
+        deb_install,
     })
 }
 
@@ -164,6 +175,58 @@ fn is_scoop_install_path(exe_path: &str, roots: &[String]) -> bool {
             .iter()
             .filter(|root| !root.trim().is_empty())
             .any(|root| normalized_exe.starts_with(&format!("{}\\apps\\", normalize(root))))
+}
+
+/// Whether the running executable is managed by the system package manager
+/// (`dpkg`), i.e. the app was installed from the release `.deb`.
+///
+/// `tauri-plugin-updater` picks the install strategy from the *running binary*,
+/// not from the payload: an executable under `/usr/...` that `dpkg -S` claims
+/// selects its `install_deb` branch, and that branch rejects the AppImage bytes
+/// published under `linux-x86_64` with `InvalidUpdaterFormat`. Publishing a deb
+/// payload instead would not fix it either — `install_deb` needs `pkexec`,
+/// `zenity` / `kdialog`, or an interactive terminal `sudo` for elevation, none
+/// of which exist in a plain GUI session (and none at all inside WSL). So a deb
+/// install can never self-update; report it and let the user reinstall the
+/// package or switch to the AppImage build.
+#[allow(unreachable_code)]
+pub fn is_deb_install() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(exe_path) = std::env::current_exe() else {
+            return false;
+        };
+        let exe_path = exe_path.to_string_lossy().into_owned();
+        if !is_deb_install_path(&exe_path) {
+            return false;
+        }
+        // Only trust `/usr/...` when the package database actually claims the
+        // file, so an AppImage dropped into `/usr/local` by hand still keeps the
+        // in-app updater.
+        return std::process::Command::new("dpkg")
+            .args(["-S", exe_path.as_str()])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+    }
+
+    false
+}
+
+/// Pure path check for dpkg-managed executables: the deb bundle always installs
+/// the binary to `/usr/bin/<name>`.
+#[cfg(any(target_os = "linux", test))]
+fn is_deb_install_path(exe_path: &str) -> bool {
+    exe_path.starts_with("/usr/")
+}
+
+/// `is_deb_install` shells out to `dpkg`, which can block for a long time behind
+/// a package-manager lock; keep it off the async runtime (see "Async Runtime
+/// Safety" in `AGENTS.md`).
+async fn is_deb_install_async() -> bool {
+    tauri::async_runtime::spawn_blocking(is_deb_install)
+        .await
+        .unwrap_or(false)
 }
 
 /// Detect current platform string for matching latest.json
@@ -293,6 +356,11 @@ async fn run_updater_download(app: &tauri::AppHandle) -> Result<bool, String> {
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to install update: {}", e);
+                    // `tauri-plugin-updater`'s own records are filtered out of the
+                    // app log file (see `setup_logging`), so keep the reason on a
+                    // target the file accepts. Without this a failed auto-update
+                    // leaves no trace anywhere the user can retrieve.
+                    log::warn!("{}", error_msg);
                     eprintln!("{}", error_msg);
                     Err(error_msg)
                 }
@@ -314,6 +382,11 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
     if is_scoop_install() {
         return Err(
             "Scoop-managed installations must be updated with scoop update ai-toolbox".to_string(),
+        );
+    }
+    if is_deb_install_async().await {
+        return Err(
+            "deb-managed installations must be updated by reinstalling the .deb package or by switching to the AppImage build".to_string(),
         );
     }
     // Snapshot proxy-related env vars so we can always restore them, regardless
@@ -401,7 +474,7 @@ fn compare_versions(v1: &str, v2: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::is_scoop_install_path;
+    use super::{is_deb_install_path, is_scoop_install_path};
 
     #[test]
     fn detects_per_user_scoop_install() {
@@ -437,6 +510,30 @@ mod tests {
         assert!(!is_scoop_install_path(
             "C:\\Users\\foo\\scoopless\\apps\\ai-toolbox\\ai-toolbox.exe",
             &[],
+        ));
+    }
+
+    #[test]
+    fn detects_deb_install_paths() {
+        // The deb bundle installs the binary to `/usr/bin/<name>`.
+        assert!(is_deb_install_path("/usr/bin/ai-toolbox"));
+        assert!(is_deb_install_path("/usr/lib/AI Toolbox/ai-toolbox"));
+    }
+
+    #[test]
+    fn rejects_non_deb_install_paths() {
+        // An AppImage anywhere outside `/usr` keeps the in-app updater.
+        assert!(!is_deb_install_path(
+            "/home/foo/Downloads/AI.Toolbox_1.1.7_amd64.AppImage"
+        ));
+        assert!(!is_deb_install_path(
+            "/mnt/c/Users/foo/Downloads/AI.Toolbox_1.1.7_amd64.AppImage"
+        ));
+        // `/usrx` must not match the `/usr/` prefix.
+        assert!(!is_deb_install_path("/usrx/bin/ai-toolbox"));
+        // Windows paths never match.
+        assert!(!is_deb_install_path(
+            "C:\\Program Files\\AI Toolbox\\ai-toolbox.exe"
         ));
     }
 

@@ -385,6 +385,8 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 #### Package-Managed Updates
 
 - Scoop 安装识别必须同时支持默认 `scoop/apps` 布局和 `SCOOP` / `SCOOP_GLOBAL` 自定义根目录，按路径分隔边界匹配；此类安装既不下发内置安装器 payload，也不得通过 `install_update` 绕过检查执行 NSIS 升级。
+- Linux 上 `dpkg` 托管的安装（`/usr/...` 且 `dpkg -S` 命中，即 `.deb` 安装）同样不下发内置安装器 payload，`install_update` 也必须拒绝（前端退回"打开下载页"）。这是结构性约束，不是保守策略：`latest.json` 的 `linux-x86_64` 只有 AppImage 一种 payload（`tauri-plugin-updater` 没有 deb 专用 target key），而插件按**运行中的可执行文件**而不是 payload 选择安装策略——`/usr` 下被 dpkg 托管的二进制会走它的 `install_deb` 分支，然后用 `InvalidUpdaterFormat` 拒掉这个 AppImage。即使另外发布 deb payload 也救不回来：`install_deb` 依赖 `pkexec` / `zenity` / `kdialog` 或交互式终端 `sudo` 提权，纯 GUI 会话（WSL 尤其）一个都没有。给 deb 用户的可行动作只有"重装新 .deb"或"改用 AppImage"。
+- 自动更新失败的原因必须能被用户取回。`install_update` 的失败串要交给 `log`（target 归属 `ai_toolbox*`）并透传到 UI 弹窗；`setup_logging` 里 `WriteLogger` 的 `add_filter_allow_str("tauri_plugin_updater")` 是刻意的 allowlist 条目，改动日志配置时不要删掉它，否则插件侧的安装失败在日志文件里同样不可见，更新问题又会退化成只有一句"自动更新失败"的 issue（#383）。
 
 #### HTTP / TLS Compatibility
 

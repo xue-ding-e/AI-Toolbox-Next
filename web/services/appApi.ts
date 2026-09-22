@@ -30,6 +30,8 @@ export interface UpdateInfo {
   url?: string;
   /** The app is Scoop-managed; the in-app updater is unavailable. */
   scoopInstall: boolean;
+  /** The app came from the release `.deb`; the in-app updater is unavailable. */
+  debInstall: boolean;
 }
 
 interface UpdateCheckResult {
@@ -41,6 +43,7 @@ interface UpdateCheckResult {
   signature?: string;
   url?: string;
   scoop_install?: boolean;
+  deb_install?: boolean;
 }
 
 /**
@@ -65,6 +68,7 @@ export const checkForUpdates = async (): Promise<UpdateInfo> => {
     signature: result.signature,
     url: result.url,
     scoopInstall: result.scoop_install ?? false,
+    debInstall: result.deb_install ?? false,
   };
 };
 
