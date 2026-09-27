@@ -42,7 +42,14 @@ use crate::http_client;
 use chrono::Local;
 use tauri::{Emitter, Runtime};
 
-const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 2] = ["mcp_servers", "plugins"];
+/// Runtime-owned `config.toml` sections AI Toolbox never manages.
+///
+/// `projects` is Codex's own trust map (`[projects."<dir>"] trust_level`): it is
+/// written by Codex, read by Codex, and cleanup of the project-less chat entries
+/// in it is a separate, explicitly requested operation
+/// (`coding::codex::scratch_workspace`). A provider or common-config rewrite must
+/// never drop or re-project it.
+const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "plugins", "projects"];
 const PROTECTED_FEATURE_TOML_KEYS: [&str; 1] = ["plugins"];
 const CODEX_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No config files found";
 const CODEX_MODEL_CATALOG_URLS: [&str; 2] = [
@@ -8275,6 +8282,53 @@ name = "new-provider"
             Some(true)
         );
         assert_eq!(doc["mcp_servers"]["test"]["command"].as_str(), Some("uvx"));
+    }
+
+    /// `[projects]` is Codex's trust map: a rewrite may neither drop the user's
+    /// entries nor project a new one (issue #400 cleans them on request instead).
+    #[test]
+    fn build_written_codex_config_toml_keeps_project_trust_entries() {
+        let existing = r#"
+[projects.'c:\users\me\documents\codex\2026-08-31\new-chat']
+trust_level = "trusted"
+
+[model_providers.old]
+name = "old-provider"
+"#;
+
+        // A managed snapshot that happens to carry the table (e.g. the user
+        // pasted a whole config.toml into the common config) must not let the
+        // diff delete a live trust entry.
+        let previous_managed = r#"
+[projects.'c:\users\me\documents\codex\2026-08-31\new-chat']
+trust_level = "trusted"
+
+[model_providers.old]
+name = "old-provider"
+"#;
+
+        let next_managed = r#"
+model_provider = "custom"
+
+[projects."/tmp/not-ours"]
+trust_level = "trusted"
+
+[model_providers.custom]
+name = "new-provider"
+"#;
+
+        let rendered =
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+                .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert!(doc["model_providers"].get("old").is_none());
+        assert_eq!(
+            doc["projects"][r"c:\users\me\documents\codex\2026-08-31\new-chat"]["trust_level"]
+                .as_str(),
+            Some("trusted")
+        );
+        assert!(doc["projects"].get("/tmp/not-ours").is_none());
     }
 
     #[test]

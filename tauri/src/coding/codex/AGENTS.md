@@ -47,7 +47,7 @@ sequenceDiagram
 - Codex 无可委托的 `plugin marketplace add` CLI（不像 Grok/Claude 委托各自 CLI）。远程市场源（git 仓库 URL / GitHub `owner/repo` 简写 / `marketplace.json` 直链）由后端 `plugin_workspace::add_codex_plugin_workspace_root` 自行处理：git 源克隆到 `<codex_root>/.tmp/plugin-marketplaces/<id>`、JSON 源仅下载 `marketplace.json` 到该目录的 `.agents/plugins/`，再注册为 workspace root。LocalWindows 复用 `coding::skills::git_fetcher::clone_or_pull`（含代理 env + 超时）；WslDirect 走 `wsl -d <distro> --exec env <proxy> git clone` 到 Linux 路径、注册 UNC 等价路径。`marketplace.json` 直链仅下载单文件，插件可列但不可装（`source: { Local }` 相对路径无对应目录）。重复添加同一 URL 命中同一 `<id>` 缓存目录，触发 fetch+reset 刷新而非重建。删除 workspace root 时若路径位于受控缓存目录下，顺手清理克隆/下载的缓存。
 - `extract_codex_common_config_from_current_file` 只能读当前根目录下的 `config.toml`，禁止复用 `read_codex_settings_from_disk`（会先读无关的 `auth.json`）。提取逻辑不需要 auth；WSL UNC / 网络路径上 `Path::exists` / `fs::read_to_string` 可能长时间阻塞，文件 I/O 必须走 `coding::file_io`（`spawn_blocking` + 超时），超时错误文案要带上实际路径。
 - 不要对 `config.toml` 做纯文本拼接。遇到 table 合并必须走结构化 TOML merge。
-- 改写 `config.toml` 时要显式保留 runtime-owned sections，例如 `mcp_servers`、`plugins`。`[features]` 不是整段保护；普通 feature key 可以由 provider/common config 管理，但 `features.plugins` 属于插件页/运行时开关，必须保留当前 live 文件里的值，不能被 provider/common config 覆盖。
+- 改写 `config.toml` 时要显式保留 runtime-owned sections，例如 `mcp_servers`、`plugins`、`projects`。`[features]` 不是整段保护；普通 feature key 可以由 provider/common config 管理，但 `features.plugins` 属于插件页/运行时开关，必须保留当前 live 文件里的值，不能被 provider/common config 覆盖。`projects` 是 Codex 自己的目录信任表（`[projects."<dir>"] trust_level = "trusted"`），写在 `PROTECTED_TOP_LEVEL_TOML_KEYS` 里，provider/common 重写既不能删除用户的条目也不能投影新条目（issue #400 的残留清理是唯一入口，见下）。
 - Codex 插件批量启用/禁用只作用于当前 runtime 下真实已安装插件。全启用会确保 `[features].plugins = true`；全禁用只把各插件 `enabled = false`，不要顺手关闭 plugins feature，否则会把“逐插件状态”和“全局插件功能开关”混成两个不可解释的状态。
 - 改写 `auth.json` 时不要覆盖运行时 OAuth 字段；AI Toolbox 只应管理自己负责的 auth 键。
 - 当 `codex_preserve_official_auth_on_switch=true` 且应用第三方 provider 时，第三方 API key 的运行时投影只能写入当前 `model_provider` 指向的 `[model_providers.<id>].experimental_bearer_token`，不能写顶层 `experimental_bearer_token`，因为 Codex runtime 不读取顶层 bearer token。缺少有效 `model_provider` 或对应 provider 表时应拒绝应用，避免跳过 `auth.json` 后生成无可用第三方凭据的运行态。provider 存储仍以 `settings_config.auth.OPENAI_API_KEY` 为主数据；保存/导入 live config 时要把 provider-scoped `experimental_bearer_token` 回填到 auth 并从存储 TOML 清掉，旧 managed 快照也必须包含这个生成字段，确保关闭开关或切回官方时不会残留。
@@ -88,6 +88,10 @@ sequenceDiagram
 - 所有 memories 相对路径必须通过 scope 校验：拒绝 `..`、绝对路径/盘符/冒号、`.` 开头隐藏组件与 symlink 穿越（对齐 Codex 自身 `resolve_scoped_path` 语义）；盘符与分隔符要显式拒绝，否则非 Windows 平台会把 `C:\x` 当普通文件名放行。文件 I/O 必须在 `spawn_blocking` + 超时内执行，错误文案带实际路径并提示 WSL/网络路径排查方向。
 - `clear_codex_memories` 对齐上游 `clear_memory_roots_contents`：清空 `memories/` 与 `memories_extensions/` 全部内容、保留目录本身、拒绝 symlink root；但刻意保留 `.git/` 等隐藏顶层条目，避免破坏 consolidation 基线导致 Codex 重建整个 workspace 历史。这是与上游 clear（连 `.git` 一起删）的有意偏差。
 - memory 文件读取有 2 MiB 上限；`rollout_summaries/`、`raw_memories.md`、`MEMORY.md`、`memory_summary.md` 是 Codex 内部 DB/consolidation 的重建产物，手动删除后可能被重写——UI 有提示文案，后端不做 DB 级清理（私有 schema，跨版本不稳定）。
+- 无项目对话残留（`codex/scratch_workspace.rs`，issue #400）是 Codex 桌面端的行为：每个「无项目对话」会创建 `<Documents>/Codex/<YYYY-MM-DD>/<slug>` 工作目录，并写入 `[projects."<该目录>"] trust_level = "trusted"`；删除对话时两者都不会被回收。目录模式**不是 CLI 契约**（CLI 只记录 cwd 的信任），仓库内没有上游源码可对齐，`scratch_workspace.rs` 是这条启发式的唯一落点，Codex 改布局时只改这里。识别与删除的护栏缺一不可：结构必须匹配 `.../Documents/Codex/<日期>/<至少一段>`、规范化后必须仍在 `<Documents>/Codex` 锚点内、锚点以下的任何组件是 symlink/junction 一律拒绝、**目标本身及其子树**的任何位置含 `.git` 一律按真实项目拒绝（用户完全可能在脚手架目录里 `git clone`，只查顶层等于放行一个真实项目；同理 `truncated`（超过 `WORKSPACE_WALK_LIMIT` 个文件，无法证明没有仓库）也必须拒绝，删除侧不能只依赖 UI 的 `hasGit`），这是「绝不删真实项目」的底线。空祖先裁剪只删日期目录，`<Documents>/Codex` 本身永不删除。`inspect_workspace` 的 `is_empty` 含义是「这里没有任何产出」——空目录（含 Codex 自己建的 `work/`、`outputs/`）不算内容，所以刚开的对话工作目录默认勾选；而任何文件、以及任何**链接**条目都算内容，且遍历上限按条目数（不只文件数）计，命中即 `truncated`，而 `truncated` 在删除侧等于拒绝。
+- 信任键匹配必须按 Codex 自己的写法：Codex 持久化的是 `project_trust_key`（realpath 规范化，Windows 下小写），而 rollout 记录的是运行时的 `cwd`；因此 `find_trust_keys` 同时试原始与规范化拼写，大小写折叠只按**路径形态**（盘符路径折叠、Linux/WSL 路径保持大小写），不能照抄 `cfg!(windows)` 的做法——Windows 主机的 WSL 配置里存的是区分大小写的 Linux 路径。删除键必须用 `TableLike::iter` 给出的解码键（`Key` 的 `Display` 会重新加引号），删空 `projects` 表时移除整表；返回值是**真正被删掉的键**（并发写者可能已经删过），调用方不得按入参数量统计。
+- 「这个目录还有人在用吗」的反向查询同样要试全部拼写：`path_compare_candidates`（原始 + realpath 规范化 + WSL UNC 还原成 Linux）配 `path_compare_key` 做集合查找。只看调用方手里那一种拼写会漏掉"rollout 记的是软链过的 Documents、扫描列的是真实路径"这类同名不同拼的情况，把仍在用的工作目录判成残留——而这个判定的后果是删目录，所以宁可多试拼写。
+- 改写 `config.toml` 的信任项用 `mcp::yaml_sync::atomic_write_bytes`（同目录临时文件 + rename），并用 `document.to_string()` 原样序列化：**不要**复用 `render_codex_config_document`，它会补写 `#:schema none`，等于替用户关掉编辑器 schema。config.toml 不存在视为幂等成功，解析失败必须返回错误（调用方要把「无法确认」和「没有残留」区分开）。
 
 ## 跨模块依赖
 
@@ -109,6 +113,7 @@ sequenceDiagram
 ## 最小验证
 
 - 至少验证：common/provider 合并后顶层键仍在根级，表结构未错位。
+- 改无项目对话残留逻辑时，跑 `cargo test --lib scratch_workspace`，并核对四条底线：真实项目路径不匹配模式、含 `.git` 的目录被拒绝、symlink 组件被拒绝、`projects` 表被删空后整表移除且文件其余内容（注释、`#:schema`）原样保留。
 - 至少验证：编辑已应用配置后仍会发出 `wsl-sync-request-codex`。
 - 至少验证：prompt 应用会改写当前根目录下的 active prompt 文件。
 - 至少验证：存在非空 `AGENTS.override.md` 时，prompt 读取、应用、删除和 WSL/SSH 动态映射都作用于 `AGENTS.override.md`，且切回 `AGENTS.md` 时远端 stale override 会被清理。

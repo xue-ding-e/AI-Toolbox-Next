@@ -50,6 +50,42 @@ pub async fn read_text_file_with_timeout(path: PathBuf, label: &str) -> Result<S
         .unwrap_or_default())
 }
 
+/// Run a blocking filesystem operation on the blocking pool with a wall-clock
+/// timeout, so a stalled WSL/UNC root fails instead of leaving the UI spinning.
+///
+/// The timeout only bounds the await: the blocking thread may stay busy briefly
+/// afterwards, so callers must not retry in a loop against unreachable paths.
+/// Use a longer `timeout` for operations that legitimately walk a directory tree.
+pub async fn run_blocking_fs_operation<T, F>(
+    timeout: Duration,
+    operation_label: &str,
+    display_path: &str,
+    operation: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let label_owned = operation_label.to_string();
+    let display_path_owned = display_path.to_string();
+
+    match tokio::time::timeout(
+        timeout,
+        tauri::async_runtime::spawn_blocking(operation),
+    )
+    .await
+    {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_error)) => Err(format!(
+            "Failed to {label_owned} ({display_path_owned}): {join_error}"
+        )),
+        Err(_) => Err(format!(
+            "Timed out after {}s while trying to {label_owned} ({display_path_owned}). If this is a WSL or network path, check that the distro/share is running and accessible.",
+            timeout.as_secs(),
+        )),
+    }
+}
+
 /// Run a best-effort filesystem probe on the blocking pool with a wall-clock
 /// timeout. Returns `None` on timeout or join failure. The timeout only bounds
 /// the await; the blocking thread may stay busy briefly afterwards, so callers

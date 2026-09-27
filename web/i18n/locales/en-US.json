@@ -1744,7 +1744,17 @@
       "last7Days": "Last 7 days",
       "last30Days": "Last 30 days",
       "older30Days": "Older than 30 days"
-    }
+    },
+    "codexCleanupWorkspace": "Also delete the Codex-generated workspace {{path}}",
+    "codexCleanupWorkspaces": "Also delete the {{count}} Codex-generated workspaces",
+    "codexCleanupWorkspaceEmpty": "Empty directory, safe to remove",
+    "codexCleanupWorkspaceFiles": "Holds {{fileCount}} files ({{nonEmptyCount}} of the directories are not empty); removal cannot be undone",
+    "codexCleanupTrust": "Also remove the trust entry {{key}}",
+    "codexCleanupTrustEntries": "Also remove {{count}} Codex trust entries",
+    "codexCleanupTrustHint": "Only trust entries written for project-less chats are removed; the trust entry of a real project is kept",
+    "codexCleanupSuccess": "Residue cleaned: {{workspaces}} directories, {{trustKeys}} trust entries",
+    "codexCleanupSkipped": "Session deleted, but {{count}} residue item(s) were left ({{target}}: {{reason}})",
+    "codexCleanupFailed": "Session deleted, but {{count}} residue item(s) failed to clean ({{target}}: {{error}})"
   },
   "notes": {
     "title": "Notes"
@@ -3286,6 +3296,36 @@
         "clearSuccess": "Memories cleared"
       },
       "sourceUnavailableDescription": "The current source is not available on this machine. Switch to an available source."
+    },
+    "scratchResidue": {
+      "menu": "Clean up residue",
+      "title": "Codex project-less chat residue",
+      "description": "Codex creates a workspace and a trust entry for every project-less chat and does not reclaim them when the chat is deleted. The items below are no longer referenced by any Codex session, so they are safe to clean; real project directories never appear here.",
+      "unavailable": "The selected source has no Codex home",
+      "scanIncomplete": "The session scan was incomplete, so nothing can be proven unreferenced; cleanup is disabled.",
+      "workspacesTitle": "Workspaces",
+      "blockedTitle": "Not removable (contains a git repository)",
+      "trustTitle": "Trust entries",
+      "dateDirsTitle": "Empty dated directories",
+      "selectAll": "Select all",
+      "selectNone": "Clear",
+      "workspaceEmpty": "Empty",
+      "workspaceFiles": "{{count}} files · {{size}}",
+      "workspaceGit": "Contains a git repository, treated as a real project and kept",
+      "trustDirExists": "Directory still exists",
+      "trustDirMissing": "Directory is already gone",
+      "empty": "No residue found",
+      "cleanSelected": "Clean selected ({{count}})",
+      "clean": "Clean",
+      "confirmTitle": "Clean the selected residue",
+      "confirmContent": "This removes {{workspaceCount}} directories ({{nonEmptyWorkspaceCount}} of them non-empty), {{trustKeyCount}} trust entries and {{dateDirCount}} empty dated directories. It cannot be undone.",
+      "confirmHint": "Only the selected items are touched: real project directories are never deleted, and trust entries you leave unchecked are left alone.",
+      "cleanSuccess": "Cleaned {{workspaces}} directories, {{trustKeys}} trust entries and {{dateDirs}} empty dated directories",
+      "cleanSkipped": "Cleaned {{workspaces}} directories and {{trustKeys}} trust entries; {{count}} item(s) were skipped ({{target}}: {{reason}})",
+      "cleanFailed": "Cleaned {{workspaces}} directories and {{trustKeys}} trust entries; {{count}} item(s) failed ({{target}}: {{error}})",
+      "partialHint": "The following items were not cleaned as expected; rescan and retry.",
+      "failureItem": "{{target}}: {{error}}",
+      "skipItem": "{{target}}: {{reason}}"
     }
   },
   "geminicli": {

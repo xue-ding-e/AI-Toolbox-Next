@@ -1741,7 +1741,17 @@
       "last7Days": "最近 7 天",
       "last30Days": "最近 30 天",
       "older30Days": "30 天前"
-    }
+    },
+    "codexCleanupWorkspace": "同时删除 Codex 自动生成的工作目录 {{path}}",
+    "codexCleanupWorkspaces": "同时删除 {{count}} 个 Codex 自动生成的工作目录",
+    "codexCleanupWorkspaceEmpty": "空目录，可安全删除",
+    "codexCleanupWorkspaceFiles": "含 {{fileCount}} 个文件（{{nonEmptyCount}} 个目录非空），删除后无法恢复",
+    "codexCleanupTrust": "同时移除信任配置 {{key}}",
+    "codexCleanupTrustEntries": "同时移除 {{count}} 条 Codex 信任配置",
+    "codexCleanupTrustHint": "仅移除无项目对话自动写入的信任配置；真实项目的信任配置会保留",
+    "codexCleanupSuccess": "已清理残留：{{workspaces}} 个目录、{{trustKeys}} 条信任配置",
+    "codexCleanupSkipped": "会话已删除，但有 {{count}} 项残留未清理（{{target}}：{{reason}}）",
+    "codexCleanupFailed": "会话已删除，但 {{count}} 项残留清理失败（{{target}}：{{error}}）"
   },
   "notes": {
     "title": "笔记"
@@ -3283,6 +3293,36 @@
         "clearSuccess": "记忆已清空"
       },
       "sourceUnavailableDescription": "当前来源在本机不可用，请切换到可用来源。"
+    },
+    "scratchResidue": {
+      "menu": "清理残留",
+      "title": "Codex 无项目对话残留",
+      "description": "Codex 会为无项目对话创建临时工作目录并写入信任配置，删除对话时不会自动回收。以下项目已没有任何 Codex 会话引用，可以安全清理；真实项目目录不会出现在这里。",
+      "unavailable": "当前来源没有可用的 Codex 配置目录",
+      "scanIncomplete": "会话扫描未完成，无法确认哪些目录已无引用，已停用清理。",
+      "workspacesTitle": "工作目录",
+      "blockedTitle": "不可清理（包含 git 仓库）",
+      "trustTitle": "信任配置",
+      "dateDirsTitle": "空日期目录",
+      "selectAll": "全选",
+      "selectNone": "清空",
+      "workspaceEmpty": "空目录",
+      "workspaceFiles": "{{count}} 个文件 · {{size}}",
+      "workspaceGit": "包含 git 仓库，按真实项目处理，不会删除",
+      "trustDirExists": "目录仍存在",
+      "trustDirMissing": "目录已不存在",
+      "empty": "没有发现残留",
+      "cleanSelected": "清理选中项（{{count}}）",
+      "clean": "清理",
+      "confirmTitle": "确认清理残留",
+      "confirmContent": "将删除 {{workspaceCount}} 个目录（其中 {{nonEmptyWorkspaceCount}} 个非空）、{{trustKeyCount}} 条信任配置、{{dateDirCount}} 个空日期目录，删除后无法恢复。",
+      "confirmHint": "清理只作用于上面勾选的条目：真实项目目录不会被删除，未勾选的信任配置也不会被改动。",
+      "cleanSuccess": "已清理 {{workspaces}} 个目录、{{trustKeys}} 条信任配置、{{dateDirs}} 个空日期目录",
+      "cleanSkipped": "已清理 {{workspaces}} 个目录、{{trustKeys}} 条信任配置，另有 {{count}} 项被跳过（{{target}}：{{reason}}）",
+      "cleanFailed": "已清理 {{workspaces}} 个目录、{{trustKeys}} 条信任配置，另有 {{count}} 项失败（{{target}}：{{error}}）",
+      "partialHint": "以下项目未按预期清理，可重新扫描后再试。",
+      "failureItem": "{{target}}：{{error}}",
+      "skipItem": "{{target}}：{{reason}}"
     }
   },
   "geminicli": {

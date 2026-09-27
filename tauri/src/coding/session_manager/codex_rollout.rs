@@ -33,7 +33,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -51,10 +51,31 @@ const ROLLOUT_PREFIX: &str = "rollout-";
 const ROLLOUT_SUFFIX: &str = ".jsonl";
 const ROLLOUT_TIMESTAMP_LEN: usize = 19;
 
+/// Codex compresses cold rollouts in place (`<name>.jsonl.zst`) and reads them
+/// back through a transparent decoder, so both spellings carry the same
+/// identity. Identity, deletion and the `history_base` guard must all see the
+/// compressed form: archived copies of a deleted thread are compressed first,
+/// and a compressed reference is still a reference.
+const ROLLOUT_COMPRESSED_SUFFIX: &str = ".zst";
+
 const ARCHIVED_SESSIONS_DIR_NAME: &str = "archived_sessions";
 
 /// Bound on how many lines are read while looking for the `session_meta` record.
 const HEAD_LINE_LIMIT: usize = 64;
+
+/// Bound on how many decoded bytes that search may consume.
+///
+/// The `session_meta` record is a rollout's first line, so a byte cap costs
+/// nothing for real files while keeping a damaged or hostile `.jsonl.zst` from
+/// ballooning a list scan (a compressed file can decode to far more than its
+/// size on disk).
+const HEAD_BYTE_LIMIT: u64 = 1 << 20;
+
+/// Ceiling on the rollouts one [`rollout_cwds`] pass may read.
+///
+/// The pass exists to protect live sessions from a cleanup, so hitting the
+/// ceiling must fail closed instead of returning a half-sampled answer.
+const ROLLOUT_CWD_SCAN_LIMIT: usize = 50_000;
 
 /// Reads are best-effort: a long lock retry would stall the session list, and we
 /// always have the filesystem fallback. Wait briefly for a checkpoint, then give
@@ -83,6 +104,12 @@ pub(super) struct RolloutHead {
     /// `history_mode == "paginated"`, the only mode that keeps rollouts.
     pub(super) paginated: bool,
     pub(super) history_base: Option<HistoryBase>,
+    /// The working directory Codex recorded for the thread.
+    ///
+    /// For a project-less chat this is the scratch workspace the Codex app
+    /// created, which is what the delete-time and residue cleanups match
+    /// against. `None` for a damaged head.
+    pub(super) cwd: Option<String>,
 }
 
 /// The rollout ids encoded in a canonical Codex rollout filename.
@@ -96,13 +123,15 @@ pub(super) struct RolloutFileName {
 }
 
 impl RolloutFileName {
-    /// Parses `rollout-<ts>-<thread>[ _<rollout>].jsonl`.
+    /// Parses `rollout-<ts>-<thread>[ _<rollout>].jsonl[.zst]`.
     ///
     /// The timestamp is a fixed 19 characters (`2026-09-17T09-00-00`), so the
     /// ids start right after it plus the separator. Following Codex, the ids
     /// must be UUIDs — that keeps unrelated `.jsonl` files in the tree from
-    /// parsing as rollouts.
+    /// parsing as rollouts. The optional compression suffix is Codex's own
+    /// cold-rollout representation of the same file.
     pub(super) fn parse(name: &str) -> Option<Self> {
+        let name = name.strip_suffix(ROLLOUT_COMPRESSED_SUFFIX).unwrap_or(name);
         let core = name
             .strip_prefix(ROLLOUT_PREFIX)?
             .strip_suffix(ROLLOUT_SUFFIX)?;
@@ -349,13 +378,69 @@ fn resolve_user_path(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
-/// Read the `session_meta` record of a rollout file.
-pub(super) fn read_rollout_head(path: &Path) -> Option<RolloutHead> {
+/// Whether a path names a compressed rollout (`<name>.jsonl.zst`).
+pub(super) fn is_compressed_rollout_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(ROLLOUT_COMPRESSED_SUFFIX))
+}
+
+/// Open a rollout for reading, transparently decoding the compressed spelling.
+///
+/// Codex rewrites cold rollouts as `.jsonl.zst` and reads them back through its
+/// own transparent reader (`open_rollout_line_reader`). A caller that opened the
+/// file directly would read compressed bytes as text and mistake a real rollout
+/// for an unreadable one.
+///
+/// `byte_limit` bounds the *decoded* bytes, which is what keeps a compressed
+/// file from ballooning a scan that only wants its first record.
+pub(super) fn open_rollout_reader(
+    path: &Path,
+    byte_limit: Option<u64>,
+) -> Option<Box<dyn BufRead>> {
     let file = File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    if is_compressed_rollout_path(path) {
+        let decoder = zstd::stream::read::Decoder::new(file).ok()?;
+        Some(match byte_limit {
+            Some(limit) => Box::new(BufReader::new(decoder.take(limit))),
+            None => Box::new(BufReader::new(decoder)),
+        })
+    } else {
+        let reader = BufReader::new(file);
+        Some(match byte_limit {
+            Some(limit) => Box::new(BufReader::new(reader.take(limit))),
+            None => Box::new(reader),
+        })
+    }
+}
+
+/// Read the `session_meta` record of a rollout file.
+///
+/// Both the line count and the decoded byte count are bounded: the record is the
+/// first line, so the caps only ever stop a pathological file.
+pub(super) fn read_rollout_head(path: &Path) -> Option<RolloutHead> {
+    read_rollout_head_or_unreadable(path).ok().flatten()
+}
+
+/// Read a rollout's head, telling "this rollout has no head" apart from "this
+/// rollout could not be read at all".
+///
+/// A caller that treats the head as a claim about the world — the cleanup's
+/// reference scan — has to know the difference: a record that is simply absent
+/// hides nothing, while a file that cannot be opened (or, for `.jsonl.zst`,
+/// cannot be decoded) may hold a reference it never got to see.
+fn read_rollout_head_or_unreadable(path: &Path) -> Result<Option<RolloutHead>, HeadUnreadable> {
+    let reader = open_rollout_reader(path, Some(HEAD_BYTE_LIMIT)).ok_or(HeadUnreadable)?;
+    let mut read_error = false;
 
     for line in reader.lines().take(HEAD_LINE_LIMIT) {
-        let Ok(line) = line else { continue };
+        let line = match line {
+            Ok(line) => line,
+            Err(_) => {
+                read_error = true;
+                continue;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -365,10 +450,24 @@ pub(super) fn read_rollout_head(path: &Path) -> Option<RolloutHead> {
         if value.get("type").and_then(Value::as_str) != Some("session_meta") {
             continue;
         }
-        return Some(rollout_head_from_session_meta(value.get("payload")?));
+        // The record we came for was readable, so whatever failed later is not
+        // this caller's problem.
+        return Ok(value.get("payload").map(rollout_head_from_session_meta));
     }
-    None
+
+    // No `session_meta` record. Content that could not be read is unknown (a
+    // damaged or not-actually-compressed file), while content that read fine and
+    // simply has no such record holds no working directory to hide.
+    if read_error {
+        Err(HeadUnreadable)
+    } else {
+        Ok(None)
+    }
 }
+
+/// A rollout file that could not be read.
+#[derive(Debug)]
+struct HeadUnreadable;
 
 fn rollout_head_from_session_meta(payload: &Value) -> RolloutHead {
     // An absent `history_mode` means `legacy`: that is Codex's serde default, and
@@ -386,7 +485,144 @@ fn rollout_head_from_session_meta(payload: &Value) -> RolloutHead {
             .to_string(),
         paginated,
         history_base: history_base_from_session_meta(payload),
+        cwd: payload
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     }
+}
+
+/// The working directories of every rollout still on disk.
+#[derive(Debug, Clone, Default)]
+pub(super) struct RolloutCwds {
+    pub(super) cwds: HashSet<String>,
+    /// `false` when the scan stopped at [`ROLLOUT_CWD_SCAN_LIMIT`], i.e. the cwd
+    /// set is a sample. Callers use it to protect live data from a cleanup they
+    /// cannot prove is safe.
+    pub(super) complete: bool,
+}
+
+/// Collect the `cwd` of every rollout under `sessions/` and its sibling
+/// `archived_sessions/`.
+///
+/// This is the reference check behind every Codex scratch cleanup: a workspace is
+/// leftovers only when no rollout — active *or* archived — still records it as
+/// its working directory. Archived rollouts count because Codex can resume a
+/// thread from there even though our session list does not show it.
+///
+/// Only each rollout's first record is read (see [`read_rollout_head`]), so this
+/// stays far cheaper than the metadata scan behind the session list.
+///
+/// Anything that could hide a rollout — an unreachable root, an unreadable
+/// directory, an unreadable head — marks the result incomplete instead of being
+/// skipped, because the caller's promise is "nothing is removed while a
+/// reference set could not be read in full". See [`rollout_root_state`] for why
+/// a missing root is not enough to answer that question.
+pub(super) fn rollout_cwds(sessions_root: &Path) -> RolloutCwds {
+    let mut roots = vec![sessions_root.to_path_buf()];
+    if let Some(archived) = archived_sessions_root(sessions_root) {
+        roots.push(archived);
+    }
+
+    let mut scan = RolloutCwds {
+        cwds: HashSet::new(),
+        complete: true,
+    };
+    let mut visited = 0usize;
+
+    for root in roots {
+        match rollout_root_state(&root) {
+            RolloutRootState::Readable => {}
+            RolloutRootState::Absent => continue,
+            RolloutRootState::Unreachable => {
+                scan.complete = false;
+                continue;
+            }
+        }
+
+        let mut pending = vec![root];
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                // It was listed a moment ago, so a failure here is not an absent
+                // directory: rollouts may be hiding behind it.
+                scan.complete = false;
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if parse_rollout_path(&path).is_none() {
+                    continue;
+                }
+                if visited >= ROLLOUT_CWD_SCAN_LIMIT {
+                    scan.complete = false;
+                    return scan;
+                }
+                visited += 1;
+
+                match read_rollout_head_or_unreadable(&path) {
+                    Ok(Some(head)) => {
+                        if let Some(cwd) = head.cwd {
+                            scan.cwds.insert(cwd);
+                        }
+                    }
+                    // Readable, just without a `session_meta` record: it has no
+                    // working directory to hide.
+                    Ok(None) => {}
+                    // A rollout that cannot be read may name a workspace.
+                    Err(HeadUnreadable) => scan.complete = false,
+                }
+            }
+        }
+    }
+
+    scan
+}
+
+/// How a rollout root looks from here.
+enum RolloutRootState {
+    /// Nothing is there: a Codex home that simply never had rollouts.
+    Absent,
+    Readable,
+    /// The path cannot be reached at all.
+    Unreachable,
+}
+
+/// Whether a rollout root can be read — or is plainly absent rather than
+/// unreachable.
+///
+/// "Not found" is ambiguous: an absent directory and a stopped WSL distro report
+/// it alike, and reading a dead share as "no rollouts here" would let the cleanup
+/// treat every workspace as leftovers. A WSL path is therefore asked about its
+/// distro root, which is present whenever the distro is.
+fn rollout_root_state(root: &Path) -> RolloutRootState {
+    match std::fs::read_dir(root) {
+        Ok(_) => RolloutRootState::Readable,
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => RolloutRootState::Unreachable,
+        Err(_) if wsl_distro_is_unreachable(root) => RolloutRootState::Unreachable,
+        Err(_) => RolloutRootState::Absent,
+    }
+}
+
+/// Whether a path sits inside a WSL distro that answers nothing right now.
+fn wsl_distro_is_unreachable(path: &Path) -> bool {
+    let display = path.to_string_lossy();
+    let Some(location) = crate::coding::runtime_location::parse_wsl_unc_path(&display) else {
+        return false;
+    };
+    let distro_root =
+        crate::coding::runtime_location::build_windows_unc_path(&location.distro, "/");
+    std::fs::read_dir(distro_root).is_err()
+}
+
+/// `<codex_home>/archived_sessions`, the sibling of `sessions/`.
+pub(super) fn archived_sessions_root(sessions_root: &Path) -> Option<PathBuf> {
+    sessions_root
+        .parent()
+        .map(|home| home.join(ARCHIVED_SESSIONS_DIR_NAME))
 }
 
 fn history_base_from_session_meta(payload: &Value) -> Option<HistoryBase> {
@@ -518,9 +754,45 @@ fn find_rollout_in_tree(root: &Path, rollout_id: &str) -> Option<PathBuf> {
 }
 
 /// Whether a prefix file still holds the bytes its child depended on.
+///
+/// A compressed prefix is measured by its *decoded* length: the cutoff is a
+/// plain-text offset, so an on-disk size is not comparable to it. Mirrors
+/// Codex's own `rollout_contains_prefix`, which answers from the zstd frame
+/// header when that is enough and decodes only up to the bound otherwise.
 fn rollout_contains_prefix(path: &Path, end_byte_offset: u64) -> bool {
-    std::fs::metadata(path)
-        .map(|metadata| metadata.len() >= end_byte_offset)
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+
+    if !is_compressed_rollout_path(path) {
+        return file
+            .metadata()
+            .map(|metadata| metadata.len() >= end_byte_offset)
+            .unwrap_or(false);
+    }
+
+    // A zstd frame header occupies at most 18 bytes.
+    let mut header = [0u8; 18];
+    let Ok(read) = file.read(&mut header) else {
+        return false;
+    };
+    if zstd::zstd_safe::get_frame_content_size(&header[..read])
+        .ok()
+        .flatten()
+        .is_some_and(|size| end_byte_offset <= size)
+    {
+        return true;
+    }
+
+    if file.rewind().is_err() {
+        return false;
+    }
+    let Ok(decoder) = zstd::stream::read::Decoder::new(file) else {
+        return false;
+    };
+    let mut prefix = decoder.take(end_byte_offset);
+    std::io::copy(&mut prefix, &mut std::io::sink())
+        .map(|copied| copied == end_byte_offset)
         .unwrap_or(false)
 }
 
@@ -672,6 +944,34 @@ mod tests {
         fs::metadata(path).expect("rollout should exist").len()
     }
 
+    /// Writes a rollout in Codex's cold representation: the same records, zstd
+    /// compressed, as `<name>.jsonl.zst`.
+    fn write_compressed_rollout(
+        path: &Path,
+        thread_id: &str,
+        history_base: Option<Value>,
+        cwd: &str,
+    ) {
+        let mut payload = json!({ "id": thread_id, "cwd": cwd });
+        if let Some(base) = history_base {
+            payload["history_mode"] = json!("paginated");
+            payload["history_base"] = base;
+        }
+        let head = json!({
+            "timestamp": "2026-09-17T10:00:00Z",
+            "type": "session_meta",
+            "payload": payload,
+        });
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create rollout parent");
+        }
+        let content = format!("{head}\n");
+        let compressed =
+            zstd::stream::encode_all(content.as_bytes(), 3).expect("failed to compress rollout");
+        fs::write(path, compressed).expect("failed to write compressed rollout");
+    }
+
     fn write_state_db(home: &Path, name: &str, rows: &[(&str, &str)]) {
         let connection = Connection::open(home.join(name)).expect("failed to create state db");
         connection
@@ -702,6 +1002,181 @@ mod tests {
         .expect("reverted name should parse");
         assert_eq!(reverted.thread_id, PREFIX_ID);
         assert_eq!(reverted.rollout_id, CHILD_ROLLOUT_ID);
+
+        // Codex compresses cold rollouts in place; the identity is unchanged.
+        let compressed = RolloutFileName::parse(&format!(
+            "rollout-2026-09-17T09-00-00-{PREFIX_ID}.jsonl.zst"
+        ))
+        .expect("compressed name should parse");
+        assert_eq!(compressed.thread_id, PREFIX_ID);
+        assert_eq!(compressed.rollout_id, PREFIX_ID);
+    }
+
+    /// A compressed rollout must answer with its thread id and cwd like a plain
+    /// one: without that, a compressed reference is invisible and a compressed
+    /// session looks like an unreferenced workspace.
+    #[test]
+    fn reads_a_compressed_rollout_head() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir
+            .path()
+            .join(format!("rollout-2026-09-17T09-00-00-{PREFIX_ID}.jsonl.zst"));
+        write_compressed_rollout(&path, PREFIX_ID, None, "/tmp/scratch");
+
+        let head = read_rollout_head(&path).expect("compressed head should parse");
+        assert_eq!(head.thread_id, PREFIX_ID);
+        assert_eq!(head.cwd.as_deref(), Some("/tmp/scratch"));
+        assert!(!head.paginated);
+    }
+
+    /// The reference guard reads both rollout roots and both representations, so
+    /// a compressed archived thread still protects the history it replays from.
+    #[test]
+    fn collects_references_from_compressed_rollouts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_root = dir.path().join("sessions");
+        let archived_root = dir.path().join("archived_sessions");
+
+        write_rollout(
+            &sessions_root
+                .join("2026")
+                .join("09")
+                .join("17")
+                .join(format!("rollout-2026-09-17T09-00-00-{PREFIX_ID}.jsonl")),
+            PREFIX_ID,
+            Some("paginated"),
+            None,
+        );
+        write_compressed_rollout(
+            &archived_root.join(format!("rollout-2026-09-18T09-00-00-{OTHER_ID}.jsonl.zst")),
+            OTHER_ID,
+            Some(json!({
+                "thread_id": PREFIX_ID,
+                "end_ordinal_exclusive": 2,
+                "end_byte_offset": 128,
+            })),
+            "/tmp/project",
+        );
+
+        let referenced = rollout_ids_referenced_by_other_threads(&sessions_root, PREFIX_ID);
+        assert!(
+            referenced.contains(PREFIX_ID),
+            "a compressed archived rollout is still a reference"
+        );
+    }
+
+    /// The cwd set behind a scratch cleanup spans `sessions/` and
+    /// `archived_sessions/`, including compressed files.
+    #[test]
+    fn collects_cwds_across_active_and_archived_rollouts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_root = dir.path().join("sessions");
+        let archived_root = dir.path().join("archived_sessions");
+
+        write_rollout(
+            &sessions_root
+                .join("2026")
+                .join("09")
+                .join("17")
+                .join(format!("rollout-2026-09-17T09-00-00-{PREFIX_ID}.jsonl")),
+            PREFIX_ID,
+            Some("legacy"),
+            None,
+        );
+        write_compressed_rollout(
+            &archived_root.join(format!("rollout-2026-09-18T09-00-00-{OTHER_ID}.jsonl.zst")),
+            OTHER_ID,
+            None,
+            "/tmp/scratch-workspace",
+        );
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(scan.complete);
+        assert!(scan.cwds.contains("/tmp/project"));
+        assert!(scan.cwds.contains("/tmp/scratch-workspace"));
+    }
+
+    /// A Codex home without any rollouts is not an unknown: there is nothing to
+    /// read, and the cleanup may proceed. Most users never archive, so an absent
+    /// `archived_sessions/` must not disable the whole feature.
+    #[test]
+    fn absent_rollout_roots_stay_complete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_root = dir.path().join("sessions");
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(scan.complete, "an absent root is empty, not unknown");
+        assert!(scan.cwds.is_empty());
+    }
+
+    /// A distro that is not running answers "not found" for every path inside it,
+    /// exactly like an absent directory does — so the scan asks the distro itself.
+    /// Reading a dead share as "no rollouts here" would offer every workspace in
+    /// the user's documents as leftovers.
+    #[test]
+    fn a_dead_wsl_distro_makes_the_scan_incomplete() {
+        let distro = format!(
+            "ai-toolbox-no-such-distro-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let sessions_root = crate::coding::runtime_location::build_windows_unc_path(
+            &distro,
+            "/root/.codex/sessions",
+        );
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(!scan.complete, "an unreachable distro must fail closed");
+        assert!(scan.cwds.is_empty());
+    }
+
+    /// A root that cannot be read at all — a stopped distro, a dropped share —
+    /// must not read as "nothing here": the whole cleanup is gated on this set.
+    #[test]
+    fn an_unreadable_rollout_root_is_incomplete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A file where `sessions/` should be: it exists, so this is neither an
+        // absent directory nor a readable one.
+        let sessions_root = dir.path().join("sessions");
+        fs::write(&sessions_root, b"not a directory").expect("write should succeed");
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(!scan.complete, "an unreadable root must fail closed");
+        assert!(scan.cwds.is_empty());
+    }
+
+    /// A rollout whose head cannot be decoded may name a workspace, so it makes
+    /// the scan incomplete rather than being skipped.
+    #[test]
+    fn an_unreadable_rollout_head_is_incomplete() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions_root = dir.path().join("sessions");
+        let dated = sessions_root.join("2026").join("09").join("17");
+        fs::create_dir_all(&dated).expect("rollout directory should be created");
+        // Not a zstd frame, but named like a compressed rollout.
+        fs::write(
+            sessions_root
+                .join("2026")
+                .join("09")
+                .join("17")
+                .join(format!("rollout-2026-09-17T09-00-00-{PREFIX_ID}.jsonl.zst")),
+            b"not compressed at all",
+        )
+        .expect("write should succeed");
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(!scan.complete, "an undecodable rollout must fail closed");
+
+        // A readable rollout without a `session_meta` record hides no working
+        // directory, so it stays harmless.
+        let other = dated.join(format!("rollout-2026-09-17T10-00-00-{OTHER_ID}.jsonl"));
+        fs::write(&other, b"{\"type\":\"user_message\"}\n").expect("write should succeed");
+
+        let scan = rollout_cwds(&sessions_root);
+        assert!(
+            !scan.complete,
+            "the undecodable rollout is still there, and completeness is not restored"
+        );
+        assert!(scan.cwds.is_empty());
     }
 
     #[test]

@@ -474,3 +474,66 @@ export interface CodexMemoryFileContent {
   size: number;
   modifiedAtMs?: number | null;
 }
+
+/**
+ * Codex project-less ("scratch") chat residue (issue #400).
+ *
+ * Codex creates a workspace directory and a `[projects]` trust entry for every
+ * chat started without a project, and reclaims neither when the chat is deleted.
+ */
+export interface CodexScratchWorkspaceInfo {
+  path: string;
+  exists: boolean;
+  isEmpty: boolean;
+  fileCount: number;
+  totalBytes: number;
+  hasGit: boolean;
+  truncated: boolean;
+}
+
+export interface CodexScratchResidueWorkspace {
+  info: CodexScratchWorkspaceInfo;
+  runtimeSource: 'local' | 'wsl';
+  runtimeDistro?: string | null;
+}
+
+export interface CodexScratchResidueTrustEntry {
+  key: string;
+  configPath: string;
+  dirExists: boolean;
+  runtimeSource: 'local' | 'wsl';
+  runtimeDistro?: string | null;
+}
+
+export interface CodexScratchResidue {
+  source: CodexHistorySourceMode;
+  /** The requested source has no Codex home on this machine. */
+  unavailable: boolean;
+  /**
+   * `false` when the rollout scan could not prove that a directory is
+   * unreferenced. Cleanup must not be offered in that case.
+   */
+  scanComplete: boolean;
+  configPaths: string[];
+  workspaces: CodexScratchResidueWorkspace[];
+  trustEntries: CodexScratchResidueTrustEntry[];
+  emptyDateDirs: string[];
+}
+
+export interface CodexScratchCleanSkip {
+  target: string;
+  reason: string;
+}
+
+export interface CodexScratchCleanFailure {
+  target: string;
+  error: string;
+}
+
+export interface CodexScratchCleanResult {
+  removedWorkspaces: string[];
+  removedTrustKeys: string[];
+  removedDateDirs: string[];
+  skipped: CodexScratchCleanSkip[];
+  failures: CodexScratchCleanFailure[];
+}

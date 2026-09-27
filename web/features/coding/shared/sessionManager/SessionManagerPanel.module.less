@@ -387,6 +387,28 @@
   font-size: 13px;
 }
 
+// Optional Codex residue cleanup inside a delete confirmation: one checkbox plus
+// a helper line per action, grouped with the same 8-12px rhythm as other forms.
+.cleanupOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cleanupRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cleanupDetail {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1100px) {
   .toolbar {
     flex-direction: column;

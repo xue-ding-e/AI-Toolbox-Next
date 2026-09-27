@@ -113,6 +113,72 @@ export async function verifySessionList({ send, evaluate, baseUrl, benchDirector
   await openFixture('count=2000&recent=1&tool=opencode');
   await waitFor('benchmark.metrics.expectedTotal===2000');
   check('recent snapshot is replaced by a complete OpenCode list without pagination', await evaluate('benchmark.metrics.requests.filter(item=>item.command==="list_tool_sessions").map(item=>item.args.loadMode).join(",")==="cache-first,full" && benchmark.cards().length<40'));
+  // Codex project-less chat residue cleanup (issue #400).
+  const confirmDeleteButton = 'Array.from(document.querySelectorAll(".ant-modal-confirm button")).find(button=>button.textContent.replace(/\\s/g,"")==="删除")';
+  const deleteButtonOf = index => 'benchmark.cards()[' + index + '].querySelectorAll("button")[2]';
+
+  await openFixture('count=20');
+  const plainHeader = await evaluate('benchmark.panelHeaderGeometry()');
+  check('the session search bar keeps its sticky offset', plainHeader.toolbarTop === '48px' && plainHeader.headerHeight > 0 && plainHeader.headerHeight <= 60);
+  await openFixture('count=20&extra=1');
+  const wideHeader = await evaluate('benchmark.panelHeaderGeometry()');
+  check('an extra header action does not change the header height', wideHeader.headerHeight === plainHeader.headerHeight && wideHeader.extraRows === plainHeader.extraRows && wideHeader.toolbarTop === plainHeader.toolbarTop);
+  await send('Emulation.setDeviceMetricsOverride', { width:700,height:800,deviceScaleFactor:1,mobile:false });
+  await delay(400);
+  const narrowHeader = await evaluate('benchmark.panelHeaderGeometry()');
+  check('header actions stay on one row at a narrow width', narrowHeader.extraRows === plainHeader.extraRows && narrowHeader.extraHeight <= plainHeader.extraHeight);
+  await send('Emulation.setDeviceMetricsOverride', { width:1280,height:900,deviceScaleFactor:1,mobile:false });
+  await delay(200);
+
+  await evaluate('benchmark.measure(()=>' + deleteButtonOf(0) + '.click())');
+  await waitFor('!!benchmark.confirmDialog()');
+  const emptyWorkspaceDialog = await evaluate('benchmark.confirmDialog()');
+  check('delete confirmation offers both Codex cleanup actions', emptyWorkspaceDialog.checkboxStates.length === 2);
+  check('an empty workspace and its trust entry are preselected', emptyWorkspaceDialog.checkboxStates.every(Boolean));
+  check('cleanup options render inside the confirmation without overflow', !emptyWorkspaceDialog.contentOverflows && emptyWorkspaceDialog.widestLineFitsModal);
+  check('confirmation footer stays inside the viewport', emptyWorkspaceDialog.footerInViewport);
+  check('cleanup labels describe the workspace and the trust entry', emptyWorkspaceDialog.checkboxLabels.some(label=>label.includes('Documents\\Codex') && label.includes('信任配置')));
+  await evaluate('benchmark.measure(()=>' + confirmDeleteButton + '.click())');
+  await waitFor('benchmark.metrics.requests.some(item=>item.command==="delete_tool_session")');
+  check('pressing delete carries both cleanup choices to the backend', await evaluate('(()=>{const request=benchmark.metrics.requests.filter(item=>item.command==="delete_tool_session").at(-1);return request.args.cleanup.removeWorkspace===true && request.args.cleanup.removeTrustEntry===true;})()'));
+
+  await openFixture('count=20');
+  await evaluate('benchmark.measure(()=>benchmark.findButton("sessionManager.select").click())');
+  await evaluate('benchmark.measure(()=>{benchmark.cards()[0].querySelector("input[type=checkbox]").click();benchmark.cards()[1].querySelector("input[type=checkbox]").click();})');
+  await evaluate('benchmark.measure(()=>benchmark.findButton("sessionManager.bulkDelete",{count:2}).click())');
+  await waitFor('!!benchmark.confirmDialog()');
+  const mixedDialog = await evaluate('benchmark.confirmDialog()');
+  check('a bulk selection with a non-empty workspace is not preselected for removal', mixedDialog.checkboxStates[0] === false);
+  check('bulk confirmation still preselects the trust entries', mixedDialog.checkboxStates[1] === true);
+  await evaluate('benchmark.measure(()=>document.querySelectorAll(".ant-modal-confirm input[type=checkbox]")[0].click())');
+  await evaluate('benchmark.measure(()=>' + confirmDeleteButton + '.click())');
+  await waitFor('benchmark.metrics.requests.some(item=>item.command==="delete_tool_sessions")');
+  check('the bulk delete carries the confirmed cleanup choice', await evaluate('(()=>{const request=benchmark.metrics.requests.filter(item=>item.command==="delete_tool_sessions").at(-1);return request.args.cleanup.removeWorkspace===true && request.args.cleanup.removeTrustEntry===true;})()'));
+  check('bulk deletion still reports its own count', await evaluate('benchmark.metrics.expectedTotal===18'));
+
+  // The standalone Codex residue dialog.
+  await openFixture('count=5');
+  await evaluate('benchmark.navigate("/codex-residue")');
+  await waitFor('!!document.querySelector(".ant-modal")');
+  await delay(300);
+  const residueDialog = await evaluate(`(()=>{const modal=document.querySelector('.ant-modal');const boxes=Array.from(modal.querySelectorAll('input[type=checkbox]'));const groups=Array.from(modal.querySelectorAll('section')).map(node=>node.textContent.slice(0,18));const container=modal.querySelector('.ant-modal-container');const limit=container.getBoundingClientRect();return{checked:boxes.map(node=>node.checked),disabled:boxes.map(node=>node.disabled),groups,bodyOverflows:modal.querySelector('.ant-modal-body').scrollWidth>modal.querySelector('.ant-modal-body').clientWidth+1,insideModal:Array.from(modal.querySelectorAll('[class*="item"]')).every(node=>{const rect=node.getBoundingClientRect();return rect.left>=limit.left-1&&rect.right<=limit.right+1;}),footerInViewport:Array.from(modal.querySelectorAll('.ant-modal-footer button')).every(button=>button.getBoundingClientRect().bottom<=innerHeight&&button.getBoundingClientRect().height>0)};})()`);
+  check('residue dialog groups workspaces, blocked rows, trust entries and empty date directories', residueDialog.groups.length === 4 && residueDialog.checked.length === 6);
+  check('only empty workspaces, trust entries and empty date directories are preselected', residueDialog.checked.filter(Boolean).length === 4 && residueDialog.checked[0] === true && residueDialog.checked[1] === false);
+  check('the git repository row cannot be selected', residueDialog.disabled[2] === true && residueDialog.checked[2] === false);
+  check('residue rows stay inside the dialog body', !residueDialog.bodyOverflows && residueDialog.insideModal);
+  check('residue dialog footer stays inside the viewport', residueDialog.footerInViewport);
+  await evaluate('Array.from(document.querySelectorAll(".ant-modal-footer button")).find(button=>button.textContent.includes("清理选中项")).click()');
+  await waitFor('!!document.querySelector(".ant-modal-confirm")');
+  const cleanConfirm = await evaluate('(()=>{const modal=document.querySelector(".ant-modal-confirm");return{title:modal.textContent.includes("确认清理残留"),content:modal.textContent.includes("1 个目录") && modal.textContent.includes("2 条信任配置"),footerInViewport:Array.from(modal.querySelectorAll(".ant-modal-footer button")).every(button=>button.getBoundingClientRect().bottom<=innerHeight)};})()');
+  check('cleaning asks for confirmation with the selection summary', cleanConfirm.title && cleanConfirm.content);
+  check('the cleanup confirmation footer stays inside the viewport', cleanConfirm.footerInViewport);
+  await evaluate('Array.from(document.querySelectorAll(".ant-modal-confirm button")).find(button=>button.textContent.replace(/\\s/g,"")==="清理").click()');
+  await waitFor('benchmark.metrics.requests.some(item=>item.command==="clean_codex_scratch_residue")');
+  check('the cleanup sends the selected workspace, trust keys and date directories', await evaluate('(()=>{const request=benchmark.metrics.requests.filter(item=>item.command==="clean_codex_scratch_residue").at(-1);return request.args.workspacePaths.length===1 && request.args.trustKeys.length===2 && request.args.dateDirs.length===1;})()'));
+  await waitFor('benchmark.metrics.requests.filter(item=>item.command==="scan_codex_scratch_residue").length===2');
+  check('the dialog rescans after cleaning', await evaluate('benchmark.metrics.requests.filter(item=>item.command==="scan_codex_scratch_residue").length===2'));
+  check('an emptied residue list shows the empty state', await waitFor('!!document.querySelector(".ant-empty")').then(()=>true).catch(()=>false));
+
   await writeFile(path.join(benchDirectory,'verification-results.json'),JSON.stringify(checks,null,2));
   return checks;
 }

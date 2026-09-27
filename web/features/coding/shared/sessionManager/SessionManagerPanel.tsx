@@ -38,6 +38,8 @@ import {
   listToolSessions,
 } from './sessionManagerApi';
 import type {
+  CodexCleanupOptions,
+  CodexCleanupSummary,
   DeleteToolSessionsResult,
   ExportToolSessionsResult,
   SessionListCacheState,
@@ -50,6 +52,12 @@ import type {
   SessionTimeRange,
   SessionTool,
 } from './types';
+import { CODEX_CLEANUP_REPORT_KEYS, requestCodexCleanupPlan } from './codexCleanupOptions';
+import {
+  reportCleanupOutcome,
+  type CleanupTranslate,
+} from './codexCleanupPolicy';
+import { withCodexCleanupContent } from './codexCleanupDialog';
 import {
   buildSessionDetailPath,
   SESSION_MANAGER_REFRESH_EVENT,
@@ -817,8 +825,19 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   }, [captureVisibleContextId, shouldShowVisibleFeedback, t]);
 
-  const performDeleteSession = React.useCallback(async (session: SessionMeta, visibleContextId: number) => {
-    await deleteToolSession(tool, session.sourcePath);
+  /**
+   * Surface the auxiliary Codex cleanup outcome next to the delete result.
+   *
+   * It is deliberately a separate message: the session deletion already
+   * succeeded, so leftover residue is a warning about what remains, not a
+   * failure of the delete.
+   */
+  const reportCodexCleanupOutcome = React.useCallback((summary?: CodexCleanupSummary) => {
+    reportCleanupOutcome(message, t as CleanupTranslate, summary, CODEX_CLEANUP_REPORT_KEYS);
+  }, [message, t]);
+
+  const performDeleteSession = React.useCallback(async (session: SessionMeta, visibleContextId: number, cleanup?: CodexCleanupOptions) => {
+    const result = await deleteToolSession(tool, session.sourcePath, cleanup);
 
     await loadSessions({
       forceRefresh: true,
@@ -829,8 +848,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     });
     if (shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.deleteSuccess'));
+      reportCodexCleanupOutcome(result.cleanup);
     }
-  }, [loadSessions, shouldShowVisibleFeedback, t, tool]);
+  }, [loadSessions, reportCodexCleanupOutcome, shouldShowVisibleFeedback, t, tool]);
+
+  /** The Codex residue a delete could clean up. */
+  const requestCleanupPlan = React.useCallback(
+    (sourcePaths: string[]) => requestCodexCleanupPlan(tool, sourcePaths),
+    [tool],
+  );
 
   const handleSelectionModeToggle = () => {
     if (selectionMode) {
@@ -856,8 +882,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
 
   const performBulkDeleteSessions = async (
     visibleContextId: number,
+    cleanup?: CodexCleanupOptions,
   ): Promise<DeleteToolSessionsResult> => {
-    const result = await deleteToolSessions(tool, selectedSourcePaths);
+    const result = await deleteToolSessions(tool, selectedSourcePaths, cleanup);
     const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
 
     await loadSessions({
@@ -870,6 +897,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
 
     if (result.deletedCount > 0 && shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.bulkDeleteSuccess', { count: result.deletedCount }));
+      reportCodexCleanupOutcome(result.cleanup);
     }
 
     if (result.failedItems.length > 0 && shouldShowVisibleFeedback(visibleContextId)) {
@@ -992,7 +1020,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   };
 
-  const handleBulkDeleteSessions = () => {
+  const handleBulkDeleteSessions = async () => {
     if (selectedSourcePaths.length === 0) {
       return;
     }
@@ -1003,14 +1031,24 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       .map((session) => formatSessionTitle(session))
       .join('、');
 
+    const requestedSourcePaths = [...selectedSourcePaths];
+    const cleanupPlan = await requestCleanupPlan(requestedSourcePaths);
+    let cleanupChoice = cleanupPlan?.choice;
+
     Modal.confirm({
-      title: t('sessionManager.bulkDeleteConfirmTitle', { count: selectedSourcePaths.length }),
-      content: previewTitles
-        ? t('sessionManager.bulkDeleteConfirmContentWithPreview', {
-          count: selectedSourcePaths.length,
-          titles: previewTitles,
-        })
-        : t('sessionManager.bulkDeleteConfirmContent', { count: selectedSourcePaths.length }),
+      title: t('sessionManager.bulkDeleteConfirmTitle', { count: requestedSourcePaths.length }),
+      content: withCodexCleanupContent(
+        cleanupPlan,
+        previewTitles
+          ? t('sessionManager.bulkDeleteConfirmContentWithPreview', {
+            count: requestedSourcePaths.length,
+            titles: previewTitles,
+          })
+          : t('sessionManager.bulkDeleteConfirmContent', { count: requestedSourcePaths.length }),
+        (choice) => {
+          cleanupChoice = choice;
+        },
+      ),
       icon: <ExclamationCircleOutlined />,
       okText: t('common.delete'),
       okButtonProps: { danger: true },
@@ -1019,7 +1057,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         const visibleContextId = captureVisibleContextId();
         try {
           setBulkDeleting(true);
-          await performBulkDeleteSessions(visibleContextId);
+          await performBulkDeleteSessions(visibleContextId, cleanupChoice);
         } catch (error) {
           if (!shouldShowVisibleFeedback(visibleContextId)) {
             return;
@@ -1033,10 +1071,19 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     });
   };
 
-  const handleDeleteSession = React.useCallback((session: SessionMeta) => {
+  const handleDeleteSession = React.useCallback(async (session: SessionMeta) => {
+    const cleanupPlan = await requestCleanupPlan([session.sourcePath]);
+    let cleanupChoice = cleanupPlan?.choice;
+
     Modal.confirm({
       title: t('sessionManager.deleteConfirmTitle', { title: formatSessionTitle(session) }),
-      content: t('sessionManager.deleteConfirmContent'),
+      content: withCodexCleanupContent(
+        cleanupPlan,
+        t('sessionManager.deleteConfirmContent'),
+        (choice) => {
+          cleanupChoice = choice;
+        },
+      ),
       icon: <ExclamationCircleOutlined />,
       okText: t('common.delete'),
       okButtonProps: { danger: true },
@@ -1044,7 +1091,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       onOk: async () => {
         const visibleContextId = captureVisibleContextId();
         try {
-          await performDeleteSession(session, visibleContextId);
+          await performDeleteSession(session, visibleContextId, cleanupChoice);
         } catch (error) {
           if (!shouldShowVisibleFeedback(visibleContextId)) {
             return;
@@ -1054,7 +1101,14 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         }
       },
     });
-  }, [captureVisibleContextId, performDeleteSession, shouldShowVisibleFeedback, t]);
+  }, [
+    captureVisibleContextId,
+    performDeleteSession,
+    requestCodexCleanupPlan,
+    shouldShowVisibleFeedback,
+    t,
+    withCodexCleanupContent,
+  ]);
 
   const showListOverlay = loading && (
     items.length === 0 || metadataRefreshReason === 'manual-refresh'
@@ -1187,7 +1241,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               onOpenDetail={handleOpenDetail}
               onToggleSelection={toggleSessionSelection}
               onCopyResume={handleCopyResumeCommand}
-              onDelete={handleDeleteSession}
+              onDelete={(session) => void handleDeleteSession(session)}
             />
           )}
         </Spin>

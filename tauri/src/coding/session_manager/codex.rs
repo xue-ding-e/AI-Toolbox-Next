@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -179,11 +179,13 @@ fn visit_segment_lines(
     segment: &codex_rollout::LineageSegment,
     visit: &mut impl FnMut(&str) -> bool,
 ) -> bool {
-    let Ok(file) = File::open(&segment.path) else {
+    // A prefix rollout Codex has already compressed decodes transparently; the
+    // cutoff offsets history_base records are plain-text offsets, so they apply
+    // to the decoded stream.
+    let Some(mut reader) = codex_rollout::open_rollout_reader(&segment.path, None) else {
         // An ancestor we cannot read costs us its records, not the whole session.
         return true;
     };
-    let mut reader = BufReader::new(file);
     let mut buffer: Vec<u8> = Vec::new();
     let mut consumed: u64 = 0;
 
@@ -638,18 +640,39 @@ fn number_field(value: &Value, keys: &[&str]) -> Option<i64> {
 ///
 /// Codex names rollouts `rollout-<timestamp>-<thread id>.jsonl`, so the filename
 /// answers without reading the file; only a non-canonical name falls back to the
-/// `session_meta` header.
+/// `session_meta` header. A compressed rollout is never parsed as text — its
+/// filename keeps the ids Codex wrote into it.
 fn artifact_session_id(path: &Path) -> Option<String> {
+    if codex_rollout::is_compressed_rollout_path(path) {
+        return infer_session_id_from_filename(path);
+    }
+
     infer_session_id_from_filename(path).or_else(|| parse_session(path).map(|meta| meta.session_id))
 }
 
-/// Every rollout artifact of one logical session under `root`.
+/// Every rollout artifact of one logical session under `root` and its sibling
+/// `archived_sessions/`.
 ///
 /// Codex opens a fresh `rollout-*.jsonl` on resume while keeping the thread id in
 /// `session_meta`, so one session owns several files spread over dated
-/// directories. Identity is the id, not the file.
+/// directories. Identity is the id, not the file — and not the directory either:
+/// archiving moves a thread's rollouts to `archived_sessions/`, and Codex
+/// compresses cold ones to `.jsonl.zst` in place, so leaving either out would
+/// resurrect the session the user just deleted.
 fn session_artifacts(root: &Path, session_id: &str) -> Vec<PathBuf> {
+    let mut roots = vec![root.to_path_buf()];
+    if let Some(archived) = codex_rollout::archived_sessions_root(root) {
+        roots.push(archived);
+    }
+
     let mut artifacts = Vec::new();
+    for root in roots {
+        collect_session_artifacts(&root, session_id, &mut artifacts);
+    }
+    artifacts
+}
+
+fn collect_session_artifacts(root: &Path, session_id: &str, artifacts: &mut Vec<PathBuf>) {
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -661,7 +684,7 @@ fn session_artifacts(root: &Path, session_id: &str) -> Vec<PathBuf> {
                 pending.push(path);
                 continue;
             }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            if !is_rollout_artifact_file(&path) {
                 continue;
             }
             if artifact_session_id(&path).as_deref() == Some(session_id) {
@@ -669,18 +692,26 @@ fn session_artifacts(root: &Path, session_id: &str) -> Vec<PathBuf> {
             }
         }
     }
-    artifacts
+}
+
+/// Whether a file is a rollout in either representation Codex writes.
+fn is_rollout_artifact_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
 }
 
 /// Delete a Codex session.
 ///
 /// `path` is any one of the session's artifacts; every artifact of that logical
-/// session is removed, so a resumed thread cannot reappear through its older
-/// rollout files after the user deleted the single row they were shown. This
-/// matches dsh (any generation deletes the whole session directory) and Gemini
-/// CLI (every file carrying the session id goes). Without a resolvable id or
-/// sessions root there is nothing to collapse onto, so the requested file alone
-/// is removed.
+/// session is removed — across the dated `sessions/` tree, the sibling
+/// `archived_sessions/` copy Codex keeps after an archive, and both the plain
+/// and `.jsonl.zst` representations — so a resumed, archived or compressed
+/// thread cannot reappear through a rollout file after the user deleted the
+/// single row they were shown. This matches dsh (any generation deletes the
+/// whole session directory) and Gemini CLI (every file carrying the session id
+/// goes). Without a resolvable id or sessions root there is nothing to collapse
+/// onto, so the requested file alone is removed.
 pub fn delete_session(path: &Path) -> Result<(), String> {
     let artifacts = match (find_sessions_root(path), artifact_session_id(path)) {
         (Some(root), Some(session_id)) => {
@@ -1387,6 +1418,24 @@ mod tests {
         offsets
     }
 
+    /// Writes a rollout in Codex's cold representation (`<name>.jsonl.zst`).
+    ///
+    /// The byte offsets a child records stay plain-text offsets, so the same
+    /// records can be written compressed and still honor a lineage cutoff.
+    fn write_compressed_rollout(path: &Path, lines: &[String]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create rollout directory");
+        }
+        let mut content = String::new();
+        for line in lines {
+            content.push_str(line);
+            content.push('\n');
+        }
+        let compressed =
+            zstd::stream::encode_all(content.as_bytes(), 3).expect("failed to compress rollout");
+        fs::write(path, compressed).expect("failed to write compressed rollout");
+    }
+
     fn codex_lineage_fixture(test_dir: &TestDir) -> (PathBuf, PathBuf, PathBuf) {
         let sessions_root = test_dir.path().join("sessions");
         let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
@@ -1612,6 +1661,152 @@ mod tests {
             target.exists(),
             "a refused delete must leave the rollout in place"
         );
+    }
+
+    /// Codex archives a thread by moving its rollouts to `archived_sessions/`
+    /// and compresses cold ones to `<name>.jsonl.zst`. Deleting the row the list
+    /// shows must take those copies too, or the archived thread keeps the
+    /// session alive and it reappears on the next resume.
+    #[test]
+    fn delete_session_removes_archived_and_compressed_copies() {
+        let test_dir = TestDir::new("delete-archived-copies");
+        let codex_home = test_dir.path();
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        let live = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("09")
+            .join("17")
+            .join(format!("rollout-2026-09-17T09-00-00-{thread_id}.jsonl"));
+        write_lineage_rollout(&live, &[session_meta_record(thread_id, "legacy", None)]);
+
+        let archived_plain = codex_home
+            .join("archived_sessions")
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{thread_id}.jsonl"));
+        write_lineage_rollout(
+            &archived_plain,
+            &[session_meta_record(thread_id, "legacy", None)],
+        );
+
+        let archived_compressed = codex_home
+            .join("archived_sessions")
+            .join(format!("rollout-2026-09-10T10-00-00-{thread_id}.jsonl.zst"));
+        write_compressed_rollout(
+            &archived_compressed,
+            &[session_meta_record(thread_id, "legacy", None)],
+        );
+
+        delete_session(&live).expect("delete should succeed");
+
+        assert!(!live.exists());
+        assert!(!archived_plain.exists(), "the archived copy must go too");
+        assert!(
+            !archived_compressed.exists(),
+            "the compressed archived copy must go too"
+        );
+    }
+
+    /// A compressed rollout still references its prefix — Codex reads it through
+    /// a decoder, so the delete guard has to as well.
+    #[test]
+    fn delete_session_refuses_when_a_compressed_rollout_references_a_target() {
+        let test_dir = TestDir::new("delete-compressed-reference");
+        let codex_home = test_dir.path();
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+        let other_id = "01a08e11-2c7d-7b55-8e10-4a9c77d20453";
+
+        let target = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("09")
+            .join("11")
+            .join(format!("rollout-2026-09-11T10-00-00-{thread_id}.jsonl"));
+        write_lineage_rollout(
+            &target,
+            &[
+                session_meta_record(thread_id, "paginated", None),
+                user_record("history another thread depends on"),
+            ],
+        );
+
+        let dependent = codex_home
+            .join("archived_sessions")
+            .join(format!("rollout-2026-09-17T09-00-00-{other_id}.jsonl.zst"));
+        write_compressed_rollout(
+            &dependent,
+            &[
+                session_meta_record(
+                    other_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        "end_byte_offset": 128,
+                    })),
+                ),
+                user_record("dependent thread record"),
+            ],
+        );
+
+        let error = delete_session(&target).expect_err("delete should be refused");
+        assert!(
+            error.contains("still used as history"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            target.exists(),
+            "a refused delete must leave the rollout in place"
+        );
+    }
+
+    /// A prefix rollout Codex already compressed is still part of the lineage:
+    /// the decoded stream honors the same plain-text cutoff.
+    #[test]
+    fn load_messages_stitches_a_compressed_paginated_lineage() {
+        let test_dir = TestDir::new("lineage-compressed-prefix");
+        let (_sessions_root, prefix, child) = codex_lineage_fixture(&test_dir);
+        let thread_id = "01a08e7d-5f4b-7c31-9a20-6d3f11b91882";
+
+        let prefix_records = [
+            session_meta_record(thread_id, "paginated", None),
+            user_record("earlier turn"),
+        ];
+        let mut plain = String::new();
+        for record in &prefix_records {
+            plain.push_str(record);
+            plain.push('\n');
+        }
+        let cutoff = plain.len() as u64;
+        // Only the compressed representation exists on disk, as it is after a
+        // cold-rollout compression pass.
+        write_compressed_rollout(&prefix.with_extension("jsonl.zst"), &prefix_records);
+
+        write_lineage_rollout(
+            &child,
+            &[
+                session_meta_record(
+                    thread_id,
+                    "paginated",
+                    Some(serde_json::json!({
+                        "thread_id": thread_id,
+                        "end_ordinal_exclusive": 2,
+                        "end_byte_offset": cutoff,
+                    })),
+                ),
+                user_record("later turn"),
+            ],
+        );
+
+        let messages = load_messages(&child).expect("load Codex messages");
+        let texts: Vec<&str> = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(texts, vec!["earlier turn", "later turn"]);
     }
 
     #[test]

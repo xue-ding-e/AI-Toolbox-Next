@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Checkbox, Drawer, Input } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined, BulbOutlined, CheckSquareOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ClearOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined, BulbOutlined, CheckSquareOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -77,6 +77,7 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
 import CodexMemoriesPanel from '../components/CodexMemoriesPanel/CodexMemoriesPanel';
 import CodexHistorySyncModal from '../components/CodexHistorySyncModal';
+import CodexScratchResidueModal from '../components/CodexScratchResidueModal';
 import GatewayAggregateSettings from '@/features/coding/gateway/components/GatewayAggregateSettings';
 import {
   CODEX_LOCAL_PROVIDER_ID,
@@ -471,6 +472,7 @@ const CodexPage: React.FC = () => {
   const [providerModalMode, setProviderModalMode] = React.useState<'manual' | 'import'>('manual');
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [historySyncModalOpen, setHistorySyncModalOpen] = React.useState(false);
+  const [scratchResidueModalOpen, setScratchResidueModalOpen] = React.useState(false);
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
   const [conflictInfo, setConflictInfo] = React.useState<ImportConflictInfo | null>(null);
   const [pendingFormValues, setPendingFormValues] = React.useState<CodexProviderFormValues | null>(null);
@@ -2805,18 +2807,32 @@ const CodexPage: React.FC = () => {
             sourceMode={sessionSourceMode}
             onSourceModeChange={handleSessionSourceModeChange}
             extra={(
-              <Button
-                type="link"
-                size="small"
-                style={{ fontSize: 12 }}
-                icon={<SyncOutlined />}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setHistorySyncModalOpen(true);
-                }}
-              >
-                {t('codex.historySync.menu')}
-              </Button>
+              <>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ fontSize: 12 }}
+                  icon={<SyncOutlined />}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setHistorySyncModalOpen(true);
+                  }}
+                >
+                  {t('codex.historySync.menu')}
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ fontSize: 12 }}
+                  icon={<ClearOutlined />}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setScratchResidueModalOpen(true);
+                  }}
+                >
+                  {t('codex.scratchResidue.menu')}
+                </Button>
+              </>
             )}
           />
         </div>
@@ -2950,6 +2966,12 @@ const CodexPage: React.FC = () => {
           onCancel={() => setRootDirectoryModalOpen(false)}
           onSubmit={handleSaveRootDirectory}
           onReset={handleResetRootDirectory}
+        />
+
+        <CodexScratchResidueModal
+          open={scratchResidueModalOpen}
+          onClose={() => setScratchResidueModalOpen(false)}
+          sourceMode={sessionSourceMode}
         />
 
         <CodexHistorySyncModal

@@ -40,6 +40,12 @@ import {
   formatSessionTitle,
   shouldShowVisibleFeedback as shouldShowVisibleFeedbackForContext,
 } from '../utils';
+import { CODEX_CLEANUP_REPORT_KEYS, requestCodexCleanupPlan } from '../codexCleanupOptions';
+import {
+  reportCleanupOutcome,
+  type CleanupTranslate,
+} from '../codexCleanupPolicy';
+import { withCodexCleanupContent } from '../codexCleanupDialog';
 import SessionDetailWorkbench from './SessionDetailWorkbench';
 import styles from './SessionDetailPage.module.less';
 
@@ -348,20 +354,32 @@ const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ tool }) => {
     }
   };
 
-  const handleDeleteSession = (session: SessionMeta) => {
+  const handleDeleteSession = async (session: SessionMeta) => {
+    const cleanupPlan = await requestCodexCleanupPlan(tool, [session.sourcePath]);
+    let cleanupChoice = cleanupPlan?.choice;
+
     Modal.confirm({
       title: t('sessionManager.deleteConfirmTitle', { title: formatSessionTitle(session) }),
-      content: t('sessionManager.deleteConfirmContent'),
+      content: withCodexCleanupContent(
+        cleanupPlan,
+        t('sessionManager.deleteConfirmContent'),
+        (choice) => {
+          cleanupChoice = choice;
+        },
+      ),
       okText: t('common.delete'),
       okButtonProps: { danger: true },
       cancelText: t('common.cancel'),
       onOk: async () => {
         const visibleContextId = captureVisibleContextId();
         try {
-          await deleteToolSession(tool, session.sourcePath);
+          const result = await deleteToolSession(tool, session.sourcePath, cleanupChoice);
           dispatchSessionManagerRefresh(tool);
           if (shouldShowVisibleFeedback(visibleContextId)) {
             message.success(t('sessionManager.deleteSuccess'));
+            // The same reporting the session list uses: the delete may have been
+            // started from either surface and must describe its cleanup alike.
+            reportCleanupOutcome(message, t as CleanupTranslate, result.cleanup, CODEX_CLEANUP_REPORT_KEYS);
           }
           handleBackToList();
         } catch (error) {
@@ -406,7 +424,7 @@ const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ tool }) => {
                 t={t}
                 onRename={openRenameModal}
                 onExport={() => void handleExportSession(detail)}
-                onDelete={() => handleDeleteSession(detail.meta)}
+                onDelete={() => void handleDeleteSession(detail.meta)}
                 onOpenSubagent={handleOpenSubagentDetail}
                 onBackToParent={handleBackToParentDetail}
                 onCopyText={handleCopyText}

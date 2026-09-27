@@ -33,6 +33,8 @@ import type {
   CodexMemoriesSourceMode,
   CodexMemoriesListResult,
   CodexMemoryFileContent,
+  CodexScratchResidue,
+  CodexScratchCleanResult,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -435,4 +437,28 @@ export const revealCodexMemoriesFolder = async (
   sourceMode: CodexMemoriesSourceMode
 ): Promise<void> => {
   await invoke('reveal_codex_memories_folder', { sourceMode });
+};
+
+/**
+ * Residue of project-less Codex chats: their generated workspaces and the
+ * `[projects]` trust entries Codex wrote for them.
+ */
+export const scanCodexScratchResidue = async (
+  sourceMode: CodexHistorySourceMode = 'all'
+): Promise<CodexScratchResidue> => {
+  return await invoke<CodexScratchResidue>('scan_codex_scratch_residue', { sourceMode });
+};
+
+export const cleanCodexScratchResidue = async (
+  sourceMode: CodexHistorySourceMode,
+  workspacePaths: string[],
+  trustKeys: string[],
+  dateDirs: string[]
+): Promise<CodexScratchCleanResult> => {
+  return await invoke<CodexScratchCleanResult>('clean_codex_scratch_residue', {
+    sourceMode,
+    workspacePaths,
+    trustKeys,
+    dateDirs,
+  });
 };

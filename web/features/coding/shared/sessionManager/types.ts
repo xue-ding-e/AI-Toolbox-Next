@@ -106,9 +106,76 @@ export interface DeleteSessionFailure {
   error: string;
 }
 
+/**
+ * Which auxiliary Codex cleanup the delete should also perform.
+ *
+ * Only Codex sessions have this: Codex creates a scratch workspace and a
+ * `[projects]` trust entry for every project-less chat, and reclaims neither
+ * when the chat is deleted.
+ */
+export interface CodexCleanupOptions {
+  removeWorkspace: boolean;
+  removeTrustEntry: boolean;
+}
+
+export interface ScratchWorkspaceInfo {
+  path: string;
+  exists: boolean;
+  isEmpty: boolean;
+  fileCount: number;
+  totalBytes: number;
+  /** Contains a git repository: removal is refused by the backend. */
+  hasGit: boolean;
+  truncated: boolean;
+}
+
+export interface CodexCleanupSkip {
+  target: string;
+  reason: string;
+}
+
+export interface CodexCleanupFailure {
+  target: string;
+  error: string;
+}
+
+/**
+ * The auxiliary cleanup outcome, reported separately from the deletion.
+ *
+ * A cleanup failure is never a deletion failure: the session is gone even when
+ * its workspace or trust entry could not be removed.
+ */
+export interface CodexCleanupSummary {
+  removedWorkspaces: string[];
+  removedTrustKeys: string[];
+  removedDateDirs: string[];
+  skipped: CodexCleanupSkip[];
+  failures: CodexCleanupFailure[];
+}
+
+export interface CodexCleanupPreviewItem {
+  sourcePath: string;
+  projectDir: string;
+  workspace?: ScratchWorkspaceInfo | null;
+  trustKeys: string[];
+  configPath: string;
+  runtimeSource: 'local' | 'wsl';
+  runtimeDistro?: string | null;
+}
+
+export interface CodexCleanupPreview {
+  items: CodexCleanupPreviewItem[];
+}
+
+export interface DeleteToolSessionResult {
+  sourcePath: string;
+  cleanup?: CodexCleanupSummary;
+}
+
 export interface DeleteToolSessionsResult {
   deletedCount: number;
   failedItems: DeleteSessionFailure[];
+  cleanup?: CodexCleanupSummary;
 }
 
 export interface ExportSessionItem {

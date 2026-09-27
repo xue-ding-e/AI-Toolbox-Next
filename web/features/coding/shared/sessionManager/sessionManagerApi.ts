@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type {
+  CodexCleanupOptions,
+  CodexCleanupPreview,
+  DeleteToolSessionResult,
   DeleteToolSessionsResult,
   ExportToolSessionsResult,
   SessionDetail,
@@ -121,18 +124,38 @@ export const getToolSubagentSessionDetail = async (
 export const deleteToolSession = async (
   tool: SessionTool,
   sourcePath: string,
-): Promise<void> => {
-  await invoke('delete_tool_session', {
+  cleanup?: CodexCleanupOptions,
+): Promise<DeleteToolSessionResult> => {
+  return await invoke<DeleteToolSessionResult>('delete_tool_session', {
     tool,
     sourcePath,
+    cleanup: cleanup ?? null,
   });
 };
 
 export const deleteToolSessions = async (
   tool: SessionTool,
   sourcePaths: string[],
+  cleanup?: CodexCleanupOptions,
 ): Promise<DeleteToolSessionsResult> => {
   return await invoke<DeleteToolSessionsResult>('delete_tool_sessions', {
+    tool,
+    sourcePaths,
+    cleanup: cleanup ?? null,
+  });
+};
+
+/**
+ * The Codex scratch residue a delete could also clean up.
+ *
+ * Read-only; an unavailable or failed preview simply means the confirmation
+ * dialog shows no cleanup options.
+ */
+export const previewCodexSessionCleanup = async (
+  tool: SessionTool,
+  sourcePaths: string[],
+): Promise<CodexCleanupPreview> => {
+  return await invoke<CodexCleanupPreview>('preview_codex_session_cleanup', {
     tool,
     sourcePaths,
   });
