@@ -1000,8 +1000,8 @@ async fn forward_to_upstream(
     let mut providers = provider_candidates.providers;
 
     // Aggregate routing is shared with the Responses WebSocket transport so
-    // both transports use the same persisted slug table, bare-name ambiguity
-    // policy, and candidate ordering.
+    // HTTP requests use the persisted slug table, bare-name ambiguity policy,
+    // and candidate ordering shared by this request pipeline.
     let mut aggregate_upstream_model: Option<String> = None;
     let mut aggregate_model_is_explicit = false;
     if let Some(selection) = aggregate_selection {
@@ -5223,9 +5223,9 @@ pub(super) struct AggregateRequestCandidates {
 
 /// Resolve one aggregate request into its exact eligible provider order.
 ///
-/// This is the routing source of truth for both HTTP and Responses WebSocket:
-/// the selected site, persisted slug semantics, bare-name ambiguity check, and
-/// cross-site fallback candidates must not drift between transports.
+/// This is the routing source of truth for aggregate HTTP/SSE requests: the
+/// selected site, persisted slug semantics, bare-name ambiguity check, and
+/// cross-site fallback candidates are resolved together before any upstream call.
 pub(super) fn resolve_aggregate_request_candidates(
     requested_model: &str,
     selection: &GatewayProviderSelection,
