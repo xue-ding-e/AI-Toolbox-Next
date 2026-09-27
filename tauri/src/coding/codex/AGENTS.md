@@ -26,6 +26,8 @@
 - 从页面粘贴导入的 `auth.json` 只保存为官方账号快照，不覆盖当前 live `auth.json`；只有用户显式应用该账号时才写入运行时文件。
 - Official OAuth freshness: apply 路径已有 `ensure_fresh_official_runtime_auth`（lead 3 天）。启动 / 周期巡检由 `coding::auth_refresh` 调用 `refresh_applied_codex_accounts_if_needed`（所有已入库官方账号，排除 `__local__` 虚拟账号；默认 interval 12h）。未应用账号只把新 token 写回 SQLite；**仅 applied** 才写 live `auth.json`，写后须 `config-changed` + `wsl-sync-request-codex`（与 apply 对齐）。额度 `wham/usage` 不进该调度器。
 
+- 聚合 catalog 生成必须遵守 `cross_site_failover`：开启时继续发布原有 bare aliases；关闭时仍发布每个站点的限定 slug，但只发布可唯一路由的裸名。多个已选站点声明同一模型时，若裸名没有被持久化 slug 表精确绑定为同模型的站点 slug（如 `model_only` 首个 slug），隐藏 alias 不发布；显式子代理暴露该歧义裸名则拒绝接管，不能让 Codex 派发一个 runtime 必须拒绝的模型。
+
 ## 关键流程
 
 ```mermaid

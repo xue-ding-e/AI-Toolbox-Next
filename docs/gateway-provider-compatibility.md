@@ -1142,32 +1142,33 @@ inferred provider：
 
 | 条件 | 握手行为 |
 |---|---|
-| 网关 `codex_websocket_enabled=false`（默认值，旧配置缺字段同样关闭） | 加载 provider 前本地 `426`，不发起上游 WS；在途上游握手返回后再次检查，仍关闭则不升级下游 |
-| effective target 是 Chat / Anthropic / Gemini，或 Copilot 按模型动态选协议 | 本地 `426`，不尝试上游 WS；由 Codex 发 HTTP 请求进入原转换链路 |
-| 原始 Codex provider 表的 `supports_websockets=false` | 本地 `426`；网关接管时写入本地表的 true 不覆盖此上游判断 |
-| Responses provider 的能力为 true 或未配置 | 使用实际 URL/认证发起上游握手，有效 `101` 后才升级下游 |
-| 上游返回非升级的 2xx/3xx，或 `404/405/426/501` | 返回 `426`，详情保留实际上游状态；重定向在 HTTP 路径处理 |
-| 上游返回 `401/403/429` 等真实错误 | 保留实际错误，不伪装成“不支持 WS”；沿用 retryable status / provider retry / total retry 设置，预算耗尽保留最后实际失败 |
-| 上游 `101` 的 Accept key、Upgrade/Connection、extensions/subprotocol 不合法 | `502`，不向下游写出 `101` |
+| Gateway 聚合模式 | Codex 接管配置投影 `supports_websockets=false`，客户端在建连前选择 HTTP Responses/SSE；若仍发起 WS，Gateway 本地返回 `426`，不联系上游。聚合 WS 暂不支持，这是明确技术债。 |
+| Gateway single/failover 模式且 `codex_websocket_enabled=false`（默认值，旧配置缺字段同样关闭） | 加载 provider 前本地 `426`，不发起上游 WS；在途上游握手返回后再次检查，仍关闭则不升级下游 |
+| Gateway single/failover 模式且 effective target 是 Chat / Anthropic / Gemini，或 Copilot 按模型动态选协议 | 本地 `426`，不尝试上游 WS；由 Codex 发 HTTP 请求进入原转换链路 |
+| Gateway single/failover 模式且原始 Codex provider 表的 `supports_websockets=false` | 本地 `426`；接管配置中的本机能力声明不覆盖此上游判断 |
+| Gateway single/failover 模式且 Responses provider 的能力为 true 或未配置 | 使用实际 URL/认证发起上游握手，有效 `101` 后才升级下游 |
+| Gateway single/failover 模式且上游返回非升级的 2xx/3xx，或 `404/405/426/501` | 返回 `426`，详情保留实际上游状态；重定向在 HTTP 路径处理 |
+| Gateway single/failover 模式且上游返回 `401/403/429` 等真实错误 | 保留实际错误，不伪装成“不支持 WS”；沿用 retryable status / provider retry / total retry 设置，预算耗尽保留最后实际失败 |
+| Gateway single/failover 模式且上游 `101` 的 Accept key、Upgrade/Connection、extensions/subprotocol 不合法 | `502`，不向下游写出 `101` |
 
-- 路径和 query 复用既有 `build_provider_target_url`；普通 Responses Base URL、`##` RawURL 和 `is_full_url` 语义一致。HTTP(S) 用于升级请求，详情以 WS(S) URL 标识传输。
+- 下列上游握手与逐轮兼容规则仅适用于 single/failover；聚合模式在本地拒绝 WS，不进入这些上游握手步骤。路径和 query 复用既有 `build_provider_target_url`；普通 Responses Base URL、`##` RawURL 和 `is_full_url` 语义一致。HTTP(S) 用于升级请求，详情以 WS(S) URL 标识传输。
 - 认证和 provider 自定义 Headers 先走 `build_upstream_headers`。随后由 WS 层重新生成 Connection/Upgrade、Sec-WebSocket-Key/Version，移除客户端 Sec-WebSocket-*、body framing、Host/Accept 等冲突字段；不请求压缩扩展或 subprotocol。客户端/provider 已给出的 OpenAI-Beta 保留，缺省才注入 `responses_websockets=2026-02-06`。
 - 使用专门的全局 HTTP client builder，显式 rustls、HTTP/1.1、无重定向、无总响应超时，保留用户的 direct/system/custom proxy。连接首包、逐轮 idle、写入/flush 和服务停止分别控制生命周期，不能套用普通 HTTP 的 30 秒整次请求超时。
 - 每个 `response.create` 的 model 改写复用 single/failover 规则、`[1M]` 清理及同协议 provider pipeline；去掉 HTTP 专属 `stream/background`，保留 `type/generate/stream_id/previous_response_id/event_id`。xAI native Responses namespace 恢复表按轮隔离。首版不做 WS 内协议转换、provider 切换或生成重放。
 - 握手时没有模型，只能过滤 provider 级冷却；不能用猜测模型跳过渠道或更新模型健康。每轮生成的健康判定基于实际上游模型和已送达终态；合法 Incomplete/Canceled、客户端取消和预热不当作上游模型故障。
 - `response.failed` / error event 仍以 WS 事件送给客户端，业务行的 HTTP status 保持空值，详情单独保留事件 error status。握手尝试只记录在连接 metadata；业务请求的尝试数不被它放大。
 
-网关总开关与 provider 的原始 `supports_websockets` 能力判断同时生效。关闭总开关后已有连接空闲时关闭，在途轮次继续按既有 usage/终态规则结算；开启不会解除 Codex 当前会话已经记住的 HTTP fallback，需要新会话或重启客户端再试。切换开关不改 CLI 接管字段，不影响 HTTP/SSE 的协议转换和数据脱敏设置。
+single/failover 模式下，网关总开关与 provider 的原始 `supports_websockets` 能力判断同时生效。关闭总开关后已有连接空闲时关闭，在途轮次继续按既有 usage/终态规则结算；开启不会解除 Codex 当前会话已经记住的 HTTP fallback，需要新会话或重启客户端再试。聚合模式独立投影 `supports_websockets=false`，不因该总开关开启而启用 WS。切换开关不影响 HTTP/SSE 的协议转换和数据脱敏设置。
 
-关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`runtime/websocket/settings_tests.rs`、`settings.rs::websocket_setting_defaults_to_off_and_round_trips_without_resetting_other_settings`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_enables_websocket_and_restores_original_capability`。
+关键实现：`runtime/websocket.rs`、`runtime/upstream.rs::prepare_websocket_request`、`provider_protocol.rs::codex_supports_websockets_from_config`、`cli_proxy/mod.rs::patch_codex_config`、`http_client.rs::client_websocket_handshake`。回归：`runtime/websocket/tests.rs`、`runtime/websocket/lifecycle_tests.rs`、`runtime/websocket/settings_tests.rs`、`settings.rs::websocket_setting_defaults_to_off_and_round_trips_without_resetting_other_settings`、`provider_protocol.rs::websocket_capability_uses_the_selected_provider_table`、`cli_proxy/mod.rs::codex_takeover_writes_mode_specific_websocket_capability_and_restores_original`。
 
 ### 7.2 数据脱敏与渠道兼容（issue #347）
 
 数据脱敏默认关闭，独立于 provider profile；没有渠道隐式默认启用。入口是网关设置页的“数据脱敏”，详细边界见 [`gateway-data-redaction.md`](gateway-data-redaction.md)。
 
-- Claude Code、Claude Desktop、Codex、Grok、Kimi、Gemini 六类当前受支持 CLI 共用 HTTP 保护入口，Codex Responses WS 逐轮接线；其他工具手动调用有效模型路由时同样执行。不依赖 User-Agent，也不能把 OpenCode 等 Session 统计支持误写成自动接管支持。
+- Claude Code、Claude Desktop、Codex、Grok、Kimi、Gemini 六类当前受支持 CLI 共用 HTTP 保护入口；single/failover 的 Codex Responses WS 也按轮接入保护。聚合模式使用 HTTP/SSE。其他工具手动调用有效模型路由时同样执行。不依赖 User-Agent，也不能把 OpenCode 等 Session 统计支持误写成自动接管支持。
 - 出站请求先做 provider 的 body/header/path/auth 兼容，再在消息、工具参数/结果和说明文本里替换敏感值；认证 Header、模型/工具身份、关联 ID、媒体和不透明密文不按普通业务文本改写。业务对象里的 `name`/`url` 不能按裸字段名豁免。
-- SSE、JSON 和同协议 Responses WS 在既有响应兼容/namespace 回转之后还原占位符。原始历史记录仍在还原之前，不将客户端还原副本写回 provider side store。
+- SSE、JSON 和 single/failover 同协议 Responses WS 在既有响应兼容/namespace 回转之后还原占位符。原始历史记录仍在还原之前，不将客户端还原副本写回 provider side store。
 - 各协议的 JSON 文本工具结果统一解码并扫描业务字段；Responses namespace 内嵌工具的描述/schema 也参与处理，名称、namespace、关联 ID 与 Ollama `tool_name` 不变。Gemini response schema 和 Ollama `format` 中的描述/示例参与扫描，`type/format/required` 等控制信息不改。流式工具参数支持多层 JSON 和 Unicode 转义。
 - Responses 工具结果 `output[]`、Gemini `functionResponse.parts` 和 Anthropic content 数组按 block 处理，图片/inlineData、Ollama `images[]`、redacted thinking 保持不透明；Anthropic 纯文本文档 data、title/context 仍扫描。
 - Anthropic/Gemini 真实签名绑定对象不能静默修改；需要替换或还原时明确拒绝。Gemini functionCall 的默认兼容占位签名复用 transformer 的 `DEFAULT_GEMINI_THOUGHT_SIGNATURE` 识别，不代表真实绑定，也不豁免 thinking 文本或其他签名。Gemini thought/text/function 分通道，连续相同 delta 不能被累计前缀兼容逻辑吞掉。此约束不改现有 thinking/encrypted-content 整流开关。
@@ -1175,7 +1176,7 @@ inferred provider：
 - WS 保护状态按轮次固定；关掉开关仍需拦截受保护旧轮次的重复事件。开启时，没有待处理请求的正文事件同样不能绕过关联检查。
 - 本地 HTTP 隐私错误按入站协议格式化：OpenAI `error.message/type/code`、Anthropic 顶层 `type:error`、Gemini 数字 code/status；非法 JSON、请求签名拒绝和响应还原失败都保持客户端可解析的 envelope。
 - 完全关闭后的新请求沿用既有兼容链路；旧上游历史不会被改写。引用过期映射或其它 provider 的 `previous_response_id` 需要新建会话。
-- 回归包括 `privacy/tests.rs`、`runtime/websocket/privacy_tests.rs`、`runtime/websocket/privacy_matrix_tests.rs`：七入口 × 四种目标协议 × 开关两态 × JSON/SSE/强制 SSE 聚合，以及本节 Ollama、legacy completion、协议错误和开启保护后的 WS 426→HTTP 往返。
+- 回归包括 `privacy/tests.rs`、`runtime/websocket/privacy_tests.rs`、`runtime/websocket/privacy_matrix_tests.rs`：七入口 × 四种目标协议 × 开关两态 × JSON/SSE/HTTP 强制 SSE 聚合，以及本节 Ollama、legacy completion、协议错误和开启保护后的 single/failover WS 426→HTTP 往返。
 
 ## 8. 维护流程
 

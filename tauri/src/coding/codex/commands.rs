@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -3660,6 +3660,14 @@ fn codex_aggregate_catalog_entries(
     sites: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
 ) -> Result<(Vec<AggregateCatalogEntry>, Vec<AggregateSlugEntry>), String> {
+    codex_aggregate_catalog_entries_with_failover(sites, naming, true)
+}
+
+fn codex_aggregate_catalog_entries_with_failover(
+    sites: &[(String, String, Value)],
+    naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+    cross_site_failover: bool,
+) -> Result<(Vec<AggregateCatalogEntry>, Vec<AggregateSlugEntry>), String> {
     use crate::coding::proxy_gateway::aggregate_naming::AggregateSlugAllocator;
 
     let mut entries = Vec::new();
@@ -3717,6 +3725,45 @@ fn codex_aggregate_catalog_entries(
         }
     }
 
+    let visible_slugs = slug_table
+        .iter()
+        .map(|entry| (entry.slug.as_str(), entry.upstream_model.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if !cross_site_failover {
+        let mut sites_by_model = BTreeMap::<String, BTreeSet<String>>::new();
+        for entry in &slug_table {
+            sites_by_model
+                .entry(entry.upstream_model.clone())
+                .or_default()
+                .insert(entry.site_id.clone());
+        }
+        let ambiguous_models = sites_by_model
+            .iter()
+            .filter_map(|(model, model_sites)| (model_sites.len() > 1).then_some(model.as_str()))
+            .collect::<BTreeSet<_>>();
+        let ambiguous_exposure = naming.subagent_exposed_models.iter().find(|model| {
+            ambiguous_models.contains(model.as_str())
+                && !visible_slugs
+                    .get(model.as_str())
+                    .is_some_and(|upstream_model| *upstream_model == model.as_str())
+        });
+        if let Some(model) = ambiguous_exposure {
+            return Err(format!(
+                "Cannot expose bare aggregate model '{model}' to subagents while cross-site failover is disabled because multiple selected sites declare it; use a site-qualified model instead"
+            ));
+        }
+
+        // A repeated bare name is not routable with failover disabled. Keep it
+        // only when the persisted slug table already assigns that exact name to
+        // its upstream model (for example, the first `model_only` slug).
+        bare_models.retain(|model| {
+            !ambiguous_models.contains(model.as_str())
+                || visible_slugs
+                    .get(model.as_str())
+                    .is_some_and(|upstream_model| *upstream_model == model.as_str())
+        });
+    }
+
     // Single-provider catalogs advertise the provider-level
     // `auto_review_model_override` on every model row, so a request that starts
     // from any row keeps its review/guardian calls pinned to the configured
@@ -3769,10 +3816,6 @@ fn codex_aggregate_catalog_entries(
     // priority past every visible row, so it stays callable by its exact bare
     // name but never shows up in the hints. Ticking nothing promotes nothing,
     // which is exactly the behavior before this feature existed.
-    let visible_slugs = slug_table
-        .iter()
-        .map(|entry| (entry.slug.as_str(), entry.upstream_model.as_str()))
-        .collect::<std::collections::BTreeMap<_, _>>();
     let site_row_count = entries.len();
     // Tick order is priority order: the first ticked name wins the lowest slot.
     // Only names the selected sites declare can be published. A bare name may
@@ -3947,9 +3990,11 @@ pub(crate) fn write_codex_aggregate_catalog(
     config_dir: &Path,
     providers: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+    cross_site_failover: bool,
     default_context_window: u64,
 ) -> Result<bool, String> {
-    let entries = codex_aggregate_catalog_entries(providers, naming)?.0;
+    let entries =
+        codex_aggregate_catalog_entries_with_failover(providers, naming, cross_site_failover)?.0;
     if entries.is_empty() {
         return Ok(false);
     }
@@ -5484,7 +5529,8 @@ mod tests {
     use super::{
         aggregate_catalog_from_entries, aggregate_site_model_specs, append_toml_configs,
         build_written_codex_config_toml, capture_codex_pre_aggregate_catalog,
-        codex_aggregate_catalog_entries, codex_aggregate_slug_table, codex_catalog_display_name,
+        codex_aggregate_catalog_entries, codex_aggregate_catalog_entries_with_failover,
+        codex_aggregate_slug_table, codex_catalog_display_name,
         codex_catalog_effective_input_modalities, codex_catalog_model_specs,
         ensure_codex_model_catalog_pointer, extract_codex_common_config_from_settings_toml,
         extract_provider_settings_for_storage, fill_template_fields_from_static,
@@ -6506,9 +6552,14 @@ approval_policy = "never"
     fn write_aggregate_catalog_skips_empty_selection() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
 
-        let written =
-            write_codex_aggregate_catalog(&temp_dir.path(), &[], &aggregate_naming("."), 200000)
-                .unwrap();
+        let written = write_codex_aggregate_catalog(
+            &temp_dir.path(),
+            &[],
+            &aggregate_naming("."),
+            true,
+            200000,
+        )
+        .unwrap();
 
         assert!(!written);
         assert!(!temp_dir
@@ -6526,9 +6577,14 @@ approval_policy = "never"
             json!([{ "model": "m1" }]),
         )];
 
-        let written =
-            write_codex_aggregate_catalog(&temp_dir.path(), &sites, &aggregate_naming("."), 200000)
-                .unwrap();
+        let written = write_codex_aggregate_catalog(
+            &temp_dir.path(),
+            &sites,
+            &aggregate_naming("."),
+            true,
+            200000,
+        )
+        .unwrap();
 
         assert!(written);
         let catalog_path = temp_dir
@@ -6611,6 +6667,96 @@ approval_policy = "never"
             // Hidden entries must never occupy a visible picker/hint slot.
             assert!(entry["priority"].as_u64().unwrap() >= 9000);
         }
+    }
+
+    #[test]
+    fn aggregate_catalog_hides_ambiguous_bare_names_when_cross_site_failover_is_disabled() {
+        let sites = vec![
+            aggregate_site(
+                "site1",
+                "Site 1",
+                json!([{ "model": "gpt-5.6-terra" }, { "model": "gpt-5.6-luna" }]),
+            ),
+            aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-terra" }])),
+        ];
+
+        let (entries, table) =
+            codex_aggregate_catalog_entries_with_failover(&sites, &aggregate_naming("."), false)
+                .unwrap();
+        let slugs: Vec<&str> = entries.iter().map(|entry| entry.slug.as_str()).collect();
+
+        // Both exact site routes stay published and persisted; only the
+        // unqualified name that would be ambiguous is omitted.
+        assert!(slugs.contains(&"site1.gpt-5.6-terra"));
+        assert!(slugs.contains(&"site2.gpt-5.6-terra"));
+        assert!(slugs.contains(&"gpt-5.6-luna"));
+        assert!(!slugs.contains(&"gpt-5.6-terra"));
+        assert_eq!(table.len(), 3);
+    }
+
+    #[test]
+    fn aggregate_catalog_rejects_ambiguous_subagent_bare_name_without_failover() {
+        let sites = vec![
+            aggregate_site("site1", "Site 1", json!([{ "model": "gpt-5.6-terra" }])),
+            aggregate_site("site2", "Site 2", json!([{ "model": "gpt-5.6-terra" }])),
+        ];
+
+        let error = codex_aggregate_catalog_entries_with_failover(
+            &sites,
+            &aggregate_naming_with_exposed(&["gpt-5.6-terra"]),
+            false,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("gpt-5.6-terra"));
+        assert!(error.contains("multiple selected sites"));
+        assert!(error.contains("site-qualified model"));
+    }
+
+    #[test]
+    fn aggregate_catalog_keeps_unique_subagent_bare_name_without_failover() {
+        let sites = vec![aggregate_site(
+            "思辰888-pro",
+            "思辰888-pro",
+            json!([{ "model": "gpt-5.6-terra" }]),
+        )];
+
+        let (entries, _) = codex_aggregate_catalog_entries_with_failover(
+            &sites,
+            &aggregate_naming_with_exposed(&["gpt-5.6-terra"]),
+            false,
+        )
+        .unwrap();
+        let promoted = entries
+            .iter()
+            .find(|entry| entry.slug == "gpt-5.6-terra")
+            .expect("unique bare model remains exposed to subagents");
+
+        assert!(!promoted.hidden);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.slug == "思辰888-pro.gpt-5.6-terra"));
+    }
+
+    #[test]
+    fn aggregate_model_only_slug_remains_addressable_when_bare_name_is_shared() {
+        let sites = vec![
+            aggregate_site("site1", "Site 1", json!([{ "model": "model-x" }])),
+            aggregate_site("site2", "Site 2", json!([{ "model": "model-x" }])),
+        ];
+        let naming = AggregateNamingConfig {
+            naming: crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode::ModelOnly,
+            ..aggregate_naming(".")
+        };
+
+        let (entries, table) =
+            codex_aggregate_catalog_entries_with_failover(&sites, &naming, false).unwrap();
+        assert_eq!(table[0].slug, "model-x");
+        assert_eq!(table[1].slug, "model-x#2");
+        assert!(entries.iter().any(|entry| entry.slug == "model-x"));
+        assert!(!entries
+            .iter()
+            .any(|entry| entry.hidden && entry.slug == "model-x"));
     }
 
     #[test]

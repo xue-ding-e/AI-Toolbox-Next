@@ -23,8 +23,8 @@ use super::middleware::{
 };
 use super::pipeline::Pipeline;
 use super::providers::{
-    resolve_aggregate_route_with_selection, ProviderAuthStrategy, UpstreamModelMapping,
-    UpstreamProvider,
+    resolve_aggregate_route_with_selection, AggregateRoute, GatewayProviderSelection,
+    ProviderAuthStrategy, UpstreamModelMapping, UpstreamProvider,
 };
 use super::routes::{build_target_url, match_gateway_route, split_request_target, GatewayRoute};
 use super::side_stores::{
@@ -999,106 +999,65 @@ async fn forward_to_upstream(
             .is_some_and(|selection| selection.mode == GatewayProxyMode::Single);
     let mut providers = provider_candidates.providers;
 
-    // Aggregate mode: keep the site named by the model prefix first, and keep
-    // the other sites that declare the same upstream model as fallbacks.
+    // Aggregate routing is shared with the Responses WebSocket transport so
+    // both transports use the same persisted slug table, bare-name ambiguity
+    // policy, and candidate ordering.
     let mut aggregate_upstream_model: Option<String> = None;
-    // `true` when the model name itself selected the site (a published slug or a
-    // `<site><sep><model>` prefix). Those already name the exact upstream model,
-    // so user rewrite rules must not touch them; a bare model name still runs
-    // them, exactly like the non-aggregate paths.
     let mut aggregate_model_is_explicit = false;
     if let Some(selection) = aggregate_selection {
-        let resolved =
-            match resolve_aggregate_route_with_selection(&requested_model, selection, &providers) {
-                Ok(resolved) => resolved,
-                Err(error) => {
-                    let mut response = json_response(
-                        404,
-                        "Not Found",
-                        json!({
-                            "error": "gateway_aggregate_model_unknown",
-                            "message": error,
-                        }),
-                        route.route_name,
-                        None,
-                        "aggregate model slug did not resolve",
-                    );
-                    response.cli_key = Some(route.cli_key);
-                    response.requested_model = Some(requested_model);
-                    response.error_category = Some("model_not_found".to_string());
-                    return response;
-                }
-            };
-        aggregate_upstream_model = Some(resolved.upstream_model.clone());
-        aggregate_model_is_explicit = resolved.explicit;
-        // The slug or prefix named the site/group; a bare model name names only
-        // the model. Either way the site has to be an enabled candidate right now —
-        // a site that was disabled since engage keeps its published slug in the
-        // Codex list, so fall back to whichever candidate still declares that
-        // upstream model instead of failing the request outright.
-        //
-        let target = resolved
-            .site_id
-            .as_deref()
-            .and_then(|site_id| providers.iter().position(|provider| provider.id == site_id))
-            .map(|index| providers.remove(index));
-        let model = resolved.upstream_model.clone();
-        // A fallback site only makes sense when it actually offers the same
-        // upstream model. Aggregate manifests declare the visible catalog, so
-        // never send a model to a site that does not declare it.
-        let mut fallbacks = aggregate_model_candidates(
+        let aggregate = match resolve_aggregate_request_candidates(
+            &requested_model,
+            selection,
             providers,
-            &model,
-            aggregate_model_is_explicit,
             allow_provider_model_mapping,
-        );
-        // 跨站故障转移开关：关闭时本次请求只能由一个站点服务，绝不把请求转给
-        // 其它站点；开启时保留“声明同一上游模型的站点互为兜底”的原有行为。
-        //
-        // The cross-site gate is applied here, before the retry loop, so the
-        // narrowed list also governs the health filter and every failover
-        // branch below: with a single candidate they can no longer reach
-        // another site. Same-site retries (`per_provider_retry_count`) are
-        // unaffected.
-        providers = if selection.cross_site_failover {
-            match target {
-                Some(target) => {
-                    let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
-                    ordered.push(target);
-                    ordered.append(&mut fallbacks);
-                    ordered
-                }
-                None => fallbacks,
+        ) {
+            Ok(aggregate) => aggregate,
+            Err(AggregateRoutingError::Unknown(message)) => {
+                let mut response = json_response(
+                    404,
+                    "Not Found",
+                    json!({
+                        "error": "gateway_aggregate_model_unknown",
+                        "message": message,
+                    }),
+                    route.route_name,
+                    None,
+                    "aggregate model did not resolve to an enabled candidate",
+                );
+                response.cli_key = Some(route.cli_key);
+                response.requested_model = Some(requested_model);
+                response.error_category = Some("model_not_found".to_string());
+                return response;
             }
-        } else {
-            match target {
-                Some(target) => vec![target],
-                // Nothing was named, or the named site is disabled or no longer
-                // a candidate: this request has no authorised site, so it fails
-                // instead of being handed to whichever site happens to declare
-                // the same model.
-                None => Vec::new(),
+            Err(AggregateRoutingError::Ambiguous {
+                model,
+                provider_names,
+            }) => {
+                let message = format!(
+                    "Bare aggregate model '{}' is declared by multiple selected sites ({}); use a site-qualified model slug.",
+                    model,
+                    provider_names.join(", "),
+                );
+                let mut response = json_response(
+                    409,
+                    "Conflict",
+                    json!({
+                        "error": "gateway_aggregate_model_ambiguous",
+                        "message": message,
+                    }),
+                    route.route_name,
+                    None,
+                    "bare aggregate model is declared by multiple selected sites",
+                );
+                response.cli_key = Some(route.cli_key);
+                response.requested_model = Some(requested_model);
+                response.error_category = Some("model_ambiguous".to_string());
+                return response;
             }
         };
-        if providers.is_empty() {
-            let mut response = json_response(
-                404,
-                "Not Found",
-                json!({
-                    "error": "gateway_aggregate_model_unknown",
-                    "message": format!(
-                        "No enabled aggregate site declares model '{model}'. Pick a model from the Codex model list.",
-                    ),
-                }),
-                route.route_name,
-                None,
-                "aggregate model did not match any declared catalog",
-            );
-            response.cli_key = Some(route.cli_key);
-            response.requested_model = Some(requested_model);
-            response.error_category = Some("model_not_found".to_string());
-            return response;
-        }
+        aggregate_upstream_model = Some(aggregate.route.upstream_model);
+        aggregate_model_is_explicit = aggregate.route.explicit;
+        providers = aggregate.providers;
     }
 
     let settings = context.settings_snapshot();
@@ -5248,6 +5207,111 @@ fn aggregate_model_candidates(
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AggregateRoutingError {
+    Unknown(String),
+    Ambiguous {
+        model: String,
+        provider_names: Vec<String>,
+    },
+}
+
+pub(super) struct AggregateRequestCandidates {
+    pub(super) route: AggregateRoute,
+    pub(super) providers: Vec<UpstreamProvider>,
+}
+
+/// Resolve one aggregate request into its exact eligible provider order.
+///
+/// This is the routing source of truth for both HTTP and Responses WebSocket:
+/// the selected site, persisted slug semantics, bare-name ambiguity check, and
+/// cross-site fallback candidates must not drift between transports.
+pub(super) fn resolve_aggregate_request_candidates(
+    requested_model: &str,
+    selection: &GatewayProviderSelection,
+    mut providers: Vec<UpstreamProvider>,
+    allow_provider_model_mapping: bool,
+) -> Result<AggregateRequestCandidates, AggregateRoutingError> {
+    let route = resolve_aggregate_route_with_selection(requested_model, selection, &providers)
+        .map_err(AggregateRoutingError::Unknown)?;
+    let target_site_id =
+        resolve_aggregate_target_site(&route, &providers, selection, allow_provider_model_mapping)
+            .map_err(|provider_names| AggregateRoutingError::Ambiguous {
+                model: route.upstream_model.clone(),
+                provider_names,
+            })?;
+    let target = target_site_id
+        .as_deref()
+        .and_then(|site_id| providers.iter().position(|provider| provider.id == site_id))
+        .map(|index| providers.remove(index));
+    let mut fallbacks = aggregate_model_candidates(
+        providers,
+        &route.upstream_model,
+        route.explicit,
+        allow_provider_model_mapping,
+    );
+    let providers = if selection.cross_site_failover {
+        match target {
+            Some(target) => {
+                let mut ordered = Vec::with_capacity(fallbacks.len() + 1);
+                ordered.push(target);
+                ordered.append(&mut fallbacks);
+                ordered
+            }
+            None => fallbacks,
+        }
+    } else {
+        // With the cross-site gate closed, only a currently enabled explicit
+        // target or unique selected bare-name target may serve the request.
+        target.into_iter().collect()
+    };
+    if providers.is_empty() {
+        return Err(AggregateRoutingError::Unknown(format!(
+            "No enabled aggregate site declares model '{}'. Pick a model from the Codex model list.",
+            route.upstream_model,
+        )));
+    }
+    Ok(AggregateRequestCandidates { route, providers })
+}
+
+/// Resolve a target site for an aggregate request without widening the
+/// cross-site failover policy.
+///
+/// When cross-site failover is enabled, bare models keep the historical
+/// candidate-order behavior. With it disabled, bare models may target only one
+/// currently available selected site that declares the model (after that
+/// site's normal rewrite); explicit slugs/prefixes always keep their named
+/// site.
+fn resolve_aggregate_target_site(
+    route: &AggregateRoute,
+    providers: &[UpstreamProvider],
+    selection: &GatewayProviderSelection,
+    allow_provider_model_mapping: bool,
+) -> Result<Option<String>, Vec<String>> {
+    if route.site_id.is_some() || selection.cross_site_failover {
+        return Ok(route.site_id.clone());
+    }
+
+    let selected_matches = aggregate_model_candidates(
+        providers
+            .iter()
+            .filter(|provider| selection.aggregate_provider_ids.contains(&provider.id))
+            .cloned()
+            .collect(),
+        &route.upstream_model,
+        route.explicit,
+        allow_provider_model_mapping,
+    );
+    match selected_matches.as_slice() {
+        [] => Ok(None),
+        [provider] => Ok(Some(provider.id.clone())),
+        matches => Err(matches
+            .iter()
+            .map(|provider| provider.name.clone())
+            .collect()),
+    }
+}
+
 /// Resolve the upstream model for one aggregate-mode attempt.
 ///
 /// Aggregate mode never runs the per-CLI family/default mapping: an explicit
@@ -5548,6 +5612,21 @@ pub(super) fn prepare_websocket_request(
         apply_failover_model_mapping,
         true,
     );
+    prepare_websocket_request_with_model(request, provider, context, upstream_model)
+}
+
+fn prepare_websocket_request_with_model(
+    request: &DebugHttpRequest,
+    provider: &UpstreamProvider,
+    context: &GatewayRuntimeContext,
+    upstream_model: String,
+) -> Result<(Vec<u8>, String, HashMap<String, NamespacedName>), String> {
+    let original: Value =
+        serde_json::from_slice(&request.body).map_err(|error| error.to_string())?;
+    let requested_model = original.get("model").and_then(Value::as_str).unwrap_or("");
+    if requested_model.trim().is_empty() {
+        return Err("response.create requires a model".to_string());
+    }
     let prepared = build_upstream_body_for_provider(
         request,
         requested_model,
@@ -10841,7 +10920,7 @@ pub(super) fn refresh_health_registry(context: &GatewayRuntimeContext) {
     }
 }
 
-fn is_model_available(
+pub(super) fn is_model_available(
     context: &GatewayRuntimeContext,
     health_key: &ProviderModelHealthKey,
 ) -> bool {
@@ -13008,6 +13087,137 @@ data: {data}\r\n\r\n"
         assert!(aggregate_model_candidates(vec![site_a], "gpt-5-luna", false, false).is_empty());
         // A site without a declared catalog is never a candidate.
         assert!(aggregate_model_candidates(vec![site_c], "glm-5", true, true).is_empty());
+    }
+
+    fn aggregate_route_selection(
+        provider_ids: &[&str],
+        cross_site_failover: bool,
+    ) -> GatewayProviderSelection {
+        GatewayProviderSelection {
+            mode: GatewayProxyMode::Aggregate,
+            primary_provider_id: provider_ids
+                .first()
+                .copied()
+                .unwrap_or_default()
+                .to_string(),
+            aggregate_provider_ids: provider_ids.iter().map(|id| (*id).to_string()).collect(),
+            aggregate_separator: ".".to_string(),
+            aggregate_aliases: Default::default(),
+            aggregate_naming:
+                crate::coding::proxy_gateway::aggregate_naming::AggregateNamingMode::SiteModel,
+            aggregate_subagent_exposed_models: Vec::new(),
+            aggregate_slug_table: Vec::new(),
+            cross_site_failover,
+        }
+    }
+
+    fn declaring_codex_site(id: &str, name: &str, models: &[&str]) -> UpstreamProvider {
+        let mut provider = provider_for_cli(GatewayCliKey::Codex);
+        provider.id = id.to_string();
+        provider.name = name.to_string();
+        provider.meta.declared_models = models.iter().map(|model| (*model).to_string()).collect();
+        provider
+    }
+
+    #[test]
+    fn aggregate_bare_model_pins_only_a_unique_selected_enabled_site_without_failover() {
+        let terra = declaring_codex_site("terra-site", "思辰888-pro", &["gpt-5.6-terra"]);
+        let other = declaring_codex_site("other-site", "Other", &["gpt-5.6-terra"]);
+        let selection = aggregate_route_selection(&["terra-site"], false);
+        let bare = AggregateRoute {
+            site_id: None,
+            upstream_model: "gpt-5.6-terra".to_string(),
+            explicit: false,
+        };
+
+        // The unselected provider is not considered, even when it declares the
+        // same model; the currently enabled selected site is the unique target.
+        assert_eq!(
+            resolve_aggregate_target_site(
+                &bare,
+                &[terra.clone(), other.clone()],
+                &selection,
+                true,
+            )
+            .unwrap()
+            .as_deref(),
+            Some("terra-site")
+        );
+
+        // A selected provider that is disabled/missing at request time is not a
+        // candidate, and an unselected declaration cannot take its place.
+        let disabled_selection = aggregate_route_selection(&["disabled-site"], false);
+        assert_eq!(
+            resolve_aggregate_target_site(&bare, &[other], &disabled_selection, true).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn aggregate_bare_model_rejects_zero_or_multiple_selected_declarations() {
+        let site_a = declaring_codex_site("site-a", "Site A", &["gpt-5.6-terra"]);
+        let site_b = declaring_codex_site("site-b", "Site B", &["gpt-5.6-terra"]);
+        let bare = AggregateRoute {
+            site_id: None,
+            upstream_model: "gpt-5.6-terra".to_string(),
+            explicit: false,
+        };
+
+        assert_eq!(
+            resolve_aggregate_target_site(
+                &bare,
+                &[site_a.clone()],
+                &aggregate_route_selection(&["site-b"], false),
+                true,
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_aggregate_target_site(
+                &bare,
+                &[site_a.clone(), site_b],
+                &aggregate_route_selection(&["site-a", "site-b"], false),
+                true,
+            )
+            .unwrap_err(),
+            vec!["Site A".to_string(), "Site B".to_string()]
+        );
+    }
+
+    #[test]
+    fn aggregate_explicit_site_slug_stays_bound_and_failover_keeps_bare_ordering() {
+        let site_a = declaring_codex_site("site-a", "Site A", &["gpt-5.6-terra"]);
+        let site_b = declaring_codex_site("site-b", "Site B", &["gpt-5.6-terra"]);
+        let providers = [site_a, site_b];
+        let explicit = AggregateRoute {
+            site_id: Some("site-b".to_string()),
+            upstream_model: "gpt-5.6-terra".to_string(),
+            explicit: true,
+        };
+        let selection = aggregate_route_selection(&["site-a", "site-b"], false);
+        assert_eq!(
+            resolve_aggregate_target_site(&explicit, &providers, &selection, true).unwrap(),
+            Some("site-b".to_string())
+        );
+
+        // Failover-on keeps the pre-existing bare-model fallback path instead
+        // of pinning a unique target here.
+        let bare = AggregateRoute {
+            site_id: None,
+            upstream_model: "gpt-5.6-terra".to_string(),
+            explicit: false,
+        };
+        assert_eq!(
+            resolve_aggregate_target_site(
+                &bare,
+                &providers,
+                &aggregate_route_selection(&["site-a", "site-b"], true),
+                true,
+            )
+            .unwrap(),
+            None
+        );
     }
 
     #[test]

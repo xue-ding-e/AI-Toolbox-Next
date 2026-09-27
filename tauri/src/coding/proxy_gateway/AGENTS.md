@@ -50,12 +50,16 @@
 - 网关“重启”是独立于“停止”的热重启命令：不做 CLI 接管 preflight、不改 manifest、尽量保持当前 host/port，并重建 runtime（清空 provider cache / side stores，重置模型健康冷却并写回 `model-health.json`）。请求历史与统计不删。
 - 重启 bind 只临时关闭 `port_auto_select`，不要把用户设置永久写成 `false`；同端口释放有短重试。若重启在 stop 之后 start 失败，必须明确返回“网关已停止”错误，并提示重新启动或先恢复 CLI 直连；命令层无论成功失败都要按最终 running 状态 emit `gateway-running-changed`，避免中途失败后其它 UI 仍以为网关在跑。
 
+- 聚合 HTTP 路由的 failover 开关同时约束裸模型的初始站点选择：关闭时先尊重持久化 slug 表/站点前缀；未显式指定站点的裸名只在当前已启用候选中、且仅一个已选站点按实际转发模型声明它时才路由到该站点。零匹配沿用本地 404，多匹配返回 `409 gateway_aggregate_model_ambiguous` 并要求站点限定 slug；不允许用未选站点或跨站重试消歧。开启时保留原有目标站点优先及同模型候选故障转移。
+- 聚合目录在 failover 关闭时不得发布无法唯一解析的裸名；若子代理暴露选择点中了此类歧义裸名，接管失败并要求改用可寻址的站点模型，而不是静默过滤用户选择。精确命中已发布 slug 表且 slug 与上游模型同名（例如 `model_only` 的首个 slug）仍是站点绑定的显式路由，不算未绑定裸名。failover 开启时目录发布行为保持原样。
+
 ## 核心设计决策（Why）
 
 - 历史缓存找回了全部 call item 不等于下一轮工具协议合法（issue #352）。Responses 入站 transformer 必须把同一 turn 的调用、前中后 commentary 和 reasoning 归为同一 assistant，runtime 不为 Kimi/GLM 增加第二套重排。真实 HTTP 回归要让严格 Chat/Gemini 模拟上游校验最终批次与配对，覆盖 JSON/SSE/forced SSE、完整/部分历史、previous-response/唯一 call-id 补全和正文日志关闭/截断；不能只验证缓存计数或存在 tool output。
 - Gemini 并行调用必须同时检查普通流式和非流客户端的 forced SSE 聚合：聚合器不能按函数名覆盖同名调用，统一复用 transformer 的 `merge_gemini_function_call_part`，仅同一非空原生 ID 才合并快照。无 ID 的独立调用逐个保留，JSON/SSE 转出本地 ID 须跨轮唯一。Vertex provider 移除全部 function ID 前要恢复结果的调用顺序，且 marker/媒体跟随所属结果，避免 ID 消失后同名逆序结果串配。
-- Codex WebSocket 只在 runtime 做 Responses 同协议转发（架构文档 §16.1、兼容文档 §7.1）。必须先校验实际上游的有效 `101`，再升级下游；转换、动态协议或显式关闭 WS 的渠道在升级前 `426`。接管表的 `supports_websockets=true` 描述本机能力，上游判断仍读数据库 provider 的原始配置，恢复直连要恢复原值。
-- 网关 `codex_websocket_enabled` 默认关闭，旧 settings 缺字段也关闭；这是独立于 provider capability 的运行态门控，不修改接管文件。关闭时在 provider 加载前 `426`，上游握手完成后、下游升级前再次检查。已有连接只在 pending 全部结算后关闭，空闲读被新帧唤醒时也要检查；不能中断在途 usage、额外记录模型失败或让空闲连接继续生成。开启后 Codex 已回退的旧会话需新建/重启才能重试，不能承诺自动恢复 WS。回归见 `runtime/websocket/settings_tests.rs` 与 `settings.rs`。
+- Gateway 聚合模式只使用 HTTP Responses/SSE：Codex `config.toml` 投影 `supports_websockets=false`，使 Codex 在建连前选择 HTTP/SSE；若仍收到 WS upgrade，Gateway 本地返回 `426` 且不联系上游。聚合 WebSocket 暂不支持，是明确技术债。
+- Codex WebSocket 的 Responses 同协议转发生命周期只适用于 single/failover（架构文档 §16.1、兼容文档 §7.1）。必须先校验实际上游的有效 `101`，再升级下游；转换、动态协议或显式关闭 WS 的渠道在升级前 `426`。single/failover 接管投影 `supports_websockets=true` 描述本机能力，上游判断仍读数据库 provider 的原始配置；恢复直连要还原原能力或移除新建字段。
+- single/failover 的 `codex_websocket_enabled` 默认关闭，旧 settings 缺字段也关闭；这是独立于 provider capability 的运行态门控。关闭时在 provider 加载前 `426`，上游握手完成后、下游升级前再次检查。已有连接只在 pending 全部结算后关闭，空闲读被新帧唤醒时也要检查；不能中断在途 usage、额外记录模型失败或让空闲连接继续生成。开启后 Codex 已回退的旧会话需新建/重启才能重试，不能承诺自动恢复 WS。回归见 `runtime/websocket/settings_tests.rs` 与 `settings.rs`。
 - 一条 WS 固定一个 provider/认证身份；`previous_response_id` 是连接内状态，禁止在已升级连接里静默 failover 或重放生成。握手可复用原 retry 预算，但不能把握手尝试记成每轮生成重试；握手阶段没有实际模型，只看 provider 冷却。
 - WS 收尾必须在同一个有界流程内发送/冲刷 Close 并继续读取至关闭握手结束；上下游同时收尾，各自最多 1 秒，关闭期间只排空在途帧，不转发或计为新请求。`tokio-tungstenite::WebSocketStream::close(None)` 只发送消息，收到对端 Close 后还会因连接已在关闭而拒绝发送；用 `SinkExt::close` 冲刷自动回复，再读至结束。仅发 Close 就释放 TCP 会在 Windows 上因未读数据产生 `10054 ConnectionReset`。回归覆盖延迟到达的真实 TCP 请求、双方主动关闭、未回应超时；测试用 Ping/Pong 或帧到达同步，不用 sleep 猜测 relay 已就绪。
 - WS 用量和请求详情按每个 `response.create` 结算，并按 `stream_id` / response ID 关联；终态送达后立刻落库，不等连接关闭。usage 解析先于下游写入，成功判定晚于写入；日志关闭/截断不能改统计，客户端写失败仍保留已经收到的 usage。
@@ -283,7 +287,7 @@ side store、lossy 策略、rectifier、xAI restore 仍由 `upstream.rs` 请求�
 
 ## 最小验证
 
-- 修改 WS 时至少运行 `cargo test --lib websocket --jobs 2` 和 `cargo test --test sqlite_jsonb --jobs 2`：覆盖真实握手/426→HTTP 转换、同连接多轮、多路交错、重复终态、正文关闭/截断、客户端写失败仍计用量、握手重试与超时/停止、proxy/native 两种到达顺序、预热不计调用、归档前后统计和接管恢复原能力。跨层交付仍需根文档规定的全量测试集合。
+- 修改 WS 或 Codex 接管能力投影时至少运行 `cargo test --lib websocket --jobs 2` 和 `cargo test --test sqlite_jsonb --jobs 2`，并验证聚合模式 WS upgrade 本地 `426` 且不触达上游，以及 Codex config 在聚合（`supports_websockets=false`）、single/failover（`true`）间的能力投影和恢复原值/移除新增字段。single/failover WS 回归覆盖真实握手/426→HTTP 转换、同连接多轮、多路交错、重复终态、正文关闭/截断、客户端写失败仍计用量、握手重试与超时/停止、proxy/native 两种到达顺序、预热不计调用和归档前后统计。跨层交付仍需根文档规定的全量测试集合。
 - 修改以上指标时覆盖：v16 旧行升级、正文关闭与 metrics-only 读写往返、同协议和转换请求的最终 effort、等待上游时的计数、重试不重复、60 秒边界、重启清零，以及明细/rollup 混合、CLI/时间过滤和无数据/零命中。
 - 修改本地采集时覆盖原生文件 -> SQLite -> 列表/统计往返、局部/最终用量更新、重启幂等、旧手动导入身份兼容、proxy/native 两种到达顺序、一对一去重、pending 无文件变化重查、父会话 replay、大 JSONL、只读 OpenCode WAL、2.0 `session_v2` 检测/列携带 `type`/fork 边界/会话汇总余量、账本失败回滚，以及 native-only / mixed 延迟归档前后语义。补测 21 秒落盘延迟、长请求执行区间、超过一小时的旧明细、DSH 普通恢复 marker、Grok 调用数、Hermes 累计/费用修正、Desktop 精确归档修复和旧数据不可证明时保持原值。v18/v19/v20 升级须保留旧汇总和新账本，重复升级不能清空它们；补测已标记 v18 的缺列库、完整 v18 库和归档失败仍能保存新请求/返回导入成功。
 - 成本回归覆盖带日期后缀的真实模型、精确零价保护、活跃/归档缺价补算、已知/未知费用混合、不完整分组拒绝修改、回填与账本失败回滚，以及 Desktop 补价后再退回 audit 汇总。真实数据验证在只读连接生成的副本内运行，并与使用同一价格表全新导入的结果比较，同时断言 Token 和调用数不变。

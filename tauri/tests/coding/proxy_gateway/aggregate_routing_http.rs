@@ -540,6 +540,220 @@ async fn aggregate_unknown_site_prefix_returns_404_without_calling_any_upstream(
 }
 
 #[tokio::test]
+async fn aggregate_gate_off_routes_bare_model_to_its_unique_selected_site() {
+    let terra_site = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let other_site = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let terra_url = format!("http://{}", terra_site.local_addr().unwrap());
+    let other_url = format!("http://{}", other_site.local_addr().unwrap());
+    let terra_task = spawn_upstream_capture(
+        terra_site,
+        200,
+        responses_success("gpt-5.6-terra", "from 思辰888-pro"),
+    );
+    let (other_hits, other_counter) = spawn_upstream_counter(other_site);
+
+    // The unselected site also declares the model, but bare-name resolution
+    // considers only the currently selected aggregate sites.
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("思辰888-pro", "思辰888-pro", &terra_url, &["gpt-5.6-terra"]),
+            ("other", "Other", &other_url, &["gpt-5.6-terra"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["思辰888-pro"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "gpt-5.6-terra").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        response["output"][0]["content"][0]["text"],
+        "from 思辰888-pro"
+    );
+
+    let captured = tokio::time::timeout(REQUEST_TIMEOUT, terra_task)
+        .await
+        .expect("the unique selected site should receive the bare model")
+        .unwrap()
+        .expect("the selected-site request should be captured");
+    assert_eq!(captured["model"], "gpt-5.6-terra");
+
+    settle_cross_site_window().await;
+    assert_eq!(other_hits.load(Ordering::SeqCst), 0);
+    other_counter.abort();
+}
+
+#[tokio::test]
+async fn aggregate_gate_off_rejects_ambiguous_bare_model_without_calling_upstreams() {
+    let site_a = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a.local_addr().unwrap());
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let (site_a_hits, site_a_counter) = spawn_upstream_counter(site_a);
+    let (site_b_hits, site_b_counter) = spawn_upstream_counter(site_b);
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["gpt-5.6-terra"]),
+            ("siteB", "Site B", &site_b_url, &["gpt-5.6-terra"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "gpt-5.6-terra").await;
+    assert_eq!(status, 409, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["error"], "gateway_aggregate_model_ambiguous");
+    assert!(response["message"]
+        .as_str()
+        .unwrap()
+        .contains("multiple selected sites"));
+
+    settle_cross_site_window().await;
+    assert_eq!(site_a_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(site_b_hits.load(Ordering::SeqCst), 0);
+    site_a_counter.abort();
+    site_b_counter.abort();
+}
+
+#[tokio::test]
+async fn aggregate_gate_on_keeps_cross_site_fallback_for_a_bare_model() {
+    let site_a = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a.local_addr().unwrap());
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let site_a_task = spawn_upstream_capture(site_a, 404, model_not_found_response("modelX"));
+    let site_b_task = spawn_upstream_capture(
+        site_b,
+        200,
+        responses_success("modelX", "bare model fallback B"),
+    );
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["modelX"]),
+            ("siteB", "Site B", &site_b_url, &["modelX"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        true,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "modelX").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        response["output"][0]["content"][0]["text"],
+        "bare model fallback B"
+    );
+
+    let captured_a = tokio::time::timeout(REQUEST_TIMEOUT, site_a_task)
+        .await
+        .expect("the first selected site should receive the bare model")
+        .unwrap()
+        .expect("site A request should be captured");
+    assert_eq!(captured_a["model"], "modelX");
+    let captured_b = tokio::time::timeout(REQUEST_TIMEOUT, site_b_task)
+        .await
+        .expect("the next declaring site should receive the fallback")
+        .unwrap()
+        .expect("site B request should be captured");
+    assert_eq!(captured_b["model"], "modelX");
+}
+
+#[tokio::test]
+async fn aggregate_gate_off_keeps_an_explicit_slug_bound_when_its_model_is_ambiguous() {
+    let site_a = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a.local_addr().unwrap());
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let (site_a_hits, site_a_counter) = spawn_upstream_counter(site_a);
+    let site_b_task = spawn_upstream_capture(
+        site_b,
+        200,
+        responses_success("gpt-5.6-terra", "explicit site B"),
+    );
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["gpt-5.6-terra"]),
+            ("siteB", "Site B", &site_b_url, &["gpt-5.6-terra"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "siteB.gpt-5.6-terra").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        response["output"][0]["content"][0]["text"],
+        "explicit site B"
+    );
+
+    let captured_b = tokio::time::timeout(REQUEST_TIMEOUT, site_b_task)
+        .await
+        .expect("the explicit slug's site should receive the request")
+        .unwrap()
+        .expect("site B request should be captured");
+    assert_eq!(captured_b["model"], "gpt-5.6-terra");
+
+    settle_cross_site_window().await;
+    assert_eq!(site_a_hits.load(Ordering::SeqCst), 0);
+    site_a_counter.abort();
+}
+
+#[tokio::test]
+async fn aggregate_gate_off_returns_404_for_undeclared_bare_model_without_upstream_calls() {
+    let site_a = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_a_url = format!("http://{}", site_a.local_addr().unwrap());
+    let site_b_url = format!("http://{}", site_b.local_addr().unwrap());
+    let (site_a_hits, site_a_counter) = spawn_upstream_counter(site_a);
+    let (site_b_hits, site_b_counter) = spawn_upstream_counter(site_b);
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[
+            ("siteA", "Site A", &site_a_url, &["modelX"]),
+            ("siteB", "Site B", &site_b_url, &["modelY"]),
+        ],
+        GatewayProxyMode::Aggregate,
+        &["siteA", "siteB"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_request(&gateway.url, "not-declared").await;
+    assert_eq!(status, 404, "{}", String::from_utf8_lossy(&bytes));
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["error"], "gateway_aggregate_model_unknown");
+
+    settle_cross_site_window().await;
+    assert_eq!(site_a_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(site_b_hits.load(Ordering::SeqCst), 0);
+    site_a_counter.abort();
+    site_b_counter.abort();
+}
+
+#[tokio::test]
 async fn aggregate_replays_the_persisted_table_when_a_site_is_no_longer_enabled() {
     let site_b = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let site_b_url = format!("http://{}", site_b.local_addr().unwrap());

@@ -1,5 +1,6 @@
-//! Codex Responses WebSocket transport. Each downstream socket owns exactly
-//! one upstream socket; protocol conversion remains in the HTTP/SSE pipeline.
+//! Codex Responses WebSocket transport for single/failover providers.
+//! Aggregate mode uses HTTP/SSE because its model is only known after the
+//! downstream WebSocket handshake.
 
 use super::compat::provider_kind::ProviderBodyCompat;
 use super::http_io::{
@@ -48,6 +49,8 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const WEBSOCKET_BETA: &str = "responses_websockets=2026-02-06";
 const WEBSOCKET_DISABLED_REASON: &str =
     "Codex WebSocket support is disabled in gateway settings; use HTTP/SSE.";
+const AGGREGATE_WEBSOCKET_REASON: &str =
+    "Codex aggregate mode uses HTTP/SSE because the model is selected after the WebSocket handshake.";
 
 fn socket_config() -> WebSocketConfig {
     WebSocketConfig::default()
@@ -359,7 +362,7 @@ pub(super) async fn handle_upgrade(
         )
         .await;
     };
-    let mut candidates = match context
+    let candidates = match context
         .load_candidate_providers(db, GatewayCliKey::Codex)
         .await
     {
@@ -378,15 +381,22 @@ pub(super) async fn handle_upgrade(
             .await
         }
     };
-    // 跨站故障转移关闭时，本次握手只能尝试首选站点：把候选截断为第一个，
-    // 后面按候选顺序做的每一次重试/换站都随之失效。
-    // (The WebSocket lane resolves no aggregate model slug — `response.create`
-    // arrives after the handshake — so the gate can only narrow the list to the
-    // single highest-priority candidate.)
-    if candidates.selection.as_ref().is_some_and(|selection| {
-        selection.mode == GatewayProxyMode::Aggregate && !selection.cross_site_failover
-    }) {
-        candidates.providers.truncate(1);
+    if candidates
+        .selection
+        .as_ref()
+        .is_some_and(|selection| selection.mode == GatewayProxyMode::Aggregate)
+    {
+        return write_handshake_failure(
+            stream,
+            &request,
+            context,
+            &connection_id,
+            started_at,
+            started,
+            None,
+            HandshakeFailure::local(426, AGGREGATE_WEBSOCKET_REASON),
+        )
+        .await;
     }
     let apply_mapping = !candidates
         .selection

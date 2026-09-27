@@ -879,7 +879,10 @@ pub async fn engage_aggregate_cli(
     // Generate the aggregated catalog so Codex's model picker lists every
     // selected (site, model) pair. Failing here would leave Codex pointing at a
     // catalog that does not match the routing manifest, so surface the error.
-    if let Err(error) = write_codex_aggregate_catalog_file(db, &site_specs, &naming_config).await {
+    if let Err(error) =
+        write_codex_aggregate_catalog_file(db, &site_specs, &naming_config, cross_site_failover)
+            .await
+    {
         // A manifest/config pair without its aggregate catalog is not a usable
         // takeover: Codex would have no model slugs that the router can
         // resolve. Roll back the runtime files and leave a disabled, direct
@@ -1057,6 +1060,7 @@ async fn write_codex_aggregate_catalog_file(
     db: &SqliteDbState,
     site_specs: &[(String, String, Value)],
     naming: &crate::coding::proxy_gateway::aggregate_naming::AggregateNamingConfig,
+    cross_site_failover: bool,
 ) -> Result<(), String> {
     use crate::coding::codex::commands as codex_commands;
 
@@ -1070,6 +1074,7 @@ async fn write_codex_aggregate_catalog_file(
         &config_dir,
         site_specs,
         naming,
+        cross_site_failover,
         codex_commands::CODEX_AGGREGATE_DEFAULT_CONTEXT_WINDOW,
     )?;
     if !written {
@@ -2287,6 +2292,7 @@ fn apply_gateway_config(
                 config_path,
                 &cli_gateway_endpoint(cli_key, base_origin),
                 preserve_codex_official_auth,
+                mode,
             )?;
             // `[agents]` defaults only exist for aggregate mode; the empty value
             // every other mode passes makes this a no-op.
@@ -3083,6 +3089,7 @@ fn patch_codex_config(
     path: &Path,
     gateway_endpoint: &str,
     preserve_official_auth: bool,
+    mode: GatewayProxyMode,
 ) -> Result<String, String> {
     let mut document = read_or_new_toml_document(path)?;
     let provider_id = resolve_codex_takeover_provider_id(&document);
@@ -3115,8 +3122,9 @@ fn patch_codex_config(
     provider_table["base_url"] = value(gateway_endpoint);
     provider_table["wire_api"] = value("responses");
     // This describes the local gateway transport, not the upstream protocol.
-    // Unsupported upstreams reject the upgrade with 426 before Codex sends a turn.
-    provider_table["supports_websockets"] = value(true);
+    // Aggregate mode cannot choose a site during the handshake because the
+    // model arrives in the first response.create event, so Codex must use HTTP/SSE.
+    provider_table["supports_websockets"] = value(mode != GatewayProxyMode::Aggregate);
     if provider_table.get("requires_openai_auth").is_none() {
         provider_table["requires_openai_auth"] = value(true);
     }
@@ -4265,32 +4273,38 @@ mod tests {
     }
 
     #[test]
-    fn codex_takeover_enables_websocket_and_restores_original_capability() {
-        for original in [None, Some(false), Some(true)] {
-            let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("config.toml");
-            let capability = original
-                .map(|value| format!("supports_websockets = {value}\n"))
-                .unwrap_or_default();
-            let backup = format!("model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://upstream.example/v1\"\n{capability}");
-            write_text_file(&path, &backup).unwrap();
-            patch_codex_config(&path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
-            let patched = parse_toml_file(&path).unwrap();
-            assert_eq!(
-                patched["model_providers"]["custom"]["supports_websockets"].as_bool(),
-                Some(true)
-            );
-            assert!(codex_config_managed_fields_for_provider("custom")
-                .contains(&"model_providers.custom.supports_websockets".to_string()));
-            restore_codex_config(&path, Some(&backup), &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS)
-                .unwrap();
-            let restored = parse_toml_file(&path).unwrap();
-            assert_eq!(
-                restored["model_providers"]["custom"]
-                    .get("supports_websockets")
-                    .and_then(Item::as_bool),
-                original
-            );
+    fn codex_takeover_writes_mode_specific_websocket_capability_and_restores_original() {
+        for mode in [
+            GatewayProxyMode::Single,
+            GatewayProxyMode::Failover,
+            GatewayProxyMode::Aggregate,
+        ] {
+            for original in [None, Some(false), Some(true)] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("config.toml");
+                let capability = original
+                    .map(|value| format!("supports_websockets = {value}\n"))
+                    .unwrap_or_default();
+                let backup = format!("model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://upstream.example/v1\"\n{capability}");
+                write_text_file(&path, &backup).unwrap();
+                patch_codex_config(&path, "http://127.0.0.1:37123/openai/v1", false, mode).unwrap();
+                let patched = parse_toml_file(&path).unwrap();
+                assert_eq!(
+                    patched["model_providers"]["custom"]["supports_websockets"].as_bool(),
+                    Some(mode != GatewayProxyMode::Aggregate)
+                );
+                assert!(codex_config_managed_fields_for_provider("custom")
+                    .contains(&"model_providers.custom.supports_websockets".to_string()));
+                restore_codex_config(&path, Some(&backup), &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS)
+                    .unwrap();
+                let restored = parse_toml_file(&path).unwrap();
+                assert_eq!(
+                    restored["model_providers"]["custom"]
+                        .get("supports_websockets")
+                        .and_then(Item::as_bool),
+                    original
+                );
+            }
         }
     }
 
@@ -4314,8 +4328,13 @@ command = "node"
         .unwrap();
         let backup = fs::read_to_string(&config_path).unwrap();
 
-        let provider_id =
-            patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
+        let provider_id = patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            false,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
         assert_eq!(provider_id, "custom");
         let patched = parse_toml_file(&config_path).unwrap();
         assert_eq!(patched["model_provider"].as_str(), Some("custom"));
@@ -4379,8 +4398,13 @@ command = "node"
         .unwrap();
         let backup = fs::read_to_string(&config_path).unwrap();
 
-        let provider_id =
-            patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
+        let provider_id = patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            false,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
         assert_eq!(provider_id, "custom");
         let patched = parse_toml_file(&config_path).unwrap();
         assert_eq!(patched["model_provider"].as_str(), Some("custom"));
@@ -4409,8 +4433,13 @@ command = "node"
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
 
-        let provider_id =
-            patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
+        let provider_id = patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            false,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
         assert_eq!(provider_id, "custom");
 
         restore_codex_config(&config_path, None, &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS).unwrap();
@@ -4579,8 +4608,13 @@ base_url = "http://127.0.0.1:9999/openai/v1"
         .unwrap();
         let backup = fs::read_to_string(&config_path).unwrap();
 
-        let provider_id =
-            patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
+        let provider_id = patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            false,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
         assert_eq!(provider_id, "custom");
         let patched = parse_toml_file(&config_path).unwrap();
         assert_eq!(patched["model_provider"].as_str(), Some("custom"));
@@ -4625,8 +4659,13 @@ base_url = "http://127.0.0.1:9999/openai/v1"
         .unwrap();
         let original_auth = read_json_file(&auth_path).unwrap();
 
-        let provider_id =
-            patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", true).unwrap();
+        let provider_id = patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            true,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
         assert_eq!(provider_id, "custom");
         patch_codex_auth(&auth_path, true, None).unwrap();
 

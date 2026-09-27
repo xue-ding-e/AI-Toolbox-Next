@@ -175,6 +175,55 @@ async fn start_gateway(
     (address, task)
 }
 
+#[tokio::test]
+async fn aggregate_websocket_upgrade_returns_local_426_without_upstream_connection() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let (directory, context, provider_id) = test_context(
+        &format!("http://{}/v1", upstream.local_addr().unwrap()),
+        "openai_responses",
+        true,
+    );
+    let paths = ProxyGatewayPaths::new(directory.path());
+    let manifest_path = paths.manifest_path(GatewayCliKey::Codex);
+    std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "managed_by": "ai-toolbox-test",
+            "cli_key": "codex",
+            "enabled": true,
+            "mode": "aggregate",
+            "primary_provider_id": provider_id,
+            "base_origin": "http://127.0.0.1:37123",
+            "created_at": "2026-09-27T00:00:00Z",
+            "updated_at": "2026-09-27T00:00:00Z",
+            "files": [],
+            "aggregate": {"provider_ids": [provider_id], "cross_site_failover": false}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    super::super::providers::clear_gateway_provider_selection_cache();
+
+    let (address, gateway) = start_gateway(context.clone(), 1).await;
+    let response = rejected_upgrade(address, "/openai/v1/responses").await;
+    assert_eq!(response.status(), 426);
+    assert!(
+        String::from_utf8_lossy(response.body().as_deref().unwrap_or_default())
+            .contains("aggregate mode uses HTTP/SSE")
+    );
+    gateway.await.unwrap();
+    assert!(timeout(Duration::from_millis(50), upstream.accept())
+        .await
+        .is_err());
+    let details = recorded_details(&context);
+    assert_eq!(details.len(), 1);
+    assert_eq!(details[0].summary.status_code, Some(426));
+    assert_eq!(context.requests_per_minute(), 0);
+    drop(directory);
+}
+
 async fn rejected_upgrade(
     address: std::net::SocketAddr,
     path: &str,
