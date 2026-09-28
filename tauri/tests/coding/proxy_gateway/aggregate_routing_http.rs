@@ -986,6 +986,68 @@ async fn repeated_stream_protocol_errors_do_not_cool_the_named_model_site() {
     }
 }
 
+/// issue #404: a Codex mirror relay streams degenerate flattened SSE (every
+/// `event: X data: {...}` pair concatenated with no blank line, see issue #318)
+/// and sends more control bytes than the old probe bounds allowed (32 frames /
+/// 256 KiB) before its first content event. The gateway used to answer a
+/// healthy upstream stream with a synthetic 502
+/// (`upstream_stream_first_chunk_failed`); the configured first-byte deadline is
+/// what may fail a still-silent stream, not a frame count.
+#[tokio::test]
+async fn flattened_relay_stream_beyond_the_old_probe_bounds_reaches_the_client() {
+    let site = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let site_url = format!("http://{}", site.local_addr().unwrap());
+
+    let filler = "x".repeat(4 * 1024);
+    let mut body = String::new();
+    while body.len() < 300 * 1024 {
+        body.push_str(&format!(
+            "event: response.in_progress data: {{\"type\":\"response.in_progress\",\"response\":{{\"id\":\"resp_flat\",\"status\":\"in_progress\",\"instructions\":\"{filler}\"}}}} "
+        ));
+    }
+    body.push_str(
+        "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"flattened hello\"} ",
+    );
+    body.push_str(
+        "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_flat\",\"status\":\"completed\"}}",
+    );
+    let body = body.into_bytes();
+    assert!(
+        body.len() > 256 * 1024,
+        "the fixture must exceed the probe bound that made #404 fail"
+    );
+
+    let site_task = tokio::spawn(async move {
+        let Ok(Ok((mut socket, _))) = tokio::time::timeout(REQUEST_TIMEOUT, site.accept()).await
+        else {
+            return;
+        };
+        let _ = read_http_json(&mut socket).await;
+        write_http_sse(&mut socket, &body).await;
+    });
+
+    let gateway = RunningAggregateGateway::new_with_slug_table(
+        &[("siteA", "Site A", &site_url, &["modelX"])],
+        GatewayProxyMode::Aggregate,
+        &["siteA"],
+        AggregateNamingMode::default(),
+        Vec::new(),
+        false,
+        &[],
+    );
+
+    let (status, bytes) = send_streaming_request(&gateway.url, "siteA.modelX").await;
+    site_task.abort();
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(
+        status,
+        reqwest::StatusCode::OK,
+        "a live flattened relay stream must not be rewritten into a 502: {text}"
+    );
+    assert!(text.contains("flattened hello"), "{text}");
+    assert!(text.contains("response.completed"), "{text}");
+}
+
 /// Gate fully off + the named site is cooling down: the request is refused with
 /// a 503 rather than quietly served by the other site.
 #[tokio::test]

@@ -619,7 +619,15 @@ fn find_sse_field_token(text: &str, from: usize) -> Option<(usize, &'static str)
 /// (parsed with a streaming deserializer so an ` event: ` sequence inside a
 /// JSON string cannot split it) or the `[DONE]` sentinel. Visiting stops early
 /// when the callback returns true.
-fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, &str) -> bool) {
+///
+/// [`SseUsageCollector`] (terminal + usage) and the gateway's first-chunk
+/// semantic probe (`runtime::upstream`) share this reader; the probe must judge
+/// content in flattened framing too, otherwise a live relay stream never looks
+/// like it produced anything and dies on the probe bounds (issue #404).
+pub(super) fn for_each_flattened_sse_field(
+    text: &str,
+    mut visit: impl FnMut(Option<&str>, &str) -> bool,
+) {
     let bytes = text.as_bytes();
     let mut position = 0usize;
     let mut current_event: Option<String> = None;
@@ -667,7 +675,11 @@ fn for_each_flattened_sse_field(text: &str, mut visit: impl FnMut(Option<&str>, 
 /// until later chunks complete it — a flush cut anywhere else would split an
 /// event into two unparseable halves and lose its usage and terminal verdict
 /// (issue #318: a flush landing inside `response.completed`'s JSON lost both).
-fn flattened_flush_boundary(buffer: &[u8]) -> usize {
+///
+/// The first-chunk semantic probe uses the same boundary to drop the events it
+/// has already judged, so its residual buffer is the same "still incomplete"
+/// tail and each chunk costs O(new bytes) instead of rescanning the whole trace.
+pub(super) fn flattened_flush_boundary(buffer: &[u8]) -> usize {
     // Operate on a UTF-8 string whose byte offsets stay aligned with the
     // original buffer. `String::from_utf8_lossy` would replace invalid bytes
     // with the 3-byte U+FFFD, making the lossy string longer than `buffer`;

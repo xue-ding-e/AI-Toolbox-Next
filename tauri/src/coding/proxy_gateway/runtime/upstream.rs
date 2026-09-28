@@ -46,7 +46,8 @@ use crate::coding::proxy_gateway::types::{
     GatewayProxyMode, GatewayStreamOutcome, ProviderGatewayMeta, ProviderModelHealthKey,
 };
 use crate::coding::proxy_gateway::usage_parser::{
-    from_response_body_with_provider_type, TokenUsage,
+    flattened_flush_boundary, for_each_flattened_sse_field, from_response_body_with_provider_type,
+    TokenUsage,
 };
 use crate::db::SqliteDbState;
 use crate::http_client::{self, ProxyMode};
@@ -75,8 +76,21 @@ const DEFAULT_COPILOT_WARMUP_MODEL: &str = "gpt-5-mini";
 const DEFAULT_COPILOT_TOKEN_ENDPOINT: &str = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_TOKEN_EXPIRY_BUFFER_SECS: i64 = 300;
 const COPILOT_TOKEN_CACHE_MAX_ENTRIES: usize = 256;
-const STREAM_SEMANTIC_PROBE_MAX_CHUNKS: usize = 32;
-const STREAM_SEMANTIC_PROBE_MAX_BYTES: usize = 256 * 1024;
+// Bounds on the pre-commit first-chunk probe (see
+// `validate_streaming_first_chunk`). They exist to cap what a *degenerate*
+// upstream can make the gateway buffer and scan, not to decide whether a stream
+// is empty: the configured `streaming_first_byte_timeout_secs` (default 90s,
+// heartbeats do not reset it) is what bounds a live-but-still-silent stream.
+// Sizing rationale: at realistic keepalive rates (<= 1 frame/s, and ~1 frame per
+// 50ms for a spammy relay) the deadline always fires long before 1024 frames, so
+// no live provider is cut short, while a tiny-chunk stream still cannot make the
+// block/flattened scans quadratic beyond `chunks x bytes`. The byte bound covers
+// the fat pre-content control events real Responses streams send (a
+// `response.created` / `response.in_progress` echoes `instructions` and `tools`)
+// and bounds the retained `pre_read_chunks` replay memory to
+// `MAX_BYTES x MAX_CONCURRENT_CONNECTIONS` (= 128, `runtime.rs`).
+const STREAM_SEMANTIC_PROBE_MAX_CHUNKS: usize = 1024;
+const STREAM_SEMANTIC_PROBE_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 struct CopilotTokenCacheEntry {
@@ -341,6 +355,17 @@ async fn validate_streaming_first_chunk(
     let semantic_probe = response_is_sse_header_pairs(&response.headers);
     let mut pre_read_chunks = VecDeque::new();
     let mut probe = StreamingSemanticProbe::new(semantic_probe);
+    // Every pre-commit failure carries what the upstream actually sent; without
+    // it a request detail cannot show whether the stream was empty, a failure
+    // envelope, or framing the probe could not read (issue #404).
+    let pre_read_snapshot = |chunks: &VecDeque<Vec<u8>>| -> (Vec<u8>, u64) {
+        let snapshot: Vec<u8> = chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter().copied())
+            .collect();
+        let snapshot_bytes = snapshot.len() as u64;
+        (snapshot, snapshot_bytes)
+    };
     loop {
         let next_chunk = tokio::time::timeout_at(deadline, body_stream.next())
             .await
@@ -359,11 +384,7 @@ async fn validate_streaming_first_chunk(
                 pre_read_chunks.push_back(chunk);
                 match decision {
                     StreamingProbeDecision::ProtocolError => {
-                        let snapshot: Vec<u8> = pre_read_chunks
-                            .iter()
-                            .flat_map(|chunk| chunk.iter().copied())
-                            .collect();
-                        let snapshot_bytes = snapshot.len() as u64;
+                        let (snapshot, snapshot_bytes) = pre_read_snapshot(&pre_read_chunks);
                         return Err(GatewayForwardError {
                             message: FIRST_CHUNK_PROTOCOL_ERROR_MESSAGE.to_string(),
                             kind: GatewayFailureKind::UpstreamBadRequest,
@@ -381,10 +402,14 @@ async fn validate_streaming_first_chunk(
                     }
                     StreamingProbeDecision::Continue => {
                         if probe.exceeded_limits() {
-                            return Err(GatewayForwardError::new(
-                                "Upstream streaming response exceeded the first-chunk probe limit before meaningful content",
-                                GatewayFailureKind::EmptyResponse,
-                            ));
+                            let (snapshot, snapshot_bytes) = pre_read_snapshot(&pre_read_chunks);
+                            return Err(GatewayForwardError {
+                                message: "Upstream streaming response exceeded the first-chunk probe limit before meaningful content".to_string(),
+                                kind: GatewayFailureKind::EmptyResponse,
+                                upstream_request_body: None,
+                                upstream_response_body: Some(snapshot),
+                                upstream_response_body_bytes: snapshot_bytes,
+                            });
                         }
                     }
                 }
@@ -405,11 +430,7 @@ async fn validate_streaming_first_chunk(
                 }
                 match probe.finish() {
                     StreamingProbeDecision::ProtocolError => {
-                        let snapshot: Vec<u8> = pre_read_chunks
-                            .iter()
-                            .flat_map(|chunk| chunk.iter().copied())
-                            .collect();
-                        let snapshot_bytes = snapshot.len() as u64;
+                        let (snapshot, snapshot_bytes) = pre_read_snapshot(&pre_read_chunks);
                         return Err(GatewayForwardError {
                             message: FIRST_CHUNK_PROTOCOL_ERROR_MESSAGE.to_string(),
                             kind: GatewayFailureKind::UpstreamBadRequest,
@@ -426,10 +447,15 @@ async fn validate_streaming_first_chunk(
                         return Ok(());
                     }
                     StreamingProbeDecision::Continue => {
-                        return Err(GatewayForwardError::new(
-                            "Upstream streaming response ended before meaningful content",
-                            GatewayFailureKind::EmptyResponse,
-                        ));
+                        let (snapshot, snapshot_bytes) = pre_read_snapshot(&pre_read_chunks);
+                        return Err(GatewayForwardError {
+                            message: "Upstream streaming response ended before meaningful content"
+                                .to_string(),
+                            kind: GatewayFailureKind::EmptyResponse,
+                            upstream_request_body: None,
+                            upstream_response_body: Some(snapshot),
+                            upstream_response_body_bytes: snapshot_bytes,
+                        });
                     }
                 }
             }
@@ -485,6 +511,68 @@ impl StreamingSemanticProbe {
             if sse_block_has_meaningful_content(&block) {
                 return StreamingProbeDecision::Meaningful;
             }
+        }
+        // Block framing is exhausted (drained) or never present; whatever the
+        // flattened reader concludes from the residual is this chunk's verdict.
+        self.scan_flattened_events()
+    }
+
+    /// Judge degenerate flattened framing: Codex mirror relays concatenate
+    /// `event: X data: {...}` pairs without blank-line delimiters, so the block
+    /// loop above never sees a complete block and a perfectly live stream would
+    /// otherwise sit at `Continue` until the probe bounds killed it (issue #404).
+    /// The reader and the per-event predicate are the same ones the terminal and
+    /// usage collectors use (`usage_parser::for_each_flattened_sse_field`), so
+    /// both framings classify a given event identically.
+    ///
+    /// Events already judged here are dropped from the analysis buffer up to
+    /// `flattened_flush_boundary`, so a long flattened trace neither rescans its
+    /// prefix on every chunk nor grows without bound. The buffer is analysis-only
+    /// — the client is replayed from `pre_read_chunks` — so dropping judged bytes
+    /// cannot change what the client receives. Bytes are dropped only while the
+    /// verdict is still `Continue`; a content-bearing or error event returns
+    /// immediately with the whole pre-read trace intact.
+    ///
+    /// Payloads that are not JSON spans are skipped rather than treated as text
+    /// content (the block helper's `sse_block_has_meaningful_content` does the
+    /// opposite for an unparseable `data:` line). That asymmetry only shows up
+    /// for a relay whose *flattened* payloads are not JSON at all, where the
+    /// stream still fails closed on the probe bounds / first-byte deadline.
+    fn scan_flattened_events(&mut self) -> StreamingProbeDecision {
+        if self.buffer.is_empty() {
+            return StreamingProbeDecision::Continue;
+        }
+        let mut decision = StreamingProbeDecision::Continue;
+        if let Ok(text) = std::str::from_utf8(&self.buffer) {
+            // Invalid UTF-8 is malformed framing: skip the scan and keep the
+            // buffer, exactly like `flattened_flush_boundary`'s fallback.
+            for_each_flattened_sse_field(text, |event_name, data| {
+                if data == "[DONE]" {
+                    return false;
+                }
+                let Ok(value) = serde_json::from_str::<Value>(data) else {
+                    return false;
+                };
+                if gateway_json_reports_error(&value)
+                    || event_name.is_some_and(gateway_event_reports_error)
+                {
+                    decision = StreamingProbeDecision::ProtocolError;
+                    self.saw_protocol_error = true;
+                    return true;
+                }
+                if sse_value_has_meaningful_content(event_name, &value) {
+                    decision = StreamingProbeDecision::Meaningful;
+                    return true;
+                }
+                false
+            });
+        }
+        if decision != StreamingProbeDecision::Continue {
+            return decision;
+        }
+        let boundary = flattened_flush_boundary(&self.buffer);
+        if boundary > 0 {
+            self.buffer.drain(..boundary);
         }
         StreamingProbeDecision::Continue
     }
@@ -16276,6 +16364,14 @@ data: {data}\r\n\r\n"
             .expect_err("control-only SSE at the probe chunk limit must fail closed");
 
         assert_eq!(error.kind, GatewayFailureKind::EmptyResponse);
+        // The pre-read trace is the only evidence a request detail can show for a
+        // synthetic 502; without it issue reports are undiagnosable (issue #404).
+        let expected = vec![b": ping\n\n".to_vec(); STREAM_SEMANTIC_PROBE_MAX_CHUNKS].concat();
+        assert_eq!(error.upstream_response_body_bytes, expected.len() as u64);
+        assert_eq!(
+            error.upstream_response_body.as_deref(),
+            Some(expected.as_slice())
+        );
         assert!(response.body_stream.is_none());
     }
 
@@ -16284,7 +16380,8 @@ data: {data}\r\n\r\n"
         let mut heartbeat = vec![b'x'; STREAM_SEMANTIC_PROBE_MAX_BYTES];
         heartbeat[0] = b':';
         heartbeat.extend_from_slice(b"\n\n");
-        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![Ok(heartbeat)]));
+        let stream: DebugBodyStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(heartbeat.clone())]));
         let mut response = streaming_debug_response(stream);
 
         let error = validate_streaming_first_chunk(&mut response, 1)
@@ -16292,6 +16389,11 @@ data: {data}\r\n\r\n"
             .expect_err("oversized control-only SSE must fail closed");
 
         assert_eq!(error.kind, GatewayFailureKind::EmptyResponse);
+        assert_eq!(error.upstream_response_body_bytes, heartbeat.len() as u64);
+        assert_eq!(
+            error.upstream_response_body.as_deref(),
+            Some(heartbeat.as_slice())
+        );
         assert!(response.body_stream.is_none());
     }
 
@@ -16325,6 +16427,194 @@ data: {data}\r\n\r\n"
             assert_eq!(replayed.next().await.unwrap().unwrap(), b": ping\n\n");
         }
         assert_eq!(replayed.next().await.unwrap().unwrap(), meaningful);
+        assert!(replayed.next().await.is_none());
+    }
+
+    /// issue #404: a Codex mirror relay's degenerate flattened framing (every
+    /// `event: X data: {...}` pair concatenated onto one whitespace-separated line
+    /// with no blank-line delimiter, see `usage_parser::flattened_codex_relay_stream`)
+    /// used to sit at `Continue` forever and die on the probe bounds even though
+    /// the relay streamed a complete answer.
+    #[tokio::test]
+    async fn streaming_first_chunk_commits_flattened_codex_relay_stream() {
+        let flattened = concat!(
+            "event: codex.rate_limits data: {\"type\":\"codex.rate_limits\",\"rate_limits\":{\"allowed\":true}} ",
+            "event: codex.response.metadata data: {\"type\":\"codex.response.metadata\",\"headers\":{\"x-codex-safety-buffering-enabled\":\"true\"}} ",
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_flat\",\"status\":\"in_progress\"}} ",
+            "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"} ",
+            "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_flat\",\"status\":\"completed\"}}",
+        )
+        .as_bytes()
+        .to_vec();
+        // The blind spot behind #404: the block helper cannot read a concatenated
+        // line at all, so before the flattened scan the probe had no way to see
+        // this stream's content.
+        assert!(!sse_block_has_meaningful_content(&flattened));
+        let stream: DebugBodyStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(flattened.clone())]));
+        let mut response = streaming_debug_response(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("a live flattened relay stream must commit");
+
+        let mut replayed = response.body_stream.take().expect("pre-read stream replay");
+        assert_eq!(replayed.next().await.unwrap().unwrap(), flattened);
+        assert!(replayed.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_commits_flattened_content_split_across_chunks() {
+        // The flattened control events are judged and released as they arrive; the
+        // content event is still an incomplete JSON span when the first chunk ends,
+        // so it must stay buffered until the second chunk completes it.
+        let first = concat!(
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_split\",\"status\":\"in_progress\"}} ",
+            "event: response.in_progress data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_split\",\"status\":\"in_progress\"}} ",
+            "event: response.output_text.delta data: {\"type\":\"response.output_text.delta\",\"delta\":\"he"
+        )
+        .as_bytes()
+        .to_vec();
+        let second = b"llo\"} ".to_vec();
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(first.clone()),
+            Ok(second.clone()),
+        ]));
+        let mut response = streaming_debug_response(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("flattened content completed by a later chunk must commit");
+
+        let mut replayed = response.body_stream.take().expect("pre-read stream replay");
+        assert_eq!(replayed.next().await.unwrap().unwrap(), first);
+        assert_eq!(replayed.next().await.unwrap().unwrap(), second);
+        assert!(replayed.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_flattened_control_only_still_fails_closed() {
+        let flattened = concat!(
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_empty\",\"status\":\"in_progress\",\"output\":[]}} ",
+            "event: response.in_progress data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_empty\",\"status\":\"in_progress\",\"output\":[]}} ",
+            "event: response.completed data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_empty\",\"status\":\"completed\",\"output\":[]}}"
+        )
+        .as_bytes()
+        .to_vec();
+        let stream: DebugBodyStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(flattened.clone())]));
+        let mut response = streaming_debug_response(stream);
+
+        let error = validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect_err("flattened control-only events are not content");
+
+        assert_eq!(error.kind, GatewayFailureKind::EmptyResponse);
+        assert!(
+            error.message.contains("before meaningful content"),
+            "unexpected message: {}",
+            error.message
+        );
+        assert_eq!(
+            error.upstream_response_body.as_deref(),
+            Some(flattened.as_slice())
+        );
+        assert!(response.body_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn streaming_first_chunk_flattened_failure_envelope_is_protocol_error() {
+        // `gateway_body_reports_error` cannot read a flattened line (the event name
+        // and the payload share it), so the flattened scan's own envelope check is
+        // what keeps `response.failed` classified as `UpstreamBadRequest` — the kind
+        // that keeps the 2xx-SSE health exemption working.
+        let flattened = concat!(
+            "event: response.created data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_failed\",\"status\":\"in_progress\"}} ",
+            "event: response.failed data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"flattened upstream failure\"}}}"
+        )
+        .as_bytes()
+        .to_vec();
+        let stream: DebugBodyStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(flattened.clone())]));
+        let mut response = streaming_debug_response(stream);
+
+        let error = validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect_err("a flattened failure envelope must fail the probe");
+
+        assert_eq!(error.kind, GatewayFailureKind::UpstreamBadRequest);
+        assert_eq!(error.message, FIRST_CHUNK_PROTOCOL_ERROR_MESSAGE);
+        assert_eq!(
+            error.upstream_response_body.as_deref(),
+            Some(flattened.as_slice())
+        );
+        assert!(response_is_sse_header_pairs(&response.headers));
+    }
+
+    /// issue #404 regression: v1.1.8 failed the stream on the 32nd frame. The
+    /// configured first-byte deadline (default 90s) is the documented bound for a
+    /// still-silent stream, so a provider that keeps its connection alive with
+    /// heartbeats before the first token must not be cut off at 32 frames.
+    #[tokio::test]
+    async fn streaming_first_chunk_tolerates_control_chunks_past_the_old_probe_limit() {
+        let mut chunks: Vec<_> = (0..64).map(|_| Ok(b": ping\n\n".to_vec())).collect();
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"after heartbeats\"}\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        chunks.push(Ok(delta.clone()));
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(chunks));
+        let mut response = streaming_debug_response(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("heartbeats must not exhaust the probe before the deadline");
+
+        let mut replayed = response.body_stream.take().expect("pre-read stream replay");
+        for _ in 0..64 {
+            assert_eq!(replayed.next().await.unwrap().unwrap(), b": ping\n\n");
+        }
+        assert_eq!(replayed.next().await.unwrap().unwrap(), delta);
+        assert!(replayed.next().await.is_none());
+    }
+
+    /// Responses control events echo the whole response resource: real
+    /// `response.created` / `response.in_progress` frames carry `instructions` and
+    /// `tools`, and relay echoes of them easily exceed the old 256 KiB bound before
+    /// the first delta, while staying far inside the first-byte deadline.
+    #[tokio::test]
+    async fn streaming_first_chunk_tolerates_fat_control_events_before_content() {
+        let filler = "x".repeat(40 * 1024);
+        let fat = format!(
+            "event: response.in_progress\ndata: {{\"type\":\"response.in_progress\",\"response\":{{\"id\":\"resp_fat\",\"status\":\"in_progress\",\"instructions\":\"{filler}\"}}}}\n\n"
+        )
+        .into_bytes();
+        let mut chunks: Vec<_> = (0..8).map(|_| Ok(fat.clone())).collect();
+        assert!(
+            fat.len() * 8 > 256 * 1024,
+            "the fixture must exceed the old probe byte bound"
+        );
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"after fat controls\"}\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        chunks.push(Ok(delta.clone()));
+        let stream: DebugBodyStream = Box::pin(futures_util::stream::iter(chunks));
+        let mut response = streaming_debug_response(stream);
+
+        validate_streaming_first_chunk(&mut response, 1)
+            .await
+            .expect("fat control events must not exhaust the probe before the deadline");
+
+        let mut replayed = response.body_stream.take().expect("pre-read stream replay");
+        for _ in 0..8 {
+            assert_eq!(replayed.next().await.unwrap().unwrap(), fat);
+        }
+        assert_eq!(replayed.next().await.unwrap().unwrap(), delta);
         assert!(replayed.next().await.is_none());
     }
 
