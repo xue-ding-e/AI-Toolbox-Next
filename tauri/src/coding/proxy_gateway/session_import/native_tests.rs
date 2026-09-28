@@ -139,6 +139,159 @@ fn pi_fork_does_not_reimport_archived_parent_usage_or_zeroed_omp_cost() {
     }
 }
 
+#[test]
+fn pi_fork_whose_parent_is_gone_keeps_only_its_own_usage() {
+    for tool in [GatewayUsageTool::Pi, GatewayUsageTool::OhMyPi] {
+        let root = tempfile::tempdir().unwrap();
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        let parent = root.path().join("parent.jsonl");
+        let mut copied = pi_message("copied-id", 100, 10);
+        copied["timestamp"] = json!(THEN - 30);
+        // A fork can land in the same second as the turn it copies.
+        let mut boundary = pi_message("boundary-id", 5, 2);
+        boundary["timestamp"] = json!(THEN);
+        write_jsonl(
+            &parent,
+            &[
+                json!({"type":"session","id":"parent"}),
+                copied.clone(),
+                boundary.clone(),
+            ],
+        );
+        assert_eq!(run_sync(&db, tool, root.path()).inserted_records, 2);
+        // OMP only zeroes the inherited cost; entry IDs and timestamps stay.
+        for copy in [&mut copied, &mut boundary] {
+            copy["message"]["usage"]["cost"]["total"] = json!(0);
+        }
+        let child = root.path().join("child.jsonl");
+        let own = {
+            let mut own = pi_message("own-id", 3, 2);
+            own["timestamp"] = json!(THEN + 1);
+            own
+        };
+        write_jsonl(
+            &child,
+            &[
+                json!({"type":"session","id":"child","timestamp":THEN,"parentSession":parent}),
+                copied,
+                boundary,
+                own,
+            ],
+        );
+        fs::remove_file(&parent).unwrap();
+        let result = run_sync(&db, tool, root.path());
+        assert_eq!(result.failed_files, 0);
+        assert_eq!(result.inserted_records, 1);
+        assert_eq!(count(&db), 3);
+        assert_eq!(
+            usage_stats::usage_summary(&db, None, None, Some(tool), true)
+                .unwrap()
+                .total_tokens,
+            422
+        );
+        // The child's ledger entry commits even though the parent is gone, so a
+        // settled file is neither reparsed nor warned about on every sync.
+        let source_id = format!("{}:{}", tool.as_str(), source_identity(tool, &child));
+        assert!(load_states(&db).unwrap().contains_key(&source_id));
+        assert_eq!(run_sync(&db, tool, root.path()).inserted_records, 0);
+        assert_eq!(count(&db), 3);
+        // A fork without post-fork calls yet settles all the same, so it does
+        // not reparse or warn on every sync either. OMP names its parent by
+        // session id rather than by path.
+        let mut stale = pi_message("copied-id", 100, 10);
+        stale["timestamp"] = json!(THEN - 30);
+        let unused = root.path().join("unused-fork.jsonl");
+        write_jsonl(
+            &unused,
+            &[
+                json!({"type":"session","id":"unused","timestamp":THEN,
+                    "parentSession":"019ff36a-9bdb-7000-83f7-23eeb8299161"}),
+                stale,
+            ],
+        );
+        let result = run_sync(&db, tool, root.path());
+        assert_eq!(result.failed_files, 0);
+        assert_eq!(result.inserted_records, 0);
+        assert_eq!(count(&db), 3);
+        let unused_source = format!("{}:{}", tool.as_str(), source_identity(tool, &unused));
+        assert!(load_states(&db).unwrap().contains_key(&unused_source));
+    }
+}
+
+#[test]
+fn pi_fork_chain_drops_ancestor_usage_when_the_oldest_link_is_gone() {
+    for tool in [GatewayUsageTool::Pi, GatewayUsageTool::OhMyPi] {
+        let root = tempfile::tempdir().unwrap();
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        let oldest = root.path().join("oldest.jsonl");
+        let middle = root.path().join("middle.jsonl");
+        let newest = root.path().join("newest.jsonl");
+        let mut ancestor = pi_message("ancestor-id", 100, 10);
+        ancestor["timestamp"] = json!(THEN - 80);
+        let mut middle_own = pi_message("middle-id", 7, 3);
+        middle_own["timestamp"] = json!(THEN - 50);
+        let mut newest_own = pi_message("newest-id", 3, 2);
+        newest_own["timestamp"] = json!(THEN + 1);
+        write_jsonl(
+            &oldest,
+            &[
+                json!({"type":"session","id":"oldest","timestamp":THEN - 90}),
+                ancestor.clone(),
+            ],
+        );
+        write_jsonl(
+            &middle,
+            &[
+                json!({"type":"session","id":"middle","timestamp":THEN - 60,"parentSession":oldest}),
+                ancestor.clone(),
+                middle_own.clone(),
+            ],
+        );
+        write_jsonl(
+            &newest,
+            &[
+                json!({"type":"session","id":"newest","timestamp":THEN,"parentSession":middle}),
+                ancestor,
+                middle_own,
+                newest_own,
+            ],
+        );
+        assert_eq!(run_sync(&db, tool, root.path()).inserted_records, 3);
+        // The middle link is still readable, so only the oldest link can no
+        // longer prove the records it handed down the chain.
+        fs::remove_file(&oldest).unwrap();
+        let mut ancestor_copy = pi_message("ancestor-id", 100, 10);
+        ancestor_copy["timestamp"] = json!(THEN - 80);
+        let mut middle_copy = pi_message("middle-id", 7, 3);
+        middle_copy["timestamp"] = json!(THEN - 50);
+        let mut newest_own_again = pi_message("newest-id", 3, 2);
+        newest_own_again["timestamp"] = json!(THEN + 1);
+        let mut newest_later = pi_message("newest-later-id", 3, 2);
+        newest_later["timestamp"] = json!(THEN + 2);
+        write_jsonl(
+            &newest,
+            &[
+                json!({"type":"session","id":"newest","timestamp":THEN,"parentSession":middle}),
+                ancestor_copy,
+                middle_copy,
+                newest_own_again,
+                newest_later,
+            ],
+        );
+        let result = run_sync(&db, tool, root.path());
+        assert_eq!(result.failed_files, 0);
+        assert_eq!(result.inserted_records, 1);
+        assert_eq!(count(&db), 4);
+        assert_eq!(
+            usage_stats::usage_summary(&db, None, None, Some(tool), true)
+                .unwrap()
+                .total_tokens,
+            530
+        );
+        assert_eq!(run_sync(&db, tool, root.path()).inserted_records, 0);
+    }
+}
+
 fn dsh_message(turn: u64, step: u64, input: u64, output: u64) -> Value {
     json!({"type":"assistant/message","seq":turn*100+step,"time":THEN*1000,"surfaceOp":"append",
         "data":{"turn":turn,"step":step,"message":{"id":format!("message-{turn}-{step}"),"source":{"provider":"dsh-provider","model":"dsh-model"}},

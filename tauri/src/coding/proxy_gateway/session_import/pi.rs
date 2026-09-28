@@ -29,6 +29,7 @@ fn parse_inner(
         .to_string_lossy()
         .into_owned();
     let mut parent = None;
+    let mut started_at = None;
     let mut records = BTreeMap::<String, SessionUsageRecord>::new();
     let pending = read_jsonl(path, |index, value| {
         if value.get("type").and_then(Value::as_str) == Some("session") {
@@ -36,6 +37,9 @@ fn parse_inner(
                 session = id;
             }
             parent = string(&value, &["/parentSession"]);
+            if started_at.is_none() {
+                started_at = timestamp(&value);
+            }
             return;
         }
         let record = if tool == GatewayUsageTool::OpenClaw {
@@ -49,20 +53,48 @@ fn parse_inner(
     })?;
     if let Some(parent) = parent {
         let parent_path = resolve_parent_path(path, &parent);
-        let inherited = parse_inner(tool, &parent_path, fallback, ancestors)?;
-        // Forks copy short entry IDs and timestamps, and OMP clears cost only.
-        // Match against the actual parent; an 8-character entry ID alone is
-        // not globally unique. Preserve the original invocation's identity.
-        for record in records.values_mut() {
-            let entry_id = record.request_id.rsplit(':').next();
-            if let Some(original) = inherited.records.iter().find(|original| {
-                original.request_id.rsplit(':').next() == entry_id
-                    && original.created_at == record.created_at
-                    && original.model == record.model
-                    && original.usage == record.usage
-            }) {
-                *record = original.clone();
+        // OMP records `parentSession` as a bare session id (not a path) since it
+        // moved to modular session APIs, and its gc archives old sessions outside
+        // the sessions root, so a forked transcript often has no readable parent.
+        // Inherited entries keep the parent's entry IDs and timestamps.
+        let mut inherited_ids = HashSet::new();
+        let parent_readable = parent_path.is_file();
+        if parent_readable {
+            let inherited = parse_inner(tool, &parent_path, fallback, ancestors)?;
+            // Forks copy short entry IDs and timestamps, and OMP clears cost only.
+            // Match against the actual parent; an 8-character entry ID alone is
+            // not globally unique. Preserve the original invocation's identity.
+            for (id, record) in records.iter_mut() {
+                let entry_id = record.request_id.rsplit(':').next();
+                if let Some(original) = inherited.records.iter().find(|original| {
+                    original.request_id.rsplit(':').next() == entry_id
+                        && original.created_at == record.created_at
+                        && original.model == record.model
+                        && original.usage == record.usage
+                }) {
+                    *record = original.clone();
+                    inherited_ids.insert(id.clone());
+                }
             }
+        } else {
+            log::debug!(
+                "Pi/OMP parent session {parent} for {} is unavailable; keeping only usage recorded after the fork",
+                path.display()
+            );
+        }
+        // A record that predates this session and was not proven against the
+        // readable parent above belongs to an ancestor: that ancestor's own
+        // transcript, where it still exists, is scanned under its own identity,
+        // so importing it here would bill it twice. A chain whose oldest link is
+        // gone stops proving its ancestors one level up, which is what this
+        // drops. Without a start timestamp the prefix cannot be bounded at all,
+        // so an unreadable parent leaves the file unimportable (its own calls
+        // included) rather than backfilling unprovable history as new usage.
+        if let Some(started_at) = started_at {
+            records
+                .retain(|id, record| inherited_ids.contains(id) || record.created_at > started_at);
+        } else if !parent_readable {
+            records.clear();
         }
     }
     ancestors.remove(path);

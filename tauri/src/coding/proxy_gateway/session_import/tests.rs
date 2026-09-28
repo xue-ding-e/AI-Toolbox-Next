@@ -1000,6 +1000,20 @@ fn maintenance_failure_keeps_imported_usage_and_its_success_result() {
 }
 
 #[test]
+fn repeated_source_failures_stay_quiet_until_the_source_recovers() {
+    let log = SourceFailureLog::default();
+    let missing = "Skipping local session usage a.jsonl: No such file or directory (os error 2)";
+    assert!(log.should_log("pi:file:one", missing));
+    assert!(!log.should_log("pi:file:one", missing));
+    // A different source, or a different cause for the same source, still shows.
+    assert!(log.should_log("codex:file:two", missing));
+    assert!(log.should_log("pi:file:one", "Invalid session record at line 4"));
+    log.clear("pi:file:one");
+    assert!(log.should_log("pi:file:one", missing));
+    assert!(!log.should_log("codex:file:two", missing));
+}
+
+#[test]
 fn legacy_manual_import_is_adopted_without_duplicate_usage() {
     use std::hash::{Hash, Hasher};
     let root = tempfile::tempdir().unwrap();

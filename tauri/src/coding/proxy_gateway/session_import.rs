@@ -134,6 +134,43 @@ fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+/// A source that keeps failing for the same reason (a Codex child waiting for a
+/// rollout that never lands, an unreadable transcript) would otherwise log on
+/// every sync interval without ever changing state. Remember the last message
+/// per source so a repeat stays quiet while a different failure still surfaces.
+#[derive(Default)]
+struct SourceFailureLog {
+    seen: std::sync::Mutex<HashMap<String, String>>,
+}
+
+impl SourceFailureLog {
+    /// Returns `true` the first time this exact failure is reported for a source.
+    fn should_log(&self, source_id: &str, message: &str) -> bool {
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if seen.get(source_id).is_some_and(|last| last == message) {
+            return false;
+        }
+        seen.insert(source_id.to_string(), message.to_string());
+        true
+    }
+
+    /// A source that imported again (or vanished) reports its next failure afresh.
+    fn clear(&self, source_id: &str) {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(source_id);
+    }
+}
+
+fn source_failures() -> &'static SourceFailureLog {
+    static LOG: OnceLock<SourceFailureLog> = OnceLock::new();
+    LOG.get_or_init(SourceFailureLog::default)
+}
+
 pub async fn import_session_usage(
     db: SqliteDbState,
     input: GatewaySessionUsageImportInput,
@@ -571,6 +608,7 @@ fn sync_sources(
         })();
         match processed {
             Ok(Some((state, changes))) => {
+                source_failures().clear(&source_id);
                 states.insert(source_id, state);
                 result.merge(changes);
             }
@@ -578,7 +616,10 @@ fn sync_sources(
             Err(error) => {
                 result.failed_files += 1;
                 failed_tools.insert(cli_key);
-                log::warn!("Skipping local session usage {}: {error}", path.display());
+                let message = format!("Skipping local session usage {}: {error}", path.display());
+                if source_failures().should_log(&source_id, &message) {
+                    log::warn!("{message}");
+                }
             }
         }
     }
