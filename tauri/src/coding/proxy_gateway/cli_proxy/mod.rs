@@ -3133,6 +3133,16 @@ fn patch_codex_config(
     } else {
         provider_table.remove("experimental_bearer_token");
     }
+    // Codex resolves a provider `env_key` before every credential the takeover
+    // writes (`bearer_auth_for_provider` → `provider.api_key()?` in
+    // codex-rs/model-provider/src/auth.rs), so a leftover line makes Codex abort
+    // with "Missing environment variable: `OPENAI_API_KEY`" instead of ever
+    // reaching the gateway — even though `auth.json`/the bearer token holds the
+    // gateway key (issue #401). The backup keeps the original table and restore
+    // reinstates it wholesale, so dropping the line here is reversible; the
+    // no-backup restore path deliberately leaves it alone rather than destroying
+    // a value it cannot prove.
+    provider_table.remove("env_key");
 
     write_toml_file(path, &document)?;
     Ok(provider_id)
@@ -4381,6 +4391,103 @@ command = "node"
         assert_eq!(
             restored["mcp_servers"]["keep"]["command"].as_str(),
             Some("node")
+        );
+    }
+
+    #[test]
+    fn codex_takeover_removes_provider_env_key_and_restore_brings_it_back() {
+        // issue #401: Codex resolves a provider `env_key` before the credential it
+        // is handed here (`auth.json` GATEWAY_API_KEY, or the provider bearer token
+        // under login preservation), so a takeover that left the line in place made
+        // Codex abort with "Missing environment variable: `OPENAI_API_KEY`" and
+        // never reach the local gateway. The manifest backup keeps the original
+        // table, so restore must put the user's line back — in every mode.
+        for mode in [
+            GatewayProxyMode::Single,
+            GatewayProxyMode::Failover,
+            GatewayProxyMode::Aggregate,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let config_path = dir.path().join("config.toml");
+            write_text_file(
+                &config_path,
+                r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://old.example.com/v1"
+env_key = "OPENAI_API_KEY"
+"#,
+            )
+            .unwrap();
+            let backup = fs::read_to_string(&config_path).unwrap();
+
+            let provider_id = patch_codex_config(
+                &config_path,
+                "http://127.0.0.1:37123/openai/v1",
+                false,
+                mode,
+            )
+            .unwrap();
+            assert_eq!(provider_id, "custom");
+            let patched = parse_toml_file(&config_path).unwrap();
+            assert!(patched["model_providers"]["custom"]
+                .as_table_like()
+                .expect("custom provider table")
+                .get("env_key")
+                .is_none());
+
+            restore_codex_config(
+                &config_path,
+                Some(&backup),
+                &DEFAULT_AGGREGATE_SUBAGENT_DEFAULTS,
+            )
+            .unwrap();
+            let restored = parse_toml_file(&config_path).unwrap();
+            assert_eq!(
+                restored["model_providers"]["custom"]["env_key"].as_str(),
+                Some("OPENAI_API_KEY")
+            );
+        }
+    }
+
+    #[test]
+    fn codex_takeover_with_auth_preservation_removes_provider_env_key() {
+        // Same rule on the preservation branch, where the credential is the
+        // provider bearer token instead of `auth.json`.
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        write_text_file(
+            &config_path,
+            r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://old.example.com/v1"
+env_key = "OPENAI_API_KEY"
+"#,
+        )
+        .unwrap();
+
+        patch_codex_config(
+            &config_path,
+            "http://127.0.0.1:37123/openai/v1",
+            true,
+            GatewayProxyMode::Single,
+        )
+        .unwrap();
+        let patched = parse_toml_file(&config_path).unwrap();
+        let provider = patched["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+        assert!(provider.get("env_key").is_none());
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|item| item.as_str()),
+            Some(GATEWAY_API_KEY)
         );
     }
 

@@ -2085,6 +2085,72 @@ fn strip_active_provider_requires_openai_auth(config_toml: &str) -> Result<Strin
     Ok(document.to_string())
 }
 
+/// Name of the provider-table field that makes Codex read the credential from a
+/// process environment variable.
+const CODEX_PROVIDER_ENV_KEY_FIELD: &str = "env_key";
+
+/// Drop `env_key` from the active provider's `[model_providers.<id>]` table.
+///
+/// Codex resolves a provider `env_key` *before* every credential source we
+/// manage: `bearer_auth_for_provider`
+/// (`codex-rs/model-provider/src/auth.rs`) calls `provider.api_key()?` first, and
+/// that returns `CodexErr::EnvVar` — "Missing environment variable:
+/// `OPENAI_API_KEY`" — whenever the named variable is unset or empty. It
+/// short-circuits both `auth.json` and `experimental_bearer_token`, so a stale
+/// line is fatal even when the key is present (verified against codex-cli
+/// 0.157.0). AI Toolbox cannot set that variable in the user's shell, so as soon
+/// as the projection supplies the credential the line is at best redundant and at
+/// worst the error users have to hand-delete after every switch (issue #401,
+/// originally reported in #353).
+///
+/// Only the active table is touched, and only when the caller decided the
+/// projection manages this provider's credential: a provider with no managed key
+/// that names an env var is a deliberate indirection (issue #330) and stays as-is.
+fn strip_active_provider_env_key(config_toml: &str) -> Result<String, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    let Some(provider_id) = active_codex_model_provider_id(&document) else {
+        return Ok(document.to_string());
+    };
+
+    let removed = document
+        .as_table_mut()
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|providers| providers.get_mut(&provider_id))
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|provider_table| provider_table.remove(CODEX_PROVIDER_ENV_KEY_FIELD))
+        .is_some();
+
+    if removed {
+        log::warn!(
+            "removed env_key from model_providers.{provider_id}: AI Toolbox supplies this provider's credential, and Codex resolves env_key before it"
+        );
+    }
+
+    Ok(document.to_string())
+}
+
+/// Whether AI Toolbox supplies this provider's credential, i.e. the projection —
+/// not a user environment variable — decides how Codex authenticates: official
+/// providers read the login written to `auth.json`, custom providers read the
+/// managed `OPENAI_API_KEY` (projected into `auth.json` or, under login
+/// preservation, into the provider bearer token).
+///
+/// Shared by the projection and the live-file cleanup so both agree on when an
+/// `env_key` has to go — including the shapes where the projected TOML alone
+/// cannot show it (`mode = "strip"` drops `requires_openai_auth` while the key
+/// still lands in `auth.json`).
+fn codex_projection_manages_provider_credential(
+    provider_category: &str,
+    managed_auth: &serde_json::Value,
+) -> bool {
+    provider_category == "official" || extract_codex_managed_api_key(managed_auth).is_some()
+}
+
 /// Force `requires_openai_auth = true` on the active provider's
 /// `[model_providers.<id>]` table (issue #394).
 ///
@@ -2158,6 +2224,8 @@ fn project_codex_auth_to_runtime_config_with_mode(
     mode: RequiresOpenaiAuthMode,
 ) -> Result<String, String> {
     let api_key = extract_codex_managed_api_key(managed_auth);
+    let manages_provider_credential =
+        codex_projection_manages_provider_credential(provider_category, managed_auth);
 
     // Decide whether Codex should use the OpenAI auth flow for this provider,
     // i.e. read the credential from `auth.json` (or the `OPENAI_API_KEY` env
@@ -2205,11 +2273,19 @@ fn project_codex_auth_to_runtime_config_with_mode(
         }
     };
 
-    let config_toml = if should_keep_requires_openai_auth {
+    let mut config_toml = if should_keep_requires_openai_auth {
         set_active_provider_requires_openai_auth(managed_config_toml)?
     } else {
         strip_active_provider_requires_openai_auth(managed_config_toml)?
     };
+
+    // A provider `env_key` outranks every credential written below, so it only
+    // survives when this provider brings no managed credential of its own —
+    // otherwise Codex demands an environment variable AI Toolbox cannot set and
+    // ignores the key entirely (issue #401).
+    if manages_provider_credential {
+        config_toml = strip_active_provider_env_key(&config_toml)?;
+    }
 
     if !preserve_official_auth {
         return Ok(config_toml);
@@ -2955,6 +3031,12 @@ fn render_codex_config_document(document: &toml_edit::DocumentMut) -> String {
 const CODEX_MANAGED_PROVIDER_AUTH_KEYS: [&str; 2] =
     ["requires_openai_auth", "experimental_bearer_token"];
 
+/// Provider-table auth fields that are only ours to clear while the projection
+/// manages the credential. They are *not* in [`CODEX_MANAGED_PROVIDER_AUTH_KEYS`]
+/// because a provider without a managed key owns its own credential path
+/// (`env_key` indirection, issue #330) and the line must stay.
+const CODEX_CREDENTIAL_DEPENDENT_PROVIDER_KEYS: [&str; 1] = [CODEX_PROVIDER_ENV_KEY_FIELD];
+
 /// Clear the projection-owned auth fields from the provider table the next
 /// config activates.
 ///
@@ -2971,9 +3053,18 @@ const CODEX_MANAGED_PROVIDER_AUTH_KEYS: [&str; 2] =
 ///
 /// Only the active table is touched: other provider tables in the user's file
 /// are not ours to edit.
+///
+/// `manages_provider_credential` additionally clears the fields in
+/// [`CODEX_CREDENTIAL_DEPENDENT_PROVIDER_KEYS`]. The projected `next` TOML cannot
+/// express that decision on its own (an explicit `strip` mode removes
+/// `requires_openai_auth` while the key still lands in `auth.json`), so the
+/// caller passes it in from
+/// [`codex_projection_manages_provider_credential`] — the same predicate the
+/// projection uses to decide whether to strip `env_key`.
 fn clear_managed_provider_auth_keys(
     document: &mut toml_edit::DocumentMut,
     next_managed_document: &toml_edit::DocumentMut,
+    manages_provider_credential: bool,
 ) {
     let Some(provider_id) = active_codex_model_provider_id(next_managed_document)
         .or_else(|| active_codex_model_provider_id(document))
@@ -2991,6 +3082,11 @@ fn clear_managed_provider_auth_keys(
         for key in CODEX_MANAGED_PROVIDER_AUTH_KEYS {
             provider_table.remove(key);
         }
+        if manages_provider_credential {
+            for key in CODEX_CREDENTIAL_DEPENDENT_PROVIDER_KEYS {
+                provider_table.remove(key);
+            }
+        }
     }
 }
 
@@ -2998,6 +3094,7 @@ fn build_written_codex_config_toml(
     existing_config_toml: &str,
     previous_managed_config_toml: Option<&str>,
     next_managed_config_toml: &str,
+    manages_provider_credential: bool,
 ) -> Result<String, String> {
     let mut current_document = parse_toml_document(existing_config_toml, "existing config.toml")?;
     let mut next_managed_document =
@@ -3018,7 +3115,11 @@ fn build_written_codex_config_toml(
     // The projection owns the provider auth fields, so clear them from the table
     // the next config activates before merging: the diff above can only remove
     // keys that `previous_managed` happened to contain.
-    clear_managed_provider_auth_keys(&mut current_document, &next_managed_document);
+    clear_managed_provider_auth_keys(
+        &mut current_document,
+        &next_managed_document,
+        manages_provider_credential,
+    );
 
     merge_toml_tables(
         current_document.as_table_mut(),
@@ -4879,6 +4980,10 @@ async fn apply_config_to_file_with_previous_managed_config(
         &final_config,
         Some(&provider_config),
         preserve_official_auth,
+        // Same predicate the projection used to strip `env_key` from
+        // `final_config`; the live file still needs its own clear for a line
+        // that only exists on disk (hand-added, or written by an older version).
+        codex_projection_manages_provider_credential(&provider.category, &auth),
     )
     .await?;
     Ok(())
@@ -4904,6 +5009,11 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
 }
 
 /// Write auth.json and config.toml files
+///
+/// `manages_provider_credential` is [`codex_projection_manages_provider_credential`]
+/// for the provider being applied: the same decision the projection already made
+/// on `next_managed_config_toml`, passed through so the live file cleanup can act
+/// on it too.
 async fn write_codex_config_files(
     db: Option<&crate::db::SqliteDbState>,
     managed_auth: &serde_json::Value,
@@ -4911,6 +5021,7 @@ async fn write_codex_config_files(
     next_managed_config_toml: &str,
     model_catalog_settings: Option<&serde_json::Value>,
     preserve_official_auth: bool,
+    manages_provider_credential: bool,
 ) -> Result<(), String> {
     let config_dir = if let Some(db) = db {
         get_codex_config_dir_from_db_async(db).await?
@@ -4967,6 +5078,7 @@ async fn write_codex_config_files(
         &existing_config_toml,
         previous_managed_config_toml,
         &next_managed_config_toml,
+        manages_provider_credential,
     )?;
     if !has_model_catalog {
         final_content = set_codex_model_catalog_json_field(&final_content, false)?;
@@ -8410,7 +8522,7 @@ name = "new-provider"
 "#;
 
         let rendered =
-            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed, false)
                 .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
@@ -8464,7 +8576,7 @@ name = "new-provider"
 "#;
 
         let rendered =
-            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed, false)
                 .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
@@ -8501,7 +8613,7 @@ image_generation = false
 "#;
 
         let rendered =
-            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed, false)
                 .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
@@ -8526,7 +8638,8 @@ enabled = false
 model_provider = "custom"
 "#;
 
-        let rendered = build_written_codex_config_toml(existing, None, next_managed).unwrap();
+        let rendered =
+            build_written_codex_config_toml(existing, None, next_managed, false).unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
@@ -8765,7 +8878,7 @@ wire_api = "responses"
         // Flip preserve on and pick `keep`: both fields, explicitly.
         let next_keep = project(true, RequiresOpenaiAuthMode::Keep);
         let written =
-            build_written_codex_config_toml(&previous, Some(&previous), &next_keep).unwrap();
+            build_written_codex_config_toml(&previous, Some(&previous), &next_keep, false).unwrap();
         let doc: DocumentMut = written.parse().unwrap();
         let table = doc["model_providers"]["custom"].as_table_like().unwrap();
         assert_eq!(
@@ -8787,7 +8900,7 @@ wire_api = "responses"
         // goes away without touching the bearer token.
         let next_auto = project(true, RequiresOpenaiAuthMode::Auto);
         let written =
-            build_written_codex_config_toml(&written, Some(&next_keep), &next_auto).unwrap();
+            build_written_codex_config_toml(&written, Some(&next_keep), &next_auto, false).unwrap();
         let doc: DocumentMut = written.parse().unwrap();
         let table = doc["model_providers"]["custom"].as_table_like().unwrap();
         assert!(
@@ -8990,7 +9103,7 @@ model = "gpt-5.4"
 "#;
 
         let rendered =
-            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed, false)
                 .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
@@ -9026,9 +9139,13 @@ name = "Custom"
 base_url = "https://api.example.com/v1"
 "#;
 
-        let rendered =
-            build_written_codex_config_toml(existing, Some(previous_managed), previous_managed)
-                .unwrap();
+        let rendered = build_written_codex_config_toml(
+            existing,
+            Some(previous_managed),
+            previous_managed,
+            false,
+        )
+        .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
@@ -9037,6 +9154,185 @@ base_url = "https://api.example.com/v1"
             .expect("custom provider table")
             .get("requires_openai_auth")
             .is_none());
+    }
+
+    #[test]
+    fn project_codex_auth_strips_provider_env_key_when_credential_is_managed() {
+        // issue #401: Codex resolves a provider `env_key` before every credential
+        // the projection writes (`bearer_auth_for_provider` →
+        // `provider.api_key()?`), so a leftover line makes Codex abort with
+        // "Missing environment variable: `OPENAI_API_KEY`" while the managed key
+        // sits unused in `auth.json`. Once we own the credential, the line is
+        // ours to drop — that is the manual deletion users had to repeat.
+        let config = r#"
+model = "gpt-5.6-sol"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+"#;
+        let auth = json!({ "OPENAI_API_KEY": "sk-managed" });
+
+        let projected =
+            project_codex_auth_to_runtime_config(config, &auth, false, "custom").unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+
+        assert!(provider.get("env_key").is_none());
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn project_codex_auth_strips_provider_env_key_with_preserve_bearer_token() {
+        // Login preservation projects the managed key into the provider bearer
+        // token; `env_key` still outranks it, so the same rule must apply.
+        let config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+"#;
+        let auth = json!({ "OPENAI_API_KEY": "sk-managed" });
+
+        let projected =
+            project_codex_auth_to_runtime_config(config, &auth, true, "custom").unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+
+        assert!(provider.get("env_key").is_none());
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|item| item.as_str()),
+            Some("sk-managed")
+        );
+    }
+
+    #[test]
+    fn project_codex_auth_strips_provider_env_key_for_official_provider() {
+        // Official providers resolve their credential from the `auth.json` login
+        // the projection maintains, so an `env_key` would override it the same way.
+        let config = r#"
+model = "gpt-5.6-sol"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+"#;
+
+        let projected =
+            project_codex_auth_to_runtime_config(config, &json!({}), false, "official").unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+
+        assert!(provider.get("env_key").is_none());
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn project_codex_auth_keeps_provider_env_key_for_keyless_provider() {
+        // No managed key means the provider owns its credential path: naming an
+        // environment variable is deliberate indirection (issue #330), not a stale
+        // line, so it must survive.
+        let config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+env_key = "MY_RELAY_KEY"
+"#;
+
+        let projected =
+            project_codex_auth_to_runtime_config(config, &json!({}), false, "custom").unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+
+        assert_eq!(
+            provider.get("env_key").and_then(|item| item.as_str()),
+            Some("MY_RELAY_KEY")
+        );
+        assert!(provider.get("requires_openai_auth").is_none());
+    }
+
+    #[test]
+    fn build_written_codex_config_toml_clears_stale_env_key_only_when_credential_is_managed() {
+        // issue #401: a line that only exists on disk (hand-added, or written by an
+        // older version) survives the managed diff, so the live file needs its own
+        // clear — and it must stay put for a provider whose credential is not ours.
+        let existing = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+env_key = "OPENAI_API_KEY"
+"#;
+        let keyed_projection = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+requires_openai_auth = true
+"#;
+        let keyless_projection = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+"#;
+
+        let rendered = build_written_codex_config_toml(existing, None, keyed_projection, true)
+            .expect("managed credential config");
+        let doc: DocumentMut = rendered.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+        assert!(provider.get("env_key").is_none());
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+
+        let rendered = build_written_codex_config_toml(existing, None, keyless_projection, false)
+            .expect("keyless config");
+        let doc: DocumentMut = rendered.parse().unwrap();
+        let provider = doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table");
+        assert_eq!(
+            provider.get("env_key").and_then(|item| item.as_str()),
+            Some("OPENAI_API_KEY")
+        );
     }
 
     #[test]
@@ -9074,6 +9370,7 @@ wire_api = "responses"
             &auto_projection,
             Some(&auto_projection),
             &keep_projection,
+            false,
         )
         .unwrap();
         let doc: DocumentMut = after_keep.parse().unwrap();
@@ -9084,9 +9381,13 @@ wire_api = "responses"
         );
 
         // Switching back: `previous` is the keep projection, i.e. what is on disk.
-        let back_to_auto =
-            build_written_codex_config_toml(&after_keep, Some(&keep_projection), &auto_projection)
-                .unwrap();
+        let back_to_auto = build_written_codex_config_toml(
+            &after_keep,
+            Some(&keep_projection),
+            &auto_projection,
+            false,
+        )
+        .unwrap();
         let doc: DocumentMut = back_to_auto.parse().unwrap();
         assert!(
             doc["model_providers"]["custom"]
@@ -9123,9 +9424,13 @@ base_url = "https://api.example.com/v1"
 wire_api = "responses"
 "#;
 
-        let rendered =
-            build_written_codex_config_toml(previous_managed, Some(previous_managed), next_managed)
-                .unwrap();
+        let rendered = build_written_codex_config_toml(
+            previous_managed,
+            Some(previous_managed),
+            next_managed,
+            false,
+        )
+        .unwrap();
         let doc: DocumentMut = rendered.parse().unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
@@ -9717,6 +10022,7 @@ base_url = "https://api.provider-b.com/v1"
             &projected_a,       // existing file with provider-a token
             Some(&projected_a), // previous managed
             &projected_b,       // next managed
+            false,
         )
         .unwrap();
         let doc_b: DocumentMut = cleaned_b.parse().unwrap();
@@ -9749,6 +10055,7 @@ model = "claude-sonnet-4-6"
             &cleaned_b,
             Some(&cleaned_b), // previous was provider-b with token
             &projected_official,
+            false,
         )
         .unwrap();
         let doc_official: DocumentMut = cleaned_official.parse().unwrap();
