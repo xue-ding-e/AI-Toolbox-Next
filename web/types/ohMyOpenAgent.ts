@@ -44,6 +44,16 @@ export interface OhMyOpenAgentCategoryDefinition {
 /**
  * Centralized agent definitions for Oh My OpenAgent.
  * Order defines UI display and should be updated intentionally.
+ *
+ * These are the builtin names of the **OpenCode plugin edition** (`oh-my-openagent`
+ * in opencode.json), which is what this module configures. As of v5.0.1 that
+ * edition still ships the full myth-named set (`BuiltinAgentNameSchema` in
+ * `packages/omo-opencode/src/config/schema/agent-names.ts`).
+ *
+ * Do NOT replace these with OmO Native's names (`plan-consultant`,
+ * `plan-reviewer`, `omo-native-code-reviewer`, ...). Native is a different
+ * edition (the `omo` binary on the senpi engine) whose agent set is disjoint
+ * from this one; those ids do not exist in the plugin schema.
  */
 export const OH_MY_OPENAGENT_AGENTS: OhMyOpenAgentAgentDefinition[] = [
 	// ===== 主 Agents：用户的直接入口，负责协调和决策（你主动找他们）=====
@@ -91,7 +101,15 @@ export const OH_MY_OPENAGENT_AGENTS: OhMyOpenAgentAgentDefinition[] = [
 
 /**
  * Centralized category definitions for Oh My OpenAgent.
- * Order follows the default categories in 3.1.
+ * Order follows the builtin categories of the OpenCode plugin edition in 5.0.
+ *
+ * `deep` was split into `deep-low` (default deep lane) and `deep-high`
+ * (escalation lane) by upstream's `2026-09-category-deep-split`. The bare `deep`
+ * key is kept working as an alias canonicalized to `deep-low`, so configs that
+ * still carry it keep loading — but new configs should use the split names.
+ *
+ * `architect` is intentionally absent: it exists only in OmO Native, not in the
+ * plugin edition.
  */
 export const OH_MY_OPENAGENT_CATEGORIES: OhMyOpenAgentCategoryDefinition[] = [
 	{
@@ -101,7 +119,10 @@ export const OH_MY_OPENAGENT_CATEGORIES: OhMyOpenAgentCategoryDefinition[] = [
 		key: "ultrabrain",
 	},
 	{
-		key: "deep",
+		key: "deep-low",
+	},
+	{
+		key: "deep-high",
 	},
 	{
 		key: "artistry",

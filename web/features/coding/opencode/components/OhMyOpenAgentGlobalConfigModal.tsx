@@ -3,6 +3,8 @@ import { Modal, Form, Button, Select, Collapse, Input, Alert } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
+import { OH_MY_OPENAGENT_AGENTS } from '@/types/ohMyOpenAgent';
+import { getOpenAgentDisplayName } from '@/services/ohMyOpenAgentApi';
 import styles from './OhMyOpenAgentGlobalConfigModal.module.less';
 
 // The upstream repository has been renamed to oh-my-openagent,
@@ -281,23 +283,18 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
                         label={t('opencode.ohMyOpenCode.disabledAgents')}
                         name="disabledAgents"
                       >
+                        {/* Derived from the single builtin agent list so it can never drift
+                            from the ids the plugin actually accepts (older copies of this
+                            list carried removed ids and display-name spellings). */}
                         <Select
                           mode="tags"
                           placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
-                          options={[
-                            { value: 'Prometheus (Planner)', label: 'Prometheus (Planner)' },
-                            { value: 'Atlas', label: 'Atlas' },
-                            { value: 'oracle', label: 'Oracle' },
-                            { value: 'librarian', label: 'Librarian' },
-                            { value: 'explore', label: 'Explore' },
-                            { value: 'multimodal-looker', label: 'Multimodal Looker' },
-                            { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
-                            { value: 'document-writer', label: 'Document Writer' },
-                            { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
-                            { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
-                            { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
-                            { value: 'OpenCode-Builder', label: 'OpenCode-Builder' },
-                          ]}
+                          options={OH_MY_OPENAGENT_AGENTS.filter(
+                            (agent) => !agent.key.startsWith('__'),
+                          ).map((agent) => ({
+                            value: agent.key,
+                            label: getOpenAgentDisplayName(agent.key, t),
+                          }))}
                         />
                       </Form.Item>
 

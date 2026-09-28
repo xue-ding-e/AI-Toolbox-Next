@@ -230,6 +230,12 @@ export const getAllAgents = () => {
 /**
  * Create a default config input with preset values
  * Note: id is NOT passed - backend will generate it automatically
+ *
+ * Keys are the canonical builtin agent ids, not their display names. The backend
+ * lowercases keys on write (`normalize_agent_key`), so a display-name spelling
+ * such as "Prometheus (Planner)" would land as `prometheus (planner)` — a
+ * user-defined agent that never resolves to the builtin. `frontend-ui-ux-engineer`
+ * and `document-writer` were dropped: upstream removed both ids entirely.
  */
 export const createDefaultOhMyOpenAgentConfig = (
 	name: string,
@@ -237,18 +243,16 @@ export const createDefaultOhMyOpenAgentConfig = (
 	return {
 		name,
 		agents: {
-			Sisyphus: { model: "opencode/minimax-m2.1-free" },
-			"Prometheus (Planner)": { model: "" },
-			Atlas: { model: "" },
+			sisyphus: { model: "opencode/minimax-m2.1-free" },
+			prometheus: { model: "" },
+			atlas: { model: "" },
 			oracle: { model: "" },
 			librarian: { model: "" },
 			explore: { model: "" },
 			"multimodal-looker": { model: "" },
-			"frontend-ui-ux-engineer": { model: "" },
-			"document-writer": { model: "" },
-			"Sisyphus-Junior": { model: "" },
-			"Metis (Plan Consultant)": { model: "" },
-			"Momus (Plan Reviewer)": { model: "" },
+			"sisyphus-junior": { model: "" },
+			metis: { model: "" },
+			momus: { model: "" },
 			"OpenCode-Builder": { model: "" },
 		},
 	};

@@ -2313,22 +2313,22 @@
         "sisyphus": {
           "name": "Sisyphus",
           "description": "主编排者 - 你的\"第一接待员\"，接收请求后决定自己干还是派专家干，负责任务分类、委派和全局协调",
-          "recommendedModel": "claude-opus-4-5 (variant: max)"
+          "recommendedModel": "claude-opus-5-5 (reasoning: max)"
         },
         "hephaestus": {
           "name": "Hephaestus",
           "description": "自主深度工作者 - 给目标就行的\"资深工匠\"，会花5-15分钟先研究再动手，端到端自主完成复杂任务不需要逐步指挥",
-          "recommendedModel": "gpt-5.2-codex (variant: medium，必需)"
+          "recommendedModel": "gpt-6-sol (reasoning: medium)"
         },
         "prometheus": {
           "name": "Prometheus",
           "description": "战略规划者 - 只做计划不写代码的\"产品经理\"，把大任务拆成小步骤，生成依赖图和执行计划",
-          "recommendedModel": "claude-opus-4-5 (variant: max)"
+          "recommendedModel": "claude-fable-5-1 (reasoning: xhigh)"
         },
         "atlas": {
           "name": "Atlas",
           "description": "任务管理者 - 持有todo清单的\"项目经理\"，跟踪多步骤任务进度，确保每个步骤有序完成不遗漏（系统会自动调用）",
-          "recommendedModel": "kimi-k2.5"
+          "recommendedModel": "claude-sonnet-5 (reasoning: medium)"
         },
         "__sub_agents_separator__": {
           "name": "子 Agents",
@@ -2337,79 +2337,84 @@
         "oracle": {
           "name": "Oracle",
           "description": "战略顾问 - 只看不动手的\"CTO顾问\"，专门分析架构、审查代码、调试疑难，给建议但不改代码",
-          "recommendedModel": "gpt-5.2 (variant: high)"
+          "recommendedModel": "gpt-5.6-sol (reasoning: xhigh)"
         },
         "librarian": {
           "name": "Librarian",
           "description": "多仓库研究员 - 专查外部资料的\"图书馆员\"，搜GitHub代码、读官方文档、找开源实现示例",
-          "recommendedModel": "glm-4.7"
+          "recommendedModel": "kimi-for-coding-highspeed (reasoning: off)"
         },
         "explore": {
           "name": "Explore",
           "description": "快速代码库搜索 - 项目内的\"Ctrl+Shift+F\"，快速定位\"这个功能在哪\"、\"谁调用了这个函数\"，可并行多个",
-          "recommendedModel": "grok-code-fast-1"
+          "recommendedModel": "kimi-for-coding-highspeed (reasoning: off)"
         },
         "multimodal-looker": {
           "name": "Multimodal-Looker",
           "description": "媒体分析器 - 有\"眼睛\"的助手，专门看图片、PDF、设计稿，提取视觉信息转成文字描述",
-          "recommendedModel": "gemini-3-flash"
+          "recommendedModel": "gpt-5.6-sol (reasoning: low)"
         },
         "metis": {
           "name": "Metis",
           "description": "规划前分析顾问 - Prometheus的\"前置分析师\"，在做计划前先帮你想清楚\"你到底要什么\"，发现隐藏需求和潜在坑",
-          "recommendedModel": "claude-opus-4-5 (variant: max)"
+          "recommendedModel": "claude-fable-5-1 (reasoning: max)"
         },
         "momus": {
           "name": "Momus",
           "description": "计划审查者 - Prometheus的\"质检员\"，专挑计划的阻塞性问题，确保计划可执行、引用有效、没有遗漏",
-          "recommendedModel": "gpt-5.2 (variant: medium)"
+          "recommendedModel": "gpt-6-astra (reasoning: xhigh)"
         },
         "sisyphus-junior": {
           "name": "Sisyphus-Junior",
           "description": "委托任务执行器 - 穿上Category\"马甲\"的\"实习生\"，根据任务类型动态调整模型和风格去执行具体工作",
-          "recommendedModel": "无需配置，动态继承Category的配置"
+          "recommendedModel": "claude-sonnet-5 (reasoning: medium)"
         }
       },
       "categoriesMeta": {
         "visual-engineering": {
           "name": "Visual Engineering",
           "description": "前端UI模式 - 做界面的\"设计师模式\"，强调大胆审美、独特排版、高冲击力动画，拒绝千篇一律",
-          "recommendedModel": "gemini-3-pro"
+          "recommendedModel": "claude-fable-5-1 (reasoning: max)"
         },
         "ultrabrain": {
           "name": "Ultrabrain",
           "description": "超级大脑模式 - 深度思考的\"架构师模式\"，只给目标不给步骤，用于真正困难的逻辑推理和架构设计",
-          "recommendedModel": "gpt-5.2-codex (variant: xhigh，必需)"
+          "recommendedModel": "gpt-6-astra (reasoning: max，需已连接 gpt-6-astra 或 gpt-5.6-sol)"
         },
-        "deep": {
-          "name": "Deep",
-          "description": "深度自主模式 - 自主研究的\"资深工程师模式\"，会花很长时间先探索再动手，用于疑难杂症和混乱代码重构",
-          "recommendedModel": "gpt-5.2-codex (variant: medium，必需)"
+        "deep-low": {
+          "name": "Deep (Low)",
+          "description": "默认深车道 - 一次一个目标一个交付物，只做能从读到的证据里定论的决策。3D图形、计算机/浏览器操作、CAPTCHA、多模态、后端、逻辑与算法都走这里；多个目标要拆成并行调用",
+          "recommendedModel": "gpt-5.6-sol-fast (reasoning: medium，需 gpt-5.6-sol-fast 或 gpt-5.6-sol)"
+        },
+        "deep-high": {
+          "name": "Deep (High)",
+          "description": "升级深车道 - 用于核心决策无法只靠证据定论的目标。契约与 Deep (Low) 相同：一次一个目标一个交付物",
+          "recommendedModel": "gpt-6-astra (reasoning: xhigh，需已连接 gpt-6-astra)"
         },
         "artistry": {
           "name": "Artistry",
           "description": "艺术创意模式 - 打破常规的\"创意总监模式\"，鼓励大胆非传统方向，用于需要惊喜和创新的任务",
-          "recommendedModel": "gemini-3-pro (variant: max，必需)"
+          "recommendedModel": "claude-fable-5-1 (reasoning: max)"
         },
         "quick": {
           "name": "Quick",
           "description": "快速模式 - 改typo的\"实习生模式\"，用便宜快速的小模型，但prompt必须写得非常详细明确",
-          "recommendedModel": "claude-haiku-4-5"
+          "recommendedModel": "gpt-6-luna-fast (reasoning: low)"
         },
         "unspecified-low": {
           "name": "Unspecified (Low)",
           "description": "通用中等模式 - 不知道归哪类的\"中等杂活模式\"，工作量不大、范围有限的常规开发任务",
-          "recommendedModel": "claude-sonnet-4-5"
+          "recommendedModel": "mimo-v2.6-pro (reasoning: max)"
         },
         "unspecified-high": {
           "name": "Unspecified (High)",
           "description": "通用高级模式 - 不知道归哪类的\"大型杂活模式\"，跨多模块、影响范围大的高工作量任务",
-          "recommendedModel": "claude-opus-4-5 (variant: max)"
+          "recommendedModel": "claude-opus-5-5 (reasoning: medium)"
         },
         "writing": {
           "name": "Writing",
           "description": "写作模式 - 写文档的\"技术作家模式\"，专注清晰流畅的散文表达，用于README、文档、技术文章",
-          "recommendedModel": "gemini-3-flash"
+          "recommendedModel": "claude-opus-5-5 (reasoning: low，仅限 Claude 家族)"
         }
       },
       "legacyConfigToggle": "写入旧版配置格式",
