@@ -5,7 +5,11 @@
 </p>
 
 <p align="center">
-  <strong>个人 AI 工具箱</strong> - 一站式管理 AI 编程助手配置
+  <strong>Personal AI Toolbox</strong> - All-in-one management for your AI coding assistant configurations
+</p>
+
+<p align="center">
+  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -22,76 +26,76 @@
 
 ---
 
-## 简介
+## Introduction
 
-AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各类 AI 编程助手的配置。支持 **Windows**、**macOS** 和 **Linux**。
+AI Toolbox is a cross-platform desktop application that helps developers efficiently manage the configuration of AI coding assistants. It supports **Windows**, **macOS**, and **Linux**.
 
-### 主要功能
+### Features
 
-- **OpenCode 配置管理** - 可视化管理 OpenCode 的供应商和模型配置，支持列表页快速启停
-- **Oh My OpenAgent / Oh My OpenCode Slim 插件配置管理** - 可视化管理 Oh My OpenAgent 及 Oh My OpenCode Slim 插件的配置
-- **Claude Code 配置管理** - 一键切换 Claude Code 的官方订阅/自定义 API 供应商配置，支持动态获取模型列表、全局 Prompt 和插件管理
-- **Codex 配置管理** - 管理 OpenAI Codex CLI 的官方账号/自定义渠道、模型映射、全局 Prompt、插件和会话历史
-- **Grok CLI 配置管理** - 管理 Grok CLI 的供应商、`config.toml` / `auth.json`、官方账号、全局 Prompt 和插件
-- **Gemini CLI 配置管理** - 管理 Gemini CLI 的官方账号/自定义渠道、`.env` / `settings.json`、全局 Prompt 和用量信息
-- **Kimi Code CLI 配置管理** - 管理 Kimi Code CLI 的供应商、`config.toml` / `credentials` 官方账号、全局 Prompt 和插件
-- **OpenClaw 配置管理** - 管理 OpenClaw 的模型、供应商、配置文件路径和会话记录
-- **Pi 配置管理** - 管理 Pi CLI 的模型、供应商、扩展、Prompt 和运行时配置
-- **Oh My Pi 配置管理** - 管理 Oh My Pi (OMP) 的运行时根目录、`models.yml` 供应商、`config.yml` 设置和 subagent 集中配置
-- **Claude Desktop 配置管理** - 管理 Claude Desktop 的 3P 网关 profile 配置，支持一键网关接管
-- **Hermes Agent 配置管理** - 管理 Hermes Agent 的 `config.yaml`、供应商、默认模型、全局提示词和 memory 记忆文件
-- **DeepSeek Harness 配置管理** - 管理 DeepSeek Harness (dsh) 的 `settings.yaml` / `.credentials.yaml`、供应商、默认模型和全局提示词
-- **本机代理网关** - 提供统一本机代理入口，支持 Claude Code / Claude Desktop / Codex / Grok / Kimi / Gemini CLI 接管、协议转换、故障切换、请求日志、用量统计和模型价格管理
-- **Image 工作台** - 管理图片生成/编辑渠道，创建图片任务，保存历史记录和生成资产
-- **MCP 服务器管理** - 集中管理 MCP（Model Context Protocol）服务器配置，支持导入/导出、收藏、分组和多工具同步
-- **Skills 技能管理** - 管理 Skills 中央仓库，支持从 Git 仓库/本地目录安装，按工具启停同步，自定义工具和分组管理
-- **会话管理** - 浏览、搜索、重命名、导入、导出和删除 OpenCode / Claude Code / Codex / Grok / Gemini CLI / Kimi / OpenClaw / Pi / Oh My Pi / Claude Desktop / Hermes / DeepSeek Harness 会话
-- **WSL 同步** - 将 Windows 端的各种 CLI 配置、MCP 和 Skills 配置同步到 WSL 环境，支持自动同步和自定义映射
-- **SSH 同步** - 将本机配置、MCP 和 Skills 同步到远程 SSH 主机，支持连接管理、路径映射和手动同步
-- **供应商管理** - 统一管理多个 AI 供应商（OpenAI、Anthropic、自定义代理等），支持跨编码工具共享与深链接导入
-- **系统托盘** - 通过系统托盘快速切换各模块的供应商、模型、Prompt、MCP 和 Skills 启用状态，无需打开主窗口
-- **数据备份** - 支持本地备份、WebDAV 云端备份、GitHub/Gitee 私有仓库备份、自动备份、可选备份加密（密码保存在本机系统凭据库）、自定义备份项、图片资产备份和敏感文件过滤
-- **主题切换** - 支持亮色/暗色/跟随系统主题
-- **多语言** - 支持中文和英文界面
-- **自动更新检查** - 启动时自动检查新版本
+- **OpenCode configuration management** - Visually manage OpenCode providers and models, with quick enable/disable toggles from the list view
+- **Oh My OpenAgent / Oh My OpenCode Slim plugin configuration** - Visually manage the configuration of the Oh My OpenAgent and Oh My OpenCode Slim plugins
+- **Claude Code configuration management** - Switch Claude Code between official subscription and custom API providers in one click, with dynamic model list fetching, global prompts, and plugin management
+- **Codex configuration management** - Manage OpenAI Codex CLI official accounts/custom channels, model mappings, global prompts, plugins, and session history
+- **Grok CLI configuration management** - Manage Grok CLI providers, `config.toml` / `auth.json`, official accounts, global prompts, and plugins
+- **Gemini CLI configuration management** - Manage Gemini CLI official accounts/custom channels, `.env` / `settings.json`, global prompts, and usage information
+- **Kimi Code CLI configuration management** - Manage Kimi Code CLI providers, `config.toml` / `credentials` official accounts, global prompts, and plugins
+- **OpenClaw configuration management** - Manage OpenClaw models, providers, config file paths, and session records
+- **Pi configuration management** - Manage Pi CLI models, providers, extensions, prompts, and runtime configuration
+- **Oh My Pi configuration management** - Manage the Oh My Pi (OMP) runtime root, `models.yml` providers, `config.yml` settings, and centralized subagent configuration
+- **Claude Desktop configuration management** - Manage Claude Desktop 3P gateway profiles, with one-click gateway takeover
+- **Hermes Agent configuration management** - Manage Hermes Agent's `config.yaml`, providers, default model, global prompts, and memory files
+- **DeepSeek Harness configuration management** - Manage DeepSeek Harness (dsh) `settings.yaml` / `.credentials.yaml`, providers, default model, and global prompts
+- **Local proxy gateway** - A unified local proxy endpoint with Claude Code / Claude Desktop / Codex / Grok / Kimi / Gemini CLI takeover, protocol conversion, failover, request logs, usage statistics, and model pricing management
+- **Image workbench** - Manage image generation/editing channels, create image jobs, and keep history and generated assets
+- **MCP server management** - Centrally manage MCP (Model Context Protocol) server configurations, with import/export, favorites, groups, and multi-tool sync
+- **Skills management** - Manage a central Skills repository, install from Git repositories or local directories, enable/disable and sync per tool, plus custom tools and group management
+- **Session management** - Browse, search, rename, import, export, and delete sessions for OpenCode / Claude Code / Codex / Grok / Gemini CLI / Kimi / OpenClaw / Pi / Oh My Pi / Claude Desktop / Hermes / DeepSeek Harness
+- **WSL sync** - Sync the various CLI, MCP, and Skills configurations from Windows into a WSL environment, with automatic sync and custom mappings
+- **SSH sync** - Sync local configurations, MCP, and Skills to remote SSH hosts, with connection management, path mappings, and manual sync
+- **Provider management** - Unified management of multiple AI providers (OpenAI, Anthropic, custom proxies, etc.), with cross-coding-tool sharing and deep-link import
+- **System tray** - Quickly toggle providers, models, prompts, MCP, and Skills for each module from the system tray, without opening the main window
+- **Data backup** - Local backups, WebDAV cloud backups, GitHub/Gitee private repository backups, automatic backups, optional backup encryption (passwords stored in the local system credential store), custom backup items, image asset backups, and sensitive file filtering
+- **Theme switching** - Light, dark, and follow-system themes
+- **Internationalization** - Chinese and English interfaces
+- **Automatic update check** - Checks for new versions on startup
 
-## 截图
+## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/app_screenshot_opencode_model.jpg" alt="OpenCode 配置管理" width="39%">
-  <img src="docs/screenshots/app_screenshot_opencode_provider.jpg" alt="OpenCode 供应商管理" width="35%">
-  <img src="docs/screenshots/app_screenshot_opencode_tray.jpg" alt="系统托盘快速切换配置" width="19%">
+  <img src="docs/screenshots/app_screenshot_opencode_model.jpg" alt="OpenCode configuration management" width="39%">
+  <img src="docs/screenshots/app_screenshot_opencode_provider.jpg" alt="OpenCode provider management" width="35%">
+  <img src="docs/screenshots/app_screenshot_opencode_tray.jpg" alt="Quick configuration switching from the system tray" width="19%">
   <br>
-  <em>OpenCode 和 Oh My OpenAgent / Oh My OpenCode Slim 插件配置管理</em>
+  <em>OpenCode and Oh My OpenAgent / Oh My OpenCode Slim plugin configuration management</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/app_screenshot_claudecode.jpg" alt="Claude Code 配置管理" width="31%">
-  <img src="docs/screenshots/app_screenshot_codex.jpg" alt="Codex 配置管理" width="31%">
-  <img src="docs/screenshots/app_screenshot_mcp.jpg" alt="MCP 服务器管理" width="31%">
+  <img src="docs/screenshots/app_screenshot_claudecode.jpg" alt="Claude Code configuration management" width="31%">
+  <img src="docs/screenshots/app_screenshot_codex.jpg" alt="Codex configuration management" width="31%">
+  <img src="docs/screenshots/app_screenshot_mcp.jpg" alt="MCP server management" width="31%">
   <br>
-  <em>Claude Code / Codex / MCP 服务器管理</em>
+  <em>Claude Code / Codex / MCP server management</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/app_screenshot_skills.jpg" alt="Skills 技能管理" width="40%">
-  <img src="docs/screenshots/app_screenshot_settings.jpg" alt="设置页面" width="32%">
-  <img src="docs/screenshots/app_screenshot_wsl.jpg" alt="WSL 同步" width="21%">
+  <img src="docs/screenshots/app_screenshot_skills.jpg" alt="Skills management" width="40%">
+  <img src="docs/screenshots/app_screenshot_settings.jpg" alt="Settings page" width="32%">
+  <img src="docs/screenshots/app_screenshot_wsl.jpg" alt="WSL sync" width="21%">
   <br>
-  <em>Skills 技能管理 / 设置页面 / WSL 同步</em>
+  <em>Skills management / Settings page / WSL sync</em>
 </p>
 
-## 下载安装
+## Download and Installation
 
-前往 [Releases](https://github.com/coulsontl/ai-toolbox/releases) 页面下载适合您系统的安装包：
+Head to the [Releases](https://github.com/coulsontl/ai-toolbox/releases) page and download the installer for your system:
 
-| 系统 | 安装包 |
-|------|--------|
+| Platform | Installer |
+|----------|-----------|
 | Windows | `.msi` / `.exe` |
 | macOS | `.dmg` |
 | Linux | `.deb` / `.AppImage` |
 
-macOS 也可以通过 Homebrew 安装、升级和卸载：
+On macOS you can also install, upgrade, and uninstall via Homebrew:
 
 ```bash
 brew tap coulsontl/ai-toolbox https://github.com/coulsontl/ai-toolbox
@@ -100,299 +104,299 @@ sudo xattr -rd com.apple.quarantine /Applications/AI\ Toolbox.app
 
 brew upgrade --cask coulsontl/ai-toolbox/ai-toolbox
 brew uninstall --cask coulsontl/ai-toolbox/ai-toolbox
-# 可选：不再需要此 tap 时移除
+# Optional: remove this tap once you no longer need it
 brew untap coulsontl/ai-toolbox
 ```
 
-说明：
+Notes:
 
-- 当前 Cask 暂时直接托管在本仓库，因此首次需要使用带仓库 URL 的 `brew tap`。
-- 后续发布新版本后，仓库中的 `Casks/ai-toolbox.rb` 会由 release workflow 自动更新，`brew upgrade` 即可获取新版本。
+- The Cask currently lives in this repository, so the first `brew tap` must include the repository URL.
+- After a new version is released, `Casks/ai-toolbox.rb` in this repository is updated automatically by the release workflow, so `brew upgrade` picks up the new version.
 
-Windows 也可以通过 [Scoop](https://scoop.sh/) 安装、升级和卸载：
+On Windows you can also install, upgrade, and uninstall via [Scoop](https://scoop.sh/):
 
 ```bash
 scoop bucket add ai-toolbox https://github.com/coulsontl/ai-toolbox
 scoop install ai-toolbox/ai-toolbox
 
-# 升级：先刷新 bucket 拿到新 manifest，再升级应用
+# Upgrade: refresh the bucket to get the new manifest first, then upgrade the app
 scoop update
 scoop update ai-toolbox
 scoop uninstall ai-toolbox
-# 可选：不再需要此 bucket 时移除
+# Optional: remove this bucket once you no longer need it
 scoop bucket rm ai-toolbox
 ```
 
-说明：
+Notes:
 
-- 当前 bucket 暂时直接托管在本仓库，因此首次需要使用带仓库 URL 的 `scoop bucket add`。
-- 后续发布新版本后，仓库中的 `bucket/ai-toolbox.json` 会由 release workflow 自动更新，`scoop update ai-toolbox` 即可获取新版本。
-- 通过 Scoop 安装时，应用内自动更新不可用，请使用 `scoop update ai-toolbox` 升级。
+- The bucket currently lives in this repository, so the first `scoop bucket add` must include the repository URL.
+- After a new version is released, `bucket/ai-toolbox.json` in this repository is updated automatically by the release workflow, so `scoop update ai-toolbox` picks up the new version.
+- In-app auto-update is unavailable when the app is installed through Scoop; use `scoop update ai-toolbox` to upgrade instead.
 
-## 技术栈
+## Tech Stack
 
-| 类别 | 技术 |
-|------|------|
-| **桌面框架** | Tauri 2.x |
-| **前端** | React 19 + TypeScript 5 |
-| **UI 组件库** | Ant Design 6 |
-| **状态管理** | Zustand |
-| **国际化** | i18next (中文/英文) |
-| **数据库** | SQLite + JSONB |
-| **构建工具** | Vite 7 |
-| **包管理器** | pnpm |
+| Category | Technology |
+|----------|------------|
+| **Desktop framework** | Tauri 2.x |
+| **Frontend** | React 19 + TypeScript 5 |
+| **UI components** | Ant Design 6 |
+| **State management** | Zustand |
+| **Internationalization** | i18next (Chinese/English) |
+| **Database** | SQLite + JSONB |
+| **Build tool** | Vite 7 |
+| **Package manager** | pnpm |
 
-## 项目结构
+## Project Structure
 
 ```
 ai-toolbox/
-├── web/                          # 前端源码
-│   ├── app/                      # 应用层（App、路由、Provider）
-│   ├── components/               # 通用组件
-│   │   └── layout/               # 布局组件（MainLayout）
-│   ├── features/                 # 功能模块（按业务划分）
-│   │   ├── daily/                # 【日常】模块
-│   │   │   └── notes/            # 笔记功能（Markdown）
-│   │   ├── coding/               # 【编码】模块
-│   │   │   ├── opencode/         # OpenCode 配置管理（含 Oh My OpenAgent / Oh My OpenCode Slim）
-│   │   │   ├── claudecode/       # Claude Code 配置管理
-│   │   │   ├── codex/            # Codex 配置管理
-│   │   │   ├── grok/             # Grok CLI 配置管理
-│   │   │   ├── geminicli/        # Gemini CLI 配置管理
-│   │   │   ├── kimi/             # Kimi Code CLI 配置管理
-│   │   │   ├── openclaw/         # OpenClaw 配置管理
-│   │   │   ├── pi/               # Pi 配置管理
-│   │   │   ├── oh_my_pi/         # Oh My Pi 配置管理
-│   │   │   ├── claudedesktop/    # Claude Desktop 配置管理
-│   │   │   ├── hermes/           # Hermes Agent 配置管理
-│   │   │   ├── dsh/              # DeepSeek Harness 配置管理
-│   │   │   ├── mcp/              # MCP 服务器管理
-│   │   │   ├── skills/           # Skills 技能管理
-│   │   │   ├── gateway/          # 本机代理网关
-│   │   │   ├── image/            # Image 工作台
-│   │   │   └── shared/           # 供应商、Prompt、会话等共享能力
-│   │   ├── shared/               # 跨模块共享能力
-│   │   │   └── deepLink/         # aitoolbox:// 深链接导入与分享
-│   │   └── settings/             # 【设置】模块
-│   ├── stores/                   # 全局状态（Zustand）
-│   ├── services/                 # API 服务层
-│   ├── i18n/                     # 国际化配置
-│   ├── constants/                # 常量（模块配置）
-│   ├── hooks/                    # 全局 Hooks
-│   ├── types/                    # 全局类型定义
-│   └── utils/                    # 工具函数
-├── tauri/                        # Tauri 后端 (Rust)
+├── web/                          # Frontend source
+│   ├── app/                      # Application layer (App, routing, providers)
+│   ├── components/               # Shared components
+│   │   └── layout/               # Layout components (MainLayout)
+│   ├── features/                 # Feature modules (grouped by domain)
+│   │   ├── daily/                # 【Daily】 module
+│   │   │   └── notes/            # Notes (Markdown)
+│   │   ├── coding/               # 【Coding】 module
+│   │   │   ├── opencode/         # OpenCode configuration (incl. Oh My OpenAgent / Oh My OpenCode Slim)
+│   │   │   ├── claudecode/       # Claude Code configuration
+│   │   │   ├── codex/            # Codex configuration
+│   │   │   ├── grok/             # Grok CLI configuration
+│   │   │   ├── geminicli/        # Gemini CLI configuration
+│   │   │   ├── kimi/             # Kimi Code CLI configuration
+│   │   │   ├── openclaw/         # OpenClaw configuration
+│   │   │   ├── pi/               # Pi configuration
+│   │   │   ├── oh_my_pi/         # Oh My Pi configuration
+│   │   │   ├── claudedesktop/    # Claude Desktop configuration
+│   │   │   ├── hermes/           # Hermes Agent configuration
+│   │   │   ├── dsh/              # DeepSeek Harness configuration
+│   │   │   ├── mcp/              # MCP server management
+│   │   │   ├── skills/           # Skills management
+│   │   │   ├── gateway/          # Local proxy gateway
+│   │   │   ├── image/            # Image workbench
+│   │   │   └── shared/           # Shared capabilities (providers, prompts, sessions, ...)
+│   │   ├── shared/               # Capabilities shared across modules
+│   │   │   └── deepLink/         # aitoolbox:// deep-link import and sharing
+│   │   └── settings/             # 【Settings】 module
+│   ├── stores/                   # Global state (Zustand)
+│   ├── services/                 # API service layer
+│   ├── i18n/                     # Internationalization configuration
+│   ├── constants/                # Constants (module configuration)
+│   ├── hooks/                    # Global hooks
+│   ├── types/                    # Global type definitions
+│   └── utils/                    # Utility functions
+├── tauri/                        # Tauri backend (Rust)
 │   ├── src/
-│   │   ├── main.rs               # 入口
-│   │   ├── lib.rs                # 库入口、命令注册
-│   │   └── coding/               # 编码模块
-│   │       ├── claude_code/      # Claude Code 后端
-│   │       ├── codex/            # Codex 后端
-│   │       ├── open_code/        # OpenCode 后端
-│   │       ├── grok/             # Grok CLI 后端
-│   │       ├── gemini_cli/       # Gemini CLI 后端
-│   │       ├── kimi/             # Kimi Code CLI 后端
-│   │       ├── open_claw/        # OpenClaw 后端
-│   │       ├── pi/               # Pi 后端
-│   │       ├── oh_my_pi/         # Oh My Pi 后端
-│   │       ├── claude_desktop/   # Claude Desktop 3P 配置后端
-│   │       ├── hermes/           # Hermes Agent 后端
-│   │       ├── dsh/              # DeepSeek Harness 后端
-│   │       ├── oh_my_openagent/  # Oh My OpenAgent 后端
-│   │       ├── oh_my_opencode_slim/ # Oh My OpenCode Slim 后端
-│   │       ├── mcp/              # MCP 服务器后端
-│   │       ├── skills/           # Skills 技能后端
-│   │       ├── tools/            # 共享工具适配与检测
-│   │       ├── proxy_gateway/    # 本机代理网关后端
-│   │       ├── image/            # 图片任务和资产后端
-│   │       ├── session_manager/  # 会话管理后端
-│   │       ├── deeplink/         # 深链接解析与导入
-│   │       ├── auth_refresh/     # 官方账号 OAuth 共享调度
-│   │       ├── ssh/              # SSH 同步后端
-│   │       └── wsl/              # WSL 同步后端
-│   ├── Cargo.toml                # Rust 依赖
-│   └── tauri.conf.json           # Tauri 配置
-├── package.json                  # 前端依赖
-├── vite.config.ts                # Vite 配置
-└── tsconfig.json                 # TypeScript 配置
+│   │   ├── main.rs               # Entry point
+│   │   ├── lib.rs                # Library entry point, command registration
+│   │   └── coding/               # Coding module
+│   │       ├── claude_code/      # Claude Code backend
+│   │       ├── codex/            # Codex backend
+│   │       ├── open_code/        # OpenCode backend
+│   │       ├── grok/             # Grok CLI backend
+│   │       ├── gemini_cli/       # Gemini CLI backend
+│   │       ├── kimi/             # Kimi Code CLI backend
+│   │       ├── open_claw/        # OpenClaw backend
+│   │       ├── pi/               # Pi backend
+│   │       ├── oh_my_pi/         # Oh My Pi backend
+│   │       ├── claude_desktop/   # Claude Desktop 3P configuration backend
+│   │       ├── hermes/           # Hermes Agent backend
+│   │       ├── dsh/              # DeepSeek Harness backend
+│   │       ├── oh_my_openagent/  # Oh My OpenAgent backend
+│   │       ├── oh_my_opencode_slim/ # Oh My OpenCode Slim backend
+│   │       ├── mcp/              # MCP server backend
+│   │       ├── skills/           # Skills backend
+│   │       ├── tools/            # Shared tool adapters and detection
+│   │       ├── proxy_gateway/    # Local proxy gateway backend
+│   │       ├── image/            # Image jobs and assets backend
+│   │       ├── session_manager/  # Session management backend
+│   │       ├── deeplink/         # Deep-link parsing and import
+│   │       ├── auth_refresh/     # Shared OAuth scheduling for official accounts
+│   │       ├── ssh/              # SSH sync backend
+│   │       └── wsl/              # WSL sync backend
+│   ├── Cargo.toml                # Rust dependencies
+│   └── tauri.conf.json           # Tauri configuration
+├── package.json                  # Frontend dependencies
+├── vite.config.ts                # Vite configuration
+└── tsconfig.json                 # TypeScript configuration
 ```
 
-## 开发指南
+## Development Guide
 
-### 前置要求
+### Prerequisites
 
-- Node.js 20.19+ 或 22.12+
+- Node.js 20.19+ or 22.12+
 - pnpm 9+
 - Rust 1.86+
-- 参考 [Tauri 前置要求](https://tauri.app/start/prerequisites/)
+- See the [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
-### 安装依赖
+### Install dependencies
 
 ```bash
 pnpm install
 ```
 
-### 启动开发服务器
+### Start the development server
 
 ```bash
 pnpm tauri dev
 ```
 
-### 构建生产版本
+### Build for production
 
 ```bash
 pnpm tauri build
 ```
 
-### 代码检查
+### Linting and checks
 
 ```bash
-# TypeScript 类型检查
+# TypeScript type checking
 pnpm tsc --noEmit
 
-# Rust 代码检查
+# Rust checks
 cd tauri && cargo check
 ```
 
-## 功能模块
+## Feature Modules
 
-| 模块 | 子模块 | 状态 | 描述 |
-|------|--------|------|------|
-| 编码 | OpenCode | ✅ 完成 | OpenCode 供应商/模型配置管理，含 Oh My OpenAgent / Oh My OpenCode Slim 插件配置 |
-| 编码 | Claude Code | ✅ 完成 | Claude Code 官方订阅/自定义 API 配置切换，支持 Prompt、插件、会话管理 |
-| 编码 | Codex | ✅ 完成 | OpenAI Codex CLI 官方账号/自定义渠道管理，支持模型映射、Prompt、插件、会话管理 |
-| 编码 | Grok | ✅ 完成 | Grok CLI 供应商、`config.toml` / `auth.json`、官方账号、Prompt、插件和会话管理 |
-| 编码 | Gemini CLI | ✅ 完成 | Gemini CLI 官方账号/自定义渠道、Prompt、用量和会话管理 |
-| 编码 | Kimi | ✅ 完成 | Kimi Code CLI 供应商、`config.toml` / `credentials` 官方账号、Prompt、插件、MCP/Skills 和会话管理 |
-| 编码 | OpenClaw | ✅ 完成 | OpenClaw 模型、供应商、配置文件和会话管理 |
-| 编码 | Pi | ✅ 完成 | Pi CLI 模型、供应商、扩展、Prompt 和会话管理 |
-| 编码 | Oh My Pi | ✅ 完成 | Oh My Pi (OMP) 运行时根目录、`models.yml` 供应商、`config.yml` 设置、subagent 配置和会话管理 |
-| 编码 | Claude Desktop | ✅ 完成 | Claude Desktop 3P 网关 profile 配置，支持网关接管和会话管理 |
-| 编码 | Hermes | ✅ 完成 | Hermes Agent `config.yaml`、供应商、默认模型、全局提示词、memory 和会话管理 |
-| 编码 | DeepSeek Harness | ✅ 完成 | DeepSeek Harness (dsh) `settings.yaml` / `.credentials.yaml`、供应商、默认模型、全局提示词和会话管理 |
-| 编码 | Gateway | ✅ 完成 | 本机代理网关、CLI 接管、协议转换、故障切换、请求日志和用量统计 |
-| 编码 | Image | ✅ 完成 | 图片生成/编辑渠道、任务历史和资产管理 |
-| 编码 | MCP 服务器 | ✅ 完成 | MCP 服务器配置管理，支持导入/导出、收藏、分组和工具同步 |
-| 编码 | Skills 技能 | ✅ 完成 | Skills 中央仓库管理，支持 Git/本地安装、自定义工具和多工具同步 |
-| 编码 | 会话管理 | ✅ 完成 | 多工具会话浏览、搜索、重命名、导入、导出和删除 |
-| 设置 | WSL 同步 | ✅ 完成 | CLI、MCP 和 Skills 配置同步到 WSL 环境 |
-| 设置 | SSH 同步 | ✅ 完成 | CLI、MCP 和 Skills 配置同步到远程 SSH 主机 |
-| 设置 | 通用设置 | ✅ 完成 | 语言切换、主题切换、启动项、代理、可见模块和版本更新检查 |
-| 设置 | 备份设置 | ✅ 完成 | 本地/WebDAV 备份恢复、自动备份、自定义备份项和文件过滤 |
-| 设置 | S3 设置 | ✅ 完成 | S3 兼容存储配置 |
-| 设置 | 供应商设置 | ✅ 完成 | AI 供应商统一管理 |
-| 日常 | 笔记 | 🚧 开发中 | Markdown 笔记管理、搜索 |
+| Module | Submodule | Status | Description |
+|--------|-----------|--------|-------------|
+| Coding | OpenCode | ✅ Done | OpenCode provider/model configuration, including Oh My OpenAgent / Oh My OpenCode Slim plugin configuration |
+| Coding | Claude Code | ✅ Done | Claude Code official subscription/custom API configuration switching, with prompts, plugins, and session management |
+| Coding | Codex | ✅ Done | OpenAI Codex CLI official account/custom channel management, with model mappings, prompts, plugins, and session management |
+| Coding | Grok | ✅ Done | Grok CLI providers, `config.toml` / `auth.json`, official accounts, prompts, plugins, and session management |
+| Coding | Gemini CLI | ✅ Done | Gemini CLI official accounts/custom channels, prompts, usage, and session management |
+| Coding | Kimi | ✅ Done | Kimi Code CLI providers, `config.toml` / `credentials` official accounts, prompts, plugins, MCP/Skills, and session management |
+| Coding | OpenClaw | ✅ Done | OpenClaw models, providers, configuration files, and session management |
+| Coding | Pi | ✅ Done | Pi CLI models, providers, extensions, prompts, and session management |
+| Coding | Oh My Pi | ✅ Done | Oh My Pi (OMP) runtime root, `models.yml` providers, `config.yml` settings, subagent configuration, and session management |
+| Coding | Claude Desktop | ✅ Done | Claude Desktop 3P gateway profile configuration, with gateway takeover and session management |
+| Coding | Hermes | ✅ Done | Hermes Agent `config.yaml`, providers, default model, global prompts, memory, and session management |
+| Coding | DeepSeek Harness | ✅ Done | DeepSeek Harness (dsh) `settings.yaml` / `.credentials.yaml`, providers, default model, global prompts, and session management |
+| Coding | Gateway | ✅ Done | Local proxy gateway, CLI takeover, protocol conversion, failover, request logs, and usage statistics |
+| Coding | Image | ✅ Done | Image generation/editing channels, job history, and asset management |
+| Coding | MCP servers | ✅ Done | MCP server configuration management, with import/export, favorites, groups, and tool sync |
+| Coding | Skills | ✅ Done | Central Skills repository management, with Git/local installation, custom tools, and multi-tool sync |
+| Coding | Session management | ✅ Done | Browse, search, rename, import, export, and delete sessions across tools |
+| Settings | WSL sync | ✅ Done | Sync CLI, MCP, and Skills configurations into a WSL environment |
+| Settings | SSH sync | ✅ Done | Sync CLI, MCP, and Skills configurations to remote SSH hosts |
+| Settings | General | ✅ Done | Language switching, theme switching, startup items, proxy, visible modules, and version update checks |
+| Settings | Backup | ✅ Done | Local/WebDAV backup and restore, automatic backups, custom backup items, and file filtering |
+| Settings | S3 | ✅ Done | S3-compatible storage configuration |
+| Settings | Providers | ✅ Done | Unified AI provider management |
+| Daily | Notes | 🚧 In progress | Markdown note management and search |
 
-## 数据存储
+## Data Storage
 
-使用 SQLite 作为本地主数据库，并通过 JSONB 表保存各模块配置。另有少量结构化表（网关请求日志、用量日汇总、模型价格）使用常规列存储，便于聚合查询与索引。
+SQLite is the local primary database, with per-module configuration stored in JSONB tables. A small number of structured tables (gateway request logs, daily usage rollups, model pricing) use regular columns instead, which keeps aggregation queries and indexes efficient.
 
-### 设计原则
+### Design Principles
 
-- **本地优先**：所有数据存储在本地，保护隐私
-- **服务层 API**：前端通过服务层与后端交互，不直接使用 localStorage
-- **灵活备份**：支持本地 ZIP、WebDAV 云端备份、自动备份、自定义备份项和外部配置文件备份
+- **Local-first**: All data is stored locally to protect privacy
+- **Service-layer API**: The frontend talks to the backend through the service layer and does not use localStorage directly
+- **Flexible backup**: Local ZIP, WebDAV cloud backup, automatic backup, custom backup items, and external configuration file backups
 
-### 数据表
+### Tables
 
-| 表名 | 描述 |
-|------|------|
-| `settings` | 应用设置 |
-| `app_migration` | 应用内部迁移记录 |
-| `opencode_common_config` | OpenCode 通用配置 |
-| `opencode_prompt_config` | OpenCode Prompt 配置 |
-| `opencode_favorite_provider` | OpenCode 收藏供应商 |
-| `opencode_favorite_plugin` | OpenCode 收藏插件 |
-| `claude_provider` | Claude Code 供应商配置 |
-| `claude_common_config` | Claude Code 通用配置 |
-| `claude_prompt_config` | Claude Code Prompt 配置 |
-| `codex_provider` | Codex 供应商配置 |
-| `codex_common_config` | Codex 通用配置 |
-| `codex_prompt_config` | Codex Prompt 配置 |
-| `codex_official_account` | Codex 官方账号配置 |
-| `codex_plugin_workspace_roots` | Codex 插件工作区根目录 |
-| `grok_provider` | Grok CLI 供应商配置 |
-| `grok_official_account` | Grok CLI 官方账号配置 |
-| `grok_common_config` | Grok CLI 通用配置 |
-| `grok_prompt_config` | Grok CLI Prompt 配置 |
-| `kimi_provider` | Kimi Code CLI 供应商配置 |
-| `kimi_official_account` | Kimi Code CLI 官方账号配置 |
-| `kimi_common_config` | Kimi Code CLI 通用配置 |
-| `kimi_prompt_config` | Kimi Code CLI Prompt 配置 |
-| `gemini_cli_provider` | Gemini CLI 供应商配置 |
-| `gemini_cli_common_config` | Gemini CLI 通用配置 |
-| `gemini_cli_prompt_config` | Gemini CLI Prompt 配置 |
-| `gemini_cli_official_account` | Gemini CLI 官方账号配置 |
-| `claude_desktop_provider` | Claude Desktop 供应商配置 |
-| `claude_desktop_prompt_config` | Claude Desktop Prompt 配置 |
-| `hermes_settings_config` | Hermes Agent 设置配置 |
-| `hermes_prompt_config` | Hermes Agent Prompt 配置 |
-| `dsh_settings_config` | DeepSeek Harness 设置配置 |
-| `dsh_prompt_config` | DeepSeek Harness Prompt 配置 |
-| `oh_my_pi_settings_config` | Oh My Pi 设置配置 |
-| `oh_my_pi_prompt_config` | Oh My Pi Prompt 配置 |
-| `oh_my_pi_agents_config` | Oh My Pi subagent 集中配置 |
-| `pi_settings_config` | Pi 设置配置 |
-| `pi_prompt_config` | Pi Prompt 配置 |
-| `openclaw_common_config` | OpenClaw 通用配置 |
-| `oh_my_openagent_config` | Oh My OpenAgent 配置 |
-| `oh_my_openagent_global_config` | Oh My OpenAgent 全局配置 |
-| `oh_my_opencode_slim_config` | Oh My OpenCode Slim 配置 |
-| `oh_my_opencode_slim_global_config` | Oh My OpenCode Slim 全局配置 |
-| `mcp_server` | MCP 服务器配置 |
-| `mcp_preferences` | MCP 服务器偏好配置 |
-| `favorite_mcp` | MCP 收藏配置 |
-| `mcp_group` | MCP 分组配置 |
-| `skill` | Skills 技能记录 |
-| `skill_group` | Skills 分组 |
-| `skill_repo` | Skills Git 仓库来源 |
-| `skill_preferences` | Skills 技能偏好配置 |
-| `skill_settings` | Skills 设置 |
-| `custom_tool` | Skills/MCP 自定义工具配置 |
-| `wsl_sync_config` | WSL 同步配置 |
-| `wsl_file_mapping` | WSL 文件映射 |
-| `ssh_sync_config` | SSH 同步配置 |
-| `ssh_connection` | SSH 连接配置 |
-| `ssh_file_mapping` | SSH 文件映射 |
-| `proxy_gateway_settings` | Gateway 设置 |
-| `gateway_session_usage_state` | Gateway 会话用量采集状态 |
-| `image_channel` | 图片渠道配置 |
-| `image_job` | 图片任务记录 |
-| `image_asset` | 图片资产记录 |
+| Table | Description |
+|-------|-------------|
+| `settings` | Application settings |
+| `app_migration` | Internal application migration records |
+| `opencode_common_config` | OpenCode common configuration |
+| `opencode_prompt_config` | OpenCode prompt configuration |
+| `opencode_favorite_provider` | OpenCode favorite providers |
+| `opencode_favorite_plugin` | OpenCode favorite plugins |
+| `claude_provider` | Claude Code provider configuration |
+| `claude_common_config` | Claude Code common configuration |
+| `claude_prompt_config` | Claude Code prompt configuration |
+| `codex_provider` | Codex provider configuration |
+| `codex_common_config` | Codex common configuration |
+| `codex_prompt_config` | Codex prompt configuration |
+| `codex_official_account` | Codex official account configuration |
+| `codex_plugin_workspace_roots` | Codex plugin workspace roots |
+| `grok_provider` | Grok CLI provider configuration |
+| `grok_official_account` | Grok CLI official account configuration |
+| `grok_common_config` | Grok CLI common configuration |
+| `grok_prompt_config` | Grok CLI prompt configuration |
+| `kimi_provider` | Kimi Code CLI provider configuration |
+| `kimi_official_account` | Kimi Code CLI official account configuration |
+| `kimi_common_config` | Kimi Code CLI common configuration |
+| `kimi_prompt_config` | Kimi Code CLI prompt configuration |
+| `gemini_cli_provider` | Gemini CLI provider configuration |
+| `gemini_cli_common_config` | Gemini CLI common configuration |
+| `gemini_cli_prompt_config` | Gemini CLI prompt configuration |
+| `gemini_cli_official_account` | Gemini CLI official account configuration |
+| `claude_desktop_provider` | Claude Desktop provider configuration |
+| `claude_desktop_prompt_config` | Claude Desktop prompt configuration |
+| `hermes_settings_config` | Hermes Agent settings configuration |
+| `hermes_prompt_config` | Hermes Agent prompt configuration |
+| `dsh_settings_config` | DeepSeek Harness settings configuration |
+| `dsh_prompt_config` | DeepSeek Harness prompt configuration |
+| `oh_my_pi_settings_config` | Oh My Pi settings configuration |
+| `oh_my_pi_prompt_config` | Oh My Pi prompt configuration |
+| `oh_my_pi_agents_config` | Oh My Pi centralized subagent configuration |
+| `pi_settings_config` | Pi settings configuration |
+| `pi_prompt_config` | Pi prompt configuration |
+| `openclaw_common_config` | OpenClaw common configuration |
+| `oh_my_openagent_config` | Oh My OpenAgent configuration |
+| `oh_my_openagent_global_config` | Oh My OpenAgent global configuration |
+| `oh_my_opencode_slim_config` | Oh My OpenCode Slim configuration |
+| `oh_my_opencode_slim_global_config` | Oh My OpenCode Slim global configuration |
+| `mcp_server` | MCP server configuration |
+| `mcp_preferences` | MCP server preferences |
+| `favorite_mcp` | MCP favorites |
+| `mcp_group` | MCP groups |
+| `skill` | Skills records |
+| `skill_group` | Skills groups |
+| `skill_repo` | Skills Git repository sources |
+| `skill_preferences` | Skills preferences |
+| `skill_settings` | Skills settings |
+| `custom_tool` | Skills/MCP custom tool configuration |
+| `wsl_sync_config` | WSL sync configuration |
+| `wsl_file_mapping` | WSL file mappings |
+| `ssh_sync_config` | SSH sync configuration |
+| `ssh_connection` | SSH connection configuration |
+| `ssh_file_mapping` | SSH file mappings |
+| `proxy_gateway_settings` | Gateway settings |
+| `gateway_session_usage_state` | Gateway session usage collection state |
+| `image_channel` | Image channel configuration |
+| `image_job` | Image job records |
+| `image_asset` | Image asset records |
 
-其中以下 3 张表使用常规列而非 JSONB：
+The following 3 tables use regular columns instead of JSONB:
 
-| 表名 | 描述 |
-|------|------|
-| `proxy_request_logs` | Gateway 请求日志明细（含 token、成本、延迟） |
-| `usage_daily_rollups` | Gateway 按日聚合的用量统计 |
-| `model_pricing` | 模型价格表 |
+| Table | Description |
+|-------|-------------|
+| `proxy_request_logs` | Gateway request log details (tokens, cost, latency) |
+| `usage_daily_rollups` | Gateway usage statistics aggregated by day |
+| `model_pricing` | Model pricing table |
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and pull requests are welcome!
 
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 提交 Pull Request
+1. Fork this repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a pull request
 
-## 推荐 IDE 配置
+## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/)
-- [Tauri 插件](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
+- [Tauri extension](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
 - [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 ## License
 
 [AGPL-3.0-or-later](LICENSE) © 2026 coulsontl
 
-本程序是自由软件：您可以依据自由软件基金会发布的 [GNU Affero 通用公共许可证第 3 版](LICENSE)（或您选择的任何更高版本）条款，重新发布和/或修改它。
+This program is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License as published by the Free Software Foundation](LICENSE), either version 3 of the License, or (at your option) any later version.
 
-本程序基于「有用」的目的发布，但不提供任何明示或默示的担保，包括但不限于对适销性或特定用途适用性的担保。详见 [LICENSE](LICENSE)。
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) for more details.
 
-本项目采用 AGPL-3.0，因此**通过计算机网络与本程序交互的用户同样有权获取其源代码**。本仓库即为完整对应源码，每个 Release 的源码对应同一 tag。
+Because this project is licensed under AGPL-3.0, **users who interact with the program over a computer network are likewise entitled to receive its source code**. This repository is the complete corresponding source, and the source for each release corresponds to the same tag.
 
 ## Acknowledgments
 
@@ -400,4 +404,4 @@ cd tauri && cargo check
 - [cc-switch](https://github.com/farion1231/cc-switch) — MIT
 - [skills-manager](https://github.com/xingkongliang/skills-manager) — MIT
 - [linux.do](https://linux.do)
-- [axonhub](https://github.com/looplj/axonhub) — Apache-2.0（其中 `llm/` 目录为 LGPL-3.0，详见 [NOTICE](NOTICE)）
+- [axonhub](https://github.com/looplj/axonhub) — Apache-2.0 (its `llm/` directory is LGPL-3.0, see [NOTICE](NOTICE))
