@@ -3,9 +3,9 @@ import test from 'node:test';
 
 import {
   detectLanguageSync,
+  detectSystemLanguage,
   fromStoredLanguage,
   isSupportedLanguage,
-  isSupportedLanguagePreference,
   normalizeLanguage,
   resolveLanguagePreference,
   resolveStoredLanguage,
@@ -129,15 +129,30 @@ test('anything unrecognized in the setting reads back as system, not as a langua
   assert.equal(fromStoredLanguage('en-US'), 'en-US');
 });
 
-test('isSupportedLanguagePreference accepts the shipped languages and system', () => {
-  assert.equal(isSupportedLanguagePreference('system'), true);
-  assert.equal(isSupportedLanguagePreference('zh-CN'), true);
-  assert.equal(isSupportedLanguagePreference('en-US'), true);
+test('the OS locale query is what decides, when it answers', async () => {
+  // The plugin-os path, which the fallback-only assertions above never reach:
+  // whatever the query returns must win over `navigator.language` (pinned to a
+  // different language here on purpose).
+  await withNavigatorLanguage('fr-FR', async () => {
+    assert.equal(await detectSystemLanguage(async () => 'zh-CN'), 'zh-CN');
+    assert.equal(await detectSystemLanguage(async () => 'zh-TW'), 'zh-CN');
+    assert.equal(await detectSystemLanguage(async () => 'en-US'), 'en-US');
+    // Linux reports the raw locale name, and Windows a BCP-47 tag.
+    assert.equal(await detectSystemLanguage(async () => 'zh_CN.UTF-8'), 'zh-CN');
+    assert.equal(await detectSystemLanguage(async () => 'de-DE'), 'en-US');
+  });
 
-  // Near-misses must not reach the settings Select as a selectable value.
-  for (const value of ['', 'zh', 'zh-TW', 'en', undefined, null, 42]) {
-    assert.equal(isSupportedLanguagePreference(value), false, `value: ${String(value)}`);
-  }
+  // A null locale and a throwing IPC both mean "no answer", and both have to
+  // fall back to something index-safe rather than to the raw value.
+  await withNavigatorLanguage('zh-TW', async () => {
+    assert.equal(await detectSystemLanguage(async () => null), 'zh-CN');
+    assert.equal(
+      await detectSystemLanguage(async () => {
+        throw new Error('plugin:os|locale not allowed');
+      }),
+      'zh-CN',
+    );
+  });
 });
 
 test('resolving the system preference follows the locale, an explicit one does not', async () => {

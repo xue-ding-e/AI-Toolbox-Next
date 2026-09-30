@@ -19,11 +19,6 @@ export function isSupportedLanguage(value: unknown): value is Language {
   return value === 'zh-CN' || value === 'en-US';
 }
 
-/** Whether a value is one of the preferences the settings UI offers. */
-export function isSupportedLanguagePreference(value: unknown): value is LanguagePreference {
-  return value === SYSTEM_LANGUAGE || isSupportedLanguage(value);
-}
-
 /**
  * Collapse any BCP-47 tag to one of the supported UI languages.
  *
@@ -49,15 +44,25 @@ export function detectLanguageSync(): Language {
  *
  * `sys-locale` (what plugin-os wraps) reads `LC_ALL` / `LC_MESSAGES` / `LANG`
  * on Linux, which is the only source that is deterministic under a C locale.
+ *
+ * The query is a parameter so the plugin-os path can be tested at all: outside
+ * a Tauri window it throws, so a test that only calls the default would always
+ * be measuring the `navigator.language` fallback instead.
  */
-export async function detectSystemLanguage(): Promise<Language> {
+export async function detectSystemLanguage(
+  query: () => Promise<string | null> = locale,
+): Promise<Language> {
   try {
-    const tag = await locale();
+    const tag = await query();
     if (tag) return normalizeLanguage(tag);
-  } catch {
-    // Not running under Tauri (plain vite dev server, Node test suite).
+    // A null locale is a real answer, not an error: no locale variable was set.
+    return detectLanguageSync();
+  } catch (error) {
+    // Not running under Tauri (plain vite dev server, Node test suite) or the
+    // IPC failed. Say which source won, since the two can disagree.
+    console.warn('[i18n] OS locale unavailable, using navigator.language:', error);
+    return detectLanguageSync();
   }
-  return detectLanguageSync();
 }
 
 /**

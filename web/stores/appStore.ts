@@ -102,6 +102,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ languagePreference: preference });
 
     const language = await resolveLanguagePreference(preference);
+    // Resolving "system" awaits an IPC call, so a later pick can already have
+    // been applied by the time this returns. Landing the stale result would
+    // leave the Select showing one language and i18next another — and the write
+    // below would persist a value the user already replaced.
+    if (get().languagePreference !== preference) return;
+
     if (i18n.language !== language) {
       await i18n.changeLanguage(language);
     }
@@ -109,6 +115,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
     try {
       const currentSettings = await getSettings();
+      // Reading the settings is another await the user can outrun, so re-check
+      // before writing: a stale save would undo the newer choice in the DB even
+      // though the UI had already moved on.
+      if (get().languagePreference !== preference) return;
       const newSettings: AppSettings = {
         ...currentSettings,
         language: toStoredLanguage(preference),

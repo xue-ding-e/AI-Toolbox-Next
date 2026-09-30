@@ -227,7 +227,7 @@ ai-toolbox/
 
 - Node.js 20.19+ or 22.12+
 - pnpm 9+
-- Rust 1.86+
+- Rust 1.90+
 - See the [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
 ### Install dependencies

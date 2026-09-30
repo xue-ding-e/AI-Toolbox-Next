@@ -47,6 +47,13 @@ const RecoveryApp: React.FC<{ errorMessage: string }> = ({ errorMessage }) => {
     document.documentElement.setAttribute('data-theme', resolvedTheme);
   }, [resolvedTheme]);
 
+  // `index.html` ships `lang="en"`, and `Providers` is not mounted in recovery
+  // mode, so the attribute has to be set here too or a Chinese screen would be
+  // annotated as English.
+  React.useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
   React.useEffect(() => {
     if (!window.matchMedia) return;
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');

@@ -6,14 +6,13 @@ import enUS from './locales/en-US.json';
 import { detectLanguageSync, type Language } from './language';
 
 export type { Language, LanguagePreference } from './language';
+// Re-exported here because this is the module the app imports from; the rest of
+// './language' (the normalizers and validators it uses internally) is imported
+// directly by whoever needs it, so nothing is exposed that has no consumer.
 export {
   SYSTEM_LANGUAGE,
   detectLanguageSync,
-  detectSystemLanguage,
   fromStoredLanguage,
-  isSupportedLanguage,
-  isSupportedLanguagePreference,
-  normalizeLanguage,
   resolveLanguagePreference,
   resolveStoredLanguage,
   toStoredLanguage,

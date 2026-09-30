@@ -164,8 +164,9 @@ export interface AppSettings {
 // Default settings
 //
 // `language` mirrors the backend's sentinel: `AppSettings::default()` stores an
-// empty string, never a language, so an unset value means "the user never chose
-// one". Consumers resolve it against the system locale via
+// empty string, and the adapter reads a row with no `language` key the same way
+// (`settings/adapter.rs`), so an empty value always means "the user never chose
+// one" and never a language. Consumers resolve it against the system locale via
 // `resolveStoredLanguage` from '@/i18n' — this module stays free of that import
 // because it is reachable from the Node test suite, whose loader does not
 // resolve the '@/' alias.
@@ -229,6 +230,18 @@ export const defaultSettings: AppSettings = {
 };
 
 /**
+ * The last settings object this module read or wrote successfully.
+ *
+ * Every setter is a read-modify-write: `getSettings()` then `saveSettings()`.
+ * If the read fails, handing back bare defaults makes the write blank every
+ * field the setter did not touch — including `language`, whose default means
+ * "never chosen", so a transient read error would silently discard an explicit
+ * language choice. A stale-but-real snapshot degrades far better, and it is the
+ * closest thing to what the failed read would have returned.
+ */
+let lastKnownSettings: AppSettings | null = null;
+
+/**
  * Get settings from database
  */
 export const getSettings = async (): Promise<AppSettings> => {
@@ -236,7 +249,7 @@ export const getSettings = async (): Promise<AppSettings> => {
     const settings = await invoke<AppSettings & {
       sidebar_visibility_by_page?: Partial<Record<SidebarPageKey, LegacySidebarVisibilityValue>>;
     }>('get_settings');
-    return {
+    const normalized: AppSettings = {
       ...settings,
       backup_custom_entries: settings.backup_custom_entries ?? [],
       backup_file_filter_rules: settings.backup_file_filter_rules ?? [],
@@ -248,9 +261,11 @@ export const getSettings = async (): Promise<AppSettings> => {
       ),
       cli_manual_paths: settings.cli_manual_paths ?? {},
     };
+    lastKnownSettings = normalized;
+    return normalized;
   } catch (error) {
     console.error('Failed to get settings:', error);
-    return defaultSettings;
+    return lastKnownSettings ?? defaultSettings;
   }
 };
 
@@ -259,6 +274,9 @@ export const getSettings = async (): Promise<AppSettings> => {
  */
 export const saveSettings = async (settings: AppSettings): Promise<void> => {
   await invoke('save_settings', { settings });
+  // The database now holds exactly this object, so a later failed read can use
+  // it without reverting what this write just changed.
+  lastKnownSettings = settings;
 };
 
 /**

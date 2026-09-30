@@ -16,7 +16,15 @@ use std::collections::HashMap;
 /// Missing fields will use default values, never panics
 pub fn from_db_value(value: Value) -> AppSettings {
     AppSettings {
-        language: get_str(&value, "language", "zh-CN"),
+        // Empty means "never chosen" — the frontend resolves it against the OS
+        // locale and the settings dropdown renders it as "System Default". It has
+        // to stay empty rather than name a language: a row created without this key
+        // is a real path, because the backup form creates the settings row as `{}`
+        // and patches only the fields it owns (repository_settings.rs:386). A
+        // concrete default here would read back as an explicit choice, pinning the
+        // window and the tray to Chinese on every machine and leaving the dropdown
+        // on 简体中文 with no way back to following the system.
+        language: get_str(&value, "language", ""),
         current_module: get_str(&value, "current_module", "coding"),
         current_sub_tab: get_str(&value, "current_sub_tab", "opencode"),
         backup_type: get_str(&value, "backup_type", "local"),
@@ -514,6 +522,24 @@ fn get_backup_file_filter_rules(value: &Value) -> Vec<BackupFileFilterRule> {
 mod tests {
     use super::from_db_value;
     use serde_json::json;
+
+    #[test]
+    fn a_row_without_a_language_reads_back_as_unset_rather_than_as_chinese() {
+        // The backup form creates the settings row as `{}` and patches only the
+        // fields it owns, so this is a real record shape, not a hypothetical.
+        // Reading "zh-CN" here would make the frontend treat it as an explicit
+        // choice and drop "System Default" from the dropdown for good.
+        let settings = from_db_value(json!({}));
+
+        assert_eq!(settings.language, "");
+    }
+
+    #[test]
+    fn an_explicit_language_is_preserved() {
+        let settings = from_db_value(json!({ "language": "en-US" }));
+
+        assert_eq!(settings.language, "en-US");
+    }
 
     #[test]
     fn backup_image_assets_enabled_defaults_to_true() {
