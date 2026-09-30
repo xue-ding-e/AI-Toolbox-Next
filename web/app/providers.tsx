@@ -333,6 +333,7 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
     if (appInitialized && i18n.language !== language) {
       i18n.changeLanguage(language);
     }
+    document.documentElement.lang = language;
   }, [language, appInitialized]);
 
   React.useEffect(() => {

@@ -162,8 +162,15 @@ export interface AppSettings {
 }
 
 // Default settings
+//
+// `language` mirrors the backend's sentinel: `AppSettings::default()` stores an
+// empty string, never a language, so an unset value means "the user never chose
+// one". Consumers resolve it against the system locale via
+// `resolveStoredLanguage` from '@/i18n' — this module stays free of that import
+// because it is reachable from the Node test suite, whose loader does not
+// resolve the '@/' alias.
 export const defaultSettings: AppSettings = {
-  language: 'zh-CN',
+  language: '',
   current_module: 'coding',
   current_sub_tab: 'opencode',
   backup_type: 'local',

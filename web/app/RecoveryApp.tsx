@@ -4,7 +4,7 @@ import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import { theme as antdTheme } from 'antd';
 import { listen } from '@tauri-apps/api/event';
-import i18n from '@/i18n';
+import i18n, { detectLanguageSync } from '@/i18n';
 import {
   checkForUpdates,
   installUpdate,
@@ -23,14 +23,6 @@ const antdLocales = {
   'en-US': enUS,
 };
 
-/** Detect a best-effort UI language without the database (recovery mode). */
-function detectLanguage(): 'zh-CN' | 'en-US' {
-  if (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('zh')) {
-    return 'zh-CN';
-  }
-  return 'en-US';
-}
-
 /** Detect system theme without the database (recovery mode). */
 function detectSystemTheme(): 'light' | 'dark' {
   if (typeof window !== 'undefined' && window.matchMedia) {
@@ -48,7 +40,7 @@ function detectSystemTheme(): 'light' | 'dark' {
  * fallback. No DB access happens anywhere in this tree.
  */
 const RecoveryApp: React.FC<{ errorMessage: string }> = ({ errorMessage }) => {
-  const language = React.useMemo(detectLanguage, []);
+  const language = React.useMemo(detectLanguageSync, []);
   const [resolvedTheme, setResolvedTheme] = React.useState(detectSystemTheme);
 
   React.useEffect(() => {

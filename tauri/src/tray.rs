@@ -68,12 +68,47 @@ struct TrayTexts {
     no_tools: &'static str,
 }
 
-fn is_english_language(language: &str) -> bool {
-    language.eq_ignore_ascii_case("en-US") || language.to_ascii_lowercase().starts_with("en")
+/// Collapse any locale tag to one of the two shipped tray languages.
+///
+/// Mirrors `normalizeLanguage` in `web/i18n/language.ts`: Chinese tags map to
+/// `zh-CN`, everything else — including an empty or unrecognized tag — maps to
+/// `en-US`, so the tray and the window cannot disagree about what a given
+/// locale means.
+fn normalize_language(tag: &str) -> &'static str {
+    if tag.to_ascii_lowercase().starts_with("zh") {
+        "zh-CN"
+    } else {
+        "en-US"
+    }
+}
+
+/// The language a stored setting resolves to, given the OS locale tag.
+///
+/// Split out from `effective_language` so the fallback can be tested without
+/// depending on the locale of the machine running the suite.
+///
+/// `sys-locale` is what plugin-os wraps; on Linux it reads `LC_ALL` /
+/// `LC_MESSAGES` / `LANG`, so a `C` locale resolves to `en-US` rather than to a
+/// fixed language.
+fn resolve_language(stored: &str, system_tag: Option<&str>) -> &'static str {
+    if stored.is_empty() {
+        system_tag.map(normalize_language).unwrap_or("en-US")
+    } else {
+        normalize_language(stored)
+    }
+}
+
+/// The language a stored setting resolves to on this machine.
+///
+/// A fresh install stores an empty string rather than a language, so an unset
+/// value follows the OS locale instead of falling through to a fixed language.
+/// An explicit choice is always preserved.
+fn effective_language(stored: &str) -> &'static str {
+    resolve_language(stored, tauri_plugin_os::locale().as_deref())
 }
 
 fn tray_texts(language: &str) -> TrayTexts {
-    if is_english_language(language) {
+    if normalize_language(language) == "en-US" {
         TrayTexts {
             show_window: "Open Main Window",
             quit: "Quit",
@@ -176,8 +211,8 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
     let texts = tauri::async_runtime::block_on(async {
         crate::settings::commands::get_settings(app.state())
             .await
-            .map(|settings| tray_texts(&settings.language))
-            .unwrap_or_else(|_| tray_texts("zh-CN"))
+            .map(|settings| tray_texts(effective_language(&settings.language)))
+            .unwrap_or_else(|_| tray_texts(effective_language("")))
     });
 
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, texts.quit, true, None::<&str>)?;
@@ -652,7 +687,10 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 /// Refresh tray menus with flat structure
 async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let (visible_tabs, texts) = match crate::settings::commands::get_settings(app.state()).await {
-        Ok(settings) => (settings.visible_tabs, tray_texts(&settings.language)),
+        Ok(settings) => (
+            settings.visible_tabs,
+            tray_texts(effective_language(&settings.language)),
+        ),
         Err(err) => {
             log::warn!("Failed to read settings for tray visibility: {err}");
             (
@@ -670,7 +708,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                     "hermes".to_string(),
                     "dsh".to_string(),
                 ],
-                tray_texts("zh-CN"),
+                // Settings could not be read at all, so there is no stored
+                // value either — same resolution as a fresh install.
+                tray_texts(effective_language("")),
             )
         }
     };
@@ -904,15 +944,18 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
     openclaw_model_data.title = texts.main_model.to_string();
 
-    let pi_data = if pi_enabled {
+    let mut pi_data = if pi_enabled {
         pi_tray::get_pi_tray_data(app).await?
     } else {
         pi_tray::TrayModelData {
-            title: "默认模型".to_string(),
+            title: texts.main_model.to_string(),
             current_display: String::new(),
             items: vec![],
         }
     };
+    // The module that built this data has no access to the tray language, so the
+    // static title is re-stamped here — same as the openclaw path above.
+    pi_data.title = texts.main_model.to_string();
 
     let mut pi_prompt_data = if pi_enabled {
         pi_tray::get_pi_prompt_tray_data(app).await?
@@ -925,15 +968,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
     pi_prompt_data.title = texts.global_prompt.to_string();
 
-    let omp_data = if omp_enabled {
+    let mut omp_data = if omp_enabled {
         omp_tray::get_omp_tray_data(app).await?
     } else {
         omp_tray::TrayModelData {
-            title: "默认模型".to_string(),
+            title: texts.main_model.to_string(),
             current_display: String::new(),
             items: vec![],
         }
     };
+    omp_data.title = texts.main_model.to_string();
 
     let mut omp_prompt_data = if omp_enabled {
         omp_tray::get_omp_prompt_tray_data(app).await?
@@ -956,15 +1000,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
 
-    let hermes_data = if hermes_enabled {
+    let mut hermes_data = if hermes_enabled {
         hermes_tray::get_hermes_tray_data(app).await?
     } else {
         hermes_tray::TrayModelData {
-            title: "默认模型".to_string(),
+            title: texts.main_model.to_string(),
             current_display: String::new(),
             items: vec![],
         }
     };
+    hermes_data.title = texts.main_model.to_string();
 
     let mut hermes_prompt_data = if hermes_enabled {
         hermes_tray::get_hermes_prompt_tray_data(app).await?
@@ -977,15 +1022,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
     hermes_prompt_data.title = texts.global_prompt.to_string();
 
-    let dsh_data = if dsh_enabled {
+    let mut dsh_data = if dsh_enabled {
         dsh_tray::get_dsh_tray_data(app).await?
     } else {
         dsh_tray::TrayModelData {
-            title: "默认模型".to_string(),
+            title: texts.main_model.to_string(),
             current_display: String::new(),
             items: vec![],
         }
     };
+    dsh_data.title = texts.main_model.to_string();
 
     let mut dsh_prompt_data = if dsh_enabled {
         dsh_tray::get_dsh_prompt_tray_data(app).await?
@@ -3266,6 +3312,55 @@ fn build_openclaw_model_submenu<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_language_folds_chinese_tags_to_zh_cn_and_the_rest_to_en_us() {
+        for tag in ["zh-CN", "zh-TW", "zh-Hans-CN", "zh", "ZH-CN", "zh_CN.UTF-8"] {
+            assert_eq!(normalize_language(tag), "zh-CN", "tag: {tag}");
+        }
+        for tag in ["en-US", "en", "fr-FR", "ja-JP", "C", "POSIX", ""] {
+            assert_eq!(normalize_language(tag), "en-US", "tag: {tag}");
+        }
+    }
+
+    #[test]
+    fn an_unset_language_follows_the_os_locale() {
+        // A fresh install stores "" — the same sentinel `AppSettings::default()`
+        // uses — so it has to reach the OS locale instead of a fixed language.
+        assert_eq!(resolve_language("", Some("fr-FR")), "en-US");
+        assert_eq!(resolve_language("", Some("zh-TW")), "zh-CN");
+
+        // `C` is the locale the AppImageHub catalogue runs under; picking
+        // Chinese for it would fail the catalogue's English-interface check.
+        assert_eq!(resolve_language("", Some("C")), "en-US");
+
+        // Nothing reported at all still has to produce a usable language.
+        assert_eq!(resolve_language("", None), "en-US");
+    }
+
+    #[test]
+    fn an_explicit_language_survives_a_disagreeing_os_locale() {
+        assert_eq!(resolve_language("zh-CN", Some("fr-FR")), "zh-CN");
+        assert_eq!(resolve_language("en-US", Some("zh-CN")), "en-US");
+    }
+
+    #[test]
+    fn tray_texts_treats_an_unset_or_unknown_language_as_english() {
+        // The catalogue screenshots the running app and OCRs it, so neither an
+        // empty setting nor a locale the app does not ship may render the
+        // Chinese tray.
+        for language in ["", "C", "POSIX", "fr-FR", "ja-JP"] {
+            let texts = tray_texts(language);
+            assert_eq!(
+                texts.show_window, "Open Main Window",
+                "language: {language}"
+            );
+            assert_eq!(texts.quit, "Quit", "language: {language}");
+        }
+
+        assert_eq!(tray_texts("zh-CN").quit, "退出");
+        assert_eq!(tray_texts("zh-TW").quit, "退出");
+    }
 
     #[test]
     fn skills_section_is_a_single_root_submenu() {

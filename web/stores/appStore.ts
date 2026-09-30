@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Language } from '@/i18n';
+import i18n, { detectLanguageSync, resolveStoredLanguage, type Language } from '@/i18n';
 import { getSettings, saveSettings, type AppSettings } from '@/services';
 import { DEFAULT_MODULE } from '@/constants';
 
@@ -25,7 +25,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   isInitialized: false,
   currentModule: DEFAULT_MODULE.key,
   currentSubTab: DEFAULT_MODULE.subTabs[0]?.key || '',
-  language: 'zh-CN',
+  language: detectLanguageSync(),
 
   initApp: async () => {
     if (get().isInitialized) return;
@@ -33,10 +33,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ isLoading: true });
     try {
       const settings = await getSettings();
+      const language = await resolveStoredLanguage(settings.language);
+      // Apply before the loading gate drops so the first painted frame is
+      // already in the right language. The effect in `providers.tsx` only
+      // covers later, user-initiated switches.
+      if (i18n.language !== language) {
+        await i18n.changeLanguage(language);
+      }
       set({
         currentModule: settings.current_module || DEFAULT_MODULE.key,
         currentSubTab: settings.current_sub_tab || DEFAULT_MODULE.subTabs[0]?.key || '',
-        language: (settings.language as Language) || 'zh-CN',
+        language,
         isInitialized: true,
       });
     } catch (error) {

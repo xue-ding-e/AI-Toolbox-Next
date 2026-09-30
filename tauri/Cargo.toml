@@ -1,6 +1,6 @@
 [package]
 name = "ai-toolbox"
-version = "1.1.8"
+version = "1.1.9"
 description = "AI Toolbox - Personal AI Tools Collection"
 authors = ["you"]
 license = "AGPL-3.0-or-later"
@@ -11,10 +11,10 @@ name = "ai_toolbox_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.3", features = [] }
+tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.9.5", features = ["protocol-asset", "tray-icon", "image-png", "unstable"] }
+tauri = { version = "2.12.0", features = ["protocol-asset", "tray-icon", "image-png", "unstable"] }
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-opener = "2.5.3"
