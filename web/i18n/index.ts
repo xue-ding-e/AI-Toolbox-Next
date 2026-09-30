@@ -5,13 +5,18 @@ import zhCN from './locales/zh-CN.json';
 import enUS from './locales/en-US.json';
 import { detectLanguageSync, type Language } from './language';
 
-export type { Language } from './language';
+export type { Language, LanguagePreference } from './language';
 export {
+  SYSTEM_LANGUAGE,
   detectLanguageSync,
   detectSystemLanguage,
+  fromStoredLanguage,
   isSupportedLanguage,
+  isSupportedLanguagePreference,
   normalizeLanguage,
+  resolveLanguagePreference,
   resolveStoredLanguage,
+  toStoredLanguage,
 } from './language';
 
 /**

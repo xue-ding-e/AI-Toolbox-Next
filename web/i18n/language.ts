@@ -8,6 +8,22 @@ import { locale } from '@tauri-apps/plugin-os';
  */
 export type Language = 'zh-CN' | 'en-US';
 
+/** What the user picked in settings: a language, or "follow the system". */
+export type LanguagePreference = 'system' | Language;
+
+/** The preference value meaning "follow the system locale". */
+export const SYSTEM_LANGUAGE = 'system';
+
+/** Whether a persisted value is a language the app actually ships. */
+export function isSupportedLanguage(value: unknown): value is Language {
+  return value === 'zh-CN' || value === 'en-US';
+}
+
+/** Whether a value is one of the preferences the settings UI offers. */
+export function isSupportedLanguagePreference(value: unknown): value is LanguagePreference {
+  return value === SYSTEM_LANGUAGE || isSupportedLanguage(value);
+}
+
 /**
  * Collapse any BCP-47 tag to one of the supported UI languages.
  *
@@ -21,11 +37,6 @@ export type Language = 'zh-CN' | 'en-US';
  */
 export function normalizeLanguage(tag: string | null | undefined): Language {
   return tag?.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
-}
-
-/** Whether a persisted value is a language the app actually ships. */
-export function isSupportedLanguage(value: unknown): value is Language {
-  return value === 'zh-CN' || value === 'en-US';
 }
 
 /** Best-effort detection for callers that cannot await (initial render, recovery shell). */
@@ -50,14 +61,35 @@ export async function detectSystemLanguage(): Promise<Language> {
 }
 
 /**
- * Pick the UI language for a stored setting.
+ * Read the stored setting back into a preference.
  *
- * An empty or unrecognized value means the user never made a choice — a fresh
- * install stores `""`, not a language — so fall back to the system locale
- * instead of a fixed language. An explicit choice is always preserved, even
- * when it disagrees with the system locale.
+ * Anything unrecognized — including the empty string a fresh install stores —
+ * means "follow the system", which is also what the settings UI shows.
  */
+export function fromStoredLanguage(stored: unknown): LanguagePreference {
+  return isSupportedLanguage(stored) ? stored : SYSTEM_LANGUAGE;
+}
+
+/**
+ * What to persist for a preference.
+ *
+ * "system" is written as an empty string: that is the sentinel the backend
+ * already uses (`AppSettings::default()` in types.rs) and what the tray's
+ * `effective_language` treats as unset, so neither side has to learn a new
+ * value to stay in agreement.
+ */
+export function toStoredLanguage(preference: LanguagePreference): string {
+  return preference === SYSTEM_LANGUAGE ? '' : preference;
+}
+
+/** The language a preference resolves to right now. */
+export async function resolveLanguagePreference(
+  preference: LanguagePreference,
+): Promise<Language> {
+  return preference === SYSTEM_LANGUAGE ? detectSystemLanguage() : preference;
+}
+
+/** The language a stored setting resolves to. */
 export async function resolveStoredLanguage(stored: unknown): Promise<Language> {
-  if (isSupportedLanguage(stored)) return stored;
-  return detectSystemLanguage();
+  return resolveLanguagePreference(fromStoredLanguage(stored));
 }

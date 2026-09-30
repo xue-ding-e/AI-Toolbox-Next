@@ -36,8 +36,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore';
-import { languages, type Language } from '@/i18n';
-import i18n from '@/i18n';
+import { SYSTEM_LANGUAGE, languages, type LanguagePreference } from '@/i18n';
 import { BackupSettingsModal, RemoteBackupRestoreModal, type RemoteBackupSelection } from '../components';
 import UpdateProgressModal from '@/components/common/UpdateProgressModal';
 import { platform } from '@tauri-apps/plugin-os';
@@ -183,7 +182,7 @@ const SortableCodingChip: React.FC<SortableCodingChipProps> = ({ id, label, chec
 const GeneralSettingsPage: React.FC = () => {
   const { t } = useTranslation();
   const { modal } = App.useApp();
-  const { language, setLanguage } = useAppStore();
+  const { languagePreference, setLanguage } = useAppStore();
   const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
   const {
     backupType,
@@ -455,9 +454,10 @@ const GeneralSettingsPage: React.FC = () => {
     }
   };
 
-  const handleLanguageChange = (value: Language) => {
+  // The store resolves and applies the language, so choosing "system" needs no
+  // knowledge here of what the system locale currently resolves to.
+  const handleLanguageChange = (value: LanguagePreference) => {
     setLanguage(value);
-    i18n.changeLanguage(value);
   };
 
   const formatBackupTime = (isoTime: string | null) => {
@@ -1004,12 +1004,15 @@ const GeneralSettingsPage: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text>{t('settings.currentLanguage')}:</Text>
                 <Select
-                  value={language}
+                  value={languagePreference}
                   onChange={handleLanguageChange}
-                  options={languages.map((lang) => ({
-                    value: lang.value,
-                    label: lang.label,
-                  }))}
+                  options={[
+                    { value: SYSTEM_LANGUAGE, label: t('settings.languageSystemDefault') },
+                    ...languages.map((lang) => ({
+                      value: lang.value,
+                      label: lang.label,
+                    })),
+                  ]}
                   style={{ width: 160 }}
                 />
               </div>

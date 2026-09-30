@@ -1,5 +1,14 @@
 import { create } from 'zustand';
-import i18n, { detectLanguageSync, resolveStoredLanguage, type Language } from '@/i18n';
+import i18n, {
+  SYSTEM_LANGUAGE,
+  detectLanguageSync,
+  fromStoredLanguage,
+  resolveLanguagePreference,
+  resolveStoredLanguage,
+  toStoredLanguage,
+  type Language,
+  type LanguagePreference,
+} from '@/i18n';
 import { getSettings, saveSettings, type AppSettings } from '@/services';
 import { DEFAULT_MODULE } from '@/constants';
 
@@ -11,13 +20,16 @@ interface AppState {
   // App state
   currentModule: string;
   currentSubTab: string;
+  /** The resolved language actually in use — always one of the shipped two. */
   language: Language;
+  /** What the user chose: a language, or "follow the system". */
+  languagePreference: LanguagePreference;
 
   // Actions
   initApp: () => Promise<void>;
   setCurrentModule: (module: string) => Promise<void>;
   setCurrentSubTab: (subTab: string) => Promise<void>;
-  setLanguage: (language: Language) => Promise<void>;
+  setLanguage: (preference: LanguagePreference) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>()((set, get) => ({
@@ -26,6 +38,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   currentModule: DEFAULT_MODULE.key,
   currentSubTab: DEFAULT_MODULE.subTabs[0]?.key || '',
   language: detectLanguageSync(),
+  languagePreference: SYSTEM_LANGUAGE,
 
   initApp: async () => {
     if (get().isInitialized) return;
@@ -44,6 +57,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         currentModule: settings.current_module || DEFAULT_MODULE.key,
         currentSubTab: settings.current_sub_tab || DEFAULT_MODULE.subTabs[0]?.key || '',
         language,
+        languagePreference: fromStoredLanguage(settings.language),
         isInitialized: true,
       });
     } catch (error) {
@@ -83,14 +97,21 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
   },
 
-  setLanguage: async (language) => {
+  setLanguage: async (preference) => {
+    // Reflect the choice straight away; resolving "system" costs an IPC call.
+    set({ languagePreference: preference });
+
+    const language = await resolveLanguagePreference(preference);
+    if (i18n.language !== language) {
+      await i18n.changeLanguage(language);
+    }
     set({ language });
 
     try {
       const currentSettings = await getSettings();
       const newSettings: AppSettings = {
         ...currentSettings,
-        language,
+        language: toStoredLanguage(preference),
       };
       await saveSettings(newSettings);
     } catch (error) {

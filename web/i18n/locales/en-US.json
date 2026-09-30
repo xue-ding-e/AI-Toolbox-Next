@@ -1395,7 +1395,8 @@
       "saveFailed": "Could not save the data directory: {{error}}",
       "restartFailed": "Directory settings are saved, but restart failed: {{error}}. Please quit and reopen the app.",
       "cancelChange": "Cancel directory change"
-    }
+    },
+    "languageSystemDefault": "System Default"
   },
   "theme": {
     "light": "Light",
