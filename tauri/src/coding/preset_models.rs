@@ -553,8 +553,9 @@ mod tests {
 
     #[test]
     fn openai_presets_define_gpt_5_6_family_with_max_reasoning() {
-        // gpt-6-astra still leads the bundled OpenAI preset list. GPT-6 Sol and
-        // Luna sit immediately after it and share the same capability set.
+        // gpt-6-astra still leads the bundled OpenAI preset list. GPT-6.1 Sol
+        // sits directly in front of the id it supersedes, and GPT-6 Sol and Luna
+        // follow it with the same capability set.
         const GPT_5_6_FAMILY_MODEL_IDS: [&str; 6] = [
             "gpt-6-astra",
             "gpt-6-sol",
@@ -563,7 +564,7 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
         ];
-        const LEADING_MODEL_IDS: [&str; 3] = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
+        const LEADING_MODEL_IDS: [&str; 3] = ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol"];
         const GPT_5_6_REASONING_LEVELS: [&str; 6] =
             ["none", "low", "medium", "high", "xhigh", "max"];
 
@@ -644,6 +645,102 @@ mod tests {
                     Some("medium")
                 );
             }
+        }
+    }
+
+    #[test]
+    fn openai_presets_place_gpt_6_1_sol_before_gpt_6_sol_without_none_reasoning() {
+        // GPT-6.1 Sol supersedes GPT-6 Sol, so the user-visible preset order
+        // keeps it directly in front of the older id. Its API reasoning effort
+        // set excludes `none` and `minimal`, unlike the GPT-6 Sol / 5.6 family.
+        const GPT_6_1_SOL_REASONING_LEVELS: [&str; 5] =
+            ["low", "medium", "high", "xhigh", "max"];
+
+        let models = bundled_openai_models();
+        let model_list = models
+            .as_array()
+            .expect("OpenAI preset group should be an array");
+        let model_ids: Vec<&str> = model_list
+            .iter()
+            .filter_map(|preset| preset.get("id").and_then(Value::as_str))
+            .collect();
+        let sol_index = model_ids
+            .iter()
+            .position(|model_id| *model_id == "gpt-6-sol")
+            .expect("gpt-6-sol preset should exist");
+        assert!(sol_index > 0, "gpt-6-sol should not lead the OpenAI group");
+        assert_eq!(
+            model_ids[sol_index - 1],
+            "gpt-6.1-sol",
+            "gpt-6.1-sol must sit immediately before the id it supersedes"
+        );
+
+        let preset = model_list
+            .iter()
+            .find(|preset| preset.get("id").and_then(Value::as_str) == Some("gpt-6.1-sol"))
+            .expect("gpt-6.1-sol preset should exist");
+        assert_eq!(
+            preset.get("name").and_then(Value::as_str),
+            Some("GPT-6.1 Sol")
+        );
+        assert_eq!(
+            preset.get("contextLimit").and_then(Value::as_u64),
+            Some(1_050_000)
+        );
+        assert_eq!(
+            preset.get("outputLimit").and_then(Value::as_u64),
+            Some(128_000)
+        );
+        assert_eq!(preset.get("reasoning").and_then(Value::as_bool), Some(true));
+        assert_eq!(preset.get("tool_call").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            preset.get("temperature").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            preset.get("attachment").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            preset.pointer("/options/store").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            preset.pointer("/modalities/input"),
+            Some(&serde_json::json!(["text", "image"]))
+        );
+        assert_eq!(
+            preset.pointer("/modalities/output"),
+            Some(&serde_json::json!(["text"]))
+        );
+
+        let variants = preset
+            .get("variants")
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| panic!("gpt-6.1-sol should define reasoning variants"));
+        assert_eq!(variants.len(), GPT_6_1_SOL_REASONING_LEVELS.len());
+        for reasoning_level in GPT_6_1_SOL_REASONING_LEVELS {
+            let variant = variants.get(reasoning_level).unwrap_or_else(|| {
+                panic!("gpt-6.1-sol should define the {reasoning_level} variant")
+            });
+            assert_eq!(
+                variant.get("reasoningEffort").and_then(Value::as_str),
+                Some(reasoning_level)
+            );
+            assert_eq!(
+                variant.get("reasoningSummary").and_then(Value::as_str),
+                Some("auto")
+            );
+            assert_eq!(
+                variant.get("textVerbosity").and_then(Value::as_str),
+                Some("medium")
+            );
+        }
+        for unsupported in ["none", "minimal"] {
+            assert!(
+                !variants.contains_key(unsupported),
+                "gpt-6.1-sol does not accept `{unsupported}` as a reasoning effort"
+            );
         }
     }
 
@@ -748,6 +845,7 @@ mod tests {
 
         for model_id in [
             "claude-fable-5",
+            "claude-sonnet-5-5",
             "claude-sonnet-5",
             "claude-opus-4-8",
             "claude-opus-4-7",

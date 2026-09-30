@@ -399,6 +399,11 @@ mod tests {
 
         for (model_id, input, output, cache_read, cache_creation) in [
             ("gpt-6-astra", "10", "50", "1", "12.5"),
+            ("gpt-6.1-sol", "2", "10", "0.10", "2.5"),
+            // Sonnet 5.5 ships at Sonnet 5's permanent $2/$10 rate; Anthropic
+            // cancelled the $3/$15 increase, so both rows stay at $2/$10.
+            ("claude-sonnet-5-5", "2", "10", "0.20", "2.50"),
+            ("claude-sonnet-5", "2", "10", "0.20", "2.50"),
             ("gpt-5.6", "5", "30", "0.50", "6.25"),
             ("gpt-5.6-sol", "5", "30", "0.50", "6.25"),
             ("gpt-5.6-terra", "2.50", "15", "0.25", "3.125"),
