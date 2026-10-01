@@ -75,6 +75,10 @@ import {
   buildFetchedOpenClawModel,
 } from '../utils/openClawFetchedModels';
 import { applyOpenClawUserAgent } from '../utils/providerHeaders';
+import {
+  extractOpenClawOtherConfigFields,
+  mergeOpenClawOtherConfigFields,
+} from '../utils/openClawOtherConfig';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import type {
   OpenClawConfig,
@@ -1260,16 +1264,13 @@ const OpenClawPage: React.FC = () => {
   // `mcp` is hidden here for the same reason OpenCode hides it: the MCP page
   // owns `mcp.servers` in this very file, and the editor's text is what the
   // blur-save writes back. Showing a copy would let a stale text revert a
-  // server the MCP page (or the tray) wrote while the box was open, even after
-  // the re-read below (issue #406). A server typed into the box by hand still
-  // wins, because the editor value is merged last.
-  const hiddenOtherConfigKeys = ['models', 'agents', 'mcp'];
-  const otherConfigFields = React.useMemo(() => {
-    if (!config) return undefined;
-    const rest: OpenClawConfig = { ...config };
-    hiddenOtherConfigKeys.forEach((key) => { delete rest[key]; });
-    return Object.keys(rest).length > 0 ? rest : undefined;
-  }, [config]);
+  // server the MCP page (or the tray) wrote while the box was open (issue #406).
+  // A server typed into the box by hand still wins, because the editor value is
+  // merged last.
+  const otherConfigFields = React.useMemo(
+    () => extractOpenClawOtherConfigFields(config),
+    [config],
+  );
 
   const handleOtherConfigChange = (_value: unknown, isValid: boolean) => {
     otherConfigJsonValidRef.current = isValid;
@@ -1293,13 +1294,11 @@ const OpenClawPage: React.FC = () => {
     if (!base) return;
 
     try {
-      const newConfig: OpenClawConfig = {
-        models: base.models,
-        agents: base.agents,
-      };
-      if (typeof value === 'object' && value !== null) {
-        Object.assign(newConfig, value);
-      }
+      // Start from the re-read file, not the editor text: the payload is what
+      // the backend diffs against the live file, so anything it omits is
+      // removed. `mcp` (same file, `mcp.servers`) is owned by the MCP page and
+      // is not in the editor value at all.
+      const newConfig = mergeOpenClawOtherConfigFields(base, value);
       await saveOpenClawConfig(newConfig);
       loadConfig();
       loadSectionData();

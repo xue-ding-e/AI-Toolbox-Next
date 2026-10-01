@@ -35,9 +35,9 @@ sequenceDiagram
 
 - 不要把 OpenClaw 的某个 section 当成独立配置源。它们最终都在改同一份配置文件。
 - 页面监听的是 `openclaw-config-changed`，不是通用 `config-changed`。抽象公共逻辑时别把它漏掉。
-- 「其他配置」失焦保存（`handleOtherConfigBlur`）必须先重读文件（`readOpenClawConfigWithResult()` + 共享的 `pickConfigSaveBase()`，见 `web/features/coding/shared/AGENTS.md`），`models`/`agents` 从最新文件取，编辑器文本只负责其余顶层键；后端 `apply_root_section_diff` 会**删除 payload 里缺失的顶层 section**，所以用页面内存副本当基底会把 MCP 页刚写进 `mcp.servers`（同一个 `openclaw.json`）的 server 整段删掉（issue #406 同形）。
+- 「其他配置」失焦保存（`handleOtherConfigBlur`）必须先重读文件（`readOpenClawConfigWithResult()` + 共享的 `pickConfigSaveBase()`，见 `web/features/coding/shared/AGENTS.md`），再把**编辑器文本合并到最新文件上**（`mergeOpenClawOtherConfigFields`，`utils/openClawOtherConfig.ts`）；后端 `apply_root_section_diff` 会**删除 payload 里缺失的顶层 section**，所以用页面内存副本当基底、或只拼 `models`/`agents` 当 payload，都会把 MCP 页刚写进 `mcp.servers`（同一个 `openclaw.json`）的 server 整段删掉（issue #406 同形）。回归见 `web/test/features/coding/openclaw/utils/openClawOtherConfig.test.ts`。
 - 本页面必须同时监听 `openclaw-config-changed` 和 `mcp-changed`：`mcp.servers` 与其余配置在同一个文件，但 MCP 页只发 `mcp-changed`。少了这个监听，页面的 `config` 与「其他配置」编辑器的文本都会停在旧值，下一次保存就把 MCP 写回旧列表。
-- 「其他配置」编辑器**不展示 `mcp`**（`hiddenOtherConfigKeys = ['models', 'agents', 'mcp']`）：编辑器文本就是失焦保存要写回的内容，展示 `mcp` 副本意味着在盒子打开期间 MCP 页/托盘写入的 server 会被旧文本回退（重读基底也救不了，因为用户文本最后合并）。手动在文本里敲进去的 `mcp` 仍以用户输入为准。这与 OpenCode 的处理一致（`web/features/coding/opencode/utils/openCodeOtherConfig.ts` 的 `managedConfigFields`）。
+- 「其他配置」编辑器**不展示 `mcp`**（`OPENCLAW_OTHER_CONFIG_HIDDEN_KEYS = ['models', 'agents', 'mcp']`）：编辑器文本就是要写回的部分，展示 `mcp` 副本意味着在盒子打开期间 MCP 页/托盘写入的 server 会被旧文本回退（重读基底也救不了，因为用户文本最后合并）。手动在文本里敲进去的 `mcp` 仍以用户输入为准，因为编辑器值最后合并。这与 OpenCode 的处理一致（`web/features/coding/opencode/utils/openCodeOtherConfig.ts` 的 `managedConfigFields`）。
 - 其余 14 个 `saveOpenClawConfig` 调用点（导入、provider/模型增删、拖拽排序、批量删除）仍以页面 `config` 为基底整份落盘；它们靠上面两个监听事件保持新鲜。若新增“页面之外也能改 `openclaw.json`”的入口（另一窗口、外部编辑器、恢复流程），必须同时给它一个刷新本页面的信号，或在该调用点改成先重读。
 - 导入 OpenCode / All API Hub / favorite providers 时，不仅要更新配置，还要同步处理 favorite provider 相关辅助状态。
 - Fetch Models 用 `findPresetModelById` 补全能力时必须保留上游返回的 model id 原文（含大小写）。preset 匹配是大小写不敏感的，只能拿 context/cost/reasoning/input 等元数据，不能把 `minimax-m3` 改写成 preset 的 `MiniMax-M3`。
