@@ -128,13 +128,23 @@ const MemoryPane: React.FC<MemoryPaneProps> = ({
   );
 };
 
+interface HermesMemoryPanelProps {
+  /**
+   * Called after a toggle rewrote the `memory:` section of config.yaml, so the
+   * page can reload its config copy. The "通用配置" editor keeps that whole
+   * section in its JSON text; without the refresh a later blur-save writes the
+   * pre-toggle copy back and silently reverts the toggle (issue #406 shape).
+   */
+  onConfigChanged?: () => void;
+}
+
 /**
  * Hermes memory editor: agent `MEMORY.md` + user `USER.md` blobs under
  * `<config>/memories/`, plus the enable toggles from the `memory:` section of
  * config.yaml. Hermes' own UI only exposes on/off + budgets, so the content
  * editing lives here.
  */
-const HermesMemoryPanel: React.FC = () => {
+const HermesMemoryPanel: React.FC<HermesMemoryPanelProps> = ({ onConfigChanged }) => {
   const { t } = useTranslation();
   const [limits, setLimits] = React.useState<HermesMemoryLimits | null>(null);
 
@@ -151,6 +161,7 @@ const HermesMemoryPanel: React.FC = () => {
     try {
       const nextLimits = await setHermesMemoryEnabled(kind, next);
       setLimits(nextLimits);
+      onConfigChanged?.();
       message.success(t('common.success'));
     } catch (error) {
       console.error('Failed to toggle Hermes memory:', error);

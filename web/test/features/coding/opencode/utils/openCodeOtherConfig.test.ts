@@ -3,10 +3,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import type { OpenCodeConfig } from '@/types/opencode';
+
 import {
   extractOpenCodeOtherConfigFields,
   mergeOpenCodeOtherConfigFields,
 } from '../../../../../features/coding/opencode/utils/openCodeOtherConfig.ts';
+import { pickConfigSaveBase } from '../../../../../features/coding/shared/configSaveBase.ts';
 
 test('extractOpenCodeOtherConfigFields keeps disabled_providers visible in other config', () => {
   const result = extractOpenCodeOtherConfigFields({
@@ -175,6 +178,65 @@ test('mergeOpenCodeOtherConfigFields preserves mcp while saving other config fie
       },
     },
     permission: true,
+  });
+});
+
+test('saving other config keeps an MCP server added after the editor loaded (issue #406)', () => {
+  // The page copy predates the MCP page writing its server into `opencode.json`.
+  const pageCopy: OpenCodeConfig = {
+    provider: {},
+    plugin: ['opencode-ai'],
+    mcp: {
+      old: {
+        type: 'local',
+        command: ['old'],
+      },
+    },
+    permission: {
+      external_directory: {
+        '*': 'deny',
+      },
+    },
+  };
+  const fileCopy: OpenCodeConfig = {
+    ...pageCopy,
+    mcp: {
+      old: {
+        type: 'local',
+        command: ['old'],
+      },
+      demo: {
+        type: 'remote',
+        url: 'https://mcp.example.test',
+      },
+    },
+  };
+
+  const base = pickConfigSaveBase({ status: 'success', config: fileCopy }, pageCopy);
+  assert.ok(base);
+  const saved = mergeOpenCodeOtherConfigFields(base, {
+    permission: {
+      external_directory: {
+        '*': 'allow',
+      },
+    },
+  });
+
+  assert.deepEqual(saved.mcp, {
+    old: {
+      type: 'local',
+      command: ['old'],
+    },
+    demo: {
+      type: 'remote',
+      url: 'https://mcp.example.test',
+    },
+  });
+  assert.deepEqual(saved.plugin, ['opencode-ai']);
+  assert.deepEqual(saved.permission, {
+    external_directory: {
+      '*': 'allow',
+    },
   });
 });
 

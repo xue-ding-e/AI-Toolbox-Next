@@ -62,6 +62,11 @@ const JsoncEditor: React.FC<JsoncEditorProps> = ({
   const isResizingRef = useRef(false);
   const startYRef = useRef(0);
   const startHeightRef = useRef(0);
+  // Monaco calls `editorDidMount` once, so the blur listener registered there
+  // would keep the first render's callback forever. Forward the latest prop
+  // through a ref instead (same rule as `JsonEditor`, issue #406).
+  const onBlurRef = useRef(onBlur);
+  onBlurRef.current = onBlur;
 
   const validateAndSetMarkers = useCallback((content: string) => {
     const editorModel = editorRef.current?.getModel();
@@ -105,9 +110,9 @@ const JsoncEditor: React.FC<JsoncEditorProps> = ({
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
       const currentContent = editorInstance.getValue();
       const result = validateAndSetMarkers(currentContent);
-      onBlur?.(currentContent, result.isValid, result.parsed);
+      onBlurRef.current?.(currentContent, result.isValid, result.parsed);
     });
-  }, [onBlur, validateAndSetMarkers, value]);
+  }, [validateAndSetMarkers, value]);
 
   const handleChange = useCallback((nextValue: string) => {
     editorContentRef.current = nextValue;

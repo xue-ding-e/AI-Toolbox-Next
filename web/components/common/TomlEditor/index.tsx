@@ -348,6 +348,11 @@ const TomlEditor: FC<TomlEditorProps> = ({
   const { resolvedTheme } = useThemeStore();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const validateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Monaco calls `editorDidMount` once, so the blur listener registered there
+  // would keep the first render's callback forever. Forward the latest prop
+  // through a ref instead (same rule as `JsonEditor`, issue #406).
+  const onBlurRef = useRef(onBlur);
+  onBlurRef.current = onBlur;
 
   // Monaco theme based on app theme (or explicit theme prop)
   const monacoTheme = theme || (resolvedTheme === 'dark' ? 'vs-dark' : 'vs');
@@ -442,11 +447,9 @@ const TomlEditor: FC<TomlEditorProps> = ({
     editorInstance.onDidBlurEditorText(() => {
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
       // 失去焦点时触发 onBlur 回调
-      if (onBlur) {
-        onBlur(editorInstance.getValue());
-      }
+      onBlurRef.current?.(editorInstance.getValue());
     });
-  }, [value, validateAndSetMarkers, onBlur]);
+  }, [value, validateAndSetMarkers]);
 
   const handleChange = useCallback((newValue: string) => {
     onChange?.(newValue);

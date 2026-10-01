@@ -69,6 +69,7 @@ import {
   type OpenCodeFavoriteProvider,
 } from '@/services/opencodeApi';
 import { useProviderSharing } from '@/features/coding/shared/providerShare';
+import { pickConfigSaveBase } from '@/features/coding/shared/configSaveBase';
 import { findPresetModelById } from '@/constants/presetModels';
 import {
   buildFetchedOpenClawModel,
@@ -84,6 +85,7 @@ import type {
   OpenClawEnvConfig,
   OpenClawHealthWarning,
   OpenClawToolsConfig,
+  ReadOpenClawConfigResult,
 } from '@/types/openclaw';
 import type { OpenCodeProvider } from '@/types/opencode';
 
@@ -417,6 +419,20 @@ const OpenClawPage: React.FC = () => {
   // Listen for config-changed events (from tray)
   React.useEffect(() => {
     const unlisten = listen('openclaw-config-changed', () => {
+      loadConfig(true);
+      loadSectionData();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [loadConfig, loadSectionData]);
+
+  // `mcp.servers` lives in the same file and is written by the MCP page, which
+  // emits `mcp-changed` instead of the tool-scoped event above. Without this the
+  // page (and the "other config" editor text seeded from it) stays stale and the
+  // next save writes the old server list back.
+  React.useEffect(() => {
+    const unlisten = listen('mcp-changed', () => {
       loadConfig(true);
       loadSectionData();
     });
@@ -1241,9 +1257,17 @@ const OpenClawPage: React.FC = () => {
   // ================================================================
   // Other config (flatten fields excluding known sections)
   // ================================================================
+  // `mcp` is hidden here for the same reason OpenCode hides it: the MCP page
+  // owns `mcp.servers` in this very file, and the editor's text is what the
+  // blur-save writes back. Showing a copy would let a stale text revert a
+  // server the MCP page (or the tray) wrote while the box was open, even after
+  // the re-read below (issue #406). A server typed into the box by hand still
+  // wins, because the editor value is merged last.
+  const hiddenOtherConfigKeys = ['models', 'agents', 'mcp'];
   const otherConfigFields = React.useMemo(() => {
     if (!config) return undefined;
-    const { models, agents, ...rest } = config;
+    const rest: OpenClawConfig = { ...config };
+    hiddenOtherConfigKeys.forEach((key) => { delete rest[key]; });
     return Object.keys(rest).length > 0 ? rest : undefined;
   }, [config]);
 
@@ -1252,11 +1276,26 @@ const OpenClawPage: React.FC = () => {
   };
 
   const handleOtherConfigBlur = async (value: unknown) => {
-    if (!config || !otherConfigJsonValidRef.current) return;
+    if (!otherConfigJsonValidRef.current) return;
+
+    // Re-read the file instead of trusting this page's copy: `mcp` (same file,
+    // `mcp.servers`) is owned by the MCP page, and the backend deletes any
+    // section the payload lacks. Merging onto a stale copy dropped the server
+    // the MCP page had just added (issue #406 shape, OpenClaw edition).
+    let readResult: ReadOpenClawConfigResult | null = null;
+    try {
+      readResult = await readOpenClawConfigWithResult();
+    } catch (error) {
+      console.error('Failed to re-read OpenClaw config before saving other config:', error);
+    }
+
+    const base = pickConfigSaveBase(readResult, config);
+    if (!base) return;
+
     try {
       const newConfig: OpenClawConfig = {
-        models: config.models,
-        agents: config.agents,
+        models: base.models,
+        agents: base.agents,
       };
       if (typeof value === 'object' && value !== null) {
         Object.assign(newConfig, value);

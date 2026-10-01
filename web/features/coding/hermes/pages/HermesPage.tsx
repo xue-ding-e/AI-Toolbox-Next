@@ -1770,7 +1770,7 @@ const HermesPage: React.FC = () => {
             data-hermes-sidebar-section="true"
             data-sidebar-title={t('hermes.memory.title', { defaultValue: 'Memory' })}
           >
-            <HermesMemoryPanel />
+            <HermesMemoryPanel onConfigChanged={() => void loadConfig(true)} />
           </div>
 
           <div

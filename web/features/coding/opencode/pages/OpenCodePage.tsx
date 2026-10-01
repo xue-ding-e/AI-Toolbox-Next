@@ -46,7 +46,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { useProviderSharing } from '@/features/coding/shared/providerShare';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeV2ConfigMode, setOpenCodeV2ConfigMode, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, getOpenCodePreview, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig, type OpenCodePreviewData } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeV2ConfigMode, setOpenCodeV2ConfigMode, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, getOpenCodePreview, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig, type OpenCodePreviewData, type ReadConfigResult } from '@/services/opencodeApi';
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
@@ -126,6 +126,7 @@ import {
   extractOpenCodeOtherConfigFields,
   mergeOpenCodeOtherConfigFields,
 } from '@/features/coding/opencode/utils/openCodeOtherConfig';
+import { pickConfigSaveBase } from '@/features/coding/shared/configSaveBase';
 import {
   getConfiguredOpenCodeAgentModelIds,
 } from '@/features/coding/opencode/utils/openCodeAgentConfig';
@@ -2069,11 +2070,33 @@ const OpenCodePage: React.FC = () => {
 
   // 保存其他配置（用于 onBlur 回调）
   const handleOtherConfigBlur = async (value: unknown) => {
-    if (!config || !otherConfigJsonValidRef.current) {
+    if (!otherConfigJsonValidRef.current) {
       return;
     }
 
-    await doSaveConfig(mergeOpenCodeOtherConfigFields(config, value));
+    // Re-read the file instead of trusting this page's copy: the hidden fields
+    // (`mcp`, `provider`, `agent`, `plugin`, the models) are written by their own
+    // surfaces — MCP page, tray, deep-link import, backup restore — and this
+    // page only refreshes on a few events, so its copy can be older.
+    let readResult: ReadConfigResult | null = null;
+    try {
+      readResult = await readOpenCodeConfigWithResult();
+    } catch (error) {
+      console.error('Failed to re-read OpenCode config before saving other config:', error);
+    }
+
+    const base = pickConfigSaveBase(readResult, config);
+    if (!base) {
+      return;
+    }
+
+    // The file copy is raw while `loadConfig` keeps a sanitized plugin list in
+    // state; mirror that so both spellings stay aligned (idempotent).
+    const alignedBase = base.plugin
+      ? { ...base, plugin: sanitizeOpenCodePluginList(base.plugin) }
+      : base;
+
+    await doSaveConfig(mergeOpenCodeOtherConfigFields(alignedBase, value));
   };
 
   const dismissV2Hint = () => {

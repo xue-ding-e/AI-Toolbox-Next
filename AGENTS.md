@@ -351,6 +351,10 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
 
 **Never use persist middleware** - all persistent data must be stored in the backend database via Tauri commands.
 
+#### Config File Saves
+
+An editor that owns only part of a config file must never rebuild the whole file from a long-lived page's in-memory copy: the fields it hides are written by other surfaces (the MCP page, the tray, deep-link imports, backup restore), and those write the file directly. Re-read the file at save time and merge onto it with `pickConfigSaveBase()` (`web/features/coding/shared/configSaveBase.ts`), or send only the edited slice to a backend command that reads the file first. Merging onto a stale copy silently reverts another surface's write — that is issue #406 (OpenCode/OpenClaw "其他配置" blur saves dropping a freshly added MCP server). Same rule for the editor's own state: when another surface writes the file, refresh the page state (subscribe to its event) or the stale editor text will be saved back.
+
 #### Path Aliases
 Use `@/` for imports from `web/` directory:
 ```typescript

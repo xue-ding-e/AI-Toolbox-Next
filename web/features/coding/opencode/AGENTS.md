@@ -59,12 +59,13 @@ sequenceDiagram
 - 覆盖收藏供应商时，模型引用清理只针对“旧模型 ID 减去新模型 ID”；保留的主模型、小模型及 Agent model/variant 必须原样保留，包括带 `/` 的上游模型 ID。替换与删除共用 `utils/providerMutations.ts` 的引用清理，不能把旧模型全集当成已删除集合。
 - 收藏覆盖先保存目标运行时配置，成功后才把旧供应商保存为收藏备份；保存失败时导入来源必须保持不变。后续备份失败只提示“覆盖成功但旧配置备份失败”，不能把已完成的覆盖报告成保存失败。回归覆盖失败后重试和保存后的再次读取。
 - “其他配置”是 OpenCode 顶层配置的补充 JSON 编辑面。`disabled_providers` 虽然也被 provider 卡片开关消费，但没有独立表单字段，不能从“其他配置”中过滤掉；保存时也要允许用户通过删除该字段来清空禁用列表。
+- “其他配置”失焦保存**必须先重读配置文件**，再把它合并到最新文件上（`readOpenCodeConfigWithResult()` + 共享的 `pickConfigSaveBase()`，规则见 `web/features/coding/shared/AGENTS.md`），不能用页面的 `config` 内存副本当基底。这个编辑面隐藏的字段（`mcp`/`provider`/`agent`/`default_agent`/`plugin`/模型）由各自入口直接写文件：MCP 页、托盘、深链导入、备份恢复、启动 re-apply 都不刷新本页面的 `config`（本页只监听 `mcp-changed`、托盘刷新事件和挂载/刷新键，不监听 payload 为 `window` 的 `config-changed`）。用内存副本合并等于把「面板展开之后」的所有外部写入整份回退——issue #406 就是新增的 MCP 在失焦保存后从 `opencode.json` 里消失。编辑器文本仍只代表用户看到的 other 切片；本编辑面只对 other 切片负责。回归：`web/test/features/coding/opencode/utils/openCodeOtherConfig.test.ts` 的 `issue #406` 用例 + `web/test/features/coding/shared/configSaveBase.test.ts`。
 - Agent 设置页管理 `agent` 和 `default_agent`，这两个字段必须从“其他配置”编辑面隐藏，但保存其他配置时要原样保留。Agent 模型、Variant、权限、Prompt、`options` 和未知字段必须无损往返；删除模型引用时只清理对应 Agent 的 `model` / `variant`，不能顺手删除其他高级字段。
 - OpenCode 内置 Agent 名单应以当前官方 Agents 文档和实际运行时为准，不能只依赖可能滞后的 config schema `properties`。当前内置 Subagent 包括 `general`、`explore`、`scout`；schema 仍允许通过 `additionalProperties` 配置未显式枚举的内置 Agent。
 - OpenCode 官方把自定义 Agent 的 `description` 作为必填配置，而 `prompt`、model 和 variant 都是可选项；添加 Agent 的 UI 和提交守卫必须保持这个边界。`prompt` 在官方 Schema 中只能是字符串，高级 JSON 编辑器也应拒绝对象或数组形态。
 - `build`、`plan`、`general`、`explore`、`scout`、`title`、`summary`、`compaction` 都是保留的内置 Agent 名称，即使当前 `agent` 对象里没有显式覆盖，也不能作为“自定义 Agent”名称创建。自定义 Agent 的非空 `description` 约束必须同时覆盖创建表单和高级 JSON 保存，不能让高级入口绕过。
 - `default_agent` 必须始终指向可作为主 Agent 使用的配置。任何入口把当前默认 Agent 改成 `mode: subagent`、`hidden: true` 或 `disable: true` 时，都必须同步清除失效的 `default_agent`，不能把会导致 OpenCode 会话解析失败的组合写入配置。
-- OpenCode 的 `mcp` 必须去 MCP 页面维护，不属于 OpenCode“其他配置”的编辑面；这里应隐藏但保存时保留现有 `mcp`，不要因为编辑其他字段把它清掉。
+- OpenCode 的 `mcp` 必须去 MCP 页面维护，不属于 OpenCode“其他配置”的编辑面；这里应隐藏但保存时保留现有 `mcp`，不要因为编辑其他字段把它清掉。**“保留”指的是保留最新文件里的 `mcp`（失焦时重读），不是保留页面内存里的旧副本**（issue #406）。
 - Ant Design 6 的 Collapse 内容节点是 `.ant-collapse-panel` / `.ant-collapse-body`，不要继续只覆盖旧版 `.ant-collapse-content` / `.ant-collapse-content-box`。本项目 `web/App.css` 还会给所有 `.ant-collapse` 添加圆角、阴影、`overflow: clip`（裁剪但不产生滚动容器），并给 `.ant-collapse .ant-collapse-panel` 添加带 `!important` 的顶边框；嵌套或无卡片视觉的 Collapse 必须在模块根节点同时覆盖圆角、overflow、阴影和 panel 边框，并使用足够具体的局部选择器，不能只清理 item/header，也不要为了单个模块修改全局规则。导出页面 HTML 检查实际 DOM、CSS Modules 类名是否挂载以及最终命中的全局规则，是定位此类优先级问题的有效手段。
 - OMOS（`oh-my-opencode-slim`）里 UI 上的“备用模型”虽然挂在 agent 行内编辑，但新写入配置时必须合成 `agents.<agent>.model` 数组；`fallback.chains` 和 `agents.*.fallback_models` 都只是历史兼容读取来源，不要继续写回运行时或数据库新内容。
 - OMOS 的 `agents.<agent>` 高级字段（如 `prompt`、`orchestratorPrompt`、`displayName`、`skills`、`mcps`、`options`）通过每个 Agent 行内的高级 JSON 编辑器进入数据库。保存/应用仍以数据库为准，不从当前运行时 JSON 文件反向合并手写字段。
@@ -100,3 +101,4 @@ sequenceDiagram
 - 至少验证：保存配置、应用 prompt、导入 provider 后托盘仍同步刷新。
 - 改 Agent 配置时至少验证：内置 Agent 模型覆盖、自定义 Agent、未知字段往返、删除 Provider/模型后的引用清理，以及 `agent` 与插件 `agents` 不混用。
 - 覆盖供应商和默认供应商删除保护运行 `web/test/features/coding/opencode/utils/providerMutations.test.ts`。
+- 改“其他配置”的保存基底或 `JsonEditor` 失焦回调时运行 `web/test/features/coding/opencode/utils/openCodeOtherConfig.test.ts`；要验证真实 Monaco 失焦链路（含 issue #406 的回归）走 `pnpm test:json-editor-blur`（本地浏览器 fixture，不进 CI）。

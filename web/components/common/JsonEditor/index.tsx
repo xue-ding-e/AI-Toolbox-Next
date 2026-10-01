@@ -71,6 +71,14 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   // 标记用户是否正在编辑器中输入
   const isUserEditingRef = useRef(false);
   const [isUserEditing, setIsUserEditing] = useState(false);
+  // Monaco only invokes `editorDidMount` once, so listeners registered there
+  // would keep the blur callbacks captured on the first render forever. Forward
+  // the latest props through refs instead; consumers rely on `onBlur` seeing
+  // current state (e.g. OpenCode's auto-save must not write a stale config).
+  const onBlurRef = useRef(onBlur);
+  const onRawBlurRef = useRef(onRawBlur);
+  onBlurRef.current = onBlur;
+  onRawBlurRef.current = onRawBlur;
 
   // 规范化值为字符串
   const normalizedValue = value === undefined || value === null ? '' : value;
@@ -202,23 +210,24 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       setIsUserEditing(false);
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
       const currentContent = editorInstance.getValue();
-      onRawBlur?.(currentContent);
+      onRawBlurRef.current?.(currentContent);
       // 失去焦点时触发 onBlur 回调
-      if (onBlur) {
+      const blurHandler = onBlurRef.current;
+      if (blurHandler) {
         const trimmedValue = currentContent.trim();
         if (trimmedValue === '') {
-          onBlur(null, true);
+          blurHandler(null, true);
         } else {
           try {
             const parsed = JSON.parse(currentContent);
-            onBlur(parsed, true);
+            blurHandler(parsed, true);
           } catch {
-            onBlur(currentContent, false);
+            blurHandler(currentContent, false);
           }
         }
       }
     });
-  }, [valueString, validateAndSetMarkers, onBlur, onRawBlur]);
+  }, [valueString, validateAndSetMarkers]);
 
   const handleChange = useCallback((newValue: string) => {
     editorContentRef.current = newValue;

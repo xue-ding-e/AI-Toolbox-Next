@@ -35,6 +35,11 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const { resolvedTheme } = useThemeStore();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const isUserEditingRef = useRef(false);
+  // Monaco calls `editorDidMount` once, so the blur listener registered there
+  // would keep the first render's callback forever. Forward the latest prop
+  // through a ref instead (same rule as `JsonEditor`, issue #406).
+  const onBlurRef = useRef(onBlur);
+  onBlurRef.current = onBlur;
   const normalizedValue = value ?? '';
   const [editorContent, setEditorContent] = useState(normalizedValue);
   const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
@@ -98,11 +103,9 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     editorInstance.onDidBlurEditorText(() => {
       isUserEditingRef.current = false;
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
-      if (onBlur) {
-        onBlur(editorInstance.getValue());
-      }
+      onBlurRef.current?.(editorInstance.getValue());
     });
-  }, [normalizedValue, onBlur]);
+  }, [normalizedValue]);
 
   const handleChange = useCallback((newValue: string) => {
     setEditorContent(newValue);

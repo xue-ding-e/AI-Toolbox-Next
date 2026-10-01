@@ -11,6 +11,8 @@ mod codex_history_sync;
 mod config_cleanup;
 #[path = "coding/gemini_cli/default_official_config.rs"]
 mod gemini_cli_default_official_config;
+#[path = "coding/grok/common_config.rs"]
+mod grok_common_config;
 #[path = "coding/kimi/provider_and_config.rs"]
 mod kimi_provider_and_config;
 #[path = "coding/kimi/runtime_location.rs"]

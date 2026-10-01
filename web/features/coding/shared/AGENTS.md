@@ -14,6 +14,7 @@
 
 - 供应商「分享」从当前记录或 runtime view 生成快照，复用 `deepLink/ProviderTransferModal` 和统一后端导入入口；新增卡片入口使用 `providerShare/useProviderSharing` 保持完成事件刷新。独立 API Key 才可迁移，官方 OAuth 不随分享导出；模型目录的不同连接分别分享。协议与边界见 `web/features/shared/deepLink/AGENTS.md`。
 
+- `configSaveBase.ts` 是「只拥有配置文件一部分的编辑面如何落盘」的共享规则：保存前必须重读文件，读得到就用文件副本做基底（`pickConfigSaveBase()`），读不到（notFound/parseError/error）才回退页面内存副本。原因是隐藏字段由别的入口直接写文件（MCP 页、托盘、深链导入、备份恢复），用陈旧内存副本合并会把它们整段回退——issue #406（OpenCode「其他配置」失焦把 MCP 页刚加进 `opencode.json` 的 server 写没了）与 OpenClaw 同形缺陷都源于此。新增这类编辑面（或给现有编辑面加自动保存）时先接这个规则，不要自建第二套判断。回归：`web/test/features/coding/shared/configSaveBase.test.ts`。
 - `useRootDirectoryConfig` + `RootDirectoryModal` 把 Claude/Codex 的根目录编辑语义统一起来，避免两个页面对 `custom/env/shell/default` 的解释漂移。
 - Claude/Codex/Grok CLI/Gemini CLI 复用共享根目录交互，而 OpenCode/OpenClaw 继续使用各自的配置文件路径弹窗；这是“根目录模块”和“文件路径模块”的前端分层，不要为了复用把两类语义硬揉到一个 modal 里。
 - `favoriteProviders.ts` 用 source 前缀和 payload 约定把 OpenCode/Claude/Codex/OpenClaw 的收藏 provider 统一建模，避免不同页面各存一套不兼容 key。

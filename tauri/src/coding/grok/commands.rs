@@ -760,11 +760,12 @@ pub async fn save_grok_common_config(
         )
         .await?;
     } else {
-        let path = get_grok_config_path_async(db).await?;
-        // Full overwrite instead of a merge, but still under the write lock so
-        // it cannot interleave with a concurrent provider apply.
-        let _guard = CONFIG_WRITE_LOCK.lock().await;
-        write_text_atomic(&path, &input.config)?;
+        write_grok_common_config_without_provider(
+            db,
+            previous_common_config.as_deref(),
+            &input.config,
+        )
+        .await?;
     }
     resync_all_skills_if_tool_path_changed(
         app.clone(),
@@ -1593,6 +1594,49 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<GrokPrompt
         created_at: Some(now.clone()),
         updated_at: Some(now),
     }))
+}
+
+/// Lock-taking entry point for the no-provider branch of
+/// `save_grok_common_config` (also exercised by the integration test).
+pub async fn write_grok_common_config_without_provider(
+    db: &SqliteDbState,
+    previous_common_config: Option<&str>,
+    common_config: &str,
+) -> Result<(), String> {
+    // The lock is held across the whole read-modify-write so it cannot
+    // interleave with a concurrent provider apply.
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
+    let path = get_grok_config_path_async(db).await?;
+    write_grok_common_config_without_provider_locked(&path, previous_common_config, common_config)
+}
+
+/// Apply a common-config edit onto the live `config.toml`.
+///
+/// The stored blob and the modal payload never contain the protected sections
+/// (`merge_common_config` skips them and `validate_unmanaged_grok_config`
+/// rejects them), so writing the blob as the whole file deleted every
+/// `[mcp_servers.*]` the MCP page manages in this very file, plus `[plugins]`
+/// and `[marketplace]`. Mirror the Kimi side
+/// (`write_common_config_without_provider_locked`): drop only the keys the
+/// previous blob owned, then merge the new one.
+fn write_grok_common_config_without_provider_locked(
+    path: &Path,
+    previous_common_config: Option<&str>,
+    common_config: &str,
+) -> Result<(), String> {
+    let current = read_optional_text(path)?.unwrap_or_default();
+    let mut document = if current.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        current
+            .parse::<DocumentMut>()
+            .map_err(|error| format!("Invalid live Grok config.toml: {error}"))?
+    };
+    if let Some(previous_common_config) = previous_common_config {
+        remove_matching_unmanaged_config(&mut document, previous_common_config)?;
+    }
+    merge_common_config(&mut document, common_config)?;
+    write_text_atomic(path, &document.to_string())
 }
 
 fn merge_common_config(document: &mut DocumentMut, common: &str) -> Result<(), String> {
