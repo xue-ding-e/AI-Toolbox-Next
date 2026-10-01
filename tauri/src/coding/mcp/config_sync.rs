@@ -21,6 +21,45 @@ use crate::coding::{
 
 const OMP_MCP_SCHEMA_URL: &str = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
 
+/// Whether this sync target is an OpenCode config currently stored in the V2
+/// shape (`mcp.servers.<name>` instead of the V1 `mcp.<name>`).
+///
+/// The live shape is owned by the OpenCode page's migration switch, which is the
+/// presence of the `openvode_v1.<ext>` backup next to the config file. Reading it
+/// here keeps file sync from writing V1-shaped servers into a V2 file, where
+/// OpenCode 2.x (`config/plugin/mcp.ts` reads `mcp?.servers`) would never load
+/// them. Both directions reuse `open_code::v2_migration` so this sync cannot
+/// drift from the page's own boundary conversion.
+fn target_is_opencode_v2(tool_key: &str, config_path: &Path) -> bool {
+    tool_key == "opencode" && crate::coding::open_code::v2_migration::is_active(config_path)
+}
+
+/// Read a parsed OpenCode config as the V1 shape the sync logic below edits.
+fn opencode_config_to_v1_view(
+    tool_key: &str,
+    config_path: &Path,
+    config: Value,
+) -> Result<Value, String> {
+    if target_is_opencode_v2(tool_key, config_path) {
+        crate::coding::open_code::v2_migration::v2_to_v1_value(config)
+    } else {
+        Ok(config)
+    }
+}
+
+/// Render the edited V1-shape config back into the shape the live file uses.
+fn opencode_config_to_live_shape(
+    tool_key: &str,
+    config_path: &Path,
+    config: Value,
+) -> Result<Value, String> {
+    if target_is_opencode_v2(tool_key, config_path) {
+        crate::coding::open_code::v2_migration::v1_to_v2_value(config)
+    } else {
+        Ok(config)
+    }
+}
+
 /// Sync an MCP server to a specific tool's config file
 pub fn sync_server_to_tool(
     db: &crate::db::SqliteDbState,
@@ -281,7 +320,7 @@ fn remove_server_from_path(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => remove_server_from_json(config_path, server_name, field),
+        "json" | "jsonc" => remove_server_from_json(config_path, server_name, field, &tool.key),
         "toml" => remove_server_from_toml(config_path, server_name, field),
         "yaml" => match tool.key.as_str() {
             "hermes" => super::hermes_mcp::remove_server_from_hermes(config_path, server_name),
@@ -320,8 +359,9 @@ fn sync_server_to_json(
     tool_key: &str,
     should_wrap_cmd: bool,
 ) -> Result<(), String> {
-    // Read existing config or create new (json5 handles both JSON and JSONC)
-    let mut config: Value = if config_path.exists() {
+    // Read existing config or create new (json5 handles both JSON and JSONC),
+    // then edit it in the V1 shape the shared helpers below understand.
+    let existing: Value = if config_path.exists() {
         let content = std::fs::read_to_string(config_path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
         let content = content.trim();
@@ -333,6 +373,7 @@ fn sync_server_to_json(
     } else {
         serde_json::json!({})
     };
+    let mut config = opencode_config_to_v1_view(tool_key, config_path, existing)?;
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
@@ -358,6 +399,7 @@ fn sync_server_to_json(
     // Write back to file with pretty formatting
     // Note: json5 crate doesn't have serialization, so we write standard JSON
     // which is valid JSON5 (JSON is a subset of JSON5)
+    let config = opencode_config_to_live_shape(tool_key, config_path, config)?;
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     std::fs::write(config_path, content)
@@ -371,6 +413,7 @@ fn remove_server_from_json(
     config_path: &PathBuf,
     server_name: &str,
     field: &str,
+    tool_key: &str,
 ) -> Result<(), String> {
     if !config_path.exists() {
         return Ok(()); // Nothing to remove
@@ -382,8 +425,9 @@ fn remove_server_from_json(
     if content.is_empty() {
         return Ok(()); // Empty file, nothing to remove
     }
-    let mut config: Value =
+    let parsed: Value =
         json5::from_str(content).map_err(|e| format!("Failed to parse config file: {}", e))?;
+    let mut config = opencode_config_to_v1_view(tool_key, config_path, parsed)?;
 
     // Get the MCP servers field, supporting nested paths like `mcp.servers`.
     if let Some(mcp_servers) = get_json_value_by_path_mut(&mut config, field) {
@@ -393,6 +437,7 @@ fn remove_server_from_json(
     }
 
     // Write back to file
+    let config = opencode_config_to_live_shape(tool_key, config_path, config)?;
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     std::fs::write(config_path, content)
@@ -1227,7 +1272,7 @@ pub(crate) fn import_servers_from_path(
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
         "json" | "jsonc" if tool.key == "kimi" => import_servers_from_kimi(config_path),
-        "json" | "jsonc" => import_servers_from_json(config_path, field, format_config),
+        "json" | "jsonc" => import_servers_from_json(config_path, field, format_config, &tool.key),
         "toml" => import_servers_from_toml(config_path, field, &tool.key),
         "yaml" => match tool.key.as_str() {
             "hermes" => super::hermes_mcp::import_servers_from_hermes(config_path),
@@ -1385,6 +1430,7 @@ fn import_servers_from_json(
     config_path: &PathBuf,
     field: &str,
     format_config: Option<&McpFormatConfig>,
+    tool_key: &str,
 ) -> Result<Vec<McpServer>, String> {
     let content = std::fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
@@ -1392,8 +1438,11 @@ fn import_servers_from_json(
     if content.is_empty() {
         return Ok(vec![]);
     }
-    let config: Value =
+    let parsed: Value =
         json5::from_str(content).map_err(|e| format!("Failed to parse config file: {}", e))?;
+    // A V2 OpenCode file keeps its servers under `mcp.servers`; parse the V1 view
+    // so the shared field-based reader sees them.
+    let config = opencode_config_to_v1_view(tool_key, config_path, parsed)?;
 
     parse_mcp_servers_from_value(&config, field, format_config)
 }
@@ -1931,6 +1980,95 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    /// Mark `dir/opencode.json` as an OpenCode V2 target: the V2-shaped content
+    /// plus the `openvode_v1.<ext>` backup that `v2_migration::is_active` reads.
+    fn write_opencode_v2_config(dir: &Path) -> PathBuf {
+        let config_path = dir.join("opencode.json");
+        let content = json!({
+            "providers": {
+                "relay": {
+                    "name": "Relay",
+                    "package": "@ai-sdk/openai-compatible",
+                    "settings": { "baseURL": "https://relay.example.com" }
+                }
+            },
+            "mcp": { "servers": {} }
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&content).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("openvode_v1.json"), "{}\n").unwrap();
+        config_path
+    }
+
+    #[test]
+    fn opencode_v2_target_writes_and_reads_servers_under_mcp_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = write_opencode_v2_config(dir.path());
+        let server = build_openclaw_stdio_server();
+
+        sync_server_to_json(&config_path, &server, "mcp", None, true, "opencode", false).unwrap();
+
+        let written: Value =
+            json5::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        // OpenCode 2.x only reads `mcp.servers`; the V1 location must stay unused.
+        assert_eq!(written["mcp"]["servers"]["gemini"]["command"], "node");
+        assert_eq!(
+            written["mcp"]["servers"]["gemini"]["args"],
+            json!(["server.js"])
+        );
+        assert!(
+            written["mcp"]["gemini"].is_null(),
+            "V1-shaped entry leaked into a V2 file: {written}"
+        );
+        assert_eq!(
+            written["providers"]["relay"]["package"], "@ai-sdk/openai-compatible",
+            "the rest of the V2 file must survive the boundary conversion: {written}"
+        );
+
+        let imported = import_servers_from_json(
+            &config_path,
+            "mcp",
+            get_format_config("opencode"),
+            "opencode",
+        )
+        .unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].name, "gemini");
+
+        remove_server_from_json(&config_path, "gemini", "mcp", "opencode").unwrap();
+        let after: Value =
+            json5::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        // An emptied map may be omitted entirely by the V2 writer.
+        let remaining = after["mcp"]["servers"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        assert!(remaining.is_empty(), "server survived removal: {after}");
+        assert!(
+            after["mcp"]["gemini"].is_null(),
+            "removal wrote a V1 entry: {after}"
+        );
+    }
+
+    #[test]
+    fn opencode_v1_target_keeps_servers_at_the_top_level_mcp_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("opencode.json");
+        std::fs::write(&config_path, "{\n  \"provider\": {}\n}\n").unwrap();
+        let server = build_openclaw_stdio_server();
+
+        sync_server_to_json(&config_path, &server, "mcp", None, true, "opencode", false).unwrap();
+
+        let written: Value =
+            json5::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(written["mcp"]["gemini"]["command"], "node");
+        assert_eq!(written["mcp"]["gemini"]["args"], json!(["server.js"]));
+        assert!(written["mcp"]["servers"].is_null());
     }
 
     #[test]

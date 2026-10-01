@@ -108,6 +108,13 @@ Gateway 协议转换采用双文档维护：
 
 工具结果媒体属于协议转换边界时，必须保持“有媒体才改写、无媒体沿用旧表示”的不变量：Chat tool message 不能承载原生图片时，把识别出的图片移到同一工具批次之后的 synthetic user turn；Responses 使用 `input_image`，Anthropic 使用原生 `image` block，Gemini 按 2.x/3.x 支持的 `functionResponse` 形态输出。媒体识别和目标协议映射必须以架构主文档、当前源码和回归测试为准，不能只复制参考项目的 helper。
 
+## OpenCode 代际判定
+
+- 「本机 OpenCode 是 V1 还是 V2」由用户在 OpenCode 页面声明的迁移开关决定，状态源是当前配置路径旁的 `openvode_v1.<ext>`（`open_code::v2_migration::is_active`）。它同时决定**配置文件形态**（1.x 顶层 `provider` / `mcp.<name>` 对 2.x 的 `providers` / `mcp.servers`）、**会话存储**（`session` / `message` / `part` 对 `session_v2` / `session_message`）和 **MCP 文件同步**的写入位置。
+- 升级过的 `opencode.db` 会两套表并存，所以不要因为 `session_v2` 表存在就自动切换会话模式，也不要在一种模式下改动另一套表；会话管理读哪一代只认这个开关（`session_manager/AGENTS.md`）。
+- 唯一例外是 Gateway 的本地用量采集：它只有数据库文件、拿不到配置路径，按文件自身的 `session_v2` 表判定活跃库。这是刻意保留的第二条口径，两侧都不要为了“统一”改成对方的规则（`proxy_gateway/AGENTS.md`）。
+- OpenCode 2.x 的会话导入/导出走 `opencode session export|import --standalone`（`--standalone` 起私有 server，避免与用户的共享后台服务抢固定端口；1.x 的 `export`/`import` 仍在顶层）。V2 模式下应用会把 1.x 格式的载荷升级成 2.x transfer schema；CLI 拒绝时失败信息会提示切换 V2 开关。
+
 ## Design System
 
 - 根目录 `DESIGN.md` 是 AI Toolbox 的视觉设计系统 Source of Truth，给 AI coding agents 阅读，不是应用运行时资源。

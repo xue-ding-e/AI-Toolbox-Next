@@ -278,10 +278,17 @@ pub fn process_opencode_json(
     let mut root: Value =
         json5::from_str(content).map_err(|e| format!("Failed to parse OpenCode JSON: {}", e))?;
 
-    // Process mcp.servers or mcp (depending on format)
-    // OpenCode uses "mcp" field which can be an object with server configs
+    // OpenCode 1.x keeps its servers directly under `mcp`; 2.x nests them under
+    // `mcp.servers` (the shape the OpenCode page's migration switch declares).
+    // Normalize whichever map holds them, so a WSL/SSH copy of either generation
+    // still loses the Windows-only `cmd /c` wrapper.
     if let Some(mcp) = root.get_mut("mcp").and_then(|v| v.as_object_mut()) {
-        for (name, server_config) in mcp.iter_mut() {
+        let servers = match mcp.get_mut("servers") {
+            Some(Value::Object(servers)) => servers,
+            _ => mcp,
+        };
+
+        for (name, server_config) in servers.iter_mut() {
             // Skip non-object entries and special fields
             if name == "enabled" || name == "disabled" {
                 continue;
@@ -737,6 +744,19 @@ mcp_servers:
         assert_eq!(arr[0], "/mnt/c/Users/x/bin/opencode.exe");
         assert_eq!(arr[1], "-y");
         assert_eq!(arr[2], "pkg");
+    }
+
+    #[test]
+    fn process_opencode_json_wsl_transforms_v2_nested_array_command() {
+        let raw = r#"{"mcp":{"servers":{"fs":{"type":"local","command":["cmd","/c","C:\\Users\\x\\bin\\opencode.exe","-y","pkg"]}}}}"#;
+        let processed = process_opencode_json(raw, false, &wsl_transform).unwrap();
+        let v: Value = serde_json::from_str(&processed).unwrap();
+        // 2.x keeps servers under `mcp.servers`; the wrapper must still be
+        // stripped and the Windows path rewritten for the Linux-side target.
+        assert_eq!(
+            v["mcp"]["servers"]["fs"]["command"],
+            json!(["/mnt/c/Users/x/bin/opencode.exe", "-y", "pkg"])
+        );
     }
 
     #[test]
