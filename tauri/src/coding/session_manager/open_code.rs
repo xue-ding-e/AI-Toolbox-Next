@@ -305,6 +305,417 @@ pub fn rename_session(source_path: &str, next_title: &str, v2: bool) -> Result<(
     Ok(())
 }
 
+/// Map a failed `Command::output()` onto the existing local/WSL CLI error text.
+fn map_opencode_spawn_error(
+    runtime_location: &RuntimeLocationInfo,
+    error: &std::io::Error,
+    command_name: &str,
+    command_context: &str,
+) -> String {
+    match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => {
+            build_missing_local_opencode_spawn_message(error, command_name, command_context)
+        }
+        RuntimeLocationMode::WslDirect => {
+            let runtime_error =
+                format!("Failed to run `{command_name}`: {error} ({command_context})");
+            let distro = runtime_location
+                .wsl
+                .as_ref()
+                .map(|wsl| wsl.distro.as_str())
+                .unwrap_or("unknown");
+            build_missing_wsl_opencode_cli_message(distro, &runtime_error)
+        }
+    }
+}
+
+/// Whether this OpenCode installation is in the V2 mode declared on the OpenCode page.
+///
+/// The migration switch (`openvode_v1.<ext>` next to the config file) is this
+/// module's single source of truth for the generation in use: the session
+/// list/detail/search/rename/delete paths already pick their store by it, so the
+/// transfer commands and their payload have to follow the same declaration
+/// instead of probing the CLI. Reading or writing the other generation's store
+/// while one mode is declared is exactly what the module forbids.
+fn opencode_v2_mode(config_path: Option<&Path>) -> bool {
+    config_path.is_some_and(crate::coding::open_code::v2_migration::is_active)
+}
+
+/// Tell the user which way to flip the migration switch when a transfer fails
+/// because the installed CLI and the declared mode disagree with each other.
+fn opencode_generation_hint(v2: bool) -> &'static str {
+    if v2 {
+        "若本机 OpenCode 仍是 1.x，请在 OpenCode 页面关闭「迁移 OpenCode 配置到 V2」后重试。"
+    } else {
+        "若本机 OpenCode 已升级到 2.x，请在 OpenCode 页面开启「迁移 OpenCode 配置到 V2」后重试。"
+    }
+}
+
+/// Run one OpenCode session subcommand in the declared generation's spelling.
+fn run_opencode_session_command(
+    runtime_location: &RuntimeLocationInfo,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+    state_root: Option<&Path>,
+    working_directory: Option<&Path>,
+    v2: bool,
+    subcommand: &str,
+    argument: &str,
+    command_name: &str,
+    command_context: &str,
+) -> Result<std::process::Output, String> {
+    let mut command = build_opencode_command(
+        runtime_location,
+        config_path,
+        data_root,
+        state_root,
+        working_directory,
+    )?;
+    if v2 {
+        // 2.x moved both commands under `session`. `--standalone` keeps the
+        // transfer away from the shared background service: that daemon may be
+        // busy with an interactive session, and a private server also works from
+        // an isolated environment instead of racing for its fixed port.
+        command
+            .args(["session", subcommand, argument])
+            .arg("--standalone");
+    } else {
+        command.arg(subcommand).arg(argument);
+    }
+
+    command.output().map_err(|error| {
+        map_opencode_spawn_error(runtime_location, &error, command_name, command_context)
+    })
+}
+
+fn empty_opencode_token_usage() -> Value {
+    serde_json::json!({
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache": {
+            "read": 0,
+            "write": 0
+        }
+    })
+}
+
+fn timestamp_millis(value: Option<&Value>) -> i64 {
+    value
+        .and_then(Value::as_f64)
+        .map(|value| value as i64)
+        .unwrap_or(0)
+}
+
+fn legacy_parts_text(parts: &[Value]) -> String {
+    parts
+        .iter()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Rewrite a 1.x `opencode export` payload into the 2.x transfer schema.
+///
+/// OpenCode 2.x validates the import payload against a stricter schema: the
+/// session gained `cost`/`tokens`/`location` and messages became tagged
+/// (`type: user|assistant`) with a `content` list instead of `{info, parts}`.
+/// Payloads that already carry the 2.x shape (`info.location`) are returned as
+/// they are, and so are payloads that are not a legacy export at all, so the CLI
+/// can still report its own error.
+fn upgrade_legacy_opencode_export(export: &Value) -> Value {
+    let Some(info) = export.get("info").and_then(Value::as_object) else {
+        return export.clone();
+    };
+    if info.contains_key("location") {
+        return export.clone();
+    }
+    let Some(messages) = export.get("messages").and_then(Value::as_array) else {
+        return export.clone();
+    };
+
+    let session_id = info.get("id").and_then(Value::as_str).unwrap_or_default();
+    let directory = info
+        .get("directory")
+        .and_then(Value::as_str)
+        .filter(|directory| !directory.is_empty())
+        .or_else(|| {
+            messages.iter().find_map(|message| {
+                message
+                    .pointer("/info/path/cwd")
+                    .and_then(Value::as_str)
+                    .filter(|cwd| !cwd.is_empty())
+            })
+        })
+        .unwrap_or_default();
+
+    let mut upgraded_info = Map::new();
+    upgraded_info.insert("id".to_string(), Value::String(session_id.to_string()));
+    upgraded_info.insert(
+        "projectID".to_string(),
+        info.get("projectID")
+            .cloned()
+            .unwrap_or_else(|| Value::String("global".to_string())),
+    );
+    upgraded_info.insert("cost".to_string(), serde_json::json!(0));
+    upgraded_info.insert("tokens".to_string(), empty_opencode_token_usage());
+    upgraded_info.insert(
+        "time".to_string(),
+        serde_json::json!({
+            "created": timestamp_millis(info.get("time").and_then(|time| time.get("created"))),
+            "updated": timestamp_millis(info.get("time").and_then(|time| time.get("updated"))),
+        }),
+    );
+    if let Some(title) = info.get("title").and_then(Value::as_str) {
+        upgraded_info.insert("title".to_string(), Value::String(title.to_string()));
+    }
+    upgraded_info.insert(
+        "location".to_string(),
+        serde_json::json!({ "directory": directory }),
+    );
+
+    let upgraded_messages = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| upgrade_legacy_opencode_message(message, index))
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "info": Value::Object(upgraded_info),
+        "messages": upgraded_messages
+    })
+}
+
+fn upgrade_legacy_opencode_message(message: &Value, index: usize) -> Option<Value> {
+    let info = message.get("info")?;
+    let role = info.get("role").and_then(Value::as_str)?;
+    let parts = message
+        .get("parts")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let message_id = info
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("msg_"))
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("msg_recovered_{index:06}"));
+    let created = timestamp_millis(info.pointer("/time/created"));
+
+    match role {
+        "user" => Some(serde_json::json!({
+            "id": message_id,
+            "type": "user",
+            "time": {
+                "created": created
+            },
+            "text": legacy_parts_text(parts)
+        })),
+        "assistant" => {
+            let content = parts
+                .iter()
+                .enumerate()
+                .filter_map(|(part_index, part)| {
+                    upgrade_legacy_opencode_part(part, created, part_index)
+                })
+                .collect::<Vec<_>>();
+            let completed = timestamp_millis(info.pointer("/time/completed")).max(created);
+
+            Some(serde_json::json!({
+                "id": message_id,
+                "type": "assistant",
+                "agent": info
+                    .get("agent")
+                    .and_then(Value::as_str)
+                    .unwrap_or("imported"),
+                "model": {
+                    "id": info
+                        .get("modelID")
+                        .and_then(Value::as_str)
+                        .unwrap_or("recovered"),
+                    "providerID": info
+                        .get("providerID")
+                        .and_then(Value::as_str)
+                        .unwrap_or("imported")
+                },
+                "content": content,
+                "cost": info.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
+                "tokens": legacy_tokens_to_v2(info.get("tokens")),
+                "time": {
+                    "created": created,
+                    "completed": completed
+                }
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn legacy_tokens_to_v2(tokens: Option<&Value>) -> Value {
+    let token_value = |key: &str| {
+        tokens
+            .and_then(|tokens| tokens.get(key))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    };
+    let cache_value = |key: &str| {
+        tokens
+            .and_then(|tokens| tokens.get("cache"))
+            .and_then(|cache| cache.get(key))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    };
+
+    serde_json::json!({
+        "input": token_value("input"),
+        "output": token_value("output"),
+        "reasoning": token_value("reasoning"),
+        "cache": {
+            "read": cache_value("read"),
+            "write": cache_value("write")
+        }
+    })
+}
+
+fn upgrade_legacy_opencode_part(part: &Value, message_created: i64, index: usize) -> Option<Value> {
+    let part_type = part.get("type").and_then(Value::as_str)?;
+    match part_type {
+        "text" => Some(serde_json::json!({
+            "type": "text",
+            "text": part.get("text").and_then(Value::as_str).unwrap_or_default()
+        })),
+        "reasoning" => Some(serde_json::json!({
+            "type": "reasoning",
+            "text": part
+                .get("text")
+                .or_else(|| part.get("reasoning"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        })),
+        "tool" => {
+            let tool_call_id = part
+                .get("callID")
+                .or_else(|| part.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("call_recovered_{index:06}"));
+            let created = timestamp_millis(part.pointer("/time/created")).max(message_created);
+
+            Some(serde_json::json!({
+                "type": "tool",
+                "id": tool_call_id,
+                "name": part.get("tool").and_then(Value::as_str).unwrap_or("unknown"),
+                "state": upgrade_legacy_opencode_tool_state(part.get("state")),
+                "time": {
+                    "created": created
+                }
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn upgrade_legacy_opencode_tool_state(state: Option<&Value>) -> Value {
+    let status = state
+        .and_then(|state| state.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
+    let input = state
+        .and_then(|state| state.get("input"))
+        .filter(|input| input.is_object())
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+
+    match status {
+        "completed" => {
+            let output = state
+                .and_then(|state| state.get("output"))
+                .map(|output| {
+                    output
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| output.to_string())
+                })
+                .unwrap_or_default();
+            serde_json::json!({
+                "status": "completed",
+                "input": input,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": output
+                    }
+                ]
+            })
+        }
+        "error" | "cancelled" => {
+            let message = state
+                .and_then(|state| state.get("error"))
+                .map(|error| {
+                    error
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| error.to_string())
+                })
+                .unwrap_or_else(|| format!("Tool execution failed: {status}"));
+            serde_json::json!({
+                "status": "error",
+                "input": input,
+                "error": {
+                    "type": status,
+                    "message": message
+                }
+            })
+        }
+        _ => serde_json::json!({
+            "status": "running",
+            "input": input,
+            "metadata": {}
+        }),
+    }
+}
+
+/// Pick the export payload the declared generation will accept.
+///
+/// A snapshot carries the export captured when the session was written, or
+/// nothing usable, in which case the transcript is rebuilt from the normalized
+/// messages. OpenCode 2.x replaced the 1.x transfer schema, so a payload captured
+/// by a 1.x CLI has to be upgraded before a 2.x CLI can read it.
+fn resolve_opencode_import_export(
+    snapshot: &Value,
+    session_id: &str,
+    meta: Option<&SessionMeta>,
+    normalized_messages: Option<&[SessionMessage]>,
+    preferred_project_dir: Option<&str>,
+    v2: bool,
+) -> Value {
+    let export_value = snapshot
+        .get("officialExport")
+        .cloned()
+        .or_else(|| {
+            snapshot
+                .get("officialExportRaw")
+                .and_then(Value::as_str)
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        })
+        .unwrap_or_else(|| {
+            build_recovered_official_export(
+                session_id,
+                meta,
+                normalized_messages,
+                preferred_project_dir,
+                v2,
+            )
+        });
+
+    if v2 {
+        upgrade_legacy_opencode_export(&export_value)
+    } else {
+        export_value
+    }
+}
+
 pub fn export_native_snapshot(
     source_path: &str,
     meta: &SessionMeta,
@@ -317,60 +728,57 @@ pub fn export_native_snapshot(
     let session_id = extract_session_id_from_source(source_path)?;
     let command_context =
         format_command_context(runtime_location, config_path, data_root, state_root, None);
-    let mut command =
-        build_opencode_command(runtime_location, config_path, data_root, state_root, None)?;
-    command.arg("export").arg(&session_id);
-    let output = command
-        .output()
-        .map_err(|error| match runtime_location.mode {
-            RuntimeLocationMode::LocalWindows => build_missing_local_opencode_spawn_message(
-                &error,
-                &format!("opencode export {session_id}"),
-                &command_context,
-            ),
-            RuntimeLocationMode::WslDirect => {
-                let runtime_error = format!(
-                    "Failed to run `opencode export {session_id}`: {error} ({command_context})"
-                );
-                let distro = runtime_location
-                    .wsl
-                    .as_ref()
-                    .map(|wsl| wsl.distro.as_str())
-                    .unwrap_or("unknown");
-                build_missing_wsl_opencode_cli_message(distro, &runtime_error)
-            }
-        })?;
+    let v2 = opencode_v2_mode(config_path);
+    let export_command_name = if v2 {
+        format!("opencode session export {session_id}")
+    } else {
+        format!("opencode export {session_id}")
+    };
+    let output = run_opencode_session_command(
+        runtime_location,
+        config_path,
+        data_root,
+        state_root,
+        None,
+        v2,
+        "export",
+        &session_id,
+        &export_command_name,
+        &command_context,
+    )?;
 
     if !output.status.success() {
         let stderr_preview = summarize_command_output(&output.stderr);
         let stdout_preview = summarize_command_output(&output.stdout);
         return Err(format!(
-            "`opencode export {session_id}` failed with status {} ({command_context}). stderr: {}; stdout: {}",
-            output.status, stderr_preview, stdout_preview
+            "`{export_command_name}` failed with status {} ({command_context}). stderr: {}; stdout: {}. {}",
+            output.status,
+            stderr_preview,
+            stdout_preview,
+            opencode_generation_hint(v2)
         ));
     }
 
     let stdout = String::from_utf8(output.stdout)
         .map_err(|error| format!("OpenCode export output is not valid UTF-8: {error}"))?;
-    let exported_json = serde_json::from_str::<Value>(&stdout).ok().or_else(|| {
-        Some(build_recovered_official_export(
+    let exported_json = match serde_json::from_str::<Value>(&stdout) {
+        Ok(value) => value,
+        Err(_) => build_recovered_official_export(
             &session_id,
             Some(meta),
             Some(messages),
             meta.project_dir.as_deref(),
-        ))
-    });
+            v2,
+        ),
+    };
+
     let mut payload = Map::new();
     payload.insert("sessionId".to_string(), Value::String(session_id));
-    if let Some(exported_json) = exported_json {
-        let exported_raw = serde_json::to_string_pretty(&exported_json).map_err(|error| {
-            format!("Failed to serialize recovered OpenCode official export: {error}")
-        })?;
-        payload.insert("officialExportRaw".to_string(), Value::String(exported_raw));
-        payload.insert("officialExport".to_string(), exported_json);
-    } else {
-        payload.insert("officialExportRaw".to_string(), Value::String(stdout));
-    }
+    let exported_raw = serde_json::to_string_pretty(&exported_json).map_err(|error| {
+        format!("Failed to serialize recovered OpenCode official export: {error}")
+    })?;
+    payload.insert("officialExportRaw".to_string(), Value::String(exported_raw));
+    payload.insert("officialExport".to_string(), exported_json);
 
     Ok(Value::Object(payload))
 }
@@ -386,35 +794,17 @@ pub fn import_native_snapshot(
     state_root: Option<&Path>,
 ) -> Result<(), String> {
     let session_id = extract_session_id_from_snapshot(snapshot)?;
-    let serialized = if let Some(official_export) = snapshot.get("officialExport").cloned() {
-        serde_json::to_string_pretty(&official_export)
-            .map_err(|error| format!("Failed to serialize OpenCode official export: {error}"))?
-    } else if let Some(official_export_raw) =
-        snapshot.get("officialExportRaw").and_then(Value::as_str)
-    {
-        match serde_json::from_str::<Value>(official_export_raw) {
-            Ok(_) => official_export_raw.to_string(),
-            Err(_) => serde_json::to_string_pretty(&build_recovered_official_export(
-                &session_id,
-                meta,
-                normalized_messages,
-                preferred_project_dir,
-            ))
-            .map_err(|error| {
-                format!("Failed to serialize recovered OpenCode official export: {error}")
-            })?,
-        }
-    } else {
-        serde_json::to_string_pretty(&build_recovered_official_export(
-            &session_id,
-            meta,
-            normalized_messages,
-            preferred_project_dir,
-        ))
-        .map_err(|error| {
-            format!("Failed to serialize recovered OpenCode official export: {error}")
-        })?
-    };
+    let v2 = opencode_v2_mode(config_path);
+    let export_value = resolve_opencode_import_export(
+        snapshot,
+        &session_id,
+        meta,
+        normalized_messages,
+        preferred_project_dir,
+        v2,
+    );
+    let serialized = serde_json::to_string_pretty(&export_value)
+        .map_err(|error| format!("Failed to serialize OpenCode official export: {error}"))?;
 
     let temp_path = std::env::temp_dir().join(format!(
         "ai-toolbox-opencode-import-{}.json",
@@ -438,38 +828,27 @@ pub fn import_native_snapshot(
         state_root,
         runtime_project_dir.as_deref(),
     );
-    let mut command = build_opencode_command(
+    let import_argument = match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => temp_path.to_string_lossy().to_string(),
+        RuntimeLocationMode::WslDirect => convert_to_wsl_command_path(&temp_path)?,
+    };
+    let import_command_name = if v2 {
+        "opencode session import"
+    } else {
+        "opencode import"
+    };
+    let output = run_opencode_session_command(
         runtime_location,
         config_path,
         data_root,
         state_root,
         runtime_project_dir.as_deref(),
+        v2,
+        "import",
+        &import_argument,
+        import_command_name,
+        &command_context,
     )?;
-    let import_argument = match runtime_location.mode {
-        RuntimeLocationMode::LocalWindows => temp_path.to_string_lossy().to_string(),
-        RuntimeLocationMode::WslDirect => convert_to_wsl_command_path(&temp_path)?,
-    };
-    command.arg("import").arg(import_argument);
-
-    let output = command
-        .output()
-        .map_err(|error| match runtime_location.mode {
-            RuntimeLocationMode::LocalWindows => build_missing_local_opencode_spawn_message(
-                &error,
-                "opencode import",
-                &command_context,
-            ),
-            RuntimeLocationMode::WslDirect => {
-                let runtime_error =
-                    format!("Failed to run `opencode import`: {error} ({command_context})");
-                let distro = runtime_location
-                    .wsl
-                    .as_ref()
-                    .map(|wsl| wsl.distro.as_str())
-                    .unwrap_or("unknown");
-                build_missing_wsl_opencode_cli_message(distro, &runtime_error)
-            }
-        })?;
     let _ = std::fs::remove_file(&temp_path);
 
     if output.status.success() {
@@ -478,17 +857,13 @@ pub fn import_native_snapshot(
         if stderr_preview.contains("File not found:") || stdout_preview.contains("File not found:")
         {
             return Err(format!(
-                "`opencode import` reported success but could not read the import file ({command_context}). stderr: {}; stdout: {}",
+                "`{import_command_name}` reported success but could not read the import file ({command_context}). stderr: {}; stdout: {}",
                 stderr_preview, stdout_preview
             ));
         }
         if let Some(data_root) = data_root {
-            ensure_imported_session_visible(
-                data_root,
-                &session_id,
-                &command_context,
-                config_path.is_some_and(crate::coding::open_code::v2_migration::is_active),
-            )?;
+            // The store this mode reads has to be the one the import wrote to.
+            ensure_imported_session_visible(data_root, &session_id, &command_context, v2)?;
         }
         return Ok(());
     }
@@ -496,8 +871,11 @@ pub fn import_native_snapshot(
     let stderr_preview = summarize_command_output(&output.stderr);
     let stdout_preview = summarize_command_output(&output.stdout);
     Err(format!(
-        "`opencode import` failed with status {} ({command_context}). stderr: {}; stdout: {}",
-        output.status, stderr_preview, stdout_preview
+        "`{import_command_name}` failed with status {} ({command_context}). stderr: {}; stdout: {}. {}",
+        output.status,
+        stderr_preview,
+        stdout_preview,
+        opencode_generation_hint(v2)
     ))
 }
 
@@ -538,11 +916,17 @@ fn extract_session_id_from_snapshot(snapshot: &Value) -> Result<String, String> 
     Err("OpenCode snapshot missing sessionId".to_string())
 }
 
+/// Rebuild a transfer payload from the normalized transcript.
+///
+/// 2.x dropped the 1.x `parentID` chain, so no synthetic parent is needed for
+/// assistant-first transcripts, and messages use the tagged `type`/`content`
+/// shape. The 1.x branch keeps the historical `{info, parts}` payload.
 fn build_recovered_official_export(
     session_id: &str,
     meta: Option<&SessionMeta>,
     normalized_messages: Option<&[SessionMessage]>,
     preferred_project_dir: Option<&str>,
+    v2: bool,
 ) -> Value {
     let project_dir = meta
         .and_then(|item| item.project_dir.as_deref())
@@ -569,8 +953,19 @@ fn build_recovered_official_export(
         .or_else(|| meta.and_then(|item| item.summary.as_deref()))
         .unwrap_or("Imported Session")
         .to_string();
-
     let source_messages = normalized_messages.unwrap_or(&[]);
+
+    if v2 {
+        return build_recovered_v2_official_export(
+            session_id,
+            &project_dir,
+            created_at,
+            updated_at,
+            &title,
+            source_messages,
+        );
+    }
+
     let needs_leading_parent = source_messages
         .first()
         .map(|message| message.role == "assistant")
@@ -698,6 +1093,77 @@ fn build_recovered_official_export(
             "time": {
                 "created": created_at,
                 "updated": updated_at
+            }
+        },
+        "messages": messages
+    })
+}
+
+fn build_recovered_v2_official_export(
+    session_id: &str,
+    project_dir: &str,
+    created_at: i64,
+    updated_at: i64,
+    title: &str,
+    source_messages: &[SessionMessage],
+) -> Value {
+    let messages = source_messages
+        .iter()
+        .enumerate()
+        .map(|(message_index, message)| {
+            let message_id = format!("msg_recovered_{message_index:06}");
+            let message_ts = message
+                .ts
+                .unwrap_or_else(|| created_at.saturating_add((message_index as i64) * 1000));
+
+            if message.role == "assistant" {
+                serde_json::json!({
+                    "id": message_id,
+                    "type": "assistant",
+                    "agent": "imported",
+                    "model": {
+                        "id": "recovered",
+                        "providerID": "imported"
+                    },
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": message.content
+                        }
+                    ],
+                    "cost": 0,
+                    "tokens": empty_opencode_token_usage(),
+                    "time": {
+                        "created": message_ts,
+                        "completed": message_ts
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "id": message_id,
+                    "type": "user",
+                    "time": {
+                        "created": message_ts
+                    },
+                    "text": message.content
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "info": {
+            "id": session_id,
+            "projectID": "global",
+            "cost": 0,
+            "tokens": empty_opencode_token_usage(),
+            "time": {
+                "created": created_at,
+                "updated": updated_at
+            },
+            "title": title,
+            "location": {
+                "directory": project_dir
             }
         },
         "messages": messages
@@ -2342,11 +2808,13 @@ mod tests {
     use super::{
         delete_session_json_artifacts, ensure_imported_session_visible,
         extract_session_id_from_snapshot, find_session_json_paths, load_messages,
-        resolve_runtime_project_dir,
+        resolve_runtime_project_dir, SessionMessage,
     };
 
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    use serde_json::Value;
 
     use crate::coding::runtime_location::RuntimeLocationInfo;
 
@@ -2882,5 +3350,248 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM session_share", [], |row| row.get(0))
             .expect("count shares");
         assert_eq!(share_count, 1);
+    }
+
+    #[test]
+    fn upgrade_legacy_export_rewrites_session_and_messages_for_v2() {
+        let legacy_export = serde_json::json!({
+            "info": {
+                "id": "ses_legacy_export",
+                "slug": "legacy-export",
+                "projectID": "global",
+                "directory": "D:/projects/demo",
+                "title": "Legacy Export",
+                "version": "1.4.14",
+                "time": {"created": 1710000000000_i64, "updated": 1710000005000_i64}
+            },
+            "messages": [
+                {
+                    "info": {
+                        "id": "msg_legacy_user",
+                        "sessionID": "ses_legacy_export",
+                        "role": "user",
+                        "time": {"created": 1710000000000_i64},
+                        "agent": "build",
+                        "model": {"providerID": "openai", "modelID": "gpt-5"}
+                    },
+                    "parts": [
+                        {
+                            "id": "prt_legacy_user",
+                            "sessionID": "ses_legacy_export",
+                            "messageID": "msg_legacy_user",
+                            "type": "text",
+                            "text": "Legacy prompt"
+                        }
+                    ]
+                },
+                {
+                    "info": {
+                        "id": "msg_legacy_assistant",
+                        "sessionID": "ses_legacy_export",
+                        "role": "assistant",
+                        "time": {"created": 1710000001000_i64, "completed": 1710000002000_i64},
+                        "parentID": "msg_legacy_user",
+                        "modelID": "gpt-5",
+                        "providerID": "openai",
+                        "tokens": {"input": 12, "output": 5, "cache": {"read": 3, "write": 2}},
+                        "cost": 0.0012
+                    },
+                    "parts": [
+                        {"id": "prt_text", "type": "text", "text": "Legacy answer"},
+                        {"id": "prt_reasoning", "type": "reasoning", "text": "Legacy reasoning"},
+                        {
+                            "id": "prt_tool",
+                            "type": "tool",
+                            "tool": "edit",
+                            "callID": "call_legacy",
+                            "state": {
+                                "status": "completed",
+                                "input": {"filePath": "src/main.ts"},
+                                "output": "updated"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let upgraded = super::upgrade_legacy_opencode_export(&legacy_export);
+
+        assert_eq!(
+            upgraded.pointer("/info/id").and_then(Value::as_str),
+            Some("ses_legacy_export")
+        );
+        assert_eq!(
+            upgraded.pointer("/info/projectID").and_then(Value::as_str),
+            Some("global")
+        );
+        assert_eq!(
+            upgraded.pointer("/info/cost").and_then(Value::as_f64),
+            Some(0.0)
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/info/location/directory")
+                .and_then(Value::as_str),
+            Some("D:/projects/demo")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/info/tokens/input")
+                .and_then(Value::as_i64),
+            Some(0)
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/info/time/updated")
+                .and_then(Value::as_i64),
+            Some(1710000005000)
+        );
+
+        assert_eq!(
+            upgraded.pointer("/messages/0/type").and_then(Value::as_str),
+            Some("user")
+        );
+        assert_eq!(
+            upgraded.pointer("/messages/0/text").and_then(Value::as_str),
+            Some("Legacy prompt")
+        );
+        assert!(upgraded.pointer("/messages/0/parts").is_none());
+
+        assert_eq!(
+            upgraded.pointer("/messages/1/type").and_then(Value::as_str),
+            Some("assistant")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/time/completed")
+                .and_then(Value::as_i64),
+            Some(1710000002000)
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/model/id")
+                .and_then(Value::as_str),
+            Some("gpt-5")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/content/0/text")
+                .and_then(Value::as_str),
+            Some("Legacy answer")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/content/1/type")
+                .and_then(Value::as_str),
+            Some("reasoning")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/content/2/state/status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/content/2/state/input/filePath")
+                .and_then(Value::as_str),
+            Some("src/main.ts")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/content/2/state/content/0/text")
+                .and_then(Value::as_str),
+            Some("updated")
+        );
+        assert_eq!(
+            upgraded
+                .pointer("/messages/1/tokens/cache/read")
+                .and_then(Value::as_f64),
+            Some(3.0)
+        );
+    }
+
+    #[test]
+    fn upgrade_legacy_export_keeps_payloads_it_cannot_rewrite() {
+        let v2_export = serde_json::json!({
+            "info": {
+                "id": "ses_already_v2",
+                "projectID": "global",
+                "cost": 0,
+                "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+                "location": {"directory": "/tmp/demo"},
+                "time": {"created": 1, "updated": 2}
+            },
+            "messages": [{"id": "msg_v2", "type": "user", "time": {"created": 1}, "text": "hi"}]
+        });
+        assert_eq!(super::upgrade_legacy_opencode_export(&v2_export), v2_export);
+
+        let not_an_export = serde_json::json!({"unexpected": true});
+        assert_eq!(
+            super::upgrade_legacy_opencode_export(&not_an_export),
+            not_an_export
+        );
+    }
+
+    #[test]
+    fn recovered_v2_export_uses_tagged_messages_without_synthetic_parent() {
+        let recovered = super::build_recovered_official_export(
+            "ses_recovered_v2",
+            None,
+            Some(&[SessionMessage {
+                role: "assistant".to_string(),
+                content: "recovered answer".to_string(),
+                ts: Some(1710000000000),
+                id: None,
+                parent_id: None,
+                message_type: None,
+                blocks: Vec::new(),
+                model: None,
+                usage: None,
+                duration_ms: None,
+                cost_usd: None,
+                is_sidechain: None,
+                metadata: None,
+            }]),
+            Some("D:/projects/demo"),
+            true,
+        );
+
+        assert_eq!(
+            recovered.pointer("/info/id").and_then(Value::as_str),
+            Some("ses_recovered_v2")
+        );
+        assert_eq!(
+            recovered
+                .pointer("/info/location/directory")
+                .and_then(Value::as_str),
+            Some("D:/projects/demo")
+        );
+        assert_eq!(
+            recovered
+                .pointer("/messages/0/type")
+                .and_then(Value::as_str),
+            Some("assistant")
+        );
+        assert_eq!(
+            recovered
+                .pointer("/messages/0/agent")
+                .and_then(Value::as_str),
+            Some("imported")
+        );
+        assert_eq!(
+            recovered
+                .pointer("/messages/0/content/0/text")
+                .and_then(Value::as_str),
+            Some("recovered answer")
+        );
+        assert_eq!(
+            recovered
+                .get("messages")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
     }
 }

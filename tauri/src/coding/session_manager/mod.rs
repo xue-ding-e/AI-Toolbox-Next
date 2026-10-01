@@ -591,6 +591,13 @@ impl SessionTool {
     }
 }
 
+/// Which OpenCode session store this installation reads.
+///
+/// The module's single source of truth is the page's declared V2 mode, not the
+/// tables inside `opencode.db`: an upgraded database keeps both generations and
+/// the app must neither auto-switch nor touch the other mode's tables. The
+/// gateway usage importer deliberately reads the file's own schema instead — see
+/// this module's AGENTS.md.
 fn opencode_reads_v2(config_path: &Path) -> bool {
     crate::coding::open_code::v2_migration::is_active(config_path)
 }
@@ -5425,7 +5432,6 @@ mod tests {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let official_export_path = test_root.join("opencode-official-export.json");
         let official_export_json = json!({
             "info": {
                 "id": session_id,
@@ -5467,18 +5473,9 @@ mod tests {
                 }
             ]
         });
-        write_text_file(
-            &official_export_path,
-            &serde_json::to_string_pretty(&official_export_json)
-                .expect("serialize opencode official export"),
-        );
-
         let export_env = OpenCodeEnv::new(test_root, "opencode-export-env");
-        run_opencode_command(
-            &export_env,
-            &project_dir,
-            &["import", official_export_path.to_string_lossy().as_ref()],
-        );
+        let reads_v2 = prepare_opencode_env_generation(&export_env);
+        seed_opencode_official_export(&export_env, &official_export_json, session_id, &project_dir);
 
         let export_data_root = export_env.data_root();
         let export_runtime_location = RuntimeLocationInfo {
@@ -5501,7 +5498,7 @@ mod tests {
             sqlite_db_path: export_env.sqlite_db_path(),
         };
         let source_session =
-            open_code::scan_sessions(&export_data_root, &export_env.sqlite_db_path(), false)
+            open_code::scan_sessions(&export_data_root, &export_env.sqlite_db_path(), reads_v2)
                 .into_iter()
                 .find(|session| session.session_id == session_id)
                 .expect("opencode source session should exist");
@@ -5534,12 +5531,36 @@ mod tests {
         let mut exported_official_export_json: Value =
             serde_json::from_str(exported_official_export_raw)
                 .expect("parse exported official export raw json");
-        let mut expected_official_export_json = official_export_json.clone();
-        normalize_opencode_official_export_defaults(&mut exported_official_export_json);
-        normalize_opencode_official_export_defaults(&mut expected_official_export_json);
-        assert_eq!(exported_official_export_json, expected_official_export_json);
+        if reads_v2 {
+            // 2.x rewrites the payload into its own transfer schema, so assert the
+            // content the round trip has to preserve instead of the exact document.
+            assert_eq!(
+                exported_official_export_json
+                    .pointer("/info/id")
+                    .and_then(Value::as_str),
+                Some(session_id)
+            );
+            assert_eq!(
+                exported_official_export_json
+                    .pointer("/messages/0/type")
+                    .and_then(Value::as_str),
+                Some("user")
+            );
+            assert_eq!(
+                exported_official_export_json
+                    .pointer("/messages/0/text")
+                    .and_then(Value::as_str),
+                Some("OpenCode round trip prompt")
+            );
+        } else {
+            let mut expected_official_export_json = official_export_json.clone();
+            normalize_opencode_official_export_defaults(&mut exported_official_export_json);
+            normalize_opencode_official_export_defaults(&mut expected_official_export_json);
+            assert_eq!(exported_official_export_json, expected_official_export_json);
+        }
 
         let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
+        let import_reads_v2 = prepare_opencode_env_generation(&import_env);
         let import_runtime_location = RuntimeLocationInfo {
             mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
             source: "test".to_string(),
@@ -5568,16 +5589,20 @@ mod tests {
         .expect("opencode import should succeed");
         drop(import_env_guards);
 
-        let imported_sessions =
-            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path(), false);
+        let imported_sessions = open_code::scan_sessions(
+            &import_env.data_root(),
+            &import_env.sqlite_db_path(),
+            import_reads_v2,
+        );
         let imported_session = imported_sessions
             .iter()
             .find(|session| session.session_id == session_id)
             .expect("opencode imported session should exist");
         assert_project_dir_eq(imported_session.project_dir.as_deref(), &project_dir);
 
-        let imported_messages = open_code::load_messages(&imported_session.source_path, false)
-            .expect("load opencode messages");
+        let imported_messages =
+            open_code::load_messages(&imported_session.source_path, import_reads_v2)
+                .expect("load opencode messages");
         assert_eq!(imported_messages.len(), 1);
         assert_eq!(imported_messages[0].content, "OpenCode round trip prompt");
 
@@ -5591,10 +5616,13 @@ mod tests {
                 .and_then(Value::as_str),
             Some(session_id)
         );
+        let exported_after_import_text = if import_reads_v2 {
+            exported_after_import_json.pointer("/messages/0/text")
+        } else {
+            exported_after_import_json.pointer("/messages/0/parts/0/text")
+        };
         assert_eq!(
-            exported_after_import_json
-                .pointer("/messages/0/parts/0/text")
-                .and_then(Value::as_str),
+            exported_after_import_text.and_then(Value::as_str),
             Some("OpenCode round trip prompt")
         );
 
@@ -5703,6 +5731,7 @@ mod tests {
         );
 
         let import_env = OpenCodeEnv::new(test_root.path(), "opencode-raw-import-env");
+        let reads_v2 = prepare_opencode_env_generation(&import_env);
         let import_context = ToolSessionContext::OpenCode {
             runtime_location: RuntimeLocationInfo {
                 mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
@@ -5731,15 +5760,18 @@ mod tests {
         .expect("raw official export import should succeed");
         drop(import_env_guards);
 
-        let imported_sessions =
-            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path(), false);
+        let imported_sessions = open_code::scan_sessions(
+            &import_env.data_root(),
+            &import_env.sqlite_db_path(),
+            reads_v2,
+        );
         let imported_session = imported_sessions
             .iter()
             .find(|session| session.session_id == session_id)
             .expect("opencode imported session should exist");
         assert_project_dir_eq(imported_session.project_dir.as_deref(), &project_dir);
 
-        let imported_messages = open_code::load_messages(&imported_session.source_path, false)
+        let imported_messages = open_code::load_messages(&imported_session.source_path, reads_v2)
             .expect("load opencode raw-import messages");
         assert_eq!(imported_messages.len(), 1);
         assert_eq!(imported_messages[0].content, "OpenCode raw import prompt");
@@ -5801,6 +5833,7 @@ mod tests {
         );
 
         let import_env = OpenCodeEnv::new(test_root.path(), "opencode-truncated-raw-import-env");
+        let reads_v2 = prepare_opencode_env_generation(&import_env);
         let import_context = ToolSessionContext::OpenCode {
             runtime_location: RuntimeLocationInfo {
                 mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
@@ -5829,15 +5862,18 @@ mod tests {
         .expect("truncated official export raw should be recovered during import");
         drop(import_env_guards);
 
-        let imported_sessions =
-            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path(), false);
+        let imported_sessions = open_code::scan_sessions(
+            &import_env.data_root(),
+            &import_env.sqlite_db_path(),
+            reads_v2,
+        );
         let imported_session = imported_sessions
             .iter()
             .find(|session| session.session_id == session_id)
             .expect("recovered opencode imported session should exist");
         assert_eq!(imported_session.title.as_deref(), Some("Recovered Import"));
 
-        let imported_messages = open_code::load_messages(&imported_session.source_path, false)
+        let imported_messages = open_code::load_messages(&imported_session.source_path, reads_v2)
             .expect("load recovered opencode messages");
         assert_eq!(imported_messages.len(), 2);
         assert_eq!(imported_messages[0].content, "Recovered import prompt");
@@ -5900,6 +5936,7 @@ mod tests {
             test_root.path(),
             "opencode-truncated-raw-assistant-first-import-env",
         );
+        let reads_v2 = prepare_opencode_env_generation(&import_env);
         let import_context = ToolSessionContext::OpenCode {
             runtime_location: RuntimeLocationInfo {
                 mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
@@ -5928,8 +5965,11 @@ mod tests {
         .expect("assistant-first truncated raw should be recovered during import");
         drop(import_env_guards);
 
-        let imported_sessions =
-            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path(), false);
+        let imported_sessions = open_code::scan_sessions(
+            &import_env.data_root(),
+            &import_env.sqlite_db_path(),
+            reads_v2,
+        );
         let imported_session = imported_sessions
             .iter()
             .find(|session| session.session_id == session_id)
@@ -5939,7 +5979,7 @@ mod tests {
             Some("Recovered Assistant First")
         );
 
-        let imported_messages = open_code::load_messages(&imported_session.source_path, false)
+        let imported_messages = open_code::load_messages(&imported_session.source_path, reads_v2)
             .expect("load assistant-first recovered opencode messages");
         assert_eq!(imported_messages.len(), 1);
         assert_eq!(
@@ -5961,7 +6001,6 @@ mod tests {
         let project_dir = test_root.path().join("opencode-project");
         fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
 
-        let official_export_path = test_root.path().join("opencode-official-export.json");
         let official_export_json = json!({
             "info": {
                 "id": session_id,
@@ -6002,18 +6041,9 @@ mod tests {
                 }
             ]
         });
-        write_text_file(
-            &official_export_path,
-            &serde_json::to_string_pretty(&official_export_json)
-                .expect("serialize opencode official export"),
-        );
-
         let source_env = OpenCodeEnv::new(test_root.path(), "source-env");
-        run_opencode_command(
-            &source_env,
-            &project_dir,
-            &["import", official_export_path.to_string_lossy().as_ref()],
-        );
+        let reads_v2 = prepare_opencode_env_generation(&source_env);
+        seed_opencode_official_export(&source_env, &official_export_json, session_id, &project_dir);
 
         let wrong_env = OpenCodeEnv::new(test_root.path(), "wrong-env");
         let wrong_env_guards = wrong_env.apply_process_env();
@@ -6083,10 +6113,13 @@ mod tests {
             official_export.pointer("/info/id").and_then(Value::as_str),
             Some(session_id)
         );
+        let exported_message_text = if reads_v2 {
+            official_export.pointer("/messages/0/text")
+        } else {
+            official_export.pointer("/messages/0/parts/0/text")
+        };
         assert_eq!(
-            official_export
-                .pointer("/messages/0/parts/0/text")
-                .and_then(Value::as_str),
+            exported_message_text.and_then(Value::as_str),
             Some("OpenCode explicit env export")
         );
         let raw_official_export = export_result
@@ -6153,11 +6186,114 @@ mod tests {
         true
     }
 
+    /// First `<digits>.` in `opencode --version` output is the major version.
+    fn opencode_cli_major_version(version_text: &str) -> Option<u64> {
+        let bytes = version_text.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if !bytes[index].is_ascii_digit() {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            if bytes.get(index) == Some(&b'.') {
+                return version_text[start..index].parse().ok();
+            }
+        }
+        None
+    }
+
+    /// Whether the installed OpenCode CLI keeps `export`/`import` under `session`.
+    ///
+    /// The product decides by the OpenCode page's declared V2 mode, so a fixture
+    /// env has to declare the generation of whichever CLI runs on this machine.
+    fn opencode_session_nested_commands(env: &OpenCodeEnv) -> bool {
+        let Some(program_path) = resolve_test_opencode_command() else {
+            return false;
+        };
+        let output = Command::new(&program_path)
+            .arg("--version")
+            .env("HOME", &env.home)
+            .env("XDG_DATA_HOME", &env.xdg_data_home)
+            .env("XDG_CACHE_HOME", &env.xdg_cache_home)
+            .env("XDG_CONFIG_HOME", &env.xdg_config_home)
+            .env("XDG_STATE_HOME", &env.xdg_state_home)
+            .output()
+            .expect("failed to probe opencode version");
+        let version_text = format!(
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        !matches!(opencode_cli_major_version(&version_text), Some(major) if major <= 1)
+    }
+
+    /// Declare the installed CLI's generation on an env and report it.
+    ///
+    /// The product's OpenCode branch is switch-driven, so a test env has to carry
+    /// the matching `openvode_v1.<ext>` marker before it seeds or imports.
+    fn prepare_opencode_env_generation(env: &OpenCodeEnv) -> bool {
+        let nested = opencode_session_nested_commands(env);
+        if nested {
+            let config_path = env.xdg_config_home.join("opencode").join("opencode.jsonc");
+            write_text_file(
+                &crate::coding::open_code::v2_migration::v1_backup_path(&config_path),
+                "{}\n",
+            );
+        }
+        nested
+    }
+
+    /// Seed a session through the product import path so a 1.x fixture is
+    /// upgraded when the installed CLI is 2.x.
+    fn seed_opencode_official_export(
+        env: &OpenCodeEnv,
+        export_json: &Value,
+        session_id: &str,
+        project_dir: &Path,
+    ) {
+        let config_path = env.xdg_config_home.join("opencode").join("opencode.jsonc");
+        let runtime_location = RuntimeLocationInfo {
+            mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+            source: "test".to_string(),
+            host_path: config_path.clone(),
+            wsl: None,
+        };
+        open_code::import_native_snapshot(
+            &json!({
+                "sessionId": session_id,
+                "officialExport": export_json,
+            }),
+            None,
+            None,
+            Some(project_dir.to_string_lossy().as_ref()),
+            &runtime_location,
+            Some(&config_path),
+            Some(&env.data_root()),
+            Some(&env.xdg_state_home.join("opencode")),
+        )
+        .expect("seed opencode session through the official export");
+    }
+
     fn run_opencode_command(env: &OpenCodeEnv, current_dir: &Path, args: &[&str]) -> String {
         let program_path = resolve_test_opencode_command()
             .expect("opencode CLI should be available before running integration helper");
+        let command_args: Vec<&str> = if opencode_session_nested_commands(env) {
+            // Mirror the product: 2.x transfers run against a private server.
+            let mut nested = vec!["session"];
+            nested.extend_from_slice(args);
+            nested.push("--standalone");
+            nested
+        } else {
+            args.to_vec()
+        };
+
         let output = Command::new(&program_path)
-            .args(args)
+            .args(&command_args)
             .current_dir(current_dir)
             .env("HOME", &env.home)
             .env("XDG_DATA_HOME", &env.xdg_data_home)
@@ -6171,7 +6307,7 @@ mod tests {
         if !output.status.success() {
             panic!(
                 "opencode command failed: args={:?}, stdout={}, stderr={}",
-                args,
+                command_args,
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
