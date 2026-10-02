@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography } from 'antd';
 import {
   CloudDownloadOutlined,
   EyeInvisibleOutlined,
@@ -12,6 +12,7 @@ import type { CodexApiFormat, CodexCatalogModel, CodexProvider, CodexProviderFor
 import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
 import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
@@ -1100,7 +1101,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Form.Item name="model" noStyle>
-              <AutoComplete
+              <ImeSafeAutoComplete
                 options={modelOptions}
                 placeholder={t('codex.provider.modelNamePlaceholder')}
                 style={{ width: '100%' }}
