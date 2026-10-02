@@ -369,6 +369,8 @@ export const mergeGatewayProfileReferenceIntoMeta = <T extends object>(
     delete nextMeta.allow_text_only_model_heuristic;
     delete nextMeta.codexChatReasoning;
     delete nextMeta.codex_chat_reasoning;
+    delete nextMeta.preserveReasoningEffort;
+    delete nextMeta.preserve_reasoning_effort;
     delete nextMeta.apiFormat;
     delete nextMeta.api_format;
     nextMeta.gatewayProfile = reference;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, Switch } from 'antd';
 import {
   CloudDownloadOutlined,
   EyeInvisibleOutlined,
@@ -56,6 +56,11 @@ import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 import { normalizeCodexRequiresOpenaiAuthMode } from '../utils/codexSettingsConfig';
 import { codexApiFormatNeedsGatewayProxy } from '../utils/codexGatewayProxyNeed';
+import {
+  codexReasoningPassthroughApplies,
+  readCodexPreserveReasoningEffort,
+  withCodexPreserveReasoningEffort,
+} from '../utils/codexReasoningPassthrough';
 import styles from './CodexProviderFormModal.module.less';
 
 const { Text } = Typography;
@@ -354,6 +359,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     : selectedApiFormat === 'gemini_native' ? '@ai-sdk/google' : '@ai-sdk/openai';
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+  // Only a custom `openai_chat` upstream has a use for the reasoning-effort
+  // passthrough switch (issue #412); other targets either pass it natively or
+  // map it into their own thinking budget.
+  const showReasoningPassthrough = codexReasoningPassthroughApplies({
+    isOfficial: isOfficialMode,
+    isCustomProvider: selectedIsCustomProviderProfile,
+    apiFormat: selectedApiFormat,
+  });
 
   const providerEndpointOptions = React.useMemo(() => {
     if (isOfficialMode && !canSelectProviderCategory) {
@@ -455,6 +468,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         notes: provider.notes || '',
         requiresOpenaiAuthMode:
           normalizeCodexRequiresOpenaiAuthMode(settingsConfig.requiresOpenaiAuthMode) ?? 'auto',
+        preserveReasoningEffort: readCodexPreserveReasoningEffort(provider.meta),
       });
       setCurrentBaseUrl(baseUrl || providerEndpoint?.baseUrl || '');
     } else {
@@ -472,6 +486,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         configToml: '',
         notes: '',
         requiresOpenaiAuthMode: 'auto',
+        preserveReasoningEffort: true,
         sourceProvider: undefined,
       });
     }
@@ -756,25 +771,33 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         // model and mappings, including user edits, imports and cleared rows.
         settingsConfig,
         apiFormat: selectedApiFormat,
-        meta: mergeModelRewritesIntoMeta(
-          mergeCustomHeadersIntoMeta(
-            mergeBillingConfigIntoMeta(
-              mergeGatewayMetaIntoProviderMeta(
-                provider?.meta,
-                gatewayProfile,
-                gatewayProfile ? undefined : selectedApiFormat,
+        meta: withCodexPreserveReasoningEffort(
+          mergeModelRewritesIntoMeta(
+            mergeCustomHeadersIntoMeta(
+              mergeBillingConfigIntoMeta(
+                mergeGatewayMetaIntoProviderMeta(
+                  provider?.meta,
+                  gatewayProfile,
+                  gatewayProfile ? undefined : selectedApiFormat,
+                ),
+                selectedCategory === 'official'
+                  ? { enabled: false, pricingModelSource: 'inherit' }
+                  : billingConfig,
               ),
               selectedCategory === 'official'
-                ? { enabled: false, pricingModelSource: 'inherit' }
-                : billingConfig,
+                ? { enabled: false, headers: [] }
+                : customHeaders,
             ),
             selectedCategory === 'official'
-              ? { enabled: false, headers: [] }
-              : customHeaders,
+              ? { enabled: false, rewrites: [] }
+              : modelRewrites,
           ),
-          selectedCategory === 'official'
-            ? { enabled: false, rewrites: [] }
-            : modelRewrites,
+          submittedValues.preserveReasoningEffort !== false,
+          codexReasoningPassthroughApplies({
+            isOfficial: selectedCategory === 'official',
+            isCustomProvider: selectedCategory !== 'official' && !selectedEndpoint,
+            apiFormat: selectedApiFormat,
+          }),
         ),
         notes: submittedValues.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -1151,6 +1174,22 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           </Text>
         )}
       </Form.Item>
+
+      {showReasoningPassthrough && (
+        <Form.Item
+          name="preserveReasoningEffort"
+          label={t('codex.provider.reasoningPassthrough')}
+          valuePropName="checked"
+          initialValue
+          extra={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('codex.provider.reasoningPassthroughHelp')}
+            </Text>
+          }
+        >
+          <Switch />
+        </Form.Item>
+      )}
 
       <Form.Item
         name="configToml"

@@ -30,6 +30,14 @@ export interface GatewayProviderMeta {
   reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
   defaultMaxTokens?: number;
   codexChatReasoning?: Record<string, unknown>;
+  /**
+   * User opt-in (custom Codex provider with an `openai_chat` upstream) to
+   * forward the client's explicit reasoning effort as the top-level
+   * `reasoning_effort` field instead of letting the gateway's generic
+   * third-party Chat cleanup strip it. `undefined` keeps the provider-specific
+   * default; only the Codex provider form writes it (issue #412).
+   */
+  preserveReasoningEffort?: boolean;
   imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
   textOnlyModels?: string[];
   imageCapableModels?: string[];
@@ -390,6 +398,9 @@ export interface CodexProviderFormValues {
   configToml?: string;
   meta?: GatewayProviderMeta;
   apiFormat?: CodexApiFormat;
+  /** Form-only toggle: forward the client's reasoning effort to a custom
+   * `openai_chat` upstream (persisted as `meta.preserveReasoningEffort`). */
+  preserveReasoningEffort?: boolean;
   notes?: string;
   sourceProviderId?: string;
 }

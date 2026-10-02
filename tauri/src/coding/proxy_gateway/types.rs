@@ -290,6 +290,14 @@ pub struct ProviderGatewayMeta {
     #[serde(alias = "defaultMaxTokens")]
     pub default_max_tokens: Option<i64>,
     pub codex_chat_reasoning: Option<CodexChatReasoningMeta>,
+    /// User opt-in (Codex provider form) to forward the client's explicit
+    /// reasoning effort to a custom OpenAI Chat upstream as the top-level
+    /// `reasoning_effort` field instead of letting the generic third-party Chat
+    /// cleanup strip it. `None` keeps the existing provider-specific defaults
+    /// (see `runtime::upstream::should_preserve_chat_reasoning_effort`); only
+    /// meaningful for a Chat target with no recognized vendor profile.
+    #[serde(default, alias = "preserveReasoningEffort")]
+    pub preserve_reasoning_effort: Option<bool>,
     pub image_input_policy: Option<String>,
     pub text_only_models: Vec<String>,
     pub image_capable_models: Vec<String>,
@@ -394,6 +402,7 @@ impl Default for ProviderGatewayMeta {
             reasoning_field: None,
             default_max_tokens: None,
             codex_chat_reasoning: None,
+            preserve_reasoning_effort: None,
             image_input_policy: None,
             text_only_models: Vec::new(),
             image_capable_models: Vec::new(),

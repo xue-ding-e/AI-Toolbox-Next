@@ -6716,10 +6716,18 @@ fn apply_outbound_adapter_compat_value(
         let placement = conversion_route.map_or(InstructionPlacement::MergeToHead, |route| {
             placement_for_protocol(route.source)
         });
+        // An explicit provider-form opt-in wins over the vendor-derived default:
+        // custom OpenAI Chat providers have no `codexChatReasoning` dialect, so
+        // without it the generic cleanup would drop the client's effort.
+        let preserve_reasoning_effort = provider_meta
+            .and_then(|meta| meta.preserve_reasoning_effort)
+            .unwrap_or_else(|| {
+                should_preserve_chat_reasoning_effort(provider_kind, codex_chat_reasoning)
+            });
         normalize_openai_chat_for_provider_compat(
             value,
             provider_kind,
-            should_preserve_chat_reasoning_effort(provider_kind, codex_chat_reasoning),
+            preserve_reasoning_effort,
             placement,
         );
     }
@@ -17460,6 +17468,57 @@ data: {data}\r\n\r\n"
                 "{model} should not preserve generic reasoning_effort"
             );
         }
+    }
+
+    #[test]
+    fn custom_chat_provider_preserve_reasoning_effort_opt_in_controls_effort() {
+        let body = br#"{
+            "model":"custom-relay-model",
+            "reasoning_effort":"high",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+        let base_meta = ProviderGatewayMeta {
+            provider_type: Some("custom".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+
+        // No opt-in: the generic third-party Chat cleanup still strips the field.
+        let stripped = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&base_meta),
+        )
+        .unwrap();
+        let stripped: Value = serde_json::from_slice(&stripped).unwrap();
+        assert!(stripped.get("reasoning_effort").is_none());
+
+        // Opt-in: the client's explicit effort is forwarded verbatim (issue #412).
+        let mut enabled_meta = base_meta.clone();
+        enabled_meta.preserve_reasoning_effort = Some(true);
+        let kept = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&enabled_meta),
+        )
+        .unwrap();
+        let kept: Value = serde_json::from_slice(&kept).unwrap();
+        assert_eq!(kept["reasoning_effort"], "high");
+
+        // Explicit opt-out wins even when the model name looks reasoning-capable.
+        let mut disabled_meta = base_meta;
+        disabled_meta.preserve_reasoning_effort = Some(false);
+        let disabled = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&disabled_meta),
+        )
+        .unwrap();
+        let disabled: Value = serde_json::from_slice(&disabled).unwrap();
+        assert!(disabled.get("reasoning_effort").is_none());
     }
 
     #[test]

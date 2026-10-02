@@ -146,7 +146,7 @@ Claude Desktop 使用独立 `/claude-desktop` 前缀和自己的 provider 表，
 `normalize_openai_chat_for_provider_compat()` 是发往 OpenAI Chat-compatible provider 前的通用清理：
 
 - 删除顶层 `verbosity`、`prompt_cache_key`。
-- 非 DeepSeek 且没有显式或 inferred `codexChatReasoning` 要保留 effort 时删除 `reasoning_effort`。
+- 非 DeepSeek 且没有显式或 inferred `codexChatReasoning` 要保留 effort 时删除 `reasoning_effort`。自定义（未识别 vendor）Chat provider 可由用户显式 `meta.preserveReasoningEffort=true` 保留顶层 effort（Codex 供应商表单的「透传推理强度」开关，默认开、保存后生效；issue #412）。显式 `false` 强制删除，覆盖 vendor 推断；provider 记录带 `gatewayProfile` 引用时该字段被清空，由 profile 的 `codexChatReasoning` 决定。
 - 过滤 tools，只保留 `type=function` 且有 `function.name` 的工具，移除 `response_custom_tool`。
 - `developer` role 改成 `system`。
 - system content parts 压成 string。

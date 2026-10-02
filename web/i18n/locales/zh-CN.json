@@ -2942,6 +2942,8 @@
       "providerProfileCustom": "自定义",
       "providerProfileHelp": "内置渠道会填入 API 格式、Base URL 和模型映射，Base URL 可按需修改；自定义渠道可手动配置。",
       "apiFormatNeedsGatewayHint": "{{cli}} 原生只支持 OpenAI Responses 协议；选择其他协议时，此渠道必须通过本地网关代理（由网关转换协议）才能使用。",
+      "reasoningPassthrough": "透传推理强度",
+      "reasoningPassthroughHelp": "开启后，网关会把推理强度以顶层 reasoning_effort 字段转发给该上游；关闭则不发送。若上游不认识该字段并报错，请关闭。",
       "formName": "名称",
       "providerProfileOfficial": "官方渠道",
       "loginMethodTitle": "选择登录方式",

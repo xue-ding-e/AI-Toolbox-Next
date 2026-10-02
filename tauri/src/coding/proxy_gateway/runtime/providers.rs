@@ -999,6 +999,11 @@ fn provider_meta_from_record(
             .get("codex_chat_reasoning")
             .or_else(|| meta_value.get("codexChatReasoning"))
             .and_then(|value| serde_json::from_value(value.clone()).ok()),
+        preserve_reasoning_effort: json_bool_compat(
+            meta_value,
+            "preserve_reasoning_effort",
+            "preserveReasoningEffort",
+        ),
         image_input_policy: json_string_compat(
             meta_value,
             "image_input_policy",
@@ -1161,6 +1166,9 @@ fn apply_gateway_profile_reference(cli_key: GatewayCliKey, meta: &mut ProviderGa
     } else {
         None
     };
+    // A profile endpoint owns its own reasoning dialect; a user opt-in left on
+    // the record must not override the profile's `codexChatReasoning`.
+    meta.preserve_reasoning_effort = None;
 }
 
 /// Resolve the providerConfigs entry a gateway candidate should mirror.

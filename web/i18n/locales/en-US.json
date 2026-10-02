@@ -2945,6 +2945,8 @@
       "providerProfileCustom": "Custom",
       "providerProfileHelp": "Built-in channels fill API format, Base URL, and model mapping, and Base URL can still be edited. Custom channels can be configured manually.",
       "apiFormatNeedsGatewayHint": "{{cli}} natively speaks only the OpenAI Responses protocol. With any other protocol, this provider must go through the local gateway proxy, which converts the protocol.",
+      "reasoningPassthrough": "Forward reasoning effort",
+      "reasoningPassthroughHelp": "When on, the gateway forwards the reasoning effort to this upstream as the top-level reasoning_effort field; when off, it is not sent. Turn it off if the upstream rejects this field.",
       "formName": "Name",
       "providerProfileOfficial": "Official channel",
       "loginMethodTitle": "Choose sign-in method",

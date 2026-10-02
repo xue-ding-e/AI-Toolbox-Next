@@ -862,7 +862,7 @@ runtime 读取 provider 时会从当前 profile catalog 解析出本次请求使
 - 根据 `reasoning_effort` 写入 `thinking.type`：
   - `none` / `off` / `disabled` -> `thinking.type="disabled"`，同时移除 `reasoning_effort` 并清理 assistant 历史 reasoning 字段。
   - 其它值 -> `thinking.type="enabled"`，并把 Codex/OpenAI effort 映射成 DeepSeek 接受的 `high` 或 `max`。
-- 通用 Chat 清理时，DeepSeek 是少数会保留 `reasoning_effort` 的 provider；其它普通 Chat provider 默认会删除该字段，除非显式 `codexChatReasoning` 声明需要保留。
+- 通用 Chat 清理时，DeepSeek 是少数会保留 `reasoning_effort` 的 provider；其它普通 Chat provider 默认会删除该字段，除非显式 `codexChatReasoning` 声明需要保留，或用户对该 provider 显式设置 `meta.preserveReasoningEffort=true`（Codex 供应商表单的「透传推理强度」开关，issue #412；`false` 强制删除）。
 - 通用 Chat 清理后，DeepSeek 还会再做一轮 assistant 历史 reasoning 门控：
   - assistant 历史里有非空 `tool_calls` 时，保留或回填 `reasoning_content`，缺失时用 `"tool call"` 兜底。
   - assistant 历史没有 tool call 时，移除 `reasoning_content` 和 `reasoning`，避免纯文本 assistant 历史在 DeepSeek Chat 里触发 schema 兼容错误。
