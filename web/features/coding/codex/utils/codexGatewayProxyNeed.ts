@@ -11,6 +11,14 @@ import { extractCodexBaseUrl } from '../../../../utils/codexConfigUtils';
 import { parseCodexSettingsConfig } from './codexSettingsConfig';
 
 /**
+ * Same question for a bare API format, which is all the provider form has while
+ * the user is still editing. Keeps the form hint and the stored-provider check
+ * on one predicate instead of two copies of the comparison.
+ */
+export const codexApiFormatNeedsGatewayProxy = (apiFormat?: string | null): boolean =>
+  providerNeedsGatewayProxy(apiFormat, 'openai_responses');
+
+/**
  * Does one Codex provider have to keep going through the gateway?
  *
  * Codex speaks the Responses wire only, so a provider stored with a different
@@ -36,7 +44,7 @@ export const codexProviderNeedsGatewayProxy = (provider: CodexProvider): boolean
     codexWireApiFormatFromConfig(settingsConfig.config),
     openAiApiFormatFromBaseUrl(baseUrl),
   );
-  return providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
+  return codexApiFormatNeedsGatewayProxy(providerApiFormat);
 };
 
 /**

@@ -55,6 +55,7 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 「本页改动要重启 CLI 才会刷新模型列表」这类说明集中在面板页首的 `gateway.aggregate.restartHint` 一处（`{{cli}}` 插值），不要在模板、子代理裸名等各行再重复重启句；行内 hint 只讲该字段自己的语义。后端没有热重载机制，重启要求是 Codex 的真实行为，不是保守说法。
 - 未启用聚合时，勾选站点/改分隔符/改别名/换模板都必须落草稿（组件里唯一入口是 `applySiteSelection` 与 `persistAggregateDraft`）；否则关闭抽屉（Codex 页抽屉是 `destroyOnHidden`）或切到统计/明细 Tab（设置面板随 Tab 卸载）后选择就丢了。已启用时同一批改动必须重新接管，因为生效态只有 manifest。站点顺序不在这里维护（见上一条），改顺序要回供应商列表拖，改完再回来重新勾选/接管。
 - 聚合表单种子的 effect 只能依赖「已启用配置的内容 key（`activeAggregateKey`）+ 候选集 + 草稿加载 revision + provider 列表」，**不能依赖 `selectedStatus` 对象身份**：状态每轮刷新都会换新对象，按身份重新种子会把用户刚改的内容回滚。同理，保存草稿成功后只更新 ref 与提示状态，不要重新种子。
 - 草稿写入必须串行化在 `runGatewayAggregateMutation` 通道内，避免慢的旧写入后到、把新选择覆盖回去；保存回调按 `draftRequestRef` 丢弃过期结果。

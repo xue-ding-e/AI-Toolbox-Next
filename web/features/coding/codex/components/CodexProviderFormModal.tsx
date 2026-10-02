@@ -55,6 +55,7 @@ import { getDefaultModelsApiType } from '@/components/common/FetchModelsModal/re
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 import { normalizeCodexRequiresOpenaiAuthMode } from '../utils/codexSettingsConfig';
+import { codexApiFormatNeedsGatewayProxy } from '../utils/codexGatewayProxyNeed';
 import styles from './CodexProviderFormModal.module.less';
 
 const { Text } = Typography;
@@ -992,7 +993,24 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       <Form.Item
         label={t('codex.provider.providerProfile')}
         required
-        help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.providerProfileHelp')}</Text>}
+        help={
+          <>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('codex.provider.providerProfileHelp')}
+            </Text>
+            {/* Non-official providers only: official mode hides the protocol
+                selector entirely, so its stale value must not raise a warning. */}
+            {!isOfficialMode && codexApiFormatNeedsGatewayProxy(selectedApiFormat) ? (
+              <div>
+                <Text type="warning" style={{ fontSize: 12 }}>
+                  {t('codex.provider.apiFormatNeedsGatewayHint', {
+                    cli: t('settings.gateway.cli.codex'),
+                  })}
+                </Text>
+              </div>
+            ) : null}
+          </>
+        }
       >
         <div className={isOfficialMode ? undefined : styles.providerProfileRow}>
           <Form.Item

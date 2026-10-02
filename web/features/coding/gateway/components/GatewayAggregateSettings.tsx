@@ -1111,6 +1111,13 @@ const GatewayAggregateSettings: React.FC<GatewayAggregateSettingsProps> = ({
         </div>
       </div>
 
+      {/* The whole panel rewrites the CLI's model list, and a running CLI keeps
+          the list it loaded at startup. Stated once here instead of repeating it
+          on the naming and subagent rows. */}
+      <p className={styles.helper}>
+        {t('gateway.aggregate.restartHint', { cli: t(`settings.gateway.cli.${cliKey}`) })}
+      </p>
+
       <div className={styles.fieldRow}>
         <div className={styles.fieldMeta}>
           <span className={styles.fieldLabel}>{t('gateway.aggregate.naming')}</span>

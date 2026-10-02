@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  codexApiFormatNeedsGatewayProxy,
   codexProviderNeedsGatewayProxy,
   primaryCodexProviderNeedsGatewayProxy,
 } from '../../../../../features/coding/codex/utils/codexGatewayProxyNeed.ts';
@@ -101,6 +102,27 @@ test('primaryCodexProviderNeedsGatewayProxy resolves the id against the provider
     primaryCodexProviderNeedsGatewayProxy(providers, 'deleted', isCodexLocalProviderId),
     { needsProxy: false, reason: null },
   );
+});
+
+test('codexApiFormatNeedsGatewayProxy only accepts the native Responses wire', () => {
+  // The provider form watches the bare format while editing, before a provider
+  // object exists; the form hint therefore asks this predicate, not the
+  // provider-level one.
+  assert.equal(codexApiFormatNeedsGatewayProxy('openai_responses'), false);
+  assert.equal(codexApiFormatNeedsGatewayProxy('responses'), false);
+  assert.equal(codexApiFormatNeedsGatewayProxy('openai_chat'), true);
+  assert.equal(codexApiFormatNeedsGatewayProxy('chat_completions'), true);
+  assert.equal(codexApiFormatNeedsGatewayProxy('anthropic_messages'), true);
+  assert.equal(codexApiFormatNeedsGatewayProxy('gemini_native'), true);
+});
+
+test('codexApiFormatNeedsGatewayProxy stays silent when no protocol is declared', () => {
+  // Same asymmetry as the provider-level check: an unknown/absent format is
+  // treated as usable directly, so the form must not warn about it.
+  assert.equal(codexApiFormatNeedsGatewayProxy(undefined), false);
+  assert.equal(codexApiFormatNeedsGatewayProxy(null), false);
+  assert.equal(codexApiFormatNeedsGatewayProxy(''), false);
+  assert.equal(codexApiFormatNeedsGatewayProxy('not-a-protocol'), false);
 });
 
 test('primaryCodexProviderNeedsGatewayProxy exempts official and local providers', () => {
