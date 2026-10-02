@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider, Checkbox, InputNumber } from 'antd';
+import { Modal, Form, Input, Button, Select, message, Typography, Tag, Divider, Checkbox, InputNumber } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -909,7 +910,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             return isNaN(num) ? undefined : num;
           }}
         >
-          <AutoComplete
+          <ImeSafeAutoComplete
             options={CONTEXT_LIMIT_OPTIONS}
             placeholder={t(getKey('contextLimitPlaceholder'))}
             style={{ width: '100%' }}
@@ -929,7 +930,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             return isNaN(num) ? undefined : num;
           }}
         >
-          <AutoComplete
+          <ImeSafeAutoComplete
             options={OUTPUT_LIMIT_OPTIONS}
             placeholder={t(getKey('outputLimitPlaceholder'))}
             style={{ width: '100%' }}

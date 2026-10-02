@@ -39,11 +39,22 @@ function Fixture() {
     <main style={{ maxWidth: 520, margin: '12px auto', padding: 12, display: 'grid', gap: 12 }}>
       <section id="fixture-plain">
         <label htmlFor="plain-input">plain AutoComplete</label>
-        <AutoComplete id="plain-input" value={values.plain} onChange={recordChange('plain')} options={[]} />
+        <AutoComplete id="plain-input" placeholder="fixture placeholder" value={values.plain} onChange={recordChange('plain')} options={[]} />
       </section>
       <section id="fixture-guarded">
         <label htmlFor="guarded-input">guarded AutoComplete</label>
-        <ImeSafeAutoComplete id="guarded-input" value={values.guarded} onChange={recordChange('guarded')} options={[]} />
+        <ImeSafeAutoComplete id="guarded-input" placeholder="fixture placeholder" value={values.guarded} onChange={recordChange('guarded')} options={[]} />
+      </section>
+      {/* `size` must reach the custom input: with a customized input antd
+          ignores it on AutoComplete, and a dense call site would grow back to
+          the default height. */}
+      <section id="fixture-plain-small">
+        <label htmlFor="plain-small-input">plain AutoComplete (small)</label>
+        <AutoComplete id="plain-small-input" size="small" value={values.plain} onChange={recordChange('plain')} options={[]} />
+      </section>
+      <section id="fixture-guarded-small">
+        <label htmlFor="guarded-small-input">guarded AutoComplete (small)</label>
+        <ImeSafeAutoComplete id="guarded-small-input" size="small" value={values.guarded} onChange={recordChange('guarded')} options={[]} />
       </section>
       <pre id="fixture-state">{JSON.stringify(state.changes)}</pre>
     </main>

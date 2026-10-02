@@ -1,5 +1,6 @@
 import React from 'react';
-import { Alert, AutoComplete, Button, Form, Input, message, Modal, Select, Typography } from 'antd';
+import { Alert, Button, Form, Input, message, Modal, Select, Typography } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { CloudDownloadOutlined, EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
@@ -901,7 +902,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Form.Item name="modelName" noStyle>
-                  <AutoComplete
+                  <ImeSafeAutoComplete
                     allowClear
                     options={modelOptions}
                     placeholder={t('geminicli.provider.modelNamePlaceholder')}

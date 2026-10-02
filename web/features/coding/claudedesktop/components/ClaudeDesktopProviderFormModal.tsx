@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Checkbox, Space, Dropdown, Select, message, Tooltip } from 'antd';
+import { Modal, Form, Input, Button, Checkbox, Space, Dropdown, Select, message, Tooltip } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import {
   EyeInvisibleOutlined,
   EyeOutlined,
@@ -662,7 +663,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
                     return nextModel;
                   }}
                 >
-                  <AutoComplete
+                  <ImeSafeAutoComplete
                     allowClear
                     options={modelOptions}
                     placeholder={t('claudecode.model.defaultModelPlaceholder')}
@@ -699,7 +700,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
           <div className={styles.fallbackModelLabel}>{t('claudecode.model.fallbackModel')}</div>
           <div className={styles.fallbackModelInput}>
             <Form.Item name="model" noStyle>
-              <AutoComplete
+              <ImeSafeAutoComplete
                 allowClear
                 options={modelOptions}
                 placeholder={t('claudecode.model.defaultModelPlaceholder')}

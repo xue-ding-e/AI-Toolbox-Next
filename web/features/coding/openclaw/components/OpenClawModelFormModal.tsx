@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, InputNumber, Tag, Divider, Row, Col, Typography, Checkbox } from 'antd';
+import { Modal, Form, Input, Button, InputNumber, Tag, Divider, Row, Col, Typography, Checkbox } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -317,7 +318,7 @@ const OpenClawModelFormModal: React.FC<Props> = ({
             return isNaN(num) ? undefined : num;
           }}
         >
-          <AutoComplete
+          <ImeSafeAutoComplete
             options={CONTEXT_LIMIT_OPTIONS}
             placeholder={t('openclaw.providers.contextLimitPlaceholder')}
             style={{ width: '100%' }}
@@ -336,7 +337,7 @@ const OpenClawModelFormModal: React.FC<Props> = ({
             return isNaN(num) ? undefined : num;
           }}
         >
-          <AutoComplete
+          <ImeSafeAutoComplete
             options={OUTPUT_LIMIT_OPTIONS}
             placeholder={t('openclaw.providers.outputLimitPlaceholder')}
             style={{ width: '100%' }}

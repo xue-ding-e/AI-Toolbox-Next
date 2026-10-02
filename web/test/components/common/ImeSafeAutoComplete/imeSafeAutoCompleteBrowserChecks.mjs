@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const PLAIN_INPUT = '#plain-input';
 const GUARDED_INPUT = '#guarded-input';
+const PLAIN_SMALL_INPUT = '#plain-small-input';
+const GUARDED_SMALL_INPUT = '#guarded-small-input';
 
 /**
  * Chromium cannot reproduce the WebKit composition abort that issue #409
@@ -43,7 +45,7 @@ export async function verifyImeSafeAutoComplete({ send, evaluate, baseUrl, artif
   await send('Page.navigate', { url: baseUrl + '/?runId=' + runId });
   await waitFor(
     'window.imeSafeAutoCompleteFixture?.state.runId === ' + JSON.stringify(runId)
-    + ' && document.querySelectorAll(".ant-select").length === 2',
+    + ' && document.querySelectorAll(".ant-select").length === 4',
   );
   await delay(300);
 
@@ -72,6 +74,41 @@ export async function verifyImeSafeAutoComplete({ send, evaluate, baseUrl, artif
   // Ordinary typing must keep working after the composition settled.
   await action(`setInputValue(${JSON.stringify(GUARDED_INPUT)}, "测试abc")`);
   check('guarded wrapper forwards ordinary typing', await evaluate(changes('guarded')), ['测试', '测试abc']);
+
+  // The custom child Input is the control now: antd's `-customize` root hands
+  // the chrome (border, inline padding) to it instead of drawing it itself. What
+  // must not change is the box the user sees, so compare the rendered metrics of
+  // both controls — height, font size, and where the text starts.
+  const controlMetrics = selector => `(() => {
+    const input = document.querySelector(${JSON.stringify(selector)});
+    const root = input.closest('.ant-select');
+    const inlinePad = element => parseFloat(getComputedStyle(element).paddingInlineStart) || 0;
+    return {
+      height: Math.round(root.getBoundingClientRect().height),
+      fontSize: getComputedStyle(input).fontSize,
+      textInset: Math.round(inlinePad(root) + inlinePad(input)),
+    };
+  })()`;
+  check(
+    'guarded control renders the same box and text inset as the plain one',
+    await evaluate(controlMetrics(GUARDED_INPUT)),
+    await evaluate(controlMetrics(PLAIN_INPUT)),
+  );
+  // antd hides the Select's own placeholder node for a customized input and
+  // expects the child to carry it, so it has to still be there.
+  check(
+    'guarded input keeps the placeholder',
+    await evaluate(`document.querySelector(${JSON.stringify(GUARDED_INPUT)}).getAttribute('placeholder')`),
+    'fixture placeholder',
+  );
+
+  // `size` must reach the custom input too: antd ignores it on AutoComplete once
+  // the input is customized, so a dense call site (the Kimi model table) would
+  // silently grow back to the default control height.
+  const controlHeight = selector => `Math.round(document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').getBoundingClientRect().height)`;
+  const smallGuardedHeight = await evaluate(controlHeight(GUARDED_SMALL_INPUT));
+  check('guarded control honours size="small"', smallGuardedHeight, await evaluate(controlHeight(PLAIN_SMALL_INPUT)));
+  check('size="small" still renders smaller than the default control', smallGuardedHeight < await evaluate(controlHeight(GUARDED_INPUT)), true);
 
   await screenshot('ime-safe-autocomplete');
 

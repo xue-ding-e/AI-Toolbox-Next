@@ -1,5 +1,6 @@
 import React from 'react';
-import { Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Tag, Modal } from 'antd';
+import { Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, Tag, Modal } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { FolderOutlined, GithubOutlined, PlusOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
@@ -689,7 +690,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                     <div className={styles.field}>
                       <label>{t('skills.addGit.branchLabel')}</label>
                       <div className={styles.fieldInput}>
-                        <AutoComplete
+                        <ImeSafeAutoComplete
                           value={gitBranch}
                           onChange={setGitBranch}
                           options={branchOptions}

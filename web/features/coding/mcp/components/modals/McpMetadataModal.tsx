@@ -1,5 +1,6 @@
 import React from 'react';
-import { AutoComplete, Form, Input, message, Modal } from 'antd';
+import { Form, Input, message, Modal } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { FileTextOutlined, TagsOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import * as api from '../../services/mcpApi';
@@ -111,7 +112,7 @@ export const McpMetadataModal: React.FC<McpMetadataModalProps> = ({
               )}
               name="userGroup"
             >
-              <AutoComplete
+              <ImeSafeAutoComplete
                 allowClear
                 autoFocus
                 options={groupOptions.map((group) => ({ value: group }))}

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Checkbox, Dropdown, Tooltip } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Checkbox, Dropdown, Tooltip } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined, DownOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -1027,7 +1028,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                     return nextModel;
                   }}
                 >
-                  <AutoComplete
+                  <ImeSafeAutoComplete
                     allowClear
                     options={modelOptions}
                     placeholder={t('claudecode.model.defaultModelPlaceholder')}
@@ -1068,7 +1069,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                   setClaudeOneMMarker(value, hasClaudeOneMMarker(fallbackModel))
                 }
               >
-                <AutoComplete
+                <ImeSafeAutoComplete
                   allowClear
                   options={modelOptions}
                   placeholder={t('claudecode.model.defaultModelPlaceholder')}

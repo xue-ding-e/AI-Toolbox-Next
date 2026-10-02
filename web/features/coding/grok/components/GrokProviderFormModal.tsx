@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import {
   CloudDownloadOutlined,
   EyeInvisibleOutlined,
@@ -1206,7 +1207,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
         <div style={{ display: 'flex', gap: 8, width: '100%' }}>
           {isOfficialMode || !isEdit ? (
             <Form.Item name="model" noStyle initialValue={DEFAULT_GROK_MODEL}>
-              <AutoComplete
+              <ImeSafeAutoComplete
                 options={modelOptions}
                 placeholder={t('grok.provider.modelNamePlaceholder')}
                 style={{ flex: 1, minWidth: 0 }}

@@ -4,7 +4,6 @@ import {
   Form,
   Input,
   Select,
-  AutoComplete,
   Button,
   Table,
   Alert,
@@ -12,6 +11,7 @@ import {
   Popconfirm,
   message,
 } from 'antd';
+import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import {
   PlusOutlined,
   DeleteOutlined,
@@ -488,7 +488,7 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
       key: 'maxContextSize',
       width: '22%',
       render: (_: unknown, record: KimiCatalogModel, index: number) => (
-        <AutoComplete
+        <ImeSafeAutoComplete
           size="small"
           value={record.maxContextSize != null ? String(record.maxContextSize) : ''}
           placeholder="262144"

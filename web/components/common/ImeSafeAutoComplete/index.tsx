@@ -1,6 +1,7 @@
 import React from 'react';
 import { AutoComplete, Input } from 'antd';
 import type { AutoCompleteProps } from 'antd';
+import type { BaseOptionType, DefaultOptionType } from 'antd/es/select';
 
 /**
  * `AutoComplete` that survives IME (Chinese/Japanese/Korean) input on WebKit
@@ -111,10 +112,21 @@ const ImeSafeInput = React.forwardRef<
 
 ImeSafeInput.displayName = 'ImeSafeInput';
 
-const ImeSafeAutoComplete: React.FC<AutoCompleteProps> = (props) => (
-  <AutoComplete {...props}>
-    <ImeSafeInput />
-  </AutoComplete>
-);
+// Same generic signature as antd's AutoComplete: `OptionType` is inferred from
+// `options`, which is what lets callers' inline `filterOption` see their own
+// option shape. Typing it as a plain FC would pin the defaults and break them.
+function ImeSafeAutoComplete<
+  ValueType = any,
+  OptionType extends BaseOptionType | DefaultOptionType = DefaultOptionType,
+>({ size, ...props }: AutoCompleteProps<ValueType, OptionType>): React.ReactElement {
+  // `size` belongs on the custom input, not on AutoComplete: with a customized
+  // input antd ignores it there (and warns). Forwarding keeps dense call sites
+  // (the Kimi model table) at their intended height.
+  return (
+    <AutoComplete {...props}>
+      <ImeSafeInput size={size} />
+    </AutoComplete>
+  );
+}
 
 export default ImeSafeAutoComplete;
