@@ -14,6 +14,7 @@
 - `favorite provider` 列表和诊断属于辅助历史状态，不能反推为 OpenCode 当前运行时真实配置。
 - “更多选项”的 V1→V2 开关调用后端文件迁移命令；开关状态从当前配置路径旁的 V1 备份探测，不能另存一份可能与文件状态分叉的前端持久化布尔值。切换成功后必须重读配置并刷新托盘。前端始终按 V1 编辑结构读写，**不要**自行识别或拼装 V2 的 `providers`/`plugins`/`agents`/`mcp` 形状；后端 `v2_migration` 按 `../opencode` 官方 `migrate.ts` 在读写边界转换，前端对 V2 文件字段的任何假设都会在保存时被后端再次转换。页头在迁移未开启时显示可关闭的 V2 提示，关闭状态只记在 `localStorage` 的 `opencode.v2MigrationHintDismissed`，不要写成配置或开关状态。
 - 共享连通性弹窗允许调用方传入 `apiFormat=openai-codex-responses`：该接口只接受流式诊断，温度与输出上限控件禁用；普通 OpenCode 调用不传此标记，保持原有选项与请求格式。
+- 共享连通性弹窗的「发送测试图片」(issue #410) 开关写入 `diagnostics.visionProbe` 并随请求下发；结果表新增「视觉」列消费 `visionStatus`，并用共享纯函数 `shared/providerConnectivity/visionProbe.ts` 的 `declaredVisionCapability` / `visionProbeMismatchesDeclaration` 与模型声明的 `attachment`/`vision`/`modalities.input` 做比对，不一致时高亮提示。声明未知或未测试(`unavailable`)不算不一致。判定逻辑不要写进组件，保持纯函数可测。
 
 ## 核心设计决策（Why）
 

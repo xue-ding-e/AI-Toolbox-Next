@@ -8,6 +8,9 @@ use crate::coding::proxy_gateway::types::{
     GatewayConnectivityTestResult, ProxyGatewaySettings,
 };
 use crate::coding::url_utils::encode_url_path_segment;
+use crate::coding::open_code::models_api::{
+    VISION_PROBE_EXPECTED_TOKEN, VISION_PROBE_IMAGE_BASE64,
+};
 use crate::db::SqliteDbState;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -68,31 +71,22 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
     let mut results = Vec::new();
     for model_id in request.model_ids {
         if model_id.trim().is_empty() {
-            results.push(GatewayConnectivityTestResult {
-                model_id,
-                status: "error".to_string(),
-                first_byte_ms: None,
-                total_ms: None,
-                error_message: Some("Missing model".to_string()),
-                request_url: String::new(),
-                request_headers: json!({}),
-                request_body: json!({}),
-                response_headers: None,
-                response_body: None,
-                status_code: None,
-                status_text: None,
-                upstream_status_code: None,
-                upstream_url: None,
-            });
+            results.push(empty_gateway_result(model_id, "Missing model"));
             continue;
         }
+        let prompt = if request.vision_probe {
+            vision_probe_prompt(&request.prompt)
+        } else {
+            request.prompt.clone()
+        };
         let debug_request = build_gateway_connectivity_request(
             request.cli_key,
             &model_id,
-            &request.prompt,
+            &prompt,
             stream,
+            request.vision_probe,
         )?;
-        let result = run_gateway_connectivity_request(
+        let mut result = run_gateway_connectivity_request(
             &context,
             &options,
             &test_settings,
@@ -101,10 +95,129 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
             timeout_secs,
         )
         .await;
+        if request.vision_probe {
+            if supports_gateway_vision_probe(request.cli_key) {
+                if let Some(response_body) = result.response_body.as_ref() {
+                    match classify_gateway_vision(request.cli_key, response_body) {
+                        Ok(()) => result.vision_status = Some("passed".to_string()),
+                        Err(reason) => {
+                            result.vision_status = Some("failed".to_string());
+                            result.vision_error = Some(reason);
+                        }
+                    }
+                } else {
+                    result.vision_status = Some("failed".to_string());
+                    result.vision_error =
+                        Some("the probe returned no body to inspect".to_string());
+                }
+            } else {
+                result.vision_status = Some("unavailable".to_string());
+            }
+        }
         results.push(result);
     }
 
     Ok(GatewayConnectivityTestResponse { results })
+}
+
+fn empty_gateway_result(model_id: String, message: &str) -> GatewayConnectivityTestResult {
+    GatewayConnectivityTestResult {
+        model_id,
+        status: "error".to_string(),
+        first_byte_ms: None,
+        total_ms: None,
+        error_message: Some(message.to_string()),
+        request_url: String::new(),
+        request_headers: json!({}),
+        request_body: json!({}),
+        response_headers: None,
+        response_body: None,
+        status_code: None,
+        status_text: None,
+        upstream_status_code: None,
+        upstream_url: None,
+        vision_status: None,
+        vision_error: None,
+    }
+}
+
+fn vision_probe_prompt(base_prompt: &str) -> String {
+    format!(
+        "{base_prompt}\n\nThe message also contains a 1x1 image. If you can actually see images, reply with exactly `{VISION_PROBE_EXPECTED_TOKEN}` and nothing else. If you cannot process images, reply `NO_IMAGE`.",
+    )
+}
+
+/// All gateway-supported CLIs except Kimi use a relay that passes the image
+/// block through; Kimi's native chat protocol has no image part.
+fn supports_gateway_vision_probe(cli_key: GatewayCliKey) -> bool {
+    matches!(
+        cli_key,
+        GatewayCliKey::Claude
+            | GatewayCliKey::ClaudeDesktop
+            | GatewayCliKey::Codex
+            | GatewayCliKey::Grok
+            | GatewayCliKey::Gemini
+    )
+}
+
+fn classify_gateway_vision(
+    cli_key: GatewayCliKey,
+    response_body: &Value,
+) -> Result<(), String> {
+    // The gateway relays the client protocol, and streamed responses are
+    // aggregated into a JSON body upstream before reaching here.
+    let text = match cli_key {
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => response_body
+            .get("content")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| block.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+        GatewayCliKey::Codex | GatewayCliKey::Grok => response_body
+            .get("output")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+        GatewayCliKey::Gemini => response_body
+            .pointer("/candidates/0/content/parts")
+            .and_then(Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+        GatewayCliKey::Kimi => response_body
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        GatewayCliKey::OpenCode => String::new(),
+    };
+    let normalized = text.to_ascii_uppercase();
+    if normalized.contains(VISION_PROBE_EXPECTED_TOKEN) && !normalized.contains("NO_IMAGE") {
+        Ok(())
+    } else {
+        Err(format!(
+            "model did not confirm image input (response: {})",
+            text.trim().chars().take(120).collect::<String>()
+        ))
+    }
 }
 
 fn build_gateway_connectivity_request(
@@ -112,55 +225,60 @@ fn build_gateway_connectivity_request(
     model_id: &str,
     prompt: &str,
     stream: bool,
+    vision_probe: bool,
 ) -> Result<DebugHttpRequest, String> {
+    let data_url = format!("data:image/png;base64,{VISION_PROBE_IMAGE_BASE64}");
     let body = match cli_key {
-        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => json!({
-            "model": model_id,
-            "max_tokens": 1024,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "text", "text": prompt }
-                    ]
-                }
-            ],
-            "stream": stream,
-        }),
-        GatewayCliKey::Codex | GatewayCliKey::Grok => json!({
-            "model": model_id,
-            "input": [
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        { "type": "input_text", "text": prompt }
-                    ]
-                }
-            ],
-            "stream": stream,
-            "store": false,
-        }),
+        GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => {
+            let mut content = vec![json!({ "type": "text", "text": prompt })];
+            if vision_probe {
+                content.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": VISION_PROBE_IMAGE_BASE64,
+                    }
+                }));
+            }
+            json!({
+                "model": model_id,
+                "max_tokens": 1024,
+                "messages": [{ "role": "user", "content": content }],
+                "stream": stream,
+            })
+        }
+        GatewayCliKey::Codex | GatewayCliKey::Grok => {
+            let mut content = vec![json!({ "type": "input_text", "text": prompt })];
+            if vision_probe {
+                content.push(json!({ "type": "input_image", "image_url": data_url }));
+            }
+            json!({
+                "model": model_id,
+                "input": [{ "type": "message", "role": "user", "content": content }],
+                "stream": stream,
+                "store": false,
+            })
+        }
         GatewayCliKey::Kimi => json!({
             "model": model_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
+            "messages": [{ "role": "user", "content": prompt }],
             "stream": stream,
         }),
-        GatewayCliKey::Gemini => json!({
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        { "text": prompt }
-                    ]
-                }
-            ],
-        }),
+        GatewayCliKey::Gemini => {
+            let mut parts = vec![json!({ "text": prompt })];
+            if vision_probe {
+                parts.push(json!({
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": VISION_PROBE_IMAGE_BASE64,
+                    }
+                }));
+            }
+            json!({
+                "contents": [{ "role": "user", "parts": parts }],
+            })
+        }
         GatewayCliKey::OpenCode => {
             return Err(
                 "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
@@ -305,6 +423,8 @@ async fn run_gateway_connectivity_request(
         status_text: Some(response.status_text.clone()),
         upstream_status_code,
         upstream_url: response.upstream_url.clone(),
+        vision_status: None,
+        vision_error: None,
     }
 }
 
@@ -387,8 +507,60 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::super::upstream::gateway_body_reports_error;
-    use super::remaining_total_timeout;
+    use super::{
+        build_gateway_connectivity_request, classify_gateway_vision, supports_gateway_vision_probe,
+        remaining_total_timeout,
+    };
+    use crate::coding::proxy_gateway::types::GatewayCliKey;
+    use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn gateway_vision_probe_injects_an_image_per_cli() {
+        for cli_key in [
+            GatewayCliKey::Claude,
+            GatewayCliKey::Codex,
+            GatewayCliKey::Grok,
+            GatewayCliKey::Gemini,
+        ] {
+            let request =
+                build_gateway_connectivity_request(cli_key, "m", "probe", false, true).unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let body_text = body.to_string();
+            assert!(
+                body_text.contains("image"),
+                "{cli_key:?} body should carry an image: {body_text}"
+            );
+        }
+
+        // Kimi has no native image part and must stay text-only.
+        let kimi = build_gateway_connectivity_request(GatewayCliKey::Kimi, "m", "probe", false, true)
+            .unwrap();
+        let kimi_body: serde_json::Value = serde_json::from_slice(&kimi.body).unwrap();
+        assert!(!kimi_body.to_string().contains("image"));
+    }
+
+    #[test]
+    fn gateway_vision_classification_is_protocol_aware() {
+        assert!(classify_gateway_vision(
+            GatewayCliKey::Claude,
+            &json!({ "content": [{ "type": "text", "text": "OK" }] })
+        )
+        .is_ok());
+        assert!(classify_gateway_vision(
+            GatewayCliKey::Codex,
+            &json!({ "output": [{ "content": [{ "type": "output_text", "text": "NO_IMAGE" }] }] })
+        )
+        .is_err());
+        assert!(classify_gateway_vision(
+            GatewayCliKey::Gemini,
+            &json!({ "candidates": [{ "content": { "parts": [{ "text": "ok" }] } }] })
+        )
+        .is_ok());
+
+        assert!(supports_gateway_vision_probe(GatewayCliKey::Claude));
+        assert!(!supports_gateway_vision_probe(GatewayCliKey::Kimi));
+    }
 
     #[test]
     fn gateway_body_error_detection_handles_json_and_sse() {

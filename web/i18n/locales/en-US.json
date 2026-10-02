@@ -2025,7 +2025,14 @@
       "removeReadonlyHint": "{{count}} selected model(s) are official read-only models and cannot be removed. Deselect them and try again.",
       "noModelSelected": "Please select models to test first",
       "pending": "Pending",
-      "disclaimer": "Note: This test only verifies connectivity, not response format or fields. Results are for reference only."
+      "disclaimer": "Note: This test only verifies connectivity, not response format or fields. Results are for reference only.",
+      "visionProbe": "Send test image (verify vision)",
+      "visionProbeHint": "Sends a tiny test image and asks the model to read it back, telling declared vision apart from working vision. Skipped on protocols without image support.",
+      "vision": "Vision",
+      "visionPassed": "Reads images",
+      "visionFailed": "No vision",
+      "visionUnavailable": "Not tested",
+      "visionDeclaredMismatch": "Differs from declared vision capability"
     },
     "modelFilter": {
       "modeLabel": "Model Filter",

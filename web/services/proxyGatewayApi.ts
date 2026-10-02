@@ -213,6 +213,8 @@ export interface GatewayConnectivityTestRequest {
   stream?: boolean;
   modelIds: string[];
   timeoutSecs?: number;
+  /** Send a tiny test image so the relayed upstream must actually read it. */
+  visionProbe?: boolean;
 }
 
 export type GatewayCliTakeoverState =

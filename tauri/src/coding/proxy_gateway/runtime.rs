@@ -2833,6 +2833,7 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
                 stream: Some(false),
                 model_ids: vec!["gpt-4o".to_string()],
                 timeout_secs: Some(3),
+                vision_probe: false,
             },
         ))
         .expect("gateway connectivity test");
@@ -2898,6 +2899,7 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
                 stream: Some(false),
                 model_ids: vec!["glm-5.3".to_string()],
                 timeout_secs: Some(5),
+                vision_probe: false,
             },
         ))
         .expect("native provider connectivity test");

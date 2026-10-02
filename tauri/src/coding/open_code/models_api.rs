@@ -231,6 +231,11 @@ pub struct ConnectivityTestRequest {
     pub timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_value_mode: Option<ConfigValueMode>,
+    /// When true, the probe carries a tiny inline test image so the upstream
+    /// must actually exercise image input instead of only text. This is what
+    /// lets users tell "declared vision" apart from "vision works here".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vision_probe: bool,
 }
 
 impl ConnectivityTestRequest {
@@ -269,12 +274,53 @@ pub struct ConnectivityTestResult {
     pub response_headers: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<Value>,
+    /// Outcome of the vision probe when one was requested: `"passed"`,
+    /// `"failed"` or `"unavailable"` (no test image is defined for the wire
+    /// protocol). Absent when no vision probe was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_status: Option<String>,
+    /// Human-readable reason when `vision_status` is `"failed"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectivityTestResponse {
     pub results: Vec<ConnectivityTestResult>,
+}
+
+impl ConnectivityTestResult {
+    /// Build a result, defaulting the vision fields. Callers only need to set
+    /// `vision_status` / `vision_error` when a vision probe actually ran.
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        model_id: &str,
+        status: &str,
+        first_byte_ms: Option<u64>,
+        total_ms: Option<u64>,
+        error_message: Option<String>,
+        request_url: String,
+        request_headers: Value,
+        request_body: Value,
+        response_headers: Option<Value>,
+        response_body: Option<Value>,
+    ) -> Self {
+        Self {
+            model_id: model_id.to_string(),
+            status: status.to_string(),
+            first_byte_ms,
+            total_ms,
+            error_message,
+            request_url,
+            request_headers,
+            request_body,
+            response_headers,
+            response_body,
+            vision_status: None,
+            vision_error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1154,6 +1200,201 @@ fn enforce_prompt_and_model(npm: &str, body: &mut Value, model_id: &str, prompt:
     }
 }
 
+/// A 1x1 transparent PNG. Small enough to stay negligible in the request body
+/// yet a valid image for every supported wire protocol.
+pub(crate) const VISION_PROBE_IMAGE_BASE64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/// Marker the probe asks the model to read off the test image. The response is
+/// only accepted as proof of vision when it echoes this token, because a
+/// text-only model may still return HTTP 200 while ignoring the image.
+pub(crate) const VISION_PROBE_EXPECTED_TOKEN: &str = "OK";
+
+/// Whether a vision probe can be expressed on this wire protocol.
+pub(crate) fn supports_vision_probe(npm: &str) -> bool {
+    matches!(
+        npm,
+        "@ai-sdk/google" | "@ai-sdk/anthropic" | "@ai-sdk/openai" | "@ai-sdk/openai-compatible"
+    )
+}
+
+fn vision_probe_instruction(base_prompt: &str) -> String {
+    format!(
+        "{base_prompt}\n\nThe message also contains a 1x1 image. If you can actually see images, reply with exactly `{VISION_PROBE_EXPECTED_TOKEN}` and nothing else. If you cannot process images, reply `NO_IMAGE`.",
+        VISION_PROBE_EXPECTED_TOKEN = VISION_PROBE_EXPECTED_TOKEN
+    )
+}
+
+/// Inject a tiny image block into the probe body. `npm` follows the effective
+/// (Codex -> openai) SDK so a Codex Responses probe uses `input_image`.
+fn inject_vision_probe_image(npm: &str, body: &mut Value) {
+    let data_url = format!("data:image/png;base64,{VISION_PROBE_IMAGE_BASE64}");
+    match npm {
+        "@ai-sdk/google" => {
+            if let Some(parts) = body
+                .pointer_mut("/contents/0/parts")
+                .and_then(Value::as_array_mut)
+            {
+                parts.push(json!({
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": VISION_PROBE_IMAGE_BASE64,
+                    }
+                }));
+            }
+        }
+        "@ai-sdk/anthropic" => {
+            if let Some(content) = body
+                .pointer_mut("/messages/0/content")
+                .and_then(Value::as_array_mut)
+            {
+                content.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": VISION_PROBE_IMAGE_BASE64,
+                    }
+                }));
+            }
+        }
+        "@ai-sdk/openai" => {
+            if let Some(content) = body
+                .pointer_mut("/input/1/content")
+                .and_then(Value::as_array_mut)
+            {
+                content.push(json!({
+                    "type": "input_image",
+                    "image_url": data_url,
+                }));
+            }
+        }
+        _ => {
+            if let Some(content) = body
+                .pointer_mut("/messages/0/content")
+            {
+                *content = json!([
+                    { "type": "text", "text": vision_probe_instruction("") },
+                    { "type": "image_url", "image_url": { "url": data_url } }
+                ]);
+            }
+        }
+    }
+}
+
+/// Classify whether the probe response actually proves image understanding.
+/// `Ok(())` means passed; `Err(reason)` means failed with a reason.
+fn classify_vision_probe(
+    npm: &str,
+    response_body: &Value,
+    raw_text: &str,
+    stream_enabled: bool,
+) -> Result<(), String> {
+    let text = if stream_enabled {
+        collect_stream_text(npm, raw_text)
+    } else {
+        collect_json_text(npm, response_body)
+    };
+    let normalized = text.to_ascii_uppercase();
+    if normalized.contains(VISION_PROBE_EXPECTED_TOKEN) && !normalized.contains("NO_IMAGE") {
+        Ok(())
+    } else {
+        Err(format!(
+            "model did not confirm image input (response: {})",
+            text.trim().chars().take(120).collect::<String>()
+        ))
+    }
+}
+
+fn collect_json_text(npm: &str, body: &Value) -> String {
+    match npm {
+        "@ai-sdk/google" => body
+            .pointer("/candidates/0/content/parts")
+            .and_then(Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+        "@ai-sdk/anthropic" => body
+            .get("content")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| block.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_else(|| {
+                body.pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            }),
+        "@ai-sdk/openai" => {
+            let output_text = body
+                .pointer("/output")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.pointer("/content").and_then(Value::as_array))
+                        .flatten()
+                        .filter_map(|part| part.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+            if !output_text.is_empty() {
+                output_text
+            } else {
+                // Streaming Responses emits `response.output_text.delta` events
+                // with a flat `delta` string rather than the final `output`.
+                body.get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            }
+        }
+        _ => body
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                body.pointer("/choices/0/delta/content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn collect_stream_text(npm: &str, raw_text: &str) -> String {
+    let mut text = String::new();
+    let normalized = raw_text.replace("\r\n", "\n");
+    for frame in normalized.split("\n\n") {
+        let data = frame
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let trimmed = data.trim();
+        if trimmed.is_empty() || trimmed == "[DONE]" {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        text.push_str(&collect_json_text(npm, &event));
+    }
+    text
+}
+
+
 async fn run_connectivity_test_for_model(
     client: &reqwest::Client,
     request: &ConnectivityTestRequest,
@@ -1183,7 +1424,16 @@ async fn run_connectivity_test_for_model(
     if let Some(custom_body) = &request.body {
         merge_json(&mut body, custom_body);
     }
-    enforce_prompt_and_model(npm, &mut body, model_id, &request.prompt);
+    let vision_probe_active = request.vision_probe && supports_vision_probe(npm);
+    let prompt = if vision_probe_active {
+        vision_probe_instruction(&request.prompt)
+    } else {
+        request.prompt.clone()
+    };
+    enforce_prompt_and_model(npm, &mut body, model_id, &prompt);
+    if vision_probe_active {
+        inject_vision_probe_image(npm, &mut body);
+    }
     if request.is_codex() {
         body["stream"] = json!(true);
         body["store"] = json!(false);
@@ -1274,18 +1524,18 @@ async fn run_connectivity_test_for_model(
         Ok(resp) => resp,
         Err(err) => {
             let status = if err.is_timeout() { "timeout" } else { "error" };
-            return ConnectivityTestResult {
-                model_id: model_id.to_string(),
-                status: status.to_string(),
-                first_byte_ms: None,
-                total_ms: None,
-                error_message: Some(err.to_string()),
-                request_url: url,
-                request_headers: request_headers_value,
-                request_body: request_body_value,
-                response_headers: None,
-                response_body: None,
-            };
+            return ConnectivityTestResult::build(
+                model_id,
+                status,
+                None,
+                None,
+                Some(err.to_string()),
+                url,
+                request_headers_value,
+                request_body_value,
+                None,
+                None,
+            );
         }
     };
 
@@ -1316,18 +1566,18 @@ async fn run_connectivity_test_for_model(
                 } else {
                     parse_json_or_wrap(&body_text)
                 };
-                return ConnectivityTestResult {
-                    model_id: model_id.to_string(),
-                    status: "error".to_string(),
+                return ConnectivityTestResult::build(
+                    model_id,
+                    "error",
                     first_byte_ms,
-                    total_ms: Some(start_time.elapsed().as_millis() as u64),
-                    error_message: Some(err.to_string()),
-                    request_url: url,
-                    request_headers: request_headers_value,
-                    request_body: request_body_value,
-                    response_headers: Some(response_headers_value),
-                    response_body: Some(response_body_value),
-                };
+                    Some(start_time.elapsed().as_millis() as u64),
+                    Some(err.to_string()),
+                    url,
+                    request_headers_value,
+                    request_body_value,
+                    Some(response_headers_value),
+                    Some(response_body_value),
+                );
             }
         }
     }
@@ -1349,36 +1599,48 @@ async fn run_connectivity_test_for_model(
         .then(|| codex_stream_error(&body_text))
         .flatten();
     if !status_code.is_success() || protocol_error.is_some() {
-        return ConnectivityTestResult {
-            model_id: model_id.to_string(),
-            status: "error".to_string(),
+        return ConnectivityTestResult::build(
+            model_id,
+            "error",
             first_byte_ms,
-            total_ms: Some(total_ms),
-            error_message: Some(if status_code.is_success() {
+            Some(total_ms),
+            Some(if status_code.is_success() {
                 protocol_error.unwrap()
             } else {
                 format!("API error: {}", status_code)
             }),
-            request_url: url,
-            request_headers: request_headers_value,
-            request_body: request_body_value,
-            response_headers: Some(response_headers_value),
-            response_body: Some(response_body_value),
-        };
+            url,
+            request_headers_value,
+            request_body_value,
+            Some(response_headers_value),
+            Some(response_body_value),
+        );
     }
 
-    ConnectivityTestResult {
-        model_id: model_id.to_string(),
-        status: "success".to_string(),
+    let mut result = ConnectivityTestResult::build(
+        model_id,
+        "success",
         first_byte_ms,
-        total_ms: Some(total_ms),
-        error_message: None,
-        request_url: url,
-        request_headers: request_headers_value,
-        request_body: request_body_value,
-        response_headers: Some(response_headers_value),
-        response_body: Some(response_body_value),
+        Some(total_ms),
+        None,
+        url,
+        request_headers_value,
+        request_body_value,
+        Some(response_headers_value.clone()),
+        Some(response_body_value.clone()),
+    );
+    if vision_probe_active {
+        match classify_vision_probe(npm, &response_body_value, &body_text, stream_enabled) {
+            Ok(()) => result.vision_status = Some("passed".to_string()),
+            Err(reason) => {
+                result.vision_status = Some("failed".to_string());
+                result.vision_error = Some(reason);
+            }
+        }
+    } else if request.vision_probe {
+        result.vision_status = Some("unavailable".to_string());
     }
+    result
 }
 
 #[tauri::command]
@@ -1411,18 +1673,18 @@ pub async fn test_provider_model_connectivity(
     let mut results = Vec::new();
     for model_id in &request.model_ids {
         if request.base_url.trim().is_empty() {
-            results.push(ConnectivityTestResult {
-                model_id: model_id.clone(),
-                status: "error".to_string(),
-                first_byte_ms: None,
-                total_ms: None,
-                error_message: Some("Missing Base URL".to_string()),
-                request_url: String::new(),
-                request_headers: json!({}),
-                request_body: json!({}),
-                response_headers: None,
-                response_body: None,
-            });
+            results.push(ConnectivityTestResult::build(
+                model_id,
+                "error",
+                None,
+                None,
+                Some("Missing Base URL".to_string()),
+                String::new(),
+                json!({}),
+                json!({}),
+                None,
+                None,
+            ));
             continue;
         }
 
@@ -1860,5 +2122,115 @@ mod tests {
             ),
             "https://api.example.com/v1/models"
         );
+    }
+
+    #[test]
+    fn vision_probe_image_is_injected_per_wire_protocol() {
+        // OpenAI Chat: image_url content part.
+        let mut chat = build_default_body(&chat_request("@ai-sdk/openai-compatible"), "m", None);
+        enforce_prompt_and_model("@ai-sdk/openai-compatible", &mut chat, "m", "probe");
+        inject_vision_probe_image("@ai-sdk/openai-compatible", &mut chat);
+        let chat_parts = chat["messages"][0]["content"].as_array().unwrap();
+        assert!(chat_parts
+            .iter()
+            .any(|part| part["type"] == "image_url"
+                && part["image_url"]["url"]
+                    .as_str()
+                    .is_some_and(|url| url.contains(VISION_PROBE_IMAGE_BASE64))));
+
+        // Anthropic: native base64 image block.
+        let mut anthropic = build_default_body(&chat_request("@ai-sdk/anthropic"), "m", Some("u"));
+        enforce_prompt_and_model("@ai-sdk/anthropic", &mut anthropic, "m", "probe");
+        inject_vision_probe_image("@ai-sdk/anthropic", &mut anthropic);
+        let blocks = anthropic["messages"][0]["content"].as_array().unwrap();
+        assert!(blocks.iter().any(|block| block["type"] == "image"
+            && block["source"]["type"] == "base64"
+            && block["source"]["media_type"] == "image/png"));
+
+        // Responses: input_image part.
+        let mut responses = build_default_body(&chat_request("@ai-sdk/openai"), "m", None);
+        enforce_prompt_and_model("@ai-sdk/openai", &mut responses, "m", "probe");
+        inject_vision_probe_image("@ai-sdk/openai", &mut responses);
+        let input_parts = responses["input"][1]["content"].as_array().unwrap();
+        assert!(input_parts
+            .iter()
+            .any(|part| part["type"] == "input_image"));
+
+        // Gemini: inlineData part.
+        let mut gemini = build_default_body(&chat_request("@ai-sdk/google"), "m", None);
+        enforce_prompt_and_model("@ai-sdk/google", &mut gemini, "m", "probe");
+        inject_vision_probe_image("@ai-sdk/google", &mut gemini);
+        let gemini_parts = gemini["contents"][0]["parts"].as_array().unwrap();
+        assert!(gemini_parts.iter().any(|part| part["inlineData"]["mimeType"] == "image/png"));
+    }
+
+    #[test]
+    fn vision_probe_classification_requires_the_confirmation_token() {
+        // Confirmed vision.
+        assert!(classify_vision_probe(
+            "@ai-sdk/openai-compatible",
+            &json!({ "choices": [{ "message": { "content": "OK" } }] }),
+            "",
+            false,
+        )
+        .is_ok());
+
+        // HTTP 200 but the model says it cannot see images.
+        assert!(classify_vision_probe(
+            "@ai-sdk/openai-compatible",
+            &json!({ "choices": [{ "message": { "content": "NO_IMAGE" } }] }),
+            "",
+            false,
+        )
+        .is_err());
+
+        // Anthropic block text.
+        assert!(classify_vision_probe(
+            "@ai-sdk/anthropic",
+            &json!({ "content": [{ "type": "text", "text": "ok" }] }),
+            "",
+            false,
+        )
+        .is_ok());
+
+        // Responses streamed text.
+        assert!(classify_vision_probe(
+            "@ai-sdk/openai",
+            &Value::Null,
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n",
+            true,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn vision_probe_is_only_defined_for_image_capable_protocols() {
+        assert!(supports_vision_probe("@ai-sdk/openai-compatible"));
+        assert!(supports_vision_probe("@ai-sdk/openai"));
+        assert!(supports_vision_probe("@ai-sdk/anthropic"));
+        assert!(supports_vision_probe("@ai-sdk/google"));
+        assert!(!supports_vision_probe("@ai-sdk/unknown"));
+    }
+
+    fn chat_request(npm: &str) -> ConnectivityTestRequest {
+        ConnectivityTestRequest {
+            npm: npm.to_string(),
+            api_format: None,
+            provider_id: None,
+            base_url: "https://api.example.com/v1".to_string(),
+            api_key: None,
+            reasoning_effort: None,
+            headers: None,
+            prompt: "probe".to_string(),
+            temperature: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            stream: None,
+            body: None,
+            model_ids: vec!["m".to_string()],
+            timeout_secs: None,
+            config_value_mode: None,
+            vision_probe: true,
+        }
     }
 }

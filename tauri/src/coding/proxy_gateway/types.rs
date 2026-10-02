@@ -709,6 +709,10 @@ pub struct GatewayConnectivityTestRequest {
     pub model_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Send a tiny inline test image so the relayed upstream must actually read
+    /// an image; lets users tell declared vision from working vision.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vision_probe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -742,6 +746,11 @@ pub struct GatewayConnectivityTestResult {
     pub upstream_status_code: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_url: Option<String>,
+    /// Vision probe outcome when one was requested: passed / failed / unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

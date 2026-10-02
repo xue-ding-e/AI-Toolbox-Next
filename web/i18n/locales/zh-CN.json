@@ -2022,7 +2022,14 @@
       "removeReadonlyHint": "选中的 {{count}} 个模型属于官方只读模型，不能移除。请取消它们后再试。",
       "noModelSelected": "请先选择要测试的模型",
       "pending": "待测试",
-      "disclaimer": "提示：本测试仅验证模型连通性，不校验响应格式与字段，测试结果仅供参考。"
+      "disclaimer": "提示：本测试仅验证模型连通性，不校验响应格式与字段，测试结果仅供参考。",
+      "visionProbe": "发送测试图片（验证视觉识别）",
+      "visionProbeHint": "发送一张极小测试图片，要求模型读图并回显标记；用于区分「声明支持视觉」和「实际能读图」。不支持图片的协议会跳过。",
+      "vision": "视觉",
+      "visionPassed": "可读图",
+      "visionFailed": "不可读图",
+      "visionUnavailable": "未测试",
+      "visionDeclaredMismatch": "与声明的视觉能力不一致"
     },
     "modelFilter": {
       "modeLabel": "模型过滤",

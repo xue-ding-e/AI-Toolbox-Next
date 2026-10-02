@@ -19,6 +19,11 @@ import {
   resolveModelConnection,
   type ProviderModelConnections,
 } from '@/features/coding/shared/providerConnectivity/modelConnection';
+import {
+  declaredVisionCapability,
+  visionProbeMismatchesDeclaration,
+  type VisionProbeStatus,
+} from '@/features/coding/shared/providerConnectivity/visionProbe';
 import styles from './ConnectivityTestModal.module.less';
 
 
@@ -84,6 +89,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   const [headersValid, setHeadersValid] = React.useState(true);
   const [bodyJson, setBodyJson] = React.useState<unknown>({});
   const [bodyValid, setBodyValid] = React.useState(true);
+  const [visionProbe, setVisionProbe] = React.useState(false);
 
   // Details modal state
   const [detailsModalOpen, setDetailsModalOpen] = React.useState(false);
@@ -111,8 +117,9 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       ...(diagnostics?.stream !== undefined ? { stream: diagnostics.stream } : {}),
       ...(diagnostics?.headers ? { headers: diagnostics.headers } : {}),
       ...(diagnostics?.body ? { body: diagnostics.body } : {}),
+      visionProbe: diagnostics?.visionProbe ?? visionProbe,
     });
-  }, [onSaveDiagnostics, form, diagnostics]);
+  }, [onSaveDiagnostics, form, diagnostics, visionProbe]);
 
   // Initialize form with diagnostics prop - only when modal opens
   React.useEffect(() => {
@@ -127,6 +134,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       setHeadersJson(diagnostics?.headers || {});
       setBodyJson(diagnostics?.body || {});
+      setVisionProbe(diagnostics?.visionProbe ?? false);
       setDefaultTestModelId(resolvedDefaultTestModelId);
       setSelectedModelIds(resolvedDefaultTestModelId ? [resolvedDefaultTestModelId] : []);
 
@@ -220,6 +228,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         ...buildTokenCapFields(npm, values.maxTokens),
         ...(headersObject ? { headers: headersObject } : {}),
         ...(bodyObject ? { body: bodyObject } : {}),
+        visionProbe,
       };
 
       await onSaveDiagnostics(newDiagnostics);
@@ -246,6 +255,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         ...(bodyObject ? { body: bodyObject } : {}),
         modelIds: [],
         timeoutSecs: 30,
+        visionProbe,
       };
 
       // Run tests in parallel (streaming effect) - only for selected models
@@ -263,6 +273,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                 stream: values.stream,
                 modelIds: [modelId],
                 timeoutSecs: 30,
+                visionProbe,
               })
             : await testProviderModelConnectivity({
                 ...request,
@@ -455,6 +466,30 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       },
     },
     {
+      title: t('opencode.connectivity.vision'),
+      dataIndex: 'visionStatus',
+      key: 'visionStatus',
+      width: 100,
+      align: 'center',
+      render: (visionStatus: VisionProbeStatus | undefined, record: TestResult) => {
+        if (record.loading || record.status === 'running') return '-';
+        if (visionStatus === 'passed' || visionStatus === 'failed') {
+          const declared = declaredVisionCapability(providerConfig.models?.[record.modelId]);
+          const mismatched = visionProbeMismatchesDeclaration(declared, visionStatus);
+          const tag = visionStatus === 'passed'
+            ? <Tag color={mismatched ? 'warning' : 'success'}>{t('opencode.connectivity.visionPassed')}</Tag>
+            : <Tag color="error">{t('opencode.connectivity.visionFailed')}</Tag>;
+          const tooltip = [
+            mismatched ? t('opencode.connectivity.visionDeclaredMismatch') : undefined,
+            visionStatus === 'failed' ? record.visionError : undefined,
+          ].filter(Boolean).join('\n');
+          return tooltip ? <Tooltip title={tooltip}>{tag}</Tooltip> : tag;
+        }
+        if (visionStatus === 'unavailable') return <Tag color="default">{t('opencode.connectivity.visionUnavailable')}</Tag>;
+        return '-';
+      },
+    },
+    {
       title: t('opencode.connectivity.firstByte'),
       dataIndex: 'firstByteMs',
       key: 'firstByteMs',
@@ -564,6 +599,20 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
                 >
                   <Input.TextArea className={styles.promptInput} rows={3} />
                 </Form.Item>
+              </div>
+            </div>
+
+            <div className={styles.defaultModelPanel}>
+              <div className={styles.formFieldRow}>
+                <div className={styles.fieldLabel}>
+                  {t('opencode.connectivity.visionProbe')}
+                </div>
+                <div className={styles.fieldContent}>
+                  <Switch checked={visionProbe} onChange={setVisionProbe} />
+                  <Typography.Text className={styles.defaultModelHelp}>
+                    {t('opencode.connectivity.visionProbeHint')}
+                  </Typography.Text>
+                </div>
               </div>
             </div>
 

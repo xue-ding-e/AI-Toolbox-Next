@@ -441,6 +441,7 @@ export interface OpenCodeDiagnosticsConfig {
   stream?: boolean;
   headers?: Record<string, unknown>;
   body?: Record<string, unknown>;
+  visionProbe?: boolean;
 }
 
 /**
@@ -540,6 +541,8 @@ export interface ConnectivityTestRequest {
   body?: Record<string, unknown>;
   modelIds: string[];
   timeoutSecs?: number;
+  /** Send a tiny test image so the upstream must actually read an image. */
+  visionProbe?: boolean;
 }
 
 export interface ConnectivityTestResult {
@@ -560,6 +563,10 @@ export interface ConnectivityTestResult {
    * replaced the status with its own 502, so failures stay explainable. */
   upstreamStatusCode?: number;
   upstreamUrl?: string;
+  /** Vision probe outcome when one was requested: passed / failed / unavailable. */
+  visionStatus?: 'passed' | 'failed' | 'unavailable';
+  /** Reason the vision probe failed. */
+  visionError?: string;
 }
 
 export interface ConnectivityTestResponse {
