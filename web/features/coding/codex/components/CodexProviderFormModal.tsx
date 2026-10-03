@@ -13,6 +13,7 @@ import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
+import ImeSafeInput from '@/components/common/ImeSafeInput';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
 import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
@@ -1084,7 +1085,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             label={t('codex.provider.apiKey')}
             rules={[{ required: true, message: t('common.error') }]}
           >
-            <Input
+            {/* Guarded for the same reason as base url below: the hook trims
+                this value and an effect writes it back on every keystroke. */}
+            <ImeSafeInput
               type={showApiKey ? 'text' : 'password'}
               placeholder={t('codex.provider.apiKeyPlaceholder')}
               addonAfter={
@@ -1128,9 +1131,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             rules={[{ required: true, message: t('common.error') }]}
             help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.baseUrlHelp')}</Text>}
           >
-            <Input
-              placeholder="https://your-api-endpoint.com/v1"
-            />
+            {/* Guarded: `onValuesChange` sanitizes this field into hook state and
+                an effect writes it straight back, which would otherwise rewrite
+                the value mid-composition on macOS (issue #409). */}
+            <ImeSafeInput placeholder="https://your-api-endpoint.com/v1" />
           </Form.Item>
         </>
       )}

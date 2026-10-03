@@ -1,7 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { AutoComplete, ConfigProvider, theme } from 'antd';
+import { AutoComplete, ConfigProvider, Form, Input, theme } from 'antd';
 import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
+import ImeSafeInput from '@/components/common/ImeSafeInput';
 
 const parameters = new URLSearchParams(location.search);
 const mode = parameters.get('theme') || 'light';
@@ -19,7 +20,7 @@ window.__TAURI_INTERNALS__ = {
 // change was produced by the component under test.
 const state = {
   runId: parameters.get('runId'),
-  changes: { plain: [], guarded: [] },
+  changes: { plain: [], guarded: [], plainField: [], guardedField: [] },
 };
 
 const controls = {};
@@ -56,8 +57,46 @@ function Fixture() {
         <label htmlFor="guarded-small-input">guarded AutoComplete (small)</label>
         <ImeSafeAutoComplete id="guarded-small-input" size="small" value={values.guarded} onChange={recordChange('guarded')} options={[]} />
       </section>
+
+      {/* The second shape the guard covers: a plain form field whose value is
+          written back from outside on every keystroke. Both scenarios carry the
+          identical form wiring — only the input component differs. */}
+      <FieldScenario kind="plainField" guarded={false} inputId="plain-field-input" label="plain form field (write-back)" />
+      <FieldScenario kind="guardedField" guarded inputId="guarded-field-input" label="guarded form field (write-back)" />
+
       <pre id="fixture-state">{JSON.stringify(state.changes)}</pre>
     </main>
+  );
+}
+
+// The Codex base-url loop reduced to its essence: every keystroke sanitizes the
+// typed text into state, and an effect writes that state back into the very field
+// being typed in. The sanitizer matches `useCodexConfigState`.
+const sanitizeFieldValue = raw => raw.replace(/['"`]/g, '').trim();
+
+function FieldScenario({ kind, guarded, inputId, label }) {
+  const [form] = Form.useForm();
+  const [sanitized, setSanitized] = React.useState('');
+
+  React.useEffect(() => {
+    form.setFieldsValue({ url: sanitized });
+  }, [sanitized, form]);
+
+  return (
+    <Form
+      form={form}
+      layout="vertical"
+      onValuesChange={changed => {
+        state.changes[kind].push(changed.url);
+        setSanitized(sanitizeFieldValue(changed.url ?? ''));
+      }}
+    >
+      <Form.Item name="url" label={label}>
+        {guarded
+          ? <ImeSafeInput id={inputId} placeholder="https://example.com/v1" />
+          : <Input id={inputId} placeholder="https://example.com/v1" />}
+      </Form.Item>
+    </Form>
   );
 }
 

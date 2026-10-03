@@ -7,6 +7,13 @@ const PLAIN_INPUT = '#plain-input';
 const GUARDED_INPUT = '#guarded-input';
 const PLAIN_SMALL_INPUT = '#plain-small-input';
 const GUARDED_SMALL_INPUT = '#guarded-small-input';
+const PLAIN_FIELD = '#plain-field-input';
+const GUARDED_FIELD = '#guarded-field-input';
+// A URL the IME composes together with the space a Chinese IME appends when it
+// commits English in Chinese mode. The fixture's write-back sanitizer trims it,
+// so the value it writes back differs from what is being composed.
+const COMPOSING_FIELD_VALUE = 'https://a.example ';
+const SANITIZED_FIELD_VALUE = 'https://a.example';
 
 /**
  * Chromium cannot reproduce the WebKit composition abort that issue #409
@@ -45,7 +52,8 @@ export async function verifyImeSafeAutoComplete({ send, evaluate, baseUrl, artif
   await send('Page.navigate', { url: baseUrl + '/?runId=' + runId });
   await waitFor(
     'window.imeSafeAutoCompleteFixture?.state.runId === ' + JSON.stringify(runId)
-    + ' && document.querySelectorAll(".ant-select").length === 4',
+    + ' && document.querySelectorAll(".ant-select").length === 4'
+    + ' && document.querySelectorAll("form").length === 2',
   );
   await delay(300);
 
@@ -109,6 +117,55 @@ export async function verifyImeSafeAutoComplete({ send, evaluate, baseUrl, artif
   const smallGuardedHeight = await evaluate(controlHeight(GUARDED_SMALL_INPUT));
   check('guarded control honours size="small"', smallGuardedHeight, await evaluate(controlHeight(PLAIN_SMALL_INPUT)));
   check('size="small" still renders smaller than the default control', smallGuardedHeight < await evaluate(controlHeight(GUARDED_INPUT)), true);
+
+  // ---------------------------------------- form field with a write-back loop
+  // The Codex base-url/api-key shape: `onValuesChange` sanitizes the typed text
+  // into state and an effect writes it straight back with `setFieldsValue`. Both
+  // scenarios below carry identical form wiring, so the only difference is the
+  // input component. Chromium cannot abort the composition the way WebKit does,
+  // but it does show the rewrite the abort comes from: on the plain field the
+  // write-back reaches the DOM while the IME is still composing, on the guarded
+  // one it waits for the commit.
+  await action(`focus(${JSON.stringify(PLAIN_FIELD)})`);
+  await action(`dispatchComposition(${JSON.stringify(PLAIN_FIELD)}, "compositionstart", "")`);
+  await action(`setInputValue(${JSON.stringify(PLAIN_FIELD)}, ${JSON.stringify(COMPOSING_FIELD_VALUE)})`);
+  await delay(200);
+  check(
+    'plain form field: the per-keystroke write-back rewrites the composing value',
+    await action(`inputValue(${JSON.stringify(PLAIN_FIELD)})`),
+    SANITIZED_FIELD_VALUE,
+  );
+  check(
+    'plain form field: the form got the in-composition text',
+    await evaluate(changes('plainField')),
+    [COMPOSING_FIELD_VALUE],
+  );
+
+  await action(`focus(${JSON.stringify(GUARDED_FIELD)})`);
+  await action(`dispatchComposition(${JSON.stringify(GUARDED_FIELD)}, "compositionstart", "")`);
+  await action(`setInputValue(${JSON.stringify(GUARDED_FIELD)}, ${JSON.stringify(COMPOSING_FIELD_VALUE)})`);
+  await delay(200);
+  check(
+    'guarded form field: the composing value survives the write-back',
+    await action(`inputValue(${JSON.stringify(GUARDED_FIELD)})`),
+    COMPOSING_FIELD_VALUE,
+  );
+  check('guarded form field: nothing reached the form mid-composition', await evaluate(changes('guardedField')), []);
+
+  // The IME commits: only now may the field (and with it the write-back) move.
+  await action(`setInputValue(${JSON.stringify(GUARDED_FIELD)}, ${JSON.stringify(SANITIZED_FIELD_VALUE)})`);
+  await action(`dispatchComposition(${JSON.stringify(GUARDED_FIELD)}, "compositionend", ${JSON.stringify(SANITIZED_FIELD_VALUE)})`);
+  await delay(200);
+  check(
+    'guarded form field: commits once and settles on the sanitized value',
+    await action(`inputValue(${JSON.stringify(GUARDED_FIELD)})`),
+    SANITIZED_FIELD_VALUE,
+  );
+  check(
+    'guarded form field: the form got the committed text once',
+    await evaluate(changes('guardedField')),
+    [SANITIZED_FIELD_VALUE],
+  );
 
   await screenshot('ime-safe-autocomplete');
 
