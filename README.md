@@ -12,6 +12,8 @@
   <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+> **关于语言：** 根目录 README 以英文为主，是因为 AppImageHub 等应用目录要求仓库 README 使用英文，中文为主会导致收录失败。完整的中文文档见 [README.zh-CN.md](README.zh-CN.md)。
+
 <p align="center">
   <a href="https://github.com/coulsontl/ai-toolbox/releases">
     <img src="https://img.shields.io/github/v/release/coulsontl/ai-toolbox?style=flat-square" alt="Release">
