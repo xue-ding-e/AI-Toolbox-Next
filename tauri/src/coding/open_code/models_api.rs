@@ -1210,6 +1210,38 @@ pub(crate) const VISION_PROBE_IMAGE_BASE64: &str =
 /// text-only model may still return HTTP 200 while ignoring the image.
 pub(crate) const VISION_PROBE_EXPECTED_TOKEN: &str = "OK";
 
+/// Whether a probe response proves the model actually read the image.
+///
+/// The prompt demands "exactly `OK` and nothing else", so the reply must *be*
+/// the token rather than merely contain it: a substring match would also accept
+/// a text-only model that only says `OK, I'll help` or `I cannot see it, sorry`,
+/// which is the false green the probe exists to prevent. Surrounding quotes,
+/// backticks and trailing punctuation are stripped first because models
+/// routinely decorate a one-word answer (`OK.`, `` `OK` ``, `**OK**`).
+pub(crate) fn vision_probe_confirmed(text: &str) -> bool {
+    text.trim()
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '`' | '"'
+                        | '\''
+                        | '*'
+                        | '.'
+                        | '!'
+                        | ':'
+                        | '。'
+                        | '！'
+                        | '：'
+                        | '“'
+                        | '”'
+                        | '‘'
+                        | '’'
+                )
+        })
+        .eq_ignore_ascii_case(VISION_PROBE_EXPECTED_TOKEN)
+}
+
 /// Whether a vision probe can be expressed on this wire protocol.
 pub(crate) fn supports_vision_probe(npm: &str) -> bool {
     matches!(
@@ -1270,13 +1302,18 @@ fn inject_vision_probe_image(npm: &str, body: &mut Value) {
             }
         }
         _ => {
-            if let Some(content) = body
-                .pointer_mut("/messages/0/content")
-            {
-                *content = json!([
-                    { "type": "text", "text": vision_probe_instruction("") },
-                    { "type": "image_url", "image_url": { "url": data_url } }
-                ]);
+            // OpenAI Chat carries the prompt as a plain string. Convert it to the
+            // richer part array in place (or append to an existing array) so the
+            // probe image rides along without dropping the caller's prompt, which
+            // already holds the vision instruction set by `enforce_prompt_and_model`.
+            let image_part = json!({ "type": "image_url", "image_url": { "url": data_url } });
+            match body.pointer_mut("/messages/0/content") {
+                Some(Value::Array(parts)) => parts.push(image_part),
+                Some(content) => {
+                    let prompt = content.as_str().unwrap_or_default().to_string();
+                    *content = json!([{ "type": "text", "text": prompt }, image_part]);
+                }
+                None => {}
             }
         }
     }
@@ -1295,8 +1332,7 @@ fn classify_vision_probe(
     } else {
         collect_json_text(npm, response_body)
     };
-    let normalized = text.to_ascii_uppercase();
-    if normalized.contains(VISION_PROBE_EXPECTED_TOKEN) && !normalized.contains("NO_IMAGE") {
+    if vision_probe_confirmed(&text) {
         Ok(())
     } else {
         Err(format!(
@@ -1393,7 +1429,6 @@ fn collect_stream_text(npm: &str, raw_text: &str) -> String {
     }
     text
 }
-
 
 async fn run_connectivity_test_for_model(
     client: &reqwest::Client,
@@ -2131,12 +2166,14 @@ mod tests {
         enforce_prompt_and_model("@ai-sdk/openai-compatible", &mut chat, "m", "probe");
         inject_vision_probe_image("@ai-sdk/openai-compatible", &mut chat);
         let chat_parts = chat["messages"][0]["content"].as_array().unwrap();
+        assert!(chat_parts.iter().any(|part| part["type"] == "image_url"
+            && part["image_url"]["url"]
+                .as_str()
+                .is_some_and(|url| url.contains(VISION_PROBE_IMAGE_BASE64))));
+        // Switching the plain-string prompt to a part array must not drop it.
         assert!(chat_parts
             .iter()
-            .any(|part| part["type"] == "image_url"
-                && part["image_url"]["url"]
-                    .as_str()
-                    .is_some_and(|url| url.contains(VISION_PROBE_IMAGE_BASE64))));
+            .any(|part| part["type"] == "text" && part["text"] == "probe"));
 
         // Anthropic: native base64 image block.
         let mut anthropic = build_default_body(&chat_request("@ai-sdk/anthropic"), "m", Some("u"));
@@ -2152,16 +2189,16 @@ mod tests {
         enforce_prompt_and_model("@ai-sdk/openai", &mut responses, "m", "probe");
         inject_vision_probe_image("@ai-sdk/openai", &mut responses);
         let input_parts = responses["input"][1]["content"].as_array().unwrap();
-        assert!(input_parts
-            .iter()
-            .any(|part| part["type"] == "input_image"));
+        assert!(input_parts.iter().any(|part| part["type"] == "input_image"));
 
         // Gemini: inlineData part.
         let mut gemini = build_default_body(&chat_request("@ai-sdk/google"), "m", None);
         enforce_prompt_and_model("@ai-sdk/google", &mut gemini, "m", "probe");
         inject_vision_probe_image("@ai-sdk/google", &mut gemini);
         let gemini_parts = gemini["contents"][0]["parts"].as_array().unwrap();
-        assert!(gemini_parts.iter().any(|part| part["inlineData"]["mimeType"] == "image/png"));
+        assert!(gemini_parts
+            .iter()
+            .any(|part| part["inlineData"]["mimeType"] == "image/png"));
     }
 
     #[test]
@@ -2201,6 +2238,31 @@ mod tests {
             true,
         )
         .is_ok());
+
+        // A mere mention of "OK" in a longer reply is not proof of vision — that
+        // is the false green the probe exists to avoid.
+        assert!(classify_vision_probe(
+            "@ai-sdk/openai-compatible",
+            &json!({ "choices": [{ "message": { "content": "OK, I'll help" } }] }),
+            "",
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn vision_probe_confirmation_tolerates_decoration_but_not_extra_words() {
+        assert!(vision_probe_confirmed("OK"));
+        assert!(vision_probe_confirmed("ok"));
+        assert!(vision_probe_confirmed("  OK\n"));
+        assert!(vision_probe_confirmed("OK."));
+        assert!(vision_probe_confirmed("**OK**"));
+        assert!(vision_probe_confirmed("`OK`"));
+
+        assert!(!vision_probe_confirmed("NO_IMAGE"));
+        assert!(!vision_probe_confirmed("OK, I'll help"));
+        assert!(!vision_probe_confirmed("broken"));
+        assert!(!vision_probe_confirmed(""));
     }
 
     #[test]

@@ -3,14 +3,14 @@ use super::upstream::{
     gateway_body_reports_error, route_request_with_options, GatewayRequestOptions,
 };
 use super::{providers, GatewayRuntimeContext, NEXT_REQUEST_ID};
+use crate::coding::open_code::models_api::{
+    vision_probe_confirmed, VISION_PROBE_EXPECTED_TOKEN, VISION_PROBE_IMAGE_BASE64,
+};
 use crate::coding::proxy_gateway::types::{
     AppProxyConfig, GatewayCliKey, GatewayConnectivityTestRequest, GatewayConnectivityTestResponse,
     GatewayConnectivityTestResult, ProxyGatewaySettings,
 };
 use crate::coding::url_utils::encode_url_path_segment;
-use crate::coding::open_code::models_api::{
-    VISION_PROBE_EXPECTED_TOKEN, VISION_PROBE_IMAGE_BASE64,
-};
 use crate::db::SqliteDbState;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -43,7 +43,8 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
     // an identity/passthrough route: takeover, provider compat and forwarding still
     // apply, so the test runs it instead of refusing with "does not require
     // protocol conversion".
-    let stream = request.stream.unwrap_or(true);
+    let vision_probe = request.vision_probe && supports_gateway_vision_probe(request.cli_key);
+    let stream = gateway_connectivity_stream(&request);
     let timeout_secs = request.timeout_secs.unwrap_or(30).max(1);
     let mut test_settings = settings;
     test_settings.request_log_enabled = false;
@@ -74,7 +75,7 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
             results.push(empty_gateway_result(model_id, "Missing model"));
             continue;
         }
-        let prompt = if request.vision_probe {
+        let prompt = if vision_probe {
             vision_probe_prompt(&request.prompt)
         } else {
             request.prompt.clone()
@@ -84,7 +85,7 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
             &model_id,
             &prompt,
             stream,
-            request.vision_probe,
+            vision_probe,
         )?;
         let mut result = run_gateway_connectivity_request(
             &context,
@@ -95,24 +96,21 @@ pub(crate) async fn test_gateway_provider_model_connectivity(
             timeout_secs,
         )
         .await;
-        if request.vision_probe {
-            if supports_gateway_vision_probe(request.cli_key) {
-                if let Some(response_body) = result.response_body.as_ref() {
-                    match classify_gateway_vision(request.cli_key, response_body) {
-                        Ok(()) => result.vision_status = Some("passed".to_string()),
-                        Err(reason) => {
-                            result.vision_status = Some("failed".to_string());
-                            result.vision_error = Some(reason);
-                        }
+        if vision_probe {
+            if let Some(response_body) = result.response_body.as_ref() {
+                match classify_gateway_vision(request.cli_key, response_body) {
+                    Ok(()) => result.vision_status = Some("passed".to_string()),
+                    Err(reason) => {
+                        result.vision_status = Some("failed".to_string());
+                        result.vision_error = Some(reason);
                     }
-                } else {
-                    result.vision_status = Some("failed".to_string());
-                    result.vision_error =
-                        Some("the probe returned no body to inspect".to_string());
                 }
             } else {
-                result.vision_status = Some("unavailable".to_string());
+                result.vision_status = Some("failed".to_string());
+                result.vision_error = Some("the probe returned no body to inspect".to_string());
             }
+        } else if request.vision_probe {
+            result.vision_status = Some("unavailable".to_string());
         }
         results.push(result);
     }
@@ -160,12 +158,27 @@ fn supports_gateway_vision_probe(cli_key: GatewayCliKey) -> bool {
     )
 }
 
-fn classify_gateway_vision(
-    cli_key: GatewayCliKey,
-    response_body: &Value,
-) -> Result<(), String> {
-    // The gateway relays the client protocol, and streamed responses are
-    // aggregated into a JSON body upstream before reaching here.
+/// Whether the connectivity request must be sent as non-streaming.
+///
+/// A vision probe has to inspect a JSON body, but the gateway only aggregates an
+/// upstream SSE stream when the client asked for a non-streaming response (see
+/// `sse_aggregation_kind_for_non_streaming_client`). A streaming probe would hand
+/// `classify_gateway_vision` raw SSE text instead, which has no `content`/`output`
+/// structure and would always report "failed". Everything else keeps the
+/// caller's preference.
+fn gateway_connectivity_stream(request: &GatewayConnectivityTestRequest) -> bool {
+    if request.vision_probe && supports_gateway_vision_probe(request.cli_key) {
+        false
+    } else {
+        request.stream.unwrap_or(true)
+    }
+}
+
+fn classify_gateway_vision(cli_key: GatewayCliKey, response_body: &Value) -> Result<(), String> {
+    // The gateway relays the CLI's native protocol back, so the body is in that
+    // shape. The probe always runs non-streaming (`gateway_connectivity_stream`),
+    // which is what makes the gateway aggregate the upstream SSE into this single
+    // JSON body in the first place.
     let text = match cli_key {
         GatewayCliKey::Claude | GatewayCliKey::ClaudeDesktop => response_body
             .get("content")
@@ -202,15 +215,13 @@ fn classify_gateway_vision(
                     .join("")
             })
             .unwrap_or_default(),
-        GatewayCliKey::Kimi => response_body
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        GatewayCliKey::OpenCode => String::new(),
+        // Kimi (no image part) and OpenCode are excluded by
+        // `supports_gateway_vision_probe`, so this arm is unreachable at runtime;
+        // it returns no text rather than guessing a response shape and only keeps
+        // the match exhaustive.
+        GatewayCliKey::Kimi | GatewayCliKey::OpenCode => String::new(),
     };
-    let normalized = text.to_ascii_uppercase();
-    if normalized.contains(VISION_PROBE_EXPECTED_TOKEN) && !normalized.contains("NO_IMAGE") {
+    if vision_probe_confirmed(&text) {
         Ok(())
     } else {
         Err(format!(
@@ -508,10 +519,10 @@ fn parse_json_or_raw(body: &[u8]) -> Value {
 mod tests {
     use super::super::upstream::gateway_body_reports_error;
     use super::{
-        build_gateway_connectivity_request, classify_gateway_vision, supports_gateway_vision_probe,
-        remaining_total_timeout,
+        build_gateway_connectivity_request, classify_gateway_vision, gateway_connectivity_stream,
+        remaining_total_timeout, supports_gateway_vision_probe,
     };
-    use crate::coding::proxy_gateway::types::GatewayCliKey;
+    use crate::coding::proxy_gateway::types::{GatewayCliKey, GatewayConnectivityTestRequest};
     use serde_json::json;
     use std::time::Duration;
 
@@ -534,8 +545,9 @@ mod tests {
         }
 
         // Kimi has no native image part and must stay text-only.
-        let kimi = build_gateway_connectivity_request(GatewayCliKey::Kimi, "m", "probe", false, true)
-            .unwrap();
+        let kimi =
+            build_gateway_connectivity_request(GatewayCliKey::Kimi, "m", "probe", false, true)
+                .unwrap();
         let kimi_body: serde_json::Value = serde_json::from_slice(&kimi.body).unwrap();
         assert!(!kimi_body.to_string().contains("image"));
     }
@@ -557,9 +569,49 @@ mod tests {
             &json!({ "candidates": [{ "content": { "parts": [{ "text": "ok" }] } }] })
         )
         .is_ok());
+        // A longer reply that merely mentions "OK" is not proof of vision.
+        assert!(classify_gateway_vision(
+            GatewayCliKey::Claude,
+            &json!({ "content": [{ "type": "text", "text": "OK, I'll help" }] })
+        )
+        .is_err());
 
         assert!(supports_gateway_vision_probe(GatewayCliKey::Claude));
         assert!(!supports_gateway_vision_probe(GatewayCliKey::Kimi));
+    }
+
+    #[test]
+    fn gateway_vision_probe_forces_a_non_streaming_request() {
+        let request = |cli_key: GatewayCliKey, vision_probe: bool, stream: Option<bool>| {
+            GatewayConnectivityTestRequest {
+                cli_key,
+                provider_id: "p".to_string(),
+                prompt: "probe".to_string(),
+                stream,
+                model_ids: vec!["m".to_string()],
+                timeout_secs: None,
+                vision_probe,
+            }
+        };
+
+        // A supported probe must be non-streaming so the gateway aggregates the
+        // upstream SSE into a JSON body the classifier can actually read.
+        assert!(!gateway_connectivity_stream(&request(
+            GatewayCliKey::Claude,
+            true,
+            Some(true)
+        )));
+        // Without a probe, or on a CLI the probe skips, keep the caller's choice.
+        assert!(gateway_connectivity_stream(&request(
+            GatewayCliKey::Claude,
+            false,
+            Some(true)
+        )));
+        assert!(gateway_connectivity_stream(&request(
+            GatewayCliKey::Kimi,
+            true,
+            Some(true)
+        )));
     }
 
     #[test]
