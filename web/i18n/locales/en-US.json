@@ -2071,7 +2071,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -2806,7 +2806,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `CLAUDE.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -3175,7 +3175,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -3454,7 +3454,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local Gemini CLI global prompt file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -4480,7 +4480,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple Pi global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple Pi global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -5054,7 +5054,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple Grok global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple Grok global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -5223,7 +5223,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple Oh My Pi global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple Oh My Pi global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -5822,7 +5822,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -5935,7 +5935,7 @@
     },
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple Hermes global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple Hermes global prompt presets, then switch quickly with \"Apply\" or the tray menu.",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `SOUL.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
@@ -5980,7 +5980,7 @@
   "claudedesktop": {
     "prompt": {
       "title": "Global Prompt",
-      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\".",
+      "sectionHint": "Use \"Add Global Prompt\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\".",
       "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
       "emptyText": "No prompt presets yet. Use the top-right button to add one.",
       "addConfig": "Add Global Prompt",
