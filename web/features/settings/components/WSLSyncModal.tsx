@@ -31,6 +31,7 @@ const MODULE_NAMES: Record<string, string> = {
   kimi: 'Kimi',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
+  antigravity: 'Antigravity CLI',
   pi: 'Pi',
   oh_my_pi: 'omp',
   hermes: 'Hermes',
@@ -46,6 +47,7 @@ const MODULE_COLORS: Record<string, string> = {
   kimi: 'lime',
   openclaw: 'green',
   geminicli: 'cyan',
+  antigravity: 'geekblue',
   pi: 'magenta',
   oh_my_pi: 'magenta',
   hermes: 'volcano',
@@ -64,13 +66,14 @@ const MODULE_TO_TAB: Record<string, string> = {
   kimi: 'kimi',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
+  antigravity: 'antigravity',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
   hermes: 'hermes',
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'kimi', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 interface WSLSyncModalProps {
   open: boolean;

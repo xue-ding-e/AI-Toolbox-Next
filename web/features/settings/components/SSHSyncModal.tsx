@@ -42,6 +42,7 @@ const MODULE_NAMES: Record<string, string> = {
   kimi: 'Kimi',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
+  antigravity: 'Antigravity CLI',
   pi: 'Pi',
   oh_my_pi: 'omp',
   hermes: 'Hermes',
@@ -58,6 +59,7 @@ const MODULE_COLORS: Record<string, string> = {
   kimi: 'lime',
   openclaw: 'green',
   geminicli: 'cyan',
+  antigravity: 'geekblue',
   pi: 'magenta',
   oh_my_pi: 'magenta',
   hermes: 'volcano',
@@ -94,13 +96,14 @@ const MODULE_TO_TAB: Record<string, string> = {
   kimi: 'kimi',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
+  antigravity: 'antigravity',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
   hermes: 'hermes',
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 interface SSHSyncModalProps {
   open: boolean;
@@ -224,7 +227,9 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       mappingId === 'geminicli-env' ||
       mappingId === 'geminicli-settings' ||
       mappingId === 'geminicli-prompt' ||
-      mappingId === 'geminicli-oauth'
+      mappingId === 'geminicli-oauth' ||
+      mappingId === 'antigravity-env' ||
+      mappingId === 'antigravity-settings'
     ) {
       const fileName = normalizedLocalPath.split('/').pop();
       return formatWslDisplayPath(fileName ? `${linuxRootPath}/${fileName}` : status.linuxPath);

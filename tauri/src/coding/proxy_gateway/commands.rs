@@ -1551,6 +1551,7 @@ fn emit_gateway_cli_wsl_sync_request(app: &tauri::AppHandle, cli_key: GatewayCli
         GatewayCliKey::Grok => "wsl-sync-request-grok",
         GatewayCliKey::Kimi => "wsl-sync-request-kimi",
         GatewayCliKey::Gemini => "wsl-sync-request-geminicli",
+        GatewayCliKey::Antigravity => "wsl-sync-request-antigravity",
         GatewayCliKey::OpenCode => return,
     };
     if let Err(error) = app.emit(event_name, ()) {
@@ -1569,6 +1570,7 @@ async fn load_provider_name_map(
         (GatewayCliKey::Grok, DbTable::GrokProvider),
         (GatewayCliKey::Kimi, DbTable::KimiProvider),
         (GatewayCliKey::Gemini, DbTable::GeminiCliProvider),
+        (GatewayCliKey::Antigravity, DbTable::AntigravityProvider),
     ] {
         let order = OrderSpec::single(OrderField::id(OrderDirection::Asc));
         let records = db.with_conn(|conn| db_list(conn, table, Some(&order)))?;

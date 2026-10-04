@@ -1,0 +1,49 @@
+# AGENTS.md - Antigravity Backend
+
+## Source of Truth
+
+- Antigravity runtime root defaults to `~/.gemini/antigravity-cli`. If `ANTIGRAVITY_CLI_HOME` is present in the process env or shell config, the effective root is derived from that override.
+- Provider/common/prompt/official-account database records live in SQLite JSONB as the primary store and follow the established shape:
+  - `antigravity_provider`
+  - `antigravity_common_config` (`common` record)
+  - `antigravity_prompt_config`
+  - `antigravity_official_account`
+- `settings_config` is the only provider-owned JSON payload. Do not add separate provider columns for OAuth, quota, or account state.
+- Google official account OAuth snapshots are account-owned records in `antigravity_official_account`. Do not store account snapshots in provider `settings_config`.
+- Official quota is refreshed from Gemini Code Assist `retrieveUserQuota` and saved on the account record. Do not add a separate usage/quota table.
+- Official model refresh is an Antigravity/Gemini model catalog refresh. It may fetch the public model registry and must fall back to bundled constants.
+- Global rules file is `~/.gemini/config/GEMINI.md`. Verified by a marker probe: `agy` reads only that path while `~/.gemini/antigravity-cli/GEMINI.md` is ignored, and neither `ANTIGRAVITY_CLI_HOME` nor the in-app custom root dir moves it (it depends on `$HOME` alone). `context.fileName` / `contextFileName` is NOT an `agy` config key (that was Gemini CLI behavior) and must not be consulted.
+- Applying a provider sets or removes `"modelProvider": "gemini"` in `settings.json` (official removes it to revert to OAuth; custom sets `"gemini"` per official docs).
+- Antigravity CLI (`agy`) does NOT load `.env` files. This product flow is official Google OAuth only; API-key and custom endpoint configuration are intentionally unsupported. Any stale managed `.env` keys are scrubbed upon OAuth apply to prevent silent-failure illusions.
+- DeepLink 导入/导出遵循 `gemini_native` 协议并构建标准 `settings_config`。
+- CC-Switch 不再向 Antigravity 导入自定义渠道；Gemini CLI 的渠道仍按其自身模块处理。
+- 会话用量采集由 `proxy_gateway/session_import/antigravity.rs` 独立处理，从 `brain/<uuid>/.system_generated/logs/transcript_full.jsonl`（及 `conversations/<uuid>.db` 模型元数据）按 Turn 粒度记录调用。
+
+## Gotchas
+
+- Applying an official account writes the selected account snapshot into the OS credential store entry `gemini:antigravity` (see `credential_store.rs`), then applies the official provider config so `settings.json` keeps `security.auth.selectedType = "oauth-personal"`. `agy` does NOT read `~/.gemini/antigravity-cli/oauth_creds.json`; moving that file away does not break `agy models`, so it is inert legacy.
+- The virtual `__local__` default represents the latest CLI-owned login while default is selected, not a one-time pre-OAuth snapshot. Before every departure from default, `capture_local_default_snapshot` saves the current raw credential, including CLI-refreshed/rotated tokens. Reapplying an already-selected default captures but never rewrites/deletes the live entry. This repairs a legacy empty snapshot when the user has since logged in through `agy`.
+- The credential entry is global across provider IDs and config roots. Capture checks all applied account rows in the same SQLite transaction as snapshot read/write; if any managed account is selected, OAuth-start/import/switch must leave the default snapshot alone. All callers hold `ACCOUNT_OPERATION_LOCK`. Read/save failures abort before live credential replacement.
+- Returning from a managed account restores the saved default verbatim and needs no network/OAuth. Only an empty snapshot explicitly captured while default was active (`snapshot_captured_from_default`) may delete the credential. Missing/malformed/legacy empty snapshots cannot prove an intentional logged-out default: return an error and keep the current login/selection. A lost original credential cannot be reconstructed from an empty historical record. Nonempty legacy snapshots remain compatible.
+- Account apply publishes events only after config, credentials and selection agree. A config/selection failure restores the previous credential and provider selection; the account flag update is transactional. Tests use an injected credential store, never the real OS login.
+- Antigravity is exposed as an official-OAuth-only product flow. Do not add custom-provider commands, API-key fields, Base URL fields, deep-link imports, or CC-Switch imports for Antigravity.
+- Applying a provider merges stored common settings first and provider settings second; the provider therefore wins on overlapping keys. The prompt path is fixed, so no apply step rewrites it when the provider changes.
+- Official-account commands validate that the account belongs to the selected official provider, reject disabled providers, refresh near-expiry OAuth snapshots before writing runtime credentials, and refuse deletion of the applied account.
+- Official OAuth freshness: apply / limits refresh accounts; background passes are scheduled by `coding::auth_refresh` via `refresh_applied_antigravity_accounts_if_needed`.
+- Deleting a prompt config only removes the SQLite record; do not rewrite or clear the live runtime prompt file. `disable_antigravity_prompt_config` requires `config_id`, rejects unknown ids, and is the only command that clears the live file while keeping the DB rows.
+- Credential-store access must go through `keyring-core`'s `set_secret` / `get_secret` (raw UTF-8 bytes). `set_password` / `get_password` would encode UTF-16LE, which `agy` cannot parse. keyring v4's `Entry::new(service, user)` always builds the Windows target `service.user`, so it cannot address `gemini:antigravity`; pass the explicit `target` modifier through the platform store crates instead.
+- Official OAuth parameters (client id/secret, 7 scopes, preferred loopback port 8086 `/oauth2callback`, PKCE `S256` with a base64url digest) mirror the shipped `agy` client. Google rejects a non-base64url `code_challenge`, so the digest must be re-encoded rather than reused verbatim.
+- The loopback callback listener (`oauth_callback.rs`) tries 8086-8105 and then falls back to an OS-assigned port (`bind` to 0) because Windows can reserve the whole block (Hyper-V/WSL excluded ranges surface as `PermissionDenied` 10013). The authorize `redirect_uri` must use the actually bound port. Callback handling reads a complete HTTP header, ignores stale/invalid-state/duplicate-param requests without cancelling the active login, times out after 120s, and answers with `text/plain` so provider-controlled error text cannot become HTML. Do not reintroduce bounded-scan-only binding or an unbounded blocking accept.
+- `ensure_fresh_auth_snapshot` / `merge_refreshed_snapshot` merge a refresh response into the stored snapshot: `id_token`/`refresh_token` and unknown fields are preserved when the response omits them, and a missing `expires_in` must not leave a token looking permanently fresh. Background refresh (`refresh_applied_antigravity_accounts_if_needed`) takes the same process-wide account-operation mutex as apply, re-reads the row after locking, skips the virtual `__local__` account, and only rewrites the live credential when both the account and its provider are applied.
+- Quota (`retrieve_user_quota`) returns `Result` and `parse_quota_snapshot` reads Code Assist `buckets` (per-model `remainingFraction`, never a fabricated 100%) as well as the legacy `userQuotas` shape. A failed quota fetch must preserve saved `project_id`/`plan_type`/limit fields and only record `last_error`; a later success clears it. `limit_short_label` mirrors `limit_weekly_text`.
+- Account switching/import/limits/delete and OAuth-start share a process-wide async mutex; OAuth start uses a separate `try_lock` so concurrent UI clicks cannot open two flows. Repeated "import local account" keeps exactly one applied account (transactional clear-then-insert) and rolls back on failure.
+- Snapshot JSON must keep `agy`'s own shape: `{"token": {access_token, refresh_token, token_type, expiry, id_token?}, "auth_method": "consumer"}`. `agy` refreshes it itself on the next run when `token.expiry` is already in the past, so writing our snapshot and letting the CLI refresh is sufficient.
+- WSL/SSH default mappings exist and deliberately split two source locations: `antigravity-env` / `antigravity-settings` derive from the runtime root, while `antigravity-prompt` is fixed to `~/.gemini/config/GEMINI.md` on both sides and must use `get_antigravity_prompt_wsl_target_path*` rather than `get_antigravity_wsl_target_path*`. Adding one without the other silently syncs `.env`/`settings.json` but not the rules file (or vice versa).
+- Backup packaging already emitted `external-configs/antigravity/*` before restore had a matching branch; `restore.rs` now routes `GEMINI.md` to `~/.gemini/config/` and `.env` / `settings.json` / `tmp` to `get_antigravity_restore_dir()`. Keep both sides in sync when adding new backed-up files.
+- WSL sync emits `wsl-sync-request-antigravity`.
+
+## Minimal Verification
+
+- `cd tauri && cargo check`
+- Unit tests for env merge, settings merge, official-account serialization when modified.
+- `cargo test --lib coding::antigravity --jobs 2`: default A -> B -> OAuth-start/import C -> C -> default A, stale/empty legacy snapshots, repeated default reapply, CLI token rotation, intentionally logged-out default, and snapshot/config/selection failure recovery. The switch tests use real SQLite and temporary `settings.json`, hold `coding::test_env::lock()` and explicitly refresh the runtime cache to that temporary root.

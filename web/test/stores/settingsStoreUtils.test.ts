@@ -62,6 +62,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       codex: false,
       grok: false,
       geminicli: false,
+      antigravity: false,
       kimi: false,
       openclaw: false,
       pi: false,

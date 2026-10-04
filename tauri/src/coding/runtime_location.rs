@@ -7,12 +7,13 @@ use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
 use crate::coding::{
-    claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, open_claw, open_code, pi,
+    antigravity, claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, open_claw,
+    open_code, pi,
 };
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 11] = [
+const MODULE_KEYS: [&str; 12] = [
     "opencode",
     "claude",
     "codex",
@@ -20,6 +21,7 @@ const MODULE_KEYS: [&str; 11] = [
     "kimi",
     "openclaw",
     "geminicli",
+    "antigravity",
     "pi",
     "oh_my_pi",
     "hermes",
@@ -201,6 +203,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "kimi" | "kimi_cli" => Some("kimi"),
         "openclaw" => Some("openclaw"),
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
+        "antigravity" | "antigravity_cli" => Some("antigravity"),
         "pi" => Some("pi"),
         "oh_my_pi" | "omp" => Some("oh_my_pi"),
         "hermes" => Some("hermes"),
@@ -300,6 +303,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("geminicli") => {
             let location = resolve_gemini_cli_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("geminicli", location.clone());
+            Ok(location)
+        }
+        Some("antigravity") => {
+            let location = resolve_antigravity_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("antigravity", location.clone());
             Ok(location)
         }
         Some("pi") => {
@@ -1459,6 +1467,147 @@ pub async fn get_gemini_cli_prompt_wsl_target_path_async(db: &crate::db::SqliteD
     get_gemini_cli_wsl_target_path_async(db, &file_name).await
 }
 
+pub fn get_antigravity_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("antigravity"))
+}
+
+pub async fn get_antigravity_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "antigravity").await
+}
+
+async fn resolve_antigravity_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let path_info =
+        get_custom_path_from_record(db, DbTable::AntigravityCommonConfig, "common", |value| {
+            crate::coding::antigravity::adapter::from_db_value_common(value)
+                .root_dir
+                .filter(|path| !path.trim().is_empty())
+        })
+        .await;
+
+    let (path, source) = if let Some(path) = path_info {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_antigravity_path_without_db()
+    };
+
+    Ok(build_runtime_location(path, source))
+}
+
+pub fn get_antigravity_env_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_sync(db)?
+        .host_path
+        .join(".env"))
+}
+
+pub async fn get_antigravity_env_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(".env"))
+}
+
+pub fn get_antigravity_settings_path_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_sync(db)?
+        .host_path
+        .join("settings.json"))
+}
+
+pub async fn get_antigravity_settings_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_async(db)
+        .await?
+        .host_path
+        .join("settings.json"))
+}
+
+/// Global rules file managed by AI Toolbox for `agy`.
+///
+/// This is NOT derived from the runtime root directory: `agy` reads global
+/// rules from `~/.gemini/config/GEMINI.md` regardless of
+/// `ANTIGRAVITY_CLI_HOME` or the in-app custom root directory. It only depends
+/// on `$HOME`, so no DB access or cache refresh is required here.
+pub fn get_antigravity_prompt_path_sync(_db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    antigravity::get_antigravity_prompt_path()
+}
+
+pub async fn get_antigravity_prompt_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    get_antigravity_prompt_path_sync(db)
+}
+
+pub fn get_antigravity_tmp_dir_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_sync(db)?
+        .host_path
+        .join("tmp"))
+}
+
+pub async fn get_antigravity_tmp_dir_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_antigravity_runtime_location_async(db)
+        .await?
+        .host_path
+        .join("tmp"))
+}
+
+pub fn get_antigravity_wsl_target_path(db: &crate::db::SqliteDbState, file_name: &str) -> String {
+    match get_antigravity_runtime_location_sync(db) {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.gemini/antigravity-cli/{}", file_name)),
+        Err(_) => format!("~/.gemini/antigravity-cli/{}", file_name),
+    }
+}
+
+pub async fn get_antigravity_wsl_target_path_async(
+    db: &crate::db::SqliteDbState,
+    file_name: &str,
+) -> String {
+    match get_antigravity_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.gemini/antigravity-cli/{}", file_name)),
+        Err(_) => format!("~/.gemini/antigravity-cli/{}", file_name),
+    }
+}
+
+pub fn get_antigravity_prompt_wsl_target_path(db: &crate::db::SqliteDbState) -> String {
+    let _ = db;
+    antigravity_prompt_wsl_target_path()
+}
+
+pub async fn get_antigravity_prompt_wsl_target_path_async(db: &crate::db::SqliteDbState) -> String {
+    let _ = db;
+    antigravity_prompt_wsl_target_path()
+}
+
+/// Linux-side location of the global rules file AI Toolbox manages.
+///
+/// `agy` reads global rules from `~/.gemini/config/GEMINI.md` on every OS, so
+/// the WSL/SSH target is a fixed path rather than one derived from the
+/// (host-side) runtime root directory.
+fn antigravity_prompt_wsl_target_path() -> String {
+    format!(
+        "~/.gemini/config/{}",
+        antigravity::DEFAULT_ANTIGRAVITY_PROMPT_FILE
+    )
+}
+
 pub fn get_openclaw_runtime_location_sync(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1869,6 +2018,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "kimi" => resolve_kimi_path_without_db(),
         "openclaw" => resolve_openclaw_path_without_db(),
         "geminicli" => resolve_gemini_cli_path_without_db(),
+        "antigravity" => resolve_antigravity_path_without_db(),
         "pi" => resolve_pi_path_without_db(),
         "oh_my_pi" => resolve_omp_path_without_db(),
         "hermes" => hermes::commands::resolve_hermes_path_without_db(),
@@ -1979,6 +2129,26 @@ fn resolve_gemini_cli_path_without_db() -> (PathBuf, String) {
     (
         gemini_cli::get_gemini_cli_default_root_dir()
             .unwrap_or_else(|_| PathBuf::from("~/.gemini")),
+        "default".to_string(),
+    )
+}
+
+fn resolve_antigravity_path_without_db() -> (PathBuf, String) {
+    if let Some(env_root_dir) = antigravity::get_antigravity_root_dir_from_env() {
+        return (env_root_dir, "env".to_string());
+    }
+
+    if let Some(shell_root_dir) = shell_env::get_env_from_shell_config(
+        antigravity::ANTIGRAVITY_CLI_HOME_ENV_KEY,
+    )
+    .and_then(|home_dir| antigravity::get_antigravity_root_dir_from_home_override(&home_dir))
+    {
+        return (shell_root_dir, "shell".to_string());
+    }
+
+    (
+        antigravity::get_antigravity_default_root_dir()
+            .unwrap_or_else(|_| PathBuf::from("~/.gemini/antigravity-cli")),
         "default".to_string(),
     )
 }

@@ -61,12 +61,13 @@ const TAB_TO_MODULE: Record<string, string> = {
   kimi: 'kimi',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
+  antigravity: 'antigravity',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
   hermes: 'hermes',
   dsh: 'dsh',
 };
-const ALL_CODING_MODULES = ['opencode', 'claude', 'codex', 'grok', 'kimi', 'geminicli', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_CODING_MODULES = ['opencode', 'claude', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
 
 const notify = <T,>(listeners: Set<(value: T) => void>, value: T) => {
   listeners.forEach((listener) => listener(value));

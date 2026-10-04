@@ -6,6 +6,7 @@ export type GatewayProviderToolKey =
   | 'grok'
   | 'kimi'
   | 'gemini'
+  | 'antigravity'
   | 'claude_desktop';
 
 export interface GatewayProviderProfileReference {
@@ -144,6 +145,7 @@ const normalizeGatewayProviderTool = (value?: string | null): GatewayProviderToo
     normalized === 'grok' ||
     normalized === 'kimi' ||
     normalized === 'gemini' ||
+    normalized === 'antigravity' ||
     normalized === 'claude_desktop'
   ) {
     return normalized;
@@ -180,7 +182,9 @@ export const parseGatewayProviderEndpointKey = (value?: string | null) => {
 };
 
 export const getGatewayProviderProfilesForTool = (tool: GatewayProviderToolKey) =>
-  GATEWAY_PROVIDER_PROFILE_CATALOG.profiles.filter((profile) => profile.tools?.[tool]);
+  GATEWAY_PROVIDER_PROFILE_CATALOG.profiles.filter(
+    (profile) => profile.tools?.[tool] ?? (tool === 'antigravity' ? profile.tools?.gemini : undefined),
+  );
 
 export const findGatewayProviderProfile = (profileId?: string | null) =>
   GATEWAY_PROVIDER_PROFILE_CATALOG.profiles.find((profile) => profile.id === profileId);
@@ -188,7 +192,10 @@ export const findGatewayProviderProfile = (profileId?: string | null) =>
 export const findGatewayProviderToolProfile = (
   profileId: string | null | undefined,
   tool: GatewayProviderToolKey,
-) => findGatewayProviderProfile(profileId)?.tools?.[tool];
+) => {
+  const profile = findGatewayProviderProfile(profileId);
+  return profile?.tools?.[tool] ?? (tool === 'antigravity' ? profile?.tools?.gemini : undefined);
+};
 
 export const findGatewayProviderEndpoint = (
   profileId: string | null | undefined,
@@ -254,7 +261,7 @@ export const findGatewayProviderEndpointByReference = (
   }
 
   const profile = findGatewayProviderProfile(reference.profileId);
-  const toolProfile = profile?.tools?.[tool];
+  const toolProfile = profile?.tools?.[tool] ?? (tool === 'antigravity' ? profile?.tools?.gemini : undefined);
   const endpoint = toolProfile?.endpoints.find((item) => item.id === reference.endpointId);
   if (!profile || !endpoint) {
     return undefined;
@@ -298,7 +305,7 @@ export const inferUniqueGatewayProviderEndpointSelection = (params: {
   const matches = getGatewayProviderProfilesForTool(params.tool)
     .filter((profile) => profile.providerType.toLowerCase() === normalizedProviderType)
     .flatMap((profile) => {
-      const toolProfile = profile.tools[params.tool];
+      const toolProfile = profile.tools[params.tool] ?? (params.tool === 'antigravity' ? profile.tools.gemini : undefined);
       return (toolProfile?.endpoints || []).map((endpoint) => ({ profile, endpoint }));
     })
     .filter(({ endpoint }) => normalizeGatewayApiFormat(endpoint.apiFormat) === normalizedApiFormat);

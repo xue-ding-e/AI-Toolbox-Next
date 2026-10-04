@@ -9,7 +9,7 @@ pub(crate) fn native_cli_protocol(cli_key: GatewayCliKey) -> Option<AiProtocol> 
         GatewayCliKey::Codex => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Grok => Some(AiProtocol::OpenAiResponses),
         GatewayCliKey::Kimi => Some(AiProtocol::OpenAiChat),
-        GatewayCliKey::Gemini => Some(AiProtocol::GeminiNative),
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => Some(AiProtocol::GeminiNative),
         GatewayCliKey::OpenCode => None,
     }
 }
@@ -104,7 +104,7 @@ fn provider_target_protocol(
         GatewayCliKey::ClaudeDesktop => {
             protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::AnthropicMessages)
         }
-        GatewayCliKey::Gemini => {
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
             protocol_from_meta_or_settings(meta, &settings).unwrap_or(AiProtocol::GeminiNative)
         }
         GatewayCliKey::OpenCode => AiProtocol::OpenAiResponses,

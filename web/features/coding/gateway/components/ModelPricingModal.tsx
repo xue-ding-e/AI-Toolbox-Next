@@ -20,10 +20,10 @@ interface ModelPricingModalProps {
   onClose: () => void;
 }
 
-type PricingCliKey = 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini';
+type PricingCliKey = 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'antigravity';
 type PricingConfigState = Record<PricingCliKey, GatewayPricingConfig>;
 
-const pricingCliKeys: readonly PricingCliKey[] = ['claude', 'codex', 'grok', 'kimi', 'gemini'];
+const pricingCliKeys: readonly PricingCliKey[] = ['claude', 'codex', 'grok', 'kimi', 'gemini', 'antigravity'];
 const costPattern = /^\d+(?:\.\d+)?$/;
 
 const createDefaultPricingConfigs = (): PricingConfigState => ({
@@ -32,6 +32,7 @@ const createDefaultPricingConfigs = (): PricingConfigState => ({
   grok: { cost_multiplier: '1.0', pricing_model_source: 'upstream' },
   kimi: { cost_multiplier: '1.0', pricing_model_source: 'upstream' },
   gemini: { cost_multiplier: '1.0', pricing_model_source: 'upstream' },
+  antigravity: { cost_multiplier: '1.0', pricing_model_source: 'upstream' },
 });
 
 const createEmptyPricing = (): ModelPricing => ({

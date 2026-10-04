@@ -105,6 +105,21 @@ const BUILTIN_FILE_MAPPINGS = [
 		i18nSuffix: "geminiCliOauth",
 	},
 	{
+		id: "antigravity-env",
+		rustDefaultName: "Antigravity CLI 环境变量",
+		i18nSuffix: "antigravityEnv",
+	},
+	{
+		id: "antigravity-settings",
+		rustDefaultName: "Antigravity CLI 设置",
+		i18nSuffix: "antigravitySettings",
+	},
+	{
+		id: "antigravity-prompt",
+		rustDefaultName: "Antigravity CLI 全局提示词",
+		i18nSuffix: "antigravityPrompt",
+	},
+	{
 		id: "pi-settings",
 		rustDefaultName: "Pi 设置",
 		i18nSuffix: "piSettings",

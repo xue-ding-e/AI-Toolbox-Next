@@ -1576,3 +1576,28 @@ fn opencode_v2_records_only_the_settled_aggregate_remainder() {
         ]
     );
 }
+
+#[test]
+fn antigravity_transcripts_import_turns_into_usage() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let logs_dir = root
+        .path()
+        .join("11111111-2222-3333-4444-555555555555")
+        .join(".system_generated")
+        .join("logs");
+    fs::create_dir_all(&logs_dir).unwrap();
+
+    let content = r#"{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-09-20T10:00:00Z","content":"hello"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-09-20T10:00:02Z","content":"Hi there!","thinking":"greeting"}
+{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-09-20T10:00:05Z","content":"how are you"}
+{"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-09-20T10:00:08Z","content":"Doing great!"}
+"#;
+    fs::write(logs_dir.join("transcript_full.jsonl"), content).unwrap();
+
+    let stats = run_sync(&db, GatewayUsageTool::Antigravity, root.path());
+    assert_eq!(stats.inserted_records, 2);
+
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_requests, 2);
+}

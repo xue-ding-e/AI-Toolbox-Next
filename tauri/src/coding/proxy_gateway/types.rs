@@ -11,6 +11,7 @@ pub enum GatewayCliKey {
     Grok,
     Kimi,
     Gemini,
+    Antigravity,
     OpenCode,
 }
 
@@ -23,6 +24,7 @@ impl GatewayCliKey {
             Self::Grok => "grok",
             Self::Kimi => "kimi",
             Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::OpenCode => "opencode",
         }
     }
@@ -35,6 +37,7 @@ impl GatewayCliKey {
             Self::Grok,
             Self::Kimi,
             Self::Gemini,
+            Self::Antigravity,
         ]
     }
 }
@@ -49,6 +52,7 @@ pub enum GatewayUsageTool {
     Grok,
     Kimi,
     Gemini,
+    Antigravity,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
     Pi,
@@ -69,6 +73,7 @@ impl GatewayUsageTool {
             Self::Grok,
             Self::Kimi,
             Self::Gemini,
+            Self::Antigravity,
             Self::OpenCode,
             Self::Pi,
             Self::OhMyPi,
@@ -87,6 +92,7 @@ impl GatewayUsageTool {
             Self::Grok => "grok",
             Self::Kimi => "kimi",
             Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
             Self::OhMyPi => "oh_my_pi",
@@ -105,6 +111,7 @@ impl GatewayUsageTool {
             Self::Grok => GatewayCliKey::Grok,
             Self::Kimi => GatewayCliKey::Kimi,
             Self::Gemini => GatewayCliKey::Gemini,
+            Self::Antigravity => GatewayCliKey::Antigravity,
             Self::OpenCode => GatewayCliKey::OpenCode,
             _ => return None,
         })
@@ -120,6 +127,7 @@ impl From<GatewayCliKey> for GatewayUsageTool {
             GatewayCliKey::Grok => Self::Grok,
             GatewayCliKey::Kimi => Self::Kimi,
             GatewayCliKey::Gemini => Self::Gemini,
+            GatewayCliKey::Antigravity => Self::Antigravity,
             GatewayCliKey::OpenCode => Self::OpenCode,
         }
     }
@@ -1312,6 +1320,7 @@ pub enum GatewaySessionImportCli {
     Grok,
     Kimi,
     Gemini,
+    Antigravity,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
     Pi,

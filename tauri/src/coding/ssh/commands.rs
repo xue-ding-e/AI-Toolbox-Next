@@ -1145,7 +1145,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 17;
+    const CURRENT_DEFAULTS_VERSION: u64 = 18;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1170,6 +1170,11 @@ async fn backfill_default_file_mappings(
     ];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V16: &[&str] = &["omp-agents-dir"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V17: &[&str] = &["kimi-mcp"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V18: &[&str] = &[
+        "antigravity-env",
+        "antigravity-settings",
+        "antigravity-prompt",
+    ];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1235,6 +1240,11 @@ async fn backfill_default_file_mappings(
                 17,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V17,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                18,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V18,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1536,6 +1546,31 @@ pub async fn resolve_dynamic_paths_with_db(
                         "oauth_creds.json",
                     )
                     .await;
+                }
+            }
+            "antigravity-env" => {
+                if let Ok(path) = runtime_location::get_antigravity_env_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_antigravity_wsl_target_path_async(db, ".env").await;
+                }
+            }
+            "antigravity-settings" => {
+                if let Ok(path) = runtime_location::get_antigravity_settings_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path = runtime_location::get_antigravity_wsl_target_path_async(
+                        db,
+                        "settings.json",
+                    )
+                    .await;
+                }
+            }
+            "antigravity-prompt" => {
+                if let Ok(path) = runtime_location::get_antigravity_prompt_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    // The global rules file is not derived from the runtime root.
+                    mapping.remote_path =
+                        runtime_location::get_antigravity_prompt_wsl_target_path_async(db).await;
                 }
             }
             "kimi-config" => {
@@ -2105,6 +2140,43 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
+        // Antigravity CLI
+        SSHFileMapping {
+            id: "antigravity-env".to_string(),
+            name: "Antigravity CLI 环境变量".to_string(),
+            module: "antigravity".to_string(),
+            local_path: "~/.gemini/antigravity-cli/.env".to_string(),
+            remote_path: "~/.gemini/antigravity-cli/.env".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "antigravity-settings".to_string(),
+            name: "Antigravity CLI 设置".to_string(),
+            module: "antigravity".to_string(),
+            local_path: "~/.gemini/antigravity-cli/settings.json".to_string(),
+            remote_path: "~/.gemini/antigravity-cli/settings.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "antigravity-prompt".to_string(),
+            name: "Antigravity CLI 全局提示词".to_string(),
+            module: "antigravity".to_string(),
+            local_path: "~/.gemini/config/GEMINI.md".to_string(),
+            remote_path: "~/.gemini/config/GEMINI.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
         // Pi
         SSHFileMapping {
             id: "pi-settings".to_string(),
@@ -2625,6 +2697,37 @@ mod tests {
             "%LOCALAPPDATA%/Claude/claude_desktop_config.json"
         );
         assert!(!mapping.enabled);
+    }
+
+    #[test]
+    fn antigravity_default_mappings_split_runtime_root_and_global_rules() {
+        let mappings = default_file_mappings();
+        // `.env` and `settings.json` belong to the runtime root.
+        let env = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-env")
+            .expect("antigravity-env default mapping exists");
+        assert_eq!(env.module, "antigravity");
+        assert_eq!(env.local_path, "~/.gemini/antigravity-cli/.env");
+        assert_eq!(env.remote_path, "~/.gemini/antigravity-cli/.env");
+
+        let settings = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-settings")
+            .expect("antigravity-settings default mapping exists");
+        assert_eq!(
+            settings.local_path,
+            "~/.gemini/antigravity-cli/settings.json"
+        );
+
+        // The global rules file is NOT under the runtime root; it must stay at
+        // `~/.gemini/config/` on both sides.
+        let prompt = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-prompt")
+            .expect("antigravity-prompt default mapping exists");
+        assert_eq!(prompt.local_path, "~/.gemini/config/GEMINI.md");
+        assert_eq!(prompt.remote_path, "~/.gemini/config/GEMINI.md");
     }
 
     #[test]

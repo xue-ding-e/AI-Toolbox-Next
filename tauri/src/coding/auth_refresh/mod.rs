@@ -25,6 +25,7 @@ pub enum OfficialAuthTool {
     Grok,
     Codex,
     GeminiCli,
+    Antigravity,
     Kimi,
 }
 
@@ -38,10 +39,11 @@ pub struct AuthRefreshConfig {
 }
 
 impl OfficialAuthTool {
-    pub const ALL: [OfficialAuthTool; 4] = [
+    pub const ALL: [OfficialAuthTool; 5] = [
         OfficialAuthTool::Grok,
         OfficialAuthTool::Codex,
         OfficialAuthTool::GeminiCli,
+        OfficialAuthTool::Antigravity,
         OfficialAuthTool::Kimi,
     ];
 
@@ -66,6 +68,11 @@ impl OfficialAuthTool {
                 run_on_startup: true,
                 interval: Some(Duration::from_secs(15 * 60)),
             },
+            OfficialAuthTool::Antigravity => AuthRefreshConfig {
+                tool_id: "antigravity",
+                run_on_startup: true,
+                interval: Some(Duration::from_secs(15 * 60)),
+            },
             // ~15m access tokens with a 5m refresh lead (official_accounts.rs):
             // a 10m interval lets passes fire before expiry instead of chasing
             // tokens that just expired.
@@ -83,6 +90,9 @@ impl OfficialAuthTool {
             OfficialAuthTool::Codex => providers::codex_refresh_applied_pass(db, app).await,
             OfficialAuthTool::GeminiCli => {
                 providers::gemini_cli_refresh_applied_pass(db, app).await
+            }
+            OfficialAuthTool::Antigravity => {
+                providers::antigravity_refresh_applied_pass(db, app).await
             }
             OfficialAuthTool::Kimi => providers::kimi_refresh_applied_pass(db, app).await,
         }
@@ -175,7 +185,10 @@ mod tests {
             .into_iter()
             .map(|tool| tool.config().tool_id)
             .collect();
-        assert_eq!(ids, vec!["grok", "codex", "gemini_cli", "kimi"]);
+        assert_eq!(
+            ids,
+            vec!["grok", "codex", "gemini_cli", "antigravity", "kimi"]
+        );
     }
 
     #[test]

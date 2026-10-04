@@ -511,6 +511,7 @@ export const ClaudeCodeSessionDetailPage = () => <SessionDetailPage tool="claude
 export const CodexSessionDetailPage = () => <SessionDetailPage tool="codex" />;
 export const GrokSessionDetailPage = () => <SessionDetailPage tool="grok" />;
 export const GeminiCliSessionDetailPage = () => <SessionDetailPage tool="geminicli" />;
+export const AntigravitySessionDetailPage = () => <SessionDetailPage tool="antigravity" />;
 export const KimiSessionDetailPage = () => <SessionDetailPage tool="kimi" />;
 export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw" />;
 export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;

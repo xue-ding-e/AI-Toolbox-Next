@@ -408,6 +408,14 @@ pub fn get_gemini_cli_restore_dir() -> Result<PathBuf, String> {
     gemini_cli::get_gemini_cli_root_dir_without_db()
 }
 
+/// Platform-default Antigravity runtime root (used as the restore fallback).
+///
+/// The global rules file is intentionally not part of this directory: it always
+/// lives under `~/.gemini/config/GEMINI.md` and is restored separately.
+pub fn get_antigravity_restore_dir() -> Result<PathBuf, String> {
+    crate::coding::antigravity::get_antigravity_root_dir_without_db()
+}
+
 /// Get OpenCode config file path using priority: system env > shell config > default
 /// Note: This does NOT check database (common_config) because:
 /// 1. For backup: the database common_config will be included in the backup
@@ -814,6 +822,43 @@ pub async fn get_gemini_cli_tmp_dir_from_db(
     Ok(path.is_dir().then_some(path))
 }
 
+pub fn get_antigravity_prompt_backup_zip_path(prompt_path: &Path) -> String {
+    let file_name = prompt_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(crate::coding::antigravity::DEFAULT_ANTIGRAVITY_PROMPT_FILE);
+    format!("external-configs/antigravity/{file_name}")
+}
+
+pub async fn get_antigravity_env_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_antigravity_env_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_antigravity_settings_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_antigravity_settings_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_antigravity_prompt_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_antigravity_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_antigravity_tmp_dir_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_antigravity_tmp_dir_async(db).await?;
+    Ok(path.is_dir().then_some(path))
+}
+
 pub async fn get_openclaw_config_path_from_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<Option<PathBuf>, String> {
@@ -948,6 +993,12 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "kimi" => format!("~/.kimi-code/{relative_path}"),
         "openclaw" => format!("~/.openclaw/{relative_path}"),
         "geminicli" => format!("~/.gemini/{relative_path}"),
+        // The runtime root holds `.env` / `settings.json`, but the global
+        // rules file lives under `~/.gemini/config` on every platform.
+        "antigravity" if relative_path == "GEMINI.md" => {
+            format!("~/.gemini/config/{relative_path}")
+        }
+        "antigravity" => format!("~/.gemini/antigravity-cli/{relative_path}"),
         "pi" => format!("~/.pi/agent/{relative_path}"),
         "oh_my_pi" => format!("~/.omp/agent/{relative_path}"),
         "hermes" if relative_path == "config.yaml" => "~/.hermes/config.yaml".to_string(),
@@ -1112,6 +1163,38 @@ pub async fn list_backup_file_filter_path_options(
                 &mut options,
                 &mut seen,
                 "geminicli",
+                &format!("tmp/{relative_path}"),
+            );
+        }
+    }
+
+    if get_antigravity_env_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "antigravity", ".env");
+    }
+    if get_antigravity_settings_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "antigravity", "settings.json");
+    }
+    if let Some(prompt_path) = get_antigravity_prompt_path_from_db(db).await? {
+        push_backup_filter_option_for_path(&mut options, &mut seen, "antigravity", &prompt_path);
+    }
+    if let Some(tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
+        for entry in WalkDir::new(&tmp_dir) {
+            let entry =
+                entry.map_err(|e| format!("Failed to read Antigravity tmp entry: {}", e))?;
+            let path = entry.path();
+            if !path.is_file() || should_skip_system_file(path) {
+                continue;
+            }
+
+            let relative_path = path
+                .strip_prefix(&tmp_dir)
+                .map_err(|e| format!("Failed to get Antigravity tmp relative path: {}", e))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            push_backup_filter_option(
+                &mut options,
+                &mut seen,
+                "antigravity",
                 &format!("tmp/{relative_path}"),
             );
         }
@@ -1294,6 +1377,7 @@ const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &[
     "grok",
     "kimi",
     "geminicli",
+    "antigravity",
     "claude_desktop",
 ];
 
@@ -1401,6 +1485,7 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         "kimi" => Some("kimi"),
         "openclaw" => Some("openclaw"),
         "geminicli" => Some("geminicli"),
+        "antigravity" => Some("antigravity"),
         "pi" => Some("pi"),
         "oh_my_pi" => Some("oh_my_pi"),
         // Hermes and dsh have WSL file mappings and must be included in the
@@ -1467,6 +1552,7 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
         clear_table(conn, DbTable::ClaudeCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::GrokCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::GeminiCliCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::AntigravityCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::KimiCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::PiSettingsConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::OhMyPiSettingsConfig, PATH_KEYS)?;
@@ -1735,6 +1821,16 @@ pub async fn get_custom_root_dir_path_info(
         }
         "geminicli" => {
             let location = runtime_location::get_gemini_cli_runtime_location_async(db)
+                .await
+                .ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "antigravity" => {
+            let location = runtime_location::get_antigravity_runtime_location_async(db)
                 .await
                 .ok()?;
             if location.source == "custom" {
@@ -2612,6 +2708,10 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
         "kimi" => &["~/.kimi-code/"],
         "openclaw" => &["~/.openclaw/"],
         "geminicli" => &["~/.gemini/"],
+        // The global rules file lives under `~/.gemini/config/`, so both
+        // prefixes must be covered or its backup filter rule would not
+        // normalize to the bare `GEMINI.md` name.
+        "antigravity" => &["~/.gemini/config/", "~/.gemini/antigravity-cli/"],
         "pi" => &["~/.pi/agent/"],
         "oh_my_pi" => &["~/.omp/agent/"],
         "hermes" => &[
@@ -3186,6 +3286,73 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
         }
     }
 
+    // Antigravity is DB-backed optional tool, gated by the switch.
+    if include_optional_cli_runtime {
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "antigravity").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/antigravity/",
+                options,
+                "Antigravity directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/antigravity/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
+        if let Some(antigravity_env_path) = get_antigravity_env_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &antigravity_env_path,
+                "antigravity",
+                ".env",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(antigravity_settings_path) = get_antigravity_settings_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &antigravity_settings_path,
+                "antigravity",
+                "settings.json",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(antigravity_prompt_path) = get_antigravity_prompt_path_from_db(db).await? {
+            let zip_path = get_antigravity_prompt_backup_zip_path(&antigravity_prompt_path);
+            let relative_path = zip_path.trim_start_matches("external-configs/antigravity/");
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &antigravity_prompt_path,
+                "antigravity",
+                relative_path,
+                filter_rules,
+                options,
+            )?;
+        }
+        if let Some(antigravity_tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
+            add_external_config_directory_contents_to_zip(
+                zip,
+                &antigravity_tmp_dir,
+                "antigravity",
+                "tmp",
+                filter_rules,
+                options,
+            )?;
+        }
+    }
+
     // Pi is runtime-file-owned and always packaged (subject to filter rules).
     if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "pi").await {
         add_directory_to_zip_once(
@@ -3598,10 +3765,11 @@ mod tests {
         add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
         add_legacy_database_snapshot_to_zip, add_text_to_zip, backup_filter_option_path,
         build_backup_meta, build_db_manifest, clear_restored_cli_custom_roots,
-        external_config_tool_from_zip_entry, get_codex_prompt_backup_zip_path,
-        get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
-        is_always_backup_cli_tool, is_filesystem_root_directory, is_optional_backup_cli_tool,
-        normalize_backup_custom_entry, normalize_backup_storage_path, normalize_restore_entry_name,
+        external_config_tool_from_zip_entry, get_antigravity_prompt_backup_zip_path,
+        get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
+        get_gemini_cli_prompt_backup_zip_path, is_always_backup_cli_tool,
+        is_filesystem_root_directory, is_optional_backup_cli_tool, normalize_backup_custom_entry,
+        normalize_backup_storage_path, normalize_restore_entry_name,
         parse_post_restore_resync_wsl_modules, record_restored_external_config_wsl_module,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
         should_exclude_from_backup, should_filter_external_config_entry,
@@ -4101,6 +4269,42 @@ mod tests {
                 .expect("resolve restore path")
                 .expect("path should exist");
         assert_eq!(restored_path, restore_root.join("AGENTS.md"));
+    }
+
+    #[test]
+    fn antigravity_prompt_backup_and_restore_paths_use_global_rules_dir() {
+        // `agy` keeps its global rules file under `~/.gemini/config/`, NOT under the
+        // runtime root. The backup zip entry must therefore map back to the config
+        // dir while `.env` / `settings.json` keep mapping to the runtime root.
+        let prompt_path = std::path::PathBuf::from("/home/tester/.gemini/config/GEMINI.md");
+        let zip_path = get_antigravity_prompt_backup_zip_path(&prompt_path);
+        assert_eq!(zip_path, "external-configs/antigravity/GEMINI.md");
+
+        assert_eq!(
+            backup_filter_option_path("antigravity", "GEMINI.md").as_deref(),
+            Some("~/.gemini/config/GEMINI.md")
+        );
+        assert_eq!(
+            backup_filter_option_path("antigravity", "settings.json").as_deref(),
+            Some("~/.gemini/antigravity-cli/settings.json")
+        );
+
+        // A rule written as the config-dir path must normalize back to the bare
+        // file name so it matches the `GEMINI.md` zip entry.
+        let rules = vec![BackupFileFilterRule {
+            tool: "antigravity".to_string(),
+            file_path: "~/.gemini/config/GEMINI.md".to_string(),
+        }];
+        assert!(should_exclude_from_backup(
+            &rules,
+            "antigravity",
+            "GEMINI.md"
+        ));
+        assert!(!should_exclude_from_backup(
+            &rules,
+            "antigravity",
+            "settings.json"
+        ));
     }
 
     #[test]

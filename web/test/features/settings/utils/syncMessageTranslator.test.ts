@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TFunction } from 'i18next';
 
-import { translateSyncMessage } from '../../../../features/settings/utils/syncMessageTranslator.ts';
+import { translateDefaultMappingName, translateSyncMessage } from '../../../../features/settings/utils/syncMessageTranslator.ts';
 
 const stubT = ((key: string, vars?: Record<string, unknown>) => {
   if (!vars || Object.keys(vars).length === 0) {
@@ -141,4 +141,22 @@ test('skills warning translations retain multiline command diagnostics', () => {
       );
     }
   }
+});
+
+test('Antigravity CLI default mapping names translate to their own i18n keys', () => {
+  // The three Antigravity mappings split runtime root (env/settings) from the
+  // global rules file, and each has a distinct label key. A regression here would
+  // silently fall back to the raw Chinese Rust default name in the sync modal.
+  assert.equal(
+    translateDefaultMappingName('Antigravity CLI 环境变量', stubT),
+    'settings.wsl.defaultMappings.antigravityEnv',
+  );
+  assert.equal(
+    translateDefaultMappingName('Antigravity CLI 设置', stubT),
+    'settings.wsl.defaultMappings.antigravitySettings',
+  );
+  assert.equal(
+    translateDefaultMappingName('Antigravity CLI 全局提示词', stubT),
+    'settings.wsl.defaultMappings.antigravityPrompt',
+  );
 });

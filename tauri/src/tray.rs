@@ -14,6 +14,7 @@
 //! - MCP server options (with submenus for tool selection)
 //! - Quit
 
+use crate::coding::antigravity::tray_support as antigravity_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::claude_desktop::tray_support as claude_desktop_tray;
 use crate::coding::codex::tray_support as codex_tray;
@@ -60,6 +61,7 @@ struct TrayTexts {
     grok_header: &'static str,
     kimi_header: &'static str,
     gemini_cli_header: &'static str,
+    antigravity_header: &'static str,
     openclaw_header: &'static str,
     pi_header: &'static str,
     omp_header: &'static str,
@@ -152,6 +154,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             grok_header: "Grok",
             kimi_header: "Kimi",
             gemini_cli_header: "Gemini CLI",
+            antigravity_header: "Antigravity CLI",
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
             omp_header: "Oh My Pi",
@@ -184,6 +187,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             grok_header: "Grok",
             kimi_header: "Kimi",
             gemini_cli_header: "Gemini CLI",
+            antigravity_header: "Antigravity CLI",
             openclaw_header: "OpenClaw",
             pi_header: "Pi",
             omp_header: "Oh My Pi",
@@ -493,6 +497,30 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if let Some(provider_id) = event_id.strip_prefix("antigravity_provider_") {
+                let provider_id = provider_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        antigravity_tray::apply_antigravity_provider(&app_handle, &provider_id)
+                            .await
+                    {
+                        eprintln!("Failed to apply Antigravity provider: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("antigravity_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        antigravity_tray::apply_antigravity_prompt_config(&app_handle, &config_id)
+                            .await
+                    {
+                        eprintln!("Failed to apply Antigravity prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if let Some(selection) = event_id.strip_prefix("pi_model_") {
                 let selection = selection.to_string();
                 let app_handle = app.clone();
@@ -762,6 +790,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let kimi_enabled = is_tab_visible("kimi") && kimi_tray::is_enabled_for_tray(app).await;
     let gemini_cli_enabled =
         is_tab_visible("geminicli") && gemini_cli_tray::is_enabled_for_tray(app).await;
+    let antigravity_enabled =
+        is_tab_visible("antigravity") && antigravity_tray::is_enabled_for_tray(app).await;
     let openclaw_enabled =
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let pi_enabled = is_tab_visible("pi") && pi_tray::is_enabled_for_tray(app).await;
@@ -964,6 +994,28 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     gemini_cli_prompt_data.title = texts.global_prompt.to_string();
+
+    let mut antigravity_data = if antigravity_enabled {
+        antigravity_tray::get_antigravity_tray_data(app).await?
+    } else {
+        antigravity_tray::TrayProviderData {
+            title: texts.antigravity_header.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    antigravity_data.title = texts.antigravity_header.to_string();
+
+    let mut antigravity_prompt_data = if antigravity_enabled {
+        antigravity_tray::get_antigravity_prompt_tray_data(app).await?
+    } else {
+        antigravity_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    antigravity_prompt_data.title = texts.global_prompt.to_string();
 
     let mut openclaw_model_data = if openclaw_enabled {
         openclaw_tray::get_openclaw_tray_model_data(app).await?
@@ -1320,6 +1372,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let kimi_has_model_items = kimi_enabled && !kimi_model_data.items.is_empty();
     let kimi_has_prompt_items = kimi_enabled && !kimi_prompt_data.items.is_empty();
     let gemini_cli_has_items = gemini_cli_enabled && !gemini_cli_data.items.is_empty();
+    let antigravity_has_items = antigravity_enabled && !antigravity_data.items.is_empty();
     let pi_has_items = pi_enabled && !pi_data.items.is_empty();
     let omp_has_items = omp_enabled && !omp_data.items.is_empty();
     let claude_has_prompt_items = claude_enabled && !claude_prompt_data.items.is_empty();
@@ -1327,6 +1380,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let grok_has_prompt_items = grok_enabled && !grok_prompt_data.items.is_empty();
     let gemini_cli_has_prompt_items =
         gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
+    let antigravity_has_prompt_items =
+        antigravity_enabled && !antigravity_prompt_data.items.is_empty();
     let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
     let omp_has_prompt_items = omp_enabled && !omp_prompt_data.items.is_empty();
     let claude_desktop_has_items = claude_desktop_enabled && !claude_desktop_data.items.is_empty();
@@ -1342,6 +1397,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         kimi_enabled && (kimi_has_items || kimi_has_model_items || kimi_has_prompt_items);
     let gemini_cli_has_section =
         gemini_cli_enabled && (gemini_cli_has_items || gemini_cli_has_prompt_items);
+    let antigravity_has_section =
+        antigravity_enabled && (antigravity_has_items || antigravity_has_prompt_items);
     let pi_has_section = pi_enabled && (pi_has_items || pi_has_prompt_items);
     let omp_has_section = omp_enabled && (omp_has_items || omp_has_prompt_items);
     let claude_desktop_has_section = claude_desktop_enabled && claude_desktop_has_items;
@@ -1402,6 +1459,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             app,
             "geminicli",
             &gemini_cli_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let antigravity_prompt_submenu = if antigravity_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "antigravity",
+            &antigravity_prompt_data,
             texts,
         )?)
     } else {
@@ -1549,6 +1616,32 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             app,
             "geminicli",
             &gemini_cli_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+
+    let antigravity_header = if antigravity_has_section {
+        Some(
+            MenuItem::with_id(
+                app,
+                "antigravity_header",
+                &antigravity_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let antigravity_provider_submenu = if antigravity_has_items {
+        Some(build_named_provider_submenu(
+            app,
+            "antigravity",
+            &antigravity_data,
             texts,
         )?)
     } else {
@@ -1787,6 +1880,19 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = gemini_cli_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Antigravity section if enabled
+    if antigravity_has_section {
+        if let Some(ref header) = antigravity_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = antigravity_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = antigravity_provider_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2831,6 +2937,36 @@ impl NamedPromptTrayData for gemini_cli_tray::TrayPromptData {
     }
 }
 
+impl NamedPromptTrayItem for antigravity_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for antigravity_tray::TrayPromptData {
+    type Item = antigravity_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
 impl NamedPromptTrayItem for hermes_tray::TrayPromptItem {
     fn id(&self) -> &str {
         &self.id
@@ -3082,6 +3218,34 @@ impl NamedProviderTrayItem for gemini_cli_tray::TrayProviderItem {
 
 impl NamedProviderTrayData for gemini_cli_tray::TrayProviderData {
     type Item = gemini_cli_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedProviderTrayItem for antigravity_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for antigravity_tray::TrayProviderData {
+    type Item = antigravity_tray::TrayProviderItem;
     fn title(&self) -> &str {
         &self.title
     }

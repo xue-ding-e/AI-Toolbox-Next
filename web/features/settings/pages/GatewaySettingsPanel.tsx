@@ -35,7 +35,7 @@ type BusyAction = 'load' | 'autosave';
 type NoticeKind = 'success' | 'error' | 'info';
 type SupportedGatewayCliKey = Extract<
   GatewayCliKey,
-  'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'
+  'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'antigravity' | 'claude_desktop'
 >;
 
 interface NoticeState {
@@ -68,6 +68,10 @@ const CLI_OPTIONS: CliOption[] = [
   {
     key: 'gemini',
     labelKey: 'settings.gateway.cli.gemini',
+  },
+  {
+    key: 'antigravity',
+    labelKey: 'settings.gateway.cli.antigravity',
   },
   {
     key: 'claude_desktop',

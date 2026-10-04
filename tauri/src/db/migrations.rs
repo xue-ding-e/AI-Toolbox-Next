@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 22;
+pub const TARGET_SCHEMA_VERSION: i32 = 23;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -73,6 +73,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 22 {
         run_migration_step(conn, 22, migrate_v22)?;
+    }
+    if current_version < 23 {
+        run_migration_step(conn, 23, migrate_v23)?;
     }
 
     Ok(())
@@ -455,6 +458,30 @@ fn migrate_v22(conn: &Connection) -> Result<(), String> {
     )
 }
 
+fn migrate_v23(conn: &Connection) -> Result<(), String> {
+    for table in [
+        DbTable::AntigravityProvider,
+        DbTable::AntigravityCommonConfig,
+        DbTable::AntigravityPromptConfig,
+        DbTable::AntigravityOfficialAccount,
+    ] {
+        create_jsonb_table(conn, table)?;
+    }
+    for table in [
+        DbTable::AntigravityProvider,
+        DbTable::AntigravityPromptConfig,
+        DbTable::AntigravityOfficialAccount,
+    ] {
+        create_json_index(conn, table, &JsonFieldPath::new("is_applied")?)?;
+        create_json_index(conn, table, &JsonFieldPath::new("sort_index")?)?;
+    }
+    create_json_index(
+        conn,
+        DbTable::AntigravityOfficialAccount,
+        &JsonFieldPath::new("provider_id")?,
+    )
+}
+
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
@@ -473,15 +500,18 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         DbTable::ClaudeProvider,
         DbTable::CodexProvider,
         DbTable::GeminiCliProvider,
+        DbTable::AntigravityProvider,
         DbTable::ClaudePromptConfig,
         DbTable::CodexPromptConfig,
         DbTable::GeminiCliPromptConfig,
+        DbTable::AntigravityPromptConfig,
         DbTable::PiPromptConfig,
         DbTable::OpenCodePromptConfig,
         DbTable::OhMyOpenAgentConfig,
         DbTable::OhMyOpenCodeSlimConfig,
         DbTable::CodexOfficialAccount,
         DbTable::GeminiCliOfficialAccount,
+        DbTable::AntigravityOfficialAccount,
         DbTable::OhMyPiAgentsConfig,
     ] {
         create_json_index(conn, table, &JsonFieldPath::new("is_applied")?)?;
@@ -491,9 +521,11 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         DbTable::ClaudeProvider,
         DbTable::CodexProvider,
         DbTable::GeminiCliProvider,
+        DbTable::AntigravityProvider,
         DbTable::ClaudePromptConfig,
         DbTable::CodexPromptConfig,
         DbTable::GeminiCliPromptConfig,
+        DbTable::AntigravityPromptConfig,
         DbTable::PiPromptConfig,
         DbTable::OpenCodePromptConfig,
         DbTable::Skill,
@@ -503,6 +535,7 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         DbTable::OhMyOpenCodeSlimConfig,
         DbTable::CodexOfficialAccount,
         DbTable::GeminiCliOfficialAccount,
+        DbTable::AntigravityOfficialAccount,
         DbTable::OhMyPiAgentsConfig,
     ] {
         create_json_index(conn, table, &JsonFieldPath::new("sort_index")?)?;
@@ -530,6 +563,7 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         (DbTable::OpenCodeFavoriteProvider, "provider_id"),
         (DbTable::CodexOfficialAccount, "provider_id"),
         (DbTable::GeminiCliOfficialAccount, "provider_id"),
+        (DbTable::AntigravityOfficialAccount, "provider_id"),
         (DbTable::ImageAsset, "job_id"),
     ] {
         create_json_index(conn, table, &JsonFieldPath::new(field)?)?;

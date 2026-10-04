@@ -1137,6 +1137,11 @@ pub fn run() {
                 {
                     warn!("Gemini CLI 默认配置初始化失败: {}", e);
                 }
+                if let Err(e) =
+                    coding::antigravity::init_antigravity_provider_from_settings(&db_state).await
+                {
+                    warn!("Antigravity 默认配置初始化失败: {}", e);
+                }
 
                 app.manage(db_state);
                 info!("SQLite 主数据库状态已注册到应用");
@@ -1464,6 +1469,35 @@ pub fn run() {
                                 db_state,
                                 app.clone(),
                                 Some("geminicli".to_string()),
+                                None,
+                            )
+                            .await;
+                            // Ignore result - fire and forget
+                            let _ = result;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+
+                // Antigravity sync listener
+                let app_antigravity = app_handle.clone();
+                let app_antigravity_clone = app_antigravity.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_antigravity.listen("wsl-sync-request-antigravity", move |_event| {
+                        let app = app_antigravity_clone.clone();
+                        // Spawn background task without awaiting
+                        tauri::async_runtime::spawn(async move {
+                            // Re-obtain state inside the spawned task
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("antigravity".to_string()),
                                 None,
                             )
                             .await;
@@ -2507,6 +2541,31 @@ pub fn run() {
             coding::gemini_cli::delete_gemini_cli_official_account,
             coding::gemini_cli::refresh_gemini_cli_official_account_limits,
             coding::gemini_cli::copy_gemini_cli_official_account_token,
+            // Antigravity
+            coding::antigravity::get_antigravity_config_path,
+            coding::antigravity::get_antigravity_root_path_info,
+            coding::antigravity::reveal_antigravity_config_folder,
+            coding::antigravity::read_antigravity_settings,
+            coding::antigravity::get_antigravity_official_provider,
+            coding::antigravity::get_antigravity_common_config,
+            coding::antigravity::extract_antigravity_common_config_from_current_file,
+            coding::antigravity::save_antigravity_common_config,
+            coding::antigravity::fetch_antigravity_official_models,
+            coding::antigravity::list_antigravity_prompt_configs,
+            coding::antigravity::create_antigravity_prompt_config,
+            coding::antigravity::update_antigravity_prompt_config,
+            coding::antigravity::delete_antigravity_prompt_config,
+            coding::antigravity::disable_antigravity_prompt_config,
+            coding::antigravity::apply_antigravity_prompt_config,
+            coding::antigravity::reorder_antigravity_prompt_configs,
+            coding::antigravity::save_antigravity_local_prompt_config,
+            coding::antigravity::list_antigravity_official_accounts,
+            coding::antigravity::start_antigravity_official_account_oauth,
+            coding::antigravity::save_antigravity_official_local_account,
+            coding::antigravity::apply_antigravity_official_account,
+            coding::antigravity::delete_antigravity_official_account,
+            coding::antigravity::refresh_antigravity_official_account_limits,
+            coding::antigravity::copy_antigravity_official_account_token,
             // Pi
             coding::pi::get_pi_root_path_info,
             coding::pi::get_pi_settings_config,

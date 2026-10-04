@@ -953,7 +953,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 18;
+    const CURRENT_DEFAULTS_VERSION: u64 = 19;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -977,6 +977,11 @@ async fn backfill_default_mappings(
     ];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V17: &[&str] = &["omp-agents-dir"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V18: &[&str] = &["kimi-mcp"];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V19: &[&str] = &[
+        "antigravity-env",
+        "antigravity-settings",
+        "antigravity-prompt",
+    ];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1042,6 +1047,11 @@ async fn backfill_default_mappings(
                 18,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V18,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                19,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V19,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1412,6 +1422,32 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         "oauth_creds.json",
                     )
                     .await;
+                }
+            }
+            "antigravity-env" => {
+                if let Ok(path) = runtime_location::get_antigravity_env_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_antigravity_wsl_target_path_async(db, ".env").await;
+                }
+            }
+            "antigravity-settings" => {
+                if let Ok(path) = runtime_location::get_antigravity_settings_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = runtime_location::get_antigravity_wsl_target_path_async(
+                        db,
+                        "settings.json",
+                    )
+                    .await;
+                }
+            }
+            "antigravity-prompt" => {
+                if let Ok(path) = runtime_location::get_antigravity_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    // The global rules file is not derived from the runtime root, so
+                    // it must not reuse `get_antigravity_wsl_target_path_async`.
+                    mapping.wsl_path =
+                        runtime_location::get_antigravity_prompt_wsl_target_path_async(db).await;
                 }
             }
             "pi-settings" => {
@@ -1925,6 +1961,43 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "geminicli".to_string(),
             windows_path: "~/.gemini/oauth_creds.json".to_string(),
             wsl_path: "~/.gemini/oauth_creds.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // Antigravity CLI
+        FileMapping {
+            id: "antigravity-env".to_string(),
+            name: "Antigravity CLI 环境变量".to_string(),
+            module: "antigravity".to_string(),
+            windows_path: "~/.gemini/antigravity-cli/.env".to_string(),
+            wsl_path: "~/.gemini/antigravity-cli/.env".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "antigravity-settings".to_string(),
+            name: "Antigravity CLI 设置".to_string(),
+            module: "antigravity".to_string(),
+            windows_path: "~/.gemini/antigravity-cli/settings.json".to_string(),
+            wsl_path: "~/.gemini/antigravity-cli/settings.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "antigravity-prompt".to_string(),
+            name: "Antigravity CLI 全局提示词".to_string(),
+            module: "antigravity".to_string(),
+            windows_path: "~/.gemini/config/GEMINI.md".to_string(),
+            wsl_path: "~/.gemini/config/GEMINI.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,
@@ -2451,6 +2524,37 @@ mod tests {
         let config = super::load_wsl_config(&state).unwrap();
         assert_eq!(config.last_sync_warnings, ["warning-31"]);
         assert_eq!(config.last_sync_error.as_deref(), Some("error-31"));
+    }
+
+    #[test]
+    fn antigravity_default_mappings_split_runtime_root_and_global_rules() {
+        let mappings = default_file_mappings();
+        // `.env` and `settings.json` belong to the runtime root.
+        let env = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-env")
+            .expect("antigravity-env default mapping exists");
+        assert_eq!(env.module, "antigravity");
+        assert_eq!(env.windows_path, "~/.gemini/antigravity-cli/.env");
+        assert_eq!(env.wsl_path, "~/.gemini/antigravity-cli/.env");
+
+        let settings = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-settings")
+            .expect("antigravity-settings default mapping exists");
+        assert_eq!(
+            settings.windows_path,
+            "~/.gemini/antigravity-cli/settings.json"
+        );
+
+        // The global rules file is NOT under the runtime root; it must stay at
+        // `~/.gemini/config/` on both sides.
+        let prompt = mappings
+            .iter()
+            .find(|mapping| mapping.id == "antigravity-prompt")
+            .expect("antigravity-prompt default mapping exists");
+        assert_eq!(prompt.windows_path, "~/.gemini/config/GEMINI.md");
+        assert_eq!(prompt.wsl_path, "~/.gemini/config/GEMINI.md");
     }
 
     #[test]

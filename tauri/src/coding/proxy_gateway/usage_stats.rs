@@ -1999,6 +1999,7 @@ fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
         ("claude_desktop", "claude_desktop_provider"),
         ("codex", "codex_provider"),
         ("gemini", "gemini_cli_provider"),
+        ("antigravity", "antigravity_provider"),
         ("grok", "grok_provider"),
         ("kimi", "kimi_provider"),
     ] {
@@ -2715,6 +2716,7 @@ mod tests {
             GatewayCliKey::Grok => DbTable::GrokProvider,
             GatewayCliKey::Kimi => DbTable::KimiProvider,
             GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
+            GatewayCliKey::Antigravity => DbTable::AntigravityProvider,
             GatewayCliKey::OpenCode => {
                 panic!("OpenCode provider insertion is not used by usage_stats unit tests")
             }
@@ -2826,6 +2828,10 @@ mod tests {
             GatewayCliKey::Grok => ("grok_responses", "/v1/responses"),
             GatewayCliKey::Kimi => ("kimi_chat", "/v1/chat/completions"),
             GatewayCliKey::Gemini => ("gemini_generate", "/v1beta/models/gemini:generateContent"),
+            GatewayCliKey::Antigravity => (
+                "antigravity_generate",
+                "/v1beta/models/antigravity:generateContent",
+            ),
             GatewayCliKey::OpenCode => ("opencode", "/v1/chat/completions"),
         };
         GatewayRequestLogDetail {
@@ -3545,6 +3551,48 @@ mod tests {
         );
         assert_eq!(provider_rows[0].request_count, 1);
         assert_eq!(provider_rows[0].total_tokens, 13);
+    }
+
+    #[test]
+    fn load_provider_names_resolves_antigravity_provider_display_name() {
+        let db = test_db();
+        insert_provider_for_cli(
+            &db,
+            GatewayCliKey::Antigravity,
+            "provider-agy",
+            "Antigravity Display Name",
+        );
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail_for_cli(
+                GatewayCliKey::Antigravity,
+                "trace-agy",
+                "provider-agy",
+                200,
+                12,
+                8,
+            ),
+        )
+        .expect("record antigravity summary");
+
+        let provider_rows = provider_stats(
+            &db,
+            None,
+            None,
+            Some(GatewayCliKey::Antigravity.into()),
+            true,
+        )
+        .expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(provider_rows[0].provider_id, "provider-agy");
+        assert_eq!(
+            provider_rows[0].provider_name.as_deref(),
+            Some("Antigravity Display Name"),
+            "Antigravity usage rows must resolve display names from antigravity_provider"
+        );
+        assert_eq!(provider_rows[0].request_count, 1);
+        assert_eq!(provider_rows[0].total_tokens, 20);
     }
 
     #[test]

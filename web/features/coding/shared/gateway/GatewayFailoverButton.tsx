@@ -22,7 +22,7 @@ import { buildGatewayAggregateSitePreviewSlug } from './gatewayAggregateConfig';
 import styles from './GatewayFailoverButton.module.less';
 import chipStyles from './gatewayStatusChip.module.less';
 
-type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'claude_desktop'>;
+type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'grok' | 'kimi' | 'gemini' | 'antigravity' | 'claude_desktop'>;
 type ActionKind = 'load' | 'enableFailover' | 'disableFailover' | 'restore';
 type NoticeKind = 'success' | 'error' | 'info';
 

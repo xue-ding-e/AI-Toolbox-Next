@@ -13,7 +13,7 @@ use crate::coding::proxy_gateway::{
     provider_profiles::load_gateway_provider_profiles_for_runtime,
     transformer::AiProtocol,
 };
-use crate::coding::{claude_code, claude_desktop, codex, gemini_cli, grok, kimi};
+use crate::coding::{antigravity, claude_code, claude_desktop, codex, gemini_cli, grok, kimi};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -133,6 +133,7 @@ pub(crate) async fn load_candidate_providers_with_settings_and_selection(
         GatewayCliKey::Grok => DbTable::GrokProvider,
         GatewayCliKey::Kimi => DbTable::KimiProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
+        GatewayCliKey::Antigravity => DbTable::AntigravityProvider,
         GatewayCliKey::OpenCode => {
             return Err(
                 "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
@@ -176,6 +177,7 @@ pub(crate) async fn load_provider_by_id_for_connectivity_test(
         GatewayCliKey::Grok => DbTable::GrokProvider,
         GatewayCliKey::Kimi => DbTable::KimiProvider,
         GatewayCliKey::Gemini => DbTable::GeminiCliProvider,
+        GatewayCliKey::Antigravity => DbTable::AntigravityProvider,
         GatewayCliKey::OpenCode => {
             return Err(
                 "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
@@ -896,6 +898,54 @@ fn provider_from_record(
                 meta,
             }))
         }
+        GatewayCliKey::Antigravity => {
+            let provider = antigravity::adapter::from_db_value_provider(record);
+            if provider.is_disabled {
+                return Ok(None);
+            }
+            if is_official_provider_category(&provider.category) {
+                return Ok(None);
+            }
+            let settings = parse_json_config(
+                &provider.settings_config,
+                "Antigravity provider settings_config",
+            )?;
+            let env = settings.get("env").and_then(Value::as_object);
+            let base_url = json_object_string(env, "GOOGLE_GEMINI_BASE_URL")
+                .or_else(|| json_object_string(env, "GOOGLE_VERTEX_BASE_URL"))
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
+            let target_protocol = gemini_target_protocol(&meta, &settings);
+            let (api_key, mut auth_strategy) = gemini_auth_from_settings(
+                env,
+                &settings,
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &provider.name,
+            )?;
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
+            Ok(Some(UpstreamProvider {
+                supports_websockets: None,
+                cli_key,
+                id: provider.id,
+                name: provider.name,
+                base_url,
+                api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url,
+                sort_index: provider.sort_index,
+                model_mapping: UpstreamModelMapping {
+                    rewrite_rules: model_rewrite_rules_from_meta(&meta),
+                    ..UpstreamModelMapping::default()
+                },
+                meta,
+            }))
+        }
         // Claude Desktop reuses the Claude Code settings shape: its 3P profile
         // points at the local gateway while the DB record still holds the real
         // upstream channel config, so the same env-headedness applies here.
@@ -1232,6 +1282,7 @@ fn gateway_profile_tool_for_cli(cli_key: GatewayCliKey) -> Option<&'static str> 
         // verified.
         GatewayCliKey::Kimi => None,
         GatewayCliKey::Gemini => Some("gemini"),
+        GatewayCliKey::Antigravity => Some("antigravity"),
         GatewayCliKey::OpenCode => None,
     }
 }

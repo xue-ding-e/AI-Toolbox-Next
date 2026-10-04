@@ -740,7 +740,7 @@ fn list_from_db(path: &Path, app_type: &str) -> Result<Vec<CcSwitchProviderCandi
     let conn = open_readonly_db(path)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, settings_config, category, website_url, notes, icon, icon_color
+            "SELECT id, name, settings_config, category, website_url, notes, icon, icon_color, app_type
              FROM providers
              WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC",
@@ -758,13 +758,14 @@ fn list_from_db(path: &Path, app_type: &str) -> Result<Vec<CcSwitchProviderCandi
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, String>(8)?,
             ))
         })
         .map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
 
     let mut providers = Vec::new();
     for row in rows {
-        let (id, name, settings_str, category, website_url, notes, icon, icon_color) =
+        let (id, name, settings_str, category, website_url, notes, icon, icon_color, _row_app_type) =
             row.map_err(|e| format!("{MSG_DB_OPEN_FAILED}: {e}"))?;
         let settings: Value = serde_json::from_str(&settings_str).unwrap_or(Value::Null);
 

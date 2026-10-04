@@ -2,7 +2,7 @@
 
 ## One-line role
 
-- Schedules **startup** and **interval** OAuth token freshness passes for official CLI accounts (Grok / Codex / Gemini CLI / Kimi).
+- Schedules **startup** and **interval** OAuth token freshness passes for official CLI accounts (Grok / Codex / Gemini CLI / Kimi / Antigravity).
 - Does **not** own OAuth HTTP, auth file schemas, or quota/limits APIs.
 
 ## Source of Truth
@@ -31,6 +31,7 @@
 | Gemini CLI | yes | 15m | Lead 5m inside Gemini ensure_fresh |
 | Codex | yes | 12h | Lead 3d inside Codex ensure_fresh |
 | Kimi | yes | 15m | Lead inside Kimi ensure_fresh |
+| Antigravity | yes | 15m | Lead 5m inside Antigravity ensure_fresh; refresh takes the account-operation lock and only rewrites the live credential when the applied provider owns the applied account |
 
 ## Gotchas
 

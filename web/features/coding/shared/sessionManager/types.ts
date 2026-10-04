@@ -5,6 +5,7 @@ export type SessionTool =
   | 'claudecode'
   | 'claudedesktop'
   | 'geminicli'
+  | 'antigravity'
   | 'openclaw'
   | 'opencode'
   | 'pi'

@@ -215,11 +215,13 @@ fn classify_gateway_vision(cli_key: GatewayCliKey, response_body: &Value) -> Res
                     .join("")
             })
             .unwrap_or_default(),
-        // Kimi (no image part) and OpenCode are excluded by
+        // Kimi (no image part), OpenCode and Antigravity are excluded by
         // `supports_gateway_vision_probe`, so this arm is unreachable at runtime;
         // it returns no text rather than guessing a response shape and only keeps
         // the match exhaustive.
-        GatewayCliKey::Kimi | GatewayCliKey::OpenCode => String::new(),
+        GatewayCliKey::Kimi | GatewayCliKey::OpenCode | GatewayCliKey::Antigravity => {
+            String::new()
+        }
     };
     if vision_probe_confirmed(&text) {
         Ok(())
@@ -276,7 +278,7 @@ fn build_gateway_connectivity_request(
             "messages": [{ "role": "user", "content": prompt }],
             "stream": stream,
         }),
-        GatewayCliKey::Gemini => {
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
             let mut parts = vec![json!({ "text": prompt })];
             if vision_probe {
                 parts.push(json!({
@@ -328,7 +330,7 @@ fn gateway_connectivity_path(cli_key: GatewayCliKey, model_id: &str, stream: boo
         GatewayCliKey::Codex => "/openai/v1/responses".to_string(),
         GatewayCliKey::Grok => "/grok/v1/responses".to_string(),
         GatewayCliKey::Kimi => "/kimi/v1/chat/completions".to_string(),
-        GatewayCliKey::Gemini => {
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
             let model = model_id
                 .trim()
                 .strip_prefix("models/")
@@ -338,8 +340,13 @@ fn gateway_connectivity_path(cli_key: GatewayCliKey, model_id: &str, stream: boo
             } else {
                 "generateContent"
             };
+            let prefix = if cli_key == GatewayCliKey::Antigravity {
+                "antigravity"
+            } else {
+                "gemini"
+            };
             format!(
-                "/gemini/v1beta/models/{}:{}",
+                "/{prefix}/v1beta/models/{}:{}",
                 encode_url_path_segment(model),
                 action
             )

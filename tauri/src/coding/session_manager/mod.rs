@@ -1,3 +1,4 @@
+mod antigravity;
 mod claude_code;
 mod claude_desktop;
 mod codex;
@@ -28,12 +29,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::coding::runtime_location::{
-    build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
-    get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
-    get_grok_runtime_location_async, get_kimi_runtime_location_async,
-    get_oh_my_pi_runtime_location_async, get_openclaw_runtime_location_async,
-    get_opencode_runtime_location_async, get_pi_runtime_location_async, RuntimeLocationInfo,
-    RuntimeLocationMode, WslLocationInfo,
+    build_windows_unc_path, expand_home_from_user_root, get_antigravity_runtime_location_async,
+    get_claude_runtime_location_async, get_codex_runtime_location_async,
+    get_gemini_cli_runtime_location_async, get_grok_runtime_location_async,
+    get_kimi_runtime_location_async, get_oh_my_pi_runtime_location_async,
+    get_openclaw_runtime_location_async, get_opencode_runtime_location_async,
+    get_pi_runtime_location_async, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
 };
 use crate::db::helpers::db_get;
 use crate::db::schema::DbTable;
@@ -307,6 +308,9 @@ struct ExportedSessionFile {
 
 #[derive(Debug, Clone)]
 enum ToolSessionContext {
+    Antigravity {
+        cli_root: PathBuf,
+    },
     Codex {
         sessions_root: PathBuf,
         /// The Codex home directory — `sessions_root`'s parent.
@@ -540,6 +544,7 @@ struct SessionContextSet {
 
 #[derive(Debug, Clone, Copy)]
 enum SessionTool {
+    Antigravity,
     Codex,
     ClaudeCode,
     GeminiCli,
@@ -557,6 +562,7 @@ enum SessionTool {
 impl SessionTool {
     fn parse(raw: &str) -> Result<Self, String> {
         match raw {
+            "antigravity" => Ok(Self::Antigravity),
             "codex" => Ok(Self::Codex),
             "claudecode" | "claude_code" => Ok(Self::ClaudeCode),
             "geminicli" | "gemini_cli" | "gemini" => Ok(Self::GeminiCli),
@@ -575,6 +581,7 @@ impl SessionTool {
 
     fn as_str(&self) -> &'static str {
         match self {
+            Self::Antigravity => "antigravity",
             Self::Codex => "codex",
             Self::ClaudeCode => "claudecode",
             Self::GeminiCli => "geminicli",
@@ -620,6 +627,7 @@ impl ToolSessionContext {
                     .unwrap_or_default();
                 format!("codex:{}:{}", sessions_root.display(), state_db)
             }
+            Self::Antigravity { cli_root } => format!("antigravity:{}", cli_root.display()),
             Self::ClaudeCode { projects_root } => {
                 format!("claudecode:{}", projects_root.display())
             }
@@ -1679,6 +1687,9 @@ fn delete_session_from_meta(
     session: &SessionMeta,
 ) -> Result<(), String> {
     match context {
+        ToolSessionContext::Antigravity { .. } => {
+            antigravity::delete_session(Path::new(&session.source_path))?;
+        }
         ToolSessionContext::Codex { .. } => {
             codex::delete_session(Path::new(&session.source_path))?;
         }
@@ -2238,6 +2249,7 @@ fn import_session_blocking(
             )?;
         }
         ToolSessionContext::ClaudeDesktop { .. }
+        | ToolSessionContext::Antigravity { .. }
         | ToolSessionContext::Hermes { .. }
         | ToolSessionContext::Dsh { .. } => {
             return Err("Session import is not supported for this tool".to_string());
@@ -2379,6 +2391,7 @@ fn build_native_snapshot(
             payload: kimi::export_native_snapshot(sessions_root, Path::new(source_path))?,
         }),
         ToolSessionContext::ClaudeDesktop { .. }
+        | ToolSessionContext::Antigravity { .. }
         | ToolSessionContext::Hermes { .. }
         | ToolSessionContext::Dsh { .. } => {
             Err("Session export is not supported for this tool".to_string())
@@ -2452,6 +2465,7 @@ fn ensure_snapshot_format(snapshot: &NativeSnapshot, expected: &str) -> Result<(
 
 fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
     let mut sessions = match context {
+        ToolSessionContext::Antigravity { cli_root } => antigravity::scan_sessions(cli_root),
         ToolSessionContext::Codex { sessions_root, .. } => codex::scan_sessions(sessions_root),
         ToolSessionContext::ClaudeCode { projects_root } => {
             claude_code::scan_sessions(projects_root)
@@ -2485,6 +2499,9 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
 
 fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<SessionMeta> {
     let mut sessions = match context {
+        ToolSessionContext::Antigravity { cli_root } => {
+            antigravity::scan_recent_sessions(cli_root, limit)
+        }
         ToolSessionContext::Codex { sessions_root, .. } => {
             codex::scan_recent_sessions(sessions_root, limit)
         }
@@ -2543,6 +2560,9 @@ fn load_messages(
     source_path: &str,
 ) -> Result<Vec<SessionMessage>, String> {
     match context {
+        ToolSessionContext::Antigravity { .. } => {
+            antigravity::load_messages(Path::new(source_path))
+        }
         ToolSessionContext::Codex { .. } => codex::load_messages(Path::new(source_path)),
         ToolSessionContext::ClaudeCode { .. } => claude_code::load_messages(Path::new(source_path)),
         ToolSessionContext::GeminiCli { .. } => gemini_cli::load_messages(Path::new(source_path)),
@@ -2574,6 +2594,7 @@ fn list_subagent_sessions(
             gemini_cli::list_subagent_sessions(Path::new(source_path))
         }
         ToolSessionContext::Codex { .. }
+        | ToolSessionContext::Antigravity { .. }
         | ToolSessionContext::OpenClaw { .. }
         | ToolSessionContext::OpenCode { .. }
         | ToolSessionContext::Pi { .. }
@@ -2674,6 +2695,9 @@ fn scan_session_content_for_query(
     query_lower: &str,
 ) -> Result<bool, String> {
     match context {
+        ToolSessionContext::Antigravity { .. } => {
+            antigravity::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
         ToolSessionContext::Codex { .. } => {
             codex::scan_messages_for_query(Path::new(source_path), query_lower)
         }
@@ -2791,6 +2815,7 @@ fn session_context_entry(context: ToolSessionContext) -> SessionContextEntry {
 
 fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
     match context {
+        ToolSessionContext::Antigravity { cli_root } => path_wsl_info(cli_root),
         ToolSessionContext::Codex { sessions_root, .. } => path_wsl_info(sessions_root),
         ToolSessionContext::ClaudeCode { projects_root } => path_wsl_info(projects_root),
         ToolSessionContext::GeminiCli { tmp_root } => path_wsl_info(tmp_root),
@@ -2856,6 +2881,9 @@ fn build_default_wsl_session_context(
     let linux_user_root = Some(linux_home.to_string());
 
     match tool {
+        SessionTool::Antigravity => Some(ToolSessionContext::Antigravity {
+            cli_root: wsl_home_path(distro, linux_home, ".gemini/antigravity-cli"),
+        }),
         SessionTool::Codex => {
             let sessions_root = wsl_home_path(distro, linux_home, ".codex/sessions");
             Some(ToolSessionContext::Codex {
@@ -2972,6 +3000,12 @@ async fn resolve_context(
     tool: SessionTool,
 ) -> Result<ToolSessionContext, String> {
     match tool {
+        SessionTool::Antigravity => {
+            let runtime_location = get_antigravity_runtime_location_async(db).await?;
+            Ok(ToolSessionContext::Antigravity {
+                cli_root: runtime_location.host_path,
+            })
+        }
         SessionTool::Codex => {
             let runtime_location = get_codex_runtime_location_async(db).await?;
             Ok(ToolSessionContext::Codex {

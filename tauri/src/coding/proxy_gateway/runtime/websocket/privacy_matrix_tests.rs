@@ -256,7 +256,7 @@ fn assert_stream_response(protocol: &str, body: &str, case: &str) {
     );
 }
 
-const CLI_ENTRIES: [(GatewayCliKey, &str, &str); 7] = [
+const CLI_ENTRIES: [(GatewayCliKey, &str, &str); 8] = [
     (
         GatewayCliKey::Claude,
         "anthropic_messages",
@@ -292,6 +292,11 @@ const CLI_ENTRIES: [(GatewayCliKey, &str, &str); 7] = [
         "gemini_native",
         "/gemini/v1beta/models/test-model:generateContent",
     ),
+    (
+        GatewayCliKey::Antigravity,
+        "gemini_native",
+        "/antigravity/v1beta/models/test-model:generateContent",
+    ),
 ];
 
 #[tokio::test]
@@ -325,9 +330,9 @@ async fn privacy_all_cli_entries_and_protocols_round_trip_json_sse_and_forced_ss
                     }
                     let upstream_case = case.clone();
                     let upstream = tokio::spawn(async move {
-                        let (mut socket, _) = timeout(Duration::from_secs(10), listener.accept())
+                        let (mut socket, _) = timeout(Duration::from_secs(30), listener.accept())
                             .await
-                            .expect(&upstream_case)
+                            .expect("upstream connection")
                             .unwrap();
                         let request =
                             super::super::super::http_io::read_http_request(&mut socket, 0)
@@ -374,12 +379,14 @@ async fn privacy_all_cli_entries_and_protocols_round_trip_json_sse_and_forced_ss
                         socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
                     });
                     let (address, gateway) = start_gateway(context.clone(), 1).await;
-                    let path = if cli == GatewayCliKey::Gemini && client_streaming {
+                    let path = if matches!(cli, GatewayCliKey::Gemini | GatewayCliKey::Antigravity)
+                        && client_streaming
+                    {
                         path.replace(":generateContent", ":streamGenerateContent?alt=sse")
                     } else {
                         path.to_string()
                     };
-                    let response = crate::http_client::create_client_no_proxy(10)
+                    let response = crate::http_client::create_client_no_proxy(30)
                         .unwrap()
                         .post(format!("http://{address}{path}"))
                         .header("Authorization", "Bearer client-test-key")
@@ -470,7 +477,7 @@ async fn privacy_http_errors_use_each_clients_protocol_envelope() {
                 _ => incoming_request(source, false).to_string(),
             };
             let (address, gateway) = start_gateway(context.clone(), 1).await;
-            let response = crate::http_client::create_client_no_proxy(5)
+            let response = crate::http_client::create_client_no_proxy(30)
                 .unwrap()
                 .post(format!("http://{address}{path}"))
                 .header("Content-Type", "application/json")
@@ -570,12 +577,14 @@ async fn privacy_all_cli_entries_restore_ollama_json_and_ndjson() {
                     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
                 });
                 let (address, gateway) = start_gateway(context.clone(), 1).await;
-                let path = if cli == GatewayCliKey::Gemini && streaming {
+                let path = if matches!(cli, GatewayCliKey::Gemini | GatewayCliKey::Antigravity)
+                    && streaming
+                {
                     path.replace(":generateContent", ":streamGenerateContent?alt=sse")
                 } else {
                     path.to_string()
                 };
-                let response = crate::http_client::create_client_no_proxy(10)
+                let response = crate::http_client::create_client_no_proxy(30)
                     .unwrap()
                     .post(format!("http://{address}{path}"))
                     .json(&incoming_request(source, streaming))

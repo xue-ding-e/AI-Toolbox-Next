@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, KimiPage, GeminiCliPage, PiPage, OhMyPiPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, KimiPage, GeminiCliPage, AntigravityPage, PiPage, OhMyPiPage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -15,6 +15,7 @@ import {
   GrokSessionDetailPage,
   KimiSessionDetailPage,
   GeminiCliSessionDetailPage,
+  AntigravitySessionDetailPage,
   OpenClawSessionDetailPage,
   OpenCodeSessionDetailPage,
   PiSessionDetailPage,
@@ -127,6 +128,17 @@ export const PAGE_ROUTES: RouteEntry[] = [
       contentPadding: 'compact',
       ownerTabKey: 'geminicli',
       parentPath: '/coding/geminicli',
+    },
+  },
+  { path: '/coding/antigravity', component: AntigravityPage },
+  {
+    path: '/coding/antigravity/sessions/detail',
+    component: AntigravitySessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'antigravity',
+      parentPath: '/coding/antigravity',
     },
   },
   { path: '/coding/pi', component: PiPage },

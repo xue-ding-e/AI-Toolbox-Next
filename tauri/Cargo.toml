@@ -68,6 +68,11 @@ sha2 = "0.10"
 ring = "0.17"
 zeroize = "1"
 keyring = { version = "4.2", features = ["apple-native-keyring-store"] }
+# Antigravity CLI (`agy`) stores its OAuth credential in the OS credential store
+# under a raw, non-keyring-rs target name (`gemini:antigravity`). keyring v4's
+# `Entry` always builds `service.user`, so it cannot address that entry; go
+# through `keyring-core` directly and pass an explicit `target` modifier.
+keyring-core = "1.0.0"
 hex = "0.4"
 anyhow = "1.0"
 glob = "0.3"
@@ -87,8 +92,16 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 
 [target.'cfg(windows)'.dependencies]
 junction = "1.1"
+windows-native-keyring-store = "1.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Reaches the same macOS Keychain items `agy` itself writes (service
+# `gemini`, account `antigravity`).
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Secret Service entries use the `gemini:antigravity` label/attribute pair.
+zbus-secret-service-keyring-store = "1"
 libc = "0.2"
 
 [dev-dependencies]

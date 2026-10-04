@@ -5,6 +5,7 @@ export * from './grok';
 export * from './kimi';
 export * from './openclaw';
 export * from './geminicli';
+export * from './antigravity';
 export * from './pi';
 export * from './oh_my_pi';
 export * from './claudedesktop';

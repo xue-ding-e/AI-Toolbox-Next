@@ -92,6 +92,7 @@ name = "ai-toolbox"
 version = "1.1.9"
 dependencies = [
  "anyhow",
+ "apple-native-keyring-store",
  "arboard",
  "auto-launch",
  "base64 0.22.1",
@@ -116,6 +117,7 @@ dependencies = [
  "junction",
  "keepawake",
  "keyring",
+ "keyring-core",
  "libc",
  "log",
  "regex",
@@ -154,6 +156,8 @@ dependencies = [
  "uuid",
  "walkdir",
  "webpki-roots",
+ "windows-native-keyring-store",
+ "zbus-secret-service-keyring-store",
  "zeroize",
  "zip 2.4.2",
  "zstd",

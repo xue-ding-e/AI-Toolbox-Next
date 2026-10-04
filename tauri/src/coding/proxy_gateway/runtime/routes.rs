@@ -69,7 +69,19 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                                     query,
                                 })
                             }
-                            _ => None,
+                            _ => match strip_cli_prefix(&path, "/antigravity") {
+                                Some(forwarded_path)
+                                    if is_gemini_versioned_path(&forwarded_path) =>
+                                {
+                                    Some(GatewayRoute {
+                                        cli_key: GatewayCliKey::Antigravity,
+                                        route_name: "antigravity",
+                                        forwarded_path,
+                                        query,
+                                    })
+                                }
+                                _ => None,
+                            },
                         },
                     },
                 },

@@ -17,6 +17,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
 
+mod antigravity;
 mod cost_reconciliation;
 mod desktop;
 mod dsh;
@@ -250,6 +251,7 @@ fn import_cli_keys(selection: GatewaySessionImportCli) -> Vec<GatewayUsageTool> 
         GatewaySessionImportCli::Grok => vec![GatewayUsageTool::Grok],
         GatewaySessionImportCli::Kimi => vec![GatewayUsageTool::Kimi],
         GatewaySessionImportCli::Gemini => vec![GatewayUsageTool::Gemini],
+        GatewaySessionImportCli::Antigravity => vec![GatewayUsageTool::Antigravity],
         GatewaySessionImportCli::OpenCode => vec![GatewayUsageTool::OpenCode],
         GatewaySessionImportCli::Pi => vec![GatewayUsageTool::Pi],
         GatewaySessionImportCli::OhMyPi => vec![GatewayUsageTool::OhMyPi],
@@ -268,6 +270,7 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
         GatewayUsageTool::Grok => get_grok_runtime_location_sync(db).ok(),
         GatewayUsageTool::Kimi => get_kimi_runtime_location_sync(db).ok(),
         GatewayUsageTool::Gemini => get_gemini_cli_runtime_location_sync(db).ok(),
+        GatewayUsageTool::Antigravity => get_antigravity_runtime_location_sync(db).ok(),
         GatewayUsageTool::OpenCode => get_opencode_runtime_location_sync(db).ok(),
         GatewayUsageTool::Pi => get_pi_runtime_location_sync(db).ok(),
         GatewayUsageTool::OhMyPi => get_oh_my_pi_runtime_location_sync(db).ok(),
@@ -281,6 +284,7 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
         GatewayUsageTool::Grok => (".grok", "sessions"),
         GatewayUsageTool::Kimi => (".kimi-code", "sessions"),
         GatewayUsageTool::Gemini => (".gemini", "tmp"),
+        GatewayUsageTool::Antigravity => (".gemini/antigravity-cli", "brain"),
         GatewayUsageTool::Pi => {
             if let Some(location) = &location {
                 if let Ok(root) = crate::coding::session_manager::resolve_pi_sessions_root(location)
@@ -441,6 +445,7 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
                 GatewayUsageTool::Gemini => {
                     matches!(extension, "json" | "jsonl") && name.starts_with("session-")
                 }
+                GatewayUsageTool::Antigravity => antigravity::is_transcript(&path),
                 GatewayUsageTool::Grok => {
                     name == "updates.jsonl"
                         && !path
@@ -470,6 +475,8 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
         desktop::select_sources(files)
     } else if cli_key == GatewayUsageTool::OpenClaw {
         open_claw::canonical_files(files)
+    } else if cli_key == GatewayUsageTool::Antigravity {
+        antigravity::select_sources(files)
     } else {
         files
     }

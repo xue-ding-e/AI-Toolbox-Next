@@ -978,7 +978,7 @@ fn is_cli_route_probe(request: &DebugHttpRequest, route: &GatewayRoute) -> bool 
         GatewayCliKey::Codex => route.forwarded_path == "/v1",
         GatewayCliKey::Grok => route.forwarded_path == "/v1",
         GatewayCliKey::Kimi => route.forwarded_path == "/v1",
-        GatewayCliKey::Gemini => route.forwarded_path == "/v1beta",
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => route.forwarded_path == "/v1beta",
         GatewayCliKey::OpenCode => false,
     }
 }
@@ -4746,7 +4746,7 @@ fn request_declares_streaming(request: &DebugHttpRequest) -> bool {
 }
 
 fn route_declares_streaming(route: &GatewayRoute) -> bool {
-    route.cli_key == GatewayCliKey::Gemini
+    (route.cli_key == GatewayCliKey::Gemini || route.cli_key == GatewayCliKey::Antigravity)
         && (route.forwarded_path.contains(":streamGenerateContent")
             || route
                 .query
@@ -5558,7 +5558,7 @@ fn resolve_upstream_model_id(
                 .unwrap_or(requested_model);
             strip_one_m_context_marker(resolved_model).to_string()
         }
-        GatewayCliKey::Gemini | GatewayCliKey::OpenCode => {
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity | GatewayCliKey::OpenCode => {
             strip_one_m_context_marker(requested_model).to_string()
         }
     }
@@ -9034,7 +9034,7 @@ fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
                 None
             }
         }
-        GatewayCliKey::Gemini => {
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
             if route.forwarded_path.contains(":generateContent")
                 || route.forwarded_path.contains(":streamGenerateContent")
             {
@@ -9325,7 +9325,7 @@ fn upstream_forwarded_path<'a>(
     }
 
     if conversion_route.is_none() {
-        if route.cli_key == GatewayCliKey::Gemini {
+        if route.cli_key == GatewayCliKey::Gemini || route.cli_key == GatewayCliKey::Antigravity {
             return gemini_forwarded_path_for_provider(
                 &route.forwarded_path,
                 provider,
@@ -10563,7 +10563,7 @@ fn should_skip_forwarded_response_header(name: &str) -> bool {
 
 fn extract_requested_model(request: &DebugHttpRequest, route: &GatewayRoute) -> Option<String> {
     extract_model_from_json_body(&request.body).or_else(|| {
-        if route.cli_key == GatewayCliKey::Gemini {
+        if route.cli_key == GatewayCliKey::Gemini || route.cli_key == GatewayCliKey::Antigravity {
             extract_gemini_model_from_path(&route.forwarded_path)
         } else {
             None
@@ -11129,7 +11129,7 @@ mod tests {
                 GatewayCliKey::Kimi | GatewayCliKey::OpenCode => {
                     crate::coding::proxy_gateway::transformer::AiProtocol::OpenAiChat
                 }
-                GatewayCliKey::Gemini => {
+                GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
                     crate::coding::proxy_gateway::transformer::AiProtocol::GeminiNative
                 }
             },
@@ -11141,7 +11141,9 @@ mod tests {
                 | GatewayCliKey::Grok
                 | GatewayCliKey::Kimi
                 | GatewayCliKey::OpenCode => ProviderAuthStrategy::Bearer,
-                GatewayCliKey::Gemini => ProviderAuthStrategy::GoogleApiKey,
+                GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
+                    ProviderAuthStrategy::GoogleApiKey
+                }
             },
             is_full_url: false,
             sort_index: Some(0),

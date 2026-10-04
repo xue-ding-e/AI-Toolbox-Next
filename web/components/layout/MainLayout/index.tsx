@@ -28,7 +28,7 @@ import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
 import PiIcon from '@/assets/pi.svg';
 import OmpIcon from '@/assets/omp.svg';
-import { Gemini, Grok, HermesAgent, Kimi, OpenClaw as OpenClawIcon, DeepSeek } from '@lobehub/icons';
+import { Antigravity, Gemini, Grok, HermesAgent, Kimi, OpenClaw as OpenClawIcon, DeepSeek } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
@@ -252,6 +252,8 @@ const MainLayout: React.FC = () => {
                             <Kimi size={16} className={styles.tabIconColor} />
                           ) : tab.key === 'geminicli' ? (
                             <Gemini.Color size={16} className={styles.tabIconColor} />
+                          ) : tab.key === 'antigravity' ? (
+                            <Antigravity.Color size={16} className={styles.tabIconColor} />
                           ) : tab.key === 'hermes' ? (
                             <HermesAgent size={16} className={styles.tabIconFixed} />
                           ) : tab.key === 'dsh' ? (

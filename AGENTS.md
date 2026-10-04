@@ -44,6 +44,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/grok/` | Grok CLI 后端 provider、config/auth、官方账号、prompt、plugin 与同步约束 |
 | `tauri/src/coding/kimi/` | Kimi Code CLI 后端 provider、config/credentials、官方账号、prompt 与同步约束 |
 | `tauri/src/coding/gemini_cli/` | Gemini CLI 后端配置、env/settings、prompt、usage、tray 与 WSL/SSH/备份同步约束 |
+| `tauri/src/coding/antigravity/` | Antigravity CLI 后端配置、env/settings、prompt、usage、tray 与 WSL/SSH/备份同步约束 |
 | `tauri/src/coding/mcp/` | MCP Server 后端存储、工具配置同步、导入导出与 WSL 联动 |
 | `tauri/src/coding/open_code/` | OpenCode 后端配置文件、provider、prompt、tray 与 WSL 同步约束 |
 | `tauri/src/coding/open_claw/` | OpenClaw 后端配置文件与 WSL 同步约束 |
@@ -64,6 +65,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
+| `web/features/coding/antigravity/` | Antigravity 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
 | `web/features/coding/kimi/` | Kimi Code CLI 前端页面、根目录配置、provider、官方账号、prompt 与通用配置交互 |
 | `web/features/coding/gateway/` | Gateway 前端页面、统计/明细/设置 Tab、顶部入口与 visibleTabs 可见性 |
 | `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |

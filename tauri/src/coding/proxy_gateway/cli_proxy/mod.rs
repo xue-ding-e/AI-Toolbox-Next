@@ -40,6 +40,8 @@ const GROK_CONFIG_KIND: &str = "grok_config_toml";
 const KIMI_CONFIG_KIND: &str = "kimi_config_toml";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
+const ANTIGRAVITY_ENV_KIND: &str = "antigravity_env";
+const ANTIGRAVITY_SETTINGS_KIND: &str = "antigravity_settings_json";
 const DESKTOP_NORMAL_CONFIG_KIND: &str = "claude_desktop_normal_config_json";
 const DESKTOP_THREEP_CONFIG_KIND: &str = "claude_desktop_threep_config_json";
 const DESKTOP_PROFILE_KIND: &str = "claude_desktop_profile_json";
@@ -139,6 +141,8 @@ const GEMINI_MANAGED_ENV_KEYS: [&str; 14] = [
 ];
 
 const GEMINI_SETTINGS_MANAGED_FIELDS: [&str; 1] = ["security.auth.selectedType"];
+const ANTIGRAVITY_MANAGED_ENV_KEYS: [&str; 14] = GEMINI_MANAGED_ENV_KEYS;
+const ANTIGRAVITY_SETTINGS_MANAGED_FIELDS: [&str; 1] = GEMINI_SETTINGS_MANAGED_FIELDS;
 const NO_PROXYABLE_PROVIDER_MESSAGE: &str = "No proxyable providers are configured. Official subscription providers use CLI-native OAuth and cannot be routed through the gateway.";
 
 #[derive(Debug, Clone)]
@@ -1451,6 +1455,7 @@ pub fn wsl_synced_gateway_target_for_mapping(
         "grok-config" => Some((GatewayCliKey::Grok, GROK_CONFIG_KIND)),
         "kimi-config" => Some((GatewayCliKey::Kimi, KIMI_CONFIG_KIND)),
         "geminicli-env" => Some((GatewayCliKey::Gemini, GEMINI_ENV_KIND)),
+        "antigravity-env" => Some((GatewayCliKey::Antigravity, ANTIGRAVITY_ENV_KIND)),
         _ => None,
     }
 }
@@ -1530,6 +1535,7 @@ pub fn rewrite_wsl_synced_gateway_target_content(
             )
         }
         (GatewayCliKey::Gemini, GEMINI_ENV_KIND)
+        | (GatewayCliKey::Antigravity, ANTIGRAVITY_ENV_KIND)
             if managed_file
                 .managed_fields
                 .iter()
@@ -1637,6 +1643,9 @@ async fn resolve_targets(
         GatewayCliKey::Gemini => {
             runtime_location::get_gemini_cli_runtime_location_async(db).await?
         }
+        GatewayCliKey::Antigravity => {
+            runtime_location::get_antigravity_runtime_location_async(db).await?
+        }
         GatewayCliKey::OpenCode => {
             return Err(
                 "OpenCode adapter is intentionally out of scope for the gateway MVP".to_string(),
@@ -1688,6 +1697,18 @@ async fn resolve_targets(
                 kind: GEMINI_SETTINGS_KIND,
                 path: runtime_root.join("settings.json"),
                 managed_fields: static_managed_fields(&GEMINI_SETTINGS_MANAGED_FIELDS),
+            },
+        ],
+        GatewayCliKey::Antigravity => vec![
+            CliProxyTarget {
+                kind: ANTIGRAVITY_ENV_KIND,
+                path: runtime_root.join(".env"),
+                managed_fields: static_managed_fields(&ANTIGRAVITY_MANAGED_ENV_KEYS),
+            },
+            CliProxyTarget {
+                kind: ANTIGRAVITY_SETTINGS_KIND,
+                path: runtime_root.join("settings.json"),
+                managed_fields: static_managed_fields(&ANTIGRAVITY_SETTINGS_MANAGED_FIELDS),
             },
         ],
         GatewayCliKey::OpenCode => Vec::new(),
@@ -2337,6 +2358,13 @@ fn apply_gateway_config(
             )?;
             patch_gemini_settings(required_target_path(targets, GEMINI_SETTINGS_KIND)?)
         }
+        GatewayCliKey::Antigravity => {
+            patch_gemini_env(
+                required_target_path(targets, ANTIGRAVITY_ENV_KIND)?,
+                &cli_gateway_endpoint(cli_key, base_origin),
+            )?;
+            patch_gemini_settings(required_target_path(targets, ANTIGRAVITY_SETTINGS_KIND)?)
+        }
         GatewayCliKey::OpenCode => {
             Err("OpenCode adapter is intentionally out of scope".to_string())
         }
@@ -2436,6 +2464,26 @@ fn restore_gateway_config(
                 )
             }
         }
+        GatewayCliKey::Antigravity => {
+            let env_path = required_target_path(targets, ANTIGRAVITY_ENV_KIND)?;
+            if should_delete_gateway_created_file(manifest, ANTIGRAVITY_ENV_KIND) {
+                delete_if_exists(env_path)?;
+            } else {
+                restore_gemini_env(
+                    env_path,
+                    backup_content(paths, cli_key, manifest, ANTIGRAVITY_ENV_KIND)?.as_deref(),
+                )?;
+            }
+            let settings_path = required_target_path(targets, ANTIGRAVITY_SETTINGS_KIND)?;
+            if should_delete_gateway_created_file(manifest, ANTIGRAVITY_SETTINGS_KIND) {
+                delete_if_exists(settings_path)
+            } else {
+                restore_gemini_settings(
+                    settings_path,
+                    backup_content(paths, cli_key, manifest, ANTIGRAVITY_SETTINGS_KIND)?.as_deref(),
+                )
+            }
+        }
         GatewayCliKey::OpenCode => {
             Err("OpenCode adapter is intentionally out of scope".to_string())
         }
@@ -2495,6 +2543,9 @@ fn current_cli_gateway_endpoint(
         GatewayCliKey::Gemini => {
             current_gemini_gateway_endpoint(required_target_path(targets, GEMINI_ENV_KIND)?)
         }
+        GatewayCliKey::Antigravity => {
+            current_gemini_gateway_endpoint(required_target_path(targets, ANTIGRAVITY_ENV_KIND)?)
+        }
         GatewayCliKey::OpenCode => Ok(None),
     }
 }
@@ -2508,6 +2559,7 @@ fn cli_gateway_endpoint(cli_key: GatewayCliKey, base_origin: &str) -> String {
         GatewayCliKey::Grok => format!("{base_origin}/grok/v1"),
         GatewayCliKey::Kimi => format!("{base_origin}/kimi/v1"),
         GatewayCliKey::Gemini => format!("{base_origin}/gemini/v1beta"),
+        GatewayCliKey::Antigravity => format!("{base_origin}/antigravity/v1beta"),
         GatewayCliKey::OpenCode => base_origin.to_string(),
     }
 }

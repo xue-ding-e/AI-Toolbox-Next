@@ -16,19 +16,20 @@ use zip::ZipArchive;
 use super::credentials::{self, backup_error};
 use super::encryption::{self, CryptoError};
 use super::utils::{
-    clear_restored_cli_custom_roots, get_claude_desktop_settings_paths,
-    get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir, get_db_path,
-    get_dsh_restore_dir, get_gemini_cli_restore_dir, get_grok_restore_dir, get_hermes_restore_dir,
-    get_image_assets_dir, get_kimi_restore_dir, get_opencode_auth_restore_path,
-    get_opencode_restore_dir, get_skills_dir, harden_restored_sensitive_file,
-    normalize_restore_entry_name, push_restore_warning, read_backup_meta_from_archive,
-    read_root_dir_override, record_restored_external_config_wsl_module,
-    resolve_external_config_restore_output_path, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, restore_claude_external_config_file,
-    restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
-    sanitize_restored_claude_database_for_current_os, should_filter_external_config_entry,
-    should_reapply_applied_runtime, should_skip_external_config_on_restore,
-    should_use_root_override_for_tool, write_post_restore_flags, RestoreResult,
+    clear_restored_cli_custom_roots, get_antigravity_restore_dir,
+    get_claude_desktop_settings_paths, get_claude_mcp_restore_path, get_claude_restore_dir,
+    get_codex_restore_dir, get_db_path, get_dsh_restore_dir, get_gemini_cli_restore_dir,
+    get_grok_restore_dir, get_hermes_restore_dir, get_image_assets_dir, get_kimi_restore_dir,
+    get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
+    harden_restored_sensitive_file, normalize_restore_entry_name, push_restore_warning,
+    read_backup_meta_from_archive, read_root_dir_override,
+    record_restored_external_config_wsl_module, resolve_external_config_restore_output_path,
+    resolve_restore_dir_override, resolve_skills_restore_output_path,
+    restore_claude_external_config_file, restore_custom_backup_entries,
+    restore_sqlite_database_snapshot_from_zip, sanitize_restored_claude_database_for_current_os,
+    should_filter_external_config_entry, should_reapply_applied_runtime,
+    should_skip_external_config_on_restore, should_use_root_override_for_tool,
+    write_post_restore_flags, RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
@@ -305,6 +306,13 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     )
     .then(|| read_root_dir_override(archive, "external-configs/geminicli/root-dir.txt"))
     .flatten();
+    let antigravity_restore_dir_override = should_use_root_override_for_tool(
+        "antigravity",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(archive, "external-configs/antigravity/root-dir.txt"))
+    .flatten();
     let pi_restore_dir_override =
         should_use_root_override_for_tool("pi", include_cli_config_files, skip_cli_custom_roots)
             .then(|| read_root_dir_override(archive, "external-configs/pi/root-dir.txt"))
@@ -382,6 +390,14 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         get_gemini_cli_restore_dir()?,
     );
     if let Some(warning) = gemini_cli_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+    let (antigravity_restore_dir, antigravity_warning) = resolve_restore_dir_override(
+        "antigravity",
+        antigravity_restore_dir_override,
+        get_antigravity_restore_dir()?,
+    );
+    if let Some(warning) = antigravity_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -690,6 +706,56 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                         })?;
                     }
                 }
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/antigravity/") {
+                let relative_path = &file_name["external-configs/antigravity/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "antigravity", relative_path)
+                {
+                    continue;
+                }
+
+                // The global rules file lives under `~/.gemini/config/GEMINI.md` on
+                // every platform, while `.env` / `settings.json` / `tmp` belong to the
+                // runtime root. Restore each into its real location.
+                let base_dir = if relative_path
+                    == crate::coding::antigravity::DEFAULT_ANTIGRAVITY_PROMPT_FILE
+                {
+                    crate::coding::antigravity::get_antigravity_global_rules_dir()?
+                } else {
+                    antigravity_restore_dir.clone()
+                };
+                if !base_dir.exists() {
+                    fs::create_dir_all(&base_dir).map_err(|e| {
+                        format!("Failed to create Antigravity config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) =
+                    resolve_external_config_restore_output_path(&base_dir, relative_path)?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Antigravity parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(
+                    &mut restored_wsl_modules,
+                    "antigravity",
+                );
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

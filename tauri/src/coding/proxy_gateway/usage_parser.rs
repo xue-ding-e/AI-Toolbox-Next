@@ -764,7 +764,7 @@ fn from_json_response_with_provider_type(
             value,
             &["/usage/cached_tokens", "/response/usage/cached_tokens"],
         ),
-        GatewayCliKey::Gemini => gemini_usage(value),
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => gemini_usage(value),
     };
     if usage.envelope_id.is_none() {
         usage.envelope_id = extract_envelope_id(cli_key, value);
@@ -781,7 +781,9 @@ fn extract_envelope_id(cli_key: GatewayCliKey, value: &Value) -> Option<String> 
             "/message_id",
             "/messageId",
         ],
-        GatewayCliKey::Gemini => &["/responseId", "/response/responseId", "/id"],
+        GatewayCliKey::Gemini | GatewayCliKey::Antigravity => {
+            &["/responseId", "/response/responseId", "/id"]
+        }
         GatewayCliKey::Codex
         | GatewayCliKey::Grok
         | GatewayCliKey::Kimi

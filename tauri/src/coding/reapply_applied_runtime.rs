@@ -96,6 +96,12 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     })
     .await;
 
+    let antigravity_app = app.clone();
+    reapply_cli(&mut summary, "antigravity", async move {
+        reapply_antigravity(&antigravity_app).await
+    })
+    .await;
+
     let opencode_app = app.clone();
     reapply_cli(&mut summary, "opencode", async move {
         reapply_opencode_prompt_only(&opencode_app).await
@@ -249,6 +255,7 @@ pub fn unchanged_wsl_modules(changed_modules: &[String]) -> Vec<String> {
         "kimi",
         "openclaw",
         "geminicli",
+        "antigravity",
         "pi",
         "oh_my_pi",
         "claude_desktop",
@@ -678,6 +685,71 @@ async fn reapply_gemini<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
 
     apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
         gemini_cli::apply_prompt_config_internal_without_events(app.state(), app, &prompt_id).await
+    })
+    .await;
+    result
+}
+
+async fn reapply_antigravity<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::antigravity;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    let provider_id = resolve_record_id(
+        &mut result,
+        "provider",
+        first_applied_provider_id(&db, DbTable::AntigravityProvider),
+    );
+    let prompt_id = resolve_record_id(
+        &mut result,
+        "prompt",
+        first_applied_prompt_id(&db, DbTable::AntigravityPromptConfig),
+    );
+    if provider_id.is_none() && prompt_id.is_none() {
+        return result;
+    }
+
+    match runtime_location::get_antigravity_runtime_location_async(&db).await {
+        Ok(location) => {
+            if let Err(error) = probe_runtime_path(location.host_path).await {
+                result.warnings.push(error);
+                return result;
+            }
+        }
+        Err(error) => {
+            result
+                .warnings
+                .push(format!("failed to resolve runtime path: {error}"));
+            return result;
+        }
+    }
+
+    if gateway_locked(app, GatewayCliKey::Antigravity) {
+        if let Some(provider_id) = provider_id {
+            result.warnings.push(format!(
+                "provider:{provider_id}: gateway takeover is active; direct provider projection was skipped"
+            ));
+        }
+    } else {
+        apply_record(
+            &mut result,
+            "provider",
+            provider_id,
+            |provider_id| async move {
+                antigravity::commands::apply_config_internal_without_events(&db, &provider_id).await
+            },
+        )
+        .await;
+    }
+
+    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+        antigravity::commands::apply_prompt_config_internal_without_events(
+            app.state(),
+            app,
+            &prompt_id,
+        )
+        .await
     })
     .await;
     result

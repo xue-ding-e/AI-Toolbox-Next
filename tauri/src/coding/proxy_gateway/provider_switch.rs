@@ -155,6 +155,7 @@ fn provider_table(cli_key: GatewayCliKey) -> Option<DbTable> {
         GatewayCliKey::Grok => Some(DbTable::GrokProvider),
         GatewayCliKey::Kimi => Some(DbTable::KimiProvider),
         GatewayCliKey::Gemini => Some(DbTable::GeminiCliProvider),
+        GatewayCliKey::Antigravity => Some(DbTable::AntigravityProvider),
         GatewayCliKey::OpenCode => None,
     }
 }
@@ -281,6 +282,15 @@ async fn apply_direct_provider<R: Runtime>(
             )
             .await
         }
+        GatewayCliKey::Antigravity => {
+            crate::coding::antigravity::commands::apply_config_internal_with_sync(
+                app,
+                &db,
+                provider_id,
+                from_tray,
+            )
+            .await
+        }
         GatewayCliKey::OpenCode => Err("This CLI is not supported by the gateway MVP".to_string()),
     }
 }
@@ -343,6 +353,13 @@ async fn apply_direct_provider_without_events<R: Runtime>(
             )
             .await
         }
+        GatewayCliKey::Antigravity => {
+            crate::coding::antigravity::commands::apply_config_internal_without_events(
+                &db,
+                provider_id,
+            )
+            .await
+        }
         GatewayCliKey::OpenCode => Err("This CLI is not supported by the gateway MVP".to_string()),
     }
 }
@@ -375,6 +392,7 @@ fn emit_gateway_cli_wsl_sync_request<R: Runtime>(app: &AppHandle<R>, cli_key: Ga
         GatewayCliKey::Grok => "wsl-sync-request-grok",
         GatewayCliKey::Kimi => "wsl-sync-request-kimi",
         GatewayCliKey::Gemini => "wsl-sync-request-geminicli",
+        GatewayCliKey::Antigravity => "wsl-sync-request-antigravity",
         GatewayCliKey::OpenCode => return,
     };
     if let Err(error) = app.emit(event_name, ()) {

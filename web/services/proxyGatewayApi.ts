@@ -8,6 +8,7 @@ export type GatewayCliKey =
   | 'grok'
   | 'kimi'
   | 'gemini'
+  | 'antigravity'
   | 'opencode'
   | 'claude_desktop';
 export type GatewayPricingModelSource = 'upstream' | 'requested';
@@ -848,7 +849,7 @@ export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModel
 export type GatewayUsageTool = GatewayCliKey | 'pi' | 'oh_my_pi' | 'dsh' | 'hermes' | 'openclaw' | 'kimi_cli';
 
 export const GATEWAY_USAGE_TOOLS: readonly GatewayUsageTool[] = [
-  'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'gemini', 'opencode',
+  'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'gemini', 'antigravity', 'opencode',
   'pi', 'oh_my_pi', 'dsh', 'hermes', 'openclaw', 'kimi_cli',
 ];
 
