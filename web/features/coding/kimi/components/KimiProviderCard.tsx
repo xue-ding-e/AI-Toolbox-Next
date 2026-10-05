@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Switch, Tag, Typography, Tooltip, message } from 'antd';
+import { Card, Space, Button, Dropdown, Switch, Tag, Typography, Tooltip, Collapse, Empty, message } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
@@ -10,6 +10,7 @@ import {
   MoreOutlined,
   HolderOutlined,
   GlobalOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { KimiProvider, KIMI_LOCAL_PROVIDER_ID } from '@/types/kimi';
+import type { KimiCatalogModel } from '@/types/kimi';
 import {
   engageProxyGatewaySingle,
   restoreProxyGatewayCliDirect,
@@ -27,7 +29,9 @@ import { refreshTrayMenu } from '@/services/appApi';
 import {
   extractKimiBaseUrl,
   extractKimiDefaultModel,
+  parseKimiSettingsConfig,
 } from '../utils/settingsConfig';
+import { kimiCatalogRowKey } from '../utils/kimiCatalogModels';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
@@ -67,6 +71,14 @@ interface KimiProviderCardProps {
   selectable?: boolean;
   selected?: boolean;
   onSelectChange?: (checked: boolean) => void;
+  /** Open the single-model editor for this provider (add or edit). */
+  onEditModel?: (provider: KimiProvider, model?: KimiCatalogModel) => void;
+  onDeleteModel?: (provider: KimiProvider, model: KimiCatalogModel) => void;
+  onDeleteModels?: (provider: KimiProvider, models: KimiCatalogModel[]) => void;
+  /** Open the fetch-models modal for this provider. */
+  onFetchModels?: (provider: KimiProvider) => void;
+  /** Whether the provider has enough config for an upstream model fetch. */
+  canFetchModels?: boolean;
 }
 
 const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
@@ -86,11 +98,18 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
   selectable = false,
   selected = false,
   onSelectChange,
+  onEditModel,
+  onDeleteModel,
+  onDeleteModels,
+  onFetchModels,
+  canFetchModels = false,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
   const [restoringDirect, setRestoringDirect] = React.useState(false);
+  const [modelsSelectionMode, setModelsSelectionMode] = React.useState(false);
+  const [selectedModelKeys, setSelectedModelKeys] = React.useState<string[]>([]);
 
   const {
     attributes,
@@ -120,6 +139,13 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
   const modelName = React.useMemo(
     () => extractKimiDefaultModel(provider.settingsConfig),
     [provider.settingsConfig],
+  );
+
+  // Catalog rows shown in the model section. `__local__` is a read-only bridge
+  // to the on-disk config, so it has no editable catalog of its own.
+  const catalogModels = React.useMemo<KimiCatalogModel[]>(
+    () => (isLocalProvider ? [] : parseKimiSettingsConfig(provider.settingsConfig).catalogModels),
+    [isLocalProvider, provider.settingsConfig],
   );
 
   const gatewayProviderProfilesVersion = React.useSyncExternalStore(
@@ -354,6 +380,177 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
     : showRuntimeApplied
       ? 'var(--color-bg-selected)'
       : undefined;
+
+  const handleToggleModelsSelectionMode = () => {
+    setModelsSelectionMode((current) => !current);
+    setSelectedModelKeys([]);
+  };
+
+  const handleToggleModelSelected = (rowKey: string, checked: boolean) => {
+    setSelectedModelKeys((current) =>
+      checked ? [...current, rowKey] : current.filter((key) => key !== rowKey),
+    );
+  };
+
+  const handleBatchDeleteModels = () => {
+    if (selectedModelKeys.length === 0) return;
+    const selected = catalogModels.filter((model) =>
+      selectedModelKeys.includes(kimiCatalogRowKey(model)),
+    );
+    if (selected.length > 0) {
+      onDeleteModels?.(provider, selected);
+    }
+    setSelectedModelKeys([]);
+    setModelsSelectionMode(false);
+  };
+
+  /**
+   * Model section: the catalog editor moved off the provider form so a single
+   * model's full field set (sizes / reasoning key / capabilities / efforts) has
+   * room to breathe, and per-model actions sit next to the list they act on.
+   */
+  const renderModelSection = () => (
+    <Collapse
+      ghost
+      style={{ marginTop: 8, background: 'transparent' }}
+      items={[
+        {
+          key: 'models',
+          label: (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <Text strong style={{ fontSize: 13 }}>
+                {t('kimi.model.title')} ({catalogModels.length})
+              </Text>
+              <Space size={0} onClick={(event) => event.stopPropagation()}>
+                {modelsSelectionMode && (
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    style={{ fontSize: 12 }}
+                    disabled={selectedModelKeys.length === 0}
+                    onClick={handleBatchDeleteModels}
+                  >
+                    {t('kimi.model.deleteSelected', { count: selectedModelKeys.length })}
+                  </Button>
+                )}
+                {onDeleteModels && (
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ fontSize: 12 }}
+                    onClick={handleToggleModelsSelectionMode}
+                  >
+                    {modelsSelectionMode
+                      ? t('kimi.model.cancelBatchDelete')
+                      : t('kimi.model.batchDelete')}
+                  </Button>
+                )}
+                {onFetchModels && (
+                  <Tooltip title={canFetchModels ? '' : t('opencode.provider.completeUrlAndKey')}>
+                    <span>
+                      <Button
+                        size="small"
+                        type="text"
+                        style={{ fontSize: 12 }}
+                        disabled={!canFetchModels}
+                        onClick={() => onFetchModels(provider)}
+                      >
+                        {t('codex.fetchModels.button')}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
+                {onEditModel && (
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ fontSize: 12 }}
+                    onClick={() => onEditModel(provider)}
+                  >
+                    <PlusOutlined style={{ marginRight: 0 }} />
+                    {t('kimi.model.addModel')}
+                  </Button>
+                )}
+              </Space>
+            </div>
+          ),
+          children: (
+            <div style={{ paddingLeft: 18, background: 'transparent' }}>
+              {catalogModels.length > 0 ? (
+                <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                  {catalogModels.map((model) => {
+                    const rowKey = kimiCatalogRowKey(model);
+                    const isDefaultModel = modelName === model.key;
+                    return (
+                      <div
+                        key={rowKey}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          background: 'var(--color-bg-container)',
+                        }}
+                      >
+                        {modelsSelectionMode && (
+                          <ManagementCheckbox
+                            checked={selectedModelKeys.includes(rowKey)}
+                            ariaLabel={t('kimi.model.selectModel', { name: model.key })}
+                            onChange={(checked) => handleToggleModelSelected(rowKey, checked)}
+                            style={{ width: 13, height: 13 }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <Text
+                            style={{ fontSize: 12, cursor: modelsSelectionMode ? 'default' : 'pointer' }}
+                            onClick={() => {
+                              if (!modelsSelectionMode) onEditModel?.(provider, model);
+                            }}
+                          >
+                            {model.displayName || model.key}
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                            {model.model}
+                          </Text>
+                          {model.maxContextSize != null && (
+                            <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                              {model.maxContextSize}
+                            </Text>
+                          )}
+                          {isDefaultModel && (
+                            <Tag color="blue" style={{ marginLeft: 8, fontSize: 10 }}>
+                              {t('kimi.model.defaultTag')}
+                            </Tag>
+                          )}
+                        </div>
+                        {!modelsSelectionMode && onDeleteModel && (
+                          <Button
+                            type="text"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            onClick={() => onDeleteModel(provider, model)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </Space>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={t('kimi.model.emptyText')}
+                  style={{ margin: '8px 0' }}
+                />
+              )}
+            </div>
+          ),
+        },
+      ]}
+    />
+  );
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
@@ -635,6 +832,8 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
             </Dropdown>
           </div>
         </div>
+
+        {!isLocalProvider && renderModelSection()}
       </Card>
     </div>
   );

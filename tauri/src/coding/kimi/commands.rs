@@ -1257,6 +1257,9 @@ fn parse_local_kimi_provider_snapshot(
                     "provider" => Some("provider"),
                     "display_name" => Some("displayName"),
                     "max_context_size" => Some("maxContextSize"),
+                    "max_input_size" => Some("maxInputSize"),
+                    "max_output_size" => Some("maxOutputSize"),
+                    "reasoning_key" => Some("reasoningKey"),
                     "capabilities" => Some("capabilities"),
                     "support_efforts" => Some("supportEfforts"),
                     "default_effort" => Some("defaultEffort"),
@@ -1907,6 +1910,33 @@ fn insert_known_model_fields(
         .filter(|size| *size > 0)
         .unwrap_or(DEFAULT_MODEL_MAX_CONTEXT_SIZE);
     table.insert("max_context_size", value(max_context_size));
+    // `max_input_size` / `max_output_size` / `reasoning_key` are optional in the
+    // CLI schema, but when present they are validated as `int().min(1)` /
+    // non-empty. Omit them entirely rather than writing an invalid value —
+    // `provider catalog add` writes the latter two, so dropping them here would
+    // silently lose data the user imported.
+    if let Some(max_input_size) = model
+        .get("maxInputSize")
+        .and_then(Value::as_i64)
+        .filter(|size| *size > 0)
+    {
+        table.insert("max_input_size", value(max_input_size));
+    }
+    if let Some(max_output_size) = model
+        .get("maxOutputSize")
+        .and_then(Value::as_i64)
+        .filter(|size| *size > 0)
+    {
+        table.insert("max_output_size", value(max_output_size));
+    }
+    if let Some(reasoning_key) = model
+        .get("reasoningKey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        table.insert("reasoning_key", value(reasoning_key));
+    }
     if let Some(capabilities) = model.get("capabilities").and_then(Value::as_array) {
         let mut arr = toml_edit::Array::new();
         for item in capabilities.iter().filter_map(Value::as_str) {
@@ -2252,6 +2282,96 @@ enabled = true
         let mut document = DocumentMut::new();
         project_provider_models(&mut document, &invalid, "custom").expect("project ok");
         assert!(render(&document).contains("max_context_size = 262144"));
+    }
+
+    #[test]
+    fn project_writes_optional_model_size_and_reasoning_fields() {
+        // `max_input_size` / `max_output_size` / `reasoning_key` are optional in
+        // the CLI schema; `provider catalog add` writes the latter two, so the
+        // projection must carry them instead of dropping imported data.
+        let settings = parse(
+            r#"{
+                "modelCatalog": { "models": [
+                    {
+                        "key": "moonshotai/kimi-k3",
+                        "model": "kimi-k3",
+                        "provider": "moonshotai",
+                        "maxContextSize": 1048576,
+                        "maxInputSize": 900000,
+                        "maxOutputSize": 1048576,
+                        "reasoningKey": "reasoning_content"
+                    }
+                ]}
+            }"#,
+        );
+        let mut document = DocumentMut::new();
+        project_provider_models(&mut document, &settings, "custom").expect("project ok");
+        let text = render(&document);
+        assert!(text.contains("max_input_size = 900000"), "{text}");
+        assert!(text.contains("max_output_size = 1048576"), "{text}");
+        assert!(text.contains(r#"reasoning_key = "reasoning_content""#), "{text}");
+    }
+
+    #[test]
+    fn project_omits_optional_model_fields_when_invalid_or_missing() {
+        // The CLI validates the sizes as `int().min(1)` and rejects the config
+        // otherwise, so a zero/negative input must be omitted, not clamped.
+        let settings = parse(
+            r#"{
+                "modelCatalog": { "models": [
+                    {
+                        "key": "k3",
+                        "model": "k3",
+                        "maxInputSize": 0,
+                        "maxOutputSize": -1,
+                        "reasoningKey": "   "
+                    }
+                ]}
+            }"#,
+        );
+        let mut document = DocumentMut::new();
+        project_provider_models(&mut document, &settings, "custom").expect("project ok");
+        let text = render(&document);
+        assert!(!text.contains("max_input_size"), "{text}");
+        assert!(!text.contains("max_output_size"), "{text}");
+        assert!(!text.contains("reasoning_key"), "{text}");
+    }
+
+    #[test]
+    fn read_maps_optional_model_fields_from_config_toml() {
+        // Round trip: a config.toml written by `kimi provider catalog add` must
+        // surface its optional fields in the DB catalog instead of burying them
+        // in `extraConfig`.
+        let config = r#"
+[providers.moonshotai]
+type = "openai"
+base_url = "https://api.moonshot.ai/v1"
+
+[models."moonshotai/kimi-k3"]
+provider = "moonshotai"
+model = "kimi-k3"
+max_context_size = 1048576
+max_input_size = 900000
+max_output_size = 1048576
+reasoning_key = "reasoning_content"
+"#;
+        let snapshot = parse_local_kimi_provider_snapshot(config, false).expect("parse ok");
+        let settings: Value =
+            serde_json::from_str(&snapshot.settings_config).expect("settings json");
+        let models = settings
+            .pointer("/modelCatalog/models")
+            .and_then(Value::as_array)
+            .expect("catalog models");
+        let model = models
+            .iter()
+            .find(|item| item.get("key").and_then(Value::as_str) == Some("moonshotai/kimi-k3"))
+            .expect("model present");
+        assert_eq!(model.get("maxInputSize").and_then(Value::as_i64), Some(900000));
+        assert_eq!(model.get("maxOutputSize").and_then(Value::as_i64), Some(1048576));
+        assert_eq!(
+            model.get("reasoningKey").and_then(Value::as_str),
+            Some("reasoning_content")
+        );
     }
 
     #[test]

@@ -123,6 +123,9 @@ export function parseKimiSettingsConfig(rawConfig?: string | null): ParsedKimiSe
       const provider = typeof item.provider === 'string' ? item.provider.trim() : providerKey;
       const displayName = typeof item.displayName === 'string' ? item.displayName.trim() : undefined;
       const maxContextSize = typeof item.maxContextSize === 'number' ? item.maxContextSize : undefined;
+      const maxInputSize = typeof item.maxInputSize === 'number' ? item.maxInputSize : undefined;
+      const maxOutputSize = typeof item.maxOutputSize === 'number' ? item.maxOutputSize : undefined;
+      const reasoningKey = typeof item.reasoningKey === 'string' ? item.reasoningKey.trim() : undefined;
       const capabilities = Array.isArray(item.capabilities)
         ? (item.capabilities.filter((c): c is string => typeof c === 'string') as string[])
         : undefined;
@@ -138,6 +141,9 @@ export function parseKimiSettingsConfig(rawConfig?: string | null): ParsedKimiSe
       };
       if (displayName) catalogModel.displayName = displayName;
       if (maxContextSize !== undefined) catalogModel.maxContextSize = maxContextSize;
+      if (maxInputSize !== undefined) catalogModel.maxInputSize = maxInputSize;
+      if (maxOutputSize !== undefined) catalogModel.maxOutputSize = maxOutputSize;
+      if (reasoningKey) catalogModel.reasoningKey = reasoningKey;
       if (capabilities && capabilities.length > 0) catalogModel.capabilities = capabilities;
       if (supportEfforts && supportEfforts.length > 0) catalogModel.supportEfforts = supportEfforts;
       if (defaultEffort) catalogModel.defaultEffort = defaultEffort;
@@ -190,6 +196,9 @@ export function normalizeKimiCatalogModels(
       };
       if (displayName) normalized.displayName = displayName;
       if (m.maxContextSize !== undefined) normalized.maxContextSize = m.maxContextSize;
+      if (m.maxInputSize !== undefined) normalized.maxInputSize = m.maxInputSize;
+      if (m.maxOutputSize !== undefined) normalized.maxOutputSize = m.maxOutputSize;
+      if (m.reasoningKey) normalized.reasoningKey = m.reasoningKey;
       if (m.capabilities && m.capabilities.length > 0) normalized.capabilities = m.capabilities;
       if (m.supportEfforts && m.supportEfforts.length > 0) normalized.supportEfforts = m.supportEfforts;
       if (m.defaultEffort) normalized.defaultEffort = m.defaultEffort;

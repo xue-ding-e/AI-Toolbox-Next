@@ -1,0 +1,115 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import type { KimiCatalogModel } from '../../../../../types/kimi.ts';
+import {
+  KIMI_SUPPORTED_CAPABILITIES,
+  KIMI_SUPPORTED_EFFORTS,
+  kimiCatalogRowKey,
+  normalizeKimiCapabilities,
+  normalizeKimiStringArray,
+  removeKimiCatalogModels,
+  upsertKimiCatalogModel,
+} from '../../../../../features/coding/kimi/utils/kimiCatalogModels.ts';
+
+function model(overrides: Partial<KimiCatalogModel> = {}): KimiCatalogModel {
+  return {
+    key: 'moonshotai/kimi-k3',
+    model: 'kimi-k3',
+    provider: 'moonshotai',
+    ...overrides,
+  };
+}
+
+test('kimiCatalogRowKey uses the alias key as row identity', () => {
+  assert.equal(kimiCatalogRowKey(model()), 'moonshotai/kimi-k3');
+  assert.equal(kimiCatalogRowKey(model({ key: '  padded/key  ' })), 'padded/key');
+});
+
+test('upsertKimiCatalogModel appends when no previous row is given', () => {
+  const existing = [model()];
+  const added = model({ key: 'moonshotai/kimi-k2.6', model: 'kimi-k2.6' });
+
+  const result = upsertKimiCatalogModel(existing, added);
+
+  assert.equal(result.length, 2);
+  assert.equal(result[1].key, 'moonshotai/kimi-k2.6');
+});
+
+test('upsertKimiCatalogModel replaces the row behind previousRowKey in place', () => {
+  const existing = [
+    model(),
+    model({ key: 'moonshotai/kimi-k2.6', model: 'kimi-k2.6' }),
+    model({ key: 'moonshotai/kimi-k2.5', model: 'kimi-k2.5' }),
+  ];
+  const edited = model({ key: 'moonshotai/kimi-k3', model: 'kimi-k3', displayName: 'K3' });
+
+  const result = upsertKimiCatalogModel(existing, edited, 'moonshotai/kimi-k3');
+
+  assert.equal(result.length, 3);
+  // Replaced in place, not appended.
+  assert.equal(result[0].displayName, 'K3');
+  assert.equal(result[1].key, 'moonshotai/kimi-k2.6');
+});
+
+test('upsertKimiCatalogModel appends when the previous row disappeared', () => {
+  const existing = [model({ key: 'other/key', model: 'key' })];
+  const edited = model();
+
+  const result = upsertKimiCatalogModel(existing, edited, 'moonshotai/kimi-k3');
+
+  assert.equal(result.length, 2);
+  assert.equal(result[1].key, 'moonshotai/kimi-k3');
+});
+
+test('removeKimiCatalogModels drops every row whose key matches', () => {
+  const existing = [
+    model(),
+    model({ key: 'moonshotai/kimi-k2.6', model: 'kimi-k2.6' }),
+    model({ key: 'moonshotai/kimi-k2.5', model: 'kimi-k2.5' }),
+  ];
+
+  const result = removeKimiCatalogModels(existing, [
+    'moonshotai/kimi-k3',
+    'moonshotai/kimi-k2.5',
+  ]);
+
+  assert.deepEqual(result.map((item) => item.key), ['moonshotai/kimi-k2.6']);
+});
+
+test('normalizeKimiCapabilities keeps only the vocabulary the CLI understands', () => {
+  const result = normalizeKimiCapabilities([
+    'image_in',
+    'bogus_capability',
+    'thinking',
+    '  tool_use  ',
+  ]);
+
+  assert.deepEqual(result, ['image_in', 'thinking', 'tool_use']);
+});
+
+test('normalizeKimiCapabilities returns undefined for empty or non-array input', () => {
+  assert.equal(normalizeKimiCapabilities([]), undefined);
+  assert.equal(normalizeKimiCapabilities(['nope']), undefined);
+  assert.equal(normalizeKimiCapabilities(undefined), undefined);
+  assert.equal(normalizeKimiCapabilities('image_in'), undefined);
+});
+
+test('normalizeKimiStringArray trims and drops blanks without a vocabulary filter', () => {
+  assert.deepEqual(normalizeKimiStringArray([' low ', '', '  ', 'custom']), ['low', 'custom']);
+  assert.equal(normalizeKimiStringArray([]), undefined);
+  assert.equal(normalizeKimiStringArray(undefined), undefined);
+});
+
+test('capability and effort vocabularies cover the CLI enums', () => {
+  // Guards against silently dropping a capability the CLI accepts.
+  assert.deepEqual([...KIMI_SUPPORTED_CAPABILITIES], [
+    'image_in',
+    'video_in',
+    'audio_in',
+    'thinking',
+    'always_thinking',
+    'tool_use',
+  ]);
+  assert.deepEqual([...KIMI_SUPPORTED_EFFORTS], ['low', 'medium', 'high', 'max']);
+});

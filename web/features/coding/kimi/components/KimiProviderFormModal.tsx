@@ -4,19 +4,12 @@ import {
   Form,
   Input,
   Select,
-  Button,
-  Table,
   Alert,
   Tooltip,
-  Popconfirm,
+  Typography,
   message,
 } from 'antd';
-import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
-import {
-  PlusOutlined,
-  DeleteOutlined,
-  InfoCircleOutlined,
-} from '@ant-design/icons';
+import { InfoCircleOutlined } from '@ant-design/icons';
 import { FileCode2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -54,6 +47,8 @@ import {
 } from '../utils/settingsConfig';
 import styles from './KimiProviderFormModal.module.less';
 
+const { Text } = Typography;
+
 /**
  * Default catalog entry for a newly created provider: the current official
  * model also serves as the default for custom Kimi relays. The CLI
@@ -81,18 +76,6 @@ interface FormValues {
   baseUrl?: string;
   defaultModelKey?: string;
 }
-
-// Common context-window presets; the field also accepts any custom number.
-const CONTEXT_SIZE_PRESETS = [
-  { value: '32768', label: '32K' },
-  { value: '65536', label: '64K' },
-  { value: '131072', label: '128K' },
-  { value: '204800', label: '200K' },
-  { value: '262144', label: '256K' },
-  { value: '278528', label: '272K' },
-  { value: '409600', label: '400K' },
-  { value: '1048576', label: '1M' },
-];
 
 const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
   open,
@@ -231,79 +214,6 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
     setAdvancedExpanded(expanded);
   };
 
-  // Add new model row. Pick the first unused `custom-model-N` index instead of
-  // `length + 1`: after deleting a middle row, length+1 would collide with an
-  // existing key.
-  const handleAddModel = () => {
-    const usedIndices = new Set(
-      catalogModels
-        .map((model) => /^custom-model-(\d+)$/.exec(model.key)?.[1])
-        .filter((index): index is string => Boolean(index))
-        .map((index) => Number.parseInt(index, 10)),
-    );
-    let nextIndex = 1;
-    while (usedIndices.has(nextIndex)) nextIndex += 1;
-    const newModel: KimiCatalogModel = {
-      key: `custom-model-${nextIndex}`,
-      model: `model-${nextIndex}`,
-      provider: providerKey || CUSTOM_KIMI_PROVIDER_KEY,
-      // Kimi CLI hard-requires a positive max_context_size per model.
-      maxContextSize: KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE,
-    };
-    const nextModels = [...catalogModels, newModel];
-    setCatalogModels(nextModels);
-
-    // If defaultModelKey is empty, set it to the first model's key
-    const currentDefault = form.getFieldValue('defaultModelKey');
-    if (!currentDefault) {
-      form.setFieldsValue({ defaultModelKey: newModel.key });
-    }
-  };
-
-  // Update model row
-  const handleUpdateModel = (
-    index: number,
-    field: keyof KimiCatalogModel,
-    val: string | number | undefined,
-  ) => {
-    const nextModels = [...catalogModels];
-    const target = { ...nextModels[index], [field]: val };
-    nextModels[index] = target;
-    setCatalogModels(nextModels);
-
-    // If the changed key was the selected defaultModelKey, keep them in sync
-    if (field === 'key') {
-      const oldKey = catalogModels[index].key;
-      const currentDefault = form.getFieldValue('defaultModelKey');
-      if (currentDefault === oldKey && typeof val === 'string') {
-        form.setFieldsValue({ defaultModelKey: val });
-      }
-    }
-  };
-
-  // Update model row numeric context size (empty input clears the override;
-  // projection falls back to 262144 so the CLI still accepts the model).
-  const handleUpdateModelContextSize = (index: number, raw: string) => {
-    const trimmed = raw.trim();
-    const parsed = trimmed === '' ? undefined : Number.parseInt(trimmed, 10);
-    handleUpdateModel(index, 'maxContextSize', Number.isFinite(parsed) ? parsed : undefined);
-  };
-
-  // Delete model row
-  const handleDeleteModel = (index: number) => {
-    const deletedKey = catalogModels[index]?.key;
-    const nextModels = catalogModels.filter((_, idx) => idx !== index);
-    setCatalogModels(nextModels);
-
-    // If deleted model was selected as defaultModelKey, update to next available or clear
-    const currentDefault = form.getFieldValue('defaultModelKey');
-    if (currentDefault === deletedKey) {
-      form.setFieldsValue({
-        defaultModelKey: nextModels.length > 0 ? nextModels[0].key : '',
-      });
-    }
-  };
-
   // Options for defaultModelKey select
   const defaultModelOptions = useMemo(() => {
     const options = catalogModels
@@ -436,94 +346,6 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
     }
   };
 
-  const modelColumns = [
-    {
-      title: (
-        <span>
-          {t('kimi.providerForm.modelCatalogKey')}
-          <span style={{ color: 'var(--color-status-error)', marginLeft: 4 }}>*</span>
-        </span>
-      ),
-      dataIndex: 'key',
-      key: 'key',
-      width: '28%',
-      render: (_: unknown, record: KimiCatalogModel, index: number) => (
-        <Input
-          size="small"
-          value={record.key}
-          placeholder="e.g. kimi-code/kimi-for-coding"
-          onChange={(e) => handleUpdateModel(index, 'key', e.target.value)}
-        />
-      ),
-    },
-    {
-      title: (
-        <span>
-          {t('kimi.providerForm.modelCatalogModel')}
-          <span style={{ color: 'var(--color-status-error)', marginLeft: 4 }}>*</span>
-        </span>
-      ),
-      dataIndex: 'model',
-      key: 'model',
-      width: '28%',
-      render: (_: unknown, record: KimiCatalogModel, index: number) => (
-        <Input
-          size="small"
-          value={record.model}
-          placeholder="e.g. kimi-for-coding"
-          onChange={(e) => handleUpdateModel(index, 'model', e.target.value)}
-        />
-      ),
-    },
-    {
-      title: (
-        <span>
-          {t('kimi.providerForm.modelCatalogContextSize')}
-          <Tooltip title={t('kimi.providerForm.modelCatalogContextSizeTooltip')}>
-            <InfoCircleOutlined style={{ marginLeft: 6, color: 'var(--color-text-tertiary)' }} />
-          </Tooltip>
-        </span>
-      ),
-      dataIndex: 'maxContextSize',
-      key: 'maxContextSize',
-      width: '22%',
-      render: (_: unknown, record: KimiCatalogModel, index: number) => (
-        <ImeSafeAutoComplete
-          size="small"
-          value={record.maxContextSize != null ? String(record.maxContextSize) : ''}
-          placeholder="262144"
-          options={CONTEXT_SIZE_PRESETS}
-          filterOption={(input, option) =>
-            String(option?.value ?? '').includes(input) ||
-            String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          onChange={(value) => handleUpdateModelContextSize(index, String(value ?? ''))}
-        />
-      ),
-    },
-    {
-      title: '',
-      key: 'actions',
-      width: '10%',
-      align: 'center' as const,
-      render: (_: unknown, __: KimiCatalogModel, index: number) => (
-        <Popconfirm
-          title={t('kimi.providerForm.deleteModelConfirm')}
-          onConfirm={() => handleDeleteModel(index)}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-        >
-          <Button
-            type="text"
-            danger
-            size="small"
-            icon={<DeleteOutlined />}
-          />
-        </Popconfirm>
-      ),
-    },
-  ];
-
   return (
     <Modal
       open={open}
@@ -625,32 +447,14 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
               />
             </Form.Item>
 
-            {/* Model Catalog Table */}
+            {/* The model catalog is edited on the provider card's model
+                section, not here — a full catalog form would dwarf the
+                provider fields and the card list is the natural home for
+                per-model actions (see KimiModelFormModal). */}
             <Form.Item wrapperCol={sectionWrapperCol}>
-              <div className={styles.sectionHeader}>
-                <span className={styles.sectionTitle}>
-                  {t('kimi.providerForm.modelCatalog')}
-                </span>
-                <Button
-                  type="dashed"
-                  size="small"
-                  icon={<PlusOutlined />}
-                  onClick={handleAddModel}
-                >
-                  {t('kimi.providerForm.addModel')}
-                </Button>
-              </div>
-
-              <div className={styles.modelsTableWrapper}>
-                <Table
-                  dataSource={catalogModels}
-                  columns={modelColumns}
-                  rowKey={(record, index) => `${record.key || ''}_${index}`}
-                  pagination={false}
-                  size="small"
-                  locale={{ emptyText: t('kimi.providerForm.noModelsConfigured') }}
-                />
-              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('kimi.model.catalogMovedHint')}
+              </Text>
             </Form.Item>
           </>
         )}

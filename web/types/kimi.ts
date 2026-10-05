@@ -16,7 +16,14 @@ export interface KimiCatalogModel {
   model: string;
   provider: string;
   displayName?: string;
+  /** `max_context_size` — required by the CLI to be a positive integer. */
   maxContextSize?: number;
+  /** `max_input_size` — optional, must be a positive integer when present. */
+  maxInputSize?: number;
+  /** `max_output_size` — optional, must be a positive integer when present. */
+  maxOutputSize?: number;
+  /** `reasoning_key` — the response field carrying reasoning content. */
+  reasoningKey?: string;
   capabilities?: string[];
   supportEfforts?: string[];
   defaultEffort?: string;
