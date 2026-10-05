@@ -517,6 +517,7 @@ export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw
 export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;
 
 export const OhMyPiSessionDetailPage = () => <SessionDetailPage tool="oh_my_pi" />;
+export const OmoNativeSessionDetailPage = () => <SessionDetailPage tool="omo_native" />;
 
 export const HermesSessionDetailPage = () => <SessionDetailPage tool="hermes" />;
 export const ClaudeDesktopSessionDetailPage = () => <SessionDetailPage tool="claudedesktop" />;

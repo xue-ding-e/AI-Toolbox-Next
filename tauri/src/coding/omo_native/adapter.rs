@@ -1,0 +1,112 @@
+use chrono::Local;
+use serde_json::{json, Map, Value};
+
+use super::types::{
+    OmoNativeAgentsConfig, OmoNativeAgentsConfigContent, OmoNativeSettingsConfig,
+};
+use crate::coding::db_id::db_extract_id;
+
+pub fn settings_from_db_value(value: Value) -> OmoNativeSettingsConfig {
+    OmoNativeSettingsConfig {
+        root_dir: value
+            .get("root_dir")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        updated_at: value
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| Local::now().to_rfc3339()),
+    }
+}
+
+pub fn settings_to_db_value(root_dir: Option<&str>) -> Value {
+    // 整条记录重建。当前只有 root_dir/updated_at 两个字段所以无损；
+    // 日后新增字段时要改成 db_patch_fields 局部更新，否则会静默清掉存量字段。
+    let now = Local::now().to_rfc3339();
+    let mut value = json!({ "updated_at": now });
+    if let Some(root_dir) = root_dir.filter(|dir| !dir.trim().is_empty()) {
+        value["root_dir"] = json!(root_dir);
+    }
+    value
+}
+
+pub fn agents_from_db_value(value: Value) -> OmoNativeAgentsConfig {
+    OmoNativeAgentsConfig {
+        id: db_extract_id(&value),
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Unnamed Config")
+            .to_string(),
+        is_applied: value
+            .get("is_applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        is_disabled: value
+            .get("is_disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        agents: value.get("agents").cloned(),
+        categories: value.get("categories").cloned(),
+        model_profiles: value.get("model_profiles").cloned(),
+        model_profile: value
+            .get("model_profile")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        task: value.get("task").cloned(),
+        other_fields: value.get("other_fields").cloned(),
+        sort_index: value
+            .get("sort_index")
+            .and_then(Value::as_i64)
+            .map(|value| value as i32),
+        created_at: value
+            .get("created_at")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        updated_at: value
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+pub fn agents_to_db_value(content: &OmoNativeAgentsConfigContent) -> Value {
+    let mut map = Map::new();
+    map.insert("name".to_string(), Value::String(content.name.clone()));
+    map.insert("is_applied".to_string(), Value::Bool(content.is_applied));
+    map.insert("is_disabled".to_string(), Value::Bool(content.is_disabled));
+    if let Some(agents) = &content.agents {
+        map.insert("agents".to_string(), agents.clone());
+    }
+    if let Some(categories) = &content.categories {
+        map.insert("categories".to_string(), categories.clone());
+    }
+    if let Some(model_profiles) = &content.model_profiles {
+        map.insert("model_profiles".to_string(), model_profiles.clone());
+    }
+    if let Some(model_profile) = &content.model_profile {
+        map.insert(
+            "model_profile".to_string(),
+            Value::String(model_profile.clone()),
+        );
+    }
+    if let Some(task) = &content.task {
+        map.insert("task".to_string(), task.clone());
+    }
+    if let Some(other_fields) = &content.other_fields {
+        map.insert("other_fields".to_string(), other_fields.clone());
+    }
+    if let Some(sort_index) = content.sort_index {
+        map.insert("sort_index".to_string(), json!(sort_index));
+    }
+    map.insert(
+        "created_at".to_string(),
+        Value::String(content.created_at.clone()),
+    );
+    map.insert(
+        "updated_at".to_string(),
+        Value::String(content.updated_at.clone()),
+    );
+    Value::Object(map)
+}

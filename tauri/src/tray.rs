@@ -25,6 +25,7 @@ use crate::coding::hermes::tray_support as hermes_tray;
 use crate::coding::kimi::tray_support as kimi_tray;
 use crate::coding::mcp::tray_support as mcp_tray;
 use crate::coding::oh_my_openagent::tray_support as omo_tray;
+use crate::coding::omo_native::tray_support as omo_native_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::oh_my_pi::tray_support as omp_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
@@ -56,6 +57,7 @@ struct TrayTexts {
     opencode_plugins_header: &'static str,
     omo_header: &'static str,
     omo_slim_header: &'static str,
+    omo_native_header: &'static str,
     claude_header: &'static str,
     codex_header: &'static str,
     grok_header: &'static str,
@@ -149,6 +151,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             opencode_plugins_header: "OpenCode Plugins",
             omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
+            omo_native_header: "OmO Native",
             claude_header: "Claude Code",
             codex_header: "Codex",
             grok_header: "Grok",
@@ -182,6 +185,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             opencode_plugins_header: "OpenCode 插件",
             omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
+            omo_native_header: "OmO Native",
             claude_header: "Claude Code",
             codex_header: "Codex",
             grok_header: "Grok",
@@ -310,6 +314,19 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                         omo_tray::apply_oh_my_openagent_config(&app_handle, &config_id).await
                     {
                         eprintln!("Failed to apply Oh My OpenAgent config: {}", e);
+                    }
+                    // Refresh tray menu to update checkmarks
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("omo_native_config_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        omo_native_tray::apply_omo_native_agents_config(&app_handle, &config_id)
+                            .await
+                    {
+                        eprintln!("Failed to apply OmO Native config: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -783,6 +800,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let omo_enabled = is_tab_visible("opencode") && omo_tray::is_enabled_for_tray(app).await;
     let omo_slim_enabled =
         is_tab_visible("opencode") && omo_slim_tray::is_enabled_for_tray(app).await;
+    let omo_native_enabled =
+        is_tab_visible("omo_native") && omo_native_tray::is_enabled_for_tray(app).await;
     let claude_enabled =
         is_tab_visible("claudecode") && claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = is_tab_visible("codex") && codex_tray::is_enabled_for_tray(app).await;
@@ -864,6 +883,13 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     omo_slim_data.title = texts.omo_slim_header.to_string();
+
+    let mut omo_native_data = if omo_native_enabled {
+        omo_native_tray::get_omo_native_tray_data(app).await?
+    } else {
+        omo_native_tray::TrayAgentsConfigData::empty(texts.omo_native_header)
+    };
+    omo_native_data.title = texts.omo_native_header.to_string();
 
     let mut claude_data = if claude_enabled {
         claude_tray::get_claude_code_tray_data(app).await?
@@ -1318,6 +1344,48 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                 .map_err(|e| e.to_string())?,
             );
             omo_items.push(menu_item);
+        }
+    }
+
+    // OmO Native section (only if enabled)
+    let omo_native_header = if omo_native_enabled {
+        Some(
+            MenuItem::with_id(
+                app,
+                "omo_native_header",
+                &omo_native_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    // Build OmO Native items
+    let mut omo_native_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if omo_native_enabled && omo_native_data.items.is_empty() {
+        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+            MenuItem::with_id(app, "omo_native_empty", texts.no_config, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        );
+        omo_native_items.push(empty_item);
+    } else if omo_native_enabled {
+        for item in omo_native_data.items {
+            let item_id = format!("omo_native_config_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,
+                    item.is_selected,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            omo_native_items.push(menu_item);
         }
     }
 
@@ -1936,6 +2004,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
         if let Some(ref submenu) = omp_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add OmO Native section if enabled
+    if omo_native_enabled {
+        if let Some(ref header) = omo_native_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &omo_native_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }

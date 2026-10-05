@@ -96,7 +96,7 @@ export const getGatewayRequestsPerMinute = (
   if (!cliKey) {
     return status.requests_per_minute;
   }
-  if (['pi', 'oh_my_pi', 'dsh', 'hermes', 'openclaw', 'kimi_cli'].includes(cliKey)) {
+  if (['pi', 'oh_my_pi', 'omo_native', 'dsh', 'hermes', 'openclaw', 'kimi_cli'].includes(cliKey)) {
     return null;
   }
   return status.requests_per_minute_by_cli == null

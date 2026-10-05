@@ -117,6 +117,12 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     })
     .await;
 
+    let omo_native_app = app.clone();
+    reapply_cli(&mut summary, "omo_native", async move {
+        reapply_omo_native(&omo_native_app).await
+    })
+    .await;
+
     let claude_desktop_app = app.clone();
     reapply_cli(&mut summary, "claude_desktop", async move {
         reapply_claude_desktop(&claude_desktop_app).await
@@ -229,6 +235,7 @@ fn wsl_module_for_reapply_label(label: &str) -> Option<&'static str> {
         "opencode" | "oh-my-openagent" | "oh-my-opencode-slim" => Some("opencode"),
         "pi" => Some("pi"),
         "oh_my_pi" => Some("oh_my_pi"),
+        "omo_native" => Some("omo_native"),
         "claude_desktop" => Some("claude_desktop"),
         "hermes" => Some("hermes"),
         "dsh" => Some("dsh"),
@@ -258,6 +265,7 @@ pub fn unchanged_wsl_modules(changed_modules: &[String]) -> Vec<String> {
         "antigravity",
         "pi",
         "oh_my_pi",
+        "omo_native",
         "claude_desktop",
         "hermes",
         "dsh",
@@ -826,6 +834,38 @@ async fn reapply_pi<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
         pi::apply_pi_prompt_config_internal_without_events(app.state(), app, &prompt_id).await
     })
     .await;
+    result
+}
+
+async fn reapply_omo_native<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::omo_native;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+
+    // Agent/Category 方案：applied 标记在库里，但 `[native]` 块可能被备份跳过或整份缺失，
+    // 恢复后要按同一份方案重新写入。恢复期间不 emit 事件。
+    let agents_record = first_applied_prompt_id(&db, DbTable::OmoNativeAgentsConfig);
+    let agents_id = resolve_record_id(&mut result, "agents", agents_record);
+    if agents_id.is_some() {
+        match runtime_location::get_omo_native_runtime_location_async(&db).await {
+            Ok(location) => {
+                if let Err(error) = probe_runtime_path(location.host_path).await {
+                    result.warnings.push(error);
+                } else {
+                    apply_record(&mut result, "agents", agents_id, |agents_id| async move {
+                        omo_native::write_agents_config_to_file(&db, &agents_id).await
+                    })
+                    .await;
+                }
+            }
+            Err(error) => result
+                .warnings
+                .push(format!("failed to resolve runtime dir: {error}")),
+        }
+    }
+
     result
 }
 

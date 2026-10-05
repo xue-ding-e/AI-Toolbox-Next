@@ -24,6 +24,7 @@ const SESSION_TOOL_BASE_PATH: Record<SessionTool, string> = {
   opencode: '/coding/opencode',
   pi: '/coding/pi',
   oh_my_pi: '/coding/oh-my-pi',
+  omo_native: '/coding/omo-native',
   hermes: '/coding/hermes',
   dsh: '/coding/dsh',
 };

@@ -57,6 +57,7 @@ pub enum GatewayUsageTool {
     OpenCode,
     Pi,
     OhMyPi,
+    OmoNative,
     Dsh,
     Hermes,
     #[serde(rename = "openclaw", alias = "open_claw")]
@@ -77,6 +78,7 @@ impl GatewayUsageTool {
             Self::OpenCode,
             Self::Pi,
             Self::OhMyPi,
+            Self::OmoNative,
             Self::Dsh,
             Self::Hermes,
             Self::OpenClaw,
@@ -96,6 +98,7 @@ impl GatewayUsageTool {
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
             Self::OhMyPi => "oh_my_pi",
+            Self::OmoNative => "omo_native",
             Self::Dsh => "dsh",
             Self::Hermes => "hermes",
             Self::OpenClaw => "openclaw",
@@ -1325,6 +1328,7 @@ pub enum GatewaySessionImportCli {
     OpenCode,
     Pi,
     OhMyPi,
+    OmoNative,
     Dsh,
     Hermes,
     #[serde(rename = "openclaw", alias = "open_claw")]

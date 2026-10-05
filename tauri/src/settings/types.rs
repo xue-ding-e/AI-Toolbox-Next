@@ -315,6 +315,7 @@ impl Default for AppSettings {
                 "openclaw".to_string(),
                 "pi".to_string(),
                 "oh_my_pi".to_string(),
+                "omo_native".to_string(),
                 "hermes".to_string(),
                 "dsh".to_string(),
                 "gateway".to_string(),
@@ -358,6 +359,7 @@ pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
         ("openclaw".to_string(), false),
         ("pi".to_string(), false),
         ("oh_my_pi".to_string(), false),
+        ("omo_native".to_string(), false),
         ("hermes".to_string(), false),
         ("dsh".to_string(), false),
     ])

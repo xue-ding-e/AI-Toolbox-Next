@@ -45,6 +45,7 @@ const MODULE_NAMES: Record<string, string> = {
   antigravity: 'Antigravity CLI',
   pi: 'Pi',
   oh_my_pi: 'omp',
+  omo_native: 'omo',
   hermes: 'Hermes',
   dsh: 'dsh',
 };
@@ -62,6 +63,7 @@ const MODULE_COLORS: Record<string, string> = {
   antigravity: 'geekblue',
   pi: 'magenta',
   oh_my_pi: 'magenta',
+  omo_native: 'gold',
   hermes: 'volcano',
   dsh: 'red',
 };
@@ -99,11 +101,12 @@ const MODULE_TO_TAB: Record<string, string> = {
   antigravity: 'antigravity',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
+  omo_native: 'omo_native',
   hermes: 'hermes',
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'];
 
 interface SSHSyncModalProps {
   open: boolean;

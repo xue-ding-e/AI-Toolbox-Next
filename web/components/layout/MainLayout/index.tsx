@@ -28,6 +28,7 @@ import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
 import PiIcon from '@/assets/pi.svg';
 import OmpIcon from '@/assets/omp.svg';
+import OmoNativeIcon from '@/assets/omo-native.svg';
 import { Antigravity, Gemini, Grok, HermesAgent, Kimi, OpenClaw as OpenClawIcon, DeepSeek } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
@@ -37,6 +38,7 @@ const TAB_ICONS: Record<string, string> = {
   codex: ChatgptIcon,
   pi: PiIcon,
   oh_my_pi: OmpIcon,
+  omo_native: OmoNativeIcon,
 };
 
 // macOS Overlay 模式需要为交通灯按钮预留空间，Windows/Linux 使用原生标题栏

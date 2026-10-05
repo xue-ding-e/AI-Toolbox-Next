@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, KimiPage, GeminiCliPage, AntigravityPage, PiPage, OhMyPiPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, ClaudeDesktopPage, HermesPage, DshPage, CodexPage, GrokPage, KimiPage, GeminiCliPage, AntigravityPage, PiPage, OhMyPiPage, OmoNativePage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -20,6 +20,7 @@ import {
   OpenCodeSessionDetailPage,
   PiSessionDetailPage,
   OhMyPiSessionDetailPage,
+  OmoNativeSessionDetailPage,
   HermesSessionDetailPage,
   DshSessionDetailPage,
 } from '@/features/coding/shared/sessionManager/detail/SessionDetailPage';
@@ -161,6 +162,17 @@ export const PAGE_ROUTES: RouteEntry[] = [
       contentPadding: 'compact',
       ownerTabKey: 'oh_my_pi',
       parentPath: '/coding/oh-my-pi',
+    },
+  },
+  { path: '/coding/omo-native', component: OmoNativePage },
+  {
+    path: '/coding/omo-native/sessions/detail',
+    component: OmoNativeSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'omo_native',
+      parentPath: '/coding/omo-native',
     },
   },
   { path: '/coding/claudedesktop', component: ClaudeDesktopPage },

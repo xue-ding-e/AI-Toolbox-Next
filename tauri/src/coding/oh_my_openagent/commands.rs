@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::adapter;
 use super::types::*;
+use crate::coding::omo_jsonc_patch;
 use crate::coding::runtime_location;
 use crate::db::helpers::{
     db_create, db_delete, db_get, db_list, db_patch_fields, db_put, db_query_by_bool,
@@ -996,355 +997,43 @@ fn write_unified_omo_config(config_path: &Path, plugin_config: &Value) -> Result
     write_config_file(config_path, &top)
 }
 
-/// JSONC top-level key span for in-place patching.
-struct TopLevelKey {
-    name: String,
-    key_start: usize,   // index of the opening quote of the key
-    value_start: usize, // index of the first char of the value
-    value_end: usize,   // index pointing at the trailing comma (or root brace) after the value
-}
-
-/// Scan the root-level keys of a JSONC document, honoring strings and `//` / `/* */`
-/// comments. Returns the keys and the index of the root object's closing brace.
-fn scan_top_level_keys(text: &str) -> (Vec<TopLevelKey>, usize) {
-    let bytes = text.as_bytes();
-    let n = bytes.len();
-    let mut keys = Vec::new();
-    let mut root_close = n;
-    let mut i = 0usize;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut in_line = false;
-    let mut in_block = false;
-
-    while i < n {
-        let c = bytes[i];
-        if in_line {
-            if c == b'\n' {
-                in_line = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_block {
-            if c == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                in_block = false;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            b'/' if bytes.get(i + 1) == Some(&b'/') => {
-                in_line = true;
-                i += 2;
-                continue;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                in_block = true;
-                i += 2;
-                continue;
-            }
-            b'"' => {
-                let str_start = i;
-                i += 1;
-                let mut str_end = i;
-                let mut str_in = true;
-                let mut str_esc = false;
-                while str_end < n {
-                    let sc = bytes[str_end];
-                    if str_esc {
-                        str_esc = false;
-                    } else if sc == b'\\' {
-                        str_esc = true;
-                    } else if sc == b'"' {
-                        str_in = false;
-                        str_end += 1;
-                        break;
-                    }
-                    str_end += 1;
-                }
-                if str_in {
-                    i = str_end;
-                    continue;
-                }
-                let name = &text[str_start + 1..str_end - 1];
-                // Skip whitespace and comments to see if this string is a key (':' follows).
-                let mut j = str_end;
-                loop {
-                    while j < n && bytes[j].is_ascii_whitespace() {
-                        j += 1;
-                    }
-                    if j + 1 < n && bytes[j] == b'/' && bytes[j + 1] == b'/' {
-                        while j < n && bytes[j] != b'\n' {
-                            j += 1;
-                        }
-                        continue;
-                    }
-                    if j + 1 < n && bytes[j] == b'/' && bytes[j + 1] == b'*' {
-                        j += 2;
-                        while j + 1 < n && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
-                            j += 1;
-                        }
-                        j += 2;
-                        continue;
-                    }
-                    break;
-                }
-                if j < n && bytes[j] == b':' && depth == 1 {
-                    let mut vs = j + 1;
-                    while vs < n && bytes[vs].is_ascii_whitespace() {
-                        vs += 1;
-                    }
-                    let ve = scan_value_end(text, vs);
-                    keys.push(TopLevelKey {
-                        name: name.to_string(),
-                        key_start: str_start,
-                        value_start: vs,
-                        value_end: ve,
-                    });
-                    i = ve;
-                    continue;
-                }
-                i = str_end;
-                continue;
-            }
-            b'{' => {
-                depth += 1;
-                i += 1;
-                continue;
-            }
-            b'}' => {
-                if depth == 1 {
-                    root_close = i;
-                    i = n;
-                    continue;
-                }
-                if depth > 0 {
-                    depth -= 1;
-                }
-                i += 1;
-                continue;
-            }
-            b'[' => {
-                depth += 1;
-                i += 1;
-                continue;
-            }
-            b']' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-                i += 1;
-                continue;
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
-        }
-    }
-    (keys, root_close)
-}
-
-/// Scan a JSONC value starting at `start` and return the index just after the value
-/// (i.e. pointing at the trailing comma or the root closing brace).
-fn scan_value_end(text: &str, mut i: usize) -> usize {
-    let bytes = text.as_bytes();
-    let n = bytes.len();
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut in_line = false;
-    let mut in_block = false;
-    while i < n {
-        let c = bytes[i];
-        if in_line {
-            if c == b'\n' {
-                in_line = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_block {
-            if c == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                in_block = false;
-                i += 2;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            b'/' if bytes.get(i + 1) == Some(&b'/') => {
-                in_line = true;
-                i += 2;
-                continue;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                in_block = true;
-                i += 2;
-                continue;
-            }
-            b'"' => {
-                in_string = true;
-                i += 1;
-                continue;
-            }
-            b'{' | b'[' => {
-                depth += 1;
-                i += 1;
-                continue;
-            }
-            b'}' | b']' => {
-                if depth == 0 {
-                    return i;
-                }
-                depth -= 1;
-                i += 1;
-                continue;
-            }
-            b',' if depth == 0 => {
-                return i;
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
-        }
-    }
-    i
-}
-
 /// In-place JSONC patch: replace/insert `[opencode]`, set `$schema`, and ensure
 /// `_migrations` contains `migration_id`, preserving every other top-level block and
-/// all comments verbatim.
+/// all comments verbatim. Delegates to the shared `omo_jsonc_patch` helper, which the
+/// OmO Native module also uses for the `[native]` block in the same file.
 fn patch_unified_omo_config_text(
     raw: &str,
     block_json: &str,
     schema_url: &str,
     migration_id: &str,
 ) -> String {
-    let (keys, root_close) = scan_top_level_keys(raw);
-    let find = |name: &str| keys.iter().find(|k| k.name == name);
-
-    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-    let mut insertions: Vec<String> = Vec::new();
-
-    if let Some(k) = find("[opencode]") {
-        replacements.push((k.value_start, k.value_end, block_json.to_string()));
-    } else {
-        insertions.push(format!("\"[opencode]\": {}", block_json));
-    }
-
-    if let Some(k) = find("$schema") {
-        replacements.push((k.value_start, k.value_end, format!("\"{}\"", schema_url)));
-    } else {
-        insertions.push(format!("\"$schema\": \"{}\"", schema_url));
-    }
-
-    if let Some(k) = find("_migrations") {
-        let existing: Vec<String> =
-            json5::from_str(&raw[k.value_start..k.value_end]).unwrap_or_default();
-        let mut markers = existing;
-        if !markers.iter().any(|m| m == migration_id) {
-            markers.push(migration_id.to_string());
-        }
-        let arr = serde_json::json!(markers);
-        replacements.push((
-            k.value_start,
-            k.value_end,
-            serde_json::to_string(&arr).unwrap_or_default(),
-        ));
-    } else {
-        insertions.push(format!("\"_migrations\": [\"{}\"]", migration_id));
-    }
-
-    replacements.sort_by_key(|(start, _, _)| *start);
-
-    let mut out = String::with_capacity(raw.len() + 256);
-    let mut cursor = 0usize;
-    for (start, end, new_text) in &replacements {
-        out.push_str(&raw[cursor..*start]);
-        out.push_str(new_text);
-        cursor = *end;
-    }
-    out.push_str(&raw[cursor..root_close]);
-
-    // Insert missing keys before the root brace, comma-separated and one per line.
-    if !insertions.is_empty() {
-        let tail = out.trim_end();
-        let needs_comma = !tail.is_empty() && !tail.ends_with(',') && !tail.ends_with('{');
-        if needs_comma {
-            out.push(',');
-        }
-        for (index, insertion) in insertions.iter().enumerate() {
-            if index > 0 {
-                out.push(',');
+    let (keys, _) = omo_jsonc_patch::scan_top_level_keys(raw);
+    // `_migrations` needs a read-modify-write, so build the target array from the
+    // existing value before handing the extras to the generic patcher.
+    let migrations_json = match keys.iter().find(|k| k.name == "_migrations") {
+        Some(k) => {
+            let existing: Vec<String> =
+                json5::from_str(&raw[k.value_start..k.value_end]).unwrap_or_default();
+            let mut markers = existing;
+            if !markers.iter().any(|m| m == migration_id) {
+                markers.push(migration_id.to_string());
             }
-            out.push_str("\n  ");
-            out.push_str(insertion);
+            serde_json::to_string(&serde_json::json!(markers)).unwrap_or_default()
         }
-        out.push('\n');
-    }
-
-    out.push_str(&raw[root_close..]);
-    out
-}
-
-/// Remove a top-level key from JSONC text in place (comment-preserving), handling the
-/// surrounding comma. Returns the patched text and whether the key was found.
-fn remove_top_level_key(text: &str, name: &str) -> (String, bool) {
-    let (keys, root_close) = scan_top_level_keys(text);
-    let Some(k) = keys.iter().find(|k| k.name == name) else {
-        return (text.to_string(), false);
+        None => format!("[\"{}\"]", migration_id),
     };
-    let bytes = text.as_bytes();
-    let has_comma = k.value_end < root_close && bytes[k.value_end] == b',';
-    let mut out = String::with_capacity(text.len());
-    if has_comma {
-        // Remove [key_start, comma+1) so the preceding comma is kept and the next key stays valid.
-        out.push_str(&text[..k.key_start]);
-        out.push_str(&text[k.value_end + 1..]);
-    } else {
-        // Last key: also drop the preceding comma so no trailing comma remains before `}`.
-        let mut start = k.key_start;
-        let mut before = k.key_start;
-        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
-            before -= 1;
-        }
-        if before > 0 && bytes[before - 1] == b',' {
-            start = before - 1;
-        }
-        out.push_str(&text[..start]);
-        out.push_str(&text[root_close..]);
-    }
-    (out, true)
+
+    omo_jsonc_patch::patch_top_level_block(
+        raw,
+        "[opencode]",
+        block_json,
+        &[
+            ("$schema".to_string(), format!("\"{}\"", schema_url)),
+            ("_migrations".to_string(), migrations_json),
+        ],
+    )
 }
+
 
 /// Remove the `[opencode]` block from `~/.omo/omo.jsonc`, preserving shared keys and
 /// comments. If only control keys (`$schema`/`_migrations`/`legacy_migrations`) remain,
@@ -1359,18 +1048,14 @@ fn remove_opencode_block(config_path: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let (patched, found) = remove_top_level_key(&content, "[opencode]");
+    let (patched, found) = omo_jsonc_patch::remove_top_level_key(&content, "[opencode]");
     if !found {
         return Ok(());
     }
 
-    let (remaining_keys, _) = scan_top_level_keys(&patched);
-    let meaningful = remaining_keys.iter().any(|k| {
-        !matches!(
-            k.name.as_str(),
-            "$schema" | "_migrations" | "legacy_migrations"
-        )
-    });
+    let meaningful = omo_jsonc_patch::top_level_key_names(&patched)
+        .iter()
+        .any(|name| !matches!(name.as_str(), "$schema" | "_migrations" | "legacy_migrations"));
 
     if meaningful {
         fs::write(config_path, patched).map_err(|e| format!("Failed to write omo.jsonc: {}", e))?;
@@ -1968,12 +1653,14 @@ mod tests {
 
     #[test]
     fn remove_top_level_key_handles_middle_and_last_keys() {
-        let (middle, found) = remove_top_level_key(r#"{ "a": 1, "b": 2, "c": 3 }"#, "b");
+        // 实现已抽到 `omo_jsonc_patch`（与 OmO Native 共用），这里只保留一层回归守护：
+        // 通过本模块的 `patch_unified_omo_config_text` / `remove_opencode_block` 间接验证。
+        let (middle, found) = omo_jsonc_patch::remove_top_level_key(r#"{ "a": 1, "b": 2, "c": 3 }"#, "b");
         assert!(found);
         let obj: Value = json5::from_str(&middle).unwrap();
         assert!(obj.get("a").is_some() && obj.get("c").is_some() && obj.get("b").is_none());
 
-        let (last, found) = remove_top_level_key(r#"{ "a": 1, "b": 2 }"#, "b");
+        let (last, found) = omo_jsonc_patch::remove_top_level_key(r#"{ "a": 1, "b": 2 }"#, "b");
         assert!(found);
         let obj: Value = json5::from_str(&last).unwrap();
         assert!(obj.get("a").is_some() && obj.get("b").is_none());

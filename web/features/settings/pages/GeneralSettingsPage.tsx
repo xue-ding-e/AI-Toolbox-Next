@@ -88,6 +88,7 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   antigravity: 'subModules.antigravity',
   pi: 'subModules.pi',
   oh_my_pi: 'subModules.ohMyPi',
+  omo_native: 'subModules.omoNative',
   claudedesktop: 'subModules.claudedesktop',
   claude_desktop: 'subModules.claudedesktop',
   hermes: 'subModules.hermes',
@@ -924,7 +925,7 @@ const GeneralSettingsPage: React.FC = () => {
     </div>
   );
 
-  const CODING_TABS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'antigravity', 'kimi', 'openclaw', 'pi', 'oh_my_pi', 'hermes', 'dsh'] as const;
+  const CODING_TABS = ['opencode', 'claudecode', 'claudedesktop', 'codex', 'grok', 'geminicli', 'antigravity', 'kimi', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'] as const;
   // Order here drives the chip order in the "right side" row; keep it in the same
   // order as the header toolbar. The browser entry is opt-in and absent from the
   // backend default `visible_tabs`, so a fresh install shows no browser tab.

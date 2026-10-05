@@ -357,6 +357,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "openclaw",
         "pi",
         "oh_my_pi",
+        "omo_native",
         "hermes",
         "dsh",
         "gateway",
@@ -659,6 +660,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -708,6 +710,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -747,6 +750,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -786,6 +790,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -856,6 +861,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -902,6 +908,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -944,6 +951,7 @@ mod tests {
                 "openclaw",
                 "pi",
                 "oh_my_pi",
+                "omo_native",
                 "hermes",
                 "dsh",
                 "gateway",
@@ -1134,6 +1142,7 @@ mod tests {
                 "openclaw": true,
                 "pi": false,
                 "oh_my_pi": true,
+                "omo_native": false,
                 "hermes": true,
                 "dsh": true
             }
@@ -1155,6 +1164,13 @@ mod tests {
         assert!(settings.sidebar_hidden_by_page.get("openclaw").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("pi").copied() == Some(false));
         assert!(settings.sidebar_hidden_by_page.get("oh_my_pi").copied() == Some(true));
+        assert!(
+            settings
+                .sidebar_hidden_by_page
+                .get("omo_native")
+                .copied()
+                == Some(false)
+        );
         assert!(settings.sidebar_hidden_by_page.get("hermes").copied() == Some(true));
         assert!(settings.sidebar_hidden_by_page.get("dsh").copied() == Some(true));
     }
@@ -1210,6 +1226,7 @@ mod tests {
             "openclaw",
             "pi",
             "oh_my_pi",
+            "omo_native",
             "hermes",
             "dsh",
         ] {

@@ -37,3 +37,5 @@ mod tools_builtin;
 mod tools_path_utils;
 #[path = "coding/wsl/direct_status.rs"]
 mod wsl_direct_status;
+#[path = "coding/omo_native/jsonc_isolation.rs"]
+mod omo_native_jsonc_isolation;

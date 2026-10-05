@@ -67,6 +67,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       openclaw: false,
       pi: false,
       oh_my_pi: false,
+      omo_native: false,
       hermes: false,
       dsh: false,
     },

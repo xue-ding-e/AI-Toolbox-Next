@@ -110,7 +110,7 @@ pub(super) fn parse_file(
     fallback_timestamp: i64,
 ) -> Result<ParsedSession, String> {
     match cli_key {
-        GatewayUsageTool::Pi | GatewayUsageTool::OhMyPi => {
+        GatewayUsageTool::Pi | GatewayUsageTool::OhMyPi | GatewayUsageTool::OmoNative => {
             return super::pi::parse(cli_key, path, fallback_timestamp)
         }
         GatewayUsageTool::Dsh => return super::dsh::parse(path, fallback_timestamp),

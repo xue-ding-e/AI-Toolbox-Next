@@ -31,6 +31,7 @@ import workbuddyIconUrl from '@/assets/agent-icons/workbuddy.png';
 import claudeMarkRaw from '@/assets/claude.svg?raw';
 import chatgptMarkRaw from '@/assets/chatgpt.svg?raw';
 import opencodeMarkRaw from '@/assets/opencode.svg?raw';
+import omoNativeMarkRaw from '@/assets/omo-native.svg?raw';
 import styles from './ToolIcon.module.less';
 
 // Brand icons come from @lobehub/icons (see https://lobehub.com/icons). The
@@ -111,11 +112,13 @@ const TOOL_ICON_RENDERERS: Record<string, ToolIconRenderer> = {
 
 // Raw SVG marks, rendered inline. The inner svg is sized by the wrapper via
 // CSS (see .rawIcon in ToolIcon.module.less). Entries map 1:1 to the assets
-// MainLayout uses for the same tool's navigation tab.
+// MainLayout uses for the same tool's navigation tab — `omo_native` reuses the
+// tab asset so the Skills/MCP lists show the same mark as the sidebar.
 const RAW_SVG_MARKS: Record<string, string> = {
   claude_desktop: claudeMarkRaw,
   codex: chatgptMarkRaw,
   opencode: opencodeMarkRaw,
+  omo_native: omoNativeMarkRaw,
   droid: droidMarkRaw,
   qclaw: openclawFamilyMarkRaw,
   easyclaw: openclawFamilyMarkRaw,

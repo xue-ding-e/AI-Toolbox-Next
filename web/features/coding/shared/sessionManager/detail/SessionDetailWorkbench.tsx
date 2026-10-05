@@ -508,6 +508,8 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'dsh';
     case 'oh_my_pi':
       return 'omp';
+    case 'omo_native':
+      return 'OmO Native';
     case 'codex':
       return 'Codex';
     case 'grok':

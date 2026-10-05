@@ -7,13 +7,13 @@ use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
 use crate::coding::{
-    antigravity, claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, open_claw,
-    open_code, pi,
+    antigravity, claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, omo_native,
+    open_claw, open_code, pi,
 };
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 12] = [
+const MODULE_KEYS: [&str; 13] = [
     "opencode",
     "claude",
     "codex",
@@ -24,6 +24,7 @@ const MODULE_KEYS: [&str; 12] = [
     "antigravity",
     "pi",
     "oh_my_pi",
+    "omo_native",
     "hermes",
     "dsh",
 ];
@@ -206,6 +207,9 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "antigravity" | "antigravity_cli" => Some("antigravity"),
         "pi" => Some("pi"),
         "oh_my_pi" | "omp" => Some("oh_my_pi"),
+        // OmO Native（`omo` 二进制 / senpi 引擎）与 OpenCode 插件版 OMO 是两套 edition，
+        // 但共用 `~/.omo/omo.jsonc` 与 `~/.omo` 目录；模块 key 必须与插件版区分。
+        "omo_native" | "omo" => Some("omo_native"),
         "hermes" => Some("hermes"),
         "dsh" => Some("dsh"),
         _ => None,
@@ -318,6 +322,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("oh_my_pi") => {
             let location = resolve_oh_my_pi_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("oh_my_pi", location.clone());
+            Ok(location)
+        }
+        Some("omo_native") => {
+            let location = resolve_omo_native_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("omo_native", location.clone());
             Ok(location)
         }
         Some("hermes") => {
@@ -1281,6 +1290,95 @@ fn normalize_stored_oh_my_pi_root_dir(
     Ok(Some(normalized_root_dir))
 }
 
+/// OmO Native 引擎状态目录（`~/.omo/agent`）。
+///
+/// 决议顺序镜像上游 `packages/omo-senpi/src/components/agent-home/resolve-agent-home.ts`：
+/// 1. 应用内自定义根目录（DB）
+/// 2. `OMO_CODING_AGENT_DIR` / `SENPI_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`（进程环境）
+/// 3. 上述环境变量的 shell 配置（与 OMP/Pi 一致，覆盖新开终端才生效的场景）
+/// 4. `~/.omo/agent`（哨兵 `settings.json`）
+/// 5. pre-unification 扁平布局 `~/.omo`（哨兵 `settings.json`）
+/// 6. `~/.senpi/agent`（无 branded 布局时的引擎回退）
+fn resolve_omo_native_path_without_db() -> (PathBuf, String) {
+    use omo_native::constants as omo_constants;
+
+    for env_key in omo_constants::OMO_NATIVE_AGENT_DIR_ENV_KEYS {
+        if let Ok(env_path) = std::env::var(env_key) {
+            if !env_path.trim().is_empty() {
+                return (PathBuf::from(env_path), "env".to_string());
+            }
+        }
+    }
+
+    for env_key in omo_constants::OMO_NATIVE_AGENT_DIR_ENV_KEYS {
+        if let Some(shell_path) = shell_env::get_env_from_shell_config(env_key) {
+            if !shell_path.trim().is_empty() {
+                return (PathBuf::from(shell_path), "shell".to_string());
+            }
+        }
+    }
+
+    let home = get_home_dir().unwrap_or_else(|_| PathBuf::from("~"));
+    let branded = home.join(omo_constants::OMO_NATIVE_CONFIG_DIR);
+    let canonical = branded.join("agent");
+    if canonical
+        .join(omo_constants::OMO_NATIVE_AGENT_HOME_SENTINEL)
+        .exists()
+    {
+        return (canonical, "default".to_string());
+    }
+    if branded
+        .join(omo_constants::OMO_NATIVE_AGENT_HOME_SENTINEL)
+        .exists()
+    {
+        // pre-unification 扁平布局：引擎状态直接写在 `~/.omo` 下。
+        return (branded, "default".to_string());
+    }
+
+    let senpi_fallback = home.join(".senpi").join("agent");
+    if senpi_fallback
+        .join(omo_constants::OMO_NATIVE_AGENT_HOME_SENTINEL)
+        .exists()
+    {
+        return (senpi_fallback, "default".to_string());
+    }
+
+    (canonical, "default".to_string())
+}
+
+pub fn get_omo_native_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("omo_native"))
+}
+
+pub async fn get_omo_native_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "omo_native").await
+}
+
+async fn resolve_omo_native_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let stored_root_dir: Option<String> = db.with_conn(|conn| {
+        let Some(record) = db_get(conn, DbTable::OmoNativeSettingsConfig, "common")? else {
+            return Ok(None);
+        };
+        Ok(omo_native::adapter::settings_from_db_value(record)
+            .root_dir
+            .filter(|path| !path.trim().is_empty()))
+    })?;
+
+    let (path, source) = match stored_root_dir {
+        Some(path) => (PathBuf::from(path), "custom".to_string()),
+        None => resolve_omo_native_path_without_db(),
+    };
+
+    Ok(build_runtime_location(path, source))
+}
+
 async fn resolve_pi_runtime_location_uncached_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1744,6 +1842,9 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
         "oh_my_pi" => get_oh_my_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_omp_skills_path_from_location(&location)),
+        "omo_native" => get_omo_native_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_omo_native_skills_path_from_location(&location)),
         "gemini_cli" => get_gemini_cli_runtime_location_sync(db)
             .ok()
             .map(|location| get_gemini_cli_skills_path_from_location(&location)),
@@ -1861,6 +1962,10 @@ pub async fn get_tool_skills_path_async(
             .await
             .ok()
             .map(|location| get_omp_skills_path_from_location(&location)),
+        "omo_native" => get_omo_native_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_omo_native_skills_path_from_location(&location)),
         "gemini_cli" => get_gemini_cli_runtime_location_async(db)
             .await
             .ok()
@@ -1981,6 +2086,9 @@ pub fn get_tool_mcp_config_path_sync(
         "oh_my_pi" => get_oh_my_pi_runtime_location_sync(db)
             .ok()
             .map(|location| get_omp_mcp_config_path_from_location(&location)),
+        "omo_native" => get_omo_native_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_omo_native_mcp_config_path_from_location(&location)),
         _ => None,
     }
 }
@@ -2010,8 +2118,24 @@ pub async fn get_tool_mcp_config_path_async(
             .await
             .ok()
             .map(|location| get_omp_mcp_config_path_from_location(&location)),
+        "omo_native" => get_omo_native_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_omo_native_mcp_config_path_from_location(&location)),
         _ => None,
     }
+}
+
+fn get_omo_native_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    location
+        .host_path
+        .join(omo_native::constants::OMO_NATIVE_SKILLS_DIR)
+}
+
+fn get_omo_native_mcp_config_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    location
+        .host_path
+        .join(omo_native::constants::OMO_NATIVE_MCP_FILE)
 }
 
 fn build_runtime_location(path: PathBuf, source: String) -> RuntimeLocationInfo {
@@ -2046,6 +2170,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "antigravity" => resolve_antigravity_path_without_db(),
         "pi" => resolve_pi_path_without_db(),
         "oh_my_pi" => resolve_omp_path_without_db(),
+        "omo_native" => resolve_omo_native_path_without_db(),
         "hermes" => hermes::commands::resolve_hermes_path_without_db(),
         "dsh" => dsh::commands::resolve_dsh_path_without_db(),
         _ => (PathBuf::new(), "default".to_string()),

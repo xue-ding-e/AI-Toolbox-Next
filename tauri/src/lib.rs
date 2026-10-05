@@ -1560,6 +1560,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // OmO Native sync listener
+                let app_omo_native = app_handle.clone();
+                let app_omo_native_clone = app_omo_native.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_omo_native.listen("wsl-sync-request-omo-native", move |_event| {
+                        let app = app_omo_native_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("omo_native".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // Hermes sync listener
                 let app_hermes = app_handle.clone();
                 let app_hermes_clone = app_hermes.clone();
@@ -2620,6 +2645,31 @@ pub fn run() {
             coding::oh_my_pi::apply_omp_prompt_config,
             coding::oh_my_pi::reorder_omp_prompt_configs,
             coding::oh_my_pi::save_omp_local_prompt_config,
+            // OmO Native (the standalone `omo` binary / senpi engine)
+            coding::omo_native::get_omo_native_root_path_info,
+            coding::omo_native::get_omo_native_settings_config,
+            coding::omo_native::save_omo_native_settings_config,
+            coding::omo_native::read_omo_native_runtime_config,
+            coding::omo_native::get_omo_native_cli_info,
+            coding::omo_native::list_omo_native_agents_configs,
+            coding::omo_native::create_omo_native_agents_config,
+            coding::omo_native::update_omo_native_agents_config,
+            coding::omo_native::delete_omo_native_agents_config,
+            coding::omo_native::reorder_omo_native_agents_configs,
+            coding::omo_native::toggle_omo_native_agents_config_disabled,
+            coding::omo_native::apply_omo_native_agents_config,
+            coding::omo_native::clear_omo_native_applied_config,
+            coding::omo_native::save_omo_native_local_config,
+            coding::omo_native::list_omo_native_builtin_agents,
+            coding::omo_native::list_omo_native_builtin_categories,
+            coding::omo_native::list_omo_native_model_profiles,
+            coding::omo_native::list_omo_native_providers,
+            coding::omo_native::save_omo_native_provider,
+            coding::omo_native::delete_omo_native_provider,
+            coding::omo_native::list_omo_native_mcp_servers,
+            coding::omo_native::save_omo_native_mcp_server,
+            coding::omo_native::delete_omo_native_mcp_server,
+            coding::omo_native::list_omo_native_skills,
             // OpenClaw
             coding::open_claw::get_openclaw_config_path,
             coding::open_claw::get_openclaw_config_path_info,

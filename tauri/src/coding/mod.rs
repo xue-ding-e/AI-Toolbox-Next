@@ -21,6 +21,11 @@ pub mod mcp;
 pub mod oh_my_openagent;
 pub mod oh_my_opencode_slim;
 pub mod oh_my_pi;
+// Comment-preserving JSONC patch helpers for the shared `~/.omo/omo.jsonc`
+// (used by both `oh_my_openagent` for `[opencode]` and `omo_native` for `[native]`).
+// Public so the isolation integration test can assert the two blocks stay independent.
+pub mod omo_jsonc_patch;
+pub mod omo_native;
 // Resolver for OMP-style config values (exact env name or literal / !command).
 pub mod omp_config_value;
 pub mod open_claw;

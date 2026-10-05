@@ -1108,7 +1108,7 @@ Several places hardcode a list of tab or page/module keys. Adding a new tab with
 
 Two distinct key sets — do not conflate:
 
-- Sidebar-only (12 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, kimi, openclaw, pi, oh_my_pi, hermes, dsh.
+- Sidebar-only (14 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, antigravity, kimi, openclaw, pi, oh_my_pi, omo_native, hermes, dsh.
 - visible_tabs full set (includes non-coding tools like gateway/image/ssh/wsl): `CURRENT_DEFAULT_VISIBLE_TABS` in `tauri/src/settings/adapter.rs`, mirrored by `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and by `defaultSettings.visible_tabs` in `web/services/settingsApi.ts`.
 
 ### When Adding or Changing a Tab

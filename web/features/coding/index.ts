@@ -8,6 +8,7 @@ export * from './geminicli';
 export * from './antigravity';
 export * from './pi';
 export * from './oh_my_pi';
+export * from './omo_native';
 export * from './claudedesktop';
 export * from './hermes';
 export * from './dsh';

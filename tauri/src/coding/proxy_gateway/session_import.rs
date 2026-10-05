@@ -255,6 +255,7 @@ fn import_cli_keys(selection: GatewaySessionImportCli) -> Vec<GatewayUsageTool> 
         GatewaySessionImportCli::OpenCode => vec![GatewayUsageTool::OpenCode],
         GatewaySessionImportCli::Pi => vec![GatewayUsageTool::Pi],
         GatewaySessionImportCli::OhMyPi => vec![GatewayUsageTool::OhMyPi],
+        GatewaySessionImportCli::OmoNative => vec![GatewayUsageTool::OmoNative],
         GatewaySessionImportCli::Dsh => vec![GatewayUsageTool::Dsh],
         GatewaySessionImportCli::Hermes => vec![GatewayUsageTool::Hermes],
         GatewaySessionImportCli::OpenClaw => vec![GatewayUsageTool::OpenClaw],
@@ -274,6 +275,7 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
         GatewayUsageTool::OpenCode => get_opencode_runtime_location_sync(db).ok(),
         GatewayUsageTool::Pi => get_pi_runtime_location_sync(db).ok(),
         GatewayUsageTool::OhMyPi => get_oh_my_pi_runtime_location_sync(db).ok(),
+        GatewayUsageTool::OmoNative => get_omo_native_runtime_location_sync(db).ok(),
         GatewayUsageTool::OpenClaw => get_openclaw_runtime_location_sync(db).ok(),
         _ => None,
     };
@@ -295,6 +297,7 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
             return roots;
         }
         GatewayUsageTool::OhMyPi => (".omp/agent", "sessions"),
+        GatewayUsageTool::OmoNative => (".omo/agent", "sessions"),
         GatewayUsageTool::OpenClaw => {
             if let Some(location) = location {
                 roots.push(
@@ -376,6 +379,7 @@ fn source_identity(cli_key: GatewayUsageTool, path: &Path) -> String {
         cli_key,
         GatewayUsageTool::Pi
             | GatewayUsageTool::OhMyPi
+            | GatewayUsageTool::OmoNative
             | GatewayUsageTool::Dsh
             | GatewayUsageTool::Grok
             | GatewayUsageTool::Kimi
@@ -456,7 +460,9 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
                 GatewayUsageTool::Kimi | GatewayUsageTool::KimiCli => {
                     kimi::is_usage_file(cli_key, &path)
                 }
-                GatewayUsageTool::Pi | GatewayUsageTool::OhMyPi => extension == "jsonl",
+                GatewayUsageTool::Pi
+                | GatewayUsageTool::OhMyPi
+                | GatewayUsageTool::OmoNative => extension == "jsonl",
                 GatewayUsageTool::Dsh => dsh::generation(&path).is_some(),
                 GatewayUsageTool::Hermes => false,
                 GatewayUsageTool::OpenClaw => open_claw::is_transcript(&path),

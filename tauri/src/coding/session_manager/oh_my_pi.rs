@@ -17,7 +17,34 @@ use super::utils::{
 };
 use super::{assign_missing_message_ids, SessionMessage, SessionMessageUsage, SessionMeta};
 
-const PROVIDER_ID: &str = "omp";
+/// 同一份 senpi 引擎会话格式被两个工具使用：Oh My Pi（`omp`）与 OmO Native（`omo`）。
+/// 解析逻辑完全同构，只有 provider id 与 resume 命令不同，所以参数化而不是复制 800 行。
+#[derive(Debug, Clone, Copy)]
+pub struct SessionIdentity {
+    /// 会话元数据里的 provider id（前端按此区分工具）。
+    pub provider_id: &'static str,
+    /// 会话文件名回退前缀（`<id>.jsonl`）。
+    pub fallback_file_stem: &'static str,
+    /// 续接命令的模板，`{}` 处填被引号包裹的会话文件路径。
+    pub resume_template: &'static str,
+}
+
+pub const OH_MY_PI_IDENTITY: SessionIdentity = SessionIdentity {
+    provider_id: "omp",
+    fallback_file_stem: "omp-session",
+    resume_template: "omp --resume {}",
+};
+
+/// OmO Native 用同一个 senpi 引擎，会话格式与 Oh My Pi 一致。
+///
+/// 注意 resume 旗标与 OMP 不同：OMP 的 `-r/--resume` **接受**值（ID 前缀/路径），
+/// 而 OmO 的 `--resume` 是**无值的交互式选择器**，按路径续接要用 `--session <path|id>`。
+/// 用 `omo --resume <path>` 会把路径当成一条聊天消息发出去。
+pub const OMO_NATIVE_IDENTITY: SessionIdentity = SessionIdentity {
+    provider_id: "omo_native",
+    fallback_file_stem: "omo-session",
+    resume_template: "omo --session {}",
+};
 
 static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -25,16 +52,34 @@ static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub fn scan_sessions(root: &Path) -> Vec<SessionMeta> {
+    scan_sessions_with(root, OH_MY_PI_IDENTITY)
+}
+
+/// OmO Native 会话扫描（同一引擎格式，不同 provider id）。
+pub fn scan_sessions_for(root: &Path, identity: SessionIdentity) -> Vec<SessionMeta> {
+    scan_sessions_with(root, identity)
+}
+
+fn scan_sessions_with(root: &Path, identity: SessionIdentity) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     collect_jsonl_files(root, &mut files);
 
     files
         .into_iter()
-        .filter_map(|path| parse_session(&path))
+        .filter_map(|path| parse_session(&path, identity))
         .collect()
 }
 
 pub fn scan_recent_sessions(root: &Path, limit: usize) -> Vec<SessionMeta> {
+    scan_recent_sessions_for(root, limit, OH_MY_PI_IDENTITY)
+}
+
+/// OmO Native 最近会话扫描（同一引擎格式，不同 provider id）。
+pub fn scan_recent_sessions_for(
+    root: &Path,
+    limit: usize,
+    identity: SessionIdentity,
+) -> Vec<SessionMeta> {
     if limit == 0 {
         return Vec::new();
     }
@@ -46,7 +91,7 @@ pub fn scan_recent_sessions(root: &Path, limit: usize) -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
     for path in files {
-        if let Some(session) = parse_session(&path) {
+        if let Some(session) = parse_session(&path, identity) {
             sessions.push(session);
             if sessions.len() >= limit {
                 break;
@@ -58,6 +103,14 @@ pub fn scan_recent_sessions(root: &Path, limit: usize) -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    load_messages_for(path, OH_MY_PI_IDENTITY)
+}
+
+/// OmO Native 会话消息加载（同一引擎格式，不同 provider id）。
+pub fn load_messages_for(
+    path: &Path,
+    identity: SessionIdentity,
+) -> Result<Vec<SessionMessage>, String> {
     let file =
         File::open(path).map_err(|error| format!("Failed to open Pi session file: {error}"))?;
     let reader = BufReader::new(file);
@@ -78,7 +131,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         }
     }
 
-    assign_missing_message_ids(&mut messages, PROVIDER_ID);
+    assign_missing_message_ids(&mut messages, identity.provider_id);
     Ok(messages)
 }
 
@@ -290,7 +343,10 @@ pub fn import_native_snapshot(
         .and_then(Value::as_str)
         .ok_or_else(|| "Pi snapshot missing sessionFileContent".to_string())?;
 
-    let fallback_file_name = format!("{}.jsonl", sanitize_path_segment(session_id, "omp-session"));
+    let fallback_file_name = format!(
+        "{}.jsonl",
+        sanitize_path_segment(session_id, OH_MY_PI_IDENTITY.fallback_file_stem)
+    );
     let normalized_relative_path = if relative_session_path.ends_with(".jsonl") {
         relative_session_path.to_string()
     } else {
@@ -346,7 +402,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn parse_session(path: &Path) -> Option<SessionMeta> {
+fn parse_session(path: &Path, identity: SessionIdentity) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 80, 80).ok()?;
     let mut session_id = infer_session_id_from_filename(path);
     let mut project_dir = None;
@@ -422,14 +478,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let source_path = path.to_string_lossy().to_string();
     let resume_command = Some(build_resume_command(
         project_dir.as_deref(),
-        &format!(
-            "omp --resume {}",
-            super::utils::quote_session_arg(&source_path)
-        ),
+        &identity
+            .resume_template
+            .replace("{}", &super::utils::quote_session_arg(&source_path)),
     ));
 
     Some(SessionMeta {
-        provider_id: PROVIDER_ID.to_string(),
+        provider_id: identity.provider_id.to_string(),
         session_id,
         title: latest_session_name.or(first_user_title),
         summary: None,
@@ -808,6 +863,20 @@ fn new_entry_id() -> String {
 mod tests {
     use super::*;
 
+    /// OmO 的 `--resume` 是**无值**的交互式选择器，按路径续接要用 `--session <path|id>`。
+    /// OMP 的 `-r/--resume` 却**接受**值——照抄 OMP 的模板会让 `omo --resume <path>`
+    /// 打开选择器并把路径当成一条聊天消息发出去。这条测试守住两者的差异。
+    #[test]
+    fn omo_native_resume_uses_session_flag_not_the_omp_resume_flag() {
+        assert_eq!(OMO_NATIVE_IDENTITY.resume_template, "omo --session {}");
+        assert!(
+            !OMO_NATIVE_IDENTITY.resume_template.contains("--resume"),
+            "omo --resume takes no value; the path would be sent as a chat message"
+        );
+        // OMP keeps its own value-taking flag — the two templates must stay distinct.
+        assert_eq!(OH_MY_PI_IDENTITY.resume_template, "omp --resume {}");
+    }
+
     #[test]
     fn number_field_falls_back_to_next_numeric_key() {
         let value = json!({
@@ -847,10 +916,12 @@ mod tests {
         .join("\n");
         std::fs::write(&session_path, format!("{original_content}\n")).expect("write session");
 
-        let before = parse_session(&session_path).expect("parse before rename");
+        let before =
+            parse_session(&session_path, OH_MY_PI_IDENTITY).expect("parse before rename");
         rename_session(session_path.to_string_lossy().as_ref(), "Renamed title")
             .expect("rename session");
-        let after = parse_session(&session_path).expect("parse after rename");
+        let after =
+            parse_session(&session_path, OH_MY_PI_IDENTITY).expect("parse after rename");
 
         assert_eq!(after.title.as_deref(), Some("Renamed title"));
         assert_eq!(after.last_active_at, before.last_active_at);
