@@ -184,6 +184,26 @@ const BUILTIN_FILE_MAPPINGS = [
 		rustDefaultName: "Oh My Pi Subagents 目录（agents）",
 		i18nSuffix: "ompAgentsDir",
 	},
+	{
+		id: "zcode-provider-config",
+		rustDefaultName: "ZCode 供应商配置",
+		i18nSuffix: "zcodeProviderConfig",
+	},
+	{
+		id: "zcode-prompt",
+		rustDefaultName: "ZCode 全局提示词",
+		i18nSuffix: "zcodePrompt",
+	},
+	{
+		id: "zcode-cli-config",
+		rustDefaultName: "ZCode CLI 配置",
+		i18nSuffix: "zcodeCliConfig",
+	},
+	{
+		id: "zcode-skills",
+		rustDefaultName: "ZCode Skills 目录",
+		i18nSuffix: "zcodeSkills",
+	},
 ] as const;
 
 /** Map stable `id` and Rust default `name` (zh) → i18n key suffix. */

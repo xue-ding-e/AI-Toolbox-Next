@@ -1145,7 +1145,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 19;
+    const CURRENT_DEFAULTS_VERSION: u64 = 20;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1180,6 +1180,12 @@ async fn backfill_default_file_mappings(
         "omo-native-models",
         "omo-native-mcp",
         "omo-native-auth",
+    ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V20: &[&str] = &[
+        "zcode-provider-config",
+        "zcode-prompt",
+        "zcode-cli-config",
+        "zcode-skills",
     ];
 
     // Read stored version
@@ -1256,6 +1262,11 @@ async fn backfill_default_file_mappings(
                 19,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V19,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                20,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V20,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1800,11 +1811,45 @@ pub async fn resolve_dynamic_paths_with_db(
                         "~/.claude/desktop/claude_desktop_config.json".to_string();
                 }
             }
+            "zcode-provider-config" | "zcode-prompt" | "zcode-cli-config" | "zcode-skills" => {
+                let relative = match mapping.id.as_str() {
+                    "zcode-provider-config" => {
+                        crate::coding::zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH
+                    }
+                    "zcode-cli-config" => {
+                        crate::coding::zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH
+                    }
+                    "zcode-skills" => crate::coding::zcode::constants::ZCODE_SKILLS_DIR_NAME,
+                    _ => crate::coding::zcode::constants::ZCODE_PROMPT_FILE_NAME,
+                };
+                if let Ok(location) =
+                    runtime_location::get_zcode_runtime_location_async(db).await
+                {
+                    mapping.local_path = location
+                        .host_path
+                        .join(relative)
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.remote_path =
+                        zcode_remote_target_path_from_location(&location, relative);
+                }
+            }
             _ => {}
         }
         resolved.push(mapping);
     }
     resolved
+}
+
+fn zcode_remote_target_path_from_location(
+    location: &runtime_location::RuntimeLocationInfo,
+    relative_path: &str,
+) -> String {
+    location
+        .wsl
+        .as_ref()
+        .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), relative_path))
+        .unwrap_or_else(|| format!("~/.zcode/{relative_path}"))
 }
 
 fn omo_native_remote_target_path_from_location(
@@ -2593,6 +2638,59 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             enabled: false,
             is_pattern: false,
             is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // ZCode.
+        //
+        // `credentials.json` is deliberately excluded: its AES-GCM key is
+        // derived from the platform, home directory, and username, so a copy
+        // synced to another machine cannot be decrypted.
+        SSHFileMapping {
+            id: "zcode-provider-config".to_string(),
+            name: "ZCode 供应商配置".to_string(),
+            module: "zcode".to_string(),
+            local_path: "~/.zcode/v2/provider_config.json".to_string(),
+            remote_path: "~/.zcode/v2/provider_config.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "zcode-prompt".to_string(),
+            name: "ZCode 全局提示词".to_string(),
+            module: "zcode".to_string(),
+            local_path: "~/.zcode/AGENTS.md".to_string(),
+            remote_path: "~/.zcode/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "zcode-cli-config".to_string(),
+            name: "ZCode CLI 配置".to_string(),
+            module: "zcode".to_string(),
+            local_path: "~/.zcode/cli/config.json".to_string(),
+            remote_path: "~/.zcode/cli/config.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "zcode-skills".to_string(),
+            name: "ZCode Skills 目录".to_string(),
+            module: "zcode".to_string(),
+            local_path: "~/.zcode/skills".to_string(),
+            remote_path: "~/.zcode/skills".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },

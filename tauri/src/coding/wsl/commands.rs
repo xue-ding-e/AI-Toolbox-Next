@@ -20,6 +20,7 @@ use crate::coding::proxy_gateway::{
     types::ProxyGatewaySettings,
 };
 use crate::coding::runtime_location;
+use crate::coding::zcode;
 use crate::db::helpers::{db_delete, db_delete_all, db_get, db_list, db_patch_fields, db_put};
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -953,7 +954,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 20;
+    const CURRENT_DEFAULTS_VERSION: u64 = 21;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -987,6 +988,12 @@ async fn backfill_default_mappings(
         "omo-native-models",
         "omo-native-mcp",
         "omo-native-auth",
+    ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V21: &[&str] = &[
+        "zcode-provider-config",
+        "zcode-prompt",
+        "zcode-cli-config",
+        "zcode-skills",
     ];
 
     // Read stored version
@@ -1063,6 +1070,11 @@ async fn backfill_default_mappings(
                 20,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V20,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                21,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V21,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1459,6 +1471,50 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     // it must not reuse `get_antigravity_wsl_target_path_async`.
                     mapping.wsl_path =
                         runtime_location::get_antigravity_prompt_wsl_target_path_async(db).await;
+                }
+            }
+            "zcode-provider-config" => {
+                if let Ok(path) = runtime_location::get_zcode_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = runtime_location::get_zcode_wsl_target_path_async(
+                        db,
+                        zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH,
+                    )
+                    .await;
+                }
+            }
+            "zcode-prompt" => {
+                if let Ok(path) = runtime_location::get_zcode_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = runtime_location::get_zcode_wsl_target_path_async(
+                        db,
+                        zcode::constants::ZCODE_PROMPT_FILE_NAME,
+                    )
+                    .await;
+                }
+            }
+            "zcode-cli-config" => {
+                if let Ok(path) = runtime_location::get_zcode_mcp_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = runtime_location::get_zcode_wsl_target_path_async(
+                        db,
+                        zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH,
+                    )
+                    .await;
+                }
+            }
+            "zcode-skills" => {
+                if let Ok(location) = runtime_location::get_zcode_runtime_location_async(db).await {
+                    mapping.windows_path = location
+                        .host_path
+                        .join(zcode::constants::ZCODE_SKILLS_DIR_NAME)
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = runtime_location::get_zcode_wsl_target_path_async(
+                        db,
+                        zcode::constants::ZCODE_SKILLS_DIR_NAME,
+                    )
+                    .await;
                 }
             }
             "pi-settings" => {
@@ -2405,6 +2461,59 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "kimi".to_string(),
             windows_path: "~/.kimi-code/plugins".to_string(),
             wsl_path: "~/.kimi-code/plugins".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        // ZCode.
+        //
+        // `credentials.json` is deliberately excluded: its AES-GCM key is
+        // derived from the platform, home directory, and username, so a copy
+        // synced to another machine cannot be decrypted.
+        FileMapping {
+            id: "zcode-provider-config".to_string(),
+            name: "ZCode 供应商配置".to_string(),
+            module: "zcode".to_string(),
+            windows_path: "~/.zcode/v2/provider_config.json".to_string(),
+            wsl_path: "~/.zcode/v2/provider_config.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "zcode-prompt".to_string(),
+            name: "ZCode 全局提示词".to_string(),
+            module: "zcode".to_string(),
+            windows_path: "~/.zcode/AGENTS.md".to_string(),
+            wsl_path: "~/.zcode/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "zcode-cli-config".to_string(),
+            name: "ZCode CLI 配置".to_string(),
+            module: "zcode".to_string(),
+            windows_path: "~/.zcode/cli/config.json".to_string(),
+            wsl_path: "~/.zcode/cli/config.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "zcode-skills".to_string(),
+            name: "ZCode Skills 目录".to_string(),
+            module: "zcode".to_string(),
+            windows_path: "~/.zcode/skills".to_string(),
+            wsl_path: "~/.zcode/skills".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: true,

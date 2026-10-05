@@ -160,3 +160,24 @@ test('Antigravity CLI default mapping names translate to their own i18n keys', (
     'settings.wsl.defaultMappings.antigravityPrompt',
   );
 });
+
+test('ZCode default mapping names translate to their own i18n keys', () => {
+  // A regression here silently falls back to the raw Chinese Rust default name
+  // in the sync modal, which is how the missing keys would surface.
+  assert.equal(
+    translateDefaultMappingName('ZCode 供应商配置', stubT),
+    'settings.wsl.defaultMappings.zcodeProviderConfig',
+  );
+  assert.equal(
+    translateDefaultMappingName('ZCode 全局提示词', stubT),
+    'settings.wsl.defaultMappings.zcodePrompt',
+  );
+  assert.equal(
+    translateDefaultMappingName('ZCode CLI 配置', stubT),
+    'settings.wsl.defaultMappings.zcodeCliConfig',
+  );
+  assert.equal(
+    translateDefaultMappingName('ZCode Skills 目录', stubT),
+    'settings.wsl.defaultMappings.zcodeSkills',
+  );
+});
