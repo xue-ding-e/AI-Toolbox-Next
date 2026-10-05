@@ -16,7 +16,7 @@ use zip::ZipArchive;
 use super::credentials::{self, backup_error};
 use super::encryption::{self, CryptoError};
 use super::utils::{
-    clear_restored_cli_custom_roots, get_antigravity_restore_dir,
+    clear_restored_cli_custom_roots, get_antigravity_restore_dir, get_zcode_restore_dir,
     get_claude_desktop_settings_paths, get_claude_mcp_restore_path, get_claude_restore_dir,
     get_codex_restore_dir, get_db_path, get_dsh_restore_dir, get_gemini_cli_restore_dir,
     get_grok_restore_dir, get_hermes_restore_dir, get_image_assets_dir, get_kimi_restore_dir,
@@ -313,6 +313,10 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     )
     .then(|| read_root_dir_override(archive, "external-configs/antigravity/root-dir.txt"))
     .flatten();
+    let zcode_restore_dir_override =
+        should_use_root_override_for_tool("zcode", include_cli_config_files, skip_cli_custom_roots)
+            .then(|| read_root_dir_override(archive, "external-configs/zcode/root-dir.txt"))
+            .flatten();
     let pi_restore_dir_override =
         should_use_root_override_for_tool("pi", include_cli_config_files, skip_cli_custom_roots)
             .then(|| read_root_dir_override(archive, "external-configs/pi/root-dir.txt"))
@@ -398,6 +402,15 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         get_antigravity_restore_dir()?,
     );
     if let Some(warning) = antigravity_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (zcode_restore_dir, zcode_warning) = resolve_restore_dir_override(
+        "zcode",
+        zcode_restore_dir_override,
+        get_zcode_restore_dir()?,
+    );
+    if let Some(warning) = zcode_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -756,6 +769,51 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                     &mut restored_wsl_modules,
                     "antigravity",
                 );
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/zcode/") {
+                let relative_path = &file_name["external-configs/zcode/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "zcode", relative_path) {
+                    continue;
+                }
+
+                // The CLI config is archived under a flat name; everything else
+                // already sits directly under the data root.
+                let restore_relative_path = if relative_path == "cli-config.json" {
+                    "cli/config.json"
+                } else {
+                    relative_path
+                };
+                if !zcode_restore_dir.exists() {
+                    fs::create_dir_all(&zcode_restore_dir).map_err(|e| {
+                        format!("Failed to create ZCode config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &zcode_restore_dir,
+                    restore_relative_path,
+                )?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create ZCode parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "zcode");
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

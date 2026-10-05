@@ -418,6 +418,14 @@ pub fn get_antigravity_restore_dir() -> Result<PathBuf, String> {
     crate::coding::antigravity::get_antigravity_root_dir_without_db()
 }
 
+/// ZCode's data root, resolved without a database handle.
+///
+/// Restore runs before the app's own settings are read, so the custom root
+/// recorded in the archive is applied by the caller; this is only the fallback.
+pub fn get_zcode_restore_dir() -> Result<PathBuf, String> {
+    Ok(runtime_location::resolve_zcode_root_dir_without_db())
+}
+
 /// Get OpenCode config file path using priority: system env > shell config > default
 /// Note: This does NOT check database (common_config) because:
 /// 1. For backup: the database common_config will be included in the backup
@@ -861,6 +869,42 @@ pub async fn get_antigravity_tmp_dir_from_db(
     Ok(path.is_dir().then_some(path))
 }
 
+/// ZCode's provider registry, packaged as `provider_config.json`.
+pub async fn get_zcode_provider_config_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_zcode_config_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_zcode_prompt_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_zcode_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+/// ZCode's CLI config (MCP servers + hooks), packaged as `cli-config.json`.
+///
+/// Packaged under a flat name so the archive does not have to carry the
+/// `cli/` directory level; restore maps it back.
+pub async fn get_zcode_cli_config_path_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_zcode_mcp_config_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_zcode_skills_dir_from_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<PathBuf>, String> {
+    let root_dir = runtime_location::get_zcode_runtime_location_async(db)
+        .await?
+        .host_path;
+    let path = root_dir.join(crate::coding::zcode::constants::ZCODE_SKILLS_DIR_NAME);
+    Ok(path.is_dir().then_some(path))
+}
+
 pub async fn get_openclaw_config_path_from_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<Option<PathBuf>, String> {
@@ -1020,6 +1064,12 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "hermes" if relative_path == "SOUL.md" => "~/.hermes/SOUL.md".to_string(),
         "hermes" => format!("~/.hermes/{relative_path}"),
         "dsh" => format!("~/.dsh/{relative_path}"),
+        // ZCode archives the CLI config and the skills directory under flat
+        // names, so the archive keeps no `cli/` or nested directory level.
+        "zcode" if relative_path == "cli-config.json" => {
+            "~/.zcode/cli/config.json".to_string()
+        }
+        "zcode" => format!("~/.zcode/{relative_path}"),
         "claude_desktop" if relative_path == "claude_desktop_config.json" => {
             "%LOCALAPPDATA%/Claude/claude_desktop_config.json".to_string()
         }
@@ -1191,6 +1241,37 @@ pub async fn list_backup_file_filter_path_options(
     }
     if let Some(prompt_path) = get_antigravity_prompt_path_from_db(db).await? {
         push_backup_filter_option_for_path(&mut options, &mut seen, "antigravity", &prompt_path);
+    }
+    if get_zcode_provider_config_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "zcode", "provider_config.json");
+    }
+    if get_zcode_prompt_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "zcode", "AGENTS.md");
+    }
+    if get_zcode_cli_config_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "zcode", "cli-config.json");
+    }
+    if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
+        for entry in WalkDir::new(&skills_dir) {
+            let entry =
+                entry.map_err(|e| format!("Failed to read ZCode skills entry: {}", e))?;
+            let path = entry.path();
+            if !path.is_file() || should_skip_system_file(path) {
+                continue;
+            }
+
+            let relative_path = path
+                .strip_prefix(&skills_dir)
+                .map_err(|e| format!("Failed to get ZCode skills relative path: {}", e))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            push_backup_filter_option(
+                &mut options,
+                &mut seen,
+                "zcode",
+                &format!("skills/{relative_path}"),
+            );
+        }
     }
     if let Some(tmp_dir) = get_antigravity_tmp_dir_from_db(db).await? {
         for entry in WalkDir::new(&tmp_dir) {
@@ -1401,6 +1482,7 @@ const OPTIONAL_BACKUP_CLI_TOOLS: &[&str] = &[
     "geminicli",
     "antigravity",
     "claude_desktop",
+    "zcode",
 ];
 
 pub fn is_always_backup_cli_tool(tool: &str) -> bool {
@@ -1516,6 +1598,7 @@ fn wsl_module_for_external_config_tool(tool: &str) -> Option<&'static str> {
         // and restored files never reach WSL.
         "hermes" => Some("hermes"),
         "dsh" => Some("dsh"),
+        "zcode" => Some("zcode"),
         _ => None,
     }
 }
@@ -1576,6 +1659,7 @@ pub fn clear_restored_cli_custom_roots(db: &crate::db::SqliteDbState) -> Result<
         clear_table(conn, DbTable::GrokCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::GeminiCliCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::AntigravityCommonConfig, PATH_KEYS)?;
+        clear_table(conn, DbTable::ZcodeCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::KimiCommonConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::PiSettingsConfig, PATH_KEYS)?;
         clear_table(conn, DbTable::OhMyPiSettingsConfig, PATH_KEYS)?;
@@ -3381,6 +3465,76 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 &antigravity_tmp_dir,
                 "antigravity",
                 "tmp",
+                filter_rules,
+                options,
+            )?;
+        }
+    }
+
+    // ZCode is DB-backed optional tool, gated by the switch.
+    //
+    // `credentials.json` is deliberately not packaged: its AES-GCM key is
+    // derived from the platform, home directory, and username, so a restored
+    // copy cannot be decrypted on another machine.
+    if include_optional_cli_runtime {
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(db, "zcode").await {
+            add_directory_to_zip_once(
+                zip,
+                added_zip_directories,
+                "external-configs/zcode/",
+                options,
+                "ZCode directory",
+            )?;
+            add_text_to_zip(
+                zip,
+                "external-configs/zcode/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
+        if let Some(provider_config_path) = get_zcode_provider_config_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &provider_config_path,
+                "zcode",
+                "provider_config.json",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(prompt_path) = get_zcode_prompt_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &prompt_path,
+                "zcode",
+                "AGENTS.md",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(cli_config_path) = get_zcode_cli_config_path_from_db(db).await? {
+            add_external_config_file_to_zip(
+                zip,
+                added_zip_directories,
+                &cli_config_path,
+                "zcode",
+                "cli-config.json",
+                filter_rules,
+                options,
+            )?;
+        }
+
+        if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
+            add_external_config_directory_contents_to_zip(
+                zip,
+                &skills_dir,
+                "zcode",
+                "skills",
                 filter_rules,
                 options,
             )?;

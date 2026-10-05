@@ -102,6 +102,12 @@ pub async fn reapply_applied_runtime_after_restore<R: Runtime>(
     })
     .await;
 
+    let zcode_app = app.clone();
+    reapply_cli(&mut summary, "zcode", async move {
+        reapply_zcode(&zcode_app).await
+    })
+    .await;
+
     let opencode_app = app.clone();
     reapply_cli(&mut summary, "opencode", async move {
         reapply_opencode_prompt_only(&opencode_app).await
@@ -269,6 +275,7 @@ pub fn unchanged_wsl_modules(changed_modules: &[String]) -> Vec<String> {
         "claude_desktop",
         "hermes",
         "dsh",
+        "zcode",
     ];
 
     ALL_WSL_FILE_MODULES
@@ -758,6 +765,77 @@ async fn reapply_antigravity<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult
             &prompt_id,
         )
         .await
+    })
+    .await;
+    result
+}
+
+async fn reapply_zcode<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
+    use crate::coding::zcode;
+
+    let db_state = app.state::<SqliteDbState>();
+    let db = db_state.db();
+    let mut result = ReapplyCliResult::default();
+    let prompt_id = resolve_record_id(
+        &mut result,
+        "prompt",
+        first_applied_prompt_id(&db, DbTable::ZcodePromptConfig),
+    );
+
+    // ZCode has no single active provider: applying one means pointing
+    // `defaultModelSelection` at it. Re-project it from the database record so a
+    // registry file edited or replaced while the app was closed is restored.
+    let selection = db
+        .with_conn(|conn| {
+            crate::db::helpers::db_list(conn, DbTable::ZcodeProvider, None)
+        })
+        .ok()
+        .and_then(|providers| {
+            providers
+                .into_iter()
+                .map(zcode::adapter::from_db_value_provider)
+                .find(|provider| provider.is_applied)
+        });
+
+    if let Some(provider) = selection {
+        let settings = serde_json::from_str::<zcode::types::ZcodeSettingsConfig>(
+            &provider.settings_config,
+        )
+        .ok()
+        .and_then(|settings| {
+            settings
+                .models
+                .iter()
+                .find(|model| model.is_default)
+                .or(settings.models.first())
+                .map(|model| (settings.provider_id.clone(), model.model_id.clone()))
+        });
+        match settings {
+            Some((provider_id, model_id)) => {
+                apply_record(
+                    &mut result,
+                    "provider",
+                    Some(provider_id),
+                    |provider_id| async move {
+                        let model_id = model_id.clone();
+                        zcode::commands::select_zcode_provider_internal_without_events(
+                            &db,
+                            &provider_id,
+                            &model_id,
+                        )
+                        .await
+                    },
+                )
+                .await;
+            }
+            None => result
+                .warnings
+                .push("provider:applied provider has no models to select".to_string()),
+        }
+    }
+
+    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+        zcode::commands::apply_zcode_prompt_config_internal_without_events(&db, &prompt_id).await
     })
     .await;
     result

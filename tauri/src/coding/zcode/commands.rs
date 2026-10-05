@@ -442,19 +442,36 @@ pub async fn select_zcode_provider(
     provider_id: String,
     model_id: String,
 ) -> Result<(), String> {
-    if projection::is_reserved_provider_id(&provider_id) {
-        return Err(format!("Provider id '{provider_id}' is reserved by ZCode."));
-    }
-    let path = zcode_provider_config_path(&state)?;
-    let mut base = projection::read_provider_config_base(&path);
-    if !projection::list_provider_ids(&base).contains(&provider_id) {
-        return Err(format!("Provider '{provider_id}' is not present in the ZCode registry."));
-    }
-    projection::set_default_model_selection(&mut base, &provider_id, &model_id);
-    projection::atomic_write_json(&path, &base)?;
+    select_zcode_provider_internal_without_events(state.inner(), &provider_id, &model_id).await?;
     let _ = app.emit("config-changed", "window");
     let _ = app.emit("wsl-sync-request-zcode", ());
     Ok(())
+}
+
+/// Points `defaultModelSelection` at a provider, without emitting events.
+///
+/// Split out for the startup reapply pass, which runs before the window exists
+/// and must not fire UI notifications.
+pub async fn select_zcode_provider_internal_without_events(
+    db: &SqliteDbState,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), String> {
+    if projection::is_reserved_provider_id(provider_id) {
+        return Err(format!("Provider id '{provider_id}' is reserved by ZCode."));
+    }
+    // Held across read -> write so a concurrent save cannot project from a stale
+    // snapshot and lose this selection.
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
+    let path = zcode_provider_config_path(db)?;
+    let mut base = projection::read_provider_config_base(&path);
+    if !projection::list_provider_ids(&base).contains(&provider_id.to_string()) {
+        return Err(format!(
+            "Provider '{provider_id}' is not present in the ZCode registry."
+        ));
+    }
+    projection::set_default_model_selection(&mut base, provider_id, model_id);
+    projection::atomic_write_json(&path, &base)
 }
 
 /// Lists provider templates from the installed ZCode built-in catalog.
@@ -583,17 +600,27 @@ pub async fn apply_zcode_prompt_config(
     app: tauri::AppHandle,
     config_id: String,
 ) -> Result<(), String> {
-    let db = state.inner();
-    let prompt = get_zcode_prompt_record(db, &config_id)
+    apply_zcode_prompt_config_internal_without_events(state.inner(), &config_id).await?;
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("wsl-sync-request-zcode", ());
+    Ok(())
+}
+
+/// Writes a prompt config to `AGENTS.md`, without emitting events.
+///
+/// Split out for the startup reapply pass.
+pub async fn apply_zcode_prompt_config_internal_without_events(
+    db: &SqliteDbState,
+    config_id: &str,
+) -> Result<(), String> {
+    let prompt = get_zcode_prompt_record(db, config_id)
         .await?
         .ok_or_else(|| format!("ZCode prompt '{config_id}' not found"))?;
     write_text_atomic(&zcode_prompt_path(db)?, &prompt.content)?;
     let now = Local::now().to_rfc3339();
     db.with_conn_mut(|conn| {
-        db_update_applied_status(conn, DbTable::ZcodePromptConfig, Some(&config_id), &now)
+        db_update_applied_status(conn, DbTable::ZcodePromptConfig, Some(config_id), &now)
     })?;
-    let _ = app.emit("config-changed", "window");
-    let _ = app.emit("wsl-sync-request-zcode", ());
     Ok(())
 }
 

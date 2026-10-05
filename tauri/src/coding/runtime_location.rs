@@ -1142,6 +1142,14 @@ async fn resolve_zcode_runtime_location_uncached_async(
 /// user's shell profile, then the desktop app's own `setting.json` record.
 /// The `.zcode` suffix is appended only for the base-directory overrides,
 /// because those name the parent directory rather than the data root.
+/// ZCode's data root, resolved from the environment and on-disk settings only.
+///
+/// Exposed for the backup restore path, which runs before the database is
+/// available.
+pub fn resolve_zcode_root_dir_without_db() -> PathBuf {
+    resolve_zcode_path_without_db().0
+}
+
 fn resolve_zcode_path_without_db() -> (PathBuf, String) {
     let env_key = zcode::constants::ZCODE_DATA_BASE_DIR_ENV;
     if let Ok(path) = std::env::var(env_key) {
