@@ -13,16 +13,18 @@ import {
 import {
   CopyOutlined,
   DatabaseOutlined,
+  EditOutlined,
   EllipsisOutlined,
   ExclamationCircleOutlined,
   EyeOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
+  LinkOutlined,
   MessageOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
@@ -62,7 +64,7 @@ import {
   shouldLoadAntigravityOfficialAccounts,
 } from '../utils/localProvider';
 
-const { Title, Text } = Typography;
+const { Title, Text, Link } = Typography;
 const ACCOUNT_DETAILS_EMPTY_VALUE = '-';
 
 function formatUnixTimestamp(timestamp?: number | null): string {
@@ -208,7 +210,6 @@ const AntigravityPage: React.FC = () => {
   const {
     rootDirectoryModalOpen,
     setRootDirectoryModalOpen,
-    getSourceLabel,
     getRootDirectoryModalProps,
     handleSaveRootDirectory,
     handleResetRootDirectory,
@@ -383,37 +384,52 @@ const AntigravityPage: React.FC = () => {
         }
       }}
     >
-      <div style={{ maxWidth: 1000, margin: '0 auto', padding: '16px 24px' }}>
+      <div>
+        {/* 页面头部 */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <Title level={4} style={{ margin: 0 }}>
-              {t('antigravity.title', { defaultValue: 'Antigravity CLI 配置管理' })}
-            </Title>
-            <Space>
-              <Button
-                icon={<EyeOutlined />}
-                onClick={() => void handlePreviewConfig()}
-              >
-                {t('antigravity.viewCurrentFile', { defaultValue: '查看配置' })}
-              </Button>
-            </Space>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <Text type="secondary">{t('antigravity.configPath', { defaultValue: '配置路径' })}:</Text>
-              <Text code style={{ fontSize: 11 }}>{configPath || '-'}</Text>
-              {rootPathInfo && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+                  {t('antigravity.title')}
+                </Title>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openUrl('https://antigravity.google/docs/cli/settings');
+                  }}
+                >
+                  <LinkOutlined /> {t('antigravity.viewDocs')}
+                </Link>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12, marginLeft: 16 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handlePreviewConfig();
+                  }}
+                >
+                  <EyeOutlined /> {t('common.previewConfig')}
+                </Link>
+              </div>
+              <Space size="small">
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('antigravity.configPath')}:
+                </Text>
+                <Text code style={{ fontSize: 12 }}>
+                  {configPath || '~/.gemini/antigravity-cli/settings.json'}
+                </Text>
                 <Button
-                  type="link"
+                  type="text"
                   size="small"
+                  icon={<EditOutlined />}
                   onClick={() => setRootDirectoryModalOpen(true)}
                   style={{ padding: 0, fontSize: 12 }}
                 >
-                  [{getSourceLabel(rootPathInfo)}]
+                  {t('antigravity.rootPathSource.customize')}
                 </Button>
-              )}
-              <Space size={4}>
                 <Button
                   type="text"
                   size="small"
@@ -421,7 +437,7 @@ const AntigravityPage: React.FC = () => {
                   onClick={() => void handleOpenFolder()}
                   style={{ padding: 0, fontSize: 12 }}
                 >
-                  {t('antigravity.openFolder', { defaultValue: '打开文件夹' })}
+                  {t('antigravity.openFolder')}
                 </Button>
                 <Button
                   type="text"
@@ -430,14 +446,14 @@ const AntigravityPage: React.FC = () => {
                   onClick={() => void loadConfig()}
                   style={{ padding: 0, fontSize: 12 }}
                 >
-                  {t('antigravity.refreshConfig', { defaultValue: '刷新' })}
+                  {t('antigravity.refreshConfig')}
                 </Button>
               </Space>
             </div>
 
             <Space>
               <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
-                {t('common.moreOptions', { defaultValue: '更多选项' })}
+                {t('common.moreOptions')}
               </Button>
             </Space>
           </div>

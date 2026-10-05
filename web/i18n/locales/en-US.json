@@ -3518,10 +3518,10 @@
     "title": "Antigravity CLI Configuration",
     "pageHint": "Manage multiple provider configurations and switch between them via \"Apply\" or the system tray menu. Common configuration is shared across providers and merged upon apply.",
     "pageWarning": "Note: Configurations are stored in the database. Do not manually edit local files as they will be overwritten when applied.",
-    "configPath": "Config Path",
+    "configPath": "Configuration Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
-    "refreshConfig": "Refresh",
+    "refreshConfig": "Refresh Config",
     "addProvider": "Add Provider",
     "commonConfigButton": "Common Config",
     "emptyText": "No provider configurations yet. Click the button above to add one.",
@@ -3534,7 +3534,6 @@
     "prompts": "Global Prompts",
     "sessions": "Sessions",
     "openConfigFolder": "Open Directory",
-    "viewCurrentFile": "View Config",
     "noProviders": "No Antigravity CLI providers found. Click the button above to add one.",
     "currentSettings": "Current Antigravity CLI Settings (settings.json)",
     "officialAlertTitle": "Official Google Account OAuth Mode",
@@ -3689,7 +3688,9 @@
         "saveSuccess": "Antigravity CLI root directory saved",
         "resetSuccess": "Reset to default root directory",
         "folderOnlyTitle": "Please select a folder",
-        "folderOnlyDesc": "Do not select a specific file. Antigravity CLI will derive .env, settings.json, and tmp inside the selected folder."
+        "folderOnlyDesc": "Do not select a specific file. Antigravity CLI will derive .env, settings.json, and tmp inside the selected folder.",
+        "envHint": "Currently controlled by environment variable: {{path}}",
+        "shellHint": "Currently controlled by shell config: {{path}}"
       }
     },
     "envAlert": {

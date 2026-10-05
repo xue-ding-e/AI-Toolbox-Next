@@ -3515,10 +3515,10 @@
     "title": "Antigravity CLI 配置管理",
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
     "pageWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
-    "configPath": "配置路径",
+    "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
-    "viewDocs": "查看文档",
-    "refreshConfig": "刷新",
+    "viewDocs": "官方文档",
+    "refreshConfig": "刷新配置",
     "addProvider": "添加供应商",
     "commonConfigButton": "通用配置",
     "emptyText": "暂无供应商配置，点击右上角按钮添加",
@@ -3531,7 +3531,6 @@
     "prompts": "全局提示词",
     "sessions": "会话管理",
     "openConfigFolder": "打开目录",
-    "viewCurrentFile": "查看配置",
     "noProviders": "暂无 Antigravity CLI 提供商，点击上方按钮添加。",
     "currentSettings": "当前 Antigravity CLI 配置文件 (settings.json)",
     "officialAlertTitle": "官方 Google 账号 OAuth 模式",
@@ -3686,7 +3685,9 @@
         "saveSuccess": "Antigravity CLI 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Antigravity CLI 会在所选文件夹下派生 .env、settings.json 和 tmp。"
+        "folderOnlyDesc": "不要选择具体文件，Antigravity CLI 会在所选文件夹下派生 .env、settings.json 和 tmp。",
+        "envHint": "当前由环境变量控制：{{path}}",
+        "shellHint": "当前由 Shell 配置控制：{{path}}"
       }
     },
     "envAlert": {
