@@ -522,6 +522,8 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'Hermes';
     case 'antigravity':
       return 'Antigravity';
+    case 'zcode':
+      return 'ZCode';
     default:
       return 'Assistant';
   }

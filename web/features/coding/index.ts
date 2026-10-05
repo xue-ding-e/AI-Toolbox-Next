@@ -11,6 +11,7 @@ export * from './oh_my_pi';
 export * from './omo_native';
 export * from './claudedesktop';
 export * from './hermes';
+export * from './zcode';
 export * from './dsh';
 export * from './skills';
 export * from './image';

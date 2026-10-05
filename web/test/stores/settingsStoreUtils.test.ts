@@ -70,6 +70,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       omo_native: false,
       hermes: false,
       dsh: false,
+      zcode: false,
     },
     opencode_allow_clear_applied_oh_my_config: false,
     opencode_use_legacy_oh_my_config: false,

@@ -29,7 +29,7 @@ import ChatgptIcon from '@/assets/chatgpt.svg';
 import PiIcon from '@/assets/pi.svg';
 import OmpIcon from '@/assets/omp.svg';
 import OmoNativeIcon from '@/assets/omo-native.svg';
-import { Antigravity, Gemini, Grok, HermesAgent, Kimi, OpenClaw as OpenClawIcon, DeepSeek } from '@lobehub/icons';
+import { Antigravity, Gemini, Grok, HermesAgent, Kimi, OpenClaw as OpenClawIcon, DeepSeek, Zhipu } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
@@ -260,6 +260,8 @@ const MainLayout: React.FC = () => {
                             <HermesAgent size={16} className={styles.tabIconFixed} />
                           ) : tab.key === 'dsh' ? (
                             <DeepSeek.Color size={16} className={styles.tabIconColor} />
+                          ) : tab.key === 'zcode' ? (
+                            <Zhipu.Color size={16} className={styles.tabIconColor} />
                           ) : TAB_ICONS[tab.key] ? (
                             <img src={TAB_ICONS[tab.key]} className={styles.tabIcon} alt="" />
                           ) : null}

@@ -247,6 +247,7 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
             <Select.Option value="openclaw">OpenClaw</Select.Option>
             <Select.Option value="geminicli">Gemini</Select.Option>
             <Select.Option value="antigravity">Antigravity CLI</Select.Option>
+            <Select.Option value="zcode">ZCode</Select.Option>
             <Select.Option value="pi">Pi</Select.Option>
             <Select.Option value="oh_my_pi">omp</Select.Option>
             <Select.Option value="omo_native">omo</Select.Option>

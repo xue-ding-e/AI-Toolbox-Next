@@ -69,7 +69,7 @@ interface RepositoryFormValues {
   directory: string;
 }
 
-const TOOL_ORDER = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'antigravity', 'kimi', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'];
+const TOOL_ORDER = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'geminicli', 'antigravity', 'zcode', 'kimi', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'];
 
 const DEFAULT_REPOSITORY_FORM: RepositoryFormValues = {
   platform: 'github',

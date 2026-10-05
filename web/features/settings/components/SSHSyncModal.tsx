@@ -43,6 +43,7 @@ const MODULE_NAMES: Record<string, string> = {
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
   antigravity: 'Antigravity CLI',
+  zcode: 'ZCode',
   pi: 'Pi',
   oh_my_pi: 'omp',
   omo_native: 'omo',
@@ -61,6 +62,7 @@ const MODULE_COLORS: Record<string, string> = {
   openclaw: 'green',
   geminicli: 'cyan',
   antigravity: 'geekblue',
+  zcode: 'volcano',
   pi: 'magenta',
   oh_my_pi: 'magenta',
   omo_native: 'gold',
@@ -99,6 +101,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   openclaw: 'openclaw',
   geminicli: 'geminicli',
   antigravity: 'antigravity',
+  zcode: 'zcode',
   pi: 'pi',
   oh_my_pi: 'oh_my_pi',
   omo_native: 'omo_native',
@@ -106,7 +109,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   dsh: 'dsh',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'geminicli', 'antigravity', 'zcode', 'openclaw', 'pi', 'oh_my_pi', 'omo_native', 'hermes', 'dsh'];
 
 interface SSHSyncModalProps {
   open: boolean;

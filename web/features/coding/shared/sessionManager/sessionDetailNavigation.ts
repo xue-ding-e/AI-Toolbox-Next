@@ -20,6 +20,7 @@ const SESSION_TOOL_BASE_PATH: Record<SessionTool, string> = {
   kimi: '/coding/kimi',
   geminicli: '/coding/geminicli',
   antigravity: '/coding/antigravity',
+  zcode: '/coding/zcode',
   openclaw: '/coding/openclaw',
   opencode: '/coding/opencode',
   pi: '/coding/pi',

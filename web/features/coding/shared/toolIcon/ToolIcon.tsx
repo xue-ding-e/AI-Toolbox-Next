@@ -17,6 +17,7 @@ import {
   RooCode,
   Trae,
   Windsurf,
+  Zhipu,
 } from '@lobehub/icons';
 import { Globe } from 'lucide-react';
 import { useThemeStore } from '@/stores/themeStore';
@@ -91,6 +92,10 @@ const TOOL_ICON_RENDERERS: Record<string, ToolIconRenderer> = {
   cursor: Cursor,
   antigravity: Antigravity.Color,
   antigravity_cli: Antigravity.Color,
+  // ZCode ships no LobeHub mark of its own; it is Zhipu's coding CLI, so the
+  // Zhipu brand mark is the closest truthful match.
+  zcode: Zhipu.Color,
+  zcode_cli: Zhipu.Color,
   amp: Amp.Color,
   kilo_code: KiloCode,
   roo_code: RooCode,

@@ -28,6 +28,7 @@ export const MODULES: Module[] = [
       { key: 'grok', labelKey: 'subModules.grok', path: '/coding/grok' },
       { key: 'geminicli', labelKey: 'subModules.geminicli', path: '/coding/geminicli' },
       { key: 'antigravity', labelKey: 'subModules.antigravity', path: '/coding/antigravity' },
+      { key: 'zcode', labelKey: 'subModules.zcode', path: '/coding/zcode' },
       { key: 'kimi', labelKey: 'subModules.kimi', path: '/coding/kimi' },
       { key: 'openclaw', labelKey: 'subModules.openclaw', path: '/coding/openclaw' },
       { key: 'pi', labelKey: 'subModules.pi', path: '/coding/pi' },
