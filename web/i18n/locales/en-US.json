@@ -6438,7 +6438,7 @@
       "displayName": "Display Name",
       "displayNamePlaceholder": "Falls back to the model ID when blank",
       "ruleKind": "Configuration Mode",
-      "ruleKindHint": "Smart mode only requires the fields you want to override; the rest are inherited from ZCode’s built-in rules. Manual mode requires every field and suits models the built-in rules cannot cover.",
+      "ruleKindHint": "Smart mode only requires the fields you want to override; the rest are inherited from ZCode’s built-in rules. Manual mode requires every supported field and suits models the built-in rules cannot cover.",
       "ruleKindSmart": "Smart",
       "ruleKindManual": "Manual",
       "enabled": "Enabled",

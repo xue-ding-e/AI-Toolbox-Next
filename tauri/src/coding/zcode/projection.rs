@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 
 use super::constants::{
     ZCODE_ACCOUNT_PROVIDER_ID_PREFIX, ZCODE_BUILTIN_PROVIDER_ID_PREFIX,
-    ZCODE_PERSONAL_PROVIDER_GROUP,
+    ZCODE_MANAGED_PROVIDER_ID_PREFIX, ZCODE_PERSONAL_PROVIDER_GROUP,
 };
 use super::types::{
     ZcodeModelRow, ZcodeModelRuleKind, ZcodeProviderConfig, ZcodeSettingsConfig,
@@ -30,6 +30,14 @@ const DEFAULT_MODEL_SELECTION_KEY: &str = "defaultModelSelection";
 pub fn is_reserved_provider_id(provider_id: &str) -> bool {
     provider_id.starts_with(ZCODE_ACCOUNT_PROVIDER_ID_PREFIX)
         || provider_id.starts_with(ZCODE_BUILTIN_PROVIDER_ID_PREFIX)
+}
+
+/// Reports whether AI Toolbox owns this provider id.
+///
+/// The registry file is shared with ZCode, so anything outside the managed
+/// namespace is treated as someone else's and never rewritten.
+pub fn is_managed_provider_id(provider_id: &str) -> bool {
+    provider_id.starts_with(ZCODE_MANAGED_PROVIDER_ID_PREFIX)
 }
 
 /// Reads the provider registry, returning a minimal skeleton when the file is
@@ -182,13 +190,24 @@ pub fn build_provider_rule(settings: &ZcodeSettingsConfig) -> Value {
 }
 
 /// Builds the `modelConfigRules` entry for one model row.
+///
+/// Manual rules are filtered down to the exact field set ZCode accepts for
+/// them. ZCode validates both rule kinds with a `.strict()` schema, so emitting
+/// a smart-only field (e.g. `supportsToolCall`) inside a manual rule makes it
+/// reject the entire provider config file.
 pub fn build_model_rule(provider_id: &str, row: &ZcodeModelRow) -> Value {
+    let is_manual = row.rule_kind == ZcodeModelRuleKind::Manual;
     let mut config = Map::new();
     if let Some(enabled) = row.enabled {
         config.insert("enabled".to_string(), Value::Bool(enabled));
     }
     if let Some(properties) = row.properties.as_ref() {
         if let Ok(value) = serde_json::to_value(properties) {
+            let value = if is_manual {
+                restrict_manual_properties(value)
+            } else {
+                value
+            };
             if value.as_object().is_some_and(|map| !map.is_empty()) {
                 config.insert("properties".to_string(), value);
             }
@@ -196,6 +215,11 @@ pub fn build_model_rule(provider_id: &str, row: &ZcodeModelRow) -> Value {
     }
     if let Some(option_specs) = row.option_specs.as_ref() {
         if let Ok(value) = serde_json::to_value(option_specs) {
+            let value = if is_manual {
+                restrict_manual_option_specs(value)
+            } else {
+                value
+            };
             if value.as_object().is_some_and(|map| !map.is_empty()) {
                 config.insert("optionSpecs".to_string(), value);
             }
@@ -207,6 +231,56 @@ pub fn build_model_rule(provider_id: &str, row: &ZcodeModelRow) -> Value {
         "modelId": row.model_id,
         "config": Value::Object(config),
     })
+}
+
+/// Drops every property ZCode's manual rule schema does not declare.
+///
+/// Manual rules keep only `contextWindow`, the three image/video/pdf modality
+/// flags, and the three capability switches; everything else is smart-only.
+fn restrict_manual_properties(value: Value) -> Value {
+    let Some(mut map) = value.as_object().cloned() else {
+        return value;
+    };
+    map.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "contextWindow"
+                | "supportsJsonSchemaOutput"
+                | "supportsNativeWebSearch"
+                | "supportsMidConversationSystem"
+                | "inputFormat"
+        )
+    });
+    if let Some(input_format) = map.get_mut("inputFormat").and_then(Value::as_object_mut) {
+        input_format.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "supportsImage" | "supportsVideo" | "supportsPdf"
+            )
+        });
+        if input_format.is_empty() {
+            map.remove("inputFormat");
+        }
+    }
+    Value::Object(map)
+}
+
+/// Drops every option spec ZCode's manual rule schema does not declare.
+///
+/// Manual rules keep `reasoningLevel` and `maxOutputTokens.max`; the `map`
+/// expressions are smart-only.
+fn restrict_manual_option_specs(value: Value) -> Value {
+    let Some(mut map) = value.as_object().cloned() else {
+        return value;
+    };
+    map.retain(|key, _| matches!(key.as_str(), "reasoningLevel" | "maxOutputTokens"));
+    if let Some(max_output_tokens) = map.get_mut("maxOutputTokens").and_then(Value::as_object_mut) {
+        max_output_tokens.retain(|key, _| key == "max");
+        if max_output_tokens.is_empty() {
+            map.remove("maxOutputTokens");
+        }
+    }
+    Value::Object(map)
 }
 
 /// Inserts a provider rule, replacing any existing entry with the same id.
@@ -496,5 +570,120 @@ mod tests {
             rule["config"]["optionSpecs"]["maxOutputTokens"]["map"],
             json!("{\"max_tokens\": maxOutputTokens}")
         );
+    }
+
+    /// A manual rule is validated against a `.strict()` schema that declares a
+    /// narrower field set than the smart overlay. Emitting a smart-only field
+    /// makes ZCode reject the whole provider config file, so this is the single
+    /// most consequential invariant in the projection layer.
+    #[test]
+    fn manual_rule_drops_smart_only_fields() {
+        let mut settings = sample_settings("custom:mine", "model-a");
+        settings.models[0].rule_kind = ZcodeModelRuleKind::Manual;
+        settings.models[0].properties = Some(super::super::types::ZcodeModelProperties {
+            // Allowed in a manual rule.
+            context_window: Some(200_000),
+            supports_json_schema_output: Some(false),
+            supports_native_web_search: Some(true),
+            supports_mid_conversation_system: Some(false),
+            input_format: Some(super::super::types::ZcodeModelInputFormat {
+                supports_text: Some(true),
+                supports_image: Some(true),
+                supports_video: Some(false),
+                supports_audio: Some(true),
+                supports_pdf: Some(false),
+            }),
+            // Smart-only: must be dropped.
+            output_format: Some(super::super::types::ZcodeModelOutputFormat {
+                supports_text: Some(true),
+            }),
+            supports_tool_call: Some(true),
+            requires_mfjs_tool_schema: Some(false),
+        });
+        settings.models[0].option_specs = Some(super::super::types::ZcodeModelOptionSpecs {
+            max_output_tokens: Some(super::super::types::ZcodeMaxOutputTokensSpec {
+                max: Some(128_000),
+                // Smart-only: must be dropped.
+                map: Some("{\"max_tokens\": maxOutputTokens}".to_string()),
+            }),
+            reasoning_level: Some(super::super::types::ZcodeReasoningLevelSpec {
+                values: Some(vec!["low".to_string(), "high".to_string()]),
+                map: Some("{\"reasoning_effort\": reasoningLevel}".to_string()),
+            }),
+        });
+
+        let rule = build_model_rule(&settings.provider_id, &settings.models[0]);
+        let properties = &rule["config"]["properties"];
+
+        // Kept.
+        assert_eq!(properties["contextWindow"], json!(200_000));
+        assert_eq!(properties["supportsJsonSchemaOutput"], json!(false));
+        assert_eq!(properties["supportsNativeWebSearch"], json!(true));
+        assert_eq!(properties["supportsMidConversationSystem"], json!(false));
+        assert_eq!(properties["inputFormat"]["supportsImage"], json!(true));
+        assert_eq!(properties["inputFormat"]["supportsVideo"], json!(false));
+        assert_eq!(properties["inputFormat"]["supportsPdf"], json!(false));
+
+        // Dropped.
+        assert!(properties.get("outputFormat").is_none());
+        assert!(properties.get("supportsToolCall").is_none());
+        assert!(properties.get("requiresMfjsToolSchema").is_none());
+        assert!(properties["inputFormat"].get("supportsText").is_none());
+        assert!(properties["inputFormat"].get("supportsAudio").is_none());
+
+        let option_specs = &rule["config"]["optionSpecs"];
+        assert_eq!(option_specs["maxOutputTokens"]["max"], json!(128_000));
+        assert!(option_specs["maxOutputTokens"].get("map").is_none());
+        // `reasoningLevel` is complete in a manual rule, including its map.
+        assert_eq!(
+            option_specs["reasoningLevel"]["map"],
+            json!("{\"reasoning_effort\": reasoningLevel}")
+        );
+    }
+
+    /// The smart overlay keeps every field it is given — nothing is filtered.
+    #[test]
+    fn smart_rule_keeps_every_field() {
+        let mut settings = sample_settings("custom:mine", "model-a");
+        settings.models[0].properties = Some(super::super::types::ZcodeModelProperties {
+            supports_tool_call: Some(true),
+            requires_mfjs_tool_schema: Some(true),
+            output_format: Some(super::super::types::ZcodeModelOutputFormat {
+                supports_text: Some(true),
+            }),
+            ..Default::default()
+        });
+
+        let rule = build_model_rule(&settings.provider_id, &settings.models[0]);
+        let properties = &rule["config"]["properties"];
+        assert_eq!(properties["supportsToolCall"], json!(true));
+        assert_eq!(properties["requiresMfjsToolSchema"], json!(true));
+        assert_eq!(properties["outputFormat"]["supportsText"], json!(true));
+    }
+
+    /// `access` is validated by a `.strict()` schema that accepts exactly
+    /// `type`, `apiKey`, and `apiKeyManagementUrl`.
+    #[test]
+    fn provider_access_serializes_only_schema_keys() {
+        let mut settings = sample_settings("custom:mine", "model-a");
+        settings.config = Some(super::super::types::ZcodeProviderConfig {
+            access: Some(super::super::types::ZcodeProviderAccess {
+                r#type: Some("api-key".to_string()),
+                api_key: Some("sk-test".to_string()),
+                api_key_management_url: Some("https://example.com/keys".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let rule = build_provider_rule(&settings);
+        let access = &rule["config"]["access"];
+        assert_eq!(access["type"], json!("api-key"));
+        assert_eq!(access["apiKey"], json!("sk-test"));
+        assert_eq!(
+            access["apiKeyManagementUrl"],
+            json!("https://example.com/keys")
+        );
+        let keys: Vec<&String> = access.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 3, "access must carry no extra keys: {keys:?}");
     }
 }

@@ -46,7 +46,10 @@ pub(crate) const ZCODE_ACCOUNT_PROVIDER_ID_PREFIX: &str = "account:";
 /// Prefix reserved by ZCode for providers shipped in the built-in catalog.
 pub(crate) const ZCODE_BUILTIN_PROVIDER_ID_PREFIX: &str = "builtin:";
 
-/// Namespace AI Toolbox uses for providers it creates itself.
+/// Namespace for providers that are not part of ZCode's built-in catalog.
+///
+/// ZCode itself uses this prefix to distinguish user-defined providers from
+/// catalog ones, so AI Toolbox reuses it rather than inventing a namespace.
 pub(crate) const ZCODE_MANAGED_PROVIDER_ID_PREFIX: &str = "custom:";
 
 /// Personal-provider group marker required by the personal overlay schema.

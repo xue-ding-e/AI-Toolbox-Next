@@ -395,6 +395,13 @@ pub async fn save_zcode_provider(
             settings.provider_id
         ));
     }
+    if !projection::is_managed_provider_id(&settings.provider_id) {
+        return Err(format!(
+            "Provider id '{}' must start with '{}'. The registry file is shared with ZCode, so only ids in that namespace are rewritten.",
+            settings.provider_id,
+            super::constants::ZCODE_MANAGED_PROVIDER_ID_PREFIX
+        ));
+    }
     projection::apply_personal_model_ids(&mut settings);
 
     let mut base = projection::read_provider_config_base(&path);

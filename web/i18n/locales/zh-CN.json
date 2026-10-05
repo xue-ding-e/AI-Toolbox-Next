@@ -6435,7 +6435,7 @@
       "displayName": "显示名称",
       "displayNamePlaceholder": "留空则使用模型 ID",
       "ruleKind": "配置方式",
-      "ruleKindHint": "智能配置只需填写要覆盖的字段，其余沿用 ZCode 内置规则；手动配置要求完整填写，适用于内置规则无法覆盖的模型。",
+      "ruleKindHint": "智能配置只需填写要覆盖的字段，其余沿用 ZCode 内置规则；手动配置要求完整填写，且只支持 ZCode 允许的字段，适用于内置规则无法覆盖的模型。",
       "ruleKindSmart": "智能配置",
       "ruleKindManual": "手动配置",
       "enabled": "启用",

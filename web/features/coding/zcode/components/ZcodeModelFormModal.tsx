@@ -215,7 +215,6 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
     : undefined;
 
   const capabilityFields: Array<{ name: keyof ZcodeModelFormValues; labelKey: string; fallback: string }> = [
-    { name: 'supportsToolCall', labelKey: 'zcode.model.supportsToolCall', fallback: '工具调用' },
     {
       name: 'supportsJsonSchemaOutput',
       labelKey: 'zcode.model.supportsJsonSchemaOutput',
@@ -231,13 +230,29 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
       labelKey: 'zcode.model.supportsMidConversationSystem',
       fallback: '对话中系统消息',
     },
+    // `supportsToolCall` is smart-only: ZCode's manual rule schema does not
+    // declare it, so it is hidden rather than silently dropped on save.
+    ...(isManual
+      ? []
+      : [
+          {
+            name: 'supportsToolCall' as keyof ZcodeModelFormValues,
+            labelKey: 'zcode.model.supportsToolCall',
+            fallback: '工具调用',
+          },
+        ]),
   ];
 
+  // `supportsText` and `supportsAudio` are smart-only for the same reason.
   const modalityFields: Array<{ name: keyof ZcodeModelFormValues; labelKey: string; fallback: string }> = [
-    { name: 'supportsText', labelKey: 'zcode.model.text', fallback: '文本' },
+    ...(isManual
+      ? []
+      : [
+          { name: 'supportsText' as keyof ZcodeModelFormValues, labelKey: 'zcode.model.text', fallback: '文本' },
+          { name: 'supportsAudio' as keyof ZcodeModelFormValues, labelKey: 'zcode.model.audio', fallback: '音频' },
+        ]),
     { name: 'supportsImage', labelKey: 'zcode.model.image', fallback: '图片' },
     { name: 'supportsVideo', labelKey: 'zcode.model.video', fallback: '视频' },
-    { name: 'supportsAudio', labelKey: 'zcode.model.audio', fallback: '音频' },
     { name: 'supportsPdf', labelKey: 'zcode.model.pdf', fallback: 'PDF' },
   ];
 
@@ -280,7 +295,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('zcode.model.ruleKindHint', {
                 defaultValue:
-                  '智能配置只需填写要覆盖的字段，其余沿用 ZCode 内置规则；手动配置要求完整填写，适用于内置规则无法覆盖的模型。',
+                  '智能配置只需填写要覆盖的字段，其余沿用 ZCode 内置规则；手动配置要求完整填写，且只支持 ZCode 允许的字段，适用于内置规则无法覆盖的模型。',
               })}
             </Text>
           }
@@ -412,24 +427,33 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
           />
         </Form.Item>
 
-        <Form.Item
-          name="maxOutputTokensMap"
-          label={t('zcode.model.maxOutputTokensMapping', { defaultValue: '最大输出参数映射' })}
-          extra={
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('zcode.model.mapHint', {
-                defaultValue:
-                  '请求参数名到该字段的映射表达式，例如 {"max_tokens": maxOutputTokens}；原样写入，不做解析。',
-              })}
-            </Text>
-          }
-        >
-          <Input placeholder={'{"max_tokens": maxOutputTokens}'} />
-        </Form.Item>
+        {/* Smart-only: ZCode's manual rule schema does not declare this map. */}
+        {!isManual && (
+          <Form.Item
+            name="maxOutputTokensMap"
+            label={t('zcode.model.maxOutputTokensMapping', { defaultValue: '最大输出参数映射' })}
+            extra={
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('zcode.model.mapHint', {
+                  defaultValue:
+                    '请求参数名到该字段的映射表达式，例如 {"max_tokens": maxOutputTokens}；原样写入，不做解析。',
+                })}
+              </Text>
+            }
+          >
+            <Input placeholder={'{"max_tokens": maxOutputTokens}'} />
+          </Form.Item>
+        )}
 
-        <Form.Item name="requiresMfjsToolSchema" label={t('zcode.model.requiresMfjsToolSchema', { defaultValue: '需要 MFJS 工具 Schema' })}>
-          <Select options={triStateOptions(t)} style={{ width: 200 }} />
-        </Form.Item>
+        {/* Smart-only: same reason as the modality and capability fields above. */}
+        {!isManual && (
+          <Form.Item
+            name="requiresMfjsToolSchema"
+            label={t('zcode.model.requiresMfjsToolSchema', { defaultValue: '需要 MFJS 工具 Schema' })}
+          >
+            <Select options={triStateOptions(t)} style={{ width: 200 }} />
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );

@@ -77,6 +77,10 @@ impl ZcodeModelRuleKind {
 }
 
 /// Model input modalities. ZCode spells the PDF flag `supportsPdf`.
+///
+/// Note: ZCode's *manual* model rule only carries `supportsImage`,
+/// `supportsVideo`, and `supportsPdf` here — `supportsText` and `supportsAudio`
+/// belong to the smart overlay. See [`ZcodeModelRow::is_manual`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZcodeModelInputFormat {
@@ -90,6 +94,14 @@ pub struct ZcodeModelInputFormat {
     pub supports_audio: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_pdf: Option<bool>,
+}
+
+/// Model output modalities. Only text is expressible today.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodeModelOutputFormat {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_text: Option<bool>,
 }
 
 /// `optionSpecs.maxOutputTokens`. `map` is a mapping *expression string*, not a
@@ -124,6 +136,23 @@ pub struct ZcodeModelOptionSpecs {
 
 /// Model capability flags. `None` means "inherit from the catalog"; an explicit
 /// `false` pins the capability off and must survive round trips.
+///
+/// The two rule kinds accept different subsets, and both are `.strict()`:
+///
+/// | field | smart | manual |
+/// |---|---|---|
+/// | `contextWindow` | ✓ | ✓ |
+/// | `supportsJsonSchemaOutput` | ✓ | ✓ |
+/// | `supportsNativeWebSearch` | ✓ | ✓ |
+/// | `supportsMidConversationSystem` | ✓ | ✓ |
+/// | `inputFormat.{supportsImage,supportsVideo,supportsPdf}` | ✓ | ✓ |
+/// | `inputFormat.supportsText` / `supportsAudio` | ✓ | ✗ |
+/// | `outputFormat` | ✓ | ✗ |
+/// | `supportsToolCall` | ✓ | ✗ |
+/// | `requiresMfjsToolSchema` | ✓ | ✗ |
+///
+/// Writing an unsupported field into a manual rule makes ZCode reject the whole
+/// file, so the projection layer must filter by rule kind.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZcodeModelProperties {
@@ -131,6 +160,8 @@ pub struct ZcodeModelProperties {
     pub context_window: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_format: Option<ZcodeModelInputFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<ZcodeModelOutputFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_tool_call: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,15 +194,17 @@ pub struct ZcodeModelRow {
     pub is_default: bool,
 }
 
+/// Provider credentials. ZCode validates this with a `.strict()` schema that
+/// accepts exactly these three keys — adding another field makes ZCode reject
+/// the entire provider config file, so this struct must stay in lockstep.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZcodeProviderAccess {
+    /// `api-key` or `zhipu-coding-plan-api-key`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_management_url: Option<String>,
 }

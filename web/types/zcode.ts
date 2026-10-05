@@ -6,12 +6,25 @@ export interface ConfigPathInfo {
 /** Which `modelConfigRules` array a model row is projected into. */
 export type ZcodeModelRuleKind = 'smart' | 'manual';
 
+/**
+ * Input modalities.
+ *
+ * ZCode validates model rules with a `.strict()` schema, and the two rule kinds
+ * accept different subsets: a manual rule only carries
+ * `supportsImage`/`supportsVideo`/`supportsPdf`, while `supportsText` and
+ * `supportsAudio` are smart-only. The backend filters the rest out.
+ */
 export interface ZcodeModelInputFormat {
   supportsText?: boolean;
   supportsImage?: boolean;
   supportsVideo?: boolean;
   supportsAudio?: boolean;
   supportsPdf?: boolean;
+}
+
+/** Output modalities. Only text is expressible today; smart rules only. */
+export interface ZcodeModelOutputFormat {
+  supportsText?: boolean;
 }
 
 export interface ZcodeMaxOutputTokensSpec {
@@ -35,10 +48,15 @@ export interface ZcodeModelOptionSpecs {
 /**
  * Capability flags. `undefined` inherits from ZCode's catalog; an explicit
  * `false` pins the capability off.
+ *
+ * `outputFormat`, `supportsToolCall`, and `requiresMfjsToolSchema` are
+ * smart-only — a manual rule must not carry them, or ZCode rejects the file.
+ * The backend filters by rule kind before writing.
  */
 export interface ZcodeModelProperties {
   contextWindow?: number;
   inputFormat?: ZcodeModelInputFormat;
+  outputFormat?: ZcodeModelOutputFormat;
   supportsToolCall?: boolean;
   supportsJsonSchemaOutput?: boolean;
   supportsNativeWebSearch?: boolean;
@@ -56,10 +74,16 @@ export interface ZcodeModelRow {
   isDefault: boolean;
 }
 
+/**
+ * Provider credentials.
+ *
+ * ZCode validates this with a `.strict()` schema accepting exactly these three
+ * keys, so no other field may be added here.
+ */
 export interface ZcodeProviderAccess {
+  /** `api-key` or `zhipu-coding-plan-api-key`. */
   type?: string;
   apiKey?: string;
-  apiKeyRequired?: boolean;
   apiKeyManagementUrl?: string;
 }
 
