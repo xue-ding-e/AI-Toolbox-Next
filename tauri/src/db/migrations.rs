@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 24;
+pub const TARGET_SCHEMA_VERSION: i32 = 25;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -79,6 +79,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 24 {
         run_migration_step(conn, 24, migrate_v24)?;
+    }
+    if current_version < 25 {
+        run_migration_step(conn, 25, migrate_v25)?;
     }
 
     Ok(())
@@ -501,6 +504,30 @@ fn migrate_v24(conn: &Connection) -> Result<(), String> {
         conn,
         DbTable::OmoNativeAgentsConfig,
         &JsonFieldPath::new("sort_index")?,
+    )
+}
+
+fn migrate_v25(conn: &Connection) -> Result<(), String> {
+    for table in [
+        DbTable::ZcodeProvider,
+        DbTable::ZcodeCommonConfig,
+        DbTable::ZcodePromptConfig,
+        DbTable::ZcodeOfficialAccount,
+    ] {
+        create_jsonb_table(conn, table)?;
+    }
+    for table in [
+        DbTable::ZcodeProvider,
+        DbTable::ZcodePromptConfig,
+        DbTable::ZcodeOfficialAccount,
+    ] {
+        create_json_index(conn, table, &JsonFieldPath::new("is_applied")?)?;
+        create_json_index(conn, table, &JsonFieldPath::new("sort_index")?)?;
+    }
+    create_json_index(
+        conn,
+        DbTable::ZcodeOfficialAccount,
+        &JsonFieldPath::new("provider_id")?,
     )
 }
 

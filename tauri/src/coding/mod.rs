@@ -44,6 +44,7 @@ pub mod ssh;
 pub mod tools;
 pub(crate) mod url_utils;
 pub mod wsl;
+pub mod zcode;
 
 mod db_id;
 pub(crate) mod file_io;

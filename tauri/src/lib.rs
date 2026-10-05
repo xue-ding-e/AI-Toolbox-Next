@@ -2591,6 +2591,18 @@ pub fn run() {
             coding::antigravity::delete_antigravity_official_account,
             coding::antigravity::refresh_antigravity_official_account_limits,
             coding::antigravity::copy_antigravity_official_account_token,
+            // ZCode
+            coding::zcode::get_zcode_config_file_path,
+            coding::zcode::get_zcode_root_path_info,
+            coding::zcode::reveal_zcode_config_folder,
+            coding::zcode::read_zcode_settings,
+            coding::zcode::get_zcode_generation_status,
+            coding::zcode::get_zcode_common_config,
+            coding::zcode::save_zcode_common_config,
+            coding::zcode::save_zcode_provider,
+            coding::zcode::delete_zcode_provider_from_file,
+            coding::zcode::select_zcode_provider,
+            coding::zcode::list_zcode_provider_templates,
             // Pi
             coding::pi::get_pi_root_path_info,
             coding::pi::get_pi_settings_config,

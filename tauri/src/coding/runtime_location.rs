@@ -8,12 +8,12 @@ use serde_json::Value;
 use crate::coding::open_code::shell_env;
 use crate::coding::{
     antigravity, claude_code, codex, dsh, gemini_cli, grok, hermes, kimi, oh_my_pi, omo_native,
-    open_claw, open_code, pi,
+    open_claw, open_code, pi, zcode,
 };
 use crate::db::helpers::{db_get, db_patch_fields};
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 13] = [
+const MODULE_KEYS: [&str; 14] = [
     "opencode",
     "claude",
     "codex",
@@ -22,6 +22,7 @@ const MODULE_KEYS: [&str; 13] = [
     "openclaw",
     "geminicli",
     "antigravity",
+    "zcode",
     "pi",
     "oh_my_pi",
     "omo_native",
@@ -205,6 +206,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
         "antigravity" | "antigravity_cli" => Some("antigravity"),
+        "zcode" | "zcode_cli" => Some("zcode"),
         "pi" => Some("pi"),
         "oh_my_pi" | "omp" => Some("oh_my_pi"),
         // OmO Native（`omo` 二进制 / senpi 引擎）与 OpenCode 插件版 OMO 是两套 edition，
@@ -312,6 +314,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("antigravity") => {
             let location = resolve_antigravity_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("antigravity", location.clone());
+            Ok(location)
+        }
+        Some("zcode") => {
+            let location = resolve_zcode_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("zcode", location.clone());
             Ok(location)
         }
         Some("pi") => {
@@ -1097,6 +1104,146 @@ pub async fn get_grok_wsl_target_path_async(
     }
 }
 
+pub fn get_zcode_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("zcode"))
+}
+
+pub async fn get_zcode_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "zcode").await
+}
+
+async fn resolve_zcode_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let custom_path =
+        get_custom_path_from_record(db, DbTable::ZcodeCommonConfig, "common", |value| {
+            crate::coding::zcode::adapter::from_db_value_common(value)
+                .root_dir
+                .filter(|path| !path.trim().is_empty())
+        })
+        .await;
+    let (path, source) = if let Some(path) = custom_path {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_zcode_path_without_db()
+    };
+    Ok(build_runtime_location(path, source))
+}
+
+/// Resolves the ZCode data root without database access.
+///
+/// Precedence mirrors what the ZCode runtime itself honors: the
+/// `ZCODE_DATA_BASE_DIR` process override, the same key exported from the
+/// user's shell profile, then the desktop app's own `setting.json` record.
+/// The `.zcode` suffix is appended only for the base-directory overrides,
+/// because those name the parent directory rather than the data root.
+fn resolve_zcode_path_without_db() -> (PathBuf, String) {
+    let env_key = zcode::constants::ZCODE_DATA_BASE_DIR_ENV;
+    if let Ok(path) = std::env::var(env_key) {
+        if !path.trim().is_empty() {
+            return (
+                PathBuf::from(path.trim()).join(zcode::constants::ZCODE_DEFAULT_ROOT_DIR_NAME),
+                "env".to_string(),
+            );
+        }
+    }
+    if let Some(path) = shell_env::get_env_from_shell_config(env_key) {
+        if !path.trim().is_empty() {
+            return (
+                PathBuf::from(path.trim()).join(zcode::constants::ZCODE_DEFAULT_ROOT_DIR_NAME),
+                "shell".to_string(),
+            );
+        }
+    }
+    if let Some(path) = zcode_data_base_dir_from_setting_file() {
+        return (path, "setting".to_string());
+    }
+    (
+        dirs::home_dir()
+            .map(|home| home.join(zcode::constants::ZCODE_DEFAULT_ROOT_DIR_NAME))
+            .unwrap_or_else(|| PathBuf::from("~/.zcode")),
+        "default".to_string(),
+    )
+}
+
+/// Reads `dataBaseDir` from the desktop settings file.
+///
+/// `setting.json` always lives directly under the home directory; only the
+/// data it points at moves, so this lookup never depends on the resolved root.
+fn zcode_data_base_dir_from_setting_file() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let path = home
+        .join(zcode::constants::ZCODE_DEFAULT_ROOT_DIR_NAME)
+        .join(zcode::constants::ZCODE_SETTING_RELATIVE_PATH);
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let base = value.get("dataBaseDir")?.as_str()?.trim();
+    if base.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(base).join(zcode::constants::ZCODE_DEFAULT_ROOT_DIR_NAME))
+}
+
+pub fn get_zcode_config_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_sync(db)?
+        .host_path
+        .join(zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH))
+}
+
+pub async fn get_zcode_config_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH))
+}
+
+/// ZCode reads MCP servers from the CLI config, not the provider registry.
+pub fn get_zcode_mcp_config_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_sync(db)?
+        .host_path
+        .join(zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH))
+}
+
+pub async fn get_zcode_mcp_config_path_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH))
+}
+
+pub fn get_zcode_prompt_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_sync(db)?
+        .host_path
+        .join(zcode::constants::ZCODE_PROMPT_FILE_NAME))
+}
+
+pub async fn get_zcode_prompt_path_async(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_zcode_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(zcode::constants::ZCODE_PROMPT_FILE_NAME))
+}
+
+pub async fn get_zcode_wsl_target_path_async(
+    db: &crate::db::SqliteDbState,
+    file_name: &str,
+) -> String {
+    match get_zcode_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.zcode/{file_name}")),
+        Err(_) => format!("~/.zcode/{file_name}"),
+    }
+}
+
 pub fn get_kimi_runtime_location_sync(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1802,6 +1949,16 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
                 location.host_path.join("skills")
             }
         }),
+        "zcode" => get_zcode_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.zcode/skills"),
+                )
+            } else {
+                location.host_path.join("skills")
+            }
+        }),
         "opencode" => get_opencode_runtime_location_sync(db).ok().map(|location| {
             if let Some(wsl) = location.wsl {
                 build_windows_unc_path(
@@ -1908,6 +2065,22 @@ pub async fn get_tool_skills_path_async(
                         &expand_home_from_user_root(
                             wsl.linux_user_root.as_deref(),
                             "~/.kimi-code/skills",
+                        ),
+                    )
+                } else {
+                    location.host_path.join("skills")
+                }
+            }),
+        "zcode" => get_zcode_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| {
+                if let Some(wsl) = location.wsl {
+                    build_windows_unc_path(
+                        &wsl.distro,
+                        &expand_home_from_user_root(
+                            wsl.linux_user_root.as_deref(),
+                            "~/.zcode/skills",
                         ),
                     )
                 } else {
@@ -2074,6 +2247,7 @@ pub fn get_tool_mcp_config_path_sync(
         "codex" => get_codex_config_path_sync(db).ok(),
         "grok" => get_grok_config_path_sync(db).ok(),
         "kimi" => get_kimi_mcp_config_path_sync(db).ok(),
+        "zcode" => get_zcode_mcp_config_path_sync(db).ok(),
         "opencode" => get_opencode_runtime_location_sync(db)
             .ok()
             .map(|location| location.host_path),
@@ -2102,6 +2276,7 @@ pub async fn get_tool_mcp_config_path_async(
         "codex" => get_codex_config_path_async(db).await.ok(),
         "grok" => get_grok_config_path_async(db).await.ok(),
         "kimi" => get_kimi_mcp_config_path_async(db).await.ok(),
+        "zcode" => get_zcode_mcp_config_path_async(db).await.ok(),
         "opencode" => get_opencode_runtime_location_async(db)
             .await
             .ok()
@@ -2168,6 +2343,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "openclaw" => resolve_openclaw_path_without_db(),
         "geminicli" => resolve_gemini_cli_path_without_db(),
         "antigravity" => resolve_antigravity_path_without_db(),
+        "zcode" => resolve_zcode_path_without_db(),
         "pi" => resolve_pi_path_without_db(),
         "oh_my_pi" => resolve_omp_path_without_db(),
         "omo_native" => resolve_omo_native_path_without_db(),
