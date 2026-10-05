@@ -18,6 +18,7 @@ mod open_code;
 mod pi;
 mod tool_normalizer;
 mod utils;
+mod zcode;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -363,6 +364,15 @@ enum ToolSessionContext {
     Dsh {
         sessions_root: PathBuf,
     },
+    Zcode {
+        /// ZCode's data root — `~/.zcode`, or the app's configured override.
+        ///
+        /// The desktop transcripts live under `v2/sessions` while the CLI keeps
+        /// its own store under `cli/db/db.sqlite`, so both derive from here.
+        data_root: PathBuf,
+        sqlite_db_path: PathBuf,
+        desktop_sessions_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,6 +572,7 @@ enum SessionTool {
     ClaudeDesktop,
     Hermes,
     Dsh,
+    Zcode,
 }
 
 impl SessionTool {
@@ -581,6 +592,7 @@ impl SessionTool {
             "claudedesktop" | "claude_desktop" => Ok(Self::ClaudeDesktop),
             "hermes" => Ok(Self::Hermes),
             "dsh" => Ok(Self::Dsh),
+            "zcode" | "zcode_cli" => Ok(Self::Zcode),
             _ => Err(format!("Unsupported session tool: {raw}")),
         }
     }
@@ -601,6 +613,7 @@ impl SessionTool {
             Self::ClaudeDesktop => "claudedesktop",
             Self::Hermes => "hermes",
             Self::Dsh => "dsh",
+            Self::Zcode => "zcode",
         }
     }
 }
@@ -669,6 +682,16 @@ impl ToolSessionContext {
             }
             Self::Hermes { sessions_root } => format!("hermes:{}", sessions_root.display()),
             Self::Dsh { sessions_root } => format!("dsh:{}", sessions_root.display()),
+            Self::Zcode {
+                data_root,
+                sqlite_db_path,
+                desktop_sessions_root,
+            } => format!(
+                "zcode:{}:{}:{}",
+                data_root.display(),
+                sqlite_db_path.display(),
+                desktop_sessions_root.display()
+            ),
         }
     }
 }
@@ -1737,6 +1760,16 @@ fn delete_session_from_meta(
         ToolSessionContext::Dsh { sessions_root } => {
             dsh::delete_session(sessions_root, &session.source_path)?;
         }
+        // Desktop transcripts are plain files; CLI rows are OpenCode v1 sqlite
+        // entries, which `open_code` already knows how to remove.
+        ToolSessionContext::Zcode { .. } => {
+            if session.source_path.starts_with("sqlite:") {
+                open_code::delete_session(&session.source_path, false)?;
+            } else {
+                std::fs::remove_file(&session.source_path)
+                    .map_err(|error| format!("Failed to delete ZCode session: {error}"))?;
+            }
+        }
     }
 
     Ok(())
@@ -2270,7 +2303,8 @@ fn import_session_blocking(
         ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Antigravity { .. }
         | ToolSessionContext::Hermes { .. }
-        | ToolSessionContext::Dsh { .. } => {
+        | ToolSessionContext::Dsh { .. }
+        | ToolSessionContext::Zcode { .. } => {
             return Err("Session import is not supported for this tool".to_string());
         }
     }
@@ -2417,7 +2451,8 @@ fn build_native_snapshot(
         ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Antigravity { .. }
         | ToolSessionContext::Hermes { .. }
-        | ToolSessionContext::Dsh { .. } => {
+        | ToolSessionContext::Dsh { .. }
+        | ToolSessionContext::Zcode { .. } => {
             Err("Session export is not supported for this tool".to_string())
         }
     }
@@ -2514,6 +2549,26 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
         ToolSessionContext::ClaudeDesktop { sessions_root } => {
             claude_desktop::scan_sessions(sessions_root)
         }
+        ToolSessionContext::Zcode {
+            sqlite_db_path,
+            desktop_sessions_root,
+            ..
+        } => {
+            // The CLI database is OpenCode v1 shaped, so its reader is reused;
+            // desktop transcripts come from our own parser.
+            let mut merged =
+                open_code::scan_sessions(desktop_sessions_root, sqlite_db_path, false);
+            let known: std::collections::HashSet<String> = merged
+                .iter()
+                .map(|session| session.session_id.clone())
+                .collect();
+            for session in zcode::scan_desktop_sessions(desktop_sessions_root) {
+                if !known.contains(&session.session_id) {
+                    merged.push(session);
+                }
+            }
+            merged
+        }
     };
 
     sessions.sort_by(|left, right| {
@@ -2574,6 +2629,28 @@ fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<Sessi
         ToolSessionContext::ClaudeDesktop { sessions_root } => {
             claude_desktop::scan_recent_sessions(sessions_root, limit)
         }
+        ToolSessionContext::Zcode {
+            sqlite_db_path,
+            desktop_sessions_root,
+            ..
+        } => {
+            let mut merged = open_code::scan_recent_sessions(
+                desktop_sessions_root,
+                sqlite_db_path,
+                limit,
+                false,
+            );
+            let known: std::collections::HashSet<String> = merged
+                .iter()
+                .map(|session| session.session_id.clone())
+                .collect();
+            for session in zcode::scan_desktop_sessions(desktop_sessions_root) {
+                if !known.contains(&session.session_id) {
+                    merged.push(session);
+                }
+            }
+            merged
+        }
     };
 
     sessions.sort_by(|left, right| {
@@ -2612,6 +2689,15 @@ fn load_messages(
         ToolSessionContext::ClaudeDesktop { .. } => {
             claude_desktop::load_messages(Path::new(source_path))
         }
+        // Desktop transcripts are self-contained JSON; CLI rows are OpenCode v1
+        // sqlite entries keyed by a `sqlite:` source reference.
+        ToolSessionContext::Zcode { .. } => {
+            if source_path.starts_with("sqlite:") {
+                open_code::load_messages(source_path, false)
+            } else {
+                zcode::load_desktop_messages(source_path)
+            }
+        }
     }
 }
 
@@ -2637,7 +2723,8 @@ fn list_subagent_sessions(
         | ToolSessionContext::Kimi { .. }
         | ToolSessionContext::ClaudeDesktop { .. }
         | ToolSessionContext::Hermes { .. }
-        | ToolSessionContext::Dsh { .. } => Vec::new(),
+        | ToolSessionContext::Dsh { .. }
+        | ToolSessionContext::Zcode { .. } => Vec::new(),
     }
 }
 
@@ -2769,6 +2856,16 @@ fn scan_session_content_for_query(
         }
         ToolSessionContext::Dsh { .. } => dsh::scan_messages_for_query(source_path, query_lower),
         ToolSessionContext::ClaudeDesktop { .. } => Ok(false),
+        ToolSessionContext::Zcode { .. } => {
+            if source_path.starts_with("sqlite:") {
+                open_code::scan_messages_for_query(source_path, query_lower, false)
+            } else {
+                let messages = zcode::load_desktop_messages(source_path)?;
+                Ok(messages
+                    .iter()
+                    .any(|message| contains_query(&message.content, query_lower)))
+            }
+        }
     }
 }
 
@@ -2871,6 +2968,7 @@ fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
         ToolSessionContext::ClaudeDesktop { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Hermes { sessions_root } => path_wsl_info(sessions_root),
         ToolSessionContext::Dsh { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::Zcode { data_root, .. } => path_wsl_info(data_root),
     }
 }
 
@@ -2988,6 +3086,14 @@ fn build_default_wsl_session_context(
         SessionTool::Dsh => Some(ToolSessionContext::Dsh {
             sessions_root: wsl_home_path(distro, linux_home, ".dsh/sessions"),
         }),
+        SessionTool::Zcode => {
+            let data_root = wsl_home_path(distro, linux_home, ".zcode");
+            Some(ToolSessionContext::Zcode {
+                sqlite_db_path: data_root.join("cli/db/db.sqlite"),
+                desktop_sessions_root: data_root.join("v2/sessions"),
+                data_root,
+            })
+        }
     }
 }
 
@@ -3156,6 +3262,16 @@ async fn resolve_context(
                 .unwrap_or_default();
             Ok(ToolSessionContext::Dsh {
                 sessions_root: config_dir.join("sessions"),
+            })
+        }
+        SessionTool::Zcode => {
+            let runtime_location = crate::coding::runtime_location::get_zcode_runtime_location_async(db)
+                .await?;
+            let data_root = runtime_location.host_path;
+            Ok(ToolSessionContext::Zcode {
+                sqlite_db_path: data_root.join("cli/db/db.sqlite"),
+                desktop_sessions_root: data_root.join("v2/sessions"),
+                data_root,
             })
         }
     }
