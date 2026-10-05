@@ -212,3 +212,27 @@
     }
   }
 }
+
+.excludePatternsList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.excludePatternsRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+
+  :global {
+    .ant-form-item {
+      flex: 1;
+      margin-bottom: 6px;
+    }
+
+    .ant-btn {
+      flex: none;
+      margin-top: 1px;
+    }
+  }
+}

@@ -54,6 +54,8 @@ window.__TAURI_INTERNALS__ = {
       return { enabled: false, has_password: state.hasPassword, password_known: true };
     }
     if (command === 'list_backup_file_filter_path_options') return [];
+    // Portable paths used by the fixtures are already normalized; pass through.
+    if (command === 'normalize_backup_custom_entry_path') return args.path;
     if (command === 'test_backup_repository_connection' || command === 'test_webdav_connection') return;
     if (command === 'save_backup_settings') {
       if (state.failSave) {
@@ -124,6 +126,64 @@ window.backupFixture = {
     await tick();
   },
   async input(selector, value) { await setInput(document.querySelector(selector), value); },
+  async clickLabel(key) {
+    const label = i18n.t(key);
+    const button = [...document.querySelectorAll('button')].find(element =>
+      visible(element) && element.getAttribute('aria-label') === label);
+    if (!button) throw new Error('Missing labeled button: ' + key);
+    button.click();
+    await tick();
+  },
+  visibleModalCount() {
+    return [...document.querySelectorAll('.ant-modal')].filter(visible).length;
+  },
+  nestedModal() {
+    const modals = [...document.querySelectorAll('.ant-modal')].filter(visible);
+    const modal = modals[modals.length - 1];
+    if (!modal) throw new Error('Missing visible modal');
+    return modal;
+  },
+  nestedFormItem(labelKey) {
+    const label = i18n.t(labelKey);
+    const item = [...this.nestedModal().querySelectorAll('.ant-form-item')].find(element =>
+      element.querySelector('label')?.textContent === label);
+    if (!item) throw new Error('Missing nested form item: ' + labelKey);
+    return item;
+  },
+  async nestedInput(labelKey, value, index = 0) {
+    const inputs = this.nestedFormItem(labelKey).querySelectorAll('input');
+    await setInput(inputs[index], value);
+  },
+  nestedInputValue(labelKey, index = 0) {
+    const inputs = this.nestedFormItem(labelKey).querySelectorAll('input');
+    const input = inputs[index];
+    if (!input) throw new Error('Missing nested input: ' + labelKey + ' #' + index);
+    return input.value;
+  },
+  async nestedClickButton(labelKey) {
+    const label = i18n.t(labelKey).replace(/\s/g, '');
+    const button = [...this.nestedModal().querySelectorAll('button')].find(element =>
+      visible(element) && element.textContent.replace(/\s/g, '') === label);
+    if (!button) throw new Error('Missing nested button: ' + labelKey);
+    button.click();
+    await tick();
+  },
+  async nestedSelectOption(labelKey, optionKey) {
+    const trigger = this.nestedFormItem(labelKey).querySelector('[role="combobox"], .ant-select');
+    if (!trigger) throw new Error('Missing nested select: ' + labelKey);
+    trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    const optionLabel = i18n.t(optionKey);
+    const option = [...document.querySelectorAll('.ant-select-item-option')].find(element =>
+      element.textContent === optionLabel);
+    if (!option) throw new Error('Missing option: ' + optionKey);
+    option.click();
+    await tick();
+  },
+  async nestedExcludePatternCount() {
+    return this.nestedFormItem('settings.backupSettings.customEntries.excludePatterns')
+      .querySelectorAll('.ant-form-item').length;
+  },
   async number(key, value) {
     const item = [...document.querySelectorAll('.ant-form-item')].find(element =>
       element.querySelector('label')?.textContent === i18n.t(key));

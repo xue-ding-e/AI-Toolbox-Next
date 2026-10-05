@@ -173,6 +173,63 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
   await waitFor('backupFixture.state.closed');
   record('fresh local settings save without a repository connection', true);
 
+  // Directory entries support regex exclusions: the section only shows for the
+  // directory type, invalid patterns block the save inline, and valid patterns
+  // round-trip into the saved payload.
+  await navigate({ theme: 'light', language: 'zh-CN', channel: 'local' });
+  await openSettings();
+  await call('click', 'settings.backupSettings.customEntries.add');
+  await waitFor('backupFixture.visibleModalCount() === 2');
+  assert.equal(
+    await call('nestedFormItem', 'settings.backupSettings.customEntries.excludePatterns').then(() => true).catch(() => false),
+    false,
+    'file entries do not show the exclude section',
+  );
+  await call('nestedSelectOption', 'settings.backupSettings.customEntries.type', 'settings.backupSettings.customEntries.directory');
+  assert.equal(await call('nestedExcludePatternCount'), 0);
+  await call('nestedInput', 'settings.backupSettings.customEntries.name', 'memories');
+  await call('nestedInput', 'settings.backupSettings.customEntries.sourcePath', '~/.agents/memories');
+  await call('nestedClickButton', 'settings.backupSettings.customEntries.addExcludePattern');
+  assert.equal(await call('nestedExcludePatternCount'), 1);
+  await screenshot('custom-entry-exclude-modal');
+  await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '[', 0);
+  await call('nestedClickButton', 'common.save');
+  assert.equal(await call('visibleModalCount'), 2, 'invalid regex keeps the entry modal open');
+  assert.ok(await evaluate('!!document.querySelector(".ant-form-item-explain-error")'), 'invalid regex shows an inline error');
+  await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '^local$', 0);
+  await call('nestedClickButton', 'settings.backupSettings.customEntries.addExcludePattern');
+  await call('nestedInput', 'settings.backupSettings.customEntries.excludePatterns', '(^|/)\\.git$', 1);
+  await call('nestedClickButton', 'common.save');
+  await waitFor('backupFixture.visibleModalCount() === 1');
+  await screenshot('custom-entry-exclude-list');
+  assert.ok(
+    await evaluate('document.body.textContent.includes("^local$") && document.body.textContent.includes(".git$")'),
+    'the entry list shows the configured exclude rules',
+  );
+  await call('click', 'common.save');
+  await waitFor('backupFixture.state.closed');
+  const excludePayload = (await call('savedRequests')).at(-1).args.payload.backup_custom_entries;
+  assert.deepEqual(excludePayload.map(entry => entry.exclude_patterns), [['^local$', '(^|/)\\.git$']]);
+  assert.equal(excludePayload[0].entry_type, 'directory');
+  record('directory exclude rules validate inline and round trip', true);
+
+  // Reopening the saved entry must pre-fill the rules and a file-type switch
+  // must drop them, so editing never silently loses or keeps stale patterns.
+  await openSettings();
+  await call('clickLabel', 'settings.backupSettings.customEntries.edit');
+  await waitFor('backupFixture.visibleModalCount() === 2');
+  assert.equal(await call('nestedInputValue', 'settings.backupSettings.customEntries.excludePatterns', 0), '^local$');
+  assert.equal(await call('nestedInputValue', 'settings.backupSettings.customEntries.excludePatterns', 1), '(^|/)\\.git$');
+  await call('nestedSelectOption', 'settings.backupSettings.customEntries.type', 'settings.backupSettings.customEntries.file');
+  await waitFor('!document.querySelector(".ant-form-item-explain-error")');
+  await call('nestedClickButton', 'common.save');
+  await waitFor('backupFixture.visibleModalCount() === 1');
+  assert.ok(
+    !await evaluate('document.body.textContent.includes("^local$")'),
+    'switching to the file type drops the exclude rules from the entry',
+  );
+  record('editing pre-fills exclude rules and a file switch drops them', true);
+
   await navigate({ theme: 'light' });
   await evaluate('backupFixture.state.files=[]');
   await call('open', 'remote');

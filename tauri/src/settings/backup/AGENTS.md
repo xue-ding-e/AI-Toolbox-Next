@@ -28,6 +28,7 @@
 - 每个备份 zip 根目录写入 `backup_meta.json`（`version` + `cli_config_files_included`）。`cli_config_files_included` 表示 **optional（DB 型）** CLI 运行时是否完整进包，不等于“所有 external-configs 都无”。`need_reapply` 仅在「本次恢复跳过 optional CLI 运行时」或「meta 明确 `cli_config_files_included=false`」时为 true；**旧包无 meta 不因缺 external-configs 推断 re-apply**，避免残缺旧包误改本机配置。
 - app data 下的动态资源缓存文件也是备份恢复对象，包括 `preset_models.json`、`models.dev.json`、`model_pricing.json` 和 `gateway_provider_profiles.json`；它们是远端数据缓存，不是仓库内 bundled resource 文件。
 - 自定义备份项是 Backup 自己的 source of truth，不复用 SSH/WSL file mappings；保存路径时优先使用 `~/...` 或 `%APPDATA%/...` 这类可迁移格式。
+- 自定义备份项目录条目支持 `exclude_patterns`（正则数组，`file` 类型忽略）：对相对于条目根的 `/` 分隔路径做标准正则搜索（`is_match` 子串语义、区分大小写，UI 提示用户用 `^`/`$` 锚定）；命中目录时用 `WalkDir::filter_entry` 整棵剪枝。只在打包阶段生效——不进 zip 则恢复天然一致，三渠道与自动备份共用同一路径。保存时 `validate_backup_custom_entry_exclude_patterns` 先编译校验，非法正则在保存（`invalidExcludePattern` 错误）时报错，而不是拖到备份/自动备份运行时；打包时防御性再编译一次。
 - 文件过滤规则 `backup_file_filter_rules` 控制哪些工具路径应从备份包中排除，以及恢复时跳过这些路径。该能力属于用户扩展配置，新用户默认不注入任何规则。持久化字段只使用 `file_path`；UI options 必须来自后端当前实际会写入 `external-configs/<tool>/` 的文件列表，并尽量使用 `~/...` 这类跨平台可迁移路径。全局 CLI 开关关闭时：optional 五工具整类不进包（过滤规则无对象）；always 三工具仍进包，过滤规则继续生效。
 - restore 后真正继续参与运行的，不只是解压出来的文件路径；任何还会被后续同步/托盘/WSL/SSH 依赖的元数据也必须保持一致。
 - 自动备份是否运行由应用设置驱动，调度器只消费设置，不自己持久化业务状态。
@@ -137,5 +138,5 @@ sequenceDiagram
 - 至少验证：restore 后关键外部配置文件落到正确位置。
 - 加密链路至少验证（`encryption.rs`/`filename.rs` 单测覆盖）：加解密往返、每次加密新 salt/nonce、错误密码/篡改/截断/空密码全部失败、magic 头识别；新旧三类文件名 + `.zip.enc` 后缀解析；恢复端到端验证错误密码时数据库零写入。
 - 涉及仓库渠道时至少验证：配置校验（owner/repo/branch/目录逃逸拒绝）；真实私库上传/列表/按 SHA 下载/删除需要真机验证，mock 不能代替。
-- 涉及自定义备份项时，至少验证：`custom-backup/manifest.json` 存在、payload 文件存在、restore 后按 `~/...` 或 `%APPDATA%/...` 写回目标路径。
+- 涉及自定义备份项时，至少验证：`custom-backup/manifest.json` 存在、payload 文件存在、restore 后按 `~/...` 或 `%APPDATA%/...` 写回目标路径；配置排除正则后，命中的文件/目录（含子目录内容）完全不进 payload，恢复后也不落盘。
 - 若本轮只改了文档或静态逻辑，也要明确说明尚未做真实备份→恢复端到端验证。

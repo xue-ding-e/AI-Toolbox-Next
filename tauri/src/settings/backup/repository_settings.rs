@@ -258,6 +258,20 @@ fn save_backup_settings_with_store(
         ));
     }
 
+    // Reject invalid custom-entry exclude regexes at save time so a typo
+    // surfaces here instead of as a failed (possibly unattended) backup.
+    if let Err(detail) =
+        crate::settings::backup::utils::validate_backup_custom_entry_exclude_patterns(
+            &payload.backup_custom_entries,
+        )
+    {
+        return Err(backup_error(
+            "invalidExcludePattern",
+            "settings.backupSettings.customEntries.excludePatternInvalid",
+            &detail,
+        ));
+    }
+
     // Only the selected repository form can edit its stored connection. Hidden
     // drafts may be incomplete or stale and must not block another channel's save.
     let repository_config = normalize(payload.repository.clone());
@@ -736,6 +750,39 @@ mod tests {
             directory: String::new(),
         };
         assert!(save_settings_and_repository(&db, &[], partial, None, "repository").is_err());
+    }
+
+    #[test]
+    fn save_rejects_invalid_custom_entry_exclude_pattern_before_touching_settings() {
+        let db = SqliteDbState::in_memory_for_test().expect("sqlite state");
+        write_record(&db, "app", &json!({ "keep_computer_awake": true }));
+        let passwords = TestPasswordStore::default();
+        let payload = BackupSettingsPayload {
+            backup_custom_entries: vec![crate::settings::types::BackupCustomEntry {
+                id: "bad-entry".into(),
+                name: "Bad Entry".into(),
+                source_path: "~/notes".into(),
+                restore_path: None,
+                entry_type: crate::settings::types::BackupCustomEntryType::Directory,
+                enabled: true,
+                exclude_patterns: vec!["[".into()],
+            }],
+            ..Default::default()
+        };
+
+        let error = save_backup_settings_with_store(&db, payload, &passwords)
+            .expect_err("invalid exclude pattern must block the save");
+        let parsed: Value = serde_json::from_str(&error).expect("frontend-readable error");
+        assert_eq!(parsed["type"], "invalidExcludePattern");
+        assert_eq!(
+            parsed["suggestion"],
+            "settings.backupSettings.customEntries.excludePatternInvalid"
+        );
+
+        // The rejected save must leave the stored settings untouched.
+        let stored = stored_app(&db);
+        assert_eq!(stored["keep_computer_awake"], true);
+        assert!(stored.get("backup_custom_entries").is_none());
     }
 
     #[test]

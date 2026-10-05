@@ -35,6 +35,8 @@ export interface BackupCustomEntry {
   restore_path: string | null;
   entry_type: BackupCustomEntryType;
   enabled: boolean;
+  /** Regex patterns excluding paths from a directory entry (relative path, `/`-separated). */
+  exclude_patterns: string[];
 }
 
 export interface BackupFileFilterRule {

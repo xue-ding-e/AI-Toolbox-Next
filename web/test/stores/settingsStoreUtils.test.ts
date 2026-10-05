@@ -128,6 +128,7 @@ test('unified backup save patch syncs every submitted field including auto-backu
       restore_path: null,
       entry_type: 'file' as const,
       enabled: true,
+      exclude_patterns: [],
     }],
     backupFileFilterRules: [{ tool: 'opencode', file_path: 'auth.json' }],
     autoBackupEnabled: true,

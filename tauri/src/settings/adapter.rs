@@ -591,16 +591,33 @@ mod tests {
                     "restore_path": "",
                     "entry_type": "file",
                     "enabled": true
+                },
+                {
+                    "id": "entry-2",
+                    "name": "Memories",
+                    "source_path": "~/.agents/memories",
+                    "restore_path": "",
+                    "entry_type": "directory",
+                    "enabled": true,
+                    "exclude_patterns": ["  ^local$ ", "", "(^|/)\\.git$"]
                 }
             ],
         }));
 
-        assert_eq!(settings.backup_custom_entries.len(), 1);
+        assert_eq!(settings.backup_custom_entries.len(), 2);
         assert_eq!(
             settings.backup_custom_entries[0].source_path,
             "~/.config/opencode/custom.json"
         );
         assert_eq!(settings.backup_custom_entries[0].restore_path, None);
+        // Legacy records without exclude_patterns load with no patterns.
+        assert!(settings.backup_custom_entries[0]
+            .exclude_patterns
+            .is_empty());
+        assert_eq!(
+            settings.backup_custom_entries[1].exclude_patterns,
+            vec!["^local$".to_string(), "(^|/)\\.git$".to_string()]
+        );
     }
 
     #[test]

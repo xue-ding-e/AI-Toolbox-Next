@@ -65,6 +65,13 @@ pub struct BackupCustomEntry {
     pub restore_path: Option<String>,
     pub entry_type: BackupCustomEntryType,
     pub enabled: bool,
+    /// Regex patterns excluding files/subdirectories from a directory entry.
+    /// Each pattern is matched (standard regex search, case-sensitive) against
+    /// the `/`-separated path relative to the entry root; a matched directory
+    /// prunes its whole subtree. Only applied to directory entries at pack
+    /// time, so restore stays consistent by construction.
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
 }
 
 /// Filter rule for excluding specific file paths from backup/restore

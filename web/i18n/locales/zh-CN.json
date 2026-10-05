@@ -929,7 +929,14 @@
         "pathHint": "支持 ~/...、%APPDATA%/... 和绝对路径。",
         "restorePathHint": "留空时使用备份路径；跨机器恢复时推荐使用 ~/... 或 %APPDATA%/...。",
         "selectFile": "选择文件",
-        "selectDirectory": "选择目录"
+        "selectDirectory": "选择目录",
+        "excludePatterns": "排除规则",
+        "excludePatternsShort": "排除",
+        "excludePatternsHint": "使用正则表达式匹配相对于备份路径的路径（以 / 分隔，区分大小写），推荐使用 ^ 和 $ 锚定；命中的文件夹会连同其中内容一起排除。例如 ^local$ 排除顶层 local 文件夹，\\.git$ 排除任意层级的 .git。",
+        "excludePatternPlaceholder": "^local$ 或 \\.git$",
+        "addExcludePattern": "添加排除规则",
+        "deleteExcludePattern": "删除这条排除规则",
+        "excludePatternInvalid": "正则表达式无效"
       },
       "fileFilterRules": {
         "title": "文件过滤规则",

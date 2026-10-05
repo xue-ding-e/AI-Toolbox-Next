@@ -53,6 +53,7 @@ interface BackupCustomEntryFormValues {
   entryType: BackupCustomEntryType;
   sourcePath: string;
   restorePath?: string;
+  excludePatterns?: string[];
 }
 
 interface FileFilterRuleFormValues {
@@ -441,6 +442,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       entryType: nextEntryType,
       sourcePath: entry?.source_path ?? '',
       restorePath: entry?.restore_path ?? '',
+      excludePatterns: entry?.exclude_patterns ?? [],
     });
     setCustomEntryModalOpen(true);
   };
@@ -471,6 +473,12 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       const restorePath = values.restorePath?.trim()
         ? await normalizeCustomEntryPath(values.restorePath)
         : null;
+      // Exclusions only apply to directories; switching to a file drops them.
+      const excludePatterns = values.entryType === 'directory'
+        ? (values.excludePatterns ?? [])
+          .map((pattern) => pattern.trim())
+          .filter((pattern) => pattern.length > 0)
+        : [];
       const nextEntry: BackupCustomEntry = {
         id: editingCustomEntry?.id ?? `custom-backup-${Date.now()}`,
         name: values.name.trim(),
@@ -478,6 +486,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         restore_path: restorePath,
         entry_type: values.entryType,
         enabled: editingCustomEntry?.enabled ?? true,
+        exclude_patterns: excludePatterns,
       };
 
       setCurrentBackupCustomEntries((entries) => {
@@ -901,6 +910,14 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                                   {t('settings.backupSettings.customEntries.restorePathShort')}: {entry.restore_path}
                                 </Typography.Text>
                               )}
+                              {entry.entry_type === 'directory' && entry.exclude_patterns.length > 0 && (
+                                <Typography.Text
+                                  className={styles.pathLine}
+                                  ellipsis={{ tooltip: entry.exclude_patterns.join(', ') }}
+                                >
+                                  {t('settings.backupSettings.customEntries.excludePatternsShort')}: {entry.exclude_patterns.join(', ')}
+                                </Typography.Text>
+                              )}
                             </Space>
                           )}
                         />
@@ -1107,6 +1124,66 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         >
           <Input placeholder={t('settings.backupSettings.customEntries.restorePathPlaceholder')} />
         </Form.Item>
+
+        {customEntryType === 'directory' && (
+          <Form.Item
+            label={t('settings.backupSettings.customEntries.excludePatterns')}
+            extra={t('settings.backupSettings.customEntries.excludePatternsHint')}
+          >
+            <Form.List name="excludePatterns">
+              {(fields, { add, remove }) => (
+                <div className={styles.excludePatternsList}>
+                  {fields.map((field) => (
+                    <div key={field.key} className={styles.excludePatternsRow}>
+                      <Form.Item
+                        {...field}
+                        rules={[
+                          {
+                            validator: (_, value: string) => {
+                              const pattern = (value ?? '').trim();
+                              if (!pattern) {
+                                return Promise.resolve();
+                              }
+                              try {
+                                new RegExp(pattern);
+                                return Promise.resolve();
+                              } catch {
+                                return Promise.reject(new Error(
+                                  t('settings.backupSettings.customEntries.excludePatternInvalid'),
+                                ));
+                              }
+                            },
+                          },
+                        ]}
+                      >
+                        <Input
+                          placeholder={t('settings.backupSettings.customEntries.excludePatternPlaceholder')}
+                        />
+                      </Form.Item>
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={() => remove(field.name)}
+                        aria-label={t('settings.backupSettings.customEntries.deleteExcludePattern')}
+                      />
+                    </div>
+                  ))}
+                  <Button
+                    type="dashed"
+                    size="small"
+                    block
+                    icon={<PlusOutlined />}
+                    onClick={() => add('')}
+                  >
+                    {t('settings.backupSettings.customEntries.addExcludePattern')}
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+          </Form.Item>
+        )}
       </Form>
     </Modal>
     <Modal

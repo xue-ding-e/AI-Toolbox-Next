@@ -929,7 +929,14 @@
         "pathHint": "Supports ~/..., %APPDATA%/..., and absolute paths.",
         "restorePathHint": "When empty, the backup path is used. For cross-device restore, prefer ~/... or %APPDATA%/....",
         "selectFile": "Select File",
-        "selectDirectory": "Select Folder"
+        "selectDirectory": "Select Folder",
+        "excludePatterns": "Exclude Rules",
+        "excludePatternsShort": "Exclude",
+        "excludePatternsHint": "Regex patterns matched against the path relative to the backup path (/-separated, case-sensitive); anchors ^ and $ are recommended. A matched folder is excluded with its contents. For example, ^local$ excludes the top-level local folder, \\.git$ excludes .git at any depth.",
+        "excludePatternPlaceholder": "^local$ or \\.git$",
+        "addExcludePattern": "Add Exclude Rule",
+        "deleteExcludePattern": "Delete this exclude rule",
+        "excludePatternInvalid": "Invalid regular expression"
       },
       "fileFilterRules": {
         "title": "File Filter Rules",

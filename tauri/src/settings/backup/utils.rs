@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
@@ -1946,7 +1947,52 @@ pub fn normalize_backup_custom_entry(entry: &BackupCustomEntry) -> BackupCustomE
         restore_path,
         entry_type: entry.entry_type.clone(),
         enabled: entry.enabled,
+        exclude_patterns: entry
+            .exclude_patterns
+            .iter()
+            .map(|pattern| pattern.trim().to_string())
+            .filter(|pattern| !pattern.is_empty())
+            .collect(),
     }
+}
+
+/// Compile a directory entry's exclude patterns into regexes.
+///
+/// Patterns are matched against the `/`-separated path relative to the entry
+/// root (case-sensitive, standard regex search semantics: unanchored patterns
+/// match anywhere in the relative path). Invalid patterns fail the operation
+/// instead of silently not excluding anything.
+pub fn compile_custom_entry_exclude_patterns(
+    entry_name: &str,
+    patterns: &[String],
+) -> Result<Vec<Regex>, String> {
+    patterns
+        .iter()
+        .map(|pattern| pattern.trim())
+        .filter(|pattern| !pattern.is_empty())
+        .map(|pattern| {
+            Regex::new(pattern).map_err(|error| {
+                format!(
+                    "Custom backup entry '{}' has an invalid exclude pattern '{}': {}",
+                    entry_name, pattern, error
+                )
+            })
+        })
+        .collect()
+}
+
+/// Validate exclude patterns of all enabled directory entries before saving.
+/// Catching a typo at save time keeps it from surfacing later as a failed
+/// backup or a silently missing exclusion in an unattended auto-backup run.
+pub fn validate_backup_custom_entry_exclude_patterns(
+    entries: &[BackupCustomEntry],
+) -> Result<(), String> {
+    for entry in entries.iter().filter(|entry| entry.enabled) {
+        if matches!(entry.entry_type, BackupCustomEntryType::Directory) {
+            compile_custom_entry_exclude_patterns(&entry.name, &entry.exclude_patterns)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve_backup_storage_path(storage_path: &str) -> Result<PathBuf, String> {
@@ -2141,11 +2187,33 @@ pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
                     ));
                 }
 
+                let exclude_regexes =
+                    compile_custom_entry_exclude_patterns(&entry.name, &entry.exclude_patterns)?;
+
                 let payload_path = format!("{}/", payload_base);
                 zip.add_directory(&payload_path, options)
                     .map_err(|e| format!("Failed to add custom backup directory payload: {}", e))?;
 
-                for entry_result in WalkDir::new(&source_path) {
+                // A matched directory is pruned with its whole subtree; the root
+                // itself is never matched. Path errors keep the entry so the main
+                // loop can report them instead of silently pruning it.
+                let walker = WalkDir::new(&source_path)
+                    .into_iter()
+                    .filter_entry(|file_entry| {
+                        if file_entry.depth() == 0 || exclude_regexes.is_empty() {
+                            return true;
+                        }
+                        let Ok(Some(relative_path)) =
+                            relative_path_for_zip(file_entry.path(), &source_path)
+                        else {
+                            return true;
+                        };
+                        !exclude_regexes
+                            .iter()
+                            .any(|regex| regex.is_match(&relative_path))
+                    });
+
+                for entry_result in walker {
                     let file_entry = entry_result
                         .map_err(|e| format!("Failed to read custom backup entry: {}", e))?;
                     let path = file_entry.path();
@@ -3533,7 +3601,7 @@ mod tests {
         external_config_tool_from_zip_entry, get_codex_prompt_backup_zip_path,
         get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
         is_always_backup_cli_tool, is_filesystem_root_directory, is_optional_backup_cli_tool,
-        normalize_backup_storage_path, normalize_restore_entry_name,
+        normalize_backup_custom_entry, normalize_backup_storage_path, normalize_restore_entry_name,
         parse_post_restore_resync_wsl_modules, record_restored_external_config_wsl_module,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
         should_exclude_from_backup, should_filter_external_config_entry,
@@ -4048,6 +4116,7 @@ mod tests {
             restore_path: None,
             entry_type: BackupCustomEntryType::File,
             enabled: true,
+            exclude_patterns: Vec::new(),
         }];
 
         let zip_data = build_zip(&entries);
@@ -4087,6 +4156,7 @@ mod tests {
             restore_path: None,
             entry_type: BackupCustomEntryType::Directory,
             enabled: true,
+            exclude_patterns: Vec::new(),
         }];
 
         let error = add_custom_backup_entries_to_zip(&mut zip, &entries, options)
@@ -4111,6 +4181,7 @@ mod tests {
             restore_path: Some(restore_dir.to_string_lossy().to_string()),
             entry_type: BackupCustomEntryType::Directory,
             enabled: true,
+            exclude_patterns: Vec::new(),
         }];
 
         let zip_data = build_zip(&entries);
@@ -4125,6 +4196,139 @@ mod tests {
         assert_eq!(
             fs::read_to_string(restore_dir.join("extra.txt")).expect("read extra"),
             "keep"
+        );
+    }
+
+    #[test]
+    fn custom_directory_entry_excludes_matching_files_and_prunes_directories() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_dir = temp_dir.path().join("source");
+        let restore_dir = temp_dir.path().join("restore");
+        fs::create_dir_all(source_dir.join("local")).expect("create local");
+        fs::write(source_dir.join("local").join("secrets.md"), "secret").expect("write secret");
+        fs::create_dir_all(source_dir.join("nested").join(".git")).expect("create nested .git");
+        fs::write(source_dir.join("nested").join(".git").join("config"), "git").expect("write git");
+        fs::create_dir_all(source_dir.join("keep")).expect("create keep");
+        fs::write(source_dir.join("keep").join("notes.md"), "notes").expect("write notes");
+        fs::write(source_dir.join("debug.log"), "log").expect("write log");
+
+        let entries = vec![BackupCustomEntry {
+            id: "exclude-entry".to_string(),
+            name: "Exclude Entry".to_string(),
+            source_path: source_dir.to_string_lossy().to_string(),
+            restore_path: Some(restore_dir.to_string_lossy().to_string()),
+            entry_type: BackupCustomEntryType::Directory,
+            enabled: true,
+            exclude_patterns: vec![
+                "^local$".to_string(),
+                r"(^|/)\.git$".to_string(),
+                r"\.log$".to_string(),
+            ],
+        }];
+
+        let zip_data = build_zip(&entries);
+        let mut archive = ZipArchive::new(Cursor::new(zip_data)).expect("zip archive");
+        let payload_dir = "custom-backup/payload/0000-exclude-entry/";
+        let mut names = Vec::new();
+        for index in 0..archive.len() {
+            names.push(
+                archive
+                    .by_index(index)
+                    .expect("payload index")
+                    .name()
+                    .to_string(),
+            );
+        }
+        assert!(
+            names
+                .iter()
+                .any(|name| name == &format!("{}keep/notes.md", payload_dir)),
+            "kept file should be packed: {:?}",
+            names
+        );
+        assert!(!names.iter().any(|name| name.contains("local")));
+        assert!(!names.iter().any(|name| name.contains(".git")));
+        assert!(!names.iter().any(|name| name.contains("debug.log")));
+
+        restore_custom_backup_entries(&mut archive).expect("restore custom entries");
+        assert_eq!(
+            fs::read_to_string(restore_dir.join("keep").join("notes.md")).expect("read restored"),
+            "notes"
+        );
+        assert!(!restore_dir.join("local").exists());
+        assert!(!restore_dir.join("nested").join(".git").exists());
+        assert!(!restore_dir.join("debug.log").exists());
+    }
+
+    #[test]
+    fn custom_directory_entry_invalid_exclude_pattern_is_rejected() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir).expect("create source");
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(&mut buffer);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let entries = vec![BackupCustomEntry {
+            id: "bad-pattern".to_string(),
+            name: "Bad Pattern".to_string(),
+            source_path: source_dir.to_string_lossy().to_string(),
+            restore_path: None,
+            entry_type: BackupCustomEntryType::Directory,
+            enabled: true,
+            exclude_patterns: vec!["[".to_string()],
+        }];
+
+        let error = add_custom_backup_entries_to_zip(&mut zip, &entries, options)
+            .expect_err("invalid pattern should be rejected");
+        assert!(error.contains("invalid exclude pattern"));
+        assert!(error.contains("Bad Pattern"));
+    }
+
+    #[test]
+    fn custom_file_entry_ignores_exclude_patterns() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_path = temp_dir.path().join("custom.json");
+        fs::write(&source_path, "{\"ok\":true}").expect("write source");
+
+        let entries = vec![BackupCustomEntry {
+            id: "file-with-patterns".to_string(),
+            name: "File With Patterns".to_string(),
+            source_path: source_path.to_string_lossy().to_string(),
+            restore_path: None,
+            entry_type: BackupCustomEntryType::File,
+            enabled: true,
+            exclude_patterns: vec!["custom".to_string()],
+        }];
+
+        let zip_data = build_zip(&entries);
+        let mut archive = ZipArchive::new(Cursor::new(zip_data)).expect("zip archive");
+        assert!(archive
+            .by_name("custom-backup/payload/0000-file-with-patterns/custom.json")
+            .is_ok());
+    }
+
+    #[test]
+    fn normalize_backup_custom_entry_trims_exclude_patterns() {
+        let entry = BackupCustomEntry {
+            id: "trim".to_string(),
+            name: "Trim".to_string(),
+            source_path: "~/notes".to_string(),
+            restore_path: None,
+            entry_type: BackupCustomEntryType::Directory,
+            enabled: true,
+            exclude_patterns: vec![
+                "  ^local$  ".to_string(),
+                "   ".to_string(),
+                r"\.git$".to_string(),
+            ],
+        };
+
+        let normalized = normalize_backup_custom_entry(&entry);
+        assert_eq!(
+            normalized.exclude_patterns,
+            vec!["^local$".to_string(), r"\.git$".to_string()]
         );
     }
 
