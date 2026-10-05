@@ -85,6 +85,7 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   kimi: 'subModules.kimi',
   openclaw: 'subModules.openclaw',
   geminicli: 'subModules.geminicli',
+  antigravity: 'subModules.antigravity',
   pi: 'subModules.pi',
   oh_my_pi: 'subModules.ohMyPi',
   claudedesktop: 'subModules.claudedesktop',

@@ -510,6 +510,16 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'omp';
     case 'codex':
       return 'Codex';
+    case 'grok':
+      return 'Grok';
+    case 'kimi':
+      return 'Kimi';
+    case 'claudedesktop':
+      return 'Claude Desktop';
+    case 'hermes':
+      return 'Hermes';
+    case 'antigravity':
+      return 'Antigravity';
     default:
       return 'Assistant';
   }

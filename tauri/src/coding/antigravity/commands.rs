@@ -749,6 +749,7 @@ pub async fn save_antigravity_common_config(
 
     let db_val = adapter::to_db_value_common(&input.config, target_root.as_deref());
     db.with_conn(|conn| db_put(conn, DbTable::AntigravityCommonConfig, "common", &db_val))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(db, "antigravity").await?;
 
     let applied_provider = db
         .with_conn(|conn| {

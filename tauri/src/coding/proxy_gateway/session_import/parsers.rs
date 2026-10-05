@@ -625,7 +625,29 @@ pub(super) fn timestamp(value: &Value) -> Option<i64> {
     })
 }
 
-pub(super) fn read_jsonl(path: &Path, mut visit: impl FnMut(usize, Value)) -> Result<bool, String> {
+pub(super) fn read_jsonl(path: &Path, visit: impl FnMut(usize, Value)) -> Result<bool, String> {
+    read_jsonl_with_policy(path, false, visit)
+}
+
+/// Tolerant variant for append-then-compact transcripts: an unparseable row in
+/// the middle of the file is skipped instead of failing the whole read.
+///
+/// Antigravity's `transcript_full.jsonl` is rewritten by compaction, so a crash
+/// mid-flush can leave a broken row anywhere. `session_manager::antigravity`
+/// reads the same file with the same skip semantics; keeping both sides aligned
+/// avoids one surface importing a session the other renders fine.
+pub(super) fn read_jsonl_lenient(
+    path: &Path,
+    visit: impl FnMut(usize, Value),
+) -> Result<bool, String> {
+    read_jsonl_with_policy(path, true, visit)
+}
+
+fn read_jsonl_with_policy(
+    path: &Path,
+    lenient: bool,
+    mut visit: impl FnMut(usize, Value),
+) -> Result<bool, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut reader: Box<dyn BufRead> = if path
         .extension()
@@ -647,6 +669,7 @@ pub(super) fn read_jsonl(path: &Path, mut visit: impl FnMut(usize, Value)) -> Re
                 match serde_json::from_str(&line) {
                     Ok(value) => visit(index, value),
                     Err(_) if !line.ends_with('\n') => return Ok(true),
+                    Err(_) if lenient => {}
                     Err(error) if !line.trim().is_empty() => {
                         return Err(format!(
                             "Invalid session record at line {}: {error}",

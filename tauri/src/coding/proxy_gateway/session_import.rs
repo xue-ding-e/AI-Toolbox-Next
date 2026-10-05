@@ -382,6 +382,7 @@ fn source_identity(cli_key: GatewayUsageTool, path: &Path) -> String {
             | GatewayUsageTool::KimiCli
             | GatewayUsageTool::ClaudeDesktop
             | GatewayUsageTool::OpenClaw
+            | GatewayUsageTool::Antigravity
     ) {
         // Generic basenames (audit, updates, wire, session) occur in many
         // directories. The file cursor is physical; invocation IDs are native.

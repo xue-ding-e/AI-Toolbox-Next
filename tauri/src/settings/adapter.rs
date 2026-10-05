@@ -672,6 +672,8 @@ mod tests {
     #[test]
     fn visible_tabs_pre_antigravity_default_is_migrated() {
         let settings = from_db_value(json!({
+            // The historical default that predates Antigravity, not the current
+            // baseline: the migration must recognize it and append the new tab.
             "visible_tabs": [
                 "opencode",
                 "claudecode",
@@ -679,7 +681,6 @@ mod tests {
                 "codex",
                 "grok",
                 "geminicli",
-                "antigravity",
                 "kimi",
                 "openclaw",
                 "pi",

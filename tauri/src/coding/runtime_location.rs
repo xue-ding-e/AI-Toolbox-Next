@@ -1537,15 +1537,40 @@ pub async fn get_antigravity_settings_path_async(
 /// This is NOT derived from the runtime root directory: `agy` reads global
 /// rules from `~/.gemini/config/GEMINI.md` regardless of
 /// `ANTIGRAVITY_CLI_HOME` or the in-app custom root directory. It only depends
-/// on `$HOME`, so no DB access or cache refresh is required here.
-pub fn get_antigravity_prompt_path_sync(_db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+/// on `$HOME`.
+///
+/// The one exception is WSL Direct: there `$HOME` is the Linux home, so the
+/// rules file must be resolved inside the distribution. `linux_user_root`
+/// carries that home (e.g. `/home/alice`) and is independent of the module's
+/// runtime root, which is why this cannot reuse `location.host_path`.
+fn antigravity_prompt_path_for_location(location: &RuntimeLocationInfo) -> PathBuf {
+    if location.mode == RuntimeLocationMode::WslDirect {
+        if let Some(wsl) = location.wsl.as_ref() {
+            let linux_path = expand_home_from_user_root(
+                wsl.linux_user_root.as_deref(),
+                "~/.gemini/config/GEMINI.md",
+            );
+            if !linux_path.starts_with('~') {
+                return build_windows_unc_path(&wsl.distro, &linux_path);
+            }
+        }
+    }
     antigravity::get_antigravity_prompt_path()
+        .unwrap_or_else(|_| PathBuf::from(antigravity::DEFAULT_ANTIGRAVITY_PROMPT_FILE))
+}
+
+pub fn get_antigravity_prompt_path_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
+    Ok(antigravity_prompt_path_for_location(
+        &get_antigravity_runtime_location_sync(db)?,
+    ))
 }
 
 pub async fn get_antigravity_prompt_path_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<PathBuf, String> {
-    get_antigravity_prompt_path_sync(db)
+    Ok(antigravity_prompt_path_for_location(
+        &get_antigravity_runtime_location_async(db).await?,
+    ))
 }
 
 pub fn get_antigravity_tmp_dir_sync(db: &crate::db::SqliteDbState) -> Result<PathBuf, String> {
@@ -2278,7 +2303,8 @@ mod tests {
         get_claude_mcp_config_path_from_location, get_claude_mcp_config_path_sync,
         get_claude_plugin_config_path_async, get_claude_plugin_config_path_sync,
         get_claude_plugins_dir_async, get_claude_plugins_dir_sync, get_claude_prompt_path_async,
-        get_claude_prompt_path_sync, get_claude_runtime_location_async,
+        get_antigravity_prompt_path_async, get_claude_prompt_path_sync,
+        get_claude_runtime_location_async,
         get_claude_runtime_location_sync, get_claude_settings_path_async,
         get_claude_settings_path_sync, get_claude_wsl_claude_json_path_async,
         get_claude_wsl_target_path_async, get_omo_config_path_async,
@@ -2523,6 +2549,34 @@ mod tests {
         assert_eq!(
             unified.to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\home\tester\.omo\omo.jsonc"
+        );
+    }
+
+    #[tokio::test]
+    async fn antigravity_prompt_path_wsl_direct_uses_wsl_home() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        let location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::WslDirect,
+            source: "custom".to_string(),
+            host_path: PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\tester\.gemini\antigravity-cli",
+            ),
+            wsl: Some(WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/.gemini/antigravity-cli".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        };
+        set_cached_runtime_location("antigravity", location);
+
+        let prompt_path = get_antigravity_prompt_path_async(&db).await.unwrap();
+
+        // The rules file depends on $HOME, not on the module runtime root.
+        assert_eq!(
+            prompt_path.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\.gemini\config\GEMINI.md"
         );
     }
 

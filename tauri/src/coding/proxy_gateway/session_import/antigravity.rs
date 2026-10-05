@@ -1,4 +1,4 @@
-use super::parsers::{native_record, read_jsonl, timestamp, ParsedSession};
+use super::parsers::{native_record, read_jsonl_lenient, timestamp, ParsedSession};
 use super::{GatewayUsageTool, SessionUsageGranularity, TokenUsage};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -176,7 +176,7 @@ pub(super) fn parse(path: &Path, fallback: i64) -> Result<ParsedSession, String>
     let mut started_at: Option<i64> = None;
     let mut records = BTreeMap::new();
 
-    let _pending = read_jsonl(path, |_line_idx, value| {
+    let _pending = read_jsonl_lenient(path, |_line_idx, value| {
         if started_at.is_none() {
             started_at = timestamp(&value);
         }

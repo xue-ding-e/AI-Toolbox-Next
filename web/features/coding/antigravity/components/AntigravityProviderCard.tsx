@@ -146,7 +146,7 @@ const AntigravityProviderCard: React.FC<AntigravityProviderCardProps> = ({
                         justifyContent: 'space-between',
                         padding: '6px 10px',
                         background: account.isApplied
-                          ? 'var(--color-primary-bg, #e6f4ff)'
+                          ? 'var(--ant-color-primary-bg, #e6f4ff)'
                           : 'var(--color-bg-elevated, #fafafa)',
                         border: account.isApplied
                           ? '1px solid var(--ant-color-primary-border, #91caff)'
@@ -157,7 +157,10 @@ const AntigravityProviderCard: React.FC<AntigravityProviderCardProps> = ({
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
                         <Text strong style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {account.email || account.name}
+                          {account.email
+                            || (account.isVirtual
+                              ? t('antigravity.provider.officialAccountLocal')
+                              : account.name)}
                         </Text>
                         {account.planType && (
                           <Tag style={{ margin: 0, fontSize: 10 }}>{account.planType}</Tag>
