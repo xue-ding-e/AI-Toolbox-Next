@@ -1983,6 +1983,12 @@ pub async fn get_custom_root_dir_path_info(
                     .ok()?;
             (source == "custom").then(|| config_dir.to_string_lossy().to_string())
         }
+        "zcode" => {
+            let location = runtime_location::get_zcode_runtime_location_async(db)
+                .await
+                .ok()?;
+            (location.source == "custom").then(|| location.host_path.to_string_lossy().to_string())
+        }
         "dsh" => {
             let (config_dir, source) = crate::coding::dsh::get_dsh_config_dir_from_db_async(db)
                 .await
@@ -2838,6 +2844,7 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
             "%localappdata%/hermes/",
         ],
         "dsh" => &["~/.dsh/"],
+        "zcode" => &["~/.zcode/"],
         "claude_desktop" => &[
             "%LOCALAPPDATA%/Claude/",
             "%localappdata%/Claude/",

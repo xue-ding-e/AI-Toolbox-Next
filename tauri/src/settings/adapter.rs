@@ -358,6 +358,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "openclaw",
         "pi",
         "oh_my_pi",
+        "omo_native",
         "hermes",
         "dsh",
         "gateway",

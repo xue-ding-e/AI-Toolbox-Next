@@ -11,18 +11,14 @@ pub(crate) const ZCODE_DEFAULT_ROOT_DIR_NAME: &str = ".zcode";
 /// subset of (by `providerId`), not the whole document.
 pub(crate) const ZCODE_PROVIDER_CONFIG_RELATIVE_PATH: &str = "v2/provider_config.json";
 
-/// Legacy provider registry. Read-only: used to detect that the user has not
-/// migrated yet, and to seed a provider list on first import.
-pub(crate) const ZCODE_LEGACY_CONFIG_RELATIVE_PATH: &str = "v2/config.json";
-
 /// Desktop settings (locale, workspace list, `dataBaseDir`, plan selection).
 pub(crate) const ZCODE_SETTING_RELATIVE_PATH: &str = "v2/setting.json";
 
-/// Account credentials. Values are `enc:v1:` AES-256-GCM ciphertexts.
-pub(crate) const ZCODE_CREDENTIALS_RELATIVE_PATH: &str = "v2/credentials.json";
-
 /// CLI configuration: MCP servers, hooks, feature switches.
 pub(crate) const ZCODE_CLI_CONFIG_RELATIVE_PATH: &str = "cli/config.json";
+
+/// The CLI's session and usage database.
+pub(crate) const ZCODE_CLI_DB_RELATIVE_PATH: &str = "cli/db/db.sqlite";
 
 /// Global rules file. Unlike Codex there is no `AGENTS.override.md` sibling.
 pub(crate) const ZCODE_PROMPT_FILE_NAME: &str = "AGENTS.md";
@@ -35,9 +31,6 @@ pub(crate) const ZCODE_SESSIONS_RELATIVE_PATH: &str = "v2/sessions";
 
 /// Absolute data-root override honored by both the desktop app and the CLI.
 pub(crate) const ZCODE_DATA_BASE_DIR_ENV: &str = "ZCODE_DATA_BASE_DIR";
-
-/// Overrides the machine-derived credential encryption secret.
-pub(crate) const ZCODE_CREDENTIAL_SECRET_ENV: &str = "ZCODE_CREDENTIAL_SECRET";
 
 /// Prefix reserved by ZCode for built-in account providers. Rules carrying it
 /// reject `config.access` overrides and cannot be disabled.

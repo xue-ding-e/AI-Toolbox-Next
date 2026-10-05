@@ -343,6 +343,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "hermes-config"
             | "dsh-mcp"
             | "claude-desktop-config"
+            | "zcode-cli-config"
     )
 }
 

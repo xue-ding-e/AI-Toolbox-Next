@@ -3269,8 +3269,10 @@ async fn resolve_context(
                 .await?;
             let data_root = runtime_location.host_path;
             Ok(ToolSessionContext::Zcode {
-                sqlite_db_path: data_root.join("cli/db/db.sqlite"),
-                desktop_sessions_root: data_root.join("v2/sessions"),
+                sqlite_db_path: data_root
+                    .join(crate::coding::zcode::constants::ZCODE_CLI_DB_RELATIVE_PATH),
+                desktop_sessions_root: data_root
+                    .join(crate::coding::zcode::constants::ZCODE_SESSIONS_RELATIVE_PATH),
                 data_root,
             })
         }

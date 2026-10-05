@@ -245,6 +245,7 @@ fn wsl_module_for_reapply_label(label: &str) -> Option<&'static str> {
         "claude_desktop" => Some("claude_desktop"),
         "hermes" => Some("hermes"),
         "dsh" => Some("dsh"),
+        "zcode" => Some("zcode"),
         _ => None,
     }
 }
@@ -798,37 +799,38 @@ async fn reapply_zcode<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult {
         });
 
     if let Some(provider) = selection {
-        let settings = serde_json::from_str::<zcode::types::ZcodeSettingsConfig>(
-            &provider.settings_config,
-        )
-        .ok()
-        .and_then(|settings| {
+        let mut settings =
+            serde_json::from_str::<zcode::types::ZcodeSettingsConfig>(&provider.settings_config).ok();
+        let model_id = settings.as_ref().and_then(|settings| {
             settings
                 .models
                 .iter()
                 .find(|model| model.is_default)
                 .or(settings.models.first())
-                .map(|model| (settings.provider_id.clone(), model.model_id.clone()))
+                .map(|model| model.model_id.clone())
         });
-        match settings {
-            Some((provider_id, model_id)) => {
-                apply_record(
-                    &mut result,
-                    "provider",
-                    Some(provider_id),
-                    |provider_id| async move {
-                        let model_id = model_id.clone();
-                        zcode::commands::select_zcode_provider_internal_without_events(
-                            &db,
-                            &provider_id,
-                            &model_id,
-                        )
-                        .await
-                    },
-                )
+        match (settings.as_mut(), model_id) {
+            (Some(settings), Some(model_id)) => {
+                let provider_id = settings.provider_id.clone();
+                let selected_provider_id = provider_id.clone();
+                apply_record(&mut result, "provider", Some(provider_id), |_| async move {
+                    // Rebuild the registry entry as well as the selection: a
+                    // registry replaced or hand-edited while the app was closed
+                    // would otherwise keep naming a missing model.
+                    zcode::commands::project_zcode_provider_internal_without_events(
+                        &db, settings,
+                    )
+                    .await?;
+                    zcode::commands::select_zcode_provider_internal_without_events(
+                        &db,
+                        &selected_provider_id,
+                        &model_id,
+                    )
+                    .await
+                })
                 .await;
             }
-            None => result
+            _ => result
                 .warnings
                 .push("provider:applied provider has no models to select".to_string()),
         }

@@ -334,6 +334,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "kimi-mcp"
             | "hermes-config"
             | "dsh-mcp"
+            | "zcode-cli-config"
     )
 }
 

@@ -151,20 +151,27 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
         settingsConfig: JSON.stringify(settings),
         notes: values.notes ?? null,
       };
+      // The DB row alone does not reach ZCode; every save must also project the
+      // provider into the registry so the desktop app can see the new values.
       if (provider) {
-        await updateZcodeProvider({
+        const updated = await updateZcodeProvider({
           ...provider,
           name: payload.name,
           settingsConfig: payload.settingsConfig,
           notes: payload.notes,
+        });
+        await saveZcodeProvider({
+          id: updated.id,
+          name: updated.name,
+          category: updated.category,
+          settingsConfig: updated.settingsConfig,
+          notes: updated.notes,
         });
       } else {
         const created = await createZcodeProvider({
           ...payload,
           id: providerId,
         });
-        // The provider row alone does not reach ZCode; project it into the
-        // registry so the desktop app can actually see it.
         await saveZcodeProvider({
           id: created.id,
           name: created.name,

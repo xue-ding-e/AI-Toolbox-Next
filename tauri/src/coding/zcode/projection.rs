@@ -347,6 +347,25 @@ pub fn set_default_model_selection(base: &mut Value, provider_id: &str, model_id
     );
 }
 
+/// Drops `defaultModelSelection` when it still points at `provider_id`.
+///
+/// Removing a provider otherwise leaves the selection dangling, and ZCode
+/// refuses to start with a selection naming a provider that no longer exists.
+pub fn clear_default_model_selection_for(base: &mut Value, provider_id: &str) {
+    let Some(config) = config_mut(base) else {
+        return;
+    };
+    if config
+        .get(DEFAULT_MODEL_SELECTION_KEY)
+        .and_then(|selection| selection.get("providerId"))
+        .and_then(Value::as_str)
+        != Some(provider_id)
+    {
+        return;
+    }
+    config.remove(DEFAULT_MODEL_SELECTION_KEY);
+}
+
 /// Reads the currently selected provider id, if any.
 pub fn read_default_provider_id(base: &Value) -> Option<String> {
     base.get("config")?
@@ -685,5 +704,19 @@ mod tests {
         );
         let keys: Vec<&String> = access.as_object().unwrap().keys().collect();
         assert_eq!(keys.len(), 3, "access must carry no extra keys: {keys:?}");
+    }
+
+    #[test]
+    fn clearing_the_selection_only_touches_the_matching_provider() {
+        let mut base = empty_provider_config();
+        set_default_model_selection(&mut base, "custom:a", "model-a");
+
+        // Another provider's selection must survive untouched.
+        clear_default_model_selection_for(&mut base, "custom:b");
+        assert_eq!(read_default_provider_id(&base).as_deref(), Some("custom:a"));
+
+        clear_default_model_selection_for(&mut base, "custom:a");
+        assert_eq!(read_default_provider_id(&base), None);
+        assert_eq!(read_default_model_id(&base), None);
     }
 }

@@ -32,6 +32,7 @@ use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::pi::tray_support as pi_tray;
 use crate::coding::skills::tray_support as skills_tray;
+use crate::coding::zcode::tray_support as zcode_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
@@ -70,6 +71,7 @@ struct TrayTexts {
     claude_desktop_header: &'static str,
     hermes_header: &'static str,
     dsh_header: &'static str,
+    zcode_header: &'static str,
     skills_header: &'static str,
     mcp_header: &'static str,
     no_config: &'static str,
@@ -164,6 +166,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             claude_desktop_header: "Claude Desktop",
             hermes_header: "Hermes",
             dsh_header: "DeepSeek Harness",
+            zcode_header: "ZCode",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  No configs",
@@ -198,6 +201,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             claude_desktop_header: "Claude Desktop",
             hermes_header: "Hermes",
             dsh_header: "DeepSeek Harness",
+            zcode_header: "ZCode",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  暂无配置",
@@ -457,6 +461,28 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                         kimi_tray::apply_kimi_prompt_config(&app_handle, &config_id).await
                     {
                         eprintln!("Failed to apply Kimi prompt: {error}");
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(row_id) = event_id.strip_prefix("zcode_provider_") {
+                let row_id = row_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) =
+                        zcode_tray::apply_zcode_provider(&app_handle, &row_id).await
+                    {
+                        eprintln!("Failed to apply ZCode provider: {error}");
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("zcode_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) =
+                        zcode_tray::apply_zcode_prompt_config(&app_handle, &config_id).await
+                    {
+                        eprintln!("Failed to apply ZCode prompt: {error}");
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
@@ -819,6 +845,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         is_tab_visible("claudedesktop") && claude_desktop_tray::is_enabled_for_tray(app).await;
     let hermes_enabled = is_tab_visible("hermes") && hermes_tray::is_enabled_for_tray(app).await;
     let dsh_enabled = is_tab_visible("dsh") && dsh_tray::is_enabled_for_tray(app).await;
+    let zcode_enabled = is_tab_visible("zcode") && zcode_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
         is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
@@ -987,6 +1014,28 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     kimi_prompt_data.title = texts.global_prompt.to_string();
+
+    let mut zcode_data = if zcode_enabled {
+        zcode_tray::get_zcode_tray_data(app).await?
+    } else {
+        zcode_tray::TrayProviderData {
+            title: texts.zcode_header.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    zcode_data.title = texts.zcode_header.to_string();
+
+    let mut zcode_prompt_data = if zcode_enabled {
+        zcode_tray::get_zcode_prompt_tray_data(app).await?
+    } else {
+        zcode_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    zcode_prompt_data.title = texts.global_prompt.to_string();
 
     let mut grok_prompt_data = if grok_enabled {
         grok_tray::get_grok_prompt_tray_data(app).await?
@@ -1457,6 +1506,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let hermes_has_prompt_items = hermes_enabled && !hermes_prompt_data.items.is_empty();
     let dsh_has_items = dsh_enabled && !dsh_data.items.is_empty();
     let dsh_has_prompt_items = dsh_enabled && !dsh_prompt_data.items.is_empty();
+    let zcode_has_items = zcode_enabled && !zcode_data.items.is_empty();
+    let zcode_has_prompt_items = zcode_enabled && !zcode_prompt_data.items.is_empty();
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
     let grok_has_section =
@@ -1472,6 +1523,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let claude_desktop_has_section = claude_desktop_enabled && claude_desktop_has_items;
     let hermes_has_section = hermes_enabled && (hermes_has_items || hermes_has_prompt_items);
     let dsh_has_section = dsh_enabled && (dsh_has_items || dsh_has_prompt_items);
+    let zcode_has_section = zcode_enabled && (zcode_has_items || zcode_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
         Some(build_named_prompt_submenu(
             app,
@@ -1509,6 +1561,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
     let kimi_model_submenu = if kimi_has_model_items {
         Some(build_kimi_model_submenu(app, &kimi_model_data, texts)?)
+    } else {
+        None
+    };
+    let zcode_prompt_submenu = if zcode_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "zcode",
+            &zcode_prompt_data,
+            texts,
+        )?)
     } else {
         None
     };
@@ -1812,6 +1874,27 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
+    // ZCode section (only if enabled and has items)
+    let zcode_header = if zcode_has_section {
+        Some(
+            MenuItem::with_id(app, "zcode_header", texts.zcode_header, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let zcode_provider_submenu = if zcode_has_items {
+        Some(build_named_provider_submenu(
+            app,
+            "zcode",
+            &zcode_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+
     // OpenClaw section (only if enabled and has items)
     let openclaw_header = if openclaw_has_items {
         Some(
@@ -2049,6 +2132,19 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = dsh_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add ZCode section if enabled
+    if zcode_has_section {
+        if let Some(ref header) = zcode_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = zcode_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = zcode_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2985,6 +3081,31 @@ impl NamedPromptTrayData for kimi_tray::TrayPromptData {
     }
 }
 
+impl NamedPromptTrayItem for zcode_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for zcode_tray::TrayPromptData {
+    type Item = zcode_tray::TrayPromptItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
 impl NamedPromptTrayItem for gemini_cli_tray::TrayPromptItem {
     fn id(&self) -> &str {
         &self.id
@@ -3263,6 +3384,34 @@ impl NamedProviderTrayItem for kimi_tray::TrayProviderItem {
     }
     fn is_disabled(&self) -> bool {
         self.is_disabled
+    }
+}
+
+impl NamedProviderTrayItem for zcode_tray::TrayProviderItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+    fn is_disabled(&self) -> bool {
+        self.is_disabled
+    }
+}
+
+impl NamedProviderTrayData for zcode_tray::TrayProviderData {
+    type Item = zcode_tray::TrayProviderItem;
+    fn title(&self) -> &str {
+        &self.title
+    }
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+    fn items(&self) -> &[Self::Item] {
+        &self.items
     }
 }
 

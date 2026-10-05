@@ -76,22 +76,15 @@ fn zcode_root_dir_from_db(state: &SqliteDbState) -> Result<Option<String>, Strin
 
 /// Resolves the effective ZCode data root.
 ///
-/// Precedence: in-app custom root, then the `ZCODE_DATA_BASE_DIR` process
-/// override, then the user's home directory. The desktop app persists its own
-/// `dataBaseDir` inside `setting.json`, which is read separately when the
-/// process override is absent.
+/// Delegates to the shared runtime-location chain so every caller agrees on the
+/// same directory. Resolving here independently previously skipped the shell
+/// profile and `setting.json.dataBaseDir` fallbacks, which meant the registry
+/// was read and written at a path the ZCode runtime never looks at.
 pub fn resolve_zcode_root_dir(state: &SqliteDbState) -> Result<PathBuf, String> {
     if let Some(root) = zcode_root_dir_from_db(state)? {
         return Ok(PathBuf::from(root));
     }
-    if let Ok(value) = std::env::var(ZCODE_DATA_BASE_DIR_ENV) {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed).join(ZCODE_DEFAULT_ROOT_DIR_NAME));
-        }
-    }
-    let home = dirs::home_dir().ok_or_else(|| "Cannot resolve home directory".to_string())?;
-    Ok(home.join(ZCODE_DEFAULT_ROOT_DIR_NAME))
+    Ok(crate::coding::runtime_location::resolve_zcode_root_dir_without_db())
 }
 
 pub fn zcode_provider_config_path(state: &SqliteDbState) -> Result<PathBuf, String> {
@@ -165,7 +158,11 @@ pub async fn get_zcode_common_config(
     })?;
     match record {
         Some(value) => {
-            let parsed = super::adapter::from_db_value_common(value);
+            // The stored record is snake_case, but the web layer reads camelCase
+            // keys, so convert through the API DTO rather than serializing the
+            // storage shape.
+            let record = super::adapter::from_db_value_common(value);
+            let parsed: super::types::ZcodeCommonConfig = record.into();
             Ok(serde_json::to_value(parsed).unwrap_or_else(|_| serde_json::json!({})))
         }
         None => Ok(serde_json::json!({ "config": "{}", "rootDir": Value::Null, "updatedAt": "" })),
@@ -202,6 +199,28 @@ pub fn list_zcode_providers_for_db(db: &SqliteDbState) -> Result<Vec<super::type
             .into_iter()
             .map(super::adapter::from_db_value_provider)
             .collect()
+    })
+}
+
+/// Mirrors the registry's `defaultModelSelection` into the DB `is_applied` flag.
+///
+/// The DB row id and the ZCode registry `providerId` are different namespaces,
+/// so the row is located through its `settings_config` rather than by primary
+/// key. A selection naming a provider AI Toolbox does not manage (a tray pick
+/// of `account:`/`builtin:`, for example) clears every flag, which is correct:
+/// no managed provider is the default in that case.
+fn sync_applied_flag_with_selection(db: &SqliteDbState, provider_id: &str) -> Result<(), String> {
+    let target_id = list_zcode_providers_for_db(db)?
+        .into_iter()
+        .find(|provider| {
+            serde_json::from_str::<super::types::ZcodeSettingsConfig>(&provider.settings_config)
+                .map(|settings| settings.provider_id == provider_id)
+                .unwrap_or(false)
+        })
+        .map(|provider| provider.id);
+    let now = Local::now().to_rfc3339();
+    db.with_conn_mut(|conn| {
+        db_update_applied_status(conn, DbTable::ZcodeProvider, target_id.as_deref(), &now)
     })
 }
 
@@ -322,6 +341,9 @@ pub async fn delete_zcode_provider(
             let path = zcode_provider_config_path(db)?;
             let mut base = projection::read_provider_config_base(&path);
             projection::remove_managed_provider(&mut base, &settings.provider_id);
+            // A selection pointing at the provider being removed would leave
+            // ZCode unable to resolve its default model.
+            projection::clear_default_model_selection_for(&mut base, &settings.provider_id);
             projection::atomic_write_json(&path, &base)?;
         }
     }
@@ -372,23 +394,21 @@ pub async fn toggle_zcode_provider_disabled(
     Ok(())
 }
 
-/// Creates or updates a provider and reprojects the registry.
-#[tauri::command]
-pub async fn save_zcode_provider(
-    state: tauri::State<'_, SqliteDbState>,
-    app: tauri::AppHandle,
-    provider: ZcodeProviderInput,
-) -> Result<String, String> {
-    let path = zcode_provider_config_path(&state)?;
+/// Writes one provider's rule and model rows into the registry.
+///
+/// Shared by the save command and the startup reapply pass, which must be able
+/// to rebuild a registry entry that was edited away while the app was closed.
+pub async fn project_zcode_provider_internal_without_events(
+    db: &SqliteDbState,
+    settings: &mut super::types::ZcodeSettingsConfig,
+) -> Result<(), String> {
+    let path = zcode_provider_config_path(db)?;
     if !projection::provider_config_exists(&path) {
         return Err(
             "ZCode has not migrated to the new provider registry yet. Start the ZCode desktop app once, then retry."
                 .to_string(),
         );
     }
-
-    let mut settings: super::types::ZcodeSettingsConfig = serde_json::from_str(&provider.settings_config)
-        .map_err(|error| format!("Invalid ZCode provider settings: {error}"))?;
     if projection::is_reserved_provider_id(&settings.provider_id) {
         return Err(format!(
             "Provider id '{}' is reserved by ZCode and cannot be managed here.",
@@ -402,13 +422,26 @@ pub async fn save_zcode_provider(
             super::constants::ZCODE_MANAGED_PROVIDER_ID_PREFIX
         ));
     }
-    projection::apply_personal_model_ids(&mut settings);
+    projection::apply_personal_model_ids(settings);
 
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
     let mut base = projection::read_provider_config_base(&path);
     projection::remove_managed_provider(&mut base, &settings.provider_id);
-    projection::upsert_provider_rule(&mut base, projection::build_provider_rule(&settings));
+    projection::upsert_provider_rule(&mut base, projection::build_provider_rule(settings));
     projection::push_model_rules(&mut base, &settings.provider_id, &settings.models);
-    projection::atomic_write_json(&path, &base)?;
+    projection::atomic_write_json(&path, &base)
+}
+
+/// Creates or updates a provider and reprojects the registry.
+#[tauri::command]
+pub async fn save_zcode_provider(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    provider: ZcodeProviderInput,
+) -> Result<String, String> {
+    let mut settings: super::types::ZcodeSettingsConfig = serde_json::from_str(&provider.settings_config)
+        .map_err(|error| format!("Invalid ZCode provider settings: {error}"))?;
+    project_zcode_provider_internal_without_events(state.inner(), &mut settings).await?;
 
     let _ = app.emit("config-changed", "window");
     let _ = app.emit("wsl-sync-request-zcode", ());
@@ -428,6 +461,7 @@ pub async fn delete_zcode_provider_from_file(
     let path = zcode_provider_config_path(&state)?;
     let mut base = projection::read_provider_config_base(&path);
     projection::remove_managed_provider(&mut base, &provider_id);
+    projection::clear_default_model_selection_for(&mut base, &provider_id);
     projection::atomic_write_json(&path, &base)?;
     let _ = app.emit("config-changed", "window");
     let _ = app.emit("wsl-sync-request-zcode", ());
@@ -471,7 +505,10 @@ pub async fn select_zcode_provider_internal_without_events(
         ));
     }
     projection::set_default_model_selection(&mut base, provider_id, model_id);
-    projection::atomic_write_json(&path, &base)
+    projection::atomic_write_json(&path, &base)?;
+    // The card's "default" badge and the startup reapply pass both read this
+    // flag, so the registry write and the DB row must move together.
+    sync_applied_flag_with_selection(db, provider_id)
 }
 
 /// Lists provider templates from the installed ZCode built-in catalog.

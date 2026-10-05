@@ -1660,6 +1660,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // ZCode sync listener
+                let app_zcode = app_handle.clone();
+                let app_zcode_clone = app_zcode.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_zcode.listen("wsl-sync-request-zcode", move |_event| {
+                        let app = app_zcode_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("zcode".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
