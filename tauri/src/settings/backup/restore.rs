@@ -786,13 +786,9 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                     continue;
                 }
 
-                // The CLI config is archived under a flat name; everything else
-                // already sits directly under the data root.
-                let restore_relative_path = if relative_path == "cli-config.json" {
-                    "cli/config.json"
-                } else {
-                    relative_path
-                };
+                // Every ZCode entry keeps its path relative to the data root,
+                // so it lands back where ZCode reads it.
+                let restore_relative_path = relative_path;
                 if !zcode_restore_dir.exists() {
                     fs::create_dir_all(&zcode_restore_dir).map_err(|e| {
                         format!("Failed to create ZCode config directory: {}", e)

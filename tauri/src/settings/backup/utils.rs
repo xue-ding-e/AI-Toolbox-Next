@@ -1064,11 +1064,6 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "hermes" if relative_path == "SOUL.md" => "~/.hermes/SOUL.md".to_string(),
         "hermes" => format!("~/.hermes/{relative_path}"),
         "dsh" => format!("~/.dsh/{relative_path}"),
-        // ZCode archives the CLI config and the skills directory under flat
-        // names, so the archive keeps no `cli/` or nested directory level.
-        "zcode" if relative_path == "cli-config.json" => {
-            "~/.zcode/cli/config.json".to_string()
-        }
         "zcode" => format!("~/.zcode/{relative_path}"),
         "claude_desktop" if relative_path == "claude_desktop_config.json" => {
             "%LOCALAPPDATA%/Claude/claude_desktop_config.json".to_string()
@@ -1243,13 +1238,28 @@ pub async fn list_backup_file_filter_path_options(
         push_backup_filter_option_for_path(&mut options, &mut seen, "antigravity", &prompt_path);
     }
     if get_zcode_provider_config_path_from_db(db).await?.is_some() {
-        push_backup_filter_option(&mut options, &mut seen, "zcode", "provider_config.json");
+        push_backup_filter_option(
+            &mut options,
+            &mut seen,
+            "zcode",
+            crate::coding::zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH,
+        );
     }
     if get_zcode_prompt_path_from_db(db).await?.is_some() {
-        push_backup_filter_option(&mut options, &mut seen, "zcode", "AGENTS.md");
+        push_backup_filter_option(
+            &mut options,
+            &mut seen,
+            "zcode",
+            crate::coding::zcode::constants::ZCODE_PROMPT_FILE_NAME,
+        );
     }
     if get_zcode_cli_config_path_from_db(db).await?.is_some() {
-        push_backup_filter_option(&mut options, &mut seen, "zcode", "cli-config.json");
+        push_backup_filter_option(
+            &mut options,
+            &mut seen,
+            "zcode",
+            crate::coding::zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH,
+        );
     }
     if let Some(skills_dir) = get_zcode_skills_dir_from_db(db).await? {
         for entry in WalkDir::new(&skills_dir) {
@@ -3506,7 +3516,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 added_zip_directories,
                 &provider_config_path,
                 "zcode",
-                "provider_config.json",
+                crate::coding::zcode::constants::ZCODE_PROVIDER_CONFIG_RELATIVE_PATH,
                 filter_rules,
                 options,
             )?;
@@ -3518,7 +3528,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 added_zip_directories,
                 &prompt_path,
                 "zcode",
-                "AGENTS.md",
+                crate::coding::zcode::constants::ZCODE_PROMPT_FILE_NAME,
                 filter_rules,
                 options,
             )?;
@@ -3530,7 +3540,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
                 added_zip_directories,
                 &cli_config_path,
                 "zcode",
-                "cli-config.json",
+                crate::coding::zcode::constants::ZCODE_CLI_CONFIG_RELATIVE_PATH,
                 filter_rules,
                 options,
             )?;
@@ -4540,6 +4550,42 @@ mod tests {
             &rules,
             "antigravity",
             "settings.json"
+        ));
+    }
+
+    /// ZCode's registry and CLI config live under `v2/` and `cli/`, so the
+    /// archive entry and the filter-rule path must both keep that level.
+    /// Flattening them restored the files where ZCode never reads them.
+    #[test]
+    fn zcode_backup_paths_keep_their_subdirectory_level() {
+        assert_eq!(
+            backup_filter_option_path("zcode", "v2/provider_config.json").as_deref(),
+            Some("~/.zcode/v2/provider_config.json")
+        );
+        assert_eq!(
+            backup_filter_option_path("zcode", "cli/config.json").as_deref(),
+            Some("~/.zcode/cli/config.json")
+        );
+        assert_eq!(
+            backup_filter_option_path("zcode", "AGENTS.md").as_deref(),
+            Some("~/.zcode/AGENTS.md")
+        );
+
+        // A rule written as the full path must normalize back to the archive's
+        // relative path so it actually matches the entry.
+        let rules = vec![BackupFileFilterRule {
+            tool: "zcode".to_string(),
+            file_path: "~/.zcode/v2/provider_config.json".to_string(),
+        }];
+        assert!(should_exclude_from_backup(
+            &rules,
+            "zcode",
+            "v2/provider_config.json"
+        ));
+        assert!(!should_exclude_from_backup(
+            &rules,
+            "zcode",
+            "AGENTS.md"
         ));
     }
 
