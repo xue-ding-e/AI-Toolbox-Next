@@ -97,13 +97,6 @@ pub fn from_db_value_prompt(value: Value) -> ZcodePromptConfig {
     }
 }
 
-pub fn to_db_value_prompt(prompt: &ZcodePromptConfig) -> Value {
-    serde_json::to_value(prompt).unwrap_or_else(|error| {
-        eprintln!("Failed to serialize ZCode prompt config: {error}");
-        json!({})
-    })
-}
-
 /// Convenience conversion used when a caller already holds the record type.
 impl From<ZcodeCommonConfigRecord> for ZcodeCommonConfig {
     fn from(record: ZcodeCommonConfigRecord) -> Self {
@@ -153,5 +146,90 @@ mod tests {
         let parsed = from_db_value_common(json!({ "id": "common", "config": "{}" }));
         assert_eq!(parsed.id, "common");
         assert_eq!(parsed.root_dir, None);
+    }
+
+    /// The web layer reads these keys verbatim, so the response shape must stay
+    /// camelCase. The stored shape (`ZcodeProviderContent`) is the opposite and
+    /// is asserted below — the two must not be confused.
+    #[test]
+    fn api_records_serialize_as_camel_case() {
+        let provider = ZcodeProvider {
+            id: "row-1".to_string(),
+            name: "DeepSeek".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: 1,
+            meta: None,
+            is_applied: true,
+            is_disabled: false,
+            created_at: "t".to_string(),
+            updated_at: "t".to_string(),
+        };
+        let value = serde_json::to_value(&provider).expect("serialize provider");
+        assert_eq!(value["settingsConfig"], json!("{}"));
+        assert_eq!(value["isApplied"], json!(true));
+        assert_eq!(value["isDisabled"], json!(false));
+        assert_eq!(value["sortIndex"], json!(1));
+        assert_eq!(value["createdAt"], json!("t"));
+        assert_eq!(value["updatedAt"], json!("t"));
+        assert!(value.get("settings_config").is_none());
+
+        let prompt = ZcodePromptConfig {
+            id: "p1".to_string(),
+            name: "Default".to_string(),
+            content: "c".to_string(),
+            is_applied: false,
+            sort_index: 2,
+            created_at: "t".to_string(),
+            updated_at: "t".to_string(),
+        };
+        let value = serde_json::to_value(&prompt).expect("serialize prompt");
+        assert_eq!(value["isApplied"], json!(false));
+        assert_eq!(value["sortIndex"], json!(2));
+
+        let common = ZcodeCommonConfig {
+            config: "{}".to_string(),
+            root_dir: Some("/tmp/zcode".to_string()),
+            updated_at: "t".to_string(),
+        };
+        let value = serde_json::to_value(&common).expect("serialize common");
+        assert_eq!(value["rootDir"], json!("/tmp/zcode"));
+    }
+
+    /// Storage keeps snake_case, and the readers accept either spelling.
+    #[test]
+    fn stored_records_stay_snake_case_and_read_both_spellings() {
+        let content = ZcodeProviderContent {
+            name: "DeepSeek".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: 1,
+            meta: None,
+            is_disabled: false,
+        };
+        let value = to_db_value_provider(&content);
+        assert!(value.get("settings_config").is_some());
+        assert!(value.get("settingsConfig").is_none());
+
+        // A camelCase row written by an older build still parses.
+        let parsed = from_db_value_provider(json!({
+            "id": "row-1",
+            "settingsConfig": "{\"providerId\":\"custom:x\"}",
+            "isApplied": true,
+            "sortIndex": 5,
+        }));
+        assert_eq!(parsed.settings_config, "{\"providerId\":\"custom:x\"}");
+        assert!(parsed.is_applied);
+        assert_eq!(parsed.sort_index, 5);
     }
 }

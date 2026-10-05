@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A ZCode provider as stored in the local SQLite JSONB table.
+/// A ZCode provider as returned to the frontend.
+///
+/// Serialized as camelCase because the web layer consumes these keys directly;
+/// storage uses [`ZcodeProviderContent`], which stays snake_case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ZcodeProvider {
     pub id: String,
     pub name: String,
@@ -22,6 +26,9 @@ pub struct ZcodeProvider {
 }
 
 /// The subset of a provider record that is written back to storage.
+///
+/// Deliberately snake_case: these keys are the stored JSONB shape, and the
+/// adapter's compatibility readers accept either spelling on the way back in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZcodeProviderContent {
     pub name: String,
@@ -268,6 +275,7 @@ pub struct ZcodeSettingsConfig {
     pub default_model_id: Option<String>,
 }
 
+/// Stored shape of the common-config record; see [`ZcodeProviderContent`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZcodeCommonConfigRecord {
     pub id: String,
@@ -321,7 +329,9 @@ pub struct ZcodePromptConfigInput {
     pub content: String,
 }
 
+/// A ZCode prompt preset as returned to the frontend (camelCase keys).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ZcodePromptConfig {
     pub id: String,
     pub name: String,
