@@ -378,6 +378,18 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("cordis"),
         mcp_field: None,
     },
+    // ZCode - supports both Skills and MCP. MCP servers live in the CLI config
+    // under the nested `mcp.servers` path, not the provider registry the page
+    // edits.
+    BuiltinTool {
+        key: "zcode",
+        display_name: "ZCode",
+        relative_skills_dir: Some("~/.zcode/skills"),
+        relative_detect_dir: Some("~/.zcode"),
+        mcp_config_path: Some("~/.zcode/cli/config.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcp.servers"),
+    },
     // Universal - agentskills.io public shared skills directory.
     // Cross-tool directory scanned by dsh (rank 500) and other agentskills.io-
     // compliant tools. Skills-only sync target; no MCP config.

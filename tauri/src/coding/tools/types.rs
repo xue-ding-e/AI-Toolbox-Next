@@ -172,6 +172,9 @@ pub struct McpFormatConfig {
     pub default_tool_type: &'static str,
     /// Whether the format supports a "timeout" field
     pub supports_timeout: bool,
+    /// Field name for the timeout value. ZCode reads `timeoutMs`; every other
+    /// tool that supports a timeout reads `timeout`.
+    pub timeout_field: &'static str,
     /// Field mappings for remote server URLs (e.g. "http" -> "httpUrl")
     pub remote_url_field_mappings: &'static [(&'static str, &'static str)],
     /// Whether missing type should be inferred from tool-specific remote URL fields

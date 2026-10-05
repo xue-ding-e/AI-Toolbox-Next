@@ -968,7 +968,10 @@ fn build_stdio_config(
         // Add timeout field if supported
         if config.supports_timeout {
             if let Some(timeout) = server.timeout {
-                result.insert("timeout".to_string(), Value::Number(timeout.into()));
+                result.insert(
+                    config.timeout_field.to_string(),
+                    Value::Number(timeout.into()),
+                );
             }
         }
 
@@ -1075,7 +1078,10 @@ fn build_http_config(
         // Add timeout field if supported
         if config.supports_timeout {
             if let Some(timeout) = server.timeout {
-                result.insert("timeout".to_string(), Value::Number(timeout.into()));
+                result.insert(
+                    config.timeout_field.to_string(),
+                    Value::Number(timeout.into()),
+                );
             }
         }
 
@@ -2850,5 +2856,50 @@ X-Test = "yes"
             expanded.server_config["args"],
             json!(["-y", "--prefer-online", "@sammysnake/fast-context-mcp"])
         );
+    }
+
+    /// ZCode reads its timeout as `timeoutMs`. Writing the generic `timeout` key
+    /// silently drops the value, because ZCode only accepts an integer
+    /// `timeoutMs` and ignores unknown fields.
+    #[test]
+    fn zcode_writes_timeout_as_timeout_ms() {
+        let config = get_format_config("zcode").expect("zcode format config");
+        let mut server = build_http_server();
+        server.timeout = Some(90);
+
+        let built = build_json_server_config(
+            &server,
+            Some(config),
+            true,
+            "zcode",
+            false,
+        )
+        .expect("build");
+
+        assert_eq!(built["timeoutMs"], json!(90));
+        assert!(built.get("timeout").is_none(), "must not emit `timeout`");
+        assert_eq!(built["url"], json!("https://example.com/mcp"));
+        // ZCode reads `headers ?? http_headers`, so the standard key round-trips.
+        assert_eq!(built["headers"]["Authorization"], json!("Bearer token"));
+    }
+
+    /// Every other tool that supports a timeout keeps the generic field name.
+    #[test]
+    fn opencode_still_writes_generic_timeout() {
+        let config = get_format_config("opencode").expect("opencode format config");
+        let mut server = build_http_server();
+        server.timeout = Some(90);
+
+        let built = build_json_server_config(
+            &server,
+            Some(config),
+            true,
+            "opencode",
+            false,
+        )
+        .expect("build");
+
+        assert_eq!(built["timeout"], json!(90));
+        assert!(built.get("timeoutMs").is_none());
     }
 }

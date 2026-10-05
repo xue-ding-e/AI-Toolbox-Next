@@ -21,6 +21,7 @@ pub const OPENCODE_FORMAT: McpFormatConfig = McpFormatConfig {
     requires_enabled: true,
     default_tool_type: "local",
     supports_timeout: true,
+    timeout_field: "timeout",
     remote_url_field_mappings: &[],
     infer_remote_type_from_url_fields_when_type_missing: false,
 };
@@ -36,6 +37,7 @@ pub const GEMINI_LIKE_FORMAT: McpFormatConfig = McpFormatConfig {
     requires_enabled: false,
     default_tool_type: "stdio",
     supports_timeout: false,
+    timeout_field: "timeout",
     remote_url_field_mappings: &[("http", "httpUrl"), ("sse", "url")],
     infer_remote_type_from_url_fields_when_type_missing: true,
 };
@@ -50,7 +52,27 @@ pub const ANTIGRAVITY_FORMAT: McpFormatConfig = McpFormatConfig {
     requires_enabled: false,
     default_tool_type: "stdio",
     supports_timeout: false,
+    timeout_field: "timeout",
     remote_url_field_mappings: &[("http", "serverUrl"), ("sse", "serverUrl")],
+    infer_remote_type_from_url_fields_when_type_missing: true,
+};
+
+/// ZCode MCP shape (servers live under `mcp.servers` in `cli/config.json`):
+/// - `stdio` keeps `command` / `args` / `env`
+/// - `http` and `sse` use `url`; ZCode also reads `http_headers` as a fallback
+///   for `headers`, so the standard `headers` key round-trips
+/// - its timeout field is `timeoutMs`, not `timeout`
+/// - `type` may be omitted (ZCode infers it from `command` / `url`), but writing
+///   it explicitly is accepted and clearer
+pub const ZCODE_FORMAT: McpFormatConfig = McpFormatConfig {
+    type_mappings: &[],
+    merge_command_args: false,
+    env_field: "env",
+    requires_enabled: false,
+    default_tool_type: "stdio",
+    supports_timeout: true,
+    timeout_field: "timeoutMs",
+    remote_url_field_mappings: &[],
     infer_remote_type_from_url_fields_when_type_missing: true,
 };
 
@@ -60,6 +82,7 @@ pub fn get_format_config(tool_key: &str) -> Option<&'static McpFormatConfig> {
         "opencode" => Some(&OPENCODE_FORMAT),
         "gemini_cli" | "qwen_code" => Some(&GEMINI_LIKE_FORMAT),
         "antigravity" | "antigravity_cli" => Some(&ANTIGRAVITY_FORMAT),
+        "zcode" => Some(&ZCODE_FORMAT),
         _ => None,
     }
 }

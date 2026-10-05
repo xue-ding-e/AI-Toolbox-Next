@@ -2002,6 +2002,9 @@ fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
         ("antigravity", "antigravity_provider"),
         ("grok", "grok_provider"),
         ("kimi", "kimi_provider"),
+        // Without this row, ZCode request rows already in the database are
+        // silently dropped from the list and the statistics.
+        ("zcode", "zcode_provider"),
     ] {
         let sql = format!("SELECT id, json_extract(data, '$.name') FROM {table}");
         let mut stmt = conn.prepare(&sql).map_err(|error| {
