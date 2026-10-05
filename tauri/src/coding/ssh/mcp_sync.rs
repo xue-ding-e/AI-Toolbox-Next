@@ -382,6 +382,8 @@ async fn strip_cmd_c_from_remote_mcp_file(
         // for the Linux SSH target.
         "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content, &identity)?,
         "dsh" => command_normalize::process_cordis_patch_yaml(&content, &identity)?,
+        // ZCode keeps Claude-shaped stdio servers under `mcp.servers`.
+        "zcode" => command_normalize::process_zcode_json(&content, false, &identity)?,
         _ => return Ok(()),
     };
 

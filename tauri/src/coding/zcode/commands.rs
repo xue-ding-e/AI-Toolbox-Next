@@ -432,16 +432,28 @@ pub async fn project_zcode_provider_internal_without_events(
     projection::atomic_write_json(&path, &base)
 }
 
-/// Creates or updates a provider and reprojects the registry.
+/// Projects a stored provider into the registry.
+///
+/// The row is re-read rather than trusting the caller's `settings_config`, so
+/// the registry can never diverge from what the provider list renders.
 #[tauri::command]
 pub async fn save_zcode_provider(
     state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
     provider: ZcodeProviderInput,
 ) -> Result<String, String> {
-    let mut settings: super::types::ZcodeSettingsConfig = serde_json::from_str(&provider.settings_config)
-        .map_err(|error| format!("Invalid ZCode provider settings: {error}"))?;
-    project_zcode_provider_internal_without_events(state.inner(), &mut settings).await?;
+    let db = state.inner();
+    let row_id = provider
+        .id
+        .as_deref()
+        .ok_or_else(|| "ZCode provider id is required to project the registry".to_string())?;
+    let stored = db
+        .with_conn(|conn| db_get(conn, DbTable::ZcodeProvider, row_id))?
+        .ok_or_else(|| format!("ZCode provider '{row_id}' not found"))?;
+    let mut settings: super::types::ZcodeSettingsConfig =
+        serde_json::from_str(&super::adapter::from_db_value_provider(stored).settings_config)
+            .map_err(|error| format!("Invalid ZCode provider settings: {error}"))?;
+    project_zcode_provider_internal_without_events(db, &mut settings).await?;
 
     let _ = app.emit("config-changed", "window");
     let _ = app.emit("wsl-sync-request-zcode", ());
@@ -458,6 +470,9 @@ pub async fn delete_zcode_provider_from_file(
     if projection::is_reserved_provider_id(&provider_id) {
         return Err(format!("Provider id '{provider_id}' is reserved by ZCode."));
     }
+    // Held across read -> write so a concurrent save cannot project from a stale
+    // snapshot and resurrect the provider this call is removing.
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
     let path = zcode_provider_config_path(&state)?;
     let mut base = projection::read_provider_config_base(&path);
     projection::remove_managed_provider(&mut base, &provider_id);

@@ -263,6 +263,42 @@ pub fn process_claude_json(
     serde_json::to_string_pretty(&root).map_err(|e| format!("Failed to serialize JSON: {}", e))
 }
 
+/// Process ZCode JSON config file content.
+///
+/// ZCode keeps its servers under `mcp.servers` (like OpenCode 2.x) but uses the
+/// Claude-style server shape — `type: "stdio"` with a string `command` plus
+/// `args` — so the Claude unwrap logic applies, only at a nested path.
+pub fn process_zcode_json(
+    content: &str,
+    wrap: bool,
+    path_transform: &impl Fn(&str) -> String,
+) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let mut root: Value =
+        json5::from_str(content).map_err(|e| format!("Failed to parse ZCode JSON: {}", e))?;
+
+    if let Some(servers) = root
+        .get_mut("mcp")
+        .and_then(|v| v.as_object_mut())
+        .and_then(|mcp| mcp.get_mut("servers"))
+        .and_then(|v| v.as_object_mut())
+    {
+        for server_config in servers.values_mut() {
+            *server_config = if wrap {
+                wrap_cmd_c(server_config)
+            } else {
+                unwrap_cmd_c(server_config)
+            };
+            transform_stdio_command(server_config, path_transform);
+        }
+    }
+
+    serde_json::to_string_pretty(&root).map_err(|e| format!("Failed to serialize JSON: {}", e))
+}
+
 /// Process OpenCode JSON/JSONC config file content
 ///
 /// OpenCode format: type=local, command=array
@@ -703,6 +739,28 @@ mcp_servers:
         assert_eq!(v["mcpServers"]["fs"]["command"], "/mnt/c/x.exe");
         // "/c" and the exe path are consumed by unwrap; args is now empty array
         assert!(v["mcpServers"]["fs"]["args"].as_array().unwrap().is_empty());
+    }
+
+    /// ZCode nests Claude-shaped servers one level down, under `mcp.servers`.
+    /// Without a dedicated processor the sync copied `cmd /c` verbatim into a
+    /// Linux target, where `cmd` does not exist.
+    #[test]
+    fn process_zcode_json_unwraps_nested_servers() {
+        let raw = r#"{"mcp":{"servers":{"fs":{"type":"stdio","command":"cmd","args":["/c","npx","-y","pkg"]}}}}"#;
+        let processed = process_zcode_json(raw, false, &identity).unwrap();
+        let v: Value = serde_json::from_str(&processed).unwrap();
+        assert_eq!(v["mcp"]["servers"]["fs"]["command"], "npx");
+        assert_eq!(v["mcp"]["servers"]["fs"]["args"], json!(["-y", "pkg"]));
+    }
+
+    /// The rest of `cli/config.json` (hooks, features) must survive the pass.
+    #[test]
+    fn process_zcode_json_preserves_unrelated_keys() {
+        let raw = r#"{"hooks":{"x":1},"mcp":{"servers":{"fs":{"type":"stdio","command":"npx","args":["-y"]}}}}"#;
+        let processed = process_zcode_json(raw, false, &identity).unwrap();
+        let v: Value = serde_json::from_str(&processed).unwrap();
+        assert_eq!(v["hooks"]["x"], json!(1));
+        assert_eq!(v["mcp"]["servers"]["fs"]["command"], "npx");
     }
 
     #[test]

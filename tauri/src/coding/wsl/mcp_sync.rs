@@ -390,6 +390,8 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
         // for the Linux-side WSL target.
         "hermes" => command_normalize::process_hermes_yaml_mcp_servers(&content, &to_wsl)?,
         "dsh" => command_normalize::process_cordis_patch_yaml(&content, &to_wsl)?,
+        // ZCode keeps Claude-shaped stdio servers under `mcp.servers`.
+        "zcode" => command_normalize::process_zcode_json(&content, false, &to_wsl)?,
         _ => return Ok(()),
     };
 
