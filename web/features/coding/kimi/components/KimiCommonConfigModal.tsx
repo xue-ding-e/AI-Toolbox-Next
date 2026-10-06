@@ -30,9 +30,12 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
   onSubmit,
 }) => {
   const { t } = useTranslation();
-  const [form] = Form.useForm<KimiCommonConfigInput>();
   const [submitting, setSubmitting] = React.useState(false);
   const [activeTab, setActiveTab] = useState('general');
+  // Both tabs hold plain controlled state rather than antd Form fields: the
+  // TOML is a raw string with no validation, and keeping it out of the Form
+  // store removes any dependence on inactive tab panes staying mounted.
+  const [toml, setToml] = useState('');
   const [swarmConfig, setSwarmConfig] = useState<KimiSecondaryModelConfig>(
     emptyKimiSecondaryModelConfig,
   );
@@ -43,10 +46,10 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
       return;
     }
     const stored = config?.config ?? '';
-    form.setFieldsValue({ config: stored });
+    setToml(stored);
     setSwarmConfig(parseKimiSecondaryModelConfig(stored));
     setActiveTab('general');
-  }, [config, form, open]);
+  }, [config, open]);
 
   // Pool options come from the applied provider's catalog; a key already stored
   // in the pool must stay selectable even when the catalog no longer lists it.
@@ -62,18 +65,17 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
   }, [modelAliasKeys, swarmConfig.models]);
 
   const handleOk = async () => {
+    const swarmError = validateKimiSecondaryModelConfig(swarmConfig);
+    if (swarmError) {
+      setActiveTab('swarm');
+      message.error(swarmError);
+      return;
+    }
     try {
-      const values = await form.validateFields();
-      const swarmError = validateKimiSecondaryModelConfig(swarmConfig);
-      if (swarmError) {
-        setActiveTab('swarm');
-        message.error(swarmError);
-        return;
-      }
       setSubmitting(true);
       // The swarm form owns `[secondary_model]`; every other line of the free
       // TOML stays byte-identical (see applyKimiSecondaryModelToml).
-      const merged = applyKimiSecondaryModelToml(values.config ?? '', swarmConfig);
+      const merged = applyKimiSecondaryModelToml(toml, swarmConfig);
       await onSubmit(buildKimiCommonConfigSubmitValues(merged));
     } catch (error) {
       // Tauri invoke rejections are plain strings, not Error instances.
@@ -84,11 +86,12 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
   };
 
   const generalTab = (
-    <Form form={form} layout="vertical">
-      <Form.Item name="config">
-        <TomlEditorFormItem placeholder={t('kimi.commonConfig.description')} />
-      </Form.Item>
-    </Form>
+    <TomlEditor
+      value={toml}
+      onChange={setToml}
+      height={300}
+      placeholder={t('kimi.commonConfig.description')}
+    />
   );
 
   const swarmTab = (
@@ -176,20 +179,5 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
     </Modal>
   );
 };
-
-// TomlEditor 与 antd Form.Item 集成的包装组件（TomlEditor 的 value 是必填 prop，
-// Form.Item 在运行时注入 value/onChange，但 TS 静态类型无法感知，需要桥接）。
-const TomlEditorFormItem: React.FC<{
-  value?: string;
-  onChange?: (value: string) => void;
-  placeholder?: string;
-}> = ({ value = '', onChange, placeholder }) => (
-  <TomlEditor
-    value={value}
-    onChange={onChange}
-    height={300}
-    placeholder={placeholder}
-  />
-);
 
 export default KimiCommonConfigModal;
