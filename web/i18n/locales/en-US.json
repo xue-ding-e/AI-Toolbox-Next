@@ -1646,6 +1646,8 @@
       "disabled": "Disabled",
       "showApiKey": "Show",
       "hideApiKey": "Hide",
+      "providerChannel": "Channel",
+      "providerChannelHint": "With a built-in channel selected, ZCode reuses that provider’s request format and model capabilities — you only supply credentials. Leave it empty to configure manually.",
       "enabled": "Enabled",
       "confirmDelete": "Delete provider \"{{name}}\"?",
       "importModalTitle": "Import used {{tool}} providers",
@@ -6109,10 +6111,7 @@
       "editTitle": "Edit Provider",
       "name": "Name",
       "providerIdHint": "Stable identifier written into ZCode. Leave blank to derive it from the name. Avoid changing it after creation.",
-      "template": "Built-in Template",
-      "templateHint": "With a template selected, ZCode reuses that provider’s request format and model capabilities — you only supply credentials.",
       "templatePlaceholder": "No template",
-      "apiType": "API Format",
       "reservedId": "The `builtin:` and `account:` prefixes are reserved by ZCode. Choose another ID."
     },
     "model": {

@@ -1646,6 +1646,8 @@
       "disabled": "已禁用",
       "showApiKey": "显示",
       "hideApiKey": "隐藏",
+      "providerChannel": "渠道",
+      "providerChannelHint": "选择内置渠道后，ZCode 会沿用该供应商的请求格式与模型能力，只需填写凭据；不选则手动配置。",
       "enabled": "已启用",
       "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？",
       "importModalTitle": "导入我使用过的 {{tool}} 供应商",
@@ -6106,10 +6108,7 @@
       "editTitle": "编辑供应商",
       "name": "名称",
       "providerIdHint": "写入 ZCode 的稳定标识，留空则按名称自动生成。创建后不建议修改。",
-      "template": "内置模板",
-      "templateHint": "选择模板后，ZCode 会沿用该供应商的请求格式与模型能力，只需填写凭据。",
       "templatePlaceholder": "不使用模板",
-      "apiType": "API 格式",
       "reservedId": "`builtin:` 与 `account:` 前缀由 ZCode 保留，请换一个 ID。"
     },
     "model": {

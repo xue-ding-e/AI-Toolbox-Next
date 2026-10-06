@@ -30,6 +30,7 @@ import {
   buildZcodeProviderId,
   parseZcodeProviderSettings,
 } from '../utils/zcodeSettingsConfig';
+import styles from './ZcodeProviderFormModal.module.less';
 
 const { Text } = Typography;
 
@@ -237,6 +238,38 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       destroyOnHidden
     >
       <Form form={form} layout="horizontal" labelCol={labelCol} wrapperCol={wrapperCol}>
+        {/* Channel row: built-in channel on the left, API format on the right —
+            the same two-column shape the Codex form uses. */}
+        <Form.Item
+          label={t('common.provider.providerChannel')}
+          required
+          extra={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('common.provider.providerChannelHint')}
+            </Text>
+          }
+        >
+          <div className={styles.providerChannelRow}>
+            <Form.Item name="templateId" noStyle>
+              <Select
+                allowClear
+                placeholder={t('zcode.form.templatePlaceholder')}
+                onChange={handleTemplateChange}
+                options={templates.map((template) => ({
+                  value: template.templateId,
+                  label: template.name,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="apiType"
+              noStyle
+              rules={[{ required: true, message: t('common.error') }]}
+            >
+              <Select options={ZCODE_API_TYPES.map((item) => ({ ...item }))} />
+            </Form.Item>
+          </div>
+        </Form.Item>
         <Form.Item
           name="name"
           label={t('zcode.form.name')}
@@ -254,32 +287,6 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
           }
         >
           <Input placeholder="custom:deepseek" disabled={isEditing} />
-        </Form.Item>
-        <Form.Item
-          name="templateId"
-          label={t('zcode.form.template')}
-          extra={
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {t('zcode.form.templateHint')}
-            </Text>
-          }
-        >
-          <Select
-            allowClear
-            placeholder={t('zcode.form.templatePlaceholder')}
-            onChange={handleTemplateChange}
-            options={templates.map((template) => ({
-              value: template.templateId,
-              label: template.name,
-            }))}
-          />
-        </Form.Item>
-        <Form.Item
-          name="apiType"
-          label={t('zcode.form.apiType')}
-          rules={[{ required: true }]}
-        >
-          <Select options={ZCODE_API_TYPES.map((item) => ({ ...item }))} />
         </Form.Item>
         <Form.Item
           name="baseUrl"
