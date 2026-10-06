@@ -62,13 +62,20 @@ function toFormValues(item: KimiCatalogModel): KimiModelFormValues {
   };
 }
 
-function fromFormValues(values: KimiModelFormValues, providerKey: string): KimiCatalogModel {
+function fromFormValues(
+  values: KimiModelFormValues,
+  providerKey: string,
+  base?: KimiCatalogModel,
+): KimiCatalogModel {
   const key = values.key.trim();
   const model = values.model.trim();
   const row: KimiCatalogModel = {
     key: key || model,
     model: model || key,
-    provider: providerKey,
+    // The dialog does not edit the provider reference, so an existing row keeps
+    // whatever provider table it pointed at; new rows default to this
+    // provider's key.
+    provider: base?.provider?.trim() || providerKey,
   };
   const displayName = values.displayName?.trim();
   if (displayName) row.displayName = displayName;
@@ -151,7 +158,7 @@ const KimiModelFormModal: React.FC<KimiModelFormModalProps> = ({
     try {
       const values = await form.validateFields();
       setSubmitting(true);
-      await onSubmit(fromFormValues(values, providerKey));
+      await onSubmit(fromFormValues(values, providerKey, initialValues));
     } finally {
       setSubmitting(false);
     }
