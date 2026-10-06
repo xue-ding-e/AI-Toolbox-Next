@@ -192,6 +192,61 @@ pub async fn save_zcode_common_config(
     Ok(())
 }
 
+/// Resolves `~/.zcode/cli/config.json`.
+///
+/// This is the CLI's own settings file — MCP servers, hooks, plugins and
+/// permission switches. It is entirely separate from `provider_config.json`,
+/// so AI Toolbox edits it verbatim rather than projecting a subset like it
+/// does for providers.
+pub fn zcode_cli_config_path(state: &SqliteDbState) -> Result<PathBuf, String> {
+    Ok(resolve_zcode_root_dir(state)?.join(ZCODE_CLI_CONFIG_RELATIVE_PATH))
+}
+
+#[tauri::command]
+pub async fn read_zcode_cli_config(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<String, String> {
+    let path = zcode_cli_config_path(&state)?;
+    match crate::coding::file_io::read_optional_text_file_with_timeout(
+        path,
+        "ZCode cli/config.json",
+    )
+    .await?
+    {
+        Some(text) => Ok(text),
+        // A missing file is a valid state: ZCode creates it on first run, and
+        // the user may never have configured MCP servers.
+        None => Ok(String::new()),
+    }
+}
+
+#[tauri::command]
+pub async fn save_zcode_cli_config(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    config: String,
+) -> Result<(), String> {
+    // Reject malformed JSON before it reaches disk: ZCode ignores the whole
+    // settings file when it fails schema validation, so a bad save would
+    // silently drop the user's MCP servers on next launch.
+    if !config.trim().is_empty() {
+        serde_json::from_str::<Value>(&config)
+            .map_err(|error| format!("Invalid JSON: {error}"))?;
+    }
+
+    let path = zcode_cli_config_path(&state)?;
+    let content = if config.trim().is_empty() {
+        String::new()
+    } else {
+        // Keep the file readable: the user edits it by hand too.
+        let parsed: Value = serde_json::from_str(&config).map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&parsed).map_err(|e| e.to_string())?
+    };
+    write_text_atomic(&path, &content)?;
+    let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
 pub fn list_zcode_providers_for_db(db: &SqliteDbState) -> Result<Vec<super::types::ZcodeProvider>, String> {
     let order = provider_order()?;
     db.with_conn(|conn| db_list(conn, DbTable::ZcodeProvider, Some(&order))).map(|values| {

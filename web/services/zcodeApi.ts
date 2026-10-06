@@ -71,6 +71,21 @@ export const saveZcodeCommonConfig = async (input: ZcodeCommonConfigInput): Prom
   await invoke('save_zcode_common_config', { input });
 };
 
+/**
+ * Reads `~/.zcode/cli/config.json` verbatim.
+ *
+ * This is the CLI's own settings file (MCP servers, hooks, plugins,
+ * permissions), separate from `provider_config.json`. Returns an empty string
+ * when the file does not exist yet.
+ */
+export const readZcodeCliConfig = async (): Promise<string> => {
+  return await invoke<string>('read_zcode_cli_config');
+};
+
+export const saveZcodeCliConfig = async (config: string): Promise<void> => {
+  await invoke('save_zcode_cli_config', { config });
+};
+
 export const listZcodeProviderTemplates = async (): Promise<ZcodeProviderTemplate[]> => {
   return await invoke<ZcodeProviderTemplate[]>('list_zcode_provider_templates');
 };

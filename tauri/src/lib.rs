@@ -2626,6 +2626,8 @@ pub fn run() {
             coding::zcode::get_zcode_generation_status,
             coding::zcode::get_zcode_common_config,
             coding::zcode::save_zcode_common_config,
+            coding::zcode::read_zcode_cli_config,
+            coding::zcode::save_zcode_cli_config,
             coding::zcode::save_zcode_provider,
             coding::zcode::delete_zcode_provider_from_file,
             coding::zcode::select_zcode_provider,

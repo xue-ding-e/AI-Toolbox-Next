@@ -1,14 +1,24 @@
 import React from 'react';
-import { Button, Card, Dropdown, Empty, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Card, Dropdown, Space, Tag, Tooltip, Typography } from 'antd';
 import {
   DeleteOutlined,
   EditOutlined,
+  HolderOutlined,
   MoreOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useTranslation } from 'react-i18next';
+import { ManagementCheckbox } from '@/features/coding/shared/management/ManagementControls';
+import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import ModelListSection from '@/features/coding/shared/ModelListSection';
+import type {
+  ModelDisplayData,
+  ProviderConnectivityStatusItem,
+} from '@/components/common/ProviderCard/types';
 import type { ZcodeProvider } from '@/types/zcode';
-import { describeZcodeModel, parseZcodeProviderSettings } from '../utils/zcodeSettingsConfig';
+import { parseZcodeProviderSettings } from '../utils/zcodeSettingsConfig';
 
 const { Text } = Typography;
 
@@ -17,6 +27,24 @@ interface ZcodeProviderCardProps {
   onEdit: () => void;
   onApply: () => void;
   onDelete: () => void;
+  /** Renders a checkbox instead of the drag handle while batch selection is on. */
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (selected: boolean) => void;
+  /** Latest result of the batch connectivity test for this provider. */
+  connectivityStatus?: ProviderConnectivityStatusItem;
+
+  /** Model catalog actions. Omit a handler to hide its button. */
+  onAddModel?: () => void;
+  onEditModel?: (modelId: string) => void;
+  onDeleteModel?: (modelId: string) => void;
+  onSetPrimaryModel?: (modelId: string) => void;
+  onReorderModels?: (orderedModelIds: string[]) => void;
+  modelSelectionMode?: boolean;
+  selectedModelIds?: string[];
+  onToggleModelSelection?: (modelId: string, selected: boolean) => void;
+  onToggleBatchDeleteMode?: () => void;
+  onBatchDeleteModels?: () => void;
 }
 
 const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
@@ -24,6 +52,20 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   onEdit,
   onApply,
   onDelete,
+  selectable = false,
+  selected = false,
+  onSelectChange,
+  connectivityStatus,
+  onAddModel,
+  onEditModel,
+  onDeleteModel,
+  onSetPrimaryModel,
+  onReorderModels,
+  modelSelectionMode = false,
+  selectedModelIds = [],
+  onToggleModelSelection,
+  onToggleBatchDeleteMode,
+  onBatchDeleteModels,
 }) => {
   const { t } = useTranslation();
   const settings = parseZcodeProviderSettings(provider.settingsConfig);
@@ -31,6 +73,33 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   const baseUrl = settings?.config?.api?.baseUrl;
   const models = settings?.models ?? [];
   const defaultModelId = models.find((model) => model.isDefault)?.modelId;
+
+  /**
+   * `ModelListSection` renders `ModelDisplayData`, so each ZCode row is mapped
+   * here. The row key is the `modelId` — ZCode keys models by it, and the
+   * default flag travels separately in `isPrimary`.
+   */
+  const modelDisplayRows = React.useMemo<ModelDisplayData[]>(
+    () =>
+      models.map((model) => ({
+        id: model.modelId,
+        name: model.displayName?.trim() || model.modelId,
+        contextLimit: model.properties?.contextWindow,
+        outputLimit: model.optionSpecs?.maxOutputTokens?.max,
+        isPrimary: model.modelId === defaultModelId,
+      })),
+    [models, defaultModelId],
+  );
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: provider.id,
+  });
+
+  const sortableStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : provider.isDisabled ? 0.6 : 1,
+  };
 
   const menuItems = [
     {
@@ -47,93 +116,111 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   ];
 
   return (
-    <Card size="small" styles={{ body: { padding: 12 } }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <Space size="small" wrap>
-            <Text strong>{provider.name}</Text>
-            {provider.isApplied && (
-              <Tag color="green">{t('zcode.provider.applied', { defaultValue: '默认' })}</Tag>
-            )}
-            {provider.isDisabled && (
-              <Tag>{t('zcode.provider.disabled', { defaultValue: '已禁用' })}</Tag>
-            )}
-            {apiType && <Tag color="blue">{apiType}</Tag>}
-          </Space>
-          <div style={{ marginTop: 4 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {provider.id}
-            </Text>
-          </div>
-          {baseUrl && (
-            <div style={{ marginTop: 2 }}>
-              <Text code style={{ fontSize: 12 }}>
-                {baseUrl}
-              </Text>
-            </div>
-          )}
-          {provider.notes && (
-            <div style={{ marginTop: 4 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {provider.notes}
-              </Text>
-            </div>
-          )}
-        </div>
-        <Space size="small">
-          <Tooltip
-            title={t('zcode.provider.applyHint', {
-              defaultValue: '设为 ZCode 新建会话的默认供应商与模型',
-            })}
-          >
-            <Button size="small" icon={<ThunderboltOutlined />} onClick={onApply}>
-              {t('zcode.provider.apply', { defaultValue: '应用' })}
-            </Button>
-          </Tooltip>
-          <Dropdown
-            menu={{
-              items: menuItems,
-              onClick: ({ key }) => {
-                if (key === 'edit') {
-                  onEdit();
-                } else if (key === 'delete') {
-                  onDelete();
-                }
-              },
-            }}
-          >
-            <Button size="small" type="text" icon={<MoreOutlined />} />
-          </Dropdown>
-        </Space>
-      </div>
-
-      <div style={{ marginTop: 10 }}>
-        {models.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={t('zcode.model.empty', { defaultValue: '暂无模型' })}
-          />
-        ) : (
-          <Space orientation="vertical" size={2} style={{ width: '100%' }}>
-            {models.map((model) => (
-              <div key={model.modelId}>
-                <Space size="small">
-                  <Text style={{ fontSize: 12 }}>{model.displayName || model.modelId}</Text>
-                  {model.modelId === defaultModelId && (
-                    <Tag color="green" style={{ fontSize: 10 }}>
-                      {t('zcode.model.default', { defaultValue: '默认' })}
-                    </Tag>
-                  )}
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    {describeZcodeModel(model)}
-                  </Text>
-                </Space>
+    <div ref={setNodeRef} style={sortableStyle}>
+      <Card size="small" styles={{ body: { padding: 12 } }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            {selectable ? (
+              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                <ManagementCheckbox
+                  checked={selected}
+                  ariaLabel={t('common.batch.selectItem')}
+                  onChange={onSelectChange ?? (() => {})}
+                />
               </div>
-            ))}
+            ) : (
+              <div
+                {...attributes}
+                {...listeners}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                  color: '#999',
+                  padding: '4px 0',
+                  touchAction: 'none',
+                }}
+              >
+                <HolderOutlined />
+              </div>
+            )}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <Space size="small" wrap>
+                <ProviderConnectivityStatus item={connectivityStatus} />
+                <Text strong>{provider.name}</Text>
+                {provider.isApplied && (
+                  <Tag color="green">{t('zcode.provider.applied', { defaultValue: '默认' })}</Tag>
+                )}
+                {provider.isDisabled && (
+                  <Tag>{t('zcode.provider.disabled', { defaultValue: '已禁用' })}</Tag>
+                )}
+                {apiType && <Tag color="blue">{apiType}</Tag>}
+              </Space>
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {provider.id}
+                </Text>
+              </div>
+              {baseUrl && (
+                <div style={{ marginTop: 2 }}>
+                  <Text code style={{ fontSize: 12 }}>
+                    {baseUrl}
+                  </Text>
+                </div>
+              )}
+              {provider.notes && (
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {provider.notes}
+                  </Text>
+                </div>
+              )}
+            </div>
+          </div>
+          <Space size="small">
+            <Tooltip
+              title={t('zcode.provider.applyHint', {
+                defaultValue: '设为 ZCode 新建会话的默认供应商与模型',
+              })}
+            >
+              <Button size="small" icon={<ThunderboltOutlined />} onClick={onApply}>
+                {t('zcode.provider.apply', { defaultValue: '应用' })}
+              </Button>
+            </Tooltip>
+            <Dropdown
+              menu={{
+                items: menuItems,
+                onClick: ({ key }) => {
+                  if (key === 'edit') {
+                    onEdit();
+                  } else if (key === 'delete') {
+                    onDelete();
+                  }
+                },
+              }}
+            >
+              <Button size="small" type="text" icon={<MoreOutlined />} />
+            </Dropdown>
           </Space>
-        )}
-      </div>
-    </Card>
+        </div>
+
+        <ModelListSection
+          models={modelDisplayRows}
+          rowKeyOf={(model) => model.id}
+          sectionKey={`zcode-models-${provider.id}`}
+          transparentRows
+          modelsDraggable={!modelSelectionMode && Boolean(onReorderModels)}
+          onReorderModels={onReorderModels}
+          selectionMode={modelSelectionMode}
+          selectedIds={selectedModelIds}
+          onToggleSelection={onToggleModelSelection}
+          onToggleBatchDeleteMode={onToggleBatchDeleteMode}
+          onBatchDelete={onBatchDeleteModels}
+          onAddModel={onAddModel}
+          onEditModel={onEditModel}
+          onDeleteModel={onDeleteModel}
+          onSetPrimaryModel={onSetPrimaryModel}
+        />
+      </Card>
+    </div>
   );
 };
 

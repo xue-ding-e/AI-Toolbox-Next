@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Form, Input, Modal, Select, Space, Tabs, Typography, message } from 'antd';
+import { Form, Input, Modal, Select, Typography, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import {
   createZcodeProvider,
@@ -7,13 +7,24 @@ import {
   saveZcodeProvider,
   updateZcodeProvider,
 } from '@/services/zcodeApi';
-import type {
-  ZcodeProvider,
-  ZcodeProviderTemplate,
-  ZcodeSettingsConfig,
-} from '@/types/zcode';
+import ProviderFormSections from '@/features/coding/shared/providerConfig/ProviderFormSections';
+import {
+  getBillingConfigFromMeta,
+  mergeBillingConfigIntoMeta,
+  type BillingConfigState,
+} from '@/features/coding/shared/providerBilling/billingConfigUtils';
+import {
+  getCustomHeadersFromMeta,
+  mergeCustomHeadersIntoMeta,
+  type CustomHeadersState,
+} from '@/features/coding/shared/providerHeaders/customHeadersUtils';
+import {
+  getModelRewritesFromMeta,
+  mergeModelRewritesIntoMeta,
+  type ModelRewritesState,
+} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
+import type { ZcodeProvider, ZcodeProviderTemplate, ZcodeSettingsConfig } from '@/types/zcode';
 import { ZCODE_API_TYPES } from '@/types/zcode';
-import ZcodeModelListEditor from './ZcodeModelListEditor';
 import {
   buildZcodeProviderId,
   parseZcodeProviderSettings,
@@ -51,9 +62,16 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   const { t } = useTranslation();
   const [form] = Form.useForm<ZcodeProviderFormValues>();
   const [templates, setTemplates] = React.useState<ZcodeProviderTemplate[]>([]);
-  const [models, setModels] = React.useState<ZcodeSettingsConfig['models']>([]);
   const [saving, setSaving] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState('provider');
+  const [billingConfig, setBillingConfig] = React.useState<BillingConfigState>(() =>
+    getBillingConfigFromMeta(provider?.meta ?? undefined),
+  );
+  const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
+    getCustomHeadersFromMeta(provider?.meta ?? undefined),
+  );
+  const [modelRewrites, setModelRewrites] = React.useState<ModelRewritesState>(() =>
+    getModelRewritesFromMeta(provider?.meta ?? undefined),
+  );
   const isEditing = Boolean(provider);
 
   React.useEffect(() => {
@@ -80,13 +98,13 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
         apiKey: settings?.config?.access?.apiKey ?? '',
         notes: provider.notes ?? '',
       });
-      setModels(settings?.models ?? []);
     } else {
       form.resetFields();
       form.setFieldsValue({ apiType: 'anthropic-messages' });
-      setModels([]);
     }
-    setActiveTab('provider');
+    setBillingConfig(getBillingConfigFromMeta(provider?.meta ?? undefined));
+    setCustomHeaders(getCustomHeadersFromMeta(provider?.meta ?? undefined));
+    setModelRewrites(getModelRewritesFromMeta(provider?.meta ?? undefined));
   }, [open, provider, form]);
 
   const handleTemplateChange = (templateId: string | undefined) => {
@@ -105,16 +123,13 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
     try {
       values = await form.validateFields();
     } catch {
-      setActiveTab('provider');
       return;
     }
-    if (models.length === 0) {
-      void message.warning(
-        t('zcode.form.needModel', { defaultValue: '请至少添加一个模型。' }),
-      );
-      setActiveTab('models');
-      return;
-    }
+    // Models are edited on the provider card, not here. Reuse whatever the
+    // stored provider already has so saving the form does not wipe the catalog.
+    const existingModels = provider
+      ? (parseZcodeProviderSettings(provider.settingsConfig)?.models ?? [])
+      : [];
 
     const providerId = values.providerId?.trim() || buildZcodeProviderId(values.name);
     if (providerId.startsWith('builtin:') || providerId.startsWith('account:')) {
@@ -139,17 +154,28 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
           ? { type: 'api-key', apiKey: values.apiKey }
           : undefined,
       },
-      models,
-      defaultModelId: models.find((model) => model.isDefault)?.modelId,
+      models: existingModels,
+      defaultModelId: existingModels.find((model) => model.isDefault)?.modelId,
     };
 
     setSaving(true);
     try {
+      // The section editors keep their state outside the form, so their values
+      // are merged back into `meta` here. Skipping this silently drops the
+      // user's billing / header / rewrite edits on save.
+      const nextMeta = mergeModelRewritesIntoMeta(
+        mergeCustomHeadersIntoMeta(
+          mergeBillingConfigIntoMeta(provider?.meta ?? undefined, billingConfig),
+          customHeaders,
+        ),
+        modelRewrites,
+      );
       const payload = {
         name: values.name,
         category: 'custom',
         settingsConfig: JSON.stringify(settings),
         notes: values.notes ?? null,
+        meta: nextMeta,
       };
       // The DB row alone does not reach ZCode; every save must also project the
       // provider into the registry so the desktop app can see the new values.
@@ -159,6 +185,7 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
           name: payload.name,
           settingsConfig: payload.settingsConfig,
           notes: payload.notes,
+          meta: payload.meta,
         });
         await saveZcodeProvider({
           id: updated.id,
@@ -205,15 +232,7 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       cancelText={t('common.cancel', { defaultValue: '取消' })}
       destroyOnHidden
     >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          {
-            key: 'provider',
-            label: t('zcode.form.tab.provider', { defaultValue: '供应商' }),
-            children: (
-              <Form form={form} layout="vertical">
+      <Form form={form} layout="vertical">
                 <Form.Item
                   name="name"
                   label={t('zcode.form.name', { defaultValue: '名称' })}
@@ -274,31 +293,18 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
                 <Form.Item name="apiKey" label="API Key">
                   <Input.Password placeholder="sk-..." />
                 </Form.Item>
-                <Form.Item name="notes" label={t('zcode.form.notes', { defaultValue: '备注' })}>
-                  <Input.TextArea rows={2} />
-                </Form.Item>
-              </Form>
-            ),
-          },
-          {
-            key: 'models',
-            label: `${t('zcode.form.tab.models', { defaultValue: '模型' })} (${models.length})`,
-            children: (
-              <Space orientation="vertical" style={{ width: '100%' }} size="middle">
-                <Alert
-                  type="info"
-                  showIcon
-                  title={t('zcode.form.modelsHint', {
-                    defaultValue:
-                      '这里配置的字段会写入 ZCode 的模型规则，之后在 ZCode 里新增会话即可直接选用，不必再逐项手填。',
-                  })}
-                />
-                <ZcodeModelListEditor models={models} onChange={setModels} />
-              </Space>
-            ),
-          },
-        ]}
-      />
+        <ProviderFormSections
+          editable
+          billing={billingConfig}
+          onBillingChange={setBillingConfig}
+          customHeaders={customHeaders}
+          onCustomHeadersChange={setCustomHeaders}
+          modelRewrites={modelRewrites}
+          onModelRewritesChange={setModelRewrites}
+          notesRows={2}
+          notesResetKey={`zcode-provider-notes-${provider?.id ?? 'new'}`}
+        />
+      </Form>
     </Modal>
   );
 };
