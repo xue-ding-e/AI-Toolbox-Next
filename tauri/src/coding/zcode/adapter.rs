@@ -1,12 +1,26 @@
 use chrono::Local;
 use serde_json::{json, Value};
 
-use crate::coding::db_id::db_extract_id;
-
 use super::types::{
     ZcodeCommonConfig, ZcodeCommonConfigRecord, ZcodePromptConfig, ZcodeProvider,
     ZcodeProviderContent,
 };
+
+/// Reads a row id verbatim.
+///
+/// ZCode is the one module whose business id *is* the row id, and managed ids
+/// carry a `custom:` prefix. The shared `db_clean_id` treats the first colon as
+/// a legacy `table:id` separator and strips everything before it, which turns
+/// `custom:my-provider` into `my-provider` — an id no row has. Every read-back
+/// then failed with "provider not found" while the row sat in the table
+/// untouched, so this module reads the raw value instead.
+fn zcode_row_id(value: &Value) -> String {
+    value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
 
 fn get_str_compat(value: &Value, snake_key: &str, camel_key: &str, default: &str) -> String {
     value
@@ -43,7 +57,7 @@ fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: boo
 
 pub fn from_db_value_provider(value: Value) -> ZcodeProvider {
     ZcodeProvider {
-        id: db_extract_id(&value),
+        id: zcode_row_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Provider"),
         category: get_str_compat(&value, "category", "category", "custom"),
         settings_config: get_str_compat(&value, "settings_config", "settingsConfig", "{}"),
@@ -70,7 +84,7 @@ pub fn to_db_value_provider(content: &ZcodeProviderContent) -> Value {
 
 pub fn from_db_value_common(value: Value) -> ZcodeCommonConfigRecord {
     ZcodeCommonConfigRecord {
-        id: db_extract_id(&value),
+        id: zcode_row_id(&value),
         config: get_str_compat(&value, "config", "config", "{}"),
         root_dir: get_opt_str_compat(&value, "root_dir", "rootDir"),
         updated_at: get_str_compat(&value, "updated_at", "updatedAt", ""),
@@ -87,7 +101,7 @@ pub fn to_db_value_common(config: &str, root_dir: Option<&str>) -> Value {
 
 pub fn from_db_value_prompt(value: Value) -> ZcodePromptConfig {
     ZcodePromptConfig {
-        id: db_extract_id(&value),
+        id: zcode_row_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Prompt"),
         content: get_str_compat(&value, "content", "content", ""),
         is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
@@ -139,6 +153,19 @@ mod tests {
         assert_eq!(parsed.sort_index, 3);
         assert!(parsed.is_applied);
         assert_eq!(parsed.notes.as_deref(), Some("note"));
+    }
+
+    /// Managed ids carry a `custom:` prefix, which the shared `db_clean_id`
+    /// strips as if it were a legacy `table:id` reference. Reading the id
+    /// through it made every read-back miss the row and report "not found".
+    #[test]
+    fn managed_provider_id_survives_the_db_round_trip() {
+        let parsed = from_db_value_provider(json!({
+            "id": "custom:axonhub-deepseek",
+            "name": "AxonHub-DeepSeek",
+            "settings_config": "{}"
+        }));
+        assert_eq!(parsed.id, "custom:axonhub-deepseek");
     }
 
     #[test]
