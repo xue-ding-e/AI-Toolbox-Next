@@ -41,16 +41,29 @@ export interface ProviderFormSectionsProps {
    * Billing section. Some flows (the import tab) deliberately omit it: the
    * imported provider has no pricing to edit yet. Defaults to following
    * `editable`.
+   *
+   * The three gateway-owned sections below share the same gate, and their value
+   * props are only read when the matching `show*` is on — a caller that hides a
+   * section may omit its state entirely.
    */
   showBilling?: boolean;
-  billing: BillingConfigState;
-  onBillingChange: (value: BillingConfigState) => void;
+  billing?: BillingConfigState;
+  onBillingChange?: (value: BillingConfigState) => void;
 
-  customHeaders: CustomHeadersState;
-  onCustomHeadersChange: (value: CustomHeadersState) => void;
+  /**
+   * Custom-header overrides. Like billing and rewrites, this is consumed only
+   * by the local gateway — a CLI the gateway cannot take over has no reader for
+   * it, so the section would collect values nothing acts on. Callers pass
+   * `false` when the CLI is outside `GatewayCliKey::supported_mvp()`.
+   */
+  showCustomHeaders?: boolean;
+  customHeaders?: CustomHeadersState;
+  onCustomHeadersChange?: (value: CustomHeadersState) => void;
 
-  modelRewrites: ModelRewritesState;
-  onModelRewritesChange: (value: ModelRewritesState) => void;
+  /** Model rewrite rules. Gateway-only, same reasoning as `showCustomHeaders`. */
+  showModelRewrites?: boolean;
+  modelRewrites?: ModelRewritesState;
+  onModelRewritesChange?: (value: ModelRewritesState) => void;
 
   notesRows?: number;
   notesResetKey: string;
@@ -80,8 +93,10 @@ const ProviderFormSections: React.FC<ProviderFormSectionsProps> = ({
   showBilling = editable,
   billing,
   onBillingChange,
+  showCustomHeaders = editable,
   customHeaders,
   onCustomHeadersChange,
+  showModelRewrites = editable,
   modelRewrites,
   onModelRewritesChange,
   notesRows = 3,
@@ -95,19 +110,19 @@ const ProviderFormSections: React.FC<ProviderFormSectionsProps> = ({
 
       {editable && advancedSettings}
 
-      {editable && showBilling && (
+      {editable && showBilling && billing && onBillingChange && (
         <Form.Item wrapperCol={PROVIDER_SECTION_WRAPPER_COL}>
           <BillingConfigCollapse value={billing} onChange={onBillingChange} />
         </Form.Item>
       )}
 
-      {editable && (
+      {editable && showCustomHeaders && customHeaders && onCustomHeadersChange && (
         <Form.Item wrapperCol={PROVIDER_SECTION_WRAPPER_COL}>
           <CustomHeadersCollapse value={customHeaders} onChange={onCustomHeadersChange} />
         </Form.Item>
       )}
 
-      {editable && (
+      {editable && showModelRewrites && modelRewrites && onModelRewritesChange && (
         <Form.Item wrapperCol={PROVIDER_SECTION_WRAPPER_COL}>
           <ModelRewritesCollapse value={modelRewrites} onChange={onModelRewritesChange} />
         </Form.Item>

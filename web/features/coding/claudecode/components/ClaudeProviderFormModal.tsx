@@ -1304,10 +1304,13 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             </ProviderConfigCollapse>
           </Form.Item>
         }
+        showBilling={gatewaySupportsThisCli}
         billing={billingConfig}
         onBillingChange={setBillingConfig}
+        showCustomHeaders={gatewaySupportsThisCli}
         customHeaders={customHeaders}
         onCustomHeadersChange={setCustomHeaders}
+        showModelRewrites={gatewaySupportsThisCli}
         modelRewrites={modelRewrites}
         onModelRewritesChange={setModelRewrites}
         notesRows={3}

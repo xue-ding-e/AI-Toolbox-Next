@@ -9,21 +9,6 @@ import {
   updateZcodeProvider,
 } from '@/services/zcodeApi';
 import ProviderFormSections from '@/features/coding/shared/providerConfig/ProviderFormSections';
-import {
-  getBillingConfigFromMeta,
-  mergeBillingConfigIntoMeta,
-  type BillingConfigState,
-} from '@/features/coding/shared/providerBilling/billingConfigUtils';
-import {
-  getCustomHeadersFromMeta,
-  mergeCustomHeadersIntoMeta,
-  type CustomHeadersState,
-} from '@/features/coding/shared/providerHeaders/customHeadersUtils';
-import {
-  getModelRewritesFromMeta,
-  mergeModelRewritesIntoMeta,
-  type ModelRewritesState,
-} from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 import type { ZcodeProvider, ZcodeProviderTemplate, ZcodeSettingsConfig } from '@/types/zcode';
 import { ZCODE_API_TYPES } from '@/types/zcode';
 import {
@@ -70,15 +55,6 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   const [templates, setTemplates] = React.useState<ZcodeProviderTemplate[]>([]);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
-  const [billingConfig, setBillingConfig] = React.useState<BillingConfigState>(() =>
-    getBillingConfigFromMeta(provider?.meta ?? undefined),
-  );
-  const [customHeaders, setCustomHeaders] = React.useState<CustomHeadersState>(() =>
-    getCustomHeadersFromMeta(provider?.meta ?? undefined),
-  );
-  const [modelRewrites, setModelRewrites] = React.useState<ModelRewritesState>(() =>
-    getModelRewritesFromMeta(provider?.meta ?? undefined),
-  );
   const isEditing = Boolean(provider);
 
   React.useEffect(() => {
@@ -111,9 +87,6 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       form.resetFields();
       form.setFieldsValue({ apiType: 'anthropic-messages', templateId: '' });
     }
-    setBillingConfig(getBillingConfigFromMeta(provider?.meta ?? undefined));
-    setCustomHeaders(getCustomHeadersFromMeta(provider?.meta ?? undefined));
-    setModelRewrites(getModelRewritesFromMeta(provider?.meta ?? undefined));
   }, [open, provider, form]);
 
   // Selecting a channel seeds the format and base URL from it; picking
@@ -169,22 +142,16 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
 
     setSaving(true);
     try {
-      // The section editors keep their state outside the form, so their values
-      // are merged back into `meta` here. Skipping this silently drops the
-      // user's billing / header / rewrite edits on save.
-      const nextMeta = mergeModelRewritesIntoMeta(
-        mergeCustomHeadersIntoMeta(
-          mergeBillingConfigIntoMeta(provider?.meta ?? undefined, billingConfig),
-          customHeaders,
-        ),
-        modelRewrites,
-      );
+      // No `meta` builder here: the billing / header / rewrite subsets are all
+      // gateway-only and ZCode is not a gateway CLI, so their sections are
+      // hidden and nothing writes those keys. `meta` is carried through
+      // unchanged to preserve anything a future version adds.
       const payload = {
         name: values.name,
         category: 'custom',
         settingsConfig: JSON.stringify(settings),
         notes: values.notes ?? null,
-        meta: nextMeta,
+        meta: provider?.meta ?? undefined,
       };
       // The DB row alone does not reach ZCode; every save must also project the
       // provider into the registry so the desktop app can see the new values.
@@ -319,14 +286,14 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
             }
           />
         </Form.Item>
+        {/* Billing, custom headers and model rewrites are all consumed by the
+            local gateway, which cannot take ZCode over — showing them would
+            collect values nothing reads. Only notes apply here. */}
         <ProviderFormSections
           editable
-          billing={billingConfig}
-          onBillingChange={setBillingConfig}
-          customHeaders={customHeaders}
-          onCustomHeadersChange={setCustomHeaders}
-          modelRewrites={modelRewrites}
-          onModelRewritesChange={setModelRewrites}
+          showBilling={false}
+          showCustomHeaders={false}
+          showModelRewrites={false}
           notesRows={2}
           notesResetKey={`zcode-provider-notes-${provider?.id ?? 'new'}`}
         />

@@ -1211,10 +1211,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
       <ProviderFormSections
         editable={!isOfficialMode}
+        showBilling={gatewaySupportsThisCli}
         billing={billingConfig}
         onBillingChange={setBillingConfig}
+        showCustomHeaders={gatewaySupportsThisCli}
         customHeaders={customHeaders}
         onCustomHeadersChange={setCustomHeaders}
+        showModelRewrites={gatewaySupportsThisCli}
         modelRewrites={modelRewrites}
         onModelRewritesChange={setModelRewrites}
         notesRows={2}
