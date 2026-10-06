@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, message } from 'antd';
+import { Alert, Modal, message } from 'antd';
 import { DatabaseOutlined, FileTextOutlined, MessageOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -96,6 +96,13 @@ const ZcodePage: React.FC = () => {
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string | null>(null);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [testingModelsFor, setTestingModelsFor] = React.useState<string | null>(null);
+  /** Provider whose model list is in batch-delete mode, if any. */
+  const [modelBatchDeleteProviderId, setModelBatchDeleteProviderId] = React.useState<string | null>(
+    null,
+  );
+  const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<
+    Record<string, string[]>
+  >({});
 
   const sidebarHidden = sidebarHiddenByPage.zcode ?? false;
 
@@ -451,6 +458,73 @@ const ZcodePage: React.FC = () => {
     }
   }, [visibleProviders, t]);
 
+  /** Enters or leaves batch-delete mode for one provider's model list. */
+  const handleToggleModelBatchDeleteMode = React.useCallback(
+    (provider: ZcodeProvider) => {
+      if (modelBatchDeleteProviderId === provider.id) {
+        setSelectedModelIdsByProvider({});
+        setModelBatchDeleteProviderId(null);
+        return;
+      }
+      setSelectedModelIdsByProvider({});
+      setModelBatchDeleteProviderId(provider.id);
+    },
+    [modelBatchDeleteProviderId],
+  );
+
+  const handleToggleModelSelection = React.useCallback(
+    (provider: ZcodeProvider, modelId: string, selected: boolean) => {
+      setSelectedModelIdsByProvider((previous) => {
+        const current = previous[provider.id] ?? [];
+        const next = selected
+          ? Array.from(new Set([...current, modelId]))
+          : current.filter((id) => id !== modelId);
+        if (next.length === 0) {
+          const nextState = { ...previous };
+          delete nextState[provider.id];
+          return nextState;
+        }
+        return { ...previous, [provider.id]: next };
+      });
+    },
+    [],
+  );
+
+  const handleBatchDeleteModels = React.useCallback(
+    (provider: ZcodeProvider) => {
+      const selectedIds = selectedModelIdsByProvider[provider.id] ?? [];
+      if (selectedIds.length === 0) {
+        return;
+      }
+      Modal.confirm({
+        title: t('common.model.batchDeleteConfirmTitle'),
+        content: t('common.model.batchDeleteConfirmContent', { count: selectedIds.length }),
+        okText: t('common.confirm'),
+        cancelText: t('common.cancel'),
+        onOk: async () => {
+          const settings = parseZcodeProviderSettings(provider.settingsConfig);
+          if (!settings) {
+            return;
+          }
+          const removed = new Set(selectedIds);
+          const nextModels = settings.models.filter((model) => !removed.has(model.modelId));
+          await persistProviderModels(provider, nextModels);
+          setSelectedModelIdsByProvider((previous) => {
+            if (!(provider.id in previous)) {
+              return previous;
+            }
+            const nextState = { ...previous };
+            delete nextState[provider.id];
+            return nextState;
+          });
+          setModelBatchDeleteProviderId((current) => (current === provider.id ? null : current));
+          message.success(t('common.success'));
+        },
+      });
+    },
+    [persistProviderModels, selectedModelIdsByProvider, t],
+  );
+
   /** Runs the connectivity probe for one provider's catalog only. */
   const handleTestProviderModels = React.useCallback(
     async (provider: ZcodeProvider) => {
@@ -675,6 +749,13 @@ const ZcodePage: React.FC = () => {
                     onReorderModels={(orderedModelIds) =>
                       void handleReorderModels(provider, orderedModelIds)
                     }
+                    modelSelectionMode={modelBatchDeleteProviderId === provider.id}
+                    selectedModelIds={selectedModelIdsByProvider[provider.id] ?? []}
+                    onToggleModelSelection={(modelId, selected) =>
+                      handleToggleModelSelection(provider, modelId, selected)
+                    }
+                    onToggleBatchDeleteMode={() => handleToggleModelBatchDeleteMode(provider)}
+                    onBatchDeleteModels={() => handleBatchDeleteModels(provider)}
                     onTestModels={() => void handleTestProviderModels(provider)}
                     testModelsDisabled={
                       testingModelsFor === provider.id ||

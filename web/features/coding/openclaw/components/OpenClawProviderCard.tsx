@@ -149,8 +149,8 @@ const OpenClawProviderCard: React.FC<Props> = ({
                   disabled={selectedModelCount === 0}
                   onClick={() => {
                     Modal.confirm({
-                      title: t('openclaw.providers.batchDeleteConfirmTitle'),
-                      content: t('openclaw.providers.batchDeleteConfirmContent', { count: selectedModelCount }),
+                      title: t('common.model.batchDeleteConfirmTitle'),
+                      content: t('common.model.batchDeleteConfirmContent', { count: selectedModelCount }),
                       okText: t('common.delete'),
                       cancelText: t('common.cancel'),
                       onOk: () => onBatchDeleteModels?.(),

@@ -1427,8 +1427,8 @@ const HermesPage: React.FC = () => {
                     disabled={selectedModelCount === 0}
                     onClick={() => {
                       Modal.confirm({
-                        title: t('hermes.model.batchDeleteConfirmTitle', { defaultValue: '批量删除模型' }),
-                        content: t('hermes.model.batchDeleteConfirmContent', { count: selectedModelCount }),
+                        title: t('common.model.batchDeleteConfirmTitle'),
+                        content: t('common.model.batchDeleteConfirmContent', { count: selectedModelCount }),
                         okText: t('common.delete', { defaultValue: '删除' }),
                         cancelText: t('common.cancel'),
                         onOk: () => handleBatchDeleteModels(provider.providerKey),

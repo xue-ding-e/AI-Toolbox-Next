@@ -1892,8 +1892,8 @@ const PiPage: React.FC = () => {
                 disabled={selectedModelCount === 0}
                 onClick={() => {
                   Modal.confirm({
-                    title: t('pi.model.batchDeleteConfirmTitle'),
-                    content: t('pi.model.batchDeleteConfirmContent', { count: selectedModelCount }),
+                    title: t('common.model.batchDeleteConfirmTitle'),
+                    content: t('common.model.batchDeleteConfirmContent', { count: selectedModelCount }),
                     okText: t('common.confirm'),
                     cancelText: t('common.cancel'),
                     onOk: async () => {

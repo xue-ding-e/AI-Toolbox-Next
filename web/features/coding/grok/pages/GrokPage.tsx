@@ -2005,8 +2005,8 @@ const GrokPage: React.FC = () => {
                                     return;
                                   }
                                   Modal.confirm({
-                                    title: t('grok.model.batchDeleteConfirmTitle'),
-                                    content: t('grok.model.batchDeleteConfirmContent', { count: selectedCount }),
+                                    title: t('common.model.batchDeleteConfirmTitle'),
+                                    content: t('common.model.batchDeleteConfirmContent', { count: selectedCount }),
                                     okText: t('common.confirm'),
                                     cancelText: t('common.cancel'),
                                     onOk: async () => {

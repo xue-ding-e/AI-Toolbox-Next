@@ -1463,8 +1463,8 @@ const CodexPage: React.FC = () => {
       return;
     }
     Modal.confirm({
-      title: t('codex.model.batchDeleteConfirmTitle'),
-      content: t('codex.model.batchDeleteConfirmContent', { count: selectedRowKeys.length }),
+      title: t('common.model.batchDeleteConfirmTitle'),
+      content: t('common.model.batchDeleteConfirmContent', { count: selectedRowKeys.length }),
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {

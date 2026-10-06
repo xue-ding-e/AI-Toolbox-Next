@@ -492,8 +492,8 @@ const KimiPage: React.FC = () => {
 
   const handleDeleteModels = React.useCallback((provider: KimiProvider, models: KimiCatalogModel[]) => {
     modal.confirm({
-      title: t('kimi.model.batchDeleteConfirmTitle'),
-      content: t('kimi.model.batchDeleteConfirmContent', { count: models.length }),
+      title: t('common.model.batchDeleteConfirmTitle'),
+      content: t('common.model.batchDeleteConfirmContent', { count: models.length }),
       icon: <ExclamationCircleOutlined />,
       onOk: async () => {
         try {

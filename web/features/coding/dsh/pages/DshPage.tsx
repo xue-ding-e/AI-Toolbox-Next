@@ -1768,11 +1768,8 @@ const DshPage: React.FC = () => {
                 disabled={selectedModelCount === 0}
                 onClick={() => {
                   Modal.confirm({
-                    title: t('dsh.model.batchDeleteConfirmTitle', { defaultValue: '批量删除模型' }),
-                    content: t('dsh.model.batchDeleteConfirmContent', {
-                      defaultValue: '确定删除选中的 {{count}} 个模型吗？',
-                      count: selectedModelCount,
-                    }),
+                    title: t('common.model.batchDeleteConfirmTitle'),
+                    content: t('common.model.batchDeleteConfirmContent', { count: selectedModelCount }),
                     okText: t('common.confirm'),
                     cancelText: t('common.cancel'),
                     onOk: async () => {
