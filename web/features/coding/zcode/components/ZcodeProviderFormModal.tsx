@@ -99,7 +99,9 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       form.setFieldsValue({
         name: provider.name,
         providerId: settings?.providerId ?? provider.id,
-        templateId: settings?.templateId,
+        // The "custom" option is the empty string; a provider without a stored
+        // template must land on it rather than showing a blank select.
+        templateId: settings?.templateId ?? '',
         apiType: settings?.config?.api?.type ?? 'anthropic-messages',
         baseUrl: settings?.config?.api?.baseUrl ?? '',
         apiKey: settings?.config?.access?.apiKey ?? '',
@@ -107,13 +109,15 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       });
     } else {
       form.resetFields();
-      form.setFieldsValue({ apiType: 'anthropic-messages' });
+      form.setFieldsValue({ apiType: 'anthropic-messages', templateId: '' });
     }
     setBillingConfig(getBillingConfigFromMeta(provider?.meta ?? undefined));
     setCustomHeaders(getCustomHeadersFromMeta(provider?.meta ?? undefined));
     setModelRewrites(getModelRewritesFromMeta(provider?.meta ?? undefined));
   }, [open, provider, form]);
 
+  // Selecting a channel seeds the format and base URL from it; picking
+  // "custom" leaves whatever the user has typed alone.
   const handleTemplateChange = (templateId: string | undefined) => {
     const template = templates.find((item) => item.templateId === templateId);
     if (!template) {
@@ -252,13 +256,17 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
           <div className={styles.providerChannelRow}>
             <Form.Item name="templateId" noStyle>
               <Select
-                allowClear
-                placeholder={t('zcode.form.templatePlaceholder')}
                 onChange={handleTemplateChange}
-                options={templates.map((template) => ({
-                  value: template.templateId,
-                  label: template.name,
-                }))}
+                options={[
+                  // Explicit "custom" entry, as on the Codex form: leaving the
+                  // channel unset is a real choice, not an empty state, so it
+                  // gets a named option instead of relying on a placeholder.
+                  { value: '', label: t('common.provider.providerChannelCustom') },
+                  ...templates.map((template) => ({
+                    value: template.templateId,
+                    label: template.name,
+                  })),
+                ]}
               />
             </Form.Item>
             <Form.Item

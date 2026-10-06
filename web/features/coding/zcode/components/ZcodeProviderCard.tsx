@@ -1,11 +1,11 @@
 import React from 'react';
 import { Button, Card, Dropdown, Space, Tag, Tooltip, Typography } from 'antd';
 import {
+  CheckOutlined,
   DeleteOutlined,
   EditOutlined,
   HolderOutlined,
   MoreOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -40,6 +40,11 @@ interface ZcodeProviderCardProps {
   onDeleteModel?: (modelId: string) => void;
   onSetPrimaryModel?: (modelId: string) => void;
   onReorderModels?: (orderedModelIds: string[]) => void;
+  /** Connectivity test for the whole catalog; hidden while it cannot run. */
+  onTestModels?: () => void;
+  testModelsDisabled?: boolean;
+  testModelsDisabledTooltip?: string;
+  onFetchModels?: () => void;
   modelSelectionMode?: boolean;
   selectedModelIds?: string[];
   onToggleModelSelection?: (modelId: string, selected: boolean) => void;
@@ -61,6 +66,10 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   onDeleteModel,
   onSetPrimaryModel,
   onReorderModels,
+  onTestModels,
+  testModelsDisabled = false,
+  testModelsDisabledTooltip,
+  onFetchModels,
   modelSelectionMode = false,
   selectedModelIds = [],
   onToggleModelSelection,
@@ -152,27 +161,26 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
                 {provider.isDisabled && (
                   <Tag>{t('zcode.provider.disabled', { defaultValue: '已禁用' })}</Tag>
                 )}
-                {apiType && <Tag color="blue">{apiType}</Tag>}
               </Space>
-              <div style={{ marginTop: 4 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {provider.id}
-                </Text>
-              </div>
-              {baseUrl && (
-                <div style={{ marginTop: 2 }}>
+              {/* One detail line, as on the Codex card: base URL, format and
+                  notes inline. The provider id is not shown — it duplicates the
+                  name for auto-derived ids and means nothing to the user. */}
+              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {baseUrl && (
                   <Text code style={{ fontSize: 12 }}>
                     {baseUrl}
                   </Text>
-                </div>
-              )}
-              {provider.notes && (
-                <div style={{ marginTop: 4 }}>
+                )}
+                {apiType && <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{apiType}</Tag>}
+                {baseUrl && provider.notes && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
+                )}
+                {provider.notes && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     {provider.notes}
                   </Text>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
           <Space size="small">
@@ -181,7 +189,15 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
                 defaultValue: '设为 ZCode 新建会话的默认供应商与模型',
               })}
             >
-              <Button size="small" icon={<ThunderboltOutlined />} onClick={onApply}>
+              {/* Link-style action, matching the apply button on every other
+                  provider card. */}
+              <Button
+                type="link"
+                size="small"
+                icon={<CheckOutlined />}
+                onClick={onApply}
+                disabled={provider.isDisabled}
+              >
                 {t('zcode.provider.apply', { defaultValue: '应用' })}
               </Button>
             </Tooltip>
@@ -214,6 +230,12 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
           onToggleSelection={onToggleModelSelection}
           onToggleBatchDeleteMode={onToggleBatchDeleteMode}
           onBatchDelete={onBatchDeleteModels}
+          onTest={onTestModels}
+          testDisabled={testModelsDisabled}
+          testDisabledTooltip={testModelsDisabledTooltip}
+          onFetchModels={onFetchModels}
+          fetchDisabled={!baseUrl}
+          fetchDisabledTooltip={t('opencode.provider.completeUrlAndKey')}
           onAddModel={onAddModel}
           onEditModel={onEditModel}
           onDeleteModel={onDeleteModel}

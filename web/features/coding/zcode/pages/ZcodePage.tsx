@@ -34,6 +34,8 @@ import {
   runProviderConnectivityBatch,
 } from '@/features/coding/shared/providerConnectivity/batchTest';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import FetchModelsModal from '@/components/common/FetchModelsModal';
+import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import { useSettingsStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
 import {
@@ -91,6 +93,9 @@ const ZcodePage: React.FC = () => {
     /** `null` means "add"; otherwise the index of the row being edited. */
     modelIndex: number | null;
   } | null>(null);
+  const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string | null>(null);
+  const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
+  const [testingModelsFor, setTestingModelsFor] = React.useState<string | null>(null);
 
   const sidebarHidden = sidebarHiddenByPage.zcode ?? false;
 
@@ -446,6 +451,112 @@ const ZcodePage: React.FC = () => {
     }
   }, [visibleProviders, t]);
 
+  /** Runs the connectivity probe for one provider's catalog only. */
+  const handleTestProviderModels = React.useCallback(
+    async (provider: ZcodeProvider) => {
+      const settings = parseZcodeProviderSettings(provider.settingsConfig);
+      const modelIds = (settings?.models ?? []).map((model) => model.modelId);
+      setTestingModelsFor(provider.id);
+      setConnectivityStatuses((previous) => {
+        const next = { ...previous };
+        delete next[provider.id];
+        return next;
+      });
+      try {
+        await runProviderConnectivityBatch(
+          [
+            buildProviderConnectivityBatchTarget(
+              {
+                providerId: provider.id,
+                providerName: provider.name,
+                providerConfig: {
+                  options: {
+                    baseURL: settings?.config?.api?.baseUrl ?? '',
+                    apiKey: settings?.config?.access?.apiKey ?? '',
+                    headers: settings?.config?.api?.headers,
+                  },
+                },
+                modelIds,
+              },
+              {
+                requireBaseUrl: true,
+                requireApiKey: true,
+                errorMessages: {
+                  missingBaseUrl: t('zcode.test.missingBaseUrl', { name: provider.name }),
+                  missingApiKey: t('zcode.test.missingApiKey', { name: provider.name }),
+                  missingModel: t('zcode.test.missingModel', { name: provider.name }),
+                },
+              },
+            ),
+          ],
+          (providerId, status) => {
+            setConnectivityStatuses((previous) => ({ ...previous, [providerId]: status }));
+          },
+        );
+      } finally {
+        setTestingModelsFor(null);
+      }
+    },
+    [t],
+  );
+
+  const fetchModelsProvider = React.useMemo(
+    () => providers.find((provider) => provider.id === fetchModelsProviderId) ?? null,
+    [fetchModelsProviderId, providers],
+  );
+
+  const fetchModelsProviderInfo = React.useMemo(() => {
+    if (!fetchModelsProvider) {
+      return null;
+    }
+    const settings = parseZcodeProviderSettings(fetchModelsProvider.settingsConfig);
+    return {
+      providerId: fetchModelsProvider.id,
+      name: fetchModelsProvider.name,
+      baseUrl: settings?.config?.api?.baseUrl ?? '',
+      apiKey: settings?.config?.access?.apiKey ?? '',
+      existingModelIds: (settings?.models ?? []).map((model) => model.modelId),
+    };
+  }, [fetchModelsProvider]);
+
+  /**
+   * Appends the fetched models to the provider's catalog.
+   *
+   * Rows are written as `smart` rules: only the id and display name are set, so
+   * ZCode derives capabilities and limits from its own built-in catalog. Writing
+   * them as `manual` would require every field to be filled and would pin values
+   * that ZCode already knows.
+   */
+  const handleFetchModelsApply = React.useCallback(
+    async (result: FetchModelsApplyResult) => {
+      if (!fetchModelsProvider) {
+        return;
+      }
+      const settings = parseZcodeProviderSettings(fetchModelsProvider.settingsConfig);
+      if (!settings) {
+        return;
+      }
+      const existingIds = new Set(settings.models.map((model) => model.modelId));
+      const added: ZcodeModelRow[] = result.selectedModels
+        .filter((model) => !existingIds.has(model.id))
+        .map((model) => ({
+          modelId: model.id,
+          displayName: model.name || undefined,
+          ruleKind: 'smart' as const,
+          isDefault: false,
+        }));
+      if (added.length === 0) {
+        setFetchModelsModalOpen(false);
+        setFetchModelsProviderId(null);
+        return;
+      }
+      await persistProviderModels(fetchModelsProvider, [...settings.models, ...added]);
+      setFetchModelsModalOpen(false);
+      setFetchModelsProviderId(null);
+    },
+    [fetchModelsProvider, persistProviderModels],
+  );
+
   return (
     <SectionSidebarLayout
       sidebarTitle={t('zcode.title', { defaultValue: 'ZCode 配置管理' })}
@@ -564,6 +675,16 @@ const ZcodePage: React.FC = () => {
                     onReorderModels={(orderedModelIds) =>
                       void handleReorderModels(provider, orderedModelIds)
                     }
+                    onTestModels={() => void handleTestProviderModels(provider)}
+                    testModelsDisabled={
+                      testingModelsFor === provider.id ||
+                      !(parseZcodeProviderSettings(provider.settingsConfig)?.models ?? []).length
+                    }
+                    testModelsDisabledTooltip={t('common.modelMissing')}
+                    onFetchModels={() => {
+                      setFetchModelsProviderId(provider.id);
+                      setFetchModelsModalOpen(true);
+                    }}
                   />
                 ))}
               </div>
@@ -650,6 +771,22 @@ const ZcodePage: React.FC = () => {
           onSuccess={() => {
             setCommonConfigModalOpen(false);
           }}
+        />
+      )}
+
+      {fetchModelsProviderInfo && (
+        <FetchModelsModal
+          open={fetchModelsModalOpen}
+          providerId={fetchModelsProviderInfo.providerId}
+          providerName={fetchModelsProviderInfo.name}
+          baseUrl={fetchModelsProviderInfo.baseUrl}
+          apiKey={fetchModelsProviderInfo.apiKey || undefined}
+          existingModelIds={fetchModelsProviderInfo.existingModelIds}
+          onCancel={() => {
+            setFetchModelsModalOpen(false);
+            setFetchModelsProviderId(null);
+          }}
+          onSuccess={(result) => void handleFetchModelsApply(result)}
         />
       )}
 
