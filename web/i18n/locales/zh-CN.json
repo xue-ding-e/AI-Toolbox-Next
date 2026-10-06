@@ -6292,7 +6292,19 @@
     },
     "commonConfig": {
       "title": "通用配置",
-      "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。"
+      "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
+      "tabGeneral": "通用配置",
+      "tabSwarm": "蜂群模型池",
+      "swarmHint": "配置 [secondary_model]：主 agent 在蜂群（AgentSwarm）模式下可为每个子 agent 自主选择模型。",
+      "swarmDefaultModel": "子 agent 默认模型",
+      "swarmDefaultModelHint": "写入 default_model。配置模型池或开启强制时必填。",
+      "swarmDefaultModelPlaceholder": "选择模型别名",
+      "swarmForce": "强制使用默认模型",
+      "swarmForceHint": "写入 force。开启后所有子 agent 固定使用默认模型，主 agent 失去选择权，且不能再配置模型池。",
+      "swarmModels": "可选模型池",
+      "swarmModelsHint": "写入 [secondary_model.models]。主 agent 可从中自主挑选；key 必须已存在于模型的别名中。保留字 primary 表示主 agent 自身模型，无需列出。",
+      "swarmModelsPlaceholder": "选择可选模型",
+      "swarmGatewayNote": "注意：模型池中引用的其他供应商不经过网关，与本工具其他 CLI 的单点接管语义一致。"
     },
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
     "addProvider": "添加供应商",
@@ -6354,7 +6366,11 @@
       "modelCatalogContextSize": "上下文大小",
       "modelCatalogContextSizeTooltip": "写入 config.toml 的 max_context_size 字段。Kimi CLI 要求每个模型必须有正数上下文大小，留空时应用默认 262144（256k）。",
       "apiKeyRequired": "请输入 API Key",
-      "baseUrlRequired": "请输入 Base URL"
+      "baseUrlRequired": "请输入 Base URL",
+      "presetMatch": "已匹配到 {{count}} 个内置预设模型（来自 models.dev 目录）",
+      "presetImport": "导入预设",
+      "presetImported": "已导入 {{count}} 个预设模型",
+      "presetNoneNew": "预设模型已全部存在，无新增"
     },
     "localConfigHint": "来自本地文件，编辑后保存到数据库",
     "providerDisabled": "已禁用",

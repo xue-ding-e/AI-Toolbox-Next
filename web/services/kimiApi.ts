@@ -8,6 +8,7 @@ import type {
   KimiOfficialAccount,
   KimiPlugin,
   KimiDeviceAuthStartResult,
+  KimiPresetModel,
   KimiSettings,
 } from '@/types/kimi';
 
@@ -99,5 +100,13 @@ export async function reorderKimiProviders(ids: string[]): Promise<void> {
 
 export async function listKimiPlugins(): Promise<KimiPlugin[]> {
   return await invoke<KimiPlugin[]>('list_kimi_plugins');
+}
+
+/**
+ * Bundled models.dev catalog models matching a provider base URL.
+ * Returns an empty list when nothing matches — the caller shows no preset hint.
+ */
+export async function getKimiPresetModels(baseUrl: string): Promise<KimiPresetModel[]> {
+  return await invoke<KimiPresetModel[]>('get_kimi_preset_models', { baseUrl });
 }
 

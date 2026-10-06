@@ -6295,7 +6295,19 @@
     },
     "commonConfig": {
       "title": "General Configuration",
-      "description": "These configurations will be appended to config.toml, applied to all providers."
+      "description": "These configurations will be appended to config.toml, applied to all providers.",
+      "tabGeneral": "General",
+      "tabSwarm": "Swarm Model Pool",
+      "swarmHint": "Configures [secondary_model]: lets the main agent pick a model per subagent in swarm (AgentSwarm) mode.",
+      "swarmDefaultModel": "Subagent Default Model",
+      "swarmDefaultModelHint": "Written as default_model. Required when a pool is configured or force is on.",
+      "swarmDefaultModelPlaceholder": "Select a model alias",
+      "swarmForce": "Force Default Model",
+      "swarmForceHint": "Written as force. Pins every subagent to the default model and removes the main agent's choice; cannot be combined with a pool.",
+      "swarmModels": "Model Pool",
+      "swarmModelsHint": "Written as [secondary_model.models]. The main agent picks from these; each key must exist as a model alias. The reserved key \"primary\" means the caller's own model and needs no entry.",
+      "swarmModelsPlaceholder": "Select pool models",
+      "swarmGatewayNote": "Note: providers referenced by the pool do not go through the gateway, matching the single-point takeover semantics of the other CLIs here."
     },
     "pageHint": "Add multiple provider configurations and quickly switch via Apply or the system tray menu. Common configuration is shared across all providers and merged automatically on apply.",
     "addProvider": "Add Provider",
@@ -6357,7 +6369,11 @@
       "modelCatalogContextSize": "Context Size",
       "modelCatalogContextSizeTooltip": "Written to config.toml as max_context_size. Kimi CLI requires a positive context size per model; defaults to 262144 (256k) when left empty.",
       "apiKeyRequired": "Please enter the API key",
-      "baseUrlRequired": "Please enter the Base URL"
+      "baseUrlRequired": "Please enter the Base URL",
+      "presetMatch": "Matched {{count}} bundled preset models (from the models.dev catalog)",
+      "presetImport": "Import Presets",
+      "presetImported": "Imported {{count}} preset models",
+      "presetNoneNew": "All preset models are already in the catalog"
     },
     "localConfigHint": "From local file, will be saved to database after editing",
     "providerDisabled": "Disabled",

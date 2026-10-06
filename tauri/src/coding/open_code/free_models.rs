@@ -173,6 +173,17 @@ pub fn get_default_provider_data() -> serde_json::Value {
     }
 }
 
+/// The compile-time bundled models.dev catalog (provider id -> provider data).
+///
+/// Exposed so other modules can offer catalog-backed presets without pulling in
+/// this module's cache/refresh lifecycle — the bundled copy is deterministic and
+/// works offline, which is what a preset hint needs.
+pub fn bundled_models_dev_catalog() -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_str(DEFAULT_MODELS_JSON).ok()?;
+    value.as_object()?;
+    Some(value)
+}
+
 pub fn get_default_free_models() -> Vec<FreeModel> {
     let provider_data = get_default_provider_data();
     filter_free_models(OPENCODE_PROVIDER_ID, &provider_data)

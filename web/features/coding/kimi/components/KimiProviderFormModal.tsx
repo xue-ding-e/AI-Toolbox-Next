@@ -5,6 +5,7 @@ import {
   Input,
   Select,
   Alert,
+  Button,
   Tooltip,
   Typography,
   message,
@@ -17,6 +18,7 @@ import type {
   KimiProvider,
   KimiProviderFormData,
   KimiCatalogModel,
+  KimiPresetModel,
   KimiProviderCategory,
 } from '@/types/kimi';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
@@ -45,6 +47,8 @@ import {
   KIMI_OFFICIAL_DEFAULT_MODEL_KEY,
   KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE,
 } from '../utils/settingsConfig';
+import { buildKimiCatalogModelsFromPresets } from '../utils/kimiCatalogModels';
+import { getKimiPresetModels } from '@/services/kimiApi';
 import styles from './KimiProviderFormModal.module.less';
 
 const { Text } = Typography;
@@ -111,6 +115,10 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
 
   // Advanced JSON section expand state (shared self-drawn collapse)
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
+
+  // Bundled models.dev catalog models matching the entered base URL. Empty
+  // means "no match", which shows no hint rather than a wrong one.
+  const [presetModels, setPresetModels] = useState<KimiPresetModel[]>([]);
 
   const isOfficial = category === 'official';
 
@@ -212,6 +220,44 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
     }
 
     setAdvancedExpanded(expanded);
+  };
+
+  /**
+   * Look up the bundled models.dev catalog for the entered base URL. Runs on
+   * blur so typing does not fire a request per keystroke; a miss clears the
+   * hint instead of keeping a stale match.
+   */
+  const handleBaseUrlBlur = async (rawValue: string) => {
+    const baseUrl = rawValue.trim();
+    if (!baseUrl) {
+      setPresetModels([]);
+      return;
+    }
+    try {
+      setPresetModels(await getKimiPresetModels(baseUrl));
+    } catch {
+      // A lookup failure must never block manual entry.
+      setPresetModels([]);
+    }
+  };
+
+  const handleImportPresetModels = () => {
+    const imported = buildKimiCatalogModelsFromPresets(
+      presetModels,
+      providerKey || CUSTOM_KIMI_PROVIDER_KEY,
+      catalogModels,
+      KIMI_OFFICIAL_DEFAULT_MODEL_MAX_CONTEXT_SIZE,
+    );
+    if (imported.length === 0) {
+      message.info(t('kimi.providerForm.presetNoneNew'));
+      return;
+    }
+    const nextModels = [...catalogModels, ...imported];
+    setCatalogModels(nextModels);
+    if (!form.getFieldValue('defaultModelKey') && nextModels[0]) {
+      form.setFieldsValue({ defaultModelKey: nextModels[0].key });
+    }
+    message.success(t('kimi.providerForm.presetImported', { count: imported.length }));
   };
 
   // Options for defaultModelKey select
@@ -425,8 +471,27 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
               }
               rules={[{ required: true, message: t('kimi.providerForm.baseUrlRequired') }]}
             >
-              <Input placeholder="https://api.example.com/v1" />
+              <Input
+                placeholder="https://api.example.com/v1"
+                onBlur={(event) => void handleBaseUrlBlur(event.target.value)}
+              />
             </Form.Item>
+
+            {/* Bundled-catalog preset hint (custom providers only). */}
+            {!isOfficial && presetModels.length > 0 && (
+              <Form.Item wrapperCol={sectionWrapperCol}>
+                <Alert
+                  type="info"
+                  showIcon
+                  message={t('kimi.providerForm.presetMatch', { count: presetModels.length })}
+                  action={
+                    <Button size="small" onClick={handleImportPresetModels}>
+                      {t('kimi.providerForm.presetImport')}
+                    </Button>
+                  }
+                />
+              </Form.Item>
+            )}
 
             {/* Default Model Selection */}
             <Form.Item

@@ -30,6 +30,17 @@ export interface KimiCatalogModel {
   [key: string]: unknown;
 }
 
+/** One catalog model from the bundled models.dev data (`get_kimi_preset_models`). */
+export interface KimiPresetModel {
+  id: string;
+  displayName?: string;
+  maxContextSize?: number;
+  maxOutputSize?: number;
+  reasoning: boolean;
+  inputModalities: string[];
+  outputModalities: string[];
+}
+
 export interface KimiProviderConfig {
   type?: string;
   base_url?: string;

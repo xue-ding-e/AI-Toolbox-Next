@@ -2542,6 +2542,7 @@ pub fn run() {
             coding::kimi::toggle_kimi_provider_disabled,
             coding::kimi::select_kimi_provider,
             coding::kimi::get_kimi_common_config,
+            coding::kimi::get_kimi_preset_models,
             coding::kimi::extract_kimi_common_config_from_current_file,
             coding::kimi::save_kimi_common_config,
             coding::kimi::save_kimi_local_config,
