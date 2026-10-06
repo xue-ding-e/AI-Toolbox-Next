@@ -274,7 +274,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] **F-2 页面级区块**（附录 B.2）：不属于任何组件、靠对照参照页面逐块点的部分（提示块、导入入口、页面级 Alert…）
 - [ ] **F-3 能力**（见 H）：组件 prop 之外的功能缺口
 
-> **ZCode 实证（三处，全部属于本条）**：
+> **ZCode 实证（三处，2026-10-06 全部补齐）**：
 >
 > | 漏传 | 界面表现 |
 > |------|---------|
@@ -282,7 +282,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 > | `CodingPageHeader.onPreviewConfig` | 页面没有「预览配置」；§4.1 早就记过这条，迁移后仍未补 |
 > | `ProviderListSection.hint` / `footer` | 提示块与「导入我使用过的供应商」整体缺失 |
 >
-> 三处的共同点：**组件本身没坏、页面也没报错**，只有把参照 CLI 打开逐项指认才会发现。
+> 三处的共同点：**组件本身没坏、页面也没报错**，只有把参照 CLI 打开逐项指认才会发现。它们是在**做完附录 B 台账之后**才被一起发现的——说明这份台账不能等到收尾再填。
 
 **G. 状态与空态**
 
@@ -330,7 +330,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 
 **为什么有这个组件**：此前 14 个页面各写各的头部，结构一致但代码分散，新工具接入只能靠"复制隔壁 + 手改"，容易漏项（zcode 漏了「预览配置」、claudedesktop 文案硬编码中文未走 i18n）。
 
-> ⚠️ **这条至今未修**：ZCode 2026-10-06 迁移到 `CodingPageHeader` 后，头部仍只传了 7 个 prop，`onPreviewConfig` 依旧是 `undefined` → 页面没有「预览配置」。**迁到共享组件不等于补齐了缺失的能力**——见附录 B.1。
+> **ZCode 的教训（已修 2026-10-06）**：迁到 `CodingPageHeader` 之后，头部仍只传了 7 个 prop，`onPreviewConfig` 一直是 `undefined` → 页面没有「预览配置」，直到做附录 B 台账时才被发现。**迁到共享组件不等于补齐了缺失的能力**——组件换对了，漏传的 prop 依然静默。
 
 **标准形态**：
 
@@ -470,9 +470,11 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `hint` / `footer` | 提示块 / 底部导入按钮；**文案由调用方传**，组件不硬编码 |
 | `onBatchTest` / `onOpenCommonConfig` | 传了才渲染对应按钮 |
 
-> ⚠️ **`hint` 与 `footer` 是最容易整体漏掉的两个插槽**：ZCode 两个都没传，于是提示块和「导入我使用过的供应商」**整块消失**，而界面看起来完全正常。已迁移的两个试点（claudecode / codex）**都传了**——`hint` 是两行（`pageHint` + `pageWarning`），`footer` 至少含 `opencode.provider.importFavorite`。
+> ⚠️ **`hint` 与 `footer` 是最容易整体漏掉的两个插槽**：ZCode 两个都没传，于是提示块和「导入我使用过的供应商」**整块消失**，而界面看起来完全正常；已迁移的两个试点（claudecode / codex）都传了。`hint` 是两行（`pageHint` + `pageWarning`），`footer` 含三个导入源。
 >
-> 13 个 coding 页面里只有 10 个有「导入我使用过的供应商」入口，zcode / kimi / geminicli / antigravity / omo_native 没有。**新增 CLI 时默认应该有**，不做要在提交说明里写明理由。
+> **接 `footer` 时先确认本 CLI 有没有 favorites 存储的接入**——ZCode 完全没有，于是连带「删除前备份」这个共享 helper 也被传了个空 writer（`async () => undefined`），**批量删除实际不备份**，而 `backupFailed` 提示永远不会触发。这类「helper 传了但传的是空实现」比漏传更难发现：调用点看起来是齐的。
+>
+> 13 个 coding 页面里只有 10 个有「导入我使用过的供应商」入口，kimi / geminicli / antigravity / omo_native 仍没有。**新增 CLI 默认应该有**，不做要在提交说明里写明理由。
 
 **文案一律走 `common.provider.*`，没有 `i18nPrefix`**：标题「供应商列表」、按钮「添加供应商」/「通用配置」、空态「暂无供应商配置，点击上方按钮添加」。组件不再按 `<tool>.provider.*` 取词——那套 per-CLI key 层级混乱（有的在顶层、有的在 `provider` 下），是空态渲染出字面量 key 的根因。claudecode / codex 迁移时产生的孤儿 key 已 prune。
 
@@ -520,7 +522,9 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `onTest` / `onFetchModels` / `onAddModel` | 工具栏三按钮；**传了才渲染** |
 | `onEditModel` / **`onCopyModel`** / `onDeleteModel` / `onSetPrimaryModel` | 行级操作；**四个一起传**，漏一个就少一个按钮 |
 
-> ⚠️ **`onCopyModel` 是最常漏的一个**：ZCode 传了 edit / delete / setPrimary，唯独没传 copy → 模型行没有「复制」，而其余 7 处调用方都有。与工具栏「只传 1 个 handler」是同一类错（13.1 模式二）。**逐个指认行级按钮数量**能发现，只读代码不能。
+> ⚠️ **`onCopyModel` 是最常漏的一个**：ZCode 传了 edit / delete / setPrimary，唯独没传 copy → 模型行没有「复制」，而其余 7 处调用方都有（2026-10-06 已补）。与工具栏「只传 1 个 handler」是同一类错（13.1 模式二）。**逐个指认行级按钮数量**能发现，只读代码不能。
+>
+> **复制 ≠ 编辑**：行 id 就是业务 id 的 CLI（ZCode 按 model id 索引目录）**不能**照抄 Codex 的「同 id 加名字后缀」，那会造出重复 id。正确做法是走**新增**流程并预填副本（`modelIndex: null` + `prefill`），让用户自己起新 id。
 | `renderModelExtraActions` | 行级额外操作（Codex 的「设为自动审批模型」） |
 | `aboveList` | 工具栏下方、列表上方的内容（Codex 的自动审批行） |
 | `className` / `bodyStyle` / `transparentRows` | 样式适配（Codex 用透明背景 + `paddingLeft: 18`） |
@@ -1162,7 +1166,8 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 归档路径保留子目录层级 | `settings/backup/utils.rs:4560`（zcode 回归测试） |
 | 业务 id 含冒号的往返读取 | `zcode/adapter.rs` 的 `managed_provider_id_survives_the_db_round_trip`（见 2.1） |
 | 预设字段 → 本 CLI 字段的映射 | `web/test/features/coding/zcode/utils/zcodeModelFields.test.ts`（对着 `preset_models.json` 断言，数据漂移即失败） |
-| 自定义根目录下 MCP/Skills 路径解析 | ⚠️ **仍然缺**（2026-10-06 复核：`tauri/tests/` 下无任何 detection 测试，`detection.rs` 也无 `mod tests`）。#13 这个 bug 拖了几轮没被发现，就是因为没有这个测试 |
+| 自定义根目录下 MCP/Skills 路径解析 | `tauri/tests/coding/tools/detection_paths.rs`（2026-10-06 补）。#13 这个 bug 拖了几轮没被发现，就是因为没有这个测试 |
+| 外部来源导入（All API Hub / CC Switch）→ 本 CLI 供应商 | `web/test/features/coding/zcode/utils/zcodeImportMapping.test.ts`（两个 extractor 的字段映射，含「无 baseUrl 也无 key → null」） |
 | 老库 backfill 默认映射 | `wsl/commands.rs` 的 versioned mapping 测试 |
 
 > **测试位置**：Rust 集成测试放 `tauri/tests/coding/<tool>/`（不存在的目录要新建并挂进 `tauri/tests/coding.rs`）；纯逻辑单测可直接放模块内 `mod tests`。前端测试放 `web/test/features/coding/<tool>/`，`pnpm test:web` 自动收集 `*.test.ts`。
@@ -1205,9 +1210,9 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 30 | 共享组件：`ModelFormModal` 的 `messageOverrides` JSDoc 说「传 i18n key」 | 与实现（按已翻译文本处理）矛盾，误导调用方 | 改 JSDoc + 删过时注释（见 4.2.4） |
 | 31 | zcode：`handleFetchModelsApply` 不查预设 | 点「获取模型 → 应用」只得到裸 id，参数要手填 | 接 `findPresetModelById` + 共享映射（见 4.2.5） |
 | 32 | zcode：`removedModelIds` 被忽略 | 弹窗里「移除已不存在的模型」开关点了没反应（9 个 CLI 里只有它没处理） | 先删后加，无变化则不写盘（见 4.2.5） |
-| 33 | zcode：`ModelListSection.onCopyModel` 未传 | 模型行没有「复制」按钮，看起来像设计如此 | **未修**，见附录 B.1 |
-| 34 | zcode：`CodingPageHeader.onPreviewConfig` 未传 | 页面没有「预览配置」；§4.1 记过一轮，迁移后仍未补 | **未修**，见 4.1 |
-| 35 | zcode：`ProviderListSection.hint` / `footer` 未传 | 提示块与导入入口整块消失 | **未修**，见 4.2.1 |
+| 33 | zcode：`ModelListSection.onCopyModel` 未传 | 模型行没有「复制」按钮，看起来像设计如此 | 补 `handleCopyModel`（预填副本、新 id），见附录 B.1 |
+| 34 | zcode：`CodingPageHeader.onPreviewConfig` 未传 | 页面没有「预览配置」；§4.1 记过一轮，迁移后仍未补 | 接 `JsonPreviewModal` + `readZcodeSettings`（见 4.1） |
+| 35 | zcode：`ProviderListSection.hint` / `footer` 未传 | 提示块与导入入口整块消失 | 补 hint + 三个导入源；顺带修好「删除不备份」（见 4.2.1） |
 | 36 | 「预设模型选择器」在弹窗里有、在获取模型路径里没有 | 同一能力两个消费点只做了一个 | 抽成共享映射模块，一处定义（见 4.2.5） |
 | 37 | 用正则批量改 TSX 源文件 | 跨行多匹配吃掉整个 `Form.Item`，文件无法编译 | **不要对 TSX 用正则批量改写**；用 AST 或逐处 Edit |
 
@@ -1290,10 +1295,10 @@ const existingModels = provider
 | 项 | 状态 |
 |----|------|
 | ~~`detection.rs` 4 个 `*_with_db*` 白名单漏 zcode~~ | ✅ 已修（2026-10-06）：白名单反转，见 7.2 |
-| 模型行缺「复制」按钮（`onCopyModel` 未传） | 未修，见 4.0.2-F / 附录 B |
-| 页面缺「预览配置」（`onPreviewConfig` 未传） | 未修，见 4.1 / 附录 B |
-| 页面缺提示块与导入入口（`hint` / `footer` 未传） | 未修，见 4.2.1 / 附录 B |
-| 「自定义根目录下 MCP/Skills 路径」无回归测试 | 未修，见 12.5 |
+| ~~模型行缺「复制」按钮（`onCopyModel` 未传）~~ | ✅ 已修（2026-10-06），见 4.0.2-F / 附录 B.1 |
+| ~~页面缺「预览配置」（`onPreviewConfig` 未传）~~ | ✅ 已修（2026-10-06），见 4.1 / 附录 B.1 |
+| ~~页面缺提示块与导入入口（`hint` / `footer` 未传）~~ | ✅ 已修（2026-10-06），三个导入源全部接上，见 4.2.1 |
+| ~~「自定义根目录下 MCP/Skills 路径」无回归测试~~ | ✅ 已修（2026-10-06）：`tauri/tests/coding/tools/detection_paths.rs`，见 12.5 |
 | ZCode 不在 `GatewayCliKey::supported_mvp()` | 设计如此（模块不 spawn CLI），故无 Gateway 接管与 cli_resolver |
 
 ---
