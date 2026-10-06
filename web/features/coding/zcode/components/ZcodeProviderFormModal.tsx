@@ -1,5 +1,6 @@
 import React from 'react';
-import { Form, Input, Modal, Select, Typography, message } from 'antd';
+import { Button, Form, Input, Modal, Select, Typography, message } from 'antd';
+import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   createZcodeProvider,
@@ -66,6 +67,7 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   const labelCol = { span: i18n.language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
   const [templates, setTemplates] = React.useState<ZcodeProviderTemplate[]>([]);
+  const [showApiKey, setShowApiKey] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [billingConfig, setBillingConfig] = React.useState<BillingConfigState>(() =>
     getBillingConfigFromMeta(provider?.meta ?? undefined),
@@ -287,7 +289,20 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
           <Input placeholder="https://api.deepseek.com/anthropic" />
         </Form.Item>
         <Form.Item name="apiKey" label="API Key">
-          <Input.Password placeholder="sk-..." />
+          <Input
+            type={showApiKey ? 'text' : 'password'}
+            placeholder="sk-..."
+            addonAfter={
+              <Button
+                type="text"
+                size="small"
+                icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                onClick={() => setShowApiKey(!showApiKey)}
+              >
+                {showApiKey ? t('common.provider.hideApiKey') : t('common.provider.showApiKey')}
+              </Button>
+            }
+          />
         </Form.Item>
         <ProviderFormSections
           editable

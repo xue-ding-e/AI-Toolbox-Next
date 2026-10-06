@@ -894,7 +894,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
                       icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
                       onClick={() => setShowApiKey(!showApiKey)}
                     >
-                      {showApiKey ? t('geminicli.provider.hideApiKey') : t('geminicli.provider.showApiKey')}
+                      {showApiKey ? t('common.provider.hideApiKey') : t('common.provider.showApiKey')}
                     </Button>
                   }
                 />

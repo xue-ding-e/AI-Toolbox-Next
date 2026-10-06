@@ -1178,7 +1178,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
                   icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
                   onClick={() => setShowApiKey(!showApiKey)}
                 >
-                  {showApiKey ? t('grok.provider.hideApiKey') : t('grok.provider.showApiKey')}
+                  {showApiKey ? t('common.provider.hideApiKey') : t('common.provider.showApiKey')}
                 </Button>
               }
             />

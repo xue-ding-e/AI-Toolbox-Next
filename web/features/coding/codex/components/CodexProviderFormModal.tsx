@@ -1100,7 +1100,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                   icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
                   onClick={() => setShowApiKey(!showApiKey)}
                 >
-                  {showApiKey ? t('codex.provider.hideApiKey') : t('codex.provider.showApiKey')}
+                  {showApiKey ? t('common.provider.hideApiKey') : t('common.provider.showApiKey')}
                 </Button>
               }
             />

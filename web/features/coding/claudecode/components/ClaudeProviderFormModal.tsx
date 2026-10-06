@@ -1234,7 +1234,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                   icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
                   onClick={() => setShowApiKey(!showApiKey)}
                 >
-                  {showApiKey ? t('claudecode.provider.hideApiKey') : t('claudecode.provider.showApiKey')}
+                  {showApiKey ? t('common.provider.hideApiKey') : t('common.provider.showApiKey')}
                 </Button>
               }
             />
