@@ -1,6 +1,11 @@
 import React from 'react';
-import { Alert, Modal, message } from 'antd';
-import { DatabaseOutlined, FileTextOutlined, MessageOutlined } from '@ant-design/icons';
+import { Alert, Button, Modal, Space, message } from 'antd';
+import {
+  DatabaseOutlined,
+  FileTextOutlined,
+  ImportOutlined,
+  MessageOutlined,
+} from '@ant-design/icons';
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import {
@@ -33,18 +38,47 @@ import {
   buildProviderConnectivityBatchTarget,
   runProviderConnectivityBatch,
 } from '@/features/coding/shared/providerConnectivity/batchTest';
+import {
+  buildFavoriteProviderStorageKey,
+  dedupeFavoriteProvidersByPayload,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  type ZcodeFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
+import {
+  deleteFavoriteProvider,
+  listFavoriteProviders,
+  upsertFavoriteProvider,
+  type OpenCodeFavoriteProvider,
+} from '@/services/opencodeApi';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
+import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
+import ZcodeImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
+import { hasAllApiHubExtension } from '@/services/appApi';
+import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
+import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import { buildZcodeFavoriteProviderConfig } from '../utils/zcodeFavoriteProvider';
+import {
+  buildZcodeSettingsConfigFromImport,
+  extractZcodeProviderFromAllApiHub,
+  extractZcodeProviderFromCcSwitch,
+} from '../utils/zcodeImportMapping';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
+import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import { useSettingsStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
 import {
+  createZcodeProvider,
   deleteZcodeProvider,
   getZcodeCommonConfig,
   getZcodeConfigFilePath,
   getZcodeGenerationStatus,
   getZcodeRootPathInfo,
   listZcodeProviders,
+  readZcodeSettings,
   reorderZcodeProviders,
   revealZcodeConfigFolder,
   saveZcodeCommonConfig,
@@ -97,9 +131,22 @@ const ZcodePage: React.FC = () => {
     provider: ZcodeProvider;
     /** `null` means "add"; otherwise the index of the row being edited. */
     modelIndex: number | null;
+    /**
+     * Seed row for "add", used by copy. A copy cannot reuse the source id —
+     * ZCode keys catalog rows by model id — so it opens the *add* flow
+     * prefilled and lets the user name the new one.
+     */
+    prefill?: ZcodeModelRow;
   } | null>(null);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string | null>(null);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
+  const [previewData, setPreviewData] = React.useState<unknown>(null);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
+  const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
+  const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
   const [testingModelsFor, setTestingModelsFor] = React.useState<string | null>(null);
   /** Provider whose model list is in batch-delete mode, if any. */
   const [modelBatchDeleteProviderId, setModelBatchDeleteProviderId] = React.useState<string | null>(
@@ -228,11 +275,199 @@ const ZcodePage: React.FC = () => {
     }
   };
 
+  /**
+   * Copies a provider into the favorites store before it is deleted.
+   *
+   * The store is shared across CLIs, so a ZCode provider becomes restorable from
+   * the provider list's import entry — the only undo a delete has.
+   */
+  const backUpProviderToFavorites = React.useCallback(async (provider: ZcodeProvider) => {
+    await upsertFavoriteProvider(
+      buildFavoriteProviderStorageKey('zcode', provider.id),
+      buildZcodeFavoriteProviderConfig(provider),
+    );
+  }, []);
+
+  /**
+   * Drops favorites that hold the same provider twice.
+   *
+   * A record is written both when a provider is deleted and when one is
+   * imported, so the same config can land under two keys. The store is shared
+   * with the other CLIs, so the duplicates are cleaned here rather than left for
+   * whichever tool reads the list next. Nothing else in this page reads the
+   * favorites list — the import dialog fetches its own.
+   */
+  const pruneDuplicateFavoriteProviders = React.useCallback(async () => {
+    try {
+      const all = await listFavoriteProviders();
+      const zcodeFavorites = all.filter((provider) =>
+        isFavoriteProviderForSource('zcode', provider),
+      );
+      const currentStorageKeys = new Set(
+        providers.map((provider) => buildFavoriteProviderStorageKey('zcode', provider.id)),
+      );
+      const { duplicateIds } = dedupeFavoriteProvidersByPayload(zcodeFavorites, currentStorageKeys);
+      await Promise.all(
+        duplicateIds.map(async (providerId) => {
+          try {
+            await deleteFavoriteProvider(providerId);
+          } catch (error) {
+            console.error('Failed to delete duplicate ZCode favorite provider:', error);
+          }
+        }),
+      );
+    } catch (error) {
+      console.error('Failed to load ZCode favorite providers:', error);
+    }
+  }, [providers]);
+
+  React.useEffect(() => {
+    void pruneDuplicateFavoriteProviders();
+  }, [pruneDuplicateFavoriteProviders]);
+
+  /** Adopts providers picked from the shared favorites list. */
+  const handleImportFavoriteProviders = React.useCallback(
+    async (providersToImport: OpenCodeFavoriteProvider[]) => {
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const payload = getFavoriteProviderPayload<ZcodeFavoriteProviderPayload>(favoriteProvider);
+        if (!payload) {
+          continue;
+        }
+        try {
+          const created = await createZcodeProvider({
+            name: payload.name,
+            category: payload.category,
+            settingsConfig: payload.settingsConfig,
+            notes: payload.notes,
+          });
+          // Keep the imported row in the store so it survives a later delete.
+          try {
+            await upsertFavoriteProvider(
+              buildFavoriteProviderStorageKey('zcode', created.id),
+              buildZcodeFavoriteProviderConfig(created),
+            );
+          } catch (favoriteError) {
+            console.error('Failed to keep the imported ZCode favorite provider:', favoriteError);
+          }
+          importedCount += 1;
+        } catch (error) {
+          console.error('Failed to import ZCode favorite provider:', error);
+        }
+      }
+      void message.success(t('common.success'));
+      setImportModalOpen(false);
+      await loadConfig();
+      await pruneDuplicateFavoriteProviders();
+      await refreshTrayMenu();
+      return importedCount;
+    },
+    [loadConfig, pruneDuplicateFavoriteProviders, t],
+  );
+
+  /** Whether the two optional import sources are present on this machine. */
+  React.useEffect(() => {
+    const checkSources = async () => {
+      try {
+        setAllApiHubAvailable(await hasAllApiHubExtension());
+      } catch {
+        setAllApiHubAvailable(false);
+      }
+      try {
+        setCcSwitchAvailable(await hasCcSwitchDb());
+      } catch {
+        setCcSwitchAvailable(false);
+      }
+    };
+    void checkSources();
+  }, []);
+
+  const handleImportFromAllApiHub = React.useCallback(
+    async (imported: OpenCodeAllApiHubProvider[]) => {
+      let ok = 0;
+      let fail = 0;
+      for (const item of imported) {
+        const mapped = extractZcodeProviderFromAllApiHub(item);
+        if (!mapped) {
+          continue;
+        }
+        try {
+          await createZcodeProvider({
+            name: mapped.name,
+            category: 'custom',
+            settingsConfig: buildZcodeSettingsConfigFromImport(mapped),
+            // Remembers where the row came from, so re-importing the same
+            // source provider is recognised instead of duplicated.
+            sourceProviderId: item.providerId,
+          });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import ZCode provider from All API Hub:', item.providerId, error);
+          fail += 1;
+        }
+      }
+      setAllApiHubImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        void message.success(t('common.allApiHub.importSuccess', { count: ok }));
+      } else if (fail > 0) {
+        void message.error(t('common.error'));
+      }
+      await loadConfig();
+      await refreshTrayMenu();
+    },
+    [loadConfig, t],
+  );
+
+  const handleImportFromCcSwitch = React.useCallback(
+    async (imported: CcSwitchProviderCandidate[]) => {
+      const existingSourceIds = new Set(
+        providers.map((provider) => provider.sourceProviderId).filter(Boolean),
+      );
+      let ok = 0;
+      let fail = 0;
+      for (const candidate of imported) {
+        const sourceProviderId = candidate.sourceProviderId ?? candidate.providerId;
+        if (existingSourceIds.has(sourceProviderId)) {
+          continue;
+        }
+        const mapped = extractZcodeProviderFromCcSwitch(candidate);
+        if (!mapped) {
+          continue;
+        }
+        try {
+          await createZcodeProvider({
+            name: mapped.name,
+            category: 'custom',
+            settingsConfig: buildZcodeSettingsConfigFromImport(mapped),
+            sourceProviderId,
+          });
+          ok += 1;
+        } catch (error) {
+          console.error('Failed to import ZCode provider from CC Switch:', candidate.providerId, error);
+          fail += 1;
+        }
+      }
+      setCcSwitchImportModalOpen(false);
+      if (ok > 0 && fail === 0) {
+        void message.success(t('common.ccSwitch.importSuccess', { count: ok }));
+      } else if (ok > 0 && fail > 0) {
+        void message.warning(t('common.ccSwitch.importPartial', { ok, fail }));
+      } else if (fail > 0) {
+        void message.error(t('common.error'));
+      }
+      await loadConfig();
+      await refreshTrayMenu();
+    },
+    [providers, loadConfig, t],
+  );
+
   const handleDeleteProvider = async (provider: ZcodeProvider) => {
     try {
+      await backUpProviderToFavorites(provider);
       await deleteZcodeProvider(provider.id);
       await refreshTrayMenu();
       await loadConfig();
+      await pruneDuplicateFavoriteProviders();
     } catch (error) {
       console.error('Failed to delete ZCode provider:', error);
       void message.error(String(error));
@@ -270,11 +505,9 @@ const ZcodePage: React.FC = () => {
         return false;
       }
       try {
-        // ZCode has no favorites store to back up into, so the backup step is
-        // a no-op — the confirmation dialog is the only guard.
         await backupProvidersBeforeDelete(
           providersToDelete,
-          async () => undefined,
+          backUpProviderToFavorites,
           (provider) => t('common.batch.backupFailed', { name: provider.name }),
         );
         for (const provider of providersToDelete) {
@@ -282,6 +515,7 @@ const ZcodePage: React.FC = () => {
         }
         await refreshTrayMenu();
         await loadConfig();
+        await pruneDuplicateFavoriteProviders();
         void message.success(t('common.success'));
         return true;
       } catch (error) {
@@ -290,7 +524,7 @@ const ZcodePage: React.FC = () => {
         return false;
       }
     },
-    [providers, loadConfig, t],
+    [providers, loadConfig, pruneDuplicateFavoriteProviders, backUpProviderToFavorites, t],
   );
 
   /**
@@ -367,6 +601,43 @@ const ZcodePage: React.FC = () => {
       await persistProviderModels(provider, nextModels);
     },
     [modelModal, persistProviderModels],
+  );
+
+  /**
+ * Shows the provider file the CLI will actually read.
+ *
+ * ZCode has no single applied provider — every enabled one is written at once —
+ * so the preview is the whole generated file, not one provider's contribution.
+ * A missing file reads as an empty config rather than an error.
+ */
+  const handlePreviewCurrentConfig = async () => {
+    try {
+      setPreviewData(await readZcodeSettings());
+      setPreviewModalOpen(true);
+    } catch (error) {
+      console.error('Failed to preview ZCode config:', error);
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleCopyModel = React.useCallback(
+    (provider: ZcodeProvider, modelId: string) => {
+      const models = parseZcodeProviderSettings(provider.settingsConfig)?.models ?? [];
+      const source = models.find((model) => model.modelId === modelId);
+      if (!source) {
+        return;
+      }
+      setModelModal({
+        provider,
+        modelIndex: null,
+        prefill: {
+          ...source,
+          displayName: `${source.displayName?.trim() || source.modelId.trim()} copy`,
+          isDefault: false,
+        },
+      });
+    },
+    [],
   );
 
   const handleDeleteModel = React.useCallback(
@@ -686,6 +957,7 @@ const ZcodePage: React.FC = () => {
           title={t('zcode.title')}
           docsUrl="https://zcode.z.ai/cn/docs/configuration"
           configPath={configPath || '~/.zcode/v2/provider_config.json'}
+          onPreviewConfig={() => void handlePreviewCurrentConfig()}
           onCustomizeConfig={() => setRootDirectoryModalOpen(true)}
           onOpenFolder={() => void handleOpenFolder()}
           onRefresh={() => void loadConfig()}
@@ -728,6 +1000,49 @@ const ZcodePage: React.FC = () => {
             setEditingProvider(null);
             setFormModalOpen(true);
           }}
+          hint={
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-secondary)',
+                borderLeft: '2px solid var(--color-border)',
+                paddingLeft: 8,
+                marginBottom: 12,
+              }}
+            >
+              <div>{t('zcode.pageHint')}</div>
+              <div>{t('zcode.pageWarning')}</div>
+            </div>
+          }
+          footer={
+            <Space wrap>
+              <Button
+                type="dashed"
+                icon={<ImportOutlined />}
+                onClick={() => setImportModalOpen(true)}
+              >
+                {t('opencode.provider.importFavorite')}
+              </Button>
+              {allApiHubAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<AllApiHubIcon />}
+                  onClick={() => setAllApiHubImportModalOpen(true)}
+                >
+                  {t('common.allApiHub.importFromAllApiHub')}
+                </Button>
+              )}
+              {ccSwitchAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<ImportOutlined />}
+                  onClick={() => setCcSwitchImportModalOpen(true)}
+                >
+                  {t('common.ccSwitch.importFromCcSwitch')}
+                </Button>
+              )}
+            </Space>
+          }
         >
           <DndContext
             sensors={providerBatchDragDisabled ? [] : undefined}
@@ -761,6 +1076,7 @@ const ZcodePage: React.FC = () => {
                     connectivityStatus={connectivityStatuses[provider.id]}
                     onAddModel={() => handleAddModel(provider)}
                     onEditModel={(modelId) => handleEditModel(provider, modelId)}
+                    onCopyModel={(modelId) => handleCopyModel(provider, modelId)}
                     onDeleteModel={(modelId) => void handleDeleteModel(provider, modelId)}
                     onSetPrimaryModel={(modelId) => void handleSetPrimaryModel(provider, modelId)}
                     onReorderModels={(orderedModelIds) =>
@@ -854,11 +1170,12 @@ const ZcodePage: React.FC = () => {
             parseZcodeProviderSettings(modelModal.provider.settingsConfig)?.config?.api?.type
           }
           initialValues={
-            modelModal.modelIndex === null
+            modelModal.prefill ??
+            (modelModal.modelIndex === null
               ? undefined
               : (parseZcodeProviderSettings(modelModal.provider.settingsConfig)?.models ?? [])[
                   modelModal.modelIndex
-                ]
+                ])
           }
           onCancel={() => setModelModal(null)}
           onSubmit={handleSubmitModel}
@@ -888,6 +1205,46 @@ const ZcodePage: React.FC = () => {
             setFetchModelsProviderId(null);
           }}
           onSuccess={(result) => void handleFetchModelsApply(result)}
+        />
+      )}
+
+      <JsonPreviewModal
+        open={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        data={previewData}
+      />
+
+      <ImportProviderModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={(imported) => void handleImportFavoriteProviders(imported)}
+        existingProviderIds={providers.map((provider) =>
+          buildFavoriteProviderStorageKey('zcode', provider.id),
+        )}
+        providerFilter={(provider) => isFavoriteProviderForSource('zcode', provider)}
+      />
+
+      {allApiHubAvailable && (
+        <ZcodeImportFromAllApiHubModal
+          open={allApiHubImportModalOpen}
+          existingProviderIds={providers.map((provider) => provider.sourceProviderId || provider.id)}
+          onCancel={() => setAllApiHubImportModalOpen(false)}
+          onImport={(imported) => void handleImportFromAllApiHub(imported)}
+        />
+      )}
+
+      {ccSwitchAvailable && (
+        <ImportFromCcSwitchModal
+          open={ccSwitchImportModalOpen}
+          // CC Switch only stores Claude-shaped providers; `claude` is the app
+          // type those rows live under, and what other Anthropic-family CLIs
+          // read here too.
+          appType="claude"
+          existingProviderIds={providers
+            .map((provider) => provider.sourceProviderId)
+            .filter((id): id is string => Boolean(id))}
+          onClose={() => setCcSwitchImportModalOpen(false)}
+          onImport={(imported) => void handleImportFromCcSwitch(imported)}
         />
       )}
 

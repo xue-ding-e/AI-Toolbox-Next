@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  OpenCodeAllApiHubProvider,
+  OpenCodeAllApiHubProvidersResult,
+} from '@/services/opencodeApi';
+import type {
   ConfigPathInfo,
   ZcodeCommonConfig,
   ZcodeCommonConfigInput,
@@ -103,6 +107,19 @@ export const selectZcodeProvider = async (
   modelId: string,
 ): Promise<void> => {
   await invoke('select_zcode_provider', { providerId, modelId });
+};
+
+/** All API Hub listings; the backend scans, the page converts to ZCode's shape. */
+export const listZcodeAllApiHubProviders = async (): Promise<OpenCodeAllApiHubProvidersResult> => {
+  return await invoke<OpenCodeAllApiHubProvidersResult>('list_zcode_all_api_hub_providers');
+};
+
+export const resolveZcodeAllApiHubProviders = async (
+  providerIds: string[],
+): Promise<OpenCodeAllApiHubProvider[]> => {
+  return await invoke<OpenCodeAllApiHubProvider[]>('resolve_zcode_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };
 
 export type { ZcodeProvider };

@@ -33,6 +33,8 @@ mod skills_sync_engine;
 mod skills_tool_adapters;
 #[path = "coding/tools/builtin.rs"]
 mod tools_builtin;
+#[path = "coding/tools/detection_paths.rs"]
+mod tools_detection_paths;
 #[path = "coding/tools/path_utils.rs"]
 mod tools_path_utils;
 #[path = "coding/wsl/direct_status.rs"]

@@ -6054,6 +6054,8 @@
   "zcode": {
     "title": "ZCode Configuration",
     "loadFailed": "Failed to load ZCode configuration",
+    "pageHint": "Add multiple provider configs and switch between them via \"Apply\" or the system tray menu. ZCode has no single active provider — every enabled provider appears in the model picker at once. \"Common Config\" is shared across all providers and merged into the provider config when applying.",
+    "pageWarning": "Note: Configs are stored in the app database. Do not edit the local config file by hand — the next \"Apply\" overwrites it. Config changes take effect only after ZCode restarts.",
     "provider": {
       "title": "Providers",
       "applied": "Default",

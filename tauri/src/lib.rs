@@ -2646,6 +2646,8 @@ pub fn run() {
             coding::zcode::disable_zcode_prompt_config,
             coding::zcode::reorder_zcode_prompt_configs,
             coding::zcode::save_zcode_local_prompt_config,
+            coding::zcode::list_zcode_all_api_hub_providers,
+            coding::zcode::resolve_zcode_all_api_hub_providers,
             // Pi
             coding::pi::get_pi_root_path_info,
             coding::pi::get_pi_settings_config,

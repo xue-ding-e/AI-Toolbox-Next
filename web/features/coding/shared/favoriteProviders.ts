@@ -4,7 +4,7 @@ import type { ClaudeDesktopMeta } from '@/types/claudedesktop';
 import type { OpenCodeProvider } from '@/types/opencode';
 import { isJsonObject } from '../../../utils/json.ts';
 
-export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp' | 'dsh' | 'hermes' | 'claudedesktop';
+export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp' | 'dsh' | 'hermes' | 'claudedesktop' | 'zcode';
 
 export interface ClaudeFavoriteProviderPayload {
   name: string;
@@ -25,6 +25,13 @@ export interface CodexFavoriteProviderPayload {
 }
 
 export interface GrokFavoriteProviderPayload extends CodexFavoriteProviderPayload {}
+
+/**
+ * ZCode providers carry a structured `settingsConfig` (access + api + models),
+ * so the payload is the same shape as Codex's: replay it through
+ * `createZcodeProvider` and the catalog comes back intact.
+ */
+export interface ZcodeFavoriteProviderPayload extends CodexFavoriteProviderPayload {}
 
 export interface OpenClawFavoriteProviderPayload {
   providerId: string;
@@ -88,6 +95,7 @@ const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   dsh: 'dsh',
   hermes: 'hermes',
   claudedesktop: 'claudedesktop',
+  zcode: 'zcode',
 };
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
 const OPENCODE_STORAGE_PREFIX = `${STORAGE_KEY_PREFIX.opencode}${SOURCE_PREFIX_SEPARATOR}`;

@@ -37,6 +37,7 @@ interface ZcodeProviderCardProps {
   /** Model catalog actions. Omit a handler to hide its button. */
   onAddModel?: () => void;
   onEditModel?: (modelId: string) => void;
+  onCopyModel?: (modelId: string) => void;
   onDeleteModel?: (modelId: string) => void;
   onSetPrimaryModel?: (modelId: string) => void;
   onReorderModels?: (orderedModelIds: string[]) => void;
@@ -63,6 +64,7 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   connectivityStatus,
   onAddModel,
   onEditModel,
+  onCopyModel,
   onDeleteModel,
   onSetPrimaryModel,
   onReorderModels,
@@ -238,6 +240,7 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
           fetchDisabledTooltip={t('opencode.provider.completeUrlAndKey')}
           onAddModel={onAddModel}
           onEditModel={onEditModel}
+          onCopyModel={onCopyModel}
           onDeleteModel={onDeleteModel}
           onSetPrimaryModel={onSetPrimaryModel}
         />
