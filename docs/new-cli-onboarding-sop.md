@@ -176,7 +176,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] `web/i18n/locales/zh-CN.json` + `en-US.json`，用 `pnpm i18n:set-key` 生成 key
 - [ ] **页面头部用共享组件 `CodingPageHeader`**（见 4.1）
 - [ ] **供应商列表用共享组件**（见 4.2）：`ProviderListSection` 外壳 + `ProviderCard` 卡片；有模型目录的再加 `ModelListSection`
-- [ ] **模型编辑弹窗用 `ModelFormModal`**，按 CLI 能力传 `show*` 开关（见 4.2.4）
+- [ ] **模型编辑弹窗用 `ModelFormModal`**，按 CLI 能力传 `show*` 开关 + `toolName`；只有字段语义/示例确实不同才用 `messageOverrides`（见 4.2.4）
 - [ ] **供应商编辑弹窗的分区用 `ProviderFormSections`**（见 4.2.6）；有协议下拉时接网关支持门控（见 4.2.7）
 - [ ] **全局提示词区块用 `GlobalPromptSettings`**，传 `promptFileName`（见 4.2.8）
 - [ ] UI 遵循 `DESIGN.md`（改任何可见 UI 前必须先完整阅读）
@@ -219,22 +219,34 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 |------|------|
 | `title` | 页面标题，传 `t('<tool>.title')` |
 | `docsUrl` | 官方文档地址；**不传则不显示**该链接 |
-| `docsText` | 覆盖默认文案 `common.viewDocs`（默认「官方文档」） |
 | `onPreviewConfig` | 传了才显示「预览配置」；无 provider 应用态时可传 `undefined` |
-| `configPathLabel` | 覆盖默认 `common.configPath`（默认「配置文件路径」） |
 | `configPath` | 路径字符串，**调用方自己给兜底值** |
 | `onCustomizeConfig` | 传了才显示「自定义配置目录」 |
-| `customizeConfigText` | 覆盖默认 `common.customizeConfigDir` |
 | `customizeConfigDisabled` | 迁移期禁用（opencode 场景） |
 | `onOpenFolder` | 传了才显示「打开文件夹」 |
-| `onRefresh` / `refreshText` | 「刷新配置」，`refreshText` 覆盖默认 `common.refreshConfig` |
+| `onRefresh` | 传了才显示「刷新配置」 |
 | `onMoreOptions` | 传了才显示「更多选项」 |
 | `extraActions` | 追加额外文字按钮（openclaw 的「打开 Web UI」、opencode 的「同步模型」） |
 | `hint` | 路径行下方的提示块（opencode 的页面提示） |
 
-**i18n 策略**：组件默认值走 `common.*`（`viewDocs` / `configPath` / `customizeConfigDir` / `openFolder` / `refreshConfig`，已补齐中英双语）。**新工具零覆盖即可用**；存量工具若已有自己的措辞，通过 `docsText` / `configPathLabel` / `customizeConfigText` / `refreshText` 传入，保证中英文都不变。
+**文案一律走 `common.*`，没有 per-CLI 覆盖 prop**：`viewDocs` / `configPath` / `customizeConfigDir` / `openFolder` / `refreshConfig` / `previewConfig` / `moreOptions`。
 
-**注意**：`configPathLabel` 等覆盖项只影响**标签**；「预览配置」和「更多选项」文案固定走 `common.*`，因为 14 个页面本来就一致。
+> **为什么不做覆盖 prop（踩过的坑）**
+>
+> 组件最初提供了 `docsText` / `configPathLabel` / `customizeConfigText` / `openFolderText` / `refreshText` 五个覆盖项，理由是要"保持既有中英文文案不变"。实际统计 14 个页面后发现这些"差异"全是同义异写，没有一处是真实语义差别：
+>
+> | 文案 | 实际分布 |
+> |------|---------|
+> | 打开文件夹 | **14/14 完全相同** |
+> | 刷新配置 | 12 个「刷新配置」，zcode/geminicli 是「刷新」 |
+> | 官方文档 | 「官方文档」 vs 「查看文档」 |
+> | 自定义配置目录 | 「自定义配置目录」 vs zcode「自定义根目录」 |
+>
+> 覆盖 prop 不但没保住什么，反而让 zcode 的「刷新」这种不一致固化了下来。**已全部删除**，组件只用 `common.*`；codex/zcode 的 8 个孤儿 key 一并 prune。
+>
+> **唯一保留的例外**：`pi` / `ohMyPi` 显示的是**目录**（`rootPathInfo.path`）而非配置文件路径，标签是「配置目录路径」。这是真实语义差异，但它们尚未迁移；迁移时应给组件加 `configPathLabel` 之类的 prop，而不是把差异抹平。
+>
+> **教训**：不要为了"迁移时不动文案"而预先加覆盖 prop。先把各页面的值统计出来，同义的直接统一，只有真正不同的才参数化。
 
 ### 4.2 供应商列表标准（`ProviderListSection` / `ProviderCard` / `ModelListSection`）
 
@@ -250,7 +262,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 | 组件 | 路径 | 职责 |
 |------|------|------|
 | `ProviderListSection` | `shared/ProviderListSection.tsx` | 区域外壳：标题 + 工具栏 + 提示 + 空态 + 底部导入 |
-| `ProviderCard` | `components/common/ProviderCard/` | 单张供应商卡片（已有共享组件，本次扩展了 5 个插槽） |
+| `ProviderCard` | `components/common/ProviderCard/` | 最基础的共享卡片（无 CLI 专属插槽，见 §4.2.2） |
 | `ModelListSection` | `shared/ModelListSection.tsx` | 模型列表折叠区（仅"支持自定义模型"形态用） |
 
 #### 4.2.1 区域外壳 `ProviderListSection`
@@ -276,7 +288,6 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 
 <ProviderListSection
-  i18nPrefix="<tool>"
   sectionId="<tool>-providers"
   collapsed={providerListCollapsed}
   onCollapsedChange={setProviderListCollapsed}
@@ -295,6 +306,7 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
   onOpenCommonConfig={() => setCommonConfigModalOpen(true)}
   onAddProvider={handleAddProvider}
   headerExtra={<GatewayFailoverButton ... />} // 可选：Gateway 胶囊等
+  emptyTextHint={t('<tool>.importFromX')}      // 可选：仅当能从此处导入时
   hint={<div>…两行提示…</div>}                // 文案由调用方提供
   footer={<Space wrap>…三个导入按钮…</Space>}  // 可选
 >
@@ -306,30 +318,16 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 
 | prop | 说明 |
 |------|------|
-| `i18nPrefix` | 决定 `provider.title` / `provider.emptyText` / `commonConfigButton` / `addProvider` 的 key 前缀 |
 | `sectionId` | sidebar 锚点 id，如 `<tool>-providers` |
 | `batch` / `batchSelectableIds` | 供应商级多选状态（`useProviderBatchSelection`） |
 | `headerExtra` | 插槽：渲染在标题旁（Gateway 的 Failover / Aggregate 胶囊走这里） |
-| `emptyText` | 空态文案；**不传则取 `${i18nPrefix}.provider.emptyText`**（见下方 i18n 陷阱） |
+| `emptyTextHint` | 追加在通用空态文案**下方**的一句补充，仅用于说明导入来源 |
 | `hint` / `footer` | 提示块 / 底部导入按钮；**文案由调用方传**，组件不硬编码 |
 | `onBatchTest` / `onOpenCommonConfig` | 传了才渲染对应按钮 |
 
-> **i18n key 层级陷阱（迁移必查）**
->
-> 组件按固定路径取词，但各页原有的 key 层级**并不统一**——`emptyText` / `addProvider` 在有的页面是顶层（`<tool>.emptyText`）、有的是 `<tool>.provider.emptyText`：
->
-> | key | 顶层（需传 `emptyText` prop） | 已在 `provider` 下 |
-> |-----|------|------|
-> | `emptyText` | claudecode / codex / grok / kimi / zcode / opencode | dsh / hermes / pi / ohMyPi |
-> | `addProvider` | kimi / zcode / opencode | claudecode / codex / grok / pi / ohMyPi |
->
-> 顶层的情况**必须显式传 `emptyText={t('<tool>.emptyText')}`**，否则空态会渲染出字面量 `<tool>.provider.emptyText`。`i18n:check` 查不出这类问题——key 是模板字面量拼的，且顶层 key 确实存在（只是路径不对）。
->
-> 迁移前用这段确认目标页面的四个 key 都在 `provider` 下（或准备好用 prop 覆盖）：
->
-> ```bash
-> python -c "import json;d=json.load(open('web/i18n/locales/zh-CN.json',encoding='utf-8'));p=d['<tool>'];print({k:(p.get(k) or (p.get('provider') or {}).get(k)) for k in ['emptyText','addProvider','commonConfigButton']})"
-> ```
+**文案一律走 `common.provider.*`，没有 `i18nPrefix`**：标题「供应商列表」、按钮「添加供应商」/「通用配置」、空态「暂无供应商配置，点击上方按钮添加」。组件不再按 `<tool>.provider.*` 取词——那套 per-CLI key 层级混乱（有的在顶层、有的在 `provider` 下），是空态渲染出字面量 key 的根因。claudecode / codex 迁移时产生的孤儿 key 已 prune。
+
+> 各 CLI 的空态文案内容确实有差异（claudecode 要提「或从 OpenCode 导入」），但**差异只在补充说明**，主体是同一句。所以拆成「通用基座 + 可选 `emptyTextHint`」，而不是让每个 CLI 传整句。
 
 **组件负责的固定项**：Collapse 骨架、`多选/退出` 切换、批量工具栏、搜索框、排序下拉、`一键测试`、`通用配置`、`添加供应商`、空态、搜索空态、`data-sidebar-section` 标记。
 
@@ -391,6 +389,44 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `showCost` / `showExtraParams` | 成本 / 额外参数 JSON |
 | `limitRequired` / `requireCompleteLimitPair` / `nameRequired` | 校验强度 |
 | `npmType` | 预设模型下拉的数据源 |
+| `toolName` | 插值进 `capabilitiesHint` / `inputTypesHint`（"支持 **Pi** 的 extended thinking"） |
+| `messageOverrides` | 见下方 |
+
+**文案策略**：默认全部走 `common.model.*`（约 55 个 key）。只有**真正因工具而异**的才用 `messageOverrides` 覆盖：
+
+```tsx
+<ModelFormModal
+  toolName="Pi"
+  messageOverrides={{
+    idPlaceholder: t('pi.model.idPlaceholder'),          // 示例模型名不同
+    contextLimit: t('pi.model.contextLimit'),            // 字段叫法不同
+    thinkingLevelHint: t('pi.model.thinkingLevelHint'),  // 字段语义不同
+  }}
+/>
+```
+
+> **`messageOverrides` 的值必须是 `t(...)` 的结果，不能是 key 字符串。**
+>
+> 最初写成 `idPlaceholder: 'pi.model.idPlaceholder'`（传 key，组件再 `t()`），结果 `i18n:prune` 把 `pi.model.idPlaceholder` 判定为"无人使用"并删除——静态分析看不见对象字面量里的字符串。改成 `t(...)` 后：值就是最终文本，组件用 `??` 短路，工具链也能正常追踪。
+>
+> 改这个语义时顺带暴露了两个**早就存在的坏 key**（`i18n:check` 现在能看见了）：
+> - `omoNative.model.*` 整组不存在（页面一直渲染字面量 key 名）
+> - `hermes` 借用 `pi` 前缀，`hermes.model.thinkingLevelHint` 并不存在
+>
+> 教训：**传 key 字符串给组件做延迟翻译，会同时骗过 i18n 检查工具和未来读代码的人。**
+
+**哪些 key 需要覆盖**（各 CLI 的真实差异）：
+
+| key | 差异性质 |
+|-----|---------|
+| `idPlaceholder` | 示例模型名（`deepseek-chat` / `gpt-4o` / `claude-sonnet-4.5`） |
+| `name` / `namePlaceholder` / `nameOptionalPlaceholder` | 字段叫法（"模型名称" vs "显示名称"） |
+| `contextLimit` / `outputLimit` (+Placeholder) | 叫法与示例（"上下文限制" vs "上下文"） |
+| `reasoning` | "推理" vs "支持思考" |
+| `costHint` / `extraParamsHint` | 是否提示"留空则删除" |
+| `thinkingLevelHint` / `thinkingLevelMapHint` | 写入位置不同（如 `agent.reasoning_overrides`） |
+
+其余（`addModel` / `editModel` / `id` / `api*` / `compat*` / `cost*` / `inputTypes*` / `variants*` / 各类校验消息）**都是同一句话，直接共用 `common.model.*`**。
 
 **三个必须保证的交互（已实现，勿回退）**：
 
@@ -427,11 +463,12 @@ import ProviderFormSections from '@/features/coding/shared/providerConfig/Provid
   billing={billingConfig} onBillingChange={setBillingConfig}
   customHeaders={customHeaders} onCustomHeadersChange={setCustomHeaders}
   modelRewrites={modelRewrites} onModelRewritesChange={setModelRewrites}
-  i18nPrefix="<tool>"
   notesRows={3}
   notesResetKey={notesCollapseResetKey}
 />
 ```
+
+备注区文案走 `common.provider.notes` / `common.provider.notesPlaceholder`（各 CLI 5/5 相同，无需覆盖）。
 
 **设计要点**：
 
@@ -491,7 +528,7 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 
 <GlobalPromptSettings
   key={`<tool>-prompt-${promptExpandNonce}`}
-  translationKeyPrefix="<tool>.prompt"
+  toolName="Grok"                     // 插值进提示块与名称占位符
   promptFileName="AGENTS.md"          // 该 CLI 的运行时提示词文件名
   service={<tool>PromptApi}
   collapseKey="<tool>-prompt"
@@ -499,24 +536,20 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 />
 ```
 
-**`promptFileName` 的语义**：
+**文案一律走 `common.prompt.*`，没有 `translationKeyPrefix`**。所有 22 个 key（标题、应用/禁用/删除确认、空态、名称与内容校验、占位符……）都通用化了，13 个 CLI 的 `<prefix>.prompt.*` 副本已全部 prune（每个 22 个，共 286 个）。
 
-- **传了** → 提示块第二行渲染共享模板 `common.globalPrompt.sectionWarning`，`{{fileName}}` 填入该文件名。
-- **不传** → 回退到该 CLI 自己的 `<prefix>.prompt.sectionWarning`。
+**两个插值 prop**：
 
-**为什么这样设计**：13 个 CLI 里有 10 个的警告句**只差文件名**（`AGENTS.md` / `CLAUDE.md` / `SOUL.md`），句子结构完全一致。与其维护 10 份重复文案，不如共享一个模板。
+| prop | 用途 | 不传时 |
+|------|------|--------|
+| `toolName` | 提示块（"预设多套 **Grok** 全局提示词方案"）与名称占位符（"默认 **Grok** 助手"） | 必传 |
+| `promptFileName` | 警告句、本地文件提示、内容占位符里的文件名 | 回退为字面量 `prompt` |
 
-**哪些 CLI 不传**（它们的警告句确实不同，保留自己的文案）：
+**为什么这样设计**：13 个 CLI 的提示词文案**只有工具名和文件名不同**，句子结构完全一致（`namePlaceholder` 是「默认开发助手」vs「默认 Grok 助手」，`contentPlaceholder` 只差写入哪个文件）。与其维护 13 份重复文案，不如共享模板 + 两个插值参数。
 
-| CLI | 原因 |
-|-----|------|
-| `geminicli` | 指向「Gemini CLI 全局提示词文件」，不是具名文件 |
-| `antigravity` | 引用绝对路径 `~/.gemini/config/GEMINI.md` |
-| `hermes` | 句子结构不同（"预设存储在…请勿手动编辑本地的 `SOUL.md`"） |
-
-**注意**：各 CLI 的 `<prefix>.prompt.sectionWarning` key **保留不删**——组件有 fallback 分支，删了会让不传 `promptFileName` 的 CLI 显示原始 key 名。
-
-**新增 CLI 时**：默认传 `promptFileName`，并**不需要**再写 `sectionWarning` 文案。只有当该 CLI 的警告句结构与共享模板不符时，才不传并自己写一份。
+> **`toolName` 的取值**：用各页原本 `namePlaceholder` 里的工具名——`Grok` / `Pi` / `Oh My Pi` / `ZCode` / `Claude Code` 等。原本写「默认开发助手」的 5 个页面（claudecode / claudedesktop / codex / opencode / zcode）现在会显示各自的工具名，这是有意的改进。
+>
+> **`promptFileName` 不传的两个页面**：geminicli（指向「Gemini CLI 全局提示词文件」，非具名文件）、antigravity（引用绝对路径）。它们现在走通用句子 + 字面量 `prompt`，**文案比原来弱**——如果要恢复精确表述，应给组件加一个 `promptFileLabel` prop，而不是把 22 个 key 再拆回去。
 
 **提示词文件名的事实源**：后端各模块 `constants.rs`（如 `KIMI_PROMPT_FILE` / `HERMES_PROMPT_FILE` / `DEFAULT_GEMINI_CLI_PROMPT_FILE`）；Claude Code 的在 `claude_code/commands.rs` 内联（`CLAUDE.md`）。前端目前是**手写字符串**传入，改动时需与后端常量保持一致。
 
@@ -536,56 +569,312 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 
 | 页面 | 差异点 |
 |------|--------|
-| zcode | 缺「预览配置」；`defaultValue` 硬编码兜底文案 |
+| zcode | ✅ 已迁移（2026-10-06，含搜索/排序/多选/拖拽/一键测试/通用配置） |
 | claudedesktop | 文案硬编码中文、未走 i18n；缺「自定义配置目录」 |
 | openclaw | 预览配置用 `openclaw.previewConfig` 而非 `common.previewConfig` |
 | 其余 10 个页面 | 结构合规，可直接迁移 |
 
 ---
 
-## 5. 阶段五：托盘
+## 5. 阶段五：系统托盘快捷菜单
 
-按根 `AGENTS.md`「Implementation Checklist for New Tray Integration」：
+托盘不是「每个 CLI 注册一次」，而是「一个巨型 `tray.rs` + 每模块一个 `tray_support.rs`」。
 
-- [ ] `apply_config_internal(from_tray)` 参数化
-- [ ] `get_<tool>_tray_data()` 返回当前选择
-- [ ] `apply_<tool>_selection()` 处理托盘选择
-- [ ] `tray.rs` 接入 section（`is_tab_visible("<tab>")` 门控 + 事件 dispatch）
-- [ ] **Lightweight 模式**：新增需要主窗口的入口必须先判断 `lightweight::is_lightweight_mode()`（详见根 `AGENTS.md`「Lightweight Mode」）
+### 5.1 模块侧：`tauri/src/coding/<tool>/tray_support.rs`
 
-> ZCode 踩坑：`tray_support.rs` 写好了但 `tray.rs` 从未 import，托盘支持是死代码。
+参照 `zcode/tray_support.rs`（151 行），必须导出：
+
+| 导出 | 说明 |
+|------|------|
+| `TrayProviderItem { id, display_name, is_selected, is_disabled }` | 单个供应商行 |
+| `TrayProviderData { title, current_display, items }` | 供应商子菜单数据 |
+| `TrayPromptItem` / `TrayPromptData` | 全局提示词子菜单数据 |
+| `async fn is_enabled_for_tray(app) -> bool` | ZCode 恒 `true`；**可见性由 `tray.rs` 的 `is_tab_visible("<tab>")` 决定**，不要在这里判 |
+| `async fn get_<tool>_tray_data(app)` | 返回当前选择 |
+| `async fn apply_<tool>_provider(app, row_id)` | 处理托盘点击 |
+| `async fn get_<tool>_prompt_tray_data` / `apply_<tool>_prompt_config` | 提示词侧 |
+
+**关键陷阱（ZCode 踩过）**：托盘回传的是 **DB 行 id**，但很多 CLI 内部按自己的 providerId 索引。ZCode 在 `tray_support.rs:96-119` 做了一次 row_id → providerId 的解析（查 DB 行 → 解析 settingsConfig → 调 `select_*_internal_without_events`）。**直接拿 row_id 当 providerId 用会选错或选不中。**
+
+**刷新机制**：`apply_*` 函数本身不刷新菜单；由 `tray.rs` 的 dispatch 分支在 await 之后调 `refresh_tray_menus`。另有全局链路：任何 `app.emit("config-changed", ...)` → `lib.rs` 的全局 listener → `tray::refresh_tray_menus`。
+
+### 5.2 `tauri/src/tray.rs`：9 个必改点
+
+以 zcode 为例（行号为当前工作区）：
+
+| # | 位置 | 内容 |
+|---|------|------|
+| 1 | `:17-35` | `use crate::coding::<tool>::tray_support as <tool>_tray;` |
+| 2 | `:44-80` | `struct TrayTexts` 加 `<tool>_header: &'static str` |
+| 3 | `:169`(en) / `:204`(zh) | **两处**都要给值（漏一处 → 该语言下标题为空） |
+| 4 | `:467-488` | dispatch 分支：`event_id.strip_prefix("<tool>_provider_")` + `"<tool>_prompt_"`，spawn → `apply_*` → `refresh_tray_menus` |
+| 5 | `:848` | `let <tool>_enabled = is_tab_visible("<tab>") && <tool>_tray::is_enabled_for_tray(app).await;` |
+| 6 | `:1018-1038` | 取数据 + **else 分支构造空 `TrayProviderData` 并覆写 `.title`** |
+| 7 | `:1509-1526` | `<tool>_has_items` / `<tool>_has_prompt_items` / `<tool>_has_section` |
+| 8 | `:1567-1576`、`:1877-1896` | 构造 `<tool>_prompt_submenu`、`<tool>_header`（`MenuItem::with_id`）、`<tool>_provider_submenu` |
+| 9 | `:2139-2151` + `:3084-3108` + `:3390-3416` | ① section append 进 `menu`；② `impl NamedPromptTrayItem/Data`；③ `impl NamedProviderTrayItem/Data` |
+
+**好消息**：第 9 点的两个 trait impl 漏了**编译不过**（不是静默失效）。真正的静默失效是 `tray.rs` 根本没 import `tray_support`——ZCode 的 142 行全是死代码，端到端接线后才生效。
+
+**MCP / Skills 区不用改 `tray.rs`**：它们的工具列表来自 `get_mcp_runtime_tools` / `get_all_tool_adapters`，注册进 `BUILTIN_TOOLS` 后自动出现（见第 7 节）。
+
+### 5.3 Lightweight 模式
+
+新增**需要主窗口**的入口必须先判断 `lightweight::is_lightweight_mode()`（详见根 `AGENTS.md`「Lightweight Mode」）。托盘自身的 `show` / `lightweight_mode` 项已覆盖，但新 CLI 若加「打开页面」类菜单项必须自己处理。
+
+### 5.4 其他
+
+- **事件 id 前缀必须唯一**：dispatch 用 `strip_prefix` 顺序匹配，若新 CLI key 是另一个 key 的前缀会误命中。
+- `tray.rs:796-809` 的 fallback `visible_tabs` 数组（`get_settings` 读失败时兜底）也建议加上新 tab。
 
 ---
 
-## 6. 阶段六：WSL/SSH 同步
+## 6. 阶段六：WSL / SSH 同步
 
-- [ ] `lib.rs` 加 `wsl-sync-request-<tool>` 事件监听器（当前已有 14 个，对照补一个）
-- [ ] 前端 `TAB_TO_MODULE` / `ALL_CODING_MODULES` / `MODULE_TO_TAB` / `ALL_MODULE_KEYS`（见 3.2）
-- [ ] 配置文件路径通过 runtime_location 派生，**不在同步 helper 里临时查 DB/环境变量**
-- [ ] WSL Direct 下 CLI 调用必须走 `wsl -d <distro> --exec`，路径转 Linux 格式
-- [ ] MCP 同步映射：`tauri/src/coding/wsl/mcp_sync.rs` + `ssh/mcp_sync.rs` 加 arm
-- [ ] MCP 形态转换：`tauri/src/coding/mcp/command_normalize.rs` 按需加专用 processor
+### 6.1 路径解析：单一事实源
 
-> ZCode 踩坑：`is_mapped_mcp_config_file` 注册了映射 id，但后处理 match 没有 arm，导致 Windows `cmd /c` wrapper 被原样复制到 Linux 侧。
+所有同步路径从 `runtime_location.rs` 派生，**不在同步 helper 里临时查 DB/环境变量**。
+
+| 位置 | 符号 |
+|------|------|
+| `runtime_location.rs:16` | `const MODULE_KEYS: [&str; 14]`（zcode 在 `:25`）—— WSL Direct 状态、缓存刷新、`get_wsl_direct_status_map_async` 的唯一来源 |
+| `:199` | `normalize_module_key()` match（`"zcode" \| "zcode_cli" => Some("zcode")`） |
+| `:276` | `get_runtime_location_async` dispatch match |
+| `:1200-1253` | `get_<tool>_config_path_*` / `get_<tool>_mcp_config_path_*` / `get_<tool>_prompt_path_*` / **`get_<tool>_wsl_target_path_async(db, file_name)`** |
+| `:1149` | `resolve_<tool>_root_dir_without_db()`（给 backup restore 用的无 DB 入口） |
+
+`get_<tool>_wsl_target_path_async` 就是「Windows 路径 → WSL 内路径」的映射器，范式：
+
+```rust
+match get_<tool>_runtime_location_async(db).await {
+    Ok(location) => location.wsl
+        .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+        .unwrap_or_else(|| format!("~/.<tool>/{file_name}")),
+    Err(_) => format!("~/.<tool>/{file_name}"),
+}
+```
+
+### 6.2 默认文件映射表
+
+**WSL**（`tauri/src/coding/wsl/commands.rs`）：
+
+| 位置 | 符号 | 说明 |
+|------|------|------|
+| `:957` | `const CURRENT_DEFAULTS_VERSION: u64` | **每次新增默认映射必须 +1** |
+| `:992` | `const DEFAULT_MAPPING_IDS_ADDED_IN_V<N>: &[&str]` | 本次新增的 mapping id |
+| `:1077` | `should_backfill_versioned_mapping(...)` | 老用户回填的判定调用 |
+| `:2475` | `default_mappings()` 的 `FileMapping` 结构体 | `id` / `name` / `module` / `windows_path` / `wsl_path` / `is_directory` |
+| `:1476` | `resolve_dynamic_paths_with_db()` match arm | 把默认 `~/.<tool>/...` 换成**实际解析出的**路径（自定义根目录时关键） |
+
+ZCode 的 4 条映射：
+
+```
+<tool>-provider-config  module=<tool>  ~/.<tool>/v2/provider_config.json  (file)
+<tool>-prompt           module=<tool>  ~/.<tool>/AGENTS.md                (file)
+<tool>-cli-config       module=<tool>  ~/.<tool>/cli/config.json          (file)
+<tool>-skills           module=<tool>  ~/.<tool>/skills                   (dir)
+```
+
+> ZCode 的 `credentials.json` **有意排除**：AES-GCM key 由平台 + home + 用户名派生，跨机无法解密。代码里有注释。
+
+**SSH**（`tauri/src/coding/ssh/commands.rs`）：结构同构，但 `CURRENT_DEFAULTS_VERSION` 是**独立编号**（`:1148`），字段名是 `local_path` / `remote_path`，另有 `zcode_remote_target_path_from_location()`（`:1844`）。
+
+### 6.3 MCP 同步（两条链路，各两个点）
+
+| 位置 | 符号 | 漏改后果 |
+|------|------|---------|
+| `wsl/mcp_sync.rs:324` | `is_mapped_mcp_config_file()` 白名单 | 该 CLI 的 MCP 配置**完全不参与 WSL 同步**（静默） |
+| `wsl/mcp_sync.rs:366` | `strip_cmd_c_from_wsl_mcp_file()` 的 match | **注册了 id 但没 arm → `_ => return Ok(())`，Windows `cmd /c` wrapper 原样复制到 Linux，WSL 里 server 起不来**（ZCode 实证） |
+| `ssh/mcp_sync.rs:332` / `:386` | SSH 版同上 | 同上 |
+| `mcp/command_normalize.rs` | 按需新增 `process_<tool>_json` | 无专用 processor 就用通用形状，CLI 可能读不懂 |
+| `mcp/format_configs.rs:80` | `get_format_config()` match | `_ => None` → 用通用 key 写入，CLI 只认自己的 key 就**静默丢值**（zcode 的 `timeoutMs` vs `timeout` 实证） |
+
+### 6.4 事件、reapply、状态
+
+| 位置 | 符号 | 漏改后果 |
+|------|------|---------|
+| `lib.rs:1663` | `app.listen("wsl-sync-request-<tool>", ...)` | 保存配置后**不自动同步**（当前 14 个监听器，对照补） |
+| `reapply_applied_runtime.rs:234` | `wsl_module_for_reapply_label()` match | **漏 arm → 该模块不进 `changed_modules` → 被 `unchanged_wsl_modules` 判为「未变」→ 恢复后 WSL sync 静默跳过它** |
+| `reapply_applied_runtime.rs:264` | `const ALL_WSL_FILE_MODULES: &[&str]` | 漏项 → 该模块永远不被 skip（可能误覆盖本机运行时文件） |
+| `reapply_applied_runtime.rs:105` | `reapply_cli(&mut summary, "<tool>", ...)` 调用点 | 恢复后不 re-apply |
+
+### 6.5 前端注册（全部会静默失效）
+
+| 文件 | 符号 | 漏改后果 |
+|------|------|---------|
+| `useWSLSync.ts:56` / `:72` | `TAB_TO_MODULE` / `ALL_CODING_MODULES` | 映射为 `undefined` → `.filter(Boolean)` 丢弃 → 塞进 `skipModules` → **文件永不参与 WSL 同步**（复发 2 次的头号坑） |
+| `useSSHSync.ts:23` / `:40` | 同上 | 同上（SSH） |
+| `WSLSyncModal.tsx:74` / `:82` | `MODULE_TO_TAB` / `ALL_MODULE_KEYS` | 模块 tab 在同步弹窗里**看不见** |
+| `SSHSyncModal.tsx:104` / `:112` | 同上 | 同上 |
+| `FileMappingModal.tsx:250` | `<Select.Option value="<tool>">` | 手动加映射时选不到该模块 |
+| `SSHFileMappingModal.tsx:153` | 同上 | 同上 |
+| `syncMessageTranslator.ts:182` | `BUILTIN_MAPPING_LABELS` 每个 mapping id 一条 | 同步结果消息里显示原始 id 而非本地化名 |
+
+### 6.6 本节的静默失效陷阱汇总
+
+1. **`default_mappings()` 加了结构体但没加进 `DEFAULT_MAPPING_IDS_ADDED_IN_V<N>` / 没 bump `CURRENT_DEFAULTS_VERSION`**：老用户永远拿不到新映射，**只有全新安装才有**。无任何提示。
+2. **`resolve_dynamic_paths_with_db` 漏 arm**：映射保留字面 `~/.<tool>/...`，用户设了自定义根目录时同步的是**错误路径**（通常表现为 skipped 而非 error）。
+3. **`TAB_TO_MODULE` 漏项**：复发 3 次的头号坑（`AGENTS.md:1111-1113` 有完整记录）。
+4. **`runtime_location::MODULE_KEYS` 漏项**（issue #331）：模块不在 Direct 状态列表里 → 后端不知道它已是 WSL Direct → 把 Windows UNC 路径 `//wsl.localhost/...` 交给 Linux `cp`。
+5. **`is_mapped_mcp_config_file` 注册了但 `strip_cmd_c` 没 arm**：`cmd /c` 原样进 Linux（ZCode 实证）。
+6. **`wsl_module_for_reapply_label` 漏 arm**：恢复后 WSL sync 把该模块当「未变更」跳过。
 
 ---
 
-## 7. 阶段七：Skills / MCP
+## 7. 阶段七：Skills / MCP 管理
 
-- [ ] `tauri/src/coding/tools/builtin.rs` 加内置工具定义（Skills 路径、MCP 路径、安装检测）
-- [ ] 路径必须与模块 Source of Truth 一致（kimi 曾误写 `~/.kimi/*`，实际是 `~/.kimi-code/`）
-- [ ] 强制复制的工具（不支持 symlink）扩展 `builtin_tool_forces_skill_copy`
-- [ ] MCP 配置文件格式映射（`format_configs.rs`）
+### 7.1 核心事实：工具枚举只有一个权威来源
+
+`tauri/src/coding/tools/builtin.rs:14` 的 `BUILTIN_TOOLS: &[BuiltinTool]` 是**唯一**的工具枚举常量表：
+
+```rust
+pub struct BuiltinTool {
+    pub key: &'static str,
+    pub display_name: &'static str,
+    pub relative_skills_dir: Option<&'static str>,
+    pub relative_detect_dir: Option<&'static str>,
+    pub mcp_config_path: Option<&'static str>,
+    pub mcp_config_format: Option<&'static str>,  // "json"|"toml"|"jsonc"|"yaml"|"cordis"
+    pub mcp_field: Option<&'static str>,
+}
+```
+
+zcode 的 entry（`builtin.rs:384-392`）：
+
+```rust
+BuiltinTool {
+    key: "zcode", display_name: "ZCode",
+    relative_skills_dir: Some("~/.zcode/skills"),
+    relative_detect_dir: Some("~/.zcode"),
+    mcp_config_path: Some("~/.zcode/cli/config.json"),
+    mcp_config_format: Some("json"),
+    mcp_field: Some("mcp.servers"),   // 支持点分嵌套路径
+},
+```
+
+**加一条 entry 就够**：`get_all_builtin_tools()` / `get_skills_builtin_tools()` / `get_mcp_builtin_tools()` / `get_all_tool_adapters()` / `get_mcp_runtime_tools()` 全是派生函数，MCP 页、Skills 页、托盘 MCP 区、托盘 Skills 区、以及它们的 WSL/SSH 同步**全部自动生效**。
+
+**前端零改动**（除图标）：`useMcpTools.ts` 和 `SkillsSettingsModal.tsx` 的数据都来自后端命令。
+
+> **路径必须与模块 Source of Truth 一致**：kimi 曾误写 `~/.kimi/*`，实际是 `~/.kimi-code/*`。
+>
+> **强制复制**：不支持 symlink 的 CLI 要在 `builtin_tool_forces_skill_copy()`（`builtin.rs:436`）加 key（当前只有 `cursor` / `antigravity_cli`）。
+
+### 7.2 但路径解析有 6 处独立于 `BUILTIN_TOOLS` 的 match
+
+这些是真正的「漏改静默失效」区，文件 `tauri/src/coding/tools/detection.rs`：
+
+| 函数 | 行号 | 说明 |
+|------|------|------|
+| `resolve_special_mcp_config_path` | `:48` | OS 特殊路径（opencode / github_copilot_intellij / claude_desktop / hermes / dsh） |
+| `is_tool_installed` 的 special 列表 | `:94` | 同上 5 个 key |
+| `resolve_mcp_config_path_with_db` | `:163` | **DB 优先解析**：白名单 match |
+| `resolve_mcp_config_path_with_db_async` | `:188` | 同上 |
+| `resolve_skills_path_with_db` | `:211` | 同上 |
+| `resolve_skills_path_with_db_async` | `:230` | 同上 |
+
+配套的 backend resolver 在 `runtime_location.rs` 的 `get_tool_mcp_config_path_sync/_async`（`:2250` / `:2281`）和 `get_tool_skills_path_*`（`:1960` / `:2082`）。
+
+> ⚠️ **已知未修 bug（zcode 至今未注册）**：`detection.rs` 的 4 个 `*_with_db*` 是**白名单 match**，zcode 不在其中，`_ =>` 走静态路径。后果：**用户在「自定义配置目录」里改了 root_dir 后，MCP 页读写的仍是默认路径，而不是用户自定义路径——无报错、无日志。**
+>
+> zcode 能「看起来正常」只是因为 `runtime_location.rs` 有 arm，但 `detection.rs` 根本不调用它。**新增 CLI 时必须同时改这两处**，否则自定义目录静默失效。
+
+### 7.3 前端图标（MCP 与 Skills 共用）
+
+`web/features/coding/shared/toolIcon/ToolIcon.tsx` 有 5 级解析顺序（见 `skills/AGENTS.md:76`）：
+
+| 优先级 | 位置 | 形态 |
+|--------|------|------|
+| 0 | `:191` | `claude_code` / `pi` / `oh_my_pi` / `openclaw` 硬编码分支 |
+| 1 | `:122` `RAW_SVG_MARKS` | `?raw` 内联 SVG |
+| 2 | `:140` `PNG_ICON_URLS` | PNG `<img>` |
+| 3 | `:84` `TOOL_ICON_RENDERERS` | LobeHub 组件（zcode: `Zhipu.Color`） |
+| 4 | `:232` | 自定义工具的 `iconUrl` |
+| 5 | `:257` | 两字母兜底徽标 |
+
+**漏加 = 静默降级成兜底徽标，不报错。**
+
+### 7.4 MCP 显示名覆盖
+
+`tauri/src/coding/mcp/mod.rs:22` 的 `mcp_tool_display_name()` 只在需要改名时动（当前只有 `github_copilot`）。
 
 ---
 
 ## 8. 阶段八：备份 / 恢复
 
-- [ ] `settings/backup/utils.rs` 备份清单（见 3.2）+ `get_<tool>_*_path_from_db` 系列
-- [ ] `settings/backup/restore.rs` 恢复分支
-- [ ] 归档路径保留 data-root 子目录层级（ZCode 踩坑：扁平化后恢复到了 CLI 不读取的位置）
-- [ ] `web/features/settings/components/BackupSettingsModal.tsx` 前端清单
-- [ ] 恢复后 reapply：`reapply_applied_runtime.rs` 加 `<tool>` arm
+### 8.1 管线（三渠道共用）
+
+```
+generate.rs::generate_backup_file
+  └─ utils.rs::create_backup_zip
+       └─ utils.rs::write_backup_zip_contents
+            └─ utils.rs::write_external_configs_to_backup_zip   ← 打包：改这里
+
+restore.rs::restore_from_archive                                 ← 恢复：改这里
+  ↑ local.rs / webdav.rs / repository.rs 全部只调用它
+```
+
+**重要**：`local.rs` / `webdav.rs` / `repository.rs` **没有** per-tool 的 restore 分支，三渠道只做薄包装。新增 CLI **不需要**动这三个文件。
+
+### 8.2 必改的代码位置
+
+#### A. 分类清单（决定「开关关闭时是否仍进包/恢复」）
+
+| 位置 | 符号 | 说明 |
+|------|------|------|
+| `utils.rs:1477` | `const ALWAYS_BACKUP_CLI_TOOLS` | 运行时文件为真源、不可 re-apply → 开关关闭也进包 |
+| `utils.rs:1487` | `const OPTIONAL_BACKUP_CLI_TOOLS` | SQLite 为真源、可 re-apply → 受 `backup_cli_config_files_enabled` 门控 |
+| `utils.rs:1498` / `:1502` | `is_always_backup_cli_tool()` / `is_optional_backup_cli_tool()` | |
+| `utils.rs:1593` | `wsl_module_for_external_config_tool()` match | **漏 arm → 恢复出的文件永远不会被 post-restore WSL sync 传播**（拿不到 module 就静默 return） |
+| `utils.rs:1578` | `record_restored_external_config_wsl_module()` | 依赖上面那个 match |
+
+#### B. 打包写入（`write_external_configs_to_backup_zip`，`utils.rs:3004`）
+
+每个工具一段，标准形态是「写 `external-configs/<tool>/` 目录 entry + 写 `root-dir.txt` + 逐个文件调 `add_external_config_file_to_zip`」。
+
+配套 helper：
+- `utils.rs:2911` `add_external_config_file_to_zip(...)`
+- `add_external_config_directory_contents_to_zip(...)`（目录递归）
+- `utils.rs:390` `harden_restored_sensitive_file()`（敏感文件 0600）
+- 每个工具的 `get_<tool>_*_path_from_db()`
+- **无 DB 的 restore 期 fallback**：`utils.rs:425` → 调 `runtime_location::resolve_<tool>_root_dir_without_db()`
+
+> ⚠️ `zip::ZipWriter` 不允许重复 entry。目录 entry 必须走 `add_directory_to_zip_once`（带 `added_zip_directories: &mut HashSet<String>` 幂等），否则自定义根目录 + 配置文件同时存在时报 `Duplicate filename`。
+
+#### C. 恢复解压（`restore.rs`）
+
+`restore.rs` 里是一长串 `else if file_name.starts_with("external-configs/<tool>/")`，**当前 14 个分支**。新增工具要加三处：
+
+1. **root-dir override 读取**（`restore.rs:316` 的写法）
+2. **解析 restore dir**（`restore.rs:408`）
+3. **解压分支**（`restore.rs:776` 是 zcode 范本）。分支内必须：
+   - 跳过空/目录/`root-dir.txt`（**漏了会在 CLI 数据根目录留下垃圾文件**）
+   - `should_filter_external_config_entry(&filter_rules, "<tool>", relative_path)`
+   - `resolve_external_config_restore_output_path(&<tool>_restore_dir, restore_relative_path)?`（**安全 helper，禁止直接 `join`**）
+   - `record_restored_external_config_wsl_module(&mut restored_wsl_modules, "<tool>")`
+
+#### D. 其余备份相关清单
+
+| 位置 | 符号 | 漏改后果 |
+|------|------|---------|
+| `utils.rs:1035` | `backup_filter_option_path()` match | 过滤规则下拉显示裸相对路径而非 `~/.<tool>/...` |
+| `utils.rs:1112` | `list_backup_file_filter_path_options()` | 「文件过滤规则」里没有该工具的任何可选项 |
+| `utils.rs:2828` | `normalize_backup_filter_rule_path()` 的 `tool_prefixes` match | 用户写的 `~/.<tool>/AGENTS.md` **归一化不到** `AGENTS.md`，规则静默不匹配（**安全影响**） |
+| `utils.rs:1876` | `get_custom_root_dir_path_info()` match | `_ => None` → 归档里不写 `root-dir.txt`，自定义根目录不被备份 |
+| `utils.rs:1637` | `clear_restored_cli_custom_roots()` | `skip_cli_custom_roots=true` 时旧机器路径残留 |
+| `restore.rs:1136` | `write_post_restore_flags(...)` | 恢复后不触发 WSL resync |
+| `db/schema.rs` / `db/migrations.rs` | `DbTable` 枚举 + 建表 | **编译器会抓**（exhaustive match），非静默 |
+| `BackupSettingsModal.tsx:72` | `TOOL_ORDER` | 该工具不出现在备份设置的排序里 |
+| i18n ×2 | `settings.backupSettings.cliConfigFilesDesc` | **文案里点名工具列表**，中英各一份 |
+
+### 8.3 备份侧的静默失效陷阱
+
+1. **`should_skip_external_config_on_restore()` 的兜底是 `_ => true`（跳过）**。新增工具若**只写了打包段**、忘了登记进 `ALWAYS_`/`OPTIONAL_BACKUP_CLI_TOOLS`，那么在开关关闭的机器上恢复时，它的文件被**静默跳过**，恢复结果 `success=true`、0 warning。
+2. **`wsl_module_for_external_config_tool` 漏 arm**：恢复出的文件永远不会被 post-restore WSL sync 传播。无日志。
+3. **`restore.rs` 漏分支**：`else if` 链走到底什么都不做，entry 被丢弃，恢复「成功」。
+4. **打包段漏写但没漏 `root-dir.txt`**：`root-dir.txt` 被当普通 entry 解压到 `<restore_dir>/root-dir.txt`，留下垃圾文件。
+5. **归档路径扁平化**：zcode 曾把 `v2/provider_config.json` 存成 `provider_config.json`，恢复后文件落在 CLI **不读取**的位置（commit `312529b7` 修复，回归测试 `utils.rs:4560`）。**归档 entry 的相对路径必须保留 data-root 下的子目录层级。**
+6. **`tool_prefixes` 漏项**：过滤规则「存在即生效」，归一化失败 = 用户以为排除了敏感文件，实际照打进去。
 
 ---
 
@@ -623,13 +912,33 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 
 ## 12. 验收
 
-- [ ] `pnpm test` + `cargo test` + `pnpm exec tsc --noEmit` 全绿
+### 12.1 构建与测试
+
+- [ ] `pnpm exec tsc --noEmit` + `pnpm i18n:check` + `pnpm test:web` 全绿
+- [ ] `cargo check`（或 `cargo test`）通过
+- [ ] `pnpm build` 成功
 - [ ] 至少一条「表单提交 → 持久化 → 再读取」的往返用例
 - [ ] 3.4 的全局 grep 兜底通过
-- [ ] 本机 + WSL Direct 两条路径都验证（runtime_location 改动必做）
+
+### 12.2 端到端行为（逐条对照前面各节）
+
+- [ ] **本机**：页面能加载配置、增删改供应商、应用默认、模型 CRUD
+- [ ] **WSL Direct**：路径解析正确、CLI 调用走 `wsl -d <distro> --exec`（6.1）
+- [ ] **托盘**：新 CLI 的供应商/提示词子菜单**真实出现**且点击生效；中英两种语言标题都不为空（5.2 第 3 点）
+- [ ] **WSL/SSH 同步**：新映射在**老库**上也生效（`CURRENT_DEFAULTS_VERSION` 已 bump，6.2）；同步结果消息显示本地化名而非裸 id
+- [ ] **MCP 页 / Skills 页**：新工具出现、图标正确、读写路径在自定义根目录下也对（7.2 的白名单）
+- [ ] **备份/恢复**：打包 → 换机恢复 → 文件落在 CLI 能读到的位置；恢复后 WSL 自动 resync（8.3）
 - [ ] 主窗口保存、托盘刷新、WSL 设置页状态三者一致
 - [ ] 新 tab 的侧栏开关重启后保持
-- [ ] 新 tab 的配置文件在 WSL/SSH 同步中不被静默跳过
+- [ ] 新 tab 的配置文件在 WSL/SSH 同步中**不被静默跳过**（`TAB_TO_MODULE` / `ALL_CODING_MODULES`）
+
+### 12.3 建议加回归测试的位置
+
+| 场景 | 参考 |
+|------|------|
+| 归档路径保留子目录层级 | `settings/backup/utils.rs:4560`（zcode 回归测试） |
+| 自定义根目录下 MCP/Skills 路径解析 | 需新写（当前 zcode 缺这个测试，所以 bug 没被发现） |
+| 老库 backfill 默认映射 | `wsl/commands.rs` 的 versioned mapping 测试 |
 
 ---
 
@@ -649,6 +958,12 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 | 10 | zcode：备份归档扁平化路径 | 恢复后文件在 CLI 不读取的位置 | 保留 data-root 子目录层级 |
 | 11 | zcode：`select_*_provider` 不写 `is_applied` | 默认徽章无值、启动 reapply 找不到 provider | 写入后镜像 flag |
 | 12 | kimi：导入快照路径未走 `join_safe_relative` | 路径遍历漏洞 | 修复 + 恶意路径回归测试 |
+| 13 | zcode：`detection.rs` 4 个 `*_with_db*` 白名单漏注册 | 自定义根目录下 MCP/Skills 页读写默认路径（静默） | **未修**，见 7.2 |
+| 14 | zcode：备份 `root-dir.txt` 被当普通 entry 解压 | CLI 数据根目录留垃圾文件 | 分支内显式跳过 |
+| 15 | zcode：`wsl_module_for_external_config_tool` 漏 arm | 恢复出的文件不被 post-restore WSL sync 传播 | 补 arm |
+| 16 | zcode：`format_configs.rs` 无专用格式 | `timeoutMs` 写成通用 `timeout`，CLI 静默丢值 | 加 `ZCODE_FORMAT` |
+| 17 | 共享组件：`omoNative.model.*` / `hermes.model.thinkingLevelHint` 整组键不存在 | 页面渲染字面键名 | 改为 `common.model.*` |
+| 18 | 共享组件：`ModelFormModal` 覆盖值存 i18n key | `i18n:prune` 把 key 判为未使用并删除 | 覆盖值存 `t(key)` 的结果（已是终态文本） |
 
 ---
 
@@ -660,6 +975,40 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 - **前端 33 个**：`web/features/coding/zcode/`（7 个）+ `web/services/`（3 个）+ `web/types/` + `constants/modules.tsx` + `app/routeConfig.ts` + `MainLayout` + `toolIcon` + `features/settings/`（7 个）+ i18n（2 个）
 
 > ZCode **未做**：Gateway 接管、`CliManualPathSetting`（页面有「更多选项」但只是配置弹窗；ZCode 模块本身不 spawn CLI，故无 cli_resolver 需求）、`docs/plan` 文档。这些是可选阶段——反过来说，**如果新工具需要调用 CLI**，cli_resolver 与手动路径入口就是必需项。
+
+### A.1 共享组件改造后的「标准形态」（ZCode 是范本）
+
+ZCode 后来做了一次前端改造，把页面从自建组件切到共享组件。**新 CLI 应直接照抄这个形态，而不是重写一遍**：
+
+| 关注点 | 用共享组件 | 备注 |
+|--------|-----------|------|
+| 页面头部 | `CodingPageHeader` | 无文案 props；所有标签走 `common.*` |
+| 供应商列表 | `ProviderListSection` | `emptyTextHint` 是唯一的空态扩展点 |
+| 供应商卡片 | `ProviderCard` | 无插槽；模型区用 `ModelListSection` |
+| 模型列表 | `ModelListSection` | `renderModelExtraActions` 收 `rowKey` 参数 |
+| 供应商表单 | `ProviderFormSections` | 计费 / 自定义头 / 模型重写三块共用 |
+| 模型表单 | `ModelFormModal` | 差异走 `messageOverrides`（值是**已翻译文本**，不是 key） |
+| 通用配置编辑 | `JsonEditor` | `onChange(parsed, isValid)` + `onRawChange(raw)` 配合使用 |
+
+**ZCode 供应商是「Codex 形态」**：支持自定义模型目录，因此表单里**不含模型编辑**（模型在卡片上增删改），保存时要把已存模型原样带回去，否则会清空模型目录：
+
+```tsx
+// Models are edited on the provider card, not here. Reuse whatever the
+// stored provider already has so saving the form does not wipe the catalog.
+const existingModels = provider
+  ? (parseZcodeProviderSettings(provider.settingsConfig)?.models ?? [])
+  : [];
+```
+
+**ZCode 有三个配置文件**（新 CLI 若也是多文件，照此分工）：
+
+| 文件 | 内容 | 管理方式 |
+|------|------|---------|
+| `v2/provider_config.json` | 供应商 + 模型目录 | 结构化 UI（provider/模型 CRUD） |
+| `cli/config.json` | MCP 服务器 / hooks / plugins / 权限 | `JsonEditor` 原文编辑（`ZcodeCommonConfigModal`） |
+| `v2/setting.json` | 桌面端偏好 | 只读 |
+
+> `cli/config.json` 里含明文凭据（Tavily / Firecrawl / GitHub token / Context7 key）。做演示或截图时注意遮挡。
 
 ---
 
