@@ -202,6 +202,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] **页面头部用共享组件 `CodingPageHeader`**（见 4.1）
 - [ ] **供应商列表用共享组件**（见 4.2）：`ProviderListSection` 外壳 + `ProviderCard` 卡片；有模型目录的再加 `ModelListSection`
 - [ ] **模型编辑弹窗用 `ModelFormModal`**，按 CLI 能力传 `show*` 开关 + `toolName`；只有字段语义/示例确实不同才用 `messageOverrides`（见 4.2.4）
+- [ ] ⚠️ **模型弹窗必须有「选择预设模型」入口**——最重要的能力之一，**不许漏**（见 4.2.4）
 - [ ] **供应商编辑弹窗的分区用 `ProviderFormSections`**（见 4.2.6）；有协议下拉时接网关支持门控（见 4.2.7）
 - [ ] **全局提示词区块用 `GlobalPromptSettings`**，传 `promptFileName`（见 4.2.8）
 - [ ] UI 遵循 `DESIGN.md`（改任何可见 UI 前必须先完整阅读）
@@ -229,9 +230,15 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 **A. 外层容器（共享组件管不到的部分）**
 
 - [ ] `layout` / `labelCol` / `wrapperCol` —— **共享组件只管内部，外层布局仍由调用方写**。
-  > ZCode 保留了 `layout="vertical"`（标签在输入框上方），而其他 5 个 CLI 全是 `layout="horizontal"` + `labelCol={span: 4|6}` / `wrapperCol={span: 20}`。弹窗看起来像另一个产品。
+  > ZCode 保留了 `layout="vertical"`（标签在输入框上方），而其他 5 个 CLI 全是 `layout="horizontal"` + `labelCol` / `wrapperCol`。弹窗看起来像另一个产品。
+  >
+  > **同一个错误在 ZCode 犯了两次**：先是供应商弹窗，后是模型弹窗。**每一个 `<Form>` 都要单独核对**——供应商弹窗改对了不代表模型弹窗也对。
+  >
+  > `labelCol` 的 span 各 CLI 不同（shared 4/6、codex 6/8、grok 5/7、kimi 7/9、openclaw 5/7），**按本 CLI 最长的标签选**，不是照抄。ZCode 最长标签是「推理等级（从低到高）」，用 7/9。
 - [ ] `width` / `title` / `okText` / `cancelText` / `destroyOnHidden`
 - [ ] 表单字段的**顺序与数量**：逐字段列出「参照有我没有」「我有参照没有」，确认每一处差异都是**有意的**
+- [ ] **分组子字段**（如「一组三态下拉」）：横向布局下内层 `Form.Item` 若带 `label` 会继承外层 labelCol 百分比，布局错乱。改成「纯文本子标签 + 无 label 的 `Form.Item`（`labelCol={{span:0}}` / `wrapperCol={{span:24}}`）」，既保持分组又保留校验错误显示。
+  > 若给内层用 `noStyle`，校验错误就没有渲染位置 —— 手动模式漏填会「点了保存没反应」，属于 13.1 模式三。
 
 **B. 第一行放什么**
 
@@ -267,6 +274,21 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 **G. 状态与空态**
 
 - [ ] 空态 / 搜索空态 / 加载态 / 禁用态文案是否与参照一致
+
+**H. 能力核对（不是样式，样式核对抓不到）**
+
+逐项确认参照 CLI 有的**能力**本 CLI 也有。漏能力不会让界面「长得不对」，只会让界面「少了功能」，所以必须单独列：
+
+- [ ] **模型编辑弹窗有「选择预设模型」入口** —— ⚠️ **最重要的能力之一，不许漏**（见 4.2.4）
+- [ ] 模型列表有「获取模型」（从上游 API 拉取）
+- [ ] 模型列表有连通性测试
+- [ ] 供应商有连通性测试 / 批量测试
+- [ ] 有「导入我使用过的供应商」或等价导入入口
+- [ ] 有全局提示词区块
+- [ ] 有会话管理面板（若该 CLI 有会话概念）
+- [ ] 有「预览配置」「打开文件夹」「刷新配置」
+
+> 对照方法：打开参照 CLI 的页面**逐个点一遍**，列出它有的入口；回到本 CLI 页面逐个找。找不到的要么补上，要么在提交说明里写明「有意不做 + 理由」。
 
 #### 4.0.3 第三步：核对共享组件的**前置条件**
 
@@ -536,11 +558,33 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 
 其余（`addModel` / `editModel` / `id` / `api*` / `compat*` / `cost*` / `inputTypes*` / `variants*` / 各类校验消息）**都是同一句话，直接共用 `common.model.*`**。
 
-**三个必须保证的交互（已实现，勿回退）**：
+**⚠️ 「选择预设模型」是模型编辑弹窗最重要的能力之一，不许漏。**
 
-1. **「选择预设模型」按钮在模型 ID 输入框右侧**（`ModelFormModal` 的 ID 字段 flex 布局内）
+它让用户从 models.dev 数据里一键带出模型的全部参数（名称、上下文/输出限制、成本、模态、能力、variants），而不是靠记忆手填十来个字段。**新 CLI 的模型弹窗若没有它，等于把一个高价值能力降级成纯手工表单**——这是不可接受的缺失，不是「可选增强」。
+
+> **实际教训**：ZCode 的模型弹窗从始至终没有预设入口，而同一批次的其他 4 个自建模型弹窗、以及共享的 `ModelFormModal` 都有。迁移时只核对了布局，没核对该有的能力，于是这个缺口一直没被发现，直到被指出来。
+>
+> **所以「有没有预设模型」必须单独进核对清单**（见 4.0.2-H）——它不属于「样式」，样式核对抓不到它。
+
+**四个必须保证的交互**：
+
+1. **「选择预设模型」入口在模型 ID 输入框右侧**（`ModelFormModal` 的 ID 字段 flex 布局内）——**没有它就不算完成**
 2. **编辑态 ID 不可编辑**（`disabled={isEdit}`），选其他预设**只更新其余字段**，不覆盖 ID
 3. **新增态选预设**：填充**完整参数**（含 ID、名称、上下文/输出限制、options、variants、模态、能力）
+4. **预设数据源按本 CLI 的 SDK 类型取**：`npmType` → `PRESET_MODELS[npmType]`。协议可变的 CLI 由当前协议推导 npmType（如 Codex：`anthropic_messages` → `@ai-sdk/anthropic`，其余 → `@ai-sdk/openai`）
+
+**预设字段 → 本 CLI 字段的映射**（各 CLI 字段名不同，需要显式转换，不是照搬）：
+
+| 预设字段 | 常见落点 |
+|---------|---------|
+| `id` / `name` | 模型 ID / 显示名 |
+| `contextLimit` / `outputLimit` | 上下文 / 输出限制 |
+| `modalities.input`（`text`/`image`/`pdf`/`video`/`audio`） | 输入模态开关 |
+| `tool_call` / `attachment` / `reasoning` / `temperature` | 能力开关 |
+| `cost.*` | 成本字段（若本 CLI 支持） |
+| `variants` / `options` | 高级字段（若本 CLI 支持） |
+
+> 本 CLI 没有对应字段的，**留空/继承**，不要硬塞。有对应字段但预设没给的，也保持继承态。
 
 #### 4.2.5 「获取模型」的预设匹配
 
@@ -1105,6 +1149,8 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 26 | zcode：`ModelListSection` 只传 1 个 handler | 工具栏只有「添加模型」，看起来像设计如此 | 补齐 test / fetch / batchDelete（见 4.0.2-F） |
 | 27 | zcode：`db_clean_id` 剥离业务 ID 的 `custom:` 前缀 | 写库成功但读回 ID 被篡改，后续操作全报 not found | adapter 读原始 id + 回归测试（见 2.1） |
 | 28 | zcode：模板加载 `.catch()` 只 `console.error` | 后端调用失败表现为「暂无数据」，排查绕远路 | 改成可见错误提示 |
+| 29 | zcode：模型弹窗也保留 `layout="vertical"` | 同上，**同一错误在第二个 `<Form>` 上重犯** | 改 horizontal；4 个自建模型弹窗全是 horizontal（见 4.0.2-A） |
+| 30 | 共享组件：`ModelFormModal` 的 `messageOverrides` JSDoc 说「传 i18n key」 | 与实现（按已翻译文本处理）矛盾，误导调用方 | 改 JSDoc + 删过时注释（见 4.2.4） |
 
 ### 13.1 静默失效的三种模式（归纳）
 
