@@ -10,7 +10,7 @@
 > - ZCode 集成实证（2026-10-06 合并）：10 个提交、63 个文件，含 3 轮「漏注册」修复
 > - 记忆库 `projects/ai-toolbox/tab-allowlist-misses-new-tabs.md`（头号复发坑）
 >
-> **最近更新**：2026-10-06（ZCode 集成完成后）
+> **最近更新**：2026-10-06（ZCode 集成 + 复用轮清理：§4.0.2-F 改为附录 B 台账、7.2 白名单反转、13 节补 31–37 条）
 
 ---
 
@@ -234,11 +234,11 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
   >
   > **同一个错误在 ZCode 犯了两次**：先是供应商弹窗，后是模型弹窗。**每一个 `<Form>` 都要单独核对**——供应商弹窗改对了不代表模型弹窗也对。
   >
-  > `labelCol` 的 span 各 CLI 不同（shared 4/6、codex 6/8、grok 5/7、kimi 7/9、openclaw 5/7），**按本 CLI 最长的标签选**，不是照抄。ZCode 最长标签是「推理等级（从低到高）」，用 7/9。
+  > `labelCol` 的 span 各 CLI 不同（shared 4/6、codex 6/8、grok 5/7、kimi 7/9、openclaw 5/7），**按本 CLI 最长的标签选**，不是照抄。**标签改了就要重算**：ZCode 原用 7/9，是因为最长标签是「推理等级（从低到高）」；标签简化为「推理等级」后改成 6/8。
 - [ ] `width` / `title` / `okText` / `cancelText` / `destroyOnHidden`
 - [ ] 表单字段的**顺序与数量**：逐字段列出「参照有我没有」「我有参照没有」，确认每一处差异都是**有意的**
 - [ ] **分组子字段**（如「一组三态下拉」）：横向布局下内层 `Form.Item` 若带 `label` 会继承外层 labelCol 百分比，布局错乱。改成「纯文本子标签 + 无 label 的 `Form.Item`（`labelCol={{span:0}}` / `wrapperCol={{span:24}}`）」，既保持分组又保留校验错误显示。
-  > 若给内层用 `noStyle`，校验错误就没有渲染位置 —— 手动模式漏填会「点了保存没反应」，属于 13.1 模式三。
+  > **何时可以用 `noStyle`**：分组内**没有**逐字段校验时（如「模型能力」勾选组——布尔字段永远有值，不存在「漏填」）用 `noStyle` 是正确的，它让勾选框自然横向排列。**有** `rules` 的字段必须留出 `wrapperCol`，否则校验错误无处渲染，手动模式漏填会「点了保存没反应」（13.1 模式三）。判断依据是**该字段有没有 rules**，不是「在不在分组里」。
 
 **B. 第一行放什么**
 
@@ -264,12 +264,25 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] 操作按钮的数量、**样式**（`type="link"` / `type="text"` / default）、图标、禁用条件
   > ZCode 的「应用」用了 default 按钮（带边框），其他 CLI 全是 `type="link"`（蓝色文字）。
 
-**F. 工具栏的按钮全集（最容易漏的一类）**
+**F. 三层「可选项」台账（最容易漏的一类）**
 
-- [ ] 枚举共享组件的**全部**可选 prop，逐个决定「传 / 不传」，并记录理由。
-  > `ModelListSection` 的按钮是「传了 handler 才渲染」。ZCode 只传了 1 个，于是工具栏只有「添加模型」——**看起来像设计如此，实际是漏传**。
-  >
-  > 位置全集：批量删除入口 / 模型测试 / 获取模型 / 添加模型 + 每行的编辑 / 复制 / 删除 / 设为主模型 / `renderModelExtraActions`。
+共享组件全部用「**传了才渲染**」组织 UI：漏传一个 prop → 少一个按钮 / 分区 / 插槽，**没有任何报错**，看起来像设计如此（13.1 模式二）。ZCode 在这三层**各漏过**，且都在界面上「看起来正常」。
+
+**核对方法**：打开 **附录 B** 的三张表，**每一行**都在 PR 描述里写「传 / 有意不传 + 理由」。不许整表跳过——跳过的行下次就会被当成「设计如此」。
+
+- [ ] **F-1 组件可选 prop**（附录 B.1）：`ProviderListSection` / `ModelListSection` / `CodingPageHeader` / `ProviderFormSections` / `ModelFormModal` 的**每一个**可选 prop
+- [ ] **F-2 页面级区块**（附录 B.2）：不属于任何组件、靠对照参照页面逐块点的部分（提示块、导入入口、页面级 Alert…）
+- [ ] **F-3 能力**（见 H）：组件 prop 之外的功能缺口
+
+> **ZCode 实证（三处，全部属于本条）**：
+>
+> | 漏传 | 界面表现 |
+> |------|---------|
+> | `ModelListSection.onCopyModel` | 模型行没有「复制」按钮，其余 7 个 CLI 都有 |
+> | `CodingPageHeader.onPreviewConfig` | 页面没有「预览配置」；§4.1 早就记过这条，迁移后仍未补 |
+> | `ProviderListSection.hint` / `footer` | 提示块与「导入我使用过的供应商」整体缺失 |
+>
+> 三处的共同点：**组件本身没坏、页面也没报错**，只有把参照 CLI 打开逐项指认才会发现。
 
 **G. 状态与空态**
 
@@ -316,6 +329,8 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 **所有 coding tab 的页面头部必须用共享组件**，不要照抄隔壁页面。组件在 `web/features/coding/shared/CodingPageHeader.tsx`，由 Codex 页（2026-10-06）作为首个消费方验证。
 
 **为什么有这个组件**：此前 14 个页面各写各的头部，结构一致但代码分散，新工具接入只能靠"复制隔壁 + 手改"，容易漏项（zcode 漏了「预览配置」、claudedesktop 文案硬编码中文未走 i18n）。
+
+> ⚠️ **这条至今未修**：ZCode 2026-10-06 迁移到 `CodingPageHeader` 后，头部仍只传了 7 个 prop，`onPreviewConfig` 依旧是 `undefined` → 页面没有「预览配置」。**迁到共享组件不等于补齐了缺失的能力**——见附录 B.1。
 
 **标准形态**：
 
@@ -455,6 +470,10 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `hint` / `footer` | 提示块 / 底部导入按钮；**文案由调用方传**，组件不硬编码 |
 | `onBatchTest` / `onOpenCommonConfig` | 传了才渲染对应按钮 |
 
+> ⚠️ **`hint` 与 `footer` 是最容易整体漏掉的两个插槽**：ZCode 两个都没传，于是提示块和「导入我使用过的供应商」**整块消失**，而界面看起来完全正常。已迁移的两个试点（claudecode / codex）**都传了**——`hint` 是两行（`pageHint` + `pageWarning`），`footer` 至少含 `opencode.provider.importFavorite`。
+>
+> 13 个 coding 页面里只有 10 个有「导入我使用过的供应商」入口，zcode / kimi / geminicli / antigravity / omo_native 没有。**新增 CLI 时默认应该有**，不做要在提交说明里写明理由。
+
 **文案一律走 `common.provider.*`，没有 `i18nPrefix`**：标题「供应商列表」、按钮「添加供应商」/「通用配置」、空态「暂无供应商配置，点击上方按钮添加」。组件不再按 `<tool>.provider.*` 取词——那套 per-CLI key 层级混乱（有的在顶层、有的在 `provider` 下），是空态渲染出字面量 key 的根因。claudecode / codex 迁移时产生的孤儿 key 已 prune。
 
 > 各 CLI 的空态文案内容确实有差异（claudecode 要提「或从 OpenCode 导入」），但**差异只在补充说明**，主体是同一句。所以拆成「通用基座 + 可选 `emptyTextHint`」，而不是让每个 CLI 传整句。
@@ -499,7 +518,9 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `selectionMode` / `selectedIds` / `onToggleSelection` | 批量删除选择态 |
 | `onToggleBatchDeleteMode` / `onBatchDelete` | 批量删除入口与执行 |
 | `onTest` / `onFetchModels` / `onAddModel` | 工具栏三按钮；**传了才渲染** |
-| `onEditModel` / `onCopyModel` / `onDeleteModel` / `onSetPrimaryModel` | 行级操作 |
+| `onEditModel` / **`onCopyModel`** / `onDeleteModel` / `onSetPrimaryModel` | 行级操作；**四个一起传**，漏一个就少一个按钮 |
+
+> ⚠️ **`onCopyModel` 是最常漏的一个**：ZCode 传了 edit / delete / setPrimary，唯独没传 copy → 模型行没有「复制」，而其余 7 处调用方都有。与工具栏「只传 1 个 handler」是同一类错（13.1 模式二）。**逐个指认行级按钮数量**能发现，只读代码不能。
 | `renderModelExtraActions` | 行级额外操作（Codex 的「设为自动审批模型」） |
 | `aboveList` | 工具栏下方、列表上方的内容（Codex 的自动审批行） |
 | `className` / `bodyStyle` / `transparentRows` | 样式适配（Codex 用透明背景 + `paddingLeft: 18`） |
@@ -931,16 +952,28 @@ BuiltinTool {
 |------|------|------|
 | `resolve_special_mcp_config_path` | `:48` | OS 特殊路径（opencode / github_copilot_intellij / claude_desktop / hermes / dsh） |
 | `is_tool_installed` 的 special 列表 | `:94` | 同上 5 个 key |
-| `resolve_mcp_config_path_with_db` | `:163` | **DB 优先解析**：白名单 match |
-| `resolve_mcp_config_path_with_db_async` | `:188` | 同上 |
-| `resolve_skills_path_with_db` | `:211` | 同上 |
-| `resolve_skills_path_with_db_async` | `:230` | 同上 |
+| `resolve_special_mcp_config_path_with_db` | `:172` | 按需查 DB 的**特例**（hermes / dsh） |
+| `resolve_mcp_config_path_with_db` | `:190` | DB 优先解析 → 特殊 → `runtime_location` → 静态兜底 |
+| `resolve_mcp_config_path_with_db_async` | `:201` | 同上（async） |
+| `resolve_special_skills_path_with_db` | `:216` | 同上（hermes） |
+| `resolve_skills_path_with_db` | `:228` | 同上 |
+| `resolve_skills_path_with_db_async` | `:237` | 同上 |
 
 配套的 backend resolver 在 `runtime_location.rs` 的 `get_tool_mcp_config_path_sync/_async`（`:2250` / `:2281`）和 `get_tool_skills_path_*`（`:1960` / `:2082`）。
 
-> ⚠️ **已知未修 bug（zcode 至今未注册）**：`detection.rs` 的 4 个 `*_with_db*` 是**白名单 match**，zcode 不在其中，`_ =>` 走静态路径。后果：**用户在「自定义配置目录」里改了 root_dir 后，MCP 页读写的仍是默认路径，而不是用户自定义路径——无报错、无日志。**
+> **历史上的坑（已结构性修复，2026-10-06）**：`*_with_db*` 原本是**白名单 match**，每个 CLI 在 `detection.rs` 里抄一份自己的 key，zcode 不在其中 → `_ =>` 走静态路径。后果：**用户在「自定义配置目录」里改了 root_dir 后，MCP 页读写的仍是默认路径——无报错、无日志。**
 >
-> zcode 能「看起来正常」只是因为 `runtime_location.rs` 有 arm，但 `detection.rs` 根本不调用它。**新增 CLI 时必须同时改这两处**，否则自定义目录静默失效。
+> **修法不是「把 zcode 加进白名单」，而是把白名单反过来**：
+>
+> ```rust
+> pub fn resolve_mcp_config_path_with_db(db, tool) -> Option<PathBuf> {
+>     resolve_special_mcp_config_path_with_db(db, tool)   // 只剩 hermes/dsh 这类真特例
+>         .or_else(|| runtime_location::get_tool_mcp_config_path_sync(db, &tool.key))
+>         .or_else(|| resolve_mcp_config_path(tool))      // 静态默认值兜底
+> }
+> ```
+>
+> 共享 resolver 自己处理未知 key（返回 `None` → 走兜底），调用侧不维护副本列表——这样**以后新增 CLI 不需要改这里**。这是 13.1 模式一的标准对策，新增 CLI 时若发现某处仍是白名单 match，**优先按这个方向改，而不是补一行 key**。
 
 ### 7.3 前端图标（MCP 与 Skills 共用）
 
@@ -1103,8 +1136,13 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 - [ ] 供应商弹窗：**没有**该 CLI 用不上的分区（非网关 CLI 不应出现计费/请求头/改写，见 4.0.3）
 - [ ] 供应商卡片：详情**一行**、应用按钮是蓝色文字（`type="link"`）
 - [ ] 模型列表工具栏：按钮**数量与参照一致**（逐个指着数，见 4.0.2-F）
+- [ ] **模型行**：编辑 / 复制 / 删除 / 设为主模型**四个按钮都在**（附录 B.1）
+- [ ] 页面头部：「预览配置」「自定义配置目录」「打开文件夹」「刷新配置」「更多选项」**五个都在**（附录 B.1）
+- [ ] 供应商列表：提示块在、底部导入按钮在（附录 B.1）
 - [ ] 空态 / 搜索空态 / 加载态文案与参照一致
 - [ ] 失败路径有可见反馈，不是静默空列表（见 13.1 模式三）
+
+> **核对的单位是「界面上的块」，不是「代码里有没有」。** 漏传一个 prop 在代码里毫无痕迹，只有把参照 CLI 和本 CLI 并排打开、一块一块数，才能发现。附录 B 的台账是这个动作的记录载体。
 
 > 若本次无法运行界面，**必须在提交说明里写明「未做视觉核对」**。ZCode 这一轮 8 次返工全部出在这一步——每一处都是「编译通过但形态不对」。
 
@@ -1123,8 +1161,11 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 |------|------|
 | 归档路径保留子目录层级 | `settings/backup/utils.rs:4560`（zcode 回归测试） |
 | 业务 id 含冒号的往返读取 | `zcode/adapter.rs` 的 `managed_provider_id_survives_the_db_round_trip`（见 2.1） |
-| 自定义根目录下 MCP/Skills 路径解析 | 需新写（当前 zcode 缺这个测试，所以 bug 没被发现） |
+| 预设字段 → 本 CLI 字段的映射 | `web/test/features/coding/zcode/utils/zcodeModelFields.test.ts`（对着 `preset_models.json` 断言，数据漂移即失败） |
+| 自定义根目录下 MCP/Skills 路径解析 | ⚠️ **仍然缺**（2026-10-06 复核：`tauri/tests/` 下无任何 detection 测试，`detection.rs` 也无 `mod tests`）。#13 这个 bug 拖了几轮没被发现，就是因为没有这个测试 |
 | 老库 backfill 默认映射 | `wsl/commands.rs` 的 versioned mapping 测试 |
+
+> **测试位置**：Rust 集成测试放 `tauri/tests/coding/<tool>/`（不存在的目录要新建并挂进 `tauri/tests/coding.rs`）；纯逻辑单测可直接放模块内 `mod tests`。前端测试放 `web/test/features/coding/<tool>/`，`pnpm test:web` 自动收集 `*.test.ts`。
 
 ---
 
@@ -1144,7 +1185,7 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 10 | zcode：备份归档扁平化路径 | 恢复后文件在 CLI 不读取的位置 | 保留 data-root 子目录层级 |
 | 11 | zcode：`select_*_provider` 不写 `is_applied` | 默认徽章无值、启动 reapply 找不到 provider | 写入后镜像 flag |
 | 12 | kimi：导入快照路径未走 `join_safe_relative` | 路径遍历漏洞 | 修复 + 恶意路径回归测试 |
-| 13 | zcode：`detection.rs` 4 个 `*_with_db*` 白名单漏注册 | 自定义根目录下 MCP/Skills 页读写默认路径（静默） | **未修**，见 7.2 |
+| 13 | zcode：`detection.rs` 4 个 `*_with_db*` 白名单漏注册 | 自定义根目录下 MCP/Skills 页读写默认路径（静默） | 白名单**反转**为「共享 resolver 处理未知 key」（见 7.2） |
 | 14 | zcode：备份 `root-dir.txt` 被当普通 entry 解压 | CLI 数据根目录留垃圾文件 | 分支内显式跳过 |
 | 15 | zcode：`wsl_module_for_external_config_tool` 漏 arm | 恢复出的文件不被 post-restore WSL sync 传播 | 补 arm |
 | 16 | zcode：`format_configs.rs` 无专用格式 | `timeoutMs` 写成通用 `timeout`，CLI 静默丢值 | 加 `ZCODE_FORMAT` |
@@ -1162,6 +1203,13 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 28 | zcode：模板加载 `.catch()` 只 `console.error` | 后端调用失败表现为「暂无数据」，排查绕远路 | 改成可见错误提示 |
 | 29 | zcode：模型弹窗也保留 `layout="vertical"` | 同上，**同一错误在第二个 `<Form>` 上重犯** | 改 horizontal；4 个自建模型弹窗全是 horizontal（见 4.0.2-A） |
 | 30 | 共享组件：`ModelFormModal` 的 `messageOverrides` JSDoc 说「传 i18n key」 | 与实现（按已翻译文本处理）矛盾，误导调用方 | 改 JSDoc + 删过时注释（见 4.2.4） |
+| 31 | zcode：`handleFetchModelsApply` 不查预设 | 点「获取模型 → 应用」只得到裸 id，参数要手填 | 接 `findPresetModelById` + 共享映射（见 4.2.5） |
+| 32 | zcode：`removedModelIds` 被忽略 | 弹窗里「移除已不存在的模型」开关点了没反应（9 个 CLI 里只有它没处理） | 先删后加，无变化则不写盘（见 4.2.5） |
+| 33 | zcode：`ModelListSection.onCopyModel` 未传 | 模型行没有「复制」按钮，看起来像设计如此 | **未修**，见附录 B.1 |
+| 34 | zcode：`CodingPageHeader.onPreviewConfig` 未传 | 页面没有「预览配置」；§4.1 记过一轮，迁移后仍未补 | **未修**，见 4.1 |
+| 35 | zcode：`ProviderListSection.hint` / `footer` 未传 | 提示块与导入入口整块消失 | **未修**，见 4.2.1 |
+| 36 | 「预设模型选择器」在弹窗里有、在获取模型路径里没有 | 同一能力两个消费点只做了一个 | 抽成共享映射模块，一处定义（见 4.2.5） |
+| 37 | 用正则批量改 TSX 源文件 | 跨行多匹配吃掉整个 `Form.Item`，文件无法编译 | **不要对 TSX 用正则批量改写**；用 AST 或逐处 Edit |
 
 ### 13.1 静默失效的三种模式（归纳）
 
@@ -1181,6 +1229,11 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > 例：#28 模板加载失败显示「暂无数据」。
 >
 > **对策**：`catch` 必须给用户可见反馈，除非该失败确实无需用户知晓（此时要写明理由）。
+
+**模式四：同一能力有多个消费点，只做了一个。** 一个能力往往不止一处入口——「预设模型」既要在模型弹窗里选，也要在「获取模型」的应用回调里按 id 匹配；「模型目录」既要在卡片上增删改，也要在保存供应商表单时原样带回。做了其中一处，**另一处不会报错，只是白拿不到数据**。
+> 例：#31 预设匹配、#36 同一条。
+>
+> **对策**：实现一个能力时先问「**谁还会消费这份数据**」，把转换逻辑抽成共享模块（如 `utils/zcodeModelFields.ts`），两个调用点共用一个定义。**两处各写一遍必然漂移**——这正是 #31 的成因。
 
 **反向模式（不是坑但容易误判）：进程 stales。**
 > 排查 UI 异常前，**先确认运行中的进程是当前构建**。曾出现：前端 Vite 热更新到最新代码，而后端进程是 14 小时前启动的旧二进制，DB 迁移也没跑 → 表现为「后端命令不存在/报错」，实际是代码根本没生效。
@@ -1236,8 +1289,96 @@ const existingModels = provider
 
 | 项 | 状态 |
 |----|------|
-| `detection.rs` 4 个 `*_with_db*` 白名单漏 zcode | 未修，见 7.2 |
+| ~~`detection.rs` 4 个 `*_with_db*` 白名单漏 zcode~~ | ✅ 已修（2026-10-06）：白名单反转，见 7.2 |
+| 模型行缺「复制」按钮（`onCopyModel` 未传） | 未修，见 4.0.2-F / 附录 B |
+| 页面缺「预览配置」（`onPreviewConfig` 未传） | 未修，见 4.1 / 附录 B |
+| 页面缺提示块与导入入口（`hint` / `footer` 未传） | 未修，见 4.2.1 / 附录 B |
+| 「自定义根目录下 MCP/Skills 路径」无回归测试 | 未修，见 12.5 |
 | ZCode 不在 `GatewayCliKey::supported_mvp()` | 设计如此（模块不 spawn CLI），故无 Gateway 接管与 cli_resolver |
+
+---
+
+## 附录 B：可选项台账（4.0.2-F 的核对底表）
+
+**用法**：新增 CLI 时把下面三张表的每一行抄进 PR 描述，填「传 / 有意不传 + 理由」。这张表是**穷举**的——组件源码里改了 prop，这里要同步改（同步检查方式：`grep "?: " <组件>` 对比本表）。
+
+「ZCode 现状」一列是实证，**用来提醒这些都是真会漏的**，不是「应该照抄 ZCode」。
+
+### B.1 组件可选 prop
+
+**`ProviderListSection`**（`shared/ProviderListSection.tsx`）
+
+| prop | 渲染出的东西 | ZCode 现状 |
+|------|-------------|-----------|
+| `onBatchTest` / `batchTesting` | 「一键测试」 | ✅ 传 |
+| `onOpenCommonConfig` | 「通用配置」 | ✅ 传 |
+| `headerExtra` | 标题旁插槽（Gateway 胶囊） | 有意不传（非网关 CLI） |
+| `emptyTextHint` | 空态追加的一句补充 | 有意不传（无专属导入来源） |
+| `hint` | 工具栏下方提示块 | ❌ **漏传** |
+| `footer` | 底部导入按钮组 | ❌ **漏传** |
+
+**`ModelListSection`**（`shared/ModelListSection.tsx`）
+
+| prop | 渲染出的东西 | ZCode 现状 |
+|------|-------------|-----------|
+| `onToggleBatchDeleteMode` / `onBatchDelete` | 「批量删除」入口与执行 | ✅ 传 |
+| `selectionMode` / `selectedIds` / `onToggleSelection` | 多选状态 | ✅ 传 |
+| `onTest`（+ `testDisabled` / `testDisabledTooltip`） | 「模型测试」 | ✅ 传 |
+| `onFetchModels`（+ `fetchDisabled` / `fetchDisabledTooltip`） | 「获取模型」 | ✅ 传 |
+| `onAddModel` | 「添加模型」 | ✅ 传 |
+| `onEditModel` | 行级「编辑」 | ✅ 传 |
+| **`onCopyModel`** | **行级「复制」** | ❌ **漏传** |
+| `onDeleteModel` | 行级「删除」 | ✅ 传 |
+| `onSetPrimaryModel` | 行级「设为主模型」+「当前主模型」标签 | ✅ 传 |
+| `renderModelExtraActions` | 行级额外操作（Codex 的「设为自动审批模型」） | 有意不传（无此概念） |
+| `aboveList` | 工具栏下方、列表上方（Codex 的自动审批行） | 有意不传（同上） |
+| `modelsDraggable` / `onReorderModels` | 拖拽排序 | ✅ 传 |
+| `rowKeyOf` | 行标识解析器 | ✅ 传（`model.id`） |
+| `transparentRows` / `className` / `bodyStyle` | 样式适配 | 传 `transparentRows` |
+
+**`CodingPageHeader`**（`shared/CodingPageHeader.tsx`）
+
+| prop | 渲染出的东西 | ZCode 现状 |
+|------|-------------|-----------|
+| `docsUrl` | 「官方文档」 | ✅ 传 |
+| **`onPreviewConfig`** | **「预览配置」** | ❌ **漏传** |
+| `onCustomizeConfig` / `customizeConfigDisabled` | 「自定义配置目录」 | ✅ 传 |
+| `onOpenFolder` | 「打开文件夹」 | ✅ 传 |
+| `onRefresh` | 「刷新配置」 | ✅ 传 |
+| `onMoreOptions` | 「更多选项」 | ✅ 传 |
+| `extraActions` | 路径行追加文字按钮 | 有意不传（无「打开 Web UI」类入口） |
+| `hint` | 路径行下方提示块 | 有意不传（页面级提示在列表区内） |
+
+**`ProviderFormSections`**（`shared/providerConfig/ProviderFormSections.tsx`）
+
+| prop | 渲染出的东西 | ZCode 现状 |
+|------|-------------|-----------|
+| `advancedSettings` | 高级设置分区 | —（ZCode 表单结构不同） |
+| `modelMapping` | 模型映射分区 | 有意不传（模型在卡片上管理） |
+| `showBilling` + `billing` / `onBillingChange` | 计费分区 | `false`（非网关 CLI） |
+| `showCustomHeaders` + `customHeaders` / `onCustomHeadersChange` | 自定义请求头分区 | `false`（同上） |
+| `showModelRewrites` + `modelRewrites` / `onModelRewritesChange` | 模型改写分区 | `false`（同上） |
+| `notesRows` / `notesResetKey` | 备注区 | 传 |
+
+**`ModelFormModal`**（`components/common/ModelFormModal/index.tsx`）—— 12 个 `show*` 开关 + 3 个校验强度开关，**逐个决定**：
+
+`showOptions` / `showVariants` / `showModalities` / `showInputTypes` / `showApi` / `showReasoning` / `showThinkingLevel` / `showThinkingLevelMap` / `showOmpThinking` / `showCompat` / `showCost` / `showExtraParams`（以上 12 个 `show*`），`limitRequired` / `requireCompleteLimitPair` / `nameRequired`（校验强度），加 `apiOptions` / `thinkingLevelOptions` / `npmType` / `toolName` / `messageOverrides` / `onDuplicateId` / `existingIds` / `width`。
+
+> **用模块内自建弹窗的 CLI**（codex / grok / kimi / openclaw / zcode 等）不适用这张 props 表，但**要做的决定是一样的**：逐字段确认「参照有我没有」「我有参照没有」，并按附录 B.3 补齐能力（尤其 **4.2.4 的预设模型选择器**）。
+
+### B.2 页面级区块（不属于任何组件）
+
+靠**打开参照页面逐块点**，不能靠读组件 props：
+
+- [ ] 页面提示块（两行 `pageHint` + `pageWarning`）
+- [ ] 导入入口：从 CC Switch 导入 / **导入我使用过的供应商** / 从 All API Hub 导入
+- [ ] 页面级 `Alert`（未迁移提示、兼容性警告…）
+- [ ] 会话管理面板、全局提示词区块
+- [ ] 「更多选项」弹窗里的内容
+
+### B.3 能力（同 4.0.2-H）
+
+见 4.0.2-H 的 8 项。B.1/B.2 是「组件有没有传」，B.3 是「能力有没有做」——**两层都要**：ZCode 的预设模型选择器属于 B.3（能力缺失），`onCopyModel` 属于 B.1（prop 漏传），两者在界面上都表现为「少了一块」。
 
 ---
 
@@ -1246,4 +1387,6 @@ const existingModels = provider
 - 新增 CLI 工具完成后，把新踩的坑补进第 13 节；若是**新类型**的坑，补进 13.1 的模式归纳
 - 发现清单项过时或新增了硬编码清单，同步更新第 3 节并**同时**修正根 `AGENTS.md` 的对应章节
 - 出现新的「编译通过但形态不对」返工，把漏掉的核对项补进 4.0.2
+- **改动任何共享组件（`ProviderListSection` / `ModelListSection` / `CodingPageHeader` / `ProviderFormSections` / `ModelFormModal`）的 props 时，同步更新附录 B 的台账**——那份台账是穷举检查表，过期就失去意义
+- 修掉一批「已知遗留」（附录 A.2）后，把对应行改成 ✅ 并把坑从 #13 表里标注为已修；**过期的「未修」记录比没有记录更有害**——它会让人以为问题还在而重复排查
 - 本文件与根 `AGENTS.md` 的「Tab / Page-Key Allowlist Rules」是配套关系：后者是规则，前者是流程
