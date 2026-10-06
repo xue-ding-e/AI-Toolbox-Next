@@ -38,11 +38,26 @@
 - `__local__` 是本地文件桥接态，不是 DB 记录：不可 apply、不可删除，托盘里也不出现。
 - WSL/SSH 默认映射里 `omo-native-*` 只覆盖引擎文件（`settings.json` / `models.json` / `mcp.json` / `auth.json`）；**共用的 `~/.omo/omo.jsonc` 归 opencode 模块的 `opencode-oh-my`**，两边都登记会互相覆盖。
 
+## 页面结构（与其他 tab 同构）
+
+页头 = 大标题 + 文档链接 + 预览配置链接 + 配置路径行（自定义目录 / 打开目录 / 刷新）+ 右侧更多选项；
+下面是分区卡片（`Collapse` + `className={styles.omoSection}`），与 OMP/OpenCode 一致。
+**不要**把分区做成裸 `Collapse` 堆叠或给内容加内层 padding——那会与其他 tab 的留白不一致。
+
+- **供应商**（`components/OmoNativeProvidersSection.tsx`）组件级复用 OMP/Pi 那一套：
+  `ProviderCard` + `ProviderFormModal` 风格的表单 + `ModelFormModal` + `FetchModelsModal` +
+  `ProviderConnectivityTestModal` + `shared/providerList` 的搜索/排序/批量。
+  Native ↔ 共享形状的适配全在 `utils/omoNativeProviders.ts`，组件里不写映射逻辑。
+- **MCP 与 Skills 不在本页内嵌**（与其他 tab 一致）：区块只给指引，实际管理走顶部的
+  MCP / Skills 页——那两个页通过 `tools/builtin.rs` 的工具注册表发现 `omo_native`。
+- 会话管理直接用 `SessionManagerPanel tool="omo_native"`。
+
 ## 跨模块依赖
 
 - 后端 `omo_native::*` 命令（`web/services/omoNativeApi.ts` 一一对应）。
 - `shared/sessionManager`：会话列表与详情页（路由 `/coding/omo-native/sessions/detail`）。
 - `shared/toolIcon`：`omo_native` 复用侧栏的 `web/assets/omo-native.svg`。
+- `shared/useRootDirectoryConfig` + `shared/RootDirectoryModal`：根目录自定义。
 - 事件：`config-changed` + `wsl-sync-request-omo-native`（仅 Windows）。
 
 ## 最小验证

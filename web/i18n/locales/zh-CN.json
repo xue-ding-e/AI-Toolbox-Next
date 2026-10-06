@@ -6605,12 +6605,6 @@
     "sourceColumn": "来源",
     "valueColumn": "生效值",
     "sharedBase": "共享 base",
-    "providersPlaceholder": "Provider 管理",
-    "providersPlaceholderDesc": "自定义 provider 与 API key 读取自引擎的 agent 目录，此处暂未提供写入。",
-    "skillCount": "{{count}} 个 skill",
-    "emptySkills": "尚未安装 skill",
-    "skillName": "名称",
-    "skillDescription": "描述",
     "sections": {
       "modelSettings": "生效配置",
       "providers": "Providers",
@@ -6642,6 +6636,58 @@
       "taskHint": "任务引擎设置（执行模式、并发、daemon 生命周期）。",
       "otherFields": "其他 [native] 键",
       "otherFieldsHint": "[native] 块接受的其余键（memory、telemetry、git_master、teams 等）。集合之外的键会在保存时被丢弃。"
+    },
+    "pageHint": "只写 ~/.omo/omo.jsonc 的 [native] 块；同一文件里 OpenCode 插件版的 [opencode] 块与共享键不会被改动。",
+    "openFolder": "打开目录",
+    "refreshConfig": "刷新配置",
+    "mcpSkillsHint": "MCP 与 Skills 由顶部独立页面管理",
+    "mcpSkillsHintDesc": "与其他工具一致，请在顶部的「MCP」与「Skills」页里统一管理 Native 的服务器与技能；它们读写的就是下面的引擎文件。",
+    "rootPathSource": {
+      "customize": "自定义目录",
+      "modal": {
+        "title": "自定义 OmO Native 根目录",
+        "currentSource": "当前来源",
+        "description": "留空则按环境变量 → shell 配置 → ~/.omo/agent 的顺序自动决议。",
+        "envWarningTitle": "环境变量优先",
+        "envWarningDesc": "当前根目录来自环境变量，自定义设置会在下次启动后覆盖它。",
+        "envHint": "环境变量当前指向：{{path}}",
+        "shellHint": "shell 配置当前指向：{{path}}",
+        "customPath": "自定义路径",
+        "placeholder": "例如 ~/.omo/agent",
+        "sourceCustom": "自定义",
+        "sourceEnv": "环境变量",
+        "sourceShell": "shell 配置",
+        "sourceDefault": "默认"
+      }
+    },
+    "preview": {
+      "title": "预览配置"
+    },
+    "providers": {
+      "title": "供应商",
+      "sectionHint": "自定义 provider 写入引擎的 models.json，API key 写入 auth.json。",
+      "builtinHint": "引擎内建 provider 由 omo 自带，不在 models.json 里重复定义；这里只列出可以自定义的那些。",
+      "builtinCount": "另有 {{count}} 个引擎内建",
+      "emptyText": "还没有自定义 provider",
+      "modelsJsonSource": "models.json",
+      "addSupplier": "新增供应商",
+      "addSupplierTitle": "新增供应商",
+      "editSupplierTitle": "编辑供应商 {{name}}",
+      "providerKey": "Provider Key",
+      "providerKeyRequired": "Provider Key 不能为空",
+      "displayName": "显示名称",
+      "displayNamePlaceholder": "留空则用 Provider Key",
+      "configSection": "连接配置",
+      "apiType": "API 类型",
+      "baseUrl": "Base URL",
+      "providerApiKey": "API Key",
+      "apiKeyHint": "写入 auth.json；留空表示不改动已保存的密钥。",
+      "headersJson": "自定义请求头（JSON）",
+      "deleteConfirmTitle": "删除供应商 {{name}}？",
+      "deleteConfirmContent": "会从 models.json 移除该 provider，并删除 auth.json 里的密钥。此操作不可撤销。",
+      "modelIdExists": "该模型 ID 已存在",
+      "invalidJson": "JSON 格式不正确",
+      "noTestableProvider": "没有可测试的供应商（需要 Base URL 与至少一个模型）"
     }
   }
 }

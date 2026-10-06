@@ -1,37 +1,43 @@
 import React from 'react';
-import {
-  Alert,
-  Button,
-  Collapse,
-  Descriptions,
-  Empty,
-  Space,
-  Spin,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
+import { Alert, Button, Collapse, Descriptions, Empty, Space, Spin, Table, Tag, Typography } from 'antd';
 import {
   ApiOutlined,
   AppstoreOutlined,
-  CloudServerOutlined,
+  EditOutlined,
+  EllipsisOutlined,
+  EyeOutlined,
   FolderOpenOutlined,
   InfoCircleOutlined,
+  LinkOutlined,
+  ReloadOutlined,
   SettingOutlined,
-  ToolOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SectionSidebarLayout, {
+  type SidebarSectionMarker,
+} from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import CliManualPathSetting from '@/components/common/CliManualPathSetting';
-import { useSettingsStore } from '@/stores';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
+import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
+import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
-import { readOmoNativeRuntimeConfig, listOmoNativeSkills } from '@/services/omoNativeApi';
-import type { OmoNativeRuntimeConfig, OmoNativeSkill } from '@/types/omoNative';
+import { useSettingsStore } from '@/stores';
+import { refreshTrayMenu } from '@/services/appApi';
+import {
+  getOmoNativeRootPathInfo,
+  getOmoNativeSettingsConfig,
+  readOmoNativeRuntimeConfig,
+  saveOmoNativeSettingsConfig,
+} from '@/services/omoNativeApi';
+import type { OmoNativePathInfo, OmoNativeRuntimeConfig } from '@/types/omoNative';
 import OmoNativeSettings from '../components/OmoNativeSettings';
+import OmoNativeProvidersSection from '../components/OmoNativeProvidersSection';
+import styles from './OmoNativePage.module.less';
 
-const { Text, Link } = Typography;
+const { Text, Link, Title } = Typography;
 
 const OMO_NATIVE_DOCS_URL =
   'https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/reference/omo-json.md';
@@ -40,35 +46,38 @@ const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'omo-native-model-settings': <ThunderboltOutlined />,
   'omo-native-agents': <AppstoreOutlined />,
   'omo-native-providers': <ApiOutlined />,
-  'omo-native-mcp-skills': <ToolOutlined />,
+  'omo-native-mcp-skills': <ApiOutlined />,
   'omo-native-session-manager': <FolderOpenOutlined />,
   'omo-native-more-options': <SettingOutlined />,
 };
 
 const OmoNativePage: React.FC = () => {
   const { t } = useTranslation();
-  const cliVersion = useSettingsStore((state) => state.cliManualPaths['omo']);
 
   const [runtimeConfig, setRuntimeConfig] = React.useState<OmoNativeRuntimeConfig | null>(null);
-  const [skills, setSkills] = React.useState<OmoNativeSkill[]>([]);
+  const [pathInfo, setPathInfo] = React.useState<OmoNativePathInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
+  const { sidebarHiddenByPage, setSidebarHidden } = useSettingsStore();
+  const sidebarHidden = sidebarHiddenByPage.omo_native;
 
-  const loadConfig = React.useCallback(async () => {
-    setLoading(true);
+  const loadConfig = React.useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setLoadError(null);
     try {
-      const [config, skillList] = await Promise.all([
+      const [config, rootPathInfo] = await Promise.all([
         readOmoNativeRuntimeConfig(),
-        listOmoNativeSkills().catch(() => [] as OmoNativeSkill[]),
+        getOmoNativeRootPathInfo(),
       ]);
       setRuntimeConfig(config);
-      setSkills(skillList);
+      setPathInfo(rootPathInfo);
     } catch (error) {
       console.error('Failed to load OmO Native runtime config:', error);
       setLoadError((error as Error).message || String(error));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -76,11 +85,29 @@ const OmoNativePage: React.FC = () => {
     void loadConfig();
   }, [loadConfig]);
 
-  const sidebarSections = React.useMemo(
+  const {
+    rootDirectoryModalOpen,
+    setRootDirectoryModalOpen,
+    getRootDirectoryModalProps,
+    handleSaveRootDirectory,
+    handleResetRootDirectory,
+  } = useRootDirectoryConfig({
+    t,
+    translationKeyPrefix: 'omoNative',
+    defaultConfig: '{}',
+    loadConfig,
+    getCommonConfig: getOmoNativeSettingsConfig,
+    saveCommonConfig: async (input) => {
+      await saveOmoNativeSettingsConfig(input);
+      await refreshTrayMenu();
+    },
+  });
+
+  const sidebarSections = React.useMemo<SidebarSectionMarker[]>(
     () => [
       { id: 'omo-native-model-settings', title: t('omoNative.sections.modelSettings'), order: 1 },
       { id: 'omo-native-agents', title: t('omoNative.title'), order: 2 },
-      { id: 'omo-native-providers', title: t('omoNative.sections.providers'), order: 3 },
+      { id: 'omo-native-providers', title: t('omoNative.providers.title'), order: 3 },
       { id: 'omo-native-mcp-skills', title: t('omoNative.sections.mcpSkills'), order: 4 },
       { id: 'omo-native-session-manager', title: t('sessionManager.title'), order: 5 },
       { id: 'omo-native-more-options', title: t('omoNative.sections.moreOptions'), order: 6 },
@@ -93,6 +120,16 @@ const OmoNativePage: React.FC = () => {
     return Object.entries(runtimeConfig.effective).sort(([a], [b]) => a.localeCompare(b));
   }, [runtimeConfig]);
 
+  const handleOpenRootFolder = async () => {
+    if (!pathInfo?.path) return;
+    try {
+      const { openPath } = await import('@tauri-apps/plugin-opener');
+      await openPath(pathInfo.path);
+    } catch (error) {
+      console.error('Failed to open root folder:', error);
+    }
+  };
+
   if (loading && !runtimeConfig) {
     return (
       <div style={{ padding: 48, textAlign: 'center' }}>
@@ -104,75 +141,123 @@ const OmoNativePage: React.FC = () => {
   return (
     <SectionSidebarLayout
       sidebarTitle={t('omoNative.title')}
+      sidebarHidden={sidebarHidden}
       markerAttr="data-omo-native-sidebar-section"
       getIcon={(id: string) => SIDEBAR_ICON_BY_SECTION_ID[id] ?? null}
       sections={sidebarSections}
     >
-      <div style={{ padding: 16 }}>
+      <div className={styles.pageContent}>
+        {/* 页头：与 OMP / OpenCode 同构 */}
+        <div className={styles.pageHeader}>
+          <div>
+            <div className={styles.titleRow}>
+              <Title level={4} className={styles.pageTitle}>
+                {t('omoNative.title')}
+              </Title>
+              <Link
+                type="secondary"
+                className={styles.headerLink}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openUrl(OMO_NATIVE_DOCS_URL);
+                }}
+              >
+                <LinkOutlined /> {t('omoNative.docs')}
+              </Link>
+              <Link
+                type="secondary"
+                className={styles.headerLink}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPreviewModalOpen(true);
+                }}
+              >
+                <EyeOutlined /> {t('common.previewConfig')}
+              </Link>
+            </div>
+            <Space className={styles.pathToolbar} wrap>
+              <Text type="secondary" className={styles.pathLabel}>
+                {t('omoNative.configPath')}:
+              </Text>
+              <Text code className={styles.pathText}>
+                {runtimeConfig?.configPath ?? '-'}
+              </Text>
+              <Button
+                type="text"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => setRootDirectoryModalOpen(true)}
+                className={styles.textAction}
+              >
+                {t('omoNative.rootPathSource.customize')}
+              </Button>
+              <Button
+                type="text"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={handleOpenRootFolder}
+                className={styles.textAction}
+              >
+                {t('omoNative.openFolder')}
+              </Button>
+              <Button
+                type="text"
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => void loadConfig()}
+                className={styles.textAction}
+              >
+                {t('omoNative.refreshConfig')}
+              </Button>
+            </Space>
+          </div>
+          <Button
+            type="text"
+            icon={<EllipsisOutlined />}
+            onClick={() => setSettingsModalOpen(true)}
+          >
+            {t('common.moreOptions')}
+          </Button>
+        </div>
+        <div className={styles.pageHint}>{t('omoNative.pageHint')}</div>
+
         {loadError && (
-          <Alert
-            type="error"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message={t('omoNative.loadError')}
-            description={loadError}
-          />
+          <Alert type="error" showIcon message={t('omoNative.loadError')} description={loadError} />
         )}
 
-        {/* 生效视图 */}
+        {/* 生效配置 */}
         <div
           id="omo-native-model-settings"
+          className={styles.omoSection}
           data-omo-native-sidebar-section="true"
           data-sidebar-title={t('omoNative.sections.modelSettings')}
-          data-sidebar-order={1}
-          style={{ marginBottom: 24 }}
         >
           <Collapse
+            className={styles.collapseCard}
             defaultActiveKey={['effective']}
             items={[
               {
                 key: 'effective',
                 label: (
                   <Space>
-                    <Text strong>
-                      <ThunderboltOutlined style={{ marginRight: 8 }} />
-                      {t('omoNative.sections.modelSettings')}
-                    </Text>
-                    <Link
-                      type="secondary"
-                      style={{ fontSize: 12 }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void openUrl(OMO_NATIVE_DOCS_URL);
-                      }}
-                    >
-                      {t('omoNative.docs')}
-                    </Link>
+                    <ThunderboltOutlined />
+                    <Text strong>{t('omoNative.sections.modelSettings')}</Text>
                   </Space>
                 ),
                 children: (
                   <div>
-                    <Alert
-                      type="info"
-                      showIcon
-                      icon={<InfoCircleOutlined />}
-                      style={{ marginBottom: 12 }}
-                      message={t('omoNative.effectiveHint')}
-                    />
+                    <div className={styles.sectionHint}>{t('omoNative.effectiveHint')}</div>
                     <Descriptions size="small" column={1} style={{ marginBottom: 12 }}>
                       <Descriptions.Item label={t('omoNative.configPath')}>
                         <Text code>{runtimeConfig?.configPath ?? '-'}</Text>
                       </Descriptions.Item>
                       <Descriptions.Item label={t('omoNative.rootPath')}>
-                        <Text code>{cliVersion ?? '-'}</Text>
+                        <Text code>{pathInfo?.path ?? '-'}</Text>
                       </Descriptions.Item>
                     </Descriptions>
 
                     {effectiveEntries.length === 0 ? (
-                      <Empty
-                        description={t('omoNative.emptyEffective')}
-                        style={{ margin: '16px 0' }}
-                      />
+                      <Empty description={t('omoNative.emptyEffective')} />
                     ) : (
                       <Table
                         size="small"
@@ -221,60 +306,54 @@ const OmoNativePage: React.FC = () => {
         {/* Agent/Category 方案 */}
         <div
           id="omo-native-agents"
+          className={styles.omoSection}
           data-omo-native-sidebar-section="true"
           data-sidebar-title={t('omoNative.title')}
-          data-sidebar-order={2}
-          style={{ marginBottom: 24 }}
         >
-          <OmoNativeSettings onConfigUpdated={loadConfig} />
+          <OmoNativeSettings onConfigUpdated={() => void loadConfig(true)} />
         </div>
 
         {/* Providers */}
         <div
           id="omo-native-providers"
+          className={styles.omoSection}
           data-omo-native-sidebar-section="true"
-          data-sidebar-title={t('omoNative.sections.providers')}
-          data-sidebar-order={3}
-          style={{ marginBottom: 24 }}
+          data-sidebar-title={t('omoNative.providers.title')}
+        >
+          <OmoNativeProvidersSection />
+        </div>
+
+        {/* MCP 与 Skills：与其他 tab 一致，走顶部的独立页面 */}
+        <div
+          id="omo-native-mcp-skills"
+          className={styles.omoSection}
+          data-omo-native-sidebar-section="true"
+          data-sidebar-title={t('omoNative.sections.mcpSkills')}
         >
           <Collapse
+            className={styles.collapseCard}
             items={[
               {
-                key: 'providers',
+                key: 'mcp-skills',
                 label: (
                   <Space>
-                    <Text strong>
-                      <ApiOutlined style={{ marginRight: 8 }} />
-                      {t('omoNative.sections.providers')}
-                    </Text>
+                    <ApiOutlined />
+                    <Text strong>{t('omoNative.sections.mcpSkills')}</Text>
                   </Space>
                 ),
                 children: (
                   <Alert
                     type="info"
                     showIcon
-                    icon={<CloudServerOutlined />}
-                    message={t('omoNative.providersPlaceholder')}
+                    icon={<InfoCircleOutlined />}
+                    message={t('omoNative.mcpSkillsHint')}
                     description={
                       <div>
-                        <div>{t('omoNative.providersPlaceholderDesc')}</div>
-                        <div style={{ marginTop: 8 }}>
-                          <Text code>~/.omo/agent/models.json</Text>
-                          <br />
-                          <Text code>~/.omo/agent/auth.json</Text>
-                        </div>
-                        {runtimeConfig?.modelsContent && (
-                          <pre
-                            style={{
-                              marginTop: 12,
-                              maxHeight: 240,
-                              overflow: 'auto',
-                              fontSize: 12,
-                            }}
-                          >
-                            {runtimeConfig.modelsContent}
-                          </pre>
-                        )}
+                        <div>{t('omoNative.mcpSkillsHintDesc')}</div>
+                        <Space style={{ marginTop: 8 }} wrap>
+                          <Text code>~/.omo/agent/mcp.json</Text>
+                          <Text code>~/.omo/agent/skills/</Text>
+                        </Space>
                       </div>
                     }
                   />
@@ -284,94 +363,32 @@ const OmoNativePage: React.FC = () => {
           />
         </div>
 
-        {/* MCP 与 Skills */}
-        <div
-          id="omo-native-mcp-skills"
-          data-omo-native-sidebar-section="true"
-          data-sidebar-title={t('omoNative.sections.mcpSkills')}
-          data-sidebar-order={4}
-          style={{ marginBottom: 24 }}
-        >
-          <Collapse
-            items={[
-              {
-                key: 'mcp-skills',
-                label: (
-                  <Space>
-                    <Text strong>
-                      <ToolOutlined style={{ marginRight: 8 }} />
-                      {t('omoNative.sections.mcpSkills')}
-                    </Text>
-                    <Tag>{t('omoNative.skillCount', { count: skills.length })}</Tag>
-                  </Space>
-                ),
-                children:
-                  skills.length === 0 ? (
-                    <Empty description={t('omoNative.emptySkills')} style={{ margin: '16px 0' }} />
-                  ) : (
-                    <Table
-                      size="small"
-                      pagination={false}
-                      rowKey="name"
-                      dataSource={skills}
-                      columns={[
-                        { title: t('omoNative.skillName'), dataIndex: 'name', width: 200 },
-                        {
-                          title: t('omoNative.skillDescription'),
-                          dataIndex: 'description',
-                          render: (value: string | undefined) => value ?? '-',
-                        },
-                      ]}
-                    />
-                  ),
-              },
-            ]}
-          />
-        </div>
-
         {/* 会话管理 */}
         <div
           id="omo-native-session-manager"
+          className={styles.omoSection}
           data-omo-native-sidebar-section="true"
           data-sidebar-title={t('sessionManager.title')}
-          data-sidebar-order={5}
-          style={{ marginBottom: 24 }}
         >
-          <Collapse
-            items={[
-              {
-                key: 'session-manager',
-                label: (
-                  <Space>
-                    <Text strong>
-                      <FolderOpenOutlined style={{ marginRight: 8 }} />
-                      {t('sessionManager.title')}
-                    </Text>
-                  </Space>
-                ),
-                children: <SessionManagerPanel tool="omo_native" />,
-              },
-            ]}
-          />
+          <SessionManagerPanel tool="omo_native" />
         </div>
 
         {/* 更多选项 */}
         <div
           id="omo-native-more-options"
+          className={styles.omoSection}
           data-omo-native-sidebar-section="true"
           data-sidebar-title={t('omoNative.sections.moreOptions')}
-          data-sidebar-order={6}
         >
           <Collapse
+            className={styles.collapseCard}
             items={[
               {
                 key: 'more-options',
                 label: (
                   <Space>
-                    <Text strong>
-                      <SettingOutlined style={{ marginRight: 8 }} />
-                      {t('omoNative.sections.moreOptions')}
-                    </Text>
+                    <SettingOutlined />
+                    <Text strong>{t('omoNative.sections.moreOptions')}</Text>
                   </Space>
                 ),
                 children: (
@@ -381,11 +398,7 @@ const OmoNativePage: React.FC = () => {
                       labelKey="subModules.omoNative"
                       toolNameKey="omoNative.fullName"
                     />
-                    <Button
-                      type="link"
-                      style={{ paddingLeft: 0 }}
-                      onClick={() => void loadConfig()}
-                    >
+                    <Button type="link" style={{ paddingLeft: 0 }} onClick={() => void loadConfig()}>
                       {t('common.refresh')}
                     </Button>
                   </Space>
@@ -395,6 +408,63 @@ const OmoNativePage: React.FC = () => {
           />
         </div>
       </div>
+
+      <RootDirectoryModal
+        open={rootDirectoryModalOpen}
+        {...getRootDirectoryModalProps(pathInfo)}
+        onCancel={() => setRootDirectoryModalOpen(false)}
+        onSubmit={handleSaveRootDirectory}
+        onReset={handleResetRootDirectory}
+      />
+
+      <FileConfigPreviewModal
+        open={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        title={t('omoNative.preview.title')}
+        files={[
+          {
+            key: 'config',
+            label: runtimeConfig?.configPath?.split(/[\\/]/).pop() || 'omo.jsonc',
+            content: runtimeConfig?.nativeBlock
+              ? JSON.stringify(runtimeConfig.nativeBlock, null, 2)
+              : undefined,
+            language: 'json',
+          },
+          {
+            key: 'settings',
+            label: 'settings.json',
+            content: runtimeConfig?.settingsContent,
+            language: 'json',
+          },
+          {
+            key: 'models',
+            label: 'models.json',
+            content: runtimeConfig?.modelsContent,
+            language: 'json',
+          },
+          {
+            key: 'mcp',
+            label: 'mcp.json',
+            content: runtimeConfig?.mcpContent,
+            language: 'json',
+          },
+        ]}
+      />
+
+      <SidebarSettingsModal
+        open={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        sidebarVisible={!sidebarHidden}
+        onSidebarVisibleChange={async (visible) => {
+          await setSidebarHidden('omo_native', !visible);
+        }}
+      >
+        <CliManualPathSetting
+          commandName="omo"
+          labelKey="subModules.omoNative"
+          toolNameKey="omoNative.fullName"
+        />
+      </SidebarSettingsModal>
     </SectionSidebarLayout>
   );
 };

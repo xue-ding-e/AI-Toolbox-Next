@@ -1,11 +1,6 @@
 import React from 'react';
 import { App, Button, Collapse, Empty, Modal, Space, Spin, Tag, Typography } from 'antd';
-import {
-  AppstoreOutlined,
-  LinkOutlined,
-  PlusOutlined,
-  ThunderboltOutlined,
-} from '@ant-design/icons';
+import { AppstoreOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -29,17 +24,13 @@ import {
   toggleOmoNativeAgentsConfigDisabled,
   updateOmoNativeAgentsConfig,
 } from '@/services/omoNativeApi';
-import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import OmoNativeConfigCard from './OmoNativeConfigCard';
 import OmoNativeConfigModal, {
   type OmoNativeConfigFormValues,
 } from './OmoNativeConfigModal';
 
-const { Text, Link } = Typography;
-
-const OMO_DOCS_URL =
-  'https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/reference/omo-json.md';
+const { Text } = Typography;
 
 interface OmoNativeSettingsProps {
   /** 刷新外部（页面/托盘）的触发器。 */
@@ -270,27 +261,14 @@ const OmoNativeSettings: React.FC<OmoNativeSettingsProps> = ({ onConfigUpdated }
   return (
     <>
       <Collapse
-        style={{ marginBottom: 16 }}
         defaultActiveKey={['omo-native-agents']}
         items={[
           {
             key: 'omo-native-agents',
             label: (
               <Space>
-                <Text strong>
-                  <ThunderboltOutlined style={{ marginRight: 8 }} />
-                  {t('omoNative.title')}
-                </Text>
-                <Link
-                  type="secondary"
-                  style={{ fontSize: 12 }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openExternalUrl(OMO_DOCS_URL);
-                  }}
-                >
-                  <LinkOutlined /> {t('omoNative.docs')}
-                </Link>
+                <AppstoreOutlined />
+                <Text strong>{t('omoNative.title')}</Text>
                 {appliedConfig && (
                   <Tag color="processing">
                     {t('omoNative.current')}: {appliedConfig.name}

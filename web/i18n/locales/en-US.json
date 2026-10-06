@@ -6608,12 +6608,6 @@
     "sourceColumn": "Source",
     "valueColumn": "Effective value",
     "sharedBase": "shared base",
-    "providersPlaceholder": "Provider management",
-    "providersPlaceholderDesc": "Custom providers and API keys are read from the engine's agent directory. Nothing is written here yet.",
-    "skillCount": "{{count}} skills",
-    "emptySkills": "No skills installed",
-    "skillName": "Name",
-    "skillDescription": "Description",
     "sections": {
       "modelSettings": "Effective config",
       "providers": "Providers",
@@ -6645,6 +6639,58 @@
       "taskHint": "Task engine settings (execution mode, concurrency, daemon lifetime).",
       "otherFields": "Other [native] keys",
       "otherFieldsHint": "Any other key the [native] block accepts (memory, telemetry, git_master, teams, ...). Keys outside that set are dropped on save."
+    },
+    "pageHint": "Writes only the [native] block of ~/.omo/omo.jsonc; the OpenCode plugin edition's [opencode] block and shared keys in the same file are left untouched.",
+    "openFolder": "Open folder",
+    "refreshConfig": "Refresh config",
+    "mcpSkillsHint": "MCP and Skills are managed on their own top-level pages",
+    "mcpSkillsHintDesc": "Like every other tool, Native servers and skills are managed on the top-level MCP and Skills pages - they read and write the engine files below.",
+    "rootPathSource": {
+      "customize": "Customize",
+      "modal": {
+        "title": "Customize the OmO Native root directory",
+        "currentSource": "Current source",
+        "description": "Leave empty to resolve automatically: environment variable, then shell config, then ~/.omo/agent.",
+        "envWarningTitle": "Environment variable takes priority",
+        "envWarningDesc": "The root directory currently comes from an environment variable; a custom setting overrides it on the next start.",
+        "envHint": "The environment variable currently points at: {{path}}",
+        "shellHint": "The shell config currently points at: {{path}}",
+        "customPath": "Custom path",
+        "placeholder": "e.g. ~/.omo/agent",
+        "sourceCustom": "Custom",
+        "sourceEnv": "Environment variable",
+        "sourceShell": "Shell config",
+        "sourceDefault": "Default"
+      }
+    },
+    "preview": {
+      "title": "Preview config"
+    },
+    "providers": {
+      "title": "Providers",
+      "sectionHint": "Custom providers are written to the engine's models.json; API keys go to auth.json.",
+      "builtinHint": "Engine-builtin providers ship with omo and are not redefined in models.json, so only customizable ones are listed here.",
+      "builtinCount": "{{count}} engine builtins",
+      "emptyText": "No custom providers yet",
+      "modelsJsonSource": "models.json",
+      "addSupplier": "Add provider",
+      "addSupplierTitle": "Add provider",
+      "editSupplierTitle": "Edit provider {{name}}",
+      "providerKey": "Provider key",
+      "providerKeyRequired": "Provider key cannot be empty",
+      "displayName": "Display name",
+      "displayNamePlaceholder": "Falls back to the provider key",
+      "configSection": "Connection",
+      "apiType": "API type",
+      "baseUrl": "Base URL",
+      "providerApiKey": "API key",
+      "apiKeyHint": "Written to auth.json; leave empty to keep the stored key.",
+      "headersJson": "Custom headers (JSON)",
+      "deleteConfirmTitle": "Delete provider {{name}}?",
+      "deleteConfirmContent": "This removes the provider from models.json and deletes its key from auth.json. It cannot be undone.",
+      "modelIdExists": "That model ID already exists",
+      "invalidJson": "Invalid JSON",
+      "noTestableProvider": "No testable providers (a base URL and at least one model are required)"
     }
   }
 }

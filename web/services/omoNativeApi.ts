@@ -11,7 +11,6 @@ import type {
   OmoNativeRuntimeConfig,
   OmoNativeSettingsConfig,
   OmoNativeSettingsConfigInput,
-  OmoNativeSkill,
 } from '@/types/omoNative';
 
 // ============================================================================
@@ -129,6 +128,3 @@ export const saveOmoNativeMcpServer = async (
 export const deleteOmoNativeMcpServer = async (name: string): Promise<void> => {
   await invoke('delete_omo_native_mcp_server', { name });
 };
-
-export const listOmoNativeSkills = async (): Promise<OmoNativeSkill[]> =>
-  await invoke<OmoNativeSkill[]>('list_omo_native_skills');

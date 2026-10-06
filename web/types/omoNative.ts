@@ -10,18 +10,22 @@
  */
 
 /** 运行时根目录信息。 */
+/**
+ * 运行时根目录决议结果。`source` 与后端 `runtime_location` 的四种来源一一对应，
+ * 也与共享的 `RootPathInfoLike` 同形——共享根目录弹窗直接消费这个类型。
+ */
 export interface OmoNativePathInfo {
   path: string;
-  source: string;
+  source: 'custom' | 'env' | 'shell' | 'default';
 }
 
 export interface OmoNativeSettingsConfig {
-  rootDir?: string;
-  updatedAt: string;
+  rootDir?: string | null;
+  updatedAt?: string;
 }
 
 export interface OmoNativeSettingsConfigInput {
-  rootDir?: string;
+  rootDir?: string | null;
   clearRootDir?: boolean;
 }
 
@@ -108,12 +112,6 @@ export interface OmoNativeProviderInput {
 export interface OmoNativeMcpServer {
   name: string;
   config: Record<string, unknown>;
-}
-
-export interface OmoNativeSkill {
-  name: string;
-  path: string;
-  description?: string;
 }
 
 /**
