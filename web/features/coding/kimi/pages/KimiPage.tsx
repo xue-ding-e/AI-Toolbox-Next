@@ -995,6 +995,7 @@ const KimiPage: React.FC = () => {
           key={`kimi-prompt-${promptExpandNonce}`}
           service={kimiPromptApi}
           translationKeyPrefix="kimi.prompt"
+          promptFileName="AGENTS.md"
           collapseKey="kimi_prompt"
           defaultExpanded
         />

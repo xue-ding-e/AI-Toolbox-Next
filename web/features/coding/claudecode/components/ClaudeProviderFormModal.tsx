@@ -18,9 +18,9 @@ import type {
 import { DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY } from '@/types/claudecode';
 import { isJsonObject } from '@/utils/json';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
-import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
 import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
-import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
+import ProviderFormSections from '@/features/coding/shared/providerConfig/ProviderFormSections';
+import { useGatewaySupportedCliKeys } from '@/features/coding/shared/gateway/useGatewaySupportedCliKeys';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -29,13 +29,11 @@ import {
   getCustomHeadersFromMeta,
   mergeCustomHeadersIntoMeta,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
-import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
 import {
   getModelRewritesFromMeta,
   mergeModelRewritesIntoMeta,
   type ModelRewritesState,
 } from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
-import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
 import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -248,6 +246,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     watchOptions,
   ) as ClaudeSettingsMergeStrategy | undefined) || DEFAULT_CLAUDE_SETTINGS_MERGE_STRATEGY;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+  // A protocol selector only means something when the gateway can take this
+  // CLI over; otherwise the upstream format is fixed by the channel and the
+  // dropdown is a no-op. `undefined` while the support list loads.
+  const { isGatewaySupported } = useGatewaySupportedCliKeys();
+  const gatewaySupportsThisCli = isGatewaySupported('claude') !== false;
+
   const fallbackModel = Form.useWatch('model', watchOptions) || '';
   const sonnetModel = Form.useWatch('sonnetModel', watchOptions) || '';
   const sonnetModelName = Form.useWatch('sonnetModelName', watchOptions) || '';
@@ -1165,7 +1169,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             >
               <Select
                 options={apiFormatOptions}
-                disabled={!selectedIsCustomProviderProfile}
+                disabled={!gatewaySupportsThisCli || !selectedIsCustomProviderProfile}
               />
             </Form.Item>
           )}
@@ -1239,102 +1243,77 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         </>
       )}
 
-      {renderModelMappingSection()}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <ProviderConfigCollapse
-            title={t('claudecode.provider.advancedSettings')}
-            expanded={advancedSettingsExpanded}
-            onExpandedChange={setAdvancedSettingsExpanded}
-            icon={<Settings2 />}
-          >
-            <div className={styles.extraSettingsContent}>
-              <JsonEditor
-                value={extraSettingsValue}
-                onChange={handleExtraSettingsChange}
-                onBlur={handleExtraSettingsBlur}
-                onRawChange={handleExtraSettingsRawChange}
-                onRawBlur={handleExtraSettingsRawChange}
-                mode="text"
-                height={180}
-                minHeight={140}
-                maxHeight={360}
-                resizable
-                className={styles.extraSettingsEditor}
-                placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
-              />
-              <div className={styles.settingsMergeStrategyRow}>
-                <label
-                  className={styles.settingsMergeStrategyLabel}
-                  htmlFor="claude-settings-merge-strategy"
-                >
-                  {t('claudecode.provider.mergeStrategyLabel')}
-                </label>
-                <div className={styles.settingsMergeStrategyControl}>
-                  <Form.Item name="extraSettingsMergeStrategy" noStyle>
-                    <Select
-                      id="claude-settings-merge-strategy"
-                      size="small"
-                      className={styles.settingsMergeStrategySelect}
-                      options={settingsMergeStrategyOptions}
-                    />
-                  </Form.Item>
-                </div>
-              </div>
-              <div className={styles.extraSettingsHelp}>
-                {extraSettingsError && (
-                  <div className={styles.extraSettingsError}>
-                    {extraSettingsError}
+      <ProviderFormSections
+        editable={!isOfficialMode}
+        modelMapping={renderModelMappingSection()}
+        advancedSettings={
+          <Form.Item wrapperCol={sectionWrapperCol}>
+            <ProviderConfigCollapse
+              title={t('claudecode.provider.advancedSettings')}
+              expanded={advancedSettingsExpanded}
+              onExpandedChange={setAdvancedSettingsExpanded}
+              icon={<Settings2 />}
+            >
+              <div className={styles.extraSettingsContent}>
+                <JsonEditor
+                  value={extraSettingsValue}
+                  onChange={handleExtraSettingsChange}
+                  onBlur={handleExtraSettingsBlur}
+                  onRawChange={handleExtraSettingsRawChange}
+                  onRawBlur={handleExtraSettingsRawChange}
+                  mode="text"
+                  height={180}
+                  minHeight={140}
+                  maxHeight={360}
+                  resizable
+                  className={styles.extraSettingsEditor}
+                  placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
+                />
+                <div className={styles.settingsMergeStrategyRow}>
+                  <label
+                    className={styles.settingsMergeStrategyLabel}
+                    htmlFor="claude-settings-merge-strategy"
+                  >
+                    {t('claudecode.provider.mergeStrategyLabel')}
+                  </label>
+                  <div className={styles.settingsMergeStrategyControl}>
+                    <Form.Item name="extraSettingsMergeStrategy" noStyle>
+                      <Select
+                        id="claude-settings-merge-strategy"
+                        size="small"
+                        className={styles.settingsMergeStrategySelect}
+                        options={settingsMergeStrategyOptions}
+                      />
+                    </Form.Item>
                   </div>
-                )}
-                <div className={styles.extraSettingsHint}>
-                  {t('claudecode.provider.mergeStrategyOverviewHint')}
                 </div>
-                <div className={styles.extraSettingsHint}>
-                  {t(extraSettingsHintKey)}
+                <div className={styles.extraSettingsHelp}>
+                  {extraSettingsError && (
+                    <div className={styles.extraSettingsError}>
+                      {extraSettingsError}
+                    </div>
+                  )}
+                  <div className={styles.extraSettingsHint}>
+                    {t('claudecode.provider.mergeStrategyOverviewHint')}
+                  </div>
+                  <div className={styles.extraSettingsHint}>
+                    {t(extraSettingsHintKey)}
+                  </div>
                 </div>
               </div>
-            </div>
-          </ProviderConfigCollapse>
-        </Form.Item>
-      )}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <BillingConfigCollapse
-            value={billingConfig}
-            onChange={setBillingConfig}
-          />
-        </Form.Item>
-      )}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <CustomHeadersCollapse
-            value={customHeaders}
-            onChange={setCustomHeaders}
-          />
-        </Form.Item>
-      )}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <ModelRewritesCollapse
-            value={modelRewrites}
-            onChange={setModelRewrites}
-          />
-        </Form.Item>
-      )}
-
-      <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
-        <ProviderNotesCollapse
-          title={t('claudecode.provider.notes')}
-          placeholder={t('claudecode.provider.notesPlaceholder')}
-          rows={3}
-          resetKey={notesCollapseResetKey}
-        />
-      </Form.Item>
+            </ProviderConfigCollapse>
+          </Form.Item>
+        }
+        billing={billingConfig}
+        onBillingChange={setBillingConfig}
+        customHeaders={customHeaders}
+        onCustomHeadersChange={setCustomHeaders}
+        modelRewrites={modelRewrites}
+        onModelRewritesChange={setModelRewrites}
+        i18nPrefix="claudecode"
+        notesRows={3}
+        notesResetKey={notesCollapseResetKey}
+      />
     </Form>
   );
 
@@ -1403,16 +1382,19 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           />
         )}
 
-        {renderModelMappingSection()}
-
-        <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
-          <ProviderNotesCollapse
-            title={t('claudecode.provider.notes')}
-            placeholder={t('claudecode.provider.notesPlaceholder')}
-            rows={3}
-            resetKey={notesCollapseResetKey}
-          />
-        </Form.Item>
+        <ProviderFormSections
+          editable={false}
+          modelMapping={renderModelMappingSection()}
+          billing={billingConfig}
+          onBillingChange={setBillingConfig}
+          customHeaders={customHeaders}
+          onCustomHeadersChange={setCustomHeaders}
+          modelRewrites={modelRewrites}
+          onModelRewritesChange={setModelRewrites}
+          i18nPrefix="claudecode"
+          notesRows={3}
+          notesResetKey={notesCollapseResetKey}
+        />
       </Form>
     </div>
   );

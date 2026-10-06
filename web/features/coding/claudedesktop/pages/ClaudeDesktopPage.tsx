@@ -1226,6 +1226,7 @@ const ClaudeDesktopPage: React.FC = () => {
           <GlobalPromptSettings
             key={`claudedesktop-prompt-${promptExpandNonce}`}
             translationKeyPrefix="claudedesktop.prompt"
+            promptFileName="AGENTS.md"
             service={claudeDesktopPromptApi}
             collapseKey="claudedesktop-prompt"
             refreshKey={claudeProviderRefreshKey}

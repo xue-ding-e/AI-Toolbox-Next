@@ -2233,6 +2233,7 @@ const PiPage: React.FC = () => {
           >
             <GlobalPromptSettings
               translationKeyPrefix="pi.prompt"
+              promptFileName="AGENTS.md"
               service={piPromptApi}
               collapseKey="pi-prompt"
               onUpdated={async () => {

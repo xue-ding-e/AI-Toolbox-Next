@@ -2081,6 +2081,7 @@ const GrokPage: React.FC = () => {
           <GlobalPromptSettings
             key={`grok-prompt-${promptExpandNonce}`}
             translationKeyPrefix="grok.prompt"
+            promptFileName="AGENTS.md"
             service={grokPromptApi}
             collapseKey="grok-prompt"
             defaultExpanded={promptExpandNonce > 0}

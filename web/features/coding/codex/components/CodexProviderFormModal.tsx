@@ -14,10 +14,8 @@ import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import ImeSafeAutoComplete from '@/components/common/ImeSafeAutoComplete';
 import ImeSafeInput from '@/components/common/ImeSafeInput';
-import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
-import CustomHeadersCollapse from '@/features/coding/shared/providerHeaders/CustomHeadersCollapse';
-import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
-import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
+import ProviderFormSections from '@/features/coding/shared/providerConfig/ProviderFormSections';
+import { useGatewaySupportedCliKeys } from '@/features/coding/shared/gateway/useGatewaySupportedCliKeys';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -287,7 +285,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
-  const sectionWrapperCol = { span: 24 };
   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${mode}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
 
   // OpenCode import related state
@@ -360,6 +357,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     : selectedApiFormat === 'gemini_native' ? '@ai-sdk/google' : '@ai-sdk/openai';
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+  // A protocol selector only means something when the gateway can take this
+  // CLI over; otherwise the upstream format is fixed by the channel and the
+  // dropdown is a no-op. `undefined` while the support list loads.
+  const { isGatewaySupported } = useGatewaySupportedCliKeys();
+  const gatewaySupportsThisCli = isGatewaySupported('codex') !== false;
+
   // Only a custom `openai_chat` upstream has a use for the reasoning-effort
   // passthrough switch (issue #412); other targets either pass it natively or
   // map it into their own thinking budget.
@@ -1057,7 +1060,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             >
               <Select
                 options={apiFormatOptions}
-                disabled={!selectedIsCustomProviderProfile}
+                disabled={!gatewaySupportsThisCli || !selectedIsCustomProviderProfile}
               />
             </Form.Item>
           )}
@@ -1206,41 +1209,18 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         />
       </Form.Item>
 
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <BillingConfigCollapse
-            value={billingConfig}
-            onChange={setBillingConfig}
-          />
-        </Form.Item>
-      )}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <CustomHeadersCollapse
-            value={customHeaders}
-            onChange={setCustomHeaders}
-          />
-        </Form.Item>
-      )}
-
-      {!isOfficialMode && (
-        <Form.Item wrapperCol={sectionWrapperCol}>
-          <ModelRewritesCollapse
-            value={modelRewrites}
-            onChange={setModelRewrites}
-          />
-        </Form.Item>
-      )}
-
-      <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
-        <ProviderNotesCollapse
-          title={t('codex.provider.notes')}
-          placeholder={t('codex.provider.notesPlaceholder')}
-          rows={2}
-          resetKey={notesCollapseResetKey}
-        />
-      </Form.Item>
+      <ProviderFormSections
+        editable={!isOfficialMode}
+        billing={billingConfig}
+        onBillingChange={setBillingConfig}
+        customHeaders={customHeaders}
+        onCustomHeadersChange={setCustomHeaders}
+        modelRewrites={modelRewrites}
+        onModelRewritesChange={setModelRewrites}
+        i18nPrefix="codex"
+        notesRows={2}
+        notesResetKey={notesCollapseResetKey}
+      />
     </Form>
   );
 
@@ -1342,32 +1322,19 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           />
         </Form.Item>
 
-        {!isOfficialMode && (
-          <Form.Item wrapperCol={sectionWrapperCol}>
-            <CustomHeadersCollapse
-              value={customHeaders}
-              onChange={setCustomHeaders}
-            />
-          </Form.Item>
-        )}
-
-        {!isOfficialMode && (
-          <Form.Item wrapperCol={sectionWrapperCol}>
-            <ModelRewritesCollapse
-              value={modelRewrites}
-              onChange={setModelRewrites}
-            />
-          </Form.Item>
-        )}
-
-        <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
-          <ProviderNotesCollapse
-            title={t('codex.provider.notes')}
-            placeholder={t('codex.provider.notesPlaceholder')}
-            rows={2}
-            resetKey={notesCollapseResetKey}
-          />
-        </Form.Item>
+        <ProviderFormSections
+          editable={!isOfficialMode}
+          showBilling={false}
+          billing={billingConfig}
+          onBillingChange={setBillingConfig}
+          customHeaders={customHeaders}
+          onCustomHeadersChange={setCustomHeaders}
+          modelRewrites={modelRewrites}
+          onModelRewritesChange={setModelRewrites}
+          i18nPrefix="codex"
+          notesRows={2}
+          notesResetKey={notesCollapseResetKey}
+        />
       </Form>
     </div>
   );

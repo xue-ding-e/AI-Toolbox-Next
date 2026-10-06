@@ -1,6 +1,6 @@
 import React from 'react';
 import './CodexProviderCard.less';
-import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, Collapse, Empty, message } from 'antd';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, message } from 'antd';
 import {
   ApiOutlined,
   CheckOutlined,
@@ -14,31 +14,13 @@ import {
   LinkOutlined,
   SyncOutlined,
   EyeOutlined,
-  PlusOutlined,
-  CloudDownloadOutlined,
   SafetyOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type {
   CodexCatalogModel,
@@ -55,9 +37,9 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import AppliedTag from '@/components/common/AppliedTag';
+import ModelListSection from '@/features/coding/shared/ModelListSection';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
-import ModelItem from '@/components/common/ModelItem';
 import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
 import {
   canApplyProviderWithGatewayProxy,
@@ -264,24 +246,25 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     });
   }, [catalogModels, modelName]);
 
-  const modelSensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const handleModelDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) {
-      return;
+  /**
+   * Maps each display object back to the catalog row key it was built from.
+   * Identity-based on purpose: rebuilding the key from `display.id`/`display.name`
+   * cannot recover `displayName` (it falls back to the upstream id), and the
+   * upstream id may itself equal the display name.
+   *
+   * Only `rowKeyOf` needs this lookup — it receives the display object and
+   * nothing else. Handlers that already have a row key (`onEditModel`,
+   * `renderModelExtraActions`) get it passed in directly. The `?? model.id`
+   * fallback at the call site is unreachable for rows built from `modelRows`;
+   * it only keeps the signature total.
+   */
+  const rowKeyByDisplay = React.useMemo(() => {
+    const map = new Map<ModelDisplayData, string>();
+    for (const row of modelRows) {
+      map.set(row.display, row.rowKey);
     }
-    const rowKeys = modelRows.map((row) => row.rowKey);
-    const oldIndex = rowKeys.indexOf(String(active.id));
-    const newIndex = rowKeys.indexOf(String(over.id));
-    if (oldIndex < 0 || newIndex < 0) {
-      return;
-    }
-    onReorderModels?.(provider, arrayMove(rowKeys, oldIndex, newIndex));
-  };
+    return map;
+  }, [modelRows]);
 
   const canFetchModels = !isOfficialProvider
     && Boolean(apiKey?.trim())
@@ -694,35 +677,59 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       return null;
     }
 
-    const rows = modelRows.map(({ item, rowKey, display }) => {
-      const isAutoReviewRow = Boolean(codexAutoReviewModelOverride)
-        && item.model.trim() === codexAutoReviewModelOverride;
-      return (
-        <ModelItem
-          key={rowKey}
-          model={display}
-          i18nPrefix="codex"
-          transparentBackground
-          draggable={!modelSelectionMode}
-          sortableId={rowKey}
-          selectionMode={modelSelectionMode}
-          selected={selectedModelRowKeys.includes(rowKey)}
-          onSelectChange={onToggleModelSelection
-            ? (selected) => onToggleModelSelection(provider, rowKey, selected)
-            : undefined}
-          onEdit={!modelSelectionMode && onEditModel
-            ? () => onEditModel(provider, rowKey)
-            : undefined}
-          onCopy={!modelSelectionMode && onCopyModel
-            ? () => onCopyModel(provider, rowKey)
-            : undefined}
-          onDelete={!modelSelectionMode && onDeleteModel
-            ? () => onDeleteModel(provider, rowKey)
-            : undefined}
-          onSetPrimary={!modelSelectionMode && onSetPrimaryModel
-            ? () => onSetPrimaryModel(provider, rowKey)
-            : undefined}
-          extraActions={!modelSelectionMode && onSetAutoReviewModel ? (
+    return (
+      <ModelListSection
+        i18nPrefix="codex"
+        className="codex-model-list-collapse"
+        sectionKey={`codex-models-${provider.id}`}
+        bodyStyle={{ paddingLeft: 18, background: 'transparent' }}
+        transparentRows
+        models={modelRows.map((row) => row.display)}
+        rowKeyOf={(model) => rowKeyByDisplay.get(model) ?? model.id}
+        modelsDraggable={!modelSelectionMode}
+        onReorderModels={(orderedRowKeys) => onReorderModels?.(provider, orderedRowKeys)}
+        selectionMode={modelSelectionMode}
+        selectedIds={selectedModelRowKeys}
+        onToggleSelection={
+          onToggleModelSelection
+            ? (rowKey, selected) => onToggleModelSelection(provider, rowKey, selected)
+            : undefined
+        }
+        onToggleBatchDeleteMode={
+          onToggleBatchDeleteMode ? () => onToggleBatchDeleteMode(provider) : undefined
+        }
+        onBatchDelete={onBatchDeleteModels ? () => onBatchDeleteModels(provider) : undefined}
+        onTest={() => onTest(provider)}
+        testDisabled={!canRunConnectivityTest}
+        testDisabledTooltip={
+          isOfficialProvider
+            ? t('codex.provider.officialConnectivityHint')
+            : t('common.modelMissing')
+        }
+        onFetchModels={onFetchModels ? () => onFetchModels(provider) : undefined}
+        fetchDisabled={!canFetchModels}
+        fetchDisabledTooltip={t('opencode.provider.completeUrlAndKey')}
+        onAddModel={onAddModel ? () => onAddModel(provider) : undefined}
+        onEditModel={
+          onEditModel ? (rowKey) => onEditModel(provider, rowKey) : undefined
+        }
+        onCopyModel={
+          onCopyModel ? (rowKey) => onCopyModel(provider, rowKey) : undefined
+        }
+        onDeleteModel={
+          onDeleteModel ? (rowKey) => onDeleteModel(provider, rowKey) : undefined
+        }
+        onSetPrimaryModel={
+          onSetPrimaryModel ? (rowKey) => onSetPrimaryModel(provider, rowKey) : undefined
+        }
+        renderModelExtraActions={(model, rowKey) => {
+          if (!onSetAutoReviewModel) {
+            return undefined;
+          }
+          const isAutoReviewRow =
+            Boolean(codexAutoReviewModelOverride) &&
+            model.id.trim() === codexAutoReviewModelOverride;
+          return (
             <Button
               size="small"
               type="text"
@@ -734,158 +741,31 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 ? t('codex.model.alreadyAutoReview')
                 : t('codex.model.autoReview')}
             </Button>
-          ) : undefined}
-        />
-      );
-    });
-
-    return (
-      <Collapse
-        ghost
-        className="codex-model-list-collapse"
-        defaultActiveKey={[]}
-        style={{ marginTop: 12, background: 'transparent' }}
-        items={[{
-          key: `codex-models-${provider.id}`,
-          label: (
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                width: '100%',
-                background: 'transparent',
-              }}
-            >
-              <Text strong style={{ fontSize: 13 }}>
-                {t('codex.model.title')} ({modelRows.length})
+          );
+        }}
+        aboveList={
+          codexAutoReviewModelOverride ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Text type="secondary" style={{ fontSize: 10 }}>
+                {t('codex.model.autoReviewCurrent')}: {codexAutoReviewModelOverride}
               </Text>
-              <Space size={0} onClick={(event) => event.stopPropagation()}>
-                {onToggleBatchDeleteMode && (
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<DeleteOutlined />}
-                    style={{ fontSize: 12 }}
-                    onClick={() => onToggleBatchDeleteMode(provider)}
-                  >
-                    {modelSelectionMode
-                      ? t('codex.model.cancelBatchDelete')
-                      : t('codex.model.batchDelete')}
-                  </Button>
-                )}
-                {modelSelectionMode && onBatchDeleteModels && (
-                  <Button
-                    size="small"
-                    type="text"
-                    danger
-                    style={{ fontSize: 12 }}
-                    disabled={selectedModelRowKeys.length === 0}
-                    onClick={() => onBatchDeleteModels(provider)}
-                  >
-                    {t('codex.model.deleteSelected', { count: selectedModelRowKeys.length })}
-                  </Button>
-                )}
-                <Tooltip
-                  title={
-                    !canRunConnectivityTest
-                      ? isOfficialProvider
-                        ? t('codex.provider.officialConnectivityHint')
-                        : t('common.modelMissing')
-                      : ''
-                  }
+              {onClearAutoReviewModel && (
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ height: 'auto', padding: 0, fontSize: 10 }}
+                  onClick={() => onClearAutoReviewModel(provider)}
                 >
-                  <span>
-                    <Button
-                      size="small"
-                      type="text"
-                      style={{ fontSize: 12 }}
-                      onClick={() => onTest(provider)}
-                      disabled={!canRunConnectivityTest}
-                    >
-                      <ApiOutlined style={{ marginRight: 4 }} />
-                      {t('opencode.connectivity.button')}
-                    </Button>
-                  </span>
-                </Tooltip>
-                {onFetchModels && (
-                  <Tooltip title={canFetchModels ? '' : t('opencode.provider.completeUrlAndKey')}>
-                    <span>
-                      <Button
-                        size="small"
-                        type="text"
-                        style={{ fontSize: 12 }}
-                        onClick={() => onFetchModels(provider)}
-                        disabled={!canFetchModels}
-                      >
-                        <CloudDownloadOutlined style={{ marginRight: 4 }} />
-                        {t('codex.fetchModels.button')}
-                      </Button>
-                    </span>
-                  </Tooltip>
-                )}
-                {onAddModel && (
-                  <Button
-                    size="small"
-                    type="text"
-                    style={{ fontSize: 12 }}
-                    onClick={() => onAddModel(provider)}
-                  >
-                    <PlusOutlined style={{ marginRight: 0 }} />
-                    {t('codex.model.addModel')}
-                  </Button>
-                )}
-              </Space>
-            </div>
-          ),
-          children: (
-            <div style={{ paddingLeft: 18, background: 'transparent' }}>
-              {codexAutoReviewModelOverride && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 10 }}>
-                    {t('codex.model.autoReviewCurrent')}: {codexAutoReviewModelOverride}
-                  </Text>
-                  {onClearAutoReviewModel && (
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ height: 'auto', padding: 0, fontSize: 10 }}
-                      onClick={() => onClearAutoReviewModel(provider)}
-                    >
-                      {t('codex.model.clearAutoReview')}
-                    </Button>
-                  )}
-                </div>
-              )}
-              {modelRows.length > 0 ? (
-                <DndContext
-                  sensors={modelSensors}
-                  collisionDetection={closestCenter}
-                  modifiers={[restrictToVerticalAxis]}
-                  onDragEnd={handleModelDragEnd}
-                >
-                  <SortableContext
-                    items={modelRows.map((row) => row.rowKey)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <Space orientation="vertical" style={{ width: '100%' }} size={4}>
-                      {rows}
-                    </Space>
-                  </SortableContext>
-                </DndContext>
-              ) : (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={t('codex.model.emptyText')}
-                  style={{ margin: '8px 0' }}
-                />
+                  {t('codex.model.clearAutoReview')}
+                </Button>
               )}
             </div>
-          ),
-        }]}
+          ) : undefined
+        }
       />
     );
   };
+
 
   const menuItems: MenuProps['items'] = [
     ...(!isLocalProvider ? [{

@@ -57,6 +57,7 @@ sequenceDiagram
 ## 跨模块依赖
 
 - 依赖共享 `RootDirectoryModal` / `useRootDirectoryConfig`。
+- 供应商列表区用共享 `ProviderListSection`（`shared/ProviderListSection.tsx`），是本组件的试点（2026-10-06 迁移）。Claude Code 属于**不支持自定义模型**的形态，因此只传卡片列表、不渲染 `ModelListSection`；卡片仍是本模块自己的 `ClaudeProviderCard`（字段区显示 Haiku/Sonnet/Opus 映射）。Gateway 的 Failover 胶囊走 `headerExtra`。改列表外壳时改共享组件，不要改回页面内联。
 - 依赖后端 `claude_code::commands`、共享 favorite provider、All API Hub 导入组件，以及共享 `ImportFromCcSwitchModal`（CC Switch 只读导入；无 db 时不显示按钮）。
 - 与 `settings/` 间接共享根目录来源和 WSL Direct 语义，但本页面自己只展示 `source/path`。
 

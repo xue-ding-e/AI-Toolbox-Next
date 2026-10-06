@@ -282,6 +282,25 @@ pub fn proxy_gateway_check_port_available(
     check_port_available(input)
 }
 
+/// CLIs the gateway can actually take over.
+///
+/// Returns the keys `cli_proxy::is_supported_cli` accepts — the same gate every
+/// engage/reapply entry point checks — so the frontend can grey out
+/// provider-form controls that only work through gateway protocol conversion
+/// without keeping a second copy of the list.
+///
+/// Deliberately narrower than `GatewayCliKey::supported_mvp()` (which also
+/// lists CLIs the gateway tracks but cannot rewrite) and than the
+/// usage-collection tool list (collecting usage does not imply takeover).
+#[tauri::command]
+pub fn proxy_gateway_supported_cli_keys() -> Result<Vec<String>, String> {
+    Ok(GatewayCliKey::supported_mvp()
+        .into_iter()
+        .filter(|cli_key| cli_proxy::is_supported_cli(*cli_key))
+        .map(|cli_key| cli_key.as_str().to_string())
+        .collect())
+}
+
 #[tauri::command]
 pub async fn proxy_gateway_cli_statuses(
     gateway_state: tauri::State<'_, ProxyGatewayState>,

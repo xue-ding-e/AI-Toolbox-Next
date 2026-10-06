@@ -2136,6 +2136,7 @@ const DshPage: React.FC = () => {
             )}
             <GlobalPromptSettings
               translationKeyPrefix="dsh.prompt"
+              promptFileName="AGENTS.md"
               service={dshPromptApi}
               collapseKey="dsh-prompt"
               onUpdated={async () => {

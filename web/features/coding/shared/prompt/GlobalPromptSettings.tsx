@@ -38,6 +38,18 @@ interface GlobalPromptSettingsProps {
    * Used by pages that provide "jump to section" sidebars.
    */
   defaultExpanded?: boolean;
+  /**
+   * Name of the runtime prompt file this CLI writes (e.g. `CLAUDE.md`,
+   * `AGENTS.md`, `SOUL.md`). When provided, the warning line is rendered from
+   * the shared `common.globalPrompt.sectionWarning` template instead of the
+   * per-CLI `${translationKeyPrefix}.sectionWarning` string, so CLIs that only
+   * differ by file name share one sentence.
+   *
+   * Leave unset for CLIs whose warning genuinely differs (e.g. Gemini CLI
+   * points at a global prompt file rather than a named one, Antigravity cites
+   * an absolute path): those keep their own translated string.
+   */
+  promptFileName?: string;
 }
 
 const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
@@ -47,6 +59,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
   refreshKey = 0,
   onUpdated,
   defaultExpanded = false,
+  promptFileName,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -205,7 +218,11 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
     <Spin spinning={loading}>
       <div className={styles.hintBlock}>
         <div>{t(`${translationKeyPrefix}.sectionHint`)}</div>
-        <div>{t(`${translationKeyPrefix}.sectionWarning`)}</div>
+        <div>
+          {promptFileName
+            ? t('common.globalPrompt.sectionWarning', { fileName: promptFileName })
+            : t(`${translationKeyPrefix}.sectionWarning`)}
+        </div>
       </div>
 
       {configs.length === 0 ? (

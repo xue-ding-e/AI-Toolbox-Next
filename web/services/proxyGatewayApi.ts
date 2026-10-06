@@ -616,6 +616,18 @@ export const checkProxyGatewayPortAvailable = async (
   return invoke<ProxyGatewayPortCheckResult>('proxy_gateway_check_port_available', { input });
 };
 
+/**
+ * CLIs the gateway can take over (backend `GatewayCliKey::supported_mvp()`).
+ *
+ * Narrower than `GATEWAY_USAGE_TOOLS`: usage collection does not imply the
+ * gateway can rewrite the CLI's config and convert its protocol. Provider
+ * forms use this to grey out protocol selectors that only work via the
+ * gateway.
+ */
+export const getProxyGatewaySupportedCliKeys = async (): Promise<GatewayCliKey[]> => {
+  return invoke<GatewayCliKey[]>('proxy_gateway_supported_cli_keys');
+};
+
 export const getProxyGatewayCliStatuses = async (): Promise<GatewayCliTakeoverStatus[]> => {
   return invoke<GatewayCliTakeoverStatus[]>('proxy_gateway_cli_statuses');
 };

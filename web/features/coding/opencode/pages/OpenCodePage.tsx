@@ -2745,6 +2745,7 @@ const OpenCodePage: React.FC = () => {
               <GlobalPromptSettings
                 key={`opencode-global-prompt-${globalPromptExpandNonce}`}
                 translationKeyPrefix="opencode.prompt"
+                promptFileName="AGENTS.md"
                 service={openCodePromptApi}
                 collapseKey="opencode-prompt"
                 refreshKey={openCodeConfigRefreshKey}

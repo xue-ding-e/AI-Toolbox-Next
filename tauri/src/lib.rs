@@ -2156,6 +2156,7 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_status,
             coding::proxy_gateway::proxy_gateway_health_check,
             coding::proxy_gateway::proxy_gateway_check_port_available,
+            coding::proxy_gateway::proxy_gateway_supported_cli_keys,
             coding::proxy_gateway::proxy_gateway_cli_statuses,
             coding::proxy_gateway::proxy_gateway_cli_status,
             coding::proxy_gateway::proxy_gateway_engage_single,

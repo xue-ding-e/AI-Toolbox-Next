@@ -1636,6 +1636,14 @@
       "overwrite": "覆盖更新",
       "overwriteConfirmTitle": "确认覆盖",
       "overwriteConfirmContent": "将用导入的配置覆盖当前 \"{{name}}\" 供应商，确定？"
+    },
+    "viewDocs": "官方文档",
+    "configPath": "配置文件路径",
+    "customizeConfigDir": "自定义配置目录",
+    "openFolder": "打开文件夹",
+    "refreshConfig": "刷新配置",
+    "globalPrompt": {
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `{{fileName}}` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。"
     }
   },
   "sessionManager": {

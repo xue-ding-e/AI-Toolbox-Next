@@ -23,6 +23,7 @@ import {
   type ModelRewritesState,
 } from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import { useGatewaySupportedCliKeys } from '@/features/coding/shared/gateway/useGatewaySupportedCliKeys';
 import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -378,6 +379,12 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const providerCategory = provider ? (provider.category || 'custom') : selectedProviderCategory;
   const isOfficialMode = providerCategory === 'official';
   const selectedIsCustomProviderProfile = !selectedChannel || selectedChannel === CUSTOM_PROVIDER_ENDPOINT_KEY;
+  // A protocol selector only means something when the gateway can take this
+  // CLI over; otherwise the upstream format is fixed by the channel and the
+  // dropdown is a no-op. `undefined` while the support list loads.
+  const { isGatewaySupported } = useGatewaySupportedCliKeys();
+  const gatewaySupportsThisCli = isGatewaySupported('gemini') !== false;
+
   const channelOptions = React.useMemo(() => (
     isOfficialMode && !canSelectProviderCategory
       ? [
@@ -845,7 +852,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
                   noStyle
                   initialValue={DEFAULT_GEMINI_API_FORMAT}
                 >
-                  <Select options={apiFormatOptions} disabled={!selectedIsCustomProviderProfile} />
+                  <Select options={apiFormatOptions} disabled={!gatewaySupportsThisCli || !selectedIsCustomProviderProfile} />
                 </Form.Item>
               )}
             </div>

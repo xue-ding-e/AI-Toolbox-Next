@@ -1584,7 +1584,12 @@ pub async fn ensure_proxyable_provider(
         .map(|_| ())
 }
 
-fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
+/// Whether the gateway can actually take this CLI over.
+///
+/// This is the gate every engage/reapply entry point checks. It is deliberately
+/// narrower than [`GatewayCliKey::supported_mvp`], which additionally lists
+/// CLIs whose config the gateway knows about but cannot yet rewrite.
+pub fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
     matches!(
         cli_key,
         GatewayCliKey::Claude

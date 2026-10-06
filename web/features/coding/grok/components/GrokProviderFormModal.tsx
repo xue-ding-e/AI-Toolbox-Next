@@ -32,6 +32,7 @@ import {
   type ModelRewritesState,
 } from '@/features/coding/shared/providerModelRewrites/modelRewritesUtils';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import { useGatewaySupportedCliKeys } from '@/features/coding/shared/gateway/useGatewaySupportedCliKeys';
 import {
   CUSTOM_PROVIDER_ENDPOINT_KEY,
   CUSTOM_PROVIDER_PROFILE_ID,
@@ -381,6 +382,12 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+  // A protocol selector only means something when the gateway can take this
+  // CLI over; otherwise the upstream format is fixed by the channel and the
+  // dropdown is a no-op. `undefined` while the support list loads.
+  const { isGatewaySupported } = useGatewaySupportedCliKeys();
+  const gatewaySupportsThisCli = isGatewaySupported('grok') !== false;
+
 
   const providerEndpointOptions = React.useMemo(() => {
     if (isOfficialMode && !canSelectProviderCategory) {
@@ -1133,7 +1140,7 @@ const GrokProviderFormModal: React.FC<GrokProviderFormModalProps> = ({
             >
               <Select
                 options={apiFormatOptions}
-                disabled={!selectedIsCustomProviderProfile}
+                disabled={!gatewaySupportsThisCli || !selectedIsCustomProviderProfile}
               />
             </Form.Item>
           )}

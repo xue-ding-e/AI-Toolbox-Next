@@ -1,9 +1,9 @@
 import React from 'react';
-import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Checkbox, Drawer, Input } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ClearOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined, BulbOutlined, CheckSquareOutlined } from '@ant-design/icons';
+import { Typography, Button, Space, message, Modal, Collapse, Descriptions, Checkbox, Drawer, Input } from 'antd';
+import { AppstoreOutlined, SyncOutlined, ClearOutlined, ExclamationCircleOutlined, LinkOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, CopyOutlined, MessageOutlined, BulbOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import {
   DndContext,
@@ -94,6 +94,8 @@ import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import { findPresetModelById } from '@/constants/presetModels';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
+import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
+import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
 import SidebarSettingsModal, {
@@ -123,10 +125,6 @@ import { SessionManagerPanel, type SessionSourceMode } from '@/features/coding/s
 import {
   PROVIDER_SORT_MODES,
   backupProvidersBeforeDelete,
-  ProviderBatchToolbar,
-  ProviderSearchEmpty,
-  ProviderSearchInput,
-  ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
   useProviderBatchSelection,
@@ -191,7 +189,7 @@ import {
   type GatewayCliTakeoverStatus,
 } from '@/services';
 
-const { Title, Text, Link } = Typography;
+const { Text } = Typography;
 
 function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
   const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig);
@@ -2430,315 +2428,169 @@ const CodexPage: React.FC = () => {
       }}
     >
       <div>
-        {/* Page Header */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-                  {t('codex.title')}
-                </Title>
-                <Link
-                  type="secondary"
-                  style={{ fontSize: 12 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openUrl('https://developers.openai.com/codex/config-basic');
-                  }}
-                >
-                  <LinkOutlined /> {t('codex.viewDocs')}
-                </Link>
-                {appliedProviderId && (
-                  <Link
-                    type="secondary"
-                    style={{ fontSize: 12, marginLeft: 16 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handlePreviewCurrentConfig();
-                    }}
-                  >
-                    <EyeOutlined /> {t('common.previewConfig')}
-                  </Link>
-                )}
-              </div>
-              <Space size="small">
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('codex.configPath')}:
-                </Text>
-                <Text code style={{ fontSize: 12 }}>
-                  {configPath || '~/.codex/config.toml'}
-                </Text>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => setRootDirectoryModalOpen(true)}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('codex.rootPathSource.customize')}
-                </Button>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<FolderOpenOutlined />}
-                  onClick={handleOpenFolder}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('codex.openFolder')}
-                </Button>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<SyncOutlined />}
-                  onClick={handleRefreshPage}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('codex.refreshConfig')}
-                </Button>
-              </Space>
-            </div>
-
-            <Space>
-              <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
-                {t('common.moreOptions')}
-              </Button>
-            </Space>
-          </div>
-        </div>
+        <CodingPageHeader
+          title={t('codex.title')}
+          docsUrl="https://developers.openai.com/codex/config-basic"
+          docsText={t('codex.viewDocs')}
+          onPreviewConfig={appliedProviderId ? handlePreviewCurrentConfig : undefined}
+          configPathLabel={t('codex.configPath')}
+          configPath={configPath || '~/.codex/config.toml'}
+          onCustomizeConfig={() => setRootDirectoryModalOpen(true)}
+          customizeConfigText={t('codex.rootPathSource.customize')}
+          onOpenFolder={handleOpenFolder}
+          openFolderText={t('codex.openFolder')}
+          onRefresh={handleRefreshPage}
+          refreshText={t('codex.refreshConfig')}
+          onMoreOptions={() => setSettingsModalOpen(true)}
+        />
 
         {/* Provider List */}
-        <div
-          id="codex-providers"
-          data-sidebar-section="true"
-          data-sidebar-title={t('codex.provider.title')}
+        <ProviderListSection
+          i18nPrefix="codex"
+          emptyText={t('codex.emptyText')}
+          sectionId="codex-providers"
+          collapsed={providerListCollapsed}
+          onCollapsedChange={setProviderListCollapsed}
+          loading={loading}
+          providerCount={providers.length}
+          visibleCount={visibleProviders.length}
+          batch={providerBatch}
+          batchSelectableIds={batchSelectableIds}
+          keyword={providerKeyword}
+          onKeywordChange={setProviderKeyword}
+          sortMode={sortMode}
+          sortModes={PROVIDER_SORT_MODES}
+          onSortModeChange={setSortMode}
+          onBatchTest={handleBatchTestProviders}
+          batchTesting={batchTestingProviders}
+          onOpenCommonConfig={() => setCommonConfigModalOpen(true)}
+          onAddProvider={handleAddProvider}
+          headerExtra={
+            <Space size={8} wrap>
+              <GatewayFailoverButton
+                cliKey="codex"
+                status={gatewayCliStatus}
+                primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+                primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
+                onStatusChange={applyGatewayCliStatus}
+              />
+              {gatewayTakeoverActive ? (
+                <GatewayAggregateButton
+                  current={isGatewayAggregateMode(gatewayCliStatus?.mode)}
+                  loading={aggregateSettingsOpening}
+                  onClick={handleOpenAggregateSettings}
+                />
+              ) : null}
+            </Space>
+          }
+          hint={
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-secondary)',
+                borderLeft: '2px solid var(--color-border)',
+                paddingLeft: 8,
+                marginBottom: 12,
+              }}
+            >
+              <div>{t('codex.pageHint')}</div>
+              <div>{t('codex.pageWarning')}</div>
+            </div>
+          }
+          footer={
+            <Space wrap>
+              <Button
+                type="dashed"
+                icon={<ImportOutlined />}
+                onClick={() => setImportModalOpen(true)}
+              >
+                {t('opencode.provider.importFavorite')}
+              </Button>
+              {allApiHubAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<AllApiHubIcon />}
+                  onClick={() => setAllApiHubImportModalOpen(true)}
+                >
+                  {t('common.allApiHub.importFromAllApiHub')}
+                </Button>
+              )}
+              {ccSwitchAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<ImportOutlined />}
+                  onClick={() => setCcSwitchImportModalOpen(true)}
+                >
+                  {t('common.ccSwitch.importFromCcSwitch')}
+                </Button>
+              )}
+            </Space>
+          }
         >
-          <Collapse
-            style={{ marginBottom: 16 }}
-            activeKey={providerListCollapsed ? [] : ['providers']}
-            onChange={(keys) => setProviderListCollapsed(!keys.includes('providers'))}
-            items={[
-              {
-                key: 'providers',
-                label: (
-                  <Space size={8} wrap>
-                    <Text strong>
-                      <DatabaseOutlined style={{ marginRight: 8 }} />
-                      {t('codex.provider.title')}
-                    </Text>
-                    <GatewayFailoverButton
-                      cliKey="codex"
-                      status={gatewayCliStatus}
-                      primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
-                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
-                      onStatusChange={applyGatewayCliStatus}
-                    />
-                    {gatewayTakeoverActive ? (
-                      <GatewayAggregateButton
-                        current={isGatewayAggregateMode(gatewayCliStatus?.mode)}
-                        loading={aggregateSettingsOpening}
-                        onClick={handleOpenAggregateSettings}
-                      />
-                    ) : null}
-                  </Space>
-                ),
-                extra: (
-                  <Space size={4} wrap>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (providerBatch.selectionMode) {
-                          providerBatch.exitSelection();
-                        } else {
-                          providerBatch.enterSelection();
-                        }
-                      }}
-                    >
-                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
-                      <span>
-                        {providerBatch.selectionMode
-                          ? t('common.batch.exit')
-                          : t('common.batch.manage')}
-                      </span>
-                    </Button>
-                    {providerBatch.selectionMode && (
-                      <ProviderBatchToolbar
-                        hasSelection={providerBatch.hasSelection}
-                        visibleCount={batchSelectableIds.length}
-                        isAllSelected={providerBatch.isAllSelected}
-                        indeterminate={providerBatch.indeterminate}
-                        onSelectAll={providerBatch.selectAllFiltered}
-                        onBatchDelete={providerBatch.batchDelete}
-                        disabled={loading}
-                      />
-                    )}
-                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
-                    <ProviderSortDropdown
-                      mode={sortMode}
-                      modes={PROVIDER_SORT_MODES}
-                      onChange={setSortMode}
-                    />
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<ThunderboltOutlined />}
-                      loading={batchTestingProviders}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleBatchTestProviders();
-                      }}
-                    >
-                      {t('common.batchTest')}
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<AppstoreOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCommonConfigModalOpen(true);
-                      }}
-                    >
-                      {t('codex.commonConfigButton')}
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<PlusOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddProvider();
-                      }}
-                    >
-                      {t('codex.addProvider')}
-                    </Button>
-                  </Space>
-                ),
-                children: (
-                  <Spin spinning={loading}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--color-text-secondary)',
-                        borderLeft: '2px solid var(--color-border)',
-                        paddingLeft: 8,
-                        marginBottom: 12,
-                      }}
-                    >
-                      <div>{t('codex.pageHint')}</div>
-                      <div>{t('codex.pageWarning')}</div>
-                    </div>
-
-                    {providers.length === 0 ? (
-                      <Empty description={t('codex.emptyText')} style={{ marginTop: 40 }} />
-                    ) : visibleProviders.length === 0 ? (
-                      <ProviderSearchEmpty />
-                    ) : (
-                      <DndContext
-                            sensors={providerBatchDragDisabled ? [] : sensors}
-                            collisionDetection={closestCenter}
-                            onDragEnd={handleDragEnd}
-                            modifiers={[restrictToVerticalAxis]}
-                          >
-                            <SortableContext
-                              items={providers.map((p) => p.id)}
-                              strategy={verticalListSortingStrategy}
-                            >
-                              <div>
-                                {visibleProviders.map((provider) => (
-                              <CodexProviderCard
-                                key={provider.id}
-                                provider={provider}
-                                isApplied={provider.id === appliedProviderId}
-                                officialAccounts={officialAccountsByProviderId[provider.id] || []}
-                                onEdit={handleEditProvider}
-                                onDelete={handleDeleteProvider}
-                                onCopy={handleCopyProvider}
-                                onShare={handleShareProvider}
-                                onTest={handleTestProvider}
-                                onSelect={handleSelectProvider}
-                                onToggleDisabled={handleToggleDisabled}
-                                onAddModel={handleAddModel}
-                                onEditModel={handleEditModel}
-                                onCopyModel={handleCopyModel}
-                                onDeleteModel={handleDeleteModel}
-                                onSetPrimaryModel={handleSetPrimaryModel}
-                                onSetAutoReviewModel={handleSetAutoReviewModel}
-                                onClearAutoReviewModel={handleClearAutoReviewModel}
-                                onFetchModels={handleOpenFetchModels}
-                                onReorderModels={handleReorderModels}
-                                onToggleBatchDeleteMode={handleToggleModelBatchDeleteMode}
-                                onBatchDeleteModels={handleBatchDeleteModels}
-                                modelSelectionMode={modelBatchDeleteProviderId === provider.id}
-                                selectedModelRowKeys={selectedModelRowKeysByProvider[provider.id] ?? []}
-                                onToggleModelSelection={handleToggleModelSelection}
-                                onOfficialAccountLogin={handleStartOfficialAccountOauth}
-                                onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}
-                                onOfficialAccountApply={handleApplyOfficialAccount}
-                                onOfficialAccountDelete={handleDeleteOfficialAccount}
-                                onOfficialAccountRefresh={handleRefreshOfficialAccount}
-                                onOfficialAccountViewDetails={handleViewOfficialAccountDetails}
-                                refreshingOfficialAccountId={refreshingOfficialAccountId}
-                                savingOfficialAccountId={savingOfficialAccountId}
-                                connectivityStatus={connectivityStatuses[provider.id]}
-                                gatewayTakeoverActive={gatewayTakeoverActive}
-                                gatewayStatus={gatewayCliStatus}
-                                onGatewayStatusChange={async (status) => {
-                                  applyGatewayCliStatus(status);
-                                  await loadConfig();
-                                }}
-                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
-                                selected={providerBatch.selectedIds.has(provider.id)}
-                                onSelectChange={(checked) =>
-                                  providerBatch.toggleSelect(provider.id, checked)
-                                }
-                              />
-                              ))}
-                            </div>
-                          </SortableContext>
-                        </DndContext>
-                    )}
-
-                    <div style={{ marginTop: 12 }}>
-                      <Space wrap>
-                        <Button
-                          type="dashed"
-                          icon={<ImportOutlined />}
-                          onClick={() => setImportModalOpen(true)}
-                        >
-                          {t('opencode.provider.importFavorite')}
-                        </Button>
-                        {allApiHubAvailable && (
-                          <Button
-                            type="dashed"
-                            icon={<AllApiHubIcon />}
-                            onClick={() => setAllApiHubImportModalOpen(true)}
-                          >
-                            {t('common.allApiHub.importFromAllApiHub')}
-                          </Button>
-                        )}
-                        {ccSwitchAvailable && (
-                          <Button
-                            type="dashed"
-                            icon={<ImportOutlined />}
-                            onClick={() => setCcSwitchImportModalOpen(true)}
-                          >
-                            {t('common.ccSwitch.importFromCcSwitch')}
-                          </Button>
-                        )}
-                      </Space>
-                    </div>
-                  </Spin>
-                ),
-              },
-            ]}
-          />
-        </div>
+          <DndContext
+            sensors={providerBatchDragDisabled ? [] : sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+            modifiers={[restrictToVerticalAxis]}
+          >
+            <SortableContext
+              items={providers.map((p) => p.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div>
+                {visibleProviders.map((provider) => (
+                  <CodexProviderCard
+                    key={provider.id}
+                    provider={provider}
+                    isApplied={provider.id === appliedProviderId}
+                    officialAccounts={officialAccountsByProviderId[provider.id] || []}
+                    onEdit={handleEditProvider}
+                    onDelete={handleDeleteProvider}
+                    onCopy={handleCopyProvider}
+                    onShare={handleShareProvider}
+                    onTest={handleTestProvider}
+                    onSelect={handleSelectProvider}
+                    onToggleDisabled={handleToggleDisabled}
+                    onAddModel={handleAddModel}
+                    onEditModel={handleEditModel}
+                    onCopyModel={handleCopyModel}
+                    onDeleteModel={handleDeleteModel}
+                    onSetPrimaryModel={handleSetPrimaryModel}
+                    onSetAutoReviewModel={handleSetAutoReviewModel}
+                    onClearAutoReviewModel={handleClearAutoReviewModel}
+                    onFetchModels={handleOpenFetchModels}
+                    onReorderModels={handleReorderModels}
+                    onToggleBatchDeleteMode={handleToggleModelBatchDeleteMode}
+                    onBatchDeleteModels={handleBatchDeleteModels}
+                    modelSelectionMode={modelBatchDeleteProviderId === provider.id}
+                    selectedModelRowKeys={selectedModelRowKeysByProvider[provider.id] ?? []}
+                    onToggleModelSelection={handleToggleModelSelection}
+                    onOfficialAccountLogin={handleStartOfficialAccountOauth}
+                    onOfficialLocalAccountSave={handleSaveOfficialLocalAccount}
+                    onOfficialAccountApply={handleApplyOfficialAccount}
+                    onOfficialAccountDelete={handleDeleteOfficialAccount}
+                    onOfficialAccountRefresh={handleRefreshOfficialAccount}
+                    onOfficialAccountViewDetails={handleViewOfficialAccountDetails}
+                    refreshingOfficialAccountId={refreshingOfficialAccountId}
+                    savingOfficialAccountId={savingOfficialAccountId}
+                    connectivityStatus={connectivityStatuses[provider.id]}
+                    gatewayTakeoverActive={gatewayTakeoverActive}
+                    gatewayStatus={gatewayCliStatus}
+                    onGatewayStatusChange={async (status) => {
+                      applyGatewayCliStatus(status);
+                      await loadConfig();
+                    }}
+                    selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                    selected={providerBatch.selectedIds.has(provider.id)}
+                    onSelectChange={(checked) =>
+                      providerBatch.toggleSelect(provider.id, checked)
+                    }
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </ProviderListSection>
 
         <div
           id="codex-global-prompt"
@@ -2748,6 +2600,7 @@ const CodexPage: React.FC = () => {
           <GlobalPromptSettings
             key={`codex-prompt-${promptExpandNonce}`}
             translationKeyPrefix="codex.prompt"
+            promptFileName="AGENTS.md"
             service={codexPromptApi}
             collapseKey="codex-prompt"
             defaultExpanded={promptExpandNonce > 0}

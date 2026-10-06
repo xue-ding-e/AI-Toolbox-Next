@@ -1636,6 +1636,14 @@
       "overwrite": "Overwrite",
       "overwriteConfirmTitle": "Confirm overwrite",
       "overwriteConfirmContent": "This will overwrite provider \"{{name}}\" with the imported config. Continue?"
+    },
+    "viewDocs": "Official Docs",
+    "configPath": "Config Path",
+    "customizeConfigDir": "Customize Config Dir",
+    "openFolder": "Open Folder",
+    "refreshConfig": "Refresh Config",
+    "globalPrompt": {
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `{{fileName}}` file manually; it will be overwritten the next time you apply a config."
     }
   },
   "sessionManager": {

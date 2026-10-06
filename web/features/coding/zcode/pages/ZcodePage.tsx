@@ -363,6 +363,7 @@ const ZcodePage: React.FC = () => {
           <GlobalPromptSettings
             key={`zcode-prompt-${promptExpandNonce}`}
             translationKeyPrefix="zcode.prompt"
+            promptFileName="AGENTS.md"
             service={zcodePromptApi}
             collapseKey="zcode-prompt"
             defaultExpanded={promptExpandNonce > 0}

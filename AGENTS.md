@@ -993,6 +993,8 @@ web/
 
 ### Implementation Checklist for New Tray Integration
 
+> 本节只覆盖托盘。接入一个全新 CLI 工具时，完整流程见 `docs/new-cli-onboarding-sop.md`。
+
 1. **Backend** (`tauri/src/coding/{module}/`):
    - [ ] Add `apply_config_internal` function with `from_tray` parameter
    - [ ] Implement Tauri command for main window (calls with `false`)
@@ -1098,6 +1100,8 @@ let proxy_url = http_client::get_proxy_from_settings(&state).await?;
 
 ## Tab / Page-Key Allowlist Rules
 
+> 新增 CLI 工具的完整分阶段流程（含本节的清单、上游调研、托盘/同步/备份/Gateway/会话各阶段与历史踩坑汇编）见 `docs/new-cli-onboarding-sop.md`。本节是规则，那份是操作手册。
+
 Several places hardcode a list of tab or page/module keys. Adding a new tab without updating every such list can silently drop stored values or force the module into the wrong sync set. This has caused repeated cross-module regressions.
 
 - Recurrence 1 (sidebar show/hide): `tauri/src/settings/adapter.rs` `get_sidebar_hidden_by_page` used a 7-key allowlist; new tabs (claudedesktop/hermes/dsh/oh_my_pi) were dropped on every `get_settings`, so the "hide sidebar" toggle reset after restart. Fix: read every boolean key in the stored map instead of an allowlist.
@@ -1108,12 +1112,12 @@ Several places hardcode a list of tab or page/module keys. Adding a new tab with
 
 Two distinct key sets — do not conflate:
 
-- Sidebar-only (14 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, antigravity, kimi, openclaw, pi, oh_my_pi, omo_native, hermes, dsh.
+- Sidebar-only (15 keys, coding tools only): `SIDEBAR_PAGE_KEYS` in `web/services/settingsApi.ts`, mirrored by `default_sidebar_hidden_by_page` in `tauri/src/settings/types.rs`. Order: opencode, claudecode, claudedesktop, codex, grok, geminicli, antigravity, zcode, kimi, openclaw, pi, oh_my_pi, omo_native, hermes, dsh.
 - visible_tabs full set (includes non-coding tools like gateway/image/ssh/wsl): `CURRENT_DEFAULT_VISIBLE_TABS` in `tauri/src/settings/adapter.rs`, mirrored by `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and by `defaultSettings.visible_tabs` in `web/services/settingsApi.ts`.
 
 ### When Adding or Changing a Tab
 
-- Update the relevant authority source **and every downstream list**. Lists to re-check (grep the tab key string repo-wide, this list is not exhaustive): `web/constants/modules.tsx` `MODULES` subTabs（侧边栏显示的唯一入口——`visible_tabs` 里有但 `MODULES` 没有时 tab 会静默不显示，本次 kimi 集成即踩到此坑）, `web/features/settings/pages/GeneralSettingsPage.tsx` `CODING_TABS`（设置页模块显隐/排序管理列表，漏了会在设置里静默消失，kimi 再次踩到）, `tauri/src/settings/types.rs` `AppSettings::default()` (visible_tabs + default_sidebar_hidden_by_page), `tauri/src/coding/runtime_location.rs` `MODULE_KEYS`, `tauri/src/coding/reapply_applied_runtime.rs` `ALL_WSL_FILE_MODULES`, `tauri/src/settings/backup/utils.rs` `ALWAYS_BACKUP_CLI_TOOLS`/`OPTIONAL_BACKUP_CLI_TOOLS`, `tauri/src/tray.rs` section builders, frontend `useWSLSync.ts`/`useSSHSync.ts`/`*SyncModal.tsx` `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_*`, `FileMappingModal`/`SSHFileMappingModal` module dropdowns, and the Gateway frontend CLI lists（`GatewayStatisticsView.tsx` `cliOptions`、`GatewayRequestsView.tsx` 请求筛选、`ModelPricingModal.tsx` `pricingCliKeys`、`GatewaySettingsPanel.tsx` `CLI_OPTIONS`、`shared/gateway/providerProfiles.ts` `normalizeGatewayProviderTool`——kimi 集成时统计页筛选/定价弹窗/normalize 三处漏注册，统计页看不到 kimi），以及 Gateway 后端 usage 读路径映射（`usage_stats.rs` 的 `cli_key_from_app_type` 和 `load_provider_names`——漏注册会让该 CLI 已落库的请求行在列表/统计查询里被静默丢弃，kimi 再次踩到）。
+- Update the relevant authority source **and every downstream list**. Lists to re-check (grep the tab key string repo-wide, this list is not exhaustive): `web/constants/modules.tsx` `MODULES` subTabs（侧边栏显示的唯一入口——`visible_tabs` 里有但 `MODULES` 没有时 tab 会静默不显示，本次 kimi 集成即踩到此坑）, `web/features/settings/pages/GeneralSettingsPage.tsx` `CODING_TABS`（设置页「模块显示」的**左侧**那行 chip，也是拖拽排序基准；漏了会让该 tab 在设置页完全不可见、无法开关或排序，kimi 再次踩到。右侧 `OTHER_TABS` 只放非 coding 模块，新增 CLI 不要动它）, `tauri/src/settings/types.rs` `AppSettings::default()` (visible_tabs + default_sidebar_hidden_by_page), `tauri/src/coding/runtime_location.rs` `MODULE_KEYS`, `tauri/src/coding/reapply_applied_runtime.rs` `ALL_WSL_FILE_MODULES`, `tauri/src/settings/backup/utils.rs` `ALWAYS_BACKUP_CLI_TOOLS`/`OPTIONAL_BACKUP_CLI_TOOLS`, `tauri/src/tray.rs` section builders, frontend `useWSLSync.ts`/`useSSHSync.ts`/`*SyncModal.tsx` `TAB_TO_MODULE`/`MODULE_TO_TAB`/`ALL_*`, `FileMappingModal`/`SSHFileMappingModal` module dropdowns, and the Gateway frontend CLI lists（`GatewayStatisticsView.tsx` `cliOptions`、`GatewayRequestsView.tsx` 请求筛选、`ModelPricingModal.tsx` `pricingCliKeys`、`web/features/settings/pages/GatewaySettingsPanel.tsx` `CLI_OPTIONS`、`shared/gateway/providerProfiles.ts` `normalizeGatewayProviderTool`——kimi 集成时统计页筛选/定价弹窗/normalize 三处漏注册，统计页看不到 kimi），以及 Gateway 后端 usage 读路径映射（`usage_stats.rs` 的 `cli_key_from_app_type` 和 `load_provider_names`——漏注册会让该 CLI 已落库的请求行在列表/统计查询里被静默丢弃，kimi 再次踩到）。
 - A new default-visible tab must update `CURRENT_DEFAULT_VISIBLE_TABS` (full-replace migration baseline) plus `AppSettings::default().visible_tabs` in `tauri/src/settings/types.rs` and the frontend mirror `defaultSettings.visible_tabs` in `web/services/settingsApi.ts` (reused by `web/stores/settingsStore.ts`), plus the `visible_tabs_*` migration test expectations. Custom-order users are intentionally **not** force-inserted newly added tabs (see the comment in `adapter.rs`); they surface new tabs only through the full-replace baseline.
 - Regression tests for this class of bug must assert that a newly added key round-trips its stored value through the full read path, not just that the default is present.
 - Do not silently truncate coverage. If a list intentionally excludes some keys (e.g. a historical `PRE_*` migration baseline snapshot, or a tool that has no MCP config), leave a comment saying so.

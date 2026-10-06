@@ -17,6 +17,7 @@ import {
   type CustomHeadersState,
 } from '@/features/coding/shared/providerHeaders/customHeadersUtils';
 import ModelRewritesCollapse from '@/features/coding/shared/providerModelRewrites/ModelRewritesCollapse';
+import { useGatewaySupportedCliKeys } from '@/features/coding/shared/gateway/useGatewaySupportedCliKeys';
 import {
   getModelRewritesFromMeta,
   type ModelRewritesState,
@@ -174,6 +175,11 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
   const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+  // A protocol selector only means something when the gateway can take this
+  // CLI over; otherwise the upstream format is fixed by the channel.
+  const { isGatewaySupported } = useGatewaySupportedCliKeys();
+  const gatewaySupportsThisCli = isGatewaySupported('claude_desktop') !== false;
+
   const fallbackModel = Form.useWatch('model', watchOptions) || '';
   const sonnetModel = Form.useWatch('sonnetModel', watchOptions) || '';
   const sonnetModelName = Form.useWatch('sonnetModelName', watchOptions) || '';
@@ -780,7 +786,7 @@ const ClaudeDesktopProviderFormModal: React.FC<ClaudeDesktopProviderFormModalPro
               >
                 <Select
                   options={apiFormatOptions}
-                  disabled={!selectedIsCustomProviderProfile}
+                  disabled={!gatewaySupportsThisCli || !selectedIsCustomProviderProfile}
                 />
               </Form.Item>
             )}

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, MessageOutlined, CheckSquareOutlined } from '@ant-design/icons';
+import { Typography, Button, Space, message, Modal, Collapse } from 'antd';
+import { FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, EditOutlined, MessageOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -61,6 +61,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
@@ -85,10 +86,6 @@ import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   PROVIDER_SORT_MODES,
   backupProvidersBeforeDelete,
-  ProviderBatchToolbar,
-  ProviderSearchEmpty,
-  ProviderSearchInput,
-  ProviderSortDropdown,
   filterProviderItems,
   sortProviderItems,
   useProviderBatchSelection,
@@ -1324,208 +1321,120 @@ const ClaudeCodePage: React.FC = () => {
         </div>
 
         {/* Provider 列表 */}
-        <div
-          id="claudecode-providers"
-          data-sidebar-section="true"
-          data-sidebar-title={t('claudecode.provider.title')}
+        <ProviderListSection
+          i18nPrefix="claudecode"
+          emptyText={t('claudecode.emptyText')}
+          sectionId="claudecode-providers"
+          collapsed={providerListCollapsed}
+          onCollapsedChange={setProviderListCollapsed}
+          loading={loading}
+          providerCount={providers.length}
+          visibleCount={visibleProviders.length}
+          batch={providerBatch}
+          batchSelectableIds={batchSelectableIds}
+          keyword={providerKeyword}
+          onKeywordChange={setProviderKeyword}
+          sortMode={sortMode}
+          sortModes={PROVIDER_SORT_MODES}
+          onSortModeChange={setSortMode}
+          onBatchTest={handleBatchTestProviders}
+          batchTesting={batchTestingProviders}
+          onOpenCommonConfig={() => setCommonConfigModalOpen(true)}
+          onAddProvider={handleAddProvider}
+          headerExtra={
+            <GatewayFailoverButton
+              cliKey="claude"
+              status={gatewayCliStatus}
+              primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
+              primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
+              onStatusChange={setGatewayCliStatus}
+            />
+          }
+          hint={
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-secondary)',
+                borderLeft: '2px solid var(--color-border)',
+                paddingLeft: 8,
+                marginBottom: 12,
+              }}
+            >
+              <div>{t('claudecode.pageHint')}</div>
+              <div>{t('claudecode.pageWarning')}</div>
+            </div>
+          }
+          footer={
+            <Space wrap>
+              <Button
+                type="dashed"
+                icon={<ImportOutlined />}
+                onClick={() => setImportModalOpen(true)}
+              >
+                {t('opencode.provider.importFavorite')}
+              </Button>
+              {allApiHubAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<AllApiHubIcon />}
+                  onClick={() => setAllApiHubImportModalOpen(true)}
+                >
+                  {t('common.allApiHub.importFromAllApiHub')}
+                </Button>
+              )}
+              {ccSwitchAvailable && (
+                <Button
+                  type="dashed"
+                  icon={<ImportOutlined />}
+                  onClick={() => setCcSwitchImportModalOpen(true)}
+                >
+                  {t('common.ccSwitch.importFromCcSwitch')}
+                </Button>
+              )}
+            </Space>
+          }
         >
-          <Collapse
-            style={{ marginBottom: 16 }}
-            activeKey={providerListCollapsed ? [] : ['providers']}
-            onChange={(keys) => setProviderListCollapsed(!keys.includes('providers'))}
-            items={[
-              {
-                key: 'providers',
-                label: (
-                  <Space size={8} wrap>
-                    <Text strong>
-                      <DatabaseOutlined style={{ marginRight: 8 }} />
-                      {t('claudecode.provider.title')}
-                    </Text>
-                    <GatewayFailoverButton
-                      cliKey="claude"
-                      status={gatewayCliStatus}
-                      primaryProviderNeedsGatewayProxy={primaryGatewayProviderNeedsProxy}
-                      primaryProviderNeedsProxyReason={primaryGatewayProviderNeedsProxyReason}
-                      onStatusChange={setGatewayCliStatus}
-                    />
-                  </Space>
-                ),
-                extra: (
-                  <Space size={4} wrap>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (providerBatch.selectionMode) {
-                          providerBatch.exitSelection();
-                        } else {
-                          providerBatch.enterSelection();
-                        }
-                      }}
-                    >
-                      <CheckSquareOutlined style={{ fontSize: 13, lineHeight: 1 }} />
-                      <span>
-                        {providerBatch.selectionMode
-                          ? t('common.batch.exit')
-                          : t('common.batch.manage')}
-                      </span>
-                    </Button>
-                    {providerBatch.selectionMode && (
-                      <ProviderBatchToolbar
-                        hasSelection={providerBatch.hasSelection}
-                        visibleCount={batchSelectableIds.length}
-                        isAllSelected={providerBatch.isAllSelected}
-                        indeterminate={providerBatch.indeterminate}
-                        onSelectAll={providerBatch.selectAllFiltered}
-                        onBatchDelete={providerBatch.batchDelete}
-                        disabled={loading}
-                      />
-                    )}
-                    <ProviderSearchInput value={providerKeyword} onChange={setProviderKeyword} />
-                    <ProviderSortDropdown
-                      mode={sortMode}
-                      modes={PROVIDER_SORT_MODES}
-                      onChange={setSortMode}
-                    />
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<ThunderboltOutlined />}
-                      loading={batchTestingProviders}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleBatchTestProviders();
-                      }}
-                    >
-                      {t('common.batchTest')}
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<AppstoreOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCommonConfigModalOpen(true);
-                      }}
-                    >
-                      {t('claudecode.commonConfigButton')}
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ fontSize: 12 }}
-                      icon={<PlusOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddProvider();
-                      }}
-                    >
-                      {t('claudecode.addProvider')}
-                    </Button>
-                  </Space>
-                ),
-                children: (
-                  <Spin spinning={loading}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--color-text-secondary)',
-                        borderLeft: '2px solid var(--color-border)',
-                        paddingLeft: 8,
-                        marginBottom: 12,
-                      }}
-                    >
-                      <div>{t('claudecode.pageHint')}</div>
-                      <div>{t('claudecode.pageWarning')}</div>
-                    </div>
-
-                    {providers.length === 0 ? (
-                      <Empty description={t('claudecode.emptyText')} style={{ marginTop: 40 }} />
-                    ) : visibleProviders.length === 0 ? (
-                      <ProviderSearchEmpty />
-                    ) : (
-                      <DndContext
-                            sensors={providerBatchDragDisabled ? [] : sensors}
-                            collisionDetection={closestCenter}
-                            modifiers={[restrictToVerticalAxis]}
-                            onDragEnd={handleDragEnd}
-                          >
-                            <SortableContext
-                              items={providers.map((p) => p.id)}
-                              strategy={verticalListSortingStrategy}
-                            >
-                              <div>
-                                {visibleProviders.map((provider) => (
-                              <ClaudeProviderCard
-                                key={provider.id}
-                                provider={provider}
-                                isApplied={provider.id === appliedProviderId}
-                                onEdit={handleEditProvider}
-                                onDelete={handleDeleteProvider}
-                                onCopy={handleCopyProvider}
-                                onShare={handleShareProvider}
-                                onTest={handleTestProvider}
-                                onSelect={handleSelectProvider}
-                                onToggleDisabled={handleToggleDisabled}
-                                selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
-                                selected={providerBatch.selectedIds.has(provider.id)}
-                                onSelectChange={(checked) =>
-                                  providerBatch.toggleSelect(provider.id, checked)
-                                }
-                                connectivityStatus={connectivityStatuses[provider.id]}
-                                gatewayTakeoverActive={gatewayTakeoverActive}
-                                gatewayStatus={gatewayCliStatus}
-                                onGatewayStatusChange={async (status) => {
-                                  setGatewayCliStatus(status);
-                                  await loadConfig();
-                                }}
-                              />
-                                ))}
-                              </div>
-                            </SortableContext>
-                          </DndContext>
-                    )}
-
-                    <div style={{ marginTop: 12 }}>
-                      <Space wrap>
-                        <Button
-                          type="dashed"
-                          icon={<ImportOutlined />}
-                          onClick={() => setImportModalOpen(true)}
-                        >
-                          {t('opencode.provider.importFavorite')}
-                        </Button>
-                        {allApiHubAvailable && (
-                          <Button
-                            type="dashed"
-                            icon={<AllApiHubIcon />}
-                            onClick={() => setAllApiHubImportModalOpen(true)}
-                          >
-                            {t('common.allApiHub.importFromAllApiHub')}
-                          </Button>
-                        )}
-                        {ccSwitchAvailable && (
-                          <Button
-                            type="dashed"
-                            icon={<ImportOutlined />}
-                            onClick={() => setCcSwitchImportModalOpen(true)}
-                          >
-                            {t('common.ccSwitch.importFromCcSwitch')}
-                          </Button>
-                        )}
-                      </Space>
-                    </div>
-                  </Spin>
-                ),
-              },
-            ]}
-          />
-        </div>
+          <DndContext
+            sensors={providerBatchDragDisabled ? [] : sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis]}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={providers.map((p) => p.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div>
+                {visibleProviders.map((provider) => (
+                  <ClaudeProviderCard
+                    key={provider.id}
+                    provider={provider}
+                    isApplied={provider.id === appliedProviderId}
+                    onEdit={handleEditProvider}
+                    onDelete={handleDeleteProvider}
+                    onCopy={handleCopyProvider}
+                    onShare={handleShareProvider}
+                    onTest={handleTestProvider}
+                    onSelect={handleSelectProvider}
+                    onToggleDisabled={handleToggleDisabled}
+                    selectable={providerBatch.selectionMode && providerBatch.isSelectable(provider.id)}
+                    selected={providerBatch.selectedIds.has(provider.id)}
+                    onSelectChange={(checked) =>
+                      providerBatch.toggleSelect(provider.id, checked)
+                    }
+                    connectivityStatus={connectivityStatuses[provider.id]}
+                    gatewayTakeoverActive={gatewayTakeoverActive}
+                    gatewayStatus={gatewayCliStatus}
+                    onGatewayStatusChange={async (status) => {
+                      setGatewayCliStatus(status);
+                      await loadConfig();
+                    }}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </ProviderListSection>
 
         <div
           id="claudecode-global-prompt"
@@ -1535,6 +1444,7 @@ const ClaudeCodePage: React.FC = () => {
           <GlobalPromptSettings
             key={`claudecode-prompt-${promptExpandNonce}`}
             translationKeyPrefix="claudecode.prompt"
+            promptFileName="CLAUDE.md"
             service={claudeCodePromptApi}
             collapseKey="claudecode-prompt"
             refreshKey={claudeProviderRefreshKey}
