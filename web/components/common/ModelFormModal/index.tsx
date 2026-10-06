@@ -176,12 +176,14 @@ interface ModelFormModalProps {
    */
   toolName?: string;
   /**
-   * Per-key label overrides, as **i18n keys** (they still go through `t()`).
-   * Most labels resolve to `common.model.*`; only keys whose wording genuinely
-   * differs per tool (field semantics, example model ids) need an entry here,
-   * pointing at that tool's own locale key.
+   * Per-key label overrides, as **already-translated text** — pass the result
+   * of `t(...)`, not the key.
    *
-   *   messageOverrides={{ idPlaceholder: 'dsh.model.idPlaceholder' }}
+   *   messageOverrides={{ idPlaceholder: t('dsh.model.idPlaceholder') }}
+   *
+   * A key stored here would be invisible to `i18n:prune` (it only sees string
+   * literals it can trace to a `t()` call), which then deletes it as unused.
+   * Most labels need no override at all — they default to `common.model.*`.
    */
   messageOverrides?: ModelFormMessageOverrides;
 }
@@ -786,7 +788,6 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     }
   };
 
-  // Build i18n keys based on prefix
   /**
    * Resolves a label: a caller override is already-translated text, otherwise
    * fall back to the shared `common.model.*` key. Returning the override

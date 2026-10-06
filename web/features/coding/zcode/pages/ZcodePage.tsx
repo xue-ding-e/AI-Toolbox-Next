@@ -833,6 +833,9 @@ const ZcodePage: React.FC = () => {
         <ZcodeModelFormModal
           open
           isEdit={modelModal.modelIndex !== null}
+          apiType={
+            parseZcodeProviderSettings(modelModal.provider.settingsConfig)?.config?.api?.type
+          }
           initialValues={
             modelModal.modelIndex === null
               ? undefined

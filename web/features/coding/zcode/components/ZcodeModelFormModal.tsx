@@ -1,6 +1,12 @@
 import React from 'react';
-import { Form, Input, InputNumber, Modal, Radio, Select, Space, Typography } from 'antd';
+import { Divider, Form, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
+import {
+  PRESET_MODELS,
+  getPresetModelsVersion,
+  subscribePresetModels,
+  type PresetModel,
+} from '@/constants/presetModels';
 import type {
   ZcodeModelInputFormat,
   ZcodeModelOptionSpecs,
@@ -67,9 +73,29 @@ interface ZcodeModelFormModalProps {
   open: boolean;
   isEdit: boolean;
   initialValues?: ZcodeModelRow;
+  /**
+   * The owning provider's API format (`config.api.type`), used to pick which
+   * preset catalog to show first. Presets are how a user fills a model's
+   * parameters in one click instead of typing a dozen fields from memory.
+   */
+  apiType?: string;
   onCancel: () => void;
   onSubmit: (model: ZcodeModelRow) => void | Promise<void>;
 }
+
+/**
+ * Preset catalogs to show first, most specific first.
+ *
+ * ZCode's three formats line up with the AI SDK provider families the preset
+ * data is grouped by, so a DeepSeek model appears under the Anthropic entry
+ * when the provider speaks `anthropic-messages`. Everything else still shows,
+ * below the divider.
+ */
+const ZCODE_PRIMARY_PRESET_NPM_TYPES: Record<string, string[]> = {
+  'anthropic-messages': ['@ai-sdk/anthropic'],
+  'openai-chat-completions': ['@ai-sdk/openai', '@ai-sdk/openai-compatible'],
+  'openai-responses': ['@ai-sdk/openai'],
+};
 
 const toFormValues = (row: ZcodeModelRow | undefined): Partial<ZcodeModelFormValues> => {
   if (!row) {
@@ -164,15 +190,87 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
   open,
   isEdit,
   initialValues,
+  apiType,
   onCancel,
   onSubmit,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [form] = Form.useForm<ZcodeModelFormValues>();
+  // Labels sit in a left column, as in every other model form (the shared
+  // `ModelFormModal` and the four module-local ones). ZCode's longest label is
+  // 推理等级（从低到高）, so the column is a step wider than the shared default.
+  const labelCol = { span: i18n.language === 'zh-CN' ? 7 : 9 };
+  const wrapperCol = { span: i18n.language === 'zh-CN' ? 17 : 15 };
   const [submitting, setSubmitting] = React.useState(false);
+  const [presetsExpanded, setPresetsExpanded] = React.useState(false);
   const ruleKind = Form.useWatch('ruleKind', form) as 'smart' | 'manual' | undefined;
   const reasoningLevels = Form.useWatch('reasoningLevels', form) as string[] | undefined;
   const isManual = ruleKind === 'manual';
+  const presetModelsVersion = React.useSyncExternalStore(
+    subscribePresetModels,
+    getPresetModelsVersion,
+    getPresetModelsVersion,
+  );
+
+  // Protocol-matched presets first; the rest stay reachable below the divider.
+  const { primaryPresets, otherPresets } = React.useMemo(() => {
+    const primaryNpmTypes = ZCODE_PRIMARY_PRESET_NPM_TYPES[apiType ?? ''] ?? [];
+    const primaryNpmSet = new Set(primaryNpmTypes);
+    const primary: PresetModel[] = [];
+    const other: PresetModel[] = [];
+    const seen = new Set<string>();
+
+    const pushUnique = (target: PresetModel[], preset: PresetModel) => {
+      const id = preset.id?.trim();
+      if (!id || seen.has(id)) {
+        return;
+      }
+      seen.add(id);
+      target.push(preset);
+    };
+
+    primaryNpmTypes.forEach((npmType) => {
+      (PRESET_MODELS[npmType] || []).forEach((preset) => pushUnique(primary, preset));
+    });
+    Object.entries(PRESET_MODELS).forEach(([npmType, models]) => {
+      if (primaryNpmSet.has(npmType)) {
+        return;
+      }
+      models.forEach((preset) => pushUnique(other, preset));
+    });
+
+    return { primaryPresets: primary, otherPresets: other };
+  }, [apiType, presetModelsVersion]);
+
+  /**
+   * Fills the form from a preset.
+   *
+   * Only fields ZCode actually stores are written; the preset's cost, options
+   * and variants have no ZCode counterpart and are dropped rather than forced
+   * into a shape the CLI would reject. The model ID is left alone when editing —
+   * changing it would orphan the row.
+   */
+  const handlePresetSelect = (preset: PresetModel) => {
+    const inputModalities = preset.modalities?.input ?? [];
+    form.setFieldsValue({
+      ...(isEdit ? {} : { modelId: preset.id }),
+      displayName: preset.name,
+      contextWindow: preset.contextLimit,
+      maxOutputTokensMax: preset.outputLimit,
+      ...(inputModalities.length > 0
+        ? {
+            supportsText: inputModalities.includes('text') ? 'on' : 'off',
+            supportsImage: inputModalities.includes('image') ? 'on' : 'off',
+            supportsVideo: inputModalities.includes('video') ? 'on' : 'off',
+            supportsAudio: inputModalities.includes('audio') ? 'on' : 'off',
+            supportsPdf: inputModalities.includes('pdf') ? 'on' : 'off',
+          }
+        : {}),
+      ...(preset.tool_call === undefined
+        ? {}
+        : { supportsToolCall: preset.tool_call ? 'on' : 'off' }),
+    });
+  };
 
   React.useEffect(() => {
     if (!open) {
@@ -272,14 +370,72 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
       okText={t('common.save', { defaultValue: '保存' })}
       cancelText={t('common.cancel', { defaultValue: '取消' })}
     >
-      <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+      <Form form={form} layout="horizontal" labelCol={labelCol} wrapperCol={wrapperCol}>
         <Form.Item
-          name="modelId"
-          label={t('zcode.model.modelId', { defaultValue: '模型 ID' })}
-          rules={[{ required: true, message: t('common.error', { defaultValue: '请填写该项' }) }]}
+          label={t('zcode.model.modelId')}
+          required
         >
-          <Input placeholder="deepseek-chat" disabled={isEdit} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Form.Item
+              name="modelId"
+              noStyle
+              rules={[{ required: true, message: t('common.required') }]}
+            >
+              <Input placeholder="deepseek-chat" disabled={isEdit} style={{ flex: 1 }} />
+            </Form.Item>
+            {primaryPresets.length + otherPresets.length > 0 && (
+              <a
+                style={{
+                  flexShrink: 0,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--ant-color-text-secondary)',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  whiteSpace: 'nowrap',
+                }}
+                onClick={() => setPresetsExpanded(!presetsExpanded)}
+              >
+                {t('common.model.selectPreset')}
+                {presetsExpanded ? ' ▴' : ' ▾'}
+              </a>
+            )}
+          </div>
         </Form.Item>
+
+        {presetsExpanded && (
+          <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }} style={{ marginTop: -8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {primaryPresets.map((preset) => (
+                <Tag
+                  key={preset.id}
+                  style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                  onClick={() => handlePresetSelect(preset)}
+                >
+                  {preset.name}
+                </Tag>
+              ))}
+            </div>
+            {otherPresets.length > 0 && (
+              <>
+                <Divider style={{ margin: '12px 0', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                  {t('common.model.otherPresets')}
+                </Divider>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {otherPresets.map((preset) => (
+                    <Tag
+                      key={preset.id}
+                      style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                      onClick={() => handlePresetSelect(preset)}
+                    >
+                      {preset.name}
+                    </Tag>
+                  ))}
+                </div>
+              </>
+            )}
+          </Form.Item>
+        )}
 
         <Form.Item
           name="displayName"
@@ -339,26 +495,32 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
         </Form.Item>
 
         <Form.Item
-          label={t('zcode.model.inputFormat', { defaultValue: '输入类型' })}
+          label={t('zcode.model.inputModalities')}
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('zcode.model.inputFormatHint', {
-                defaultValue: '「继承默认」表示沿用 ZCode 内置规则，不写入该字段。',
-              })}
+              {t('zcode.model.inputModalitiesHint')}
             </Text>
           }
         >
+          {/* Each capability is its own compact column: the sub-label sits above
+              its select, and the item still validates so a manual row cannot be
+              saved with a field missing. */}
           <Space wrap size="small">
             {modalityFields.map((field) => (
-              <Form.Item
-                key={field.name}
-                name={field.name}
-                label={t(field.labelKey, { defaultValue: field.fallback })}
-                rules={manualRequiredRule}
-                style={{ marginBottom: 8 }}
-              >
-                <Select options={triStateOptions(t)} style={{ width: 116 }} />
-              </Form.Item>
+              <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t(field.labelKey, { defaultValue: field.fallback })}
+                </Text>
+                <Form.Item
+                  name={field.name}
+                  rules={manualRequiredRule}
+                  labelCol={{ span: 0 }}
+                  wrapperCol={{ span: 24 }}
+                  style={{ marginBottom: 0 }}
+                >
+                  <Select options={triStateOptions(t)} style={{ width: 116 }} />
+                </Form.Item>
+              </div>
             ))}
           </Space>
         </Form.Item>
@@ -375,15 +537,20 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
         >
           <Space wrap size="small">
             {capabilityFields.map((field) => (
-              <Form.Item
-                key={field.name}
-                name={field.name}
-                label={t(field.labelKey, { defaultValue: field.fallback })}
-                rules={manualRequiredRule}
-                style={{ marginBottom: 8 }}
-              >
-                <Select options={triStateOptions(t)} style={{ width: 116 }} />
-              </Form.Item>
+              <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t(field.labelKey, { defaultValue: field.fallback })}
+                </Text>
+                <Form.Item
+                  name={field.name}
+                  rules={manualRequiredRule}
+                  labelCol={{ span: 0 }}
+                  wrapperCol={{ span: 24 }}
+                  style={{ marginBottom: 0 }}
+                >
+                  <Select options={triStateOptions(t)} style={{ width: 116 }} />
+                </Form.Item>
+              </div>
             ))}
           </Space>
         </Form.Item>
