@@ -88,6 +88,30 @@
 - [ ] `apply_config_internal` 带 `from_tray` 参数（托盘与主窗口共用）
 - [ ] emit `config-changed` 事件，payload 区分 `"window"` / `"tray"`
 
+### 2.1 行 id 约定：**不要含冒号**
+
+`adapter.rs` 的读取函数默认调 `crate::coding::db_id::db_extract_id`，它会把**第一个 `:` 之前的内容当作遗留的 `table:id` 前缀剥掉**：
+
+```rust
+db_extract_id(&json!({"id": "custom:axonhub-deepseek"}))  // → "axonhub-deepseek"  ← 剥错了
+```
+
+后果是**写库成功、读回被篡改**：返回给前端的 id 与真实行 id 不一致，后续按 id 的每一次调用（投影、删除、应用、编辑）都会报 `not found`，而数据明明在表里。
+
+ZCode 是唯一一个**业务 id 合法含冒号**的模块——它的托管供应商 id 必须以 `custom:` 开头（`ZCODE_MANAGED_PROVIDER_ID_PREFIX`），且这个 id 同时就是行 id。所以它不能用共享的 `db_extract_id`，必须在自己的 adapter 里读原始值。
+
+**规则**：
+
+| 情况 | 做法 |
+|------|------|
+| 行 id 是不含冒号的 UUID / slug | 用 `db_extract_id`（默认，保持不变） |
+| 行 id 是**业务 id 且业务 id 允许含冒号** | 自己读 `value["id"]` 原始字符串，**不要**走 `db_clean_id` |
+| 能让行 id 与业务 id 分离（行 id 用 UUID） | 首选。这样既保留 `db_extract_id`，又不把业务约束泄漏到主键 |
+
+> 若选了第三种（UUID 行 id），业务 id 只存 JSONB 里，`db_extract_id` 可正常工作。ZCode 采用第二种是因为历史实现已把两者合一。
+>
+> **配套**：无论选哪种，都要加一条「往返」回归测试——用真实的含冒号 id 走一遍 `from_db_value_*`，断言 id 原样返回。这类 bug 单看代码读不出来。
+
 ---
 
 ## 3. 阶段三：Allowlist 全量注册（最高风险）
@@ -174,12 +198,96 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] `web/features/coding/index.ts` 加 export
 - [ ] `web/app/routeConfig.ts` 注册路由（含会话详情子路由）
 - [ ] `web/i18n/locales/zh-CN.json` + `en-US.json`，用 `pnpm i18n:set-key` 生成 key
+- [ ] **先做 §4.0 的「选参照 CLI + 逐项核对形态」** —— 这是本阶段最容易返工的环节，不要跳过
 - [ ] **页面头部用共享组件 `CodingPageHeader`**（见 4.1）
 - [ ] **供应商列表用共享组件**（见 4.2）：`ProviderListSection` 外壳 + `ProviderCard` 卡片；有模型目录的再加 `ModelListSection`
 - [ ] **模型编辑弹窗用 `ModelFormModal`**，按 CLI 能力传 `show*` 开关 + `toolName`；只有字段语义/示例确实不同才用 `messageOverrides`（见 4.2.4）
 - [ ] **供应商编辑弹窗的分区用 `ProviderFormSections`**（见 4.2.6）；有协议下拉时接网关支持门控（见 4.2.7）
 - [ ] **全局提示词区块用 `GlobalPromptSettings`**，传 `promptFileName`（见 4.2.8）
 - [ ] UI 遵循 `DESIGN.md`（改任何可见 UI 前必须先完整阅读）
+
+### 4.0 迁移前必做：选参照 CLI + 逐项核对形态
+
+> **这一节是本 SOP 最重要的一节。** 以下是实际踩过的教训：迁移共享组件时，最容易犯的错误是把「换成共享组件」理解成「替换组件引用」。正确理解是「**对齐参照 CLI 的形态**」——组件只是承载形态的容器。只换组件、不对齐形态，结果是「用了共享组件但长得像另一个产品」。
+
+#### 4.0.1 第一步：为每类界面指定一个参照 CLI
+
+不要凭印象，先明确「照着谁改」：
+
+| 界面 | 参照 | 理由 |
+|------|------|------|
+| 供应商列表 / 卡片 | **Codex** | 功能最全：模型目录 + 网关门控 + 批量操作 |
+| 供应商编辑弹窗 | **Codex** | 含渠道行、协议门控、完整分区 |
+| 模型编辑弹窗 | **Pi / Hermes** | 可选字段最多，`show*` 覆盖面最广 |
+| 页面头部 | **Codex** | 首个消费方，无遗留覆盖 prop |
+| 模型列表工具栏 | **Codex** | 传全了全部 handler |
+
+#### 4.0.2 第二步：逐项核对（机械清单，不许凭印象）
+
+打开参照文件逐行读，**不是**「我记得应该差不多」。ZCode 迁移时漏掉的每一项都在下面：
+
+**A. 外层容器（共享组件管不到的部分）**
+
+- [ ] `layout` / `labelCol` / `wrapperCol` —— **共享组件只管内部，外层布局仍由调用方写**。
+  > ZCode 保留了 `layout="vertical"`（标签在输入框上方），而其他 5 个 CLI 全是 `layout="horizontal"` + `labelCol={span: 4|6}` / `wrapperCol={span: 20}`。弹窗看起来像另一个产品。
+- [ ] `width` / `title` / `okText` / `cancelText` / `destroyOnHidden`
+- [ ] 表单字段的**顺序与数量**：逐字段列出「参照有我没有」「我有参照没有」，确认每一处差异都是**有意的**
+
+**B. 第一行放什么**
+
+- [ ] Codex 供应商表单**第一行是「渠道」**：左边渠道选择器 + 右边格式选择器，**同一行**（grid 两列），下方跟 hint。
+  > ZCode 把渠道放在第 3、4 个字段且分成两行，用户第一眼看到的是「名称」而不是「选渠道」。
+
+**C. 每个字段的交互细节**
+
+- [ ] API Key 是否有**显示/隐藏按钮**（4/5 的 CLI 用 `masked input + addonAfter` 按钮；ZCode 用了朴素的 `Input.Password`）
+- [ ] 是否该用 `ImeSafeInput` / `ImeSafeAutoComplete`（IME 组合输入安全）
+- [ ] hint 走 `help` 还是 `extra`，字号是 11 还是 12
+
+**D. 下拉的选项列表**
+
+- [ ] 是否有**显式的「自定义」选项**，还是靠 placeholder 暗示。
+  > **不要用 `allowClear` + placeholder 表达「不选」。** Codex 给「自定义」一个具名选项（`CUSTOM_PROVIDER_ENDPOINT_KEY`），语义明确；ZCode 用 `allowClear` + 「不使用模板」placeholder，用户看不出「留空 = 自定义」。
+- [ ] 选项数据源、`showSearch` / `allowClear` 是否与参照一致
+
+**E. 卡片的详情区**
+
+- [ ] Codex 是**一行**：`baseUrl` + 格式 Tag + API Key + 备注，用 `|` 分隔。
+  > ZCode 渲染了**三行**（id / baseUrl / 备注）。注意参照不显示 provider id —— 对自动生成的 id 它只是名称的 slug 副本。
+- [ ] 操作按钮的数量、**样式**（`type="link"` / `type="text"` / default）、图标、禁用条件
+  > ZCode 的「应用」用了 default 按钮（带边框），其他 CLI 全是 `type="link"`（蓝色文字）。
+
+**F. 工具栏的按钮全集（最容易漏的一类）**
+
+- [ ] 枚举共享组件的**全部**可选 prop，逐个决定「传 / 不传」，并记录理由。
+  > `ModelListSection` 的按钮是「传了 handler 才渲染」。ZCode 只传了 1 个，于是工具栏只有「添加模型」——**看起来像设计如此，实际是漏传**。
+  >
+  > 位置全集：批量删除入口 / 模型测试 / 获取模型 / 添加模型 + 每行的编辑 / 复制 / 删除 / 设为主模型 / `renderModelExtraActions`。
+
+**G. 状态与空态**
+
+- [ ] 空态 / 搜索空态 / 加载态 / 禁用态文案是否与参照一致
+
+#### 4.0.3 第三步：核对共享组件的**前置条件**
+
+共享组件不是无条件适用的，用之前先确认它的前提：
+
+- [ ] **分区可能只对部分 CLI 有效。** `ProviderFormSections` 的**计费 / 自定义请求头 / 模型改写三块只由本地网关消费**（`inject_custom_headers` / `resolve_upstream_model_id` 是唯一读者）。CLI 不在 `GatewayCliKey::supported_mvp()` 里就必须传 `show*=false`。
+  > ZCode 不在网关支持列表，三个分区填了没有任何代码读；更糟的是表单还把值写进 `meta`，制造了「配置已生效」的假象。
+  >
+  > **推论**：看到共享组件有 `meta` 合并 helper（`merge*IntoMeta`），先确认「谁读这个 key」，再决定是否调用。
+
+- [ ] **组件可能暗示了不属于本 CLI 的概念。** 例如 billing 意味着「该 CLI 的请求会经过网关计费」。
+
+#### 4.0.4 第四步：验证方式
+
+**「编译通过」不等于「形态对了」。** 编译只保证类型正确，不保证长得对。
+
+- [ ] 对照参照 CLI **打开实际界面比对**（截图对比最有效）
+- [ ] 逐条走 4.0.2 的清单，每项在界面上指认一次
+- [ ] 若无法运行界面，**在 PR/提交说明里明确写出「未做视觉核对」**，不要默认通过
+
+> ZCode 这一轮累计返工 8 次（布局 / API Key 按钮 / 渠道行位置 / 自定义选项 / 网关门控 / 卡片详情行 / 工具栏按钮 / 静默错误），全部属于「编译通过但形态不对」——若第一步就做了逐项核对，这些都不会发生。
 
 ### 4.1 页面头部标准（`CodingPageHeader`）
 
@@ -932,11 +1040,34 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 - [ ] 新 tab 的侧栏开关重启后保持
 - [ ] 新 tab 的配置文件在 WSL/SSH 同步中**不被静默跳过**（`TAB_TO_MODULE` / `ALL_CODING_MODULES`）
 
-### 12.3 建议加回归测试的位置
+### 12.3 视觉核对（**必做，不可用「编译通过」替代**）
+
+**编译只保证类型正确，不保证形态正确。** 逐项在界面上指认，对照 §4.0.1 指定的参照 CLI：
+
+- [ ] 供应商弹窗：标签在左（`layout="horizontal"`）、第一行是渠道、API Key 有显示/隐藏按钮
+- [ ] 供应商弹窗：**没有**该 CLI 用不上的分区（非网关 CLI 不应出现计费/请求头/改写，见 4.0.3）
+- [ ] 供应商卡片：详情**一行**、应用按钮是蓝色文字（`type="link"`）
+- [ ] 模型列表工具栏：按钮**数量与参照一致**（逐个指着数，见 4.0.2-F）
+- [ ] 空态 / 搜索空态 / 加载态文案与参照一致
+- [ ] 失败路径有可见反馈，不是静默空列表（见 13.1 模式三）
+
+> 若本次无法运行界面，**必须在提交说明里写明「未做视觉核对」**。ZCode 这一轮 8 次返工全部出在这一步——每一处都是「编译通过但形态不对」。
+
+### 12.4 排查前先确认「跑的是当前构建」
+
+UI 表现异常时，**先排除进程 stale**，再怀疑代码：
+
+- [ ] 进程启动时间 vs `ai-toolbox.exe` 编译时间（进程更早 = 跑的是旧二进制）
+- [ ] `PRAGMA user_version` vs `TARGET_SCHEMA_VERSION`（不相等 = 迁移没跑）
+
+> 曾出现：前端 Vite 热更新到最新代码，后端进程却是 14 小时前启动的，DB 停在旧 schema。表现为「后端命令报错」，实际代码根本没生效，排查绕了很远。
+
+### 12.5 建议加回归测试的位置
 
 | 场景 | 参考 |
 |------|------|
 | 归档路径保留子目录层级 | `settings/backup/utils.rs:4560`（zcode 回归测试） |
+| 业务 id 含冒号的往返读取 | `zcode/adapter.rs` 的 `managed_provider_id_survives_the_db_round_trip`（见 2.1） |
 | 自定义根目录下 MCP/Skills 路径解析 | 需新写（当前 zcode 缺这个测试，所以 bug 没被发现） |
 | 老库 backfill 默认映射 | `wsl/commands.rs` 的 versioned mapping 测试 |
 
@@ -964,6 +1095,40 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 | 16 | zcode：`format_configs.rs` 无专用格式 | `timeoutMs` 写成通用 `timeout`，CLI 静默丢值 | 加 `ZCODE_FORMAT` |
 | 17 | 共享组件：`omoNative.model.*` / `hermes.model.thinkingLevelHint` 整组键不存在 | 页面渲染字面键名 | 改为 `common.model.*` |
 | 18 | 共享组件：`ModelFormModal` 覆盖值存 i18n key | `i18n:prune` 把 key 判为未使用并删除 | 覆盖值存 `t(key)` 的结果（已是终态文本） |
+| 19 | zcode：迁移共享组件时保留 `layout="vertical"` | 标签在输入框上方，与其余 5 个 CLI 全不同 | 改 `horizontal` + `labelCol`/`wrapperCol`（见 4.0.2-A） |
+| 20 | zcode：API Key 用朴素 `Input.Password` | 缺显示/隐藏按钮，4/5 的 CLI 都有 | 改 `masked input + addonAfter`（见 4.0.2-C） |
+| 21 | zcode：渠道字段排在第 3、4 位且分两行 | 用户第一眼看到「名称」而非「选渠道」 | 提为第一行，左渠道 + 右格式（见 4.0.2-B） |
+| 22 | zcode：用 `allowClear` + placeholder 表达「不选」 | 用户看不出「留空 = 自定义」 | 加显式「自定义」选项（见 4.0.2-D） |
+| 23 | zcode：给非网关 CLI 加计费/请求头/改写分区 | 填了没有代码读，且写进 `meta` 造成"已生效"假象 | `show*=false` + 不合并 meta（见 4.0.3） |
+| 24 | zcode：卡片详情渲染三行（含 provider id） | 与 Codex 的一行形态不符；id 是名称的 slug 副本 | 合并为一行并去掉 id（见 4.0.2-E） |
+| 25 | zcode：卡片的「应用」用 default 按钮 | 其他 CLI 全是 `type="link"` | 改 `type="link"` + `CheckOutlined`（见 4.0.2-E） |
+| 26 | zcode：`ModelListSection` 只传 1 个 handler | 工具栏只有「添加模型」，看起来像设计如此 | 补齐 test / fetch / batchDelete（见 4.0.2-F） |
+| 27 | zcode：`db_clean_id` 剥离业务 ID 的 `custom:` 前缀 | 写库成功但读回 ID 被篡改，后续操作全报 not found | adapter 读原始 id + 回归测试（见 2.1） |
+| 28 | zcode：模板加载 `.catch()` 只 `console.error` | 后端调用失败表现为「暂无数据」，排查绕远路 | 改成可见错误提示 |
+
+### 13.1 静默失效的三种模式（归纳）
+
+上表 28 条坑可以归成三类，识别出模式就能提前防：
+
+**模式一：白名单 / 映射表漏项。** 用一个手工维护的列表去 gate 行为，新增实体时漏改一处 → 该实体永久静默失效。
+> 例：#2 `TAB_TO_MODULE`、#13 `detection.rs` 白名单、#15 `wsl_module_for_reapply_label`、#5 kimi Gateway 注册。
+>
+> **对策**：优先让共享 resolver 自己处理未知 key（返回 `None` 后走兜底），而不是在调用侧维护副本列表。见 7.2 的结构性修法。
+
+**模式二：可选 prop 决定渲染，漏传看起来像设计如此。** 组件按「传了才渲染」组织 UI，漏传一个 handler → 少一个按钮/分区，且**没有任何报错**。
+> 例：#26 `ModelListSection` 工具栏、#23 `ProviderFormSections` 分区。
+>
+> **对策**：迁移时**枚举组件的全部可选 prop**，逐个决定传/不传并记录理由（4.0.2-F）。
+
+**模式三：错误被吞掉。** `catch` 只打 console，UI 呈现为正常空态。
+> 例：#28 模板加载失败显示「暂无数据」。
+>
+> **对策**：`catch` 必须给用户可见反馈，除非该失败确实无需用户知晓（此时要写明理由）。
+
+**反向模式（不是坑但容易误判）：进程 stales。**
+> 排查 UI 异常前，**先确认运行中的进程是当前构建**。曾出现：前端 Vite 热更新到最新代码，而后端进程是 14 小时前启动的旧二进制，DB 迁移也没跑 → 表现为「后端命令不存在/报错」，实际是代码根本没生效。
+>
+> **快速核对**：进程启动时间 vs `ai-toolbox.exe` 编译时间；`PRAGMA user_version` vs `TARGET_SCHEMA_VERSION`。
 
 ---
 
@@ -976,21 +1141,21 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 
 > ZCode **未做**：Gateway 接管、`CliManualPathSetting`（页面有「更多选项」但只是配置弹窗；ZCode 模块本身不 spawn CLI，故无 cli_resolver 需求）、`docs/plan` 文档。这些是可选阶段——反过来说，**如果新工具需要调用 CLI**，cli_resolver 与手动路径入口就是必需项。
 
-### A.1 共享组件改造后的「标准形态」（ZCode 是范本）
+### A.1 共享组件对照表
 
-ZCode 后来做了一次前端改造，把页面从自建组件切到共享组件。**新 CLI 应直接照抄这个形态，而不是重写一遍**：
+**参照 CLI 是 Codex，不是 ZCode**（见 4.0.1）。下表只说明「哪个关注点该用哪个共享组件」，具体形态必须按 §4.0.2 的清单对着 Codex 逐项核对。
 
 | 关注点 | 用共享组件 | 备注 |
 |--------|-----------|------|
 | 页面头部 | `CodingPageHeader` | 无文案 props；所有标签走 `common.*` |
 | 供应商列表 | `ProviderListSection` | `emptyTextHint` 是唯一的空态扩展点 |
-| 供应商卡片 | `ProviderCard` | 无插槽；模型区用 `ModelListSection` |
-| 模型列表 | `ModelListSection` | `renderModelExtraActions` 收 `rowKey` 参数 |
-| 供应商表单 | `ProviderFormSections` | 计费 / 自定义头 / 模型重写三块共用 |
+| 供应商卡片 | 模块内卡片（参照 `CodexProviderCard`） | 字段区差异大，不强行用通用 `ProviderCard` |
+| 模型列表 | `ModelListSection` | **枚举全部可选 prop 逐个决定传/不传**（4.0.2-F） |
+| 供应商表单 | `ProviderFormSections` | 计费 / 自定义头 / 模型重写三块**只对网关 CLI 显示**（4.0.3） |
 | 模型表单 | `ModelFormModal` | 差异走 `messageOverrides`（值是**已翻译文本**，不是 key） |
 | 通用配置编辑 | `JsonEditor` | `onChange(parsed, isValid)` + `onRawChange(raw)` 配合使用 |
 
-**ZCode 供应商是「Codex 形态」**：支持自定义模型目录，因此表单里**不含模型编辑**（模型在卡片上增删改），保存时要把已存模型原样带回去，否则会清空模型目录：
+**「支持自定义模型」形态的供应商表单不含模型编辑**：模型在卡片上增删改，保存时要把已存模型原样带回去，否则会清空模型目录：
 
 ```tsx
 // Models are edited on the provider card, not here. Reuse whatever the
@@ -1010,10 +1175,18 @@ const existingModels = provider
 
 > `cli/config.json` 里含明文凭据（Tavily / Firecrawl / GitHub token / Context7 key）。做演示或截图时注意遮挡。
 
+### A.2 ZCode 的已知遗留
+
+| 项 | 状态 |
+|----|------|
+| `detection.rs` 4 个 `*_with_db*` 白名单漏 zcode | 未修，见 7.2 |
+| ZCode 不在 `GatewayCliKey::supported_mvp()` | 设计如此（模块不 spawn CLI），故无 Gateway 接管与 cli_resolver |
+
 ---
 
 ## 何时更新本文件
 
-- 新增 CLI 工具完成后，把新踩的坑补进第 13 节
+- 新增 CLI 工具完成后，把新踩的坑补进第 13 节；若是**新类型**的坑，补进 13.1 的模式归纳
 - 发现清单项过时或新增了硬编码清单，同步更新第 3 节并**同时**修正根 `AGENTS.md` 的对应章节
+- 出现新的「编译通过但形态不对」返工，把漏掉的核对项补进 4.0.2
 - 本文件与根 `AGENTS.md` 的「Tab / Page-Key Allowlist Rules」是配套关系：后者是规则，前者是流程
