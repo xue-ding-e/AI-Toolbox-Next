@@ -59,8 +59,12 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   onCancel,
   onSaved,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [form] = Form.useForm<ZcodeProviderFormValues>();
+  // Same label/wrapper split as every other provider form (kimi / openclaw /
+  // codex): labels sit in a left column rather than above the field.
+  const labelCol = { span: i18n.language === 'zh-CN' ? 4 : 6 };
+  const wrapperCol = { span: 20 };
   const [templates, setTemplates] = React.useState<ZcodeProviderTemplate[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [billingConfig, setBillingConfig] = React.useState<BillingConfigState>(() =>
@@ -134,9 +138,7 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
     const providerId = values.providerId?.trim() || buildZcodeProviderId(values.name);
     if (providerId.startsWith('builtin:') || providerId.startsWith('account:')) {
       void message.error(
-        t('zcode.form.reservedId', {
-          defaultValue: '`builtin:` 与 `account:` 前缀由 ZCode 保留，请换一个 ID。',
-        }),
+        t('zcode.form.reservedId'),
       );
       return;
     }
@@ -221,78 +223,72 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
       open={open}
       title={
         isEditing
-          ? t('zcode.form.editTitle', { defaultValue: '编辑供应商' })
-          : t('zcode.form.addTitle', { defaultValue: '添加供应商' })
+          ? t('zcode.form.editTitle')
+          : t('zcode.form.addTitle')
       }
       width={720}
       onCancel={onCancel}
       onOk={() => void handleSubmit()}
       confirmLoading={saving}
-      okText={t('common.save', { defaultValue: '保存' })}
-      cancelText={t('common.cancel', { defaultValue: '取消' })}
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
       destroyOnHidden
     >
-      <Form form={form} layout="vertical">
-                <Form.Item
-                  name="name"
-                  label={t('zcode.form.name', { defaultValue: '名称' })}
-                  rules={[{ required: true, message: t('common.required', { defaultValue: '必填' }) }]}
-                >
-                  <Input placeholder="DeepSeek" />
-                </Form.Item>
-                <Form.Item
-                  name="providerId"
-                  label="Provider ID"
-                  extra={
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      {t('zcode.form.providerIdHint', {
-                        defaultValue:
-                          '写入 ZCode 的稳定标识，留空则按名称自动生成。创建后不建议修改。',
-                      })}
-                    </Text>
-                  }
-                >
-                  <Input placeholder="custom:deepseek" disabled={isEditing} />
-                </Form.Item>
-                <Form.Item
-                  name="templateId"
-                  label={t('zcode.form.template', { defaultValue: '内置模板' })}
-                  extra={
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      {t('zcode.form.templateHint', {
-                        defaultValue:
-                          '选择模板后，ZCode 会沿用该供应商的请求格式与模型能力，只需填写凭据。',
-                      })}
-                    </Text>
-                  }
-                >
-                  <Select
-                    allowClear
-                    placeholder={t('zcode.form.templatePlaceholder', { defaultValue: '不使用模板' })}
-                    onChange={handleTemplateChange}
-                    options={templates.map((template) => ({
-                      value: template.templateId,
-                      label: template.name,
-                    }))}
-                  />
-                </Form.Item>
-                <Form.Item
-                  name="apiType"
-                  label={t('zcode.form.apiType', { defaultValue: 'API 格式' })}
-                  rules={[{ required: true }]}
-                >
-                  <Select options={ZCODE_API_TYPES.map((item) => ({ ...item }))} />
-                </Form.Item>
-                <Form.Item
-                  name="baseUrl"
-                  label="Base URL"
-                  rules={[{ required: true, message: t('common.required', { defaultValue: '必填' }) }]}
-                >
-                  <Input placeholder="https://api.deepseek.com/anthropic" />
-                </Form.Item>
-                <Form.Item name="apiKey" label="API Key">
-                  <Input.Password placeholder="sk-..." />
-                </Form.Item>
+      <Form form={form} layout="horizontal" labelCol={labelCol} wrapperCol={wrapperCol}>
+        <Form.Item
+          name="name"
+          label={t('zcode.form.name')}
+          rules={[{ required: true, message: t('common.required') }]}
+        >
+          <Input placeholder="DeepSeek" />
+        </Form.Item>
+        <Form.Item
+          name="providerId"
+          label="Provider ID"
+          extra={
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {t('zcode.form.providerIdHint')}
+            </Text>
+          }
+        >
+          <Input placeholder="custom:deepseek" disabled={isEditing} />
+        </Form.Item>
+        <Form.Item
+          name="templateId"
+          label={t('zcode.form.template')}
+          extra={
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {t('zcode.form.templateHint')}
+            </Text>
+          }
+        >
+          <Select
+            allowClear
+            placeholder={t('zcode.form.templatePlaceholder')}
+            onChange={handleTemplateChange}
+            options={templates.map((template) => ({
+              value: template.templateId,
+              label: template.name,
+            }))}
+          />
+        </Form.Item>
+        <Form.Item
+          name="apiType"
+          label={t('zcode.form.apiType')}
+          rules={[{ required: true }]}
+        >
+          <Select options={ZCODE_API_TYPES.map((item) => ({ ...item }))} />
+        </Form.Item>
+        <Form.Item
+          name="baseUrl"
+          label="Base URL"
+          rules={[{ required: true, message: t('common.required') }]}
+        >
+          <Input placeholder="https://api.deepseek.com/anthropic" />
+        </Form.Item>
+        <Form.Item name="apiKey" label="API Key">
+          <Input.Password placeholder="sk-..." />
+        </Form.Item>
         <ProviderFormSections
           editable
           billing={billingConfig}
