@@ -160,51 +160,68 @@ pub fn resolve_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
         .and_then(|path| resolve_storage_path(path))
 }
 
-pub fn resolve_mcp_config_path_with_db(
+/// Tools whose root the generic `runtime_location` resolver does not track, so
+/// they keep a dedicated DB-priority lookup here. Everything else falls through
+/// to `runtime_location`, which returns `None` for keys it does not know and
+/// lets the caller fall back to the static `BUILTIN_TOOLS` path.
+///
+/// Keeping a per-tool allowlist here instead of calling the resolver for every
+/// key meant the two lists could drift: zcode was registered in
+/// `runtime_location` but missing from the allowlist, so a custom root directory
+/// was silently ignored on the MCP and Skills pages.
+fn resolve_special_mcp_config_path_with_db(
     db: &crate::db::SqliteDbState,
     tool: &RuntimeTool,
 ) -> Option<PathBuf> {
     match tool.key.as_str() {
-        "opencode" | "claude_code" | "codex" | "grok" | "kimi" | "openclaw" | "pi" | "oh_my_pi"
-        | "omo_native" => {
-            crate::coding::runtime_location::get_tool_mcp_config_path_sync(db, &tool.key)
-                .or_else(|| resolve_mcp_config_path(tool))
-        }
         // Hermes/dsh's file operations and runtime_location's Direct status use
         // these same DB-priority resolvers (custom > env > shell > default).
         // Without this branch, MCP sync would ignore a user-customized config dir.
         "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
             .ok()
-            .map(|info| PathBuf::from(info.path).join("config.yaml"))
-            .or_else(|| resolve_mcp_config_path(tool)),
+            .map(|info| PathBuf::from(info.path).join("config.yaml")),
         "dsh" => crate::coding::dsh::commands::get_dsh_root_path_info_from_db(db)
             .ok()
-            .map(|info| PathBuf::from(info.path).join("cordis.patch.yml"))
-            .or_else(|| resolve_mcp_config_path(tool)),
-        _ => resolve_mcp_config_path(tool),
+            .map(|info| PathBuf::from(info.path).join("cordis.patch.yml")),
+        _ => None,
     }
+}
+
+pub fn resolve_mcp_config_path_with_db(
+    db: &crate::db::SqliteDbState,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
+    resolve_special_mcp_config_path_with_db(db, tool)
+        .or_else(|| {
+            crate::coding::runtime_location::get_tool_mcp_config_path_sync(db, &tool.key)
+        })
+        .or_else(|| resolve_mcp_config_path(tool))
 }
 
 pub async fn resolve_mcp_config_path_with_db_async(
     db: &crate::db::SqliteDbState,
     tool: &RuntimeTool,
 ) -> Option<PathBuf> {
+    match resolve_special_mcp_config_path_with_db(db, tool) {
+        Some(path) => Some(path),
+        None => crate::coding::runtime_location::get_tool_mcp_config_path_async(db, &tool.key)
+            .await
+            .or_else(|| resolve_mcp_config_path(tool)),
+    }
+}
+
+/// Skills counterpart of `resolve_special_mcp_config_path_with_db`. Hermes is
+/// the only tool here: its skills dir is `<hermes_root>/skills`, and the hermes
+/// root comes from a DB-priority lookup rather than the generic module map.
+fn resolve_special_skills_path_with_db(
+    db: &crate::db::SqliteDbState,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
     match tool.key.as_str() {
-        "opencode" | "claude_code" | "codex" | "grok" | "kimi" | "openclaw" | "pi" | "oh_my_pi"
-        | "omo_native" => {
-            crate::coding::runtime_location::get_tool_mcp_config_path_async(db, &tool.key)
-                .await
-                .or_else(|| resolve_mcp_config_path(tool))
-        }
         "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
             .ok()
-            .map(|info| PathBuf::from(info.path).join("config.yaml"))
-            .or_else(|| resolve_mcp_config_path(tool)),
-        "dsh" => crate::coding::dsh::commands::get_dsh_root_path_info_from_db(db)
-            .ok()
-            .map(|info| PathBuf::from(info.path).join("cordis.patch.yml"))
-            .or_else(|| resolve_mcp_config_path(tool)),
-        _ => resolve_mcp_config_path(tool),
+            .map(|info| PathBuf::from(info.path).join("skills")),
+        _ => None,
     }
 }
 
@@ -212,37 +229,20 @@ pub fn resolve_skills_path_with_db(
     db: &crate::db::SqliteDbState,
     tool: &RuntimeTool,
 ) -> Option<PathBuf> {
-    match tool.key.as_str() {
-        "opencode" | "claude_code" | "codex" | "grok" | "kimi" | "openclaw" | "pi" | "oh_my_pi"
-        | "omo_native" => {
-            crate::coding::runtime_location::get_tool_skills_path_sync(db, &tool.key)
-                .or_else(|| resolve_skills_path(tool))
-        }
-        // Hermes skills dir = <hermes_root>/skills, resolved via DB-priority logic.
-        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
-            .ok()
-            .map(|info| PathBuf::from(info.path).join("skills"))
-            .or_else(|| resolve_skills_path(tool)),
-        _ => resolve_skills_path(tool),
-    }
+    resolve_special_skills_path_with_db(db, tool)
+        .or_else(|| crate::coding::runtime_location::get_tool_skills_path_sync(db, &tool.key))
+        .or_else(|| resolve_skills_path(tool))
 }
 
 pub async fn resolve_skills_path_with_db_async(
     db: &crate::db::SqliteDbState,
     tool: &RuntimeTool,
 ) -> Option<PathBuf> {
-    match tool.key.as_str() {
-        "opencode" | "claude_code" | "codex" | "grok" | "kimi" | "openclaw" | "pi" | "oh_my_pi"
-        | "omo_native" => {
-            crate::coding::runtime_location::get_tool_skills_path_async(db, &tool.key)
-                .await
-                .or_else(|| resolve_skills_path(tool))
-        }
-        "hermes" => crate::coding::hermes::commands::get_hermes_root_path_info_from_db(db)
-            .ok()
-            .map(|info| PathBuf::from(info.path).join("skills"))
+    match resolve_special_skills_path_with_db(db, tool) {
+        Some(path) => Some(path),
+        None => crate::coding::runtime_location::get_tool_skills_path_async(db, &tool.key)
+            .await
             .or_else(|| resolve_skills_path(tool)),
-        _ => resolve_skills_path(tool),
     }
 }
 
