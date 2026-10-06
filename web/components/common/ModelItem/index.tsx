@@ -4,7 +4,7 @@ import { EditOutlined, DeleteOutlined, HolderOutlined, CopyOutlined, CheckCircle
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { ModelDisplayData, I18nPrefix } from '@/components/common/ProviderCard/types';
+import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
 import styles from './styles.module.less';
 
 const { Text } = Typography;
@@ -30,8 +30,6 @@ interface ModelItemProps {
    *  "set as auto-review model"). Hidden while a selection mode is active. */
   extraActions?: React.ReactNode;
 
-  /** i18n prefix for translations */
-  i18nPrefix?: I18nPrefix;
   /**
    * When true, content fill is transparent so a selected parent card tint shows
    * through. Borders stay. Used by Grok multi-model lists.
@@ -54,7 +52,6 @@ const ModelItem: React.FC<ModelItemProps> = ({
   selected = false,
   onSelectChange,
   extraActions,
-  i18nPrefix = 'settings',
   transparentBackground = false,
 }) => {
   const { t } = useTranslation();
@@ -111,7 +108,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
         <Checkbox
           checked={selected}
           onChange={(event) => onSelectChange(event.target.checked)}
-          aria-label={t(`${i18nPrefix}.model.selectModel`, { name: model.name })}
+          aria-label={t('common.model.selectModel', { name: model.name })}
         />
       )}
 
@@ -125,16 +122,16 @@ const ModelItem: React.FC<ModelItemProps> = ({
           </Text>
           {model.isPrimary && (
             <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-              · {t(`${i18nPrefix}.model.currentPrimary`)}
+              · {t('common.model.currentPrimary')}
             </Text>
           )}
         </div>
         {hasLimits && (
           <div style={{ marginTop: 2 }}>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {model.contextLimit !== undefined && `${t(`${i18nPrefix}.model.contextLimit`)}: ${model.contextLimit.toLocaleString()}`}
+              {model.contextLimit !== undefined && `${t('common.model.contextLimit')}: ${model.contextLimit.toLocaleString()}`}
               {model.contextLimit !== undefined && model.outputLimit !== undefined && ' | '}
-              {model.outputLimit !== undefined && `${t(`${i18nPrefix}.model.outputLimit`)}: ${model.outputLimit.toLocaleString()}`}
+              {model.outputLimit !== undefined && `${t('common.model.outputLimit')}: ${model.outputLimit.toLocaleString()}`}
             </Text>
           </div>
         )}
@@ -156,8 +153,8 @@ const ModelItem: React.FC<ModelItemProps> = ({
             disabled={model.isPrimary}
           >
             {model.isPrimary
-              ? t(`${i18nPrefix}.model.alreadyPrimary`)
-              : t(`${i18nPrefix}.model.setAsPrimary`)}
+              ? t('common.model.alreadyPrimary')
+              : t('common.model.setAsPrimary')}
           </Button>
         )}
         {!selectionMode && onEdit && (
@@ -168,8 +165,8 @@ const ModelItem: React.FC<ModelItemProps> = ({
         )}
         {!selectionMode && onDelete && (
           <Popconfirm
-            title={t(`${i18nPrefix}.model.deleteModel`)}
-            description={t(`${i18nPrefix}.model.confirmDelete`, { name: model.name })}
+            title={t('common.model.deleteModel')}
+            description={t('common.model.confirmDelete', { name: model.name })}
             onConfirm={onDelete}
             okText={t('common.confirm')}
             cancelText={t('common.cancel')}

@@ -322,7 +322,7 @@ const GrokPage: React.FC = () => {
     },
     {
       id: 'grok-global-prompt',
-      title: t('grok.prompt.title'),
+      title: t('common.prompt.title'),
       order: 2,
     },
     {
@@ -2076,11 +2076,11 @@ const GrokPage: React.FC = () => {
         <div
           id="grok-global-prompt"
           data-sidebar-section="true"
-          data-sidebar-title={t('grok.prompt.title')}
+          data-sidebar-title={t('common.prompt.title')}
         >
           <GlobalPromptSettings
             key={`grok-prompt-${promptExpandNonce}`}
-            translationKeyPrefix="grok.prompt"
+            toolName="Grok"
             promptFileName="AGENTS.md"
             service={grokPromptApi}
             collapseKey="grok-prompt"

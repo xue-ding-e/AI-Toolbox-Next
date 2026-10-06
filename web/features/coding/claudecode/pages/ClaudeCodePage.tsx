@@ -309,7 +309,7 @@ const ClaudeCodePage: React.FC = () => {
     },
     {
       id: 'claudecode-global-prompt',
-      title: t('claudecode.prompt.title'),
+      title: t('common.prompt.title'),
       order: 2,
     },
     {
@@ -1322,9 +1322,8 @@ const ClaudeCodePage: React.FC = () => {
 
         {/* Provider 列表 */}
         <ProviderListSection
-          i18nPrefix="claudecode"
-          emptyText={t('claudecode.emptyText')}
           sectionId="claudecode-providers"
+          emptyTextHint={t('claudecode.importFromOpenCode')}
           collapsed={providerListCollapsed}
           onCollapsedChange={setProviderListCollapsed}
           loading={loading}
@@ -1439,11 +1438,11 @@ const ClaudeCodePage: React.FC = () => {
         <div
           id="claudecode-global-prompt"
           data-sidebar-section="true"
-          data-sidebar-title={t('claudecode.prompt.title')}
+          data-sidebar-title={t('common.prompt.title')}
         >
           <GlobalPromptSettings
             key={`claudecode-prompt-${promptExpandNonce}`}
-            translationKeyPrefix="claudecode.prompt"
+            toolName="Claude Code"
             promptFileName="CLAUDE.md"
             service={claudeCodePromptApi}
             collapseKey="claudecode-prompt"

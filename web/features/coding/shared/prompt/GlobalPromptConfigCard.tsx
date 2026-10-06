@@ -23,7 +23,6 @@ const { Text } = Typography;
 
 interface GlobalPromptConfigCardProps {
   config: GlobalPromptConfig;
-  translationKeyPrefix: string;
   onEdit: (config: GlobalPromptConfig) => void;
   onDelete: (config: GlobalPromptConfig) => void;
   onApply: (config: GlobalPromptConfig) => void;
@@ -32,7 +31,6 @@ interface GlobalPromptConfigCardProps {
 
 const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   config,
-  translationKeyPrefix,
   onEdit,
   onDelete,
   onApply,
@@ -122,19 +120,19 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
                 <Text strong className={styles.cardName}>{config.name}</Text>
                 {isLocalConfig && (
                   <Text type="secondary" className={styles.cardHint}>
-                    ({t(`${translationKeyPrefix}.localConfigHint`)})
+                    ({t('common.prompt.localConfigHint')})
                   </Text>
                 )}
                 {showAsApplied && (
                   <AppliedTag>
-                    {t(`${translationKeyPrefix}.applied`)}
+                    {t('common.prompt.applied')}
                   </AppliedTag>
                 )}
               </div>
               <Space size={4}>
                 {!isLocalConfig && !config.isApplied && (
                   <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => onApply(config)}>
-                    {t(`${translationKeyPrefix}.apply`)}
+                    {t('common.prompt.apply')}
                   </Button>
                 )}
                 <Dropdown menu={{ items: menuItems }} trigger={['click']}>
@@ -155,8 +153,8 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
                       size="small"
                       className={styles.expandToggle}
                       icon={<UpOutlined />}
-                      aria-label={t(`${translationKeyPrefix}.collapse`)}
-                      title={t(`${translationKeyPrefix}.collapse`)}
+                      aria-label={t('common.prompt.collapse')}
+                      title={t('common.prompt.collapse')}
                       onClick={() => setExpanded(false)}
                     />
                   </div>
@@ -174,8 +172,8 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
                     size="small"
                     className={styles.expandToggle}
                     icon={<DownOutlined />}
-                    aria-label={t(`${translationKeyPrefix}.expand`)}
-                    title={t(`${translationKeyPrefix}.expand`)}
+                    aria-label={t('common.prompt.expand')}
+                    title={t('common.prompt.expand')}
                     onClick={() => setExpanded(true)}
                   />
                 </div>

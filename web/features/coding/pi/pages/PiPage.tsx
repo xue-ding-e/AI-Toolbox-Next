@@ -615,7 +615,7 @@ const PiPage: React.FC = () => {
     },
     {
       id: 'pi-global-prompt',
-      title: t('pi.prompt.title'),
+      title: t('common.prompt.title'),
       order: 4,
     },
     {
@@ -1945,7 +1945,6 @@ const PiPage: React.FC = () => {
         onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(provider.providerKey, modelId, selected)}
         modelsDraggable={!isBatchDeleteMode}
         onReorderModels={(modelIds) => handleReorderModels(provider, modelIds)}
-        i18nPrefix="pi"
       />
     );
   };
@@ -2229,10 +2228,10 @@ const PiPage: React.FC = () => {
             id="pi-global-prompt"
             className={`${styles.piSection} ${styles.promptSection}`}
             data-pi-sidebar-section="true"
-            data-sidebar-title={t('pi.prompt.title')}
+            data-sidebar-title={t('common.prompt.title')}
           >
             <GlobalPromptSettings
-              translationKeyPrefix="pi.prompt"
+              toolName="Pi"
               promptFileName="AGENTS.md"
               service={piPromptApi}
               collapseKey="pi-prompt"
@@ -2524,10 +2523,24 @@ const PiPage: React.FC = () => {
           npmType={piModelModal
             ? piApiToSdkName(getStringField(piModelModal.provider.modelsProvider ?? {}, 'api'))
             : undefined}
+          toolName="Pi"
+          messageOverrides={{
+            name: t('pi.model.name'),
+            namePlaceholder: t('pi.model.namePlaceholder'),
+            nameOptionalPlaceholder: t('pi.model.nameOptionalPlaceholder'),
+            idPlaceholder: t('pi.model.idPlaceholder'),
+            contextLimit: t('pi.model.contextLimit'),
+            contextLimitPlaceholder: t('pi.model.contextLimitPlaceholder'),
+            outputLimit: t('pi.model.outputLimit'),
+            outputLimitPlaceholder: t('pi.model.outputLimitPlaceholder'),
+            reasoning: t('pi.model.reasoning'),
+            costHint: t('pi.model.costHint'),
+            thinkingLevelHint: t('pi.model.thinkingLevelHint'),
+            thinkingLevelMapHint: t('pi.model.thinkingLevelMapHint'),
+          }}
           onCancel={() => setPiModelModal(null)}
           onSuccess={handleSavePiModel}
           onDuplicateId={() => message.error(t('pi.model.idExists'))}
-          i18nPrefix="pi"
         />
 
         {fetchModelsProviderInfo && (
@@ -2553,7 +2566,6 @@ const PiPage: React.FC = () => {
           existingProviderIds={existingFavoriteProviderIds}
           title={t('pi.provider.importModalTitle')}
           emptyDescription={t('pi.provider.noFavoriteProviders')}
-          i18nPrefix="pi"
           providerFilter={(provider) => isFavoriteProviderForSource('pi', provider)}
           providerListTransform={transformPiFavoriteProviders}
         />

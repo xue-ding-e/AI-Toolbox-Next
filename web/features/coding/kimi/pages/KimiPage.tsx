@@ -318,7 +318,7 @@ const KimiPage: React.FC = () => {
 
   const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
     { id: 'kimi-providers', title: t('kimi.provider.title'), order: 1 },
-    { id: 'kimi-global-prompt', title: t('kimi.prompt.title'), order: 2 },
+    { id: 'kimi-global-prompt', title: t('common.prompt.title'), order: 2 },
     { id: 'kimi-plugins', title: t('kimi.plugins.title'), order: 3 },
     { id: 'kimi-session-manager', title: t('kimi.sessions'), order: 4 },
   ], [t]);
@@ -1203,11 +1203,11 @@ const KimiPage: React.FC = () => {
         />
       </div>
 
-      <div id="kimi-global-prompt" data-sidebar-section="true" data-sidebar-title={t('kimi.prompt.title')}>
+      <div id="kimi-global-prompt" data-sidebar-section="true" data-sidebar-title={t('common.prompt.title')}>
         <GlobalPromptSettings
           key={`kimi-prompt-${promptExpandNonce}`}
           service={kimiPromptApi}
-          translationKeyPrefix="kimi.prompt"
+          toolName="Kimi"
           promptFileName="AGENTS.md"
           collapseKey="kimi_prompt"
           defaultExpanded

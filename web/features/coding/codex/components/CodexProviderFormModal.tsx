@@ -1217,7 +1217,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         onCustomHeadersChange={setCustomHeaders}
         modelRewrites={modelRewrites}
         onModelRewritesChange={setModelRewrites}
-        i18nPrefix="codex"
         notesRows={2}
         notesResetKey={notesCollapseResetKey}
       />
@@ -1331,7 +1330,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           onCustomHeadersChange={setCustomHeaders}
           modelRewrites={modelRewrites}
           onModelRewritesChange={setModelRewrites}
-          i18nPrefix="codex"
           notesRows={2}
           notesResetKey={notesCollapseResetKey}
         />

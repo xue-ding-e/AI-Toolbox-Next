@@ -1310,7 +1310,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         onCustomHeadersChange={setCustomHeaders}
         modelRewrites={modelRewrites}
         onModelRewritesChange={setModelRewrites}
-        i18nPrefix="claudecode"
         notesRows={3}
         notesResetKey={notesCollapseResetKey}
       />
@@ -1391,7 +1390,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           onCustomHeadersChange={setCustomHeaders}
           modelRewrites={modelRewrites}
           onModelRewritesChange={setModelRewrites}
-          i18nPrefix="claudecode"
           notesRows={3}
           notesResetKey={notesCollapseResetKey}
         />

@@ -561,7 +561,7 @@ const OhMyPiPage: React.FC = () => {
     },
     {
       id: 'pi-global-prompt',
-      title: t('ohMyPi.prompt.title'),
+      title: t('common.prompt.title'),
       order: 5,
     },
     {
@@ -1936,7 +1936,6 @@ const OhMyPiPage: React.FC = () => {
         onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(provider.providerKey, modelId, selected)}
         modelsDraggable={!isBatchDeleteMode}
         onReorderModels={(modelIds) => handleReorderModels(provider, modelIds)}
-        i18nPrefix="ohMyPi"
       />
     );
   };
@@ -2236,10 +2235,10 @@ const OhMyPiPage: React.FC = () => {
             id="pi-global-prompt"
             className={`${styles.ompSection} ${styles.promptSection}`}
             data-pi-sidebar-section="true"
-            data-sidebar-title={t('ohMyPi.prompt.title')}
+            data-sidebar-title={t('common.prompt.title')}
           >
             <GlobalPromptSettings
-              translationKeyPrefix="ohMyPi.prompt"
+              toolName="Oh My Pi"
               promptFileName="AGENTS.md"
               service={ohMyPiPromptApi}
               collapseKey="pi-prompt"
@@ -2495,10 +2494,23 @@ const OhMyPiPage: React.FC = () => {
           npmType={ompModelModal
             ? ompApiToSdkName(getStringField(ompModelModal.provider.modelsProvider ?? {}, 'api'))
             : undefined}
+          toolName="Oh My Pi"
+          messageOverrides={{
+            name: t('ohMyPi.model.name'),
+            namePlaceholder: t('ohMyPi.model.namePlaceholder'),
+            nameOptionalPlaceholder: t('ohMyPi.model.nameOptionalPlaceholder'),
+            idPlaceholder: t('ohMyPi.model.idPlaceholder'),
+            contextLimit: t('ohMyPi.model.contextLimit'),
+            contextLimitPlaceholder: t('ohMyPi.model.contextLimitPlaceholder'),
+            outputLimit: t('ohMyPi.model.outputLimit'),
+            outputLimitPlaceholder: t('ohMyPi.model.outputLimitPlaceholder'),
+            reasoning: t('ohMyPi.model.reasoning'),
+            costHint: t('ohMyPi.model.costHint'),
+            thinkingLevelMapHint: t('ohMyPi.model.thinkingLevelMapHint'),
+          }}
           onCancel={() => setOmpModelModal(null)}
           onSuccess={handleSaveOmpModel}
           onDuplicateId={() => message.error(t('ohMyPi.model.idExists'))}
-          i18nPrefix="ohMyPi"
         />
 
         {fetchModelsProviderInfo && (
@@ -2524,7 +2536,6 @@ const OhMyPiPage: React.FC = () => {
           existingProviderIds={existingFavoriteProviderIds}
           title={t('ohMyPi.provider.importModalTitle')}
           emptyDescription={t('ohMyPi.provider.noFavoriteProviders')}
-          i18nPrefix="ohMyPi"
           providerFilter={(provider) => isFavoriteProviderForSource('omp', provider)}
           providerListTransform={transformOmpFavoriteProviders}
         />

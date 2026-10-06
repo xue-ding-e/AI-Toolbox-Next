@@ -24,13 +24,12 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import ModelItem from '@/components/common/ModelItem';
-import type { ModelDisplayData, I18nPrefix } from '@/components/common/ProviderCard/types';
+import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
 
 const { Text } = Typography;
 
 export interface ModelListSectionProps {
   /** i18n prefix for `model.*` labels. */
-  i18nPrefix: I18nPrefix;
 
   /** Models rendered as rows. Callers map their own shape to `ModelDisplayData`. */
   models: ModelDisplayData[];
@@ -98,7 +97,6 @@ export interface ModelListSectionProps {
  * Providers without a catalog (the Claude Code shape) simply do not render it.
  */
 const ModelListSection: React.FC<ModelListSectionProps> = ({
-  i18nPrefix,
   models,
   rowKeyOf = (model) => model.id,
   sectionKey,
@@ -169,7 +167,6 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
           onToggleSelection ? (selected) => onToggleSelection(rowKey, selected) : undefined
         }
         extraActions={renderModelExtraActions?.(model, rowKey)}
-        i18nPrefix={i18nPrefix}
       />
     );
   });
@@ -194,7 +191,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
               }}
             >
               <Text strong style={{ fontSize: 13 }}>
-                {t(`${i18nPrefix}.model.title`)} ({models.length})
+                {t(`common.model.title`)} ({models.length})
               </Text>
               <Space size={0} onClick={(event) => event.stopPropagation()}>
                 {onToggleBatchDeleteMode && (
@@ -206,8 +203,8 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
                     onClick={onToggleBatchDeleteMode}
                   >
                     {selectionMode
-                      ? t(`${i18nPrefix}.model.cancelBatchDelete`)
-                      : t(`${i18nPrefix}.model.batchDelete`)}
+                      ? t(`common.model.cancelBatchDelete`)
+                      : t(`common.model.batchDelete`)}
                   </Button>
                 )}
                 {selectionMode && onBatchDelete && (
@@ -219,7 +216,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
                     disabled={selectedIds.length === 0}
                     onClick={onBatchDelete}
                   >
-                    {t(`${i18nPrefix}.model.deleteSelected`, { count: selectedIds.length })}
+                    {t(`common.model.deleteSelected`, { count: selectedIds.length })}
                   </Button>
                 )}
                 {onTest && (
@@ -249,7 +246,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
                         disabled={fetchDisabled}
                       >
                         <CloudDownloadOutlined style={{ marginRight: 4 }} />
-                        {t(`${i18nPrefix}.fetchModels.button`)}
+                        {t(`common.model.fetchModels`)}
                       </Button>
                     </span>
                   </Tooltip>
@@ -262,7 +259,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
                     onClick={onAddModel}
                   >
                     <PlusOutlined style={{ marginRight: 4 }} />
-                    {t(`${i18nPrefix}.model.addModel`)}
+                    {t(`common.model.addModel`)}
                   </Button>
                 )}
               </Space>
@@ -274,7 +271,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
               {models.length === 0 ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={t(`${i18nPrefix}.model.emptyText`)}
+                  description={t(`common.model.emptyText`)}
                   style={{ margin: '8px 0' }}
                 />
               ) : canReorder ? (

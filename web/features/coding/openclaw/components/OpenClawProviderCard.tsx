@@ -192,7 +192,6 @@ const OpenClawProviderCard: React.FC<Props> = ({
           </Tooltip>
         </Space>
       }
-      i18nPrefix="openclaw"
     />
   );
 };

@@ -532,7 +532,7 @@ const CodexPage: React.FC = () => {
     },
     {
       id: 'codex-global-prompt',
-      title: t('codex.prompt.title'),
+      title: t('common.prompt.title'),
       order: 2,
     },
     {
@@ -2431,23 +2431,16 @@ const CodexPage: React.FC = () => {
         <CodingPageHeader
           title={t('codex.title')}
           docsUrl="https://developers.openai.com/codex/config-basic"
-          docsText={t('codex.viewDocs')}
           onPreviewConfig={appliedProviderId ? handlePreviewCurrentConfig : undefined}
-          configPathLabel={t('codex.configPath')}
           configPath={configPath || '~/.codex/config.toml'}
           onCustomizeConfig={() => setRootDirectoryModalOpen(true)}
-          customizeConfigText={t('codex.rootPathSource.customize')}
           onOpenFolder={handleOpenFolder}
-          openFolderText={t('codex.openFolder')}
           onRefresh={handleRefreshPage}
-          refreshText={t('codex.refreshConfig')}
           onMoreOptions={() => setSettingsModalOpen(true)}
         />
 
         {/* Provider List */}
         <ProviderListSection
-          i18nPrefix="codex"
-          emptyText={t('codex.emptyText')}
           sectionId="codex-providers"
           collapsed={providerListCollapsed}
           onCollapsedChange={setProviderListCollapsed}
@@ -2595,11 +2588,11 @@ const CodexPage: React.FC = () => {
         <div
           id="codex-global-prompt"
           data-sidebar-section="true"
-          data-sidebar-title={t('codex.prompt.title')}
+          data-sidebar-title={t('common.prompt.title')}
         >
           <GlobalPromptSettings
             key={`codex-prompt-${promptExpandNonce}`}
-            translationKeyPrefix="codex.prompt"
+            toolName="Codex"
             promptFileName="AGENTS.md"
             service={codexPromptApi}
             collapseKey="codex-prompt"

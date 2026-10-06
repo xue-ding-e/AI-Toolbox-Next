@@ -5,7 +5,6 @@ import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import JsonEditor from '@/components/common/JsonEditor';
-import type { I18nPrefix } from '@/components/common/ProviderCard/types';
 import {
   PRESET_MODELS,
   getPresetModelsVersion,
@@ -21,6 +20,34 @@ import { hasCompleteModelLimitPair } from '@/utils/modelLimits';
 import { normalizeVariantsForProviderNpm } from '@/utils/openCodeVariantCompat';
 
 const { Text } = Typography;
+
+/**
+ * Labels this form pulls from `common.model.*`. Tools whose wording genuinely
+ * differs pass a `messageOverrides` entry for the key; everything else shares
+ * the common string.
+ */
+export type ModelFormMessageKey =
+  | 'addModel' | 'editModel' | 'id' | 'idPlaceholder'
+  | 'name' | 'namePlaceholder' | 'nameOptionalPlaceholder'
+  | 'contextLimit' | 'contextLimitPlaceholder'
+  | 'outputLimit' | 'outputLimitPlaceholder'
+  | 'inputTypes' | 'inputTypesHint' | 'inputTypesPlaceholder'
+  | 'capabilities' | 'capabilitiesHint' | 'reasoning'
+  | 'thinkingLevel' | 'thinkingLevelHint' | 'thinkingLevelPlaceholder'
+  | 'thinkingLevelMap' | 'thinkingLevelMapHint'
+  | 'ompThinking' | 'ompThinkingHint'
+  | 'compat' | 'compatHint' | 'extraParams' | 'extraParamsHint'
+  | 'api' | 'apiHint' | 'apiPlaceholder'
+  | 'cost' | 'costHint' | 'costInput' | 'costOutput' | 'costCacheRead' | 'costCacheWrite'
+  | 'invalidCompat' | 'invalidExtraParams' | 'invalidThinkingLevelMap'
+  | 'selectPreset' | 'otherPresets'
+  | 'inputModalities' | 'inputModalitiesPlaceholder'
+  | 'outputModalities' | 'outputModalitiesPlaceholder' | 'modalitiesHint'
+  | 'toolCall' | 'temperatureSetting' | 'attachment'
+  | 'variants' | 'variantsHint' | 'invalidVariants'
+  | 'modalitiesBothRequired' | 'limitsBothRequired';
+
+export type ModelFormMessageOverrides = Partial<Record<ModelFormMessageKey, string>>;
 
 // Context limit options with display labels
 const CONTEXT_LIMIT_OPTIONS = [
@@ -143,8 +170,20 @@ interface ModelFormModalProps {
   /** Custom duplicate ID error handler */
   onDuplicateId?: (id: string) => void;
 
-  /** i18n prefix for translations */
-  i18nPrefix?: I18nPrefix;
+  /**
+   * Display name of the tool, interpolated into hints that name it
+   * (`capabilitiesHint`, `inputTypesHint`).
+   */
+  toolName?: string;
+  /**
+   * Per-key label overrides, as **i18n keys** (they still go through `t()`).
+   * Most labels resolve to `common.model.*`; only keys whose wording genuinely
+   * differs per tool (field semantics, example model ids) need an entry here,
+   * pointing at that tool's own locale key.
+   *
+   *   messageOverrides={{ idPlaceholder: 'dsh.model.idPlaceholder' }}
+   */
+  messageOverrides?: ModelFormMessageOverrides;
 }
 
 /**
@@ -177,7 +216,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   onCancel,
   onSuccess,
   onDuplicateId,
-  i18nPrefix = 'settings',
+  toolName,
+  messageOverrides,
 }) => {
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
@@ -618,27 +658,27 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       
       // Validate variants JSON if showing variants
       if (showVariants && !variantsValid) {
-        message.error(t('opencode.model.invalidVariants'));
+        message.error(t('common.model.invalidVariants'));
         return;
       }
 
       if (showThinkingLevelMap && !thinkingLevelMapValid) {
-        message.error(t(getKey('invalidThinkingLevelMap')));
+        message.error(getKey('invalidThinkingLevelMap'));
         return;
       }
 
       if (showOmpThinking && !ompThinkingValid) {
-        message.error(t(getKey('invalidThinkingLevelMap')));
+        message.error(getKey('invalidThinkingLevelMap'));
         return;
       }
 
       if (showCompat && !compatValid) {
-        message.error(t(getKey('invalidCompat')));
+        message.error(getKey('invalidCompat'));
         return;
       }
 
       if (showExtraParams && !extraParamsValid) {
-        message.error(t(getKey('invalidExtraParams')));
+        message.error(getKey('invalidExtraParams'));
         return;
       }
 
@@ -647,14 +687,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         const hasInput = inputModalities.length > 0;
         const hasOutput = outputModalities.length > 0;
         if (hasInput !== hasOutput) {
-          message.error(t('opencode.model.modalitiesBothRequired'));
+          message.error(t('common.model.modalitiesBothRequired'));
           return;
         }
       }
 
       if (requireCompleteLimitPair) {
         if (!hasCompleteModelLimitPair(values.contextLimit, values.outputLimit)) {
-          message.error(t('opencode.model.limitsBothRequired'));
+          message.error(t('common.model.limitsBothRequired'));
           return;
         }
       }
@@ -747,11 +787,19 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   };
 
   // Build i18n keys based on prefix
-  const getKey = (key: string) => `${i18nPrefix}.model.${key}`;
+  /**
+   * Resolves a label: a caller override is already-translated text, otherwise
+   * fall back to the shared `common.model.*` key. Returning the override
+   * verbatim (rather than a key) keeps the strings visible to the i18n
+   * checker — an override holding a key would be invisible to static analysis
+   * and get pruned as unused.
+   */
+  const getKey = (key: ModelFormMessageKey, params?: Record<string, unknown>) =>
+    messageOverrides?.[key] ?? t(`common.model.${key}`, params);
 
   const limitRules = limitRequired
     ? [
-        { required: true, message: t(getKey('contextLimitPlaceholder')) },
+        { required: true, message: getKey('contextLimitPlaceholder') },
         {
           validator: (_: unknown, value: unknown) => {
             if (value && !/^\d+$/.test(String(value))) {
@@ -774,7 +822,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
   const outputLimitRules = limitRequired
     ? [
-        { required: true, message: t(getKey('outputLimitPlaceholder')) },
+        { required: true, message: getKey('outputLimitPlaceholder') },
         {
           validator: (_: unknown, value: unknown) => {
             if (value && !/^\d+$/.test(String(value))) {
@@ -797,7 +845,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
   return (
     <Modal
-      title={isEdit ? t(getKey('editModel')) : t(getKey('addModel'))}
+      title={isEdit ? getKey('editModel') : getKey('addModel')}
       open={open}
       onCancel={onCancel}
       footer={[
@@ -818,17 +866,17 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         style={{ marginTop: 24 }}
       >
         <Form.Item
-          label={t(getKey('id'))}
+          label={getKey('id')}
           required
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Form.Item
               name="id"
               noStyle
-              rules={[{ required: true, message: t(getKey('idPlaceholder')) }]}
+              rules={[{ required: true, message: getKey('idPlaceholder') }]}
             >
               <Input
-                placeholder={t(getKey('idPlaceholder'))}
+                placeholder={getKey('idPlaceholder')}
                 disabled={isEdit}
                 style={{ flex: 1 }}
               />
@@ -846,7 +894,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 }}
                 onClick={() => setPresetsExpanded(!presetsExpanded)}
               >
-                {t('opencode.model.selectPreset')}
+                {t('common.model.selectPreset')}
                 {presetsExpanded ? ' ▴' : ' ▾'}
               </a>
             )}
@@ -872,7 +920,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             {otherPresetModels.length > 0 && (
               <>
                 <Divider style={{ margin: '12px 0', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-                  {t('opencode.model.otherPresets')}
+                  {t('common.model.otherPresets')}
                 </Divider>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {otherPresetModels.map((preset) => (
@@ -894,15 +942,15 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         )}
 
         <Form.Item
-          label={t(getKey('name'))}
+          label={getKey('name')}
           name="name"
-          rules={nameRequired ? [{ required: true, message: t(getKey('namePlaceholder')) }] : []}
+          rules={nameRequired ? [{ required: true, message: getKey('namePlaceholder') }] : []}
         >
-          <Input placeholder={nameRequired ? t(getKey('namePlaceholder')) : t(getKey('nameOptionalPlaceholder'))} />
+          <Input placeholder={nameRequired ? getKey('namePlaceholder') : getKey('nameOptionalPlaceholder')} />
         </Form.Item>
 
         <Form.Item
-          label={t(getKey('contextLimit'))}
+          label={getKey('contextLimit')}
           name="contextLimit"
           rules={limitRules}
           getValueFromEvent={(val) => {
@@ -912,7 +960,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         >
           <ImeSafeAutoComplete
             options={CONTEXT_LIMIT_OPTIONS}
-            placeholder={t(getKey('contextLimitPlaceholder'))}
+            placeholder={getKey('contextLimitPlaceholder')}
             style={{ width: '100%' }}
             filterOption={(inputValue, option) =>
               (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
@@ -922,7 +970,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         </Form.Item>
 
         <Form.Item
-          label={t(getKey('outputLimit'))}
+          label={getKey('outputLimit')}
           name="outputLimit"
           rules={outputLimitRules}
           getValueFromEvent={(val) => {
@@ -932,7 +980,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         >
           <ImeSafeAutoComplete
             options={OUTPUT_LIMIT_OPTIONS}
-            placeholder={t(getKey('outputLimitPlaceholder'))}
+            placeholder={getKey('outputLimitPlaceholder')}
             style={{ width: '100%' }}
             filterOption={(inputValue, option) =>
               (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
@@ -943,13 +991,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
         {showInputTypes && (
           <Form.Item
-            label={t(getKey('inputTypes'))}
-            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('inputTypesHint'))}</Text>}
+            label={getKey('inputTypes')}
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('inputTypesHint', { tool: toolName ?? '' })}</Text>}
           >
             <Select
               mode="multiple"
               allowClear
-              placeholder={t(getKey('inputTypesPlaceholder'))}
+              placeholder={getKey('inputTypesPlaceholder')}
               options={MODALITY_OPTIONS.filter((option) => option.value === 'text' || option.value === 'image')}
               value={inputModalities}
               onChange={setInputModalities}
@@ -959,11 +1007,11 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
         {showReasoning && !showModalities && (
           <Form.Item
-            label={t(getKey('capabilities'))}
-            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('capabilitiesHint'))}</Text>}
+            label={getKey('capabilities')}
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('capabilitiesHint', { tool: toolName ?? '' })}</Text>}
           >
             <Checkbox checked={capReasoning} onChange={(e) => setCapReasoning(e.target.checked)}>
-              {t(getKey('reasoning'))}
+              {getKey('reasoning')}
             </Checkbox>
           </Form.Item>
         )}
@@ -990,46 +1038,46 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 {showModalities && (
                   <>
                     <Form.Item
-                      label={t('opencode.model.inputModalities')}
+                      label={t('common.model.inputModalities')}
                     >
                       <Select
                         mode="multiple"
                         allowClear
-                        placeholder={t('opencode.model.inputModalitiesPlaceholder')}
+                        placeholder={t('common.model.inputModalitiesPlaceholder')}
                         options={MODALITY_OPTIONS}
                         value={inputModalities}
                         onChange={setInputModalities}
                       />
                     </Form.Item>
                     <Form.Item
-                      label={t('opencode.model.outputModalities')}
-                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.modalitiesHint')}</Text>}
+                      label={t('common.model.outputModalities')}
+                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('common.model.modalitiesHint')}</Text>}
                     >
                       <Select
                         mode="multiple"
                         allowClear
-                        placeholder={t('opencode.model.outputModalitiesPlaceholder')}
+                        placeholder={t('common.model.outputModalitiesPlaceholder')}
                         options={MODALITY_OPTIONS}
                         value={outputModalities}
                         onChange={setOutputModalities}
                       />
                     </Form.Item>
                     <Form.Item
-                      label={t('opencode.model.capabilities')}
-                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.capabilitiesHint')}</Text>}
+                      label={t('common.model.capabilities')}
+                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('common.model.capabilitiesHint')}</Text>}
                     >
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
                         <Checkbox checked={capReasoning} onChange={(e) => setCapReasoning(e.target.checked)}>
-                          {t('opencode.model.reasoning')}
+                          {t('common.model.reasoning')}
                         </Checkbox>
                         <Checkbox checked={capToolCall} onChange={(e) => setCapToolCall(e.target.checked)}>
-                          {t('opencode.model.toolCall')}
+                          {t('common.model.toolCall')}
                         </Checkbox>
                         <Checkbox checked={capTemperature} onChange={(e) => setCapTemperature(e.target.checked)}>
-                          {t('opencode.model.temperatureSetting')}
+                          {t('common.model.temperatureSetting')}
                         </Checkbox>
                         <Checkbox checked={capAttachment} onChange={(e) => setCapAttachment(e.target.checked)}>
-                          {t('opencode.model.attachment')}
+                          {t('common.model.attachment')}
                         </Checkbox>
                       </div>
                     </Form.Item>
@@ -1038,8 +1086,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showVariants && (
                   <Form.Item
-                    label={t('opencode.model.variants')}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.variantsHint')}</Text>}
+                    label={t('common.model.variants')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('common.model.variantsHint')}</Text>}
                   >
                     <JsonEditor
                       value={typeof jsonVariants === 'object' && jsonVariants !== null && Object.keys(jsonVariants as object).length === 0 ? undefined : jsonVariants}
@@ -1059,15 +1107,15 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showThinkingLevel && (
                   <Form.Item
-                    label={t(getKey('thinkingLevel'))}
+                    label={getKey('thinkingLevel')}
                     name="thinkingLevel"
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('thinkingLevelHint'))}</Text>}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('thinkingLevelHint')}</Text>}
                   >
                     <Select
                       allowClear
                       showSearch
                       optionFilterProp="label"
-                      placeholder={t(getKey('thinkingLevelPlaceholder'))}
+                      placeholder={getKey('thinkingLevelPlaceholder')}
                       options={thinkingLevelOptions}
                     />
                   </Form.Item>
@@ -1075,8 +1123,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showThinkingLevelMap && (
                   <Form.Item
-                    label={t(getKey('thinkingLevelMap'))}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('thinkingLevelMapHint'))}</Text>}
+                    label={getKey('thinkingLevelMap')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('thinkingLevelMapHint')}</Text>}
                   >
                     <JsonEditor
                       value={typeof jsonThinkingLevelMap === 'object' && jsonThinkingLevelMap !== null && Object.keys(jsonThinkingLevelMap as object).length === 0 ? undefined : jsonThinkingLevelMap}
@@ -1098,8 +1146,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showOmpThinking && (
                   <Form.Item
-                    label={t(getKey('ompThinking'))}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('ompThinkingHint'))}</Text>}
+                    label={getKey('ompThinking')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('ompThinkingHint')}</Text>}
                   >
                     <JsonEditor
                       value={typeof jsonOmpThinking === 'object' && jsonOmpThinking !== null && Object.keys(jsonOmpThinking as object).length === 0 ? undefined : jsonOmpThinking}
@@ -1118,8 +1166,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showCompat && (
                   <Form.Item
-                    label={t(getKey('compat'))}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('compatHint'))}</Text>}
+                    label={getKey('compat')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('compatHint')}</Text>}
                   >
                     <JsonEditor
                       value={typeof jsonCompat === 'object' && jsonCompat !== null && Object.keys(jsonCompat as object).length === 0 ? undefined : jsonCompat}
@@ -1137,8 +1185,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showExtraParams && (
                   <Form.Item
-                    label={t(getKey('extraParams'))}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('extraParamsHint'))}</Text>}
+                    label={getKey('extraParams')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('extraParamsHint')}</Text>}
                   >
                     <JsonEditor
                       value={typeof extraParamsValue === 'object' && extraParamsValue !== null && Object.keys(extraParamsValue as object).length === 0 ? undefined : extraParamsValue}
@@ -1158,14 +1206,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showApi && (
                   <Form.Item
-                    label={t(getKey('api'))}
+                    label={getKey('api')}
                     name="api"
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('apiHint'))}</Text>}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('apiHint')}</Text>}
                   >
                     <Select
                       allowClear
                       showSearch
-                      placeholder={t(getKey('apiPlaceholder'))}
+                      placeholder={getKey('apiPlaceholder')}
                       options={apiOptions}
                     />
                   </Form.Item>
@@ -1173,21 +1221,21 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
                 {showCost && (
                   <Form.Item
-                    label={t(getKey('cost'))}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('costHint'))}</Text>}
+                    label={getKey('cost')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{getKey('costHint')}</Text>}
                   >
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-                      <Form.Item name="costInput" label={t(getKey('costInput'))} noStyle>
-                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costInput'))} />
+                      <Form.Item name="costInput" label={getKey('costInput')} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={getKey('costInput')} />
                       </Form.Item>
-                      <Form.Item name="costOutput" label={t(getKey('costOutput'))} noStyle>
-                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costOutput'))} />
+                      <Form.Item name="costOutput" label={getKey('costOutput')} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={getKey('costOutput')} />
                       </Form.Item>
-                      <Form.Item name="costCacheRead" label={t(getKey('costCacheRead'))} noStyle>
-                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costCacheRead'))} />
+                      <Form.Item name="costCacheRead" label={getKey('costCacheRead')} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={getKey('costCacheRead')} />
                       </Form.Item>
-                      <Form.Item name="costCacheWrite" label={t(getKey('costCacheWrite'))} noStyle>
-                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costCacheWrite'))} />
+                      <Form.Item name="costCacheWrite" label={getKey('costCacheWrite')} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={getKey('costCacheWrite')} />
                       </Form.Item>
                     </div>
                   </Form.Item>

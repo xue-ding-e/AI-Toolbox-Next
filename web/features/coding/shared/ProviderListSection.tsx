@@ -18,8 +18,6 @@ import type { ProviderBatchSelection } from './providerList/useProviderBatchSele
 const { Text } = Typography;
 
 export interface ProviderListSectionProps {
-  /** i18n prefix for `provider.title` / `commonConfigButton` / `addProvider`. */
-  i18nPrefix: string;
   /** Sidebar section anchor id, e.g. `codex-providers`. */
   sectionId: string;
 
@@ -52,12 +50,11 @@ export interface ProviderListSectionProps {
   headerExtra?: React.ReactNode;
 
   /**
-   * Empty-state text. Defaults to `${i18nPrefix}.provider.emptyText`, but most
-   * pages keep their `emptyText` at the top level (`<tool>.emptyText`) rather
-   * than under `provider` — pass `t('<tool>.emptyText')` for those instead of
-   * duplicating the string into a second key.
+   * Extra empty-state sentence appended to `common.provider.emptyText`, for
+   * tools that can import providers from somewhere specific ("…or import from
+   * OpenCode"). Most tools need nothing here.
    */
-  emptyText?: React.ReactNode;
+  emptyTextHint?: React.ReactNode;
 
   /** Hint block under the toolbar. Callers pass their own wording. */
   hint?: React.ReactNode;
@@ -77,7 +74,6 @@ export interface ProviderListSectionProps {
  * a new CLI inherits the layout instead of copying it.
  */
 const ProviderListSection: React.FC<ProviderListSectionProps> = ({
-  i18nPrefix,
   sectionId,
   collapsed,
   onCollapsedChange,
@@ -96,7 +92,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
   onOpenCommonConfig,
   onAddProvider,
   headerExtra,
-  emptyText,
+  emptyTextHint,
   hint,
   children,
   footer,
@@ -106,7 +102,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
   const toolbarButtonStyle: React.CSSProperties = { fontSize: 12 };
 
   return (
-    <div id={sectionId} data-sidebar-section="true" data-sidebar-title={t(`${i18nPrefix}.provider.title`)}>
+    <div id={sectionId} data-sidebar-section="true" data-sidebar-title={t('common.provider.title')}>
       <Collapse
         style={{ marginBottom: 16 }}
         activeKey={collapsed ? [] : ['providers']}
@@ -118,7 +114,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
               <Space size={8} wrap>
                 <Text strong>
                   <DatabaseOutlined style={{ marginRight: 8 }} />
-                  {t(`${i18nPrefix}.provider.title`)}
+                  {t('common.provider.title')}
                 </Text>
                 {headerExtra}
               </Space>
@@ -182,7 +178,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
                       onOpenCommonConfig();
                     }}
                   >
-                    {t(`${i18nPrefix}.commonConfigButton`)}
+                    {t('common.provider.commonConfig')}
                   </Button>
                 )}
                 <Button
@@ -195,7 +191,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
                     onAddProvider();
                   }}
                 >
-                  {t(`${i18nPrefix}.addProvider`)}
+                  {t('common.provider.add')}
                 </Button>
               </Space>
             ),
@@ -204,7 +200,16 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
                 {hint}
                 {providerCount === 0 ? (
                   <Empty
-                    description={emptyText ?? t(`${i18nPrefix}.provider.emptyText`)}
+                    description={
+                      emptyTextHint ? (
+                        <Space orientation="vertical" size={2}>
+                          <span>{t('common.provider.emptyText')}</span>
+                          <span>{emptyTextHint}</span>
+                        </Space>
+                      ) : (
+                        t('common.provider.emptyText')
+                      )
+                    }
                     style={{ marginTop: 40 }}
                   />
                 ) : visibleCount === 0 ? (

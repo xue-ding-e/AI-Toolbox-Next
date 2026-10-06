@@ -52,8 +52,6 @@ export interface ProviderFormSectionsProps {
   modelRewrites: ModelRewritesState;
   onModelRewritesChange: (value: ModelRewritesState) => void;
 
-  /** i18n prefix for the notes section labels. */
-  i18nPrefix: string;
   notesRows?: number;
   notesResetKey: string;
 }
@@ -86,7 +84,6 @@ const ProviderFormSections: React.FC<ProviderFormSectionsProps> = ({
   onCustomHeadersChange,
   modelRewrites,
   onModelRewritesChange,
-  i18nPrefix,
   notesRows = 3,
   notesResetKey,
 }) => {
@@ -118,8 +115,8 @@ const ProviderFormSections: React.FC<ProviderFormSectionsProps> = ({
 
       <Form.Item name="notes" wrapperCol={PROVIDER_SECTION_WRAPPER_COL}>
         <ProviderNotesCollapse
-          title={t(`${i18nPrefix}.provider.notes`)}
-          placeholder={t(`${i18nPrefix}.provider.notesPlaceholder`)}
+          title={t('common.provider.notes')}
+          placeholder={t('common.provider.notesPlaceholder')}
           rows={notesRows}
           resetKey={notesResetKey}
         />

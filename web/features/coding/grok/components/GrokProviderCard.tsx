@@ -1110,7 +1110,6 @@ const GrokProviderCard: React.FC<GrokProviderCardProps> = ({
                         <ModelItem
                           key={model.id}
                           model={model}
-                          i18nPrefix="grok"
                           transparentBackground
                           selectionMode={modelSelectionMode}
                           selected={selectedModelIds.includes(model.id)}

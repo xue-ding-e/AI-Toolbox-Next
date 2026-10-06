@@ -659,7 +659,7 @@ const OpenCodePage: React.FC = () => {
       },
       {
         id: 'opencode-global-prompt',
-        title: t('opencode.prompt.title'),
+        title: t('common.prompt.title'),
         order: 8,
       },
       {
@@ -2700,7 +2700,6 @@ const OpenCodePage: React.FC = () => {
                                     onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(providerId, modelId, selected)}
                                     modelsDraggable={!isBatchDeleteMode}
                                     onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
-                                    i18nPrefix="opencode"
                                   />
                                 );
                               })}
@@ -2738,13 +2737,13 @@ const OpenCodePage: React.FC = () => {
               id="opencode-global-prompt"
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
-              data-sidebar-title={t('opencode.prompt.title')}
+              data-sidebar-title={t('common.prompt.title')}
               data-sidebar-order={8}
               style={{ order: 8 }}
             >
               <GlobalPromptSettings
                 key={`opencode-global-prompt-${globalPromptExpandNonce}`}
-                translationKeyPrefix="opencode.prompt"
+                toolName="OpenCode"
                 promptFileName="AGENTS.md"
                 service={openCodePromptApi}
                 collapseKey="opencode-prompt"
@@ -2809,7 +2808,6 @@ const OpenCodePage: React.FC = () => {
                                 id={provider.id}
                                 name={provider.name}
                                 models={provider.models}
-                                i18nPrefix="opencode"
                                 isDisabled={disabledProviderIds.has(provider.id)}
                                 onToggleDisabled={() => handleToggleProviderDisabled(provider.id)}
                                 onShare={() => shareProvider({
@@ -2912,7 +2910,6 @@ const OpenCodePage: React.FC = () => {
               }}
               onSuccess={handleProviderSuccess}
               onDuplicateId={handleProviderDuplicateId}
-              i18nPrefix="opencode"
               headersOutputFormat="object"
               showOpenCodeAdvanced={true}
               modelOptions={providerFilterOptions}
@@ -2929,6 +2926,9 @@ const OpenCodePage: React.FC = () => {
               limitRequired={false}
               requireCompleteLimitPair
               nameRequired={false}
+              messageOverrides={{
+                extraParamsHint: t('opencode.model.extraParamsHint'),
+              }}
               npmType={currentModelProviderId && config?.provider[currentModelProviderId]?.npm || '@ai-sdk/openai-compatible'}
               onCancel={() => {
                 setModelModalOpen(false);
@@ -2937,7 +2937,6 @@ const OpenCodePage: React.FC = () => {
               }}
               onSuccess={handleModelSuccess}
               onDuplicateId={handleModelDuplicateId}
-              i18nPrefix="opencode"
             />
 
             <ConfigPathModal

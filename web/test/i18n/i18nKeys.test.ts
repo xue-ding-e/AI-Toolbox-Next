@@ -30,9 +30,9 @@ test('i18n check expands known dynamic translation key helpers', async () => {
   const analysis = await i18nKeys.analyzeProject();
   const expandedKeys = new Set(analysis.expandedDynamicKeyUsages.map((usage) => usage.key));
 
-  assert.ok(expandedKeys.has('opencode.model.id'));
   assert.ok(expandedKeys.has('opencode.provider.id'));
-  assert.ok(expandedKeys.has('claudecode.prompt.title'));
+  assert.ok(expandedKeys.has('opencode.provider.baseUrlHint'));
+  assert.ok(expandedKeys.has('opencode.provider.name'));
 });
 
 test('i18n text lookup can find translation keys without reading full locale files', async () => {

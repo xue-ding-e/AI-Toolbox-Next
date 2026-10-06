@@ -434,7 +434,6 @@ const OmoNativeProvidersSection: React.FC = () => {
         onAddModel={() => setModelModal({ provider })}
         onEditModel={(modelId) => setModelModal({ provider, modelId })}
         onDeleteModel={(modelId) => handleDeleteModel(provider, modelId)}
-        i18nPrefix="ohMyPi"
       />
     );
   };
@@ -650,9 +649,9 @@ const OmoNativeProvidersSection: React.FC = () => {
         showOmpThinking
         limitRequired={false}
         nameRequired={false}
+        toolName="OMO Native"
         onCancel={() => setModelModal(null)}
         onSuccess={handleSaveModel}
-        i18nPrefix="ohMyPi"
       />
 
       {fetchModelsProvider && (

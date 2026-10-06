@@ -29,7 +29,6 @@ import ProviderConnectivityStatus from '@/features/coding/shared/providerConnect
 import type {
   ProviderDisplayData,
   ModelDisplayData,
-  I18nPrefix,
   OfficialModelDisplayData,
   ProviderConnectivityStatusItem,
 } from './types';
@@ -83,8 +82,6 @@ interface ProviderCardProps {
   /** Provider connectivity status for batch test. */
   connectivityStatus?: ProviderConnectivityStatusItem;
 
-  /** i18n prefix for translations */
-  i18nPrefix?: I18nPrefix;
 
   /** Short tag shown beside the model-section title (e.g. "内置 · 适配器默认模型"). */
   modelSourceTag?: string;
@@ -127,7 +124,6 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   isDisabled,
   onToggleDisabled,
   connectivityStatus,
-  i18nPrefix = 'settings',
   modelSourceTag,
   selectable = false,
   selected = false,
@@ -194,7 +190,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
       return (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={t(`${i18nPrefix}.model.emptyText`)}
+          description={t(`common.model.emptyText`)}
           style={{ margin: '8px 0' }}
         />
       );
@@ -213,7 +209,6 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         selectionMode={modelSelectionMode}
         selected={selectedModelIds.includes(model.id)}
         onSelectChange={onToggleModelSelection ? (selected) => onToggleModelSelection(model.id, selected) : undefined}
-        i18nPrefix={i18nPrefix}
       />
     ));
 
@@ -262,7 +257,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
           <Space size={4}>
             <SafetyOutlined style={{ color: '#d4b106', fontSize: 12 }} />
             <Text type="secondary" style={{ fontSize: 11, color: '#d4b106' }}>
-              {t(`${i18nPrefix}.official.officialModels`)}
+              {t(`common.official.models`)}
             </Text>
           </Space>
           <div style={{ flex: 1, height: 1, backgroundColor: '#d4b106' }} />
@@ -281,7 +276,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
               border: '1px dashed #d4b106',
               marginTop: index > 0 ? 4 : 0,
             }}
-            title={t(`${i18nPrefix}.official.modelReadOnlyHint`)}
+            title={t(`common.official.modelReadOnlyHint`)}
           >
             <Space size={8} wrap style={{ flex: 1, minWidth: 0 }}>
               <Text style={{ fontSize: 13 }}>{model.name || model.id}</Text>
@@ -292,7 +287,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                 <>
                   <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
                   <Tag color="green" style={{ fontSize: 11, margin: 0 }}>
-                    {t(`${i18nPrefix}.official.freeModel`)}
+                    {t(`common.official.freeModel`)}
                   </Tag>
                 </>
               )}
@@ -309,8 +304,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     {[
-                      model.context !== undefined && model.context !== null ? `${t(`${i18nPrefix}.official.contextLimit`)}: ${model.context.toLocaleString()}` : null,
-                      model.output !== undefined && model.output !== null ? `${t(`${i18nPrefix}.official.outputLimit`)}: ${model.output.toLocaleString()}` : null,
+                      model.context !== undefined && model.context !== null ? `${t(`common.official.contextLimit`)}: ${model.context.toLocaleString()}` : null,
+                      model.output !== undefined && model.output !== null ? `${t(`common.official.outputLimit`)}: ${model.output.toLocaleString()}` : null,
                     ].filter(Boolean).join(' | ')}
                   </Text>
                 </>
@@ -409,8 +404,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   <Tooltip
                     title={
                       isDisabled
-                        ? t(`${i18nPrefix}.provider.disabled`)
-                        : t(`${i18nPrefix}.provider.enabled`)
+                        ? t(`common.provider.disabled`)
+                        : t(`common.provider.enabled`)
                     }
                   >
                     <Switch
@@ -449,8 +444,8 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   </Tooltip>
                 ) : onDelete && (deleteConfirm ? (
                   <Popconfirm
-                    title={t(`${i18nPrefix}.provider.deleteProvider`)}
-                    description={t(`${i18nPrefix}.provider.confirmDelete`, { name: provider.name })}
+                    title={t(`common.provider.deleteProvider`)}
+                    description={t(`common.provider.confirmDelete`, { name: provider.name })}
                     onConfirm={onDelete}
                     okText={t('common.confirm')}
                     cancelText={t('common.cancel')}
@@ -474,7 +469,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                       <Space size={8}>
                         <Text strong style={{ fontSize: 13 }}>
-                          {t(`${i18nPrefix}.model.title`)} ({models.length + (officialModels?.length || 0)})
+                          {t(`common.model.title`)} ({models.length + (officialModels?.length || 0)})
                         </Text>
                         {modelSourceTag && (
                           <Tag color="blue" style={{ fontSize: 11, marginLeft: 0 }}>
@@ -492,7 +487,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                             onClick={onAddModel}
                           >
                             <PlusOutlined style={{ marginRight: 0 }} />
-                            {t(`${i18nPrefix}.model.addModel`)}
+                            {t(`common.model.addModel`)}
                           </Button>
                         )}
                       </Space>
@@ -506,7 +501,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   ) : (
                     <Empty
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description={t(`${i18nPrefix}.model.emptyText`)}
+                      description={t(`common.model.emptyText`)}
                       style={{ margin: '8px 0' }}
                     />
                   ),

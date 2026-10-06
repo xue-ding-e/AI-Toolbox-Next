@@ -224,7 +224,7 @@ const GeminiCliPage: React.FC = () => {
 
   const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
     { id: 'geminicli-providers', title: t('geminicli.provider.title'), order: 1 },
-    { id: 'geminicli-global-prompt', title: t('geminicli.prompt.title'), order: 2 },
+    { id: 'geminicli-global-prompt', title: t('common.prompt.title'), order: 2 },
     { id: 'geminicli-session-manager', title: t('sessionManager.title'), order: 3 },
   ], [t]);
 
@@ -1054,11 +1054,12 @@ const GeminiCliPage: React.FC = () => {
         <div
           id="geminicli-global-prompt"
           data-sidebar-section="true"
-          data-sidebar-title={t('geminicli.prompt.title')}
+          data-sidebar-title={t('common.prompt.title')}
         >
           <GlobalPromptSettings
             key={`geminicli-prompt-${promptExpandNonce}`}
-            translationKeyPrefix="geminicli.prompt"
+            toolName="Gemini"
+            promptFileName="GEMINI.md"
             service={geminiCliPromptApi}
             collapseKey="geminicli-prompt"
             defaultExpanded={promptExpandNonce > 0}

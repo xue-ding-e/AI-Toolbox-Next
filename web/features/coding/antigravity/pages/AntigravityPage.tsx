@@ -501,11 +501,12 @@ const AntigravityPage: React.FC = () => {
         <div
           id="antigravity-global-prompt"
           data-sidebar-section="true"
-          data-sidebar-title={t('antigravity.prompt.title', { defaultValue: '全局提示词' })}
+          data-sidebar-title={t('common.prompt.title')}
         >
           <GlobalPromptSettings
             key={`antigravity-prompt-${promptExpandNonce}`}
-            translationKeyPrefix="antigravity.prompt"
+            toolName="Antigravity CLI"
+            promptFileName="~/.gemini/config/GEMINI.md"
             service={antigravityPromptApi}
             collapseKey="antigravity-prompt"
             defaultExpanded={promptExpandNonce > 0}

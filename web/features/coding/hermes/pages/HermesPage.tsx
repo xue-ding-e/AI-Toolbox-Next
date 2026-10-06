@@ -265,7 +265,7 @@ const HermesPage: React.FC = () => {
     },
     {
       id: 'hermes-global-prompt',
-      title: t('hermes.prompt.title', { defaultValue: 'Global Prompt' }),
+      title: t('common.prompt.title'),
       order: 3,
     },
     {
@@ -1477,7 +1477,6 @@ const HermesPage: React.FC = () => {
         onCopyModel={isReadOnly ? undefined : (modelId) => setModelModal({ provider, copyFromId: modelId })}
         onDeleteModel={isReadOnly ? undefined : (modelId) => handleDeleteModel(provider.providerKey, modelId)}
         onSetPrimaryModel={isReadOnly ? undefined : (modelId) => handleSetDefaultModel(provider, modelId)}
-        i18nPrefix="pi"
       />
     );
   };
@@ -1751,10 +1750,11 @@ const HermesPage: React.FC = () => {
             id="hermes-global-prompt"
             className={`${styles.hermesSection} ${styles.promptSection}`}
             data-hermes-sidebar-section="true"
-            data-sidebar-title={t('hermes.prompt.title', { defaultValue: 'Global Prompt' })}
+            data-sidebar-title={t('common.prompt.title')}
           >
             <GlobalPromptSettings
-              translationKeyPrefix="hermes.prompt"
+              toolName="Hermes"
+              promptFileName="SOUL.md"
               service={hermesPromptApi}
               collapseKey="hermes-prompt"
               onUpdated={async () => {
@@ -1955,10 +1955,13 @@ const HermesPage: React.FC = () => {
           limitRequired={false}
           nameRequired={false}
           npmType={modelModalProvider?.apiMode ? hermesApiModeToSdkName(modelModalProvider.apiMode) : undefined}
+          toolName="Hermes"
+          messageOverrides={{
+            thinkingLevelHint: t('pi.model.thinkingLevelHint'),
+          }}
           onCancel={() => setModelModal(null)}
           onSuccess={handleSaveModel}
           onDuplicateId={() => message.error(t('hermes.model.idExists', { defaultValue: 'Model ID already exists.' }))}
-          i18nPrefix="pi"
         />
 
         <ProviderConnectivityTestModal

@@ -15,8 +15,10 @@ export interface ImportProviderModalProps {
   title?: string;
   /** Optional empty description override */
   emptyDescription?: string;
-  /** Translation prefix for generic provider import texts */
-  i18nPrefix?: string;
+  /** Tool name interpolated into the modal title and empty state
+   *  (e.g. "Pi", "Oh My Pi"). Only needed by tools that name themselves in
+   *  those strings. */
+  toolName?: string;
   /** Optional provider filter */
   providerFilter?: (provider: OpenCodeFavoriteProvider) => boolean;
   /** Optional provider list transformer for source-specific dedupe or ordering */

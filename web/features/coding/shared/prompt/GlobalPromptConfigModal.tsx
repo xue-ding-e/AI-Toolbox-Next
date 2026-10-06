@@ -12,7 +12,11 @@ export interface GlobalPromptConfigFormValues {
 
 interface GlobalPromptConfigModalProps {
   open: boolean;
-  translationKeyPrefix: string;
+  /** Tool name interpolated into the name placeholder ("Default <tool> assistant"). */
+  toolName: string;
+  /** Prompt file the content is applied to (e.g. `AGENTS.md`), used in the
+   *  content placeholder and the local-file hint. */
+  promptFileName: string;
   initialValues?: Partial<GlobalPromptConfig>;
   onCancel: () => void;
   onSuccess: (values: GlobalPromptConfigFormValues) => Promise<void> | void;
@@ -20,7 +24,8 @@ interface GlobalPromptConfigModalProps {
 
 const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
   open,
-  translationKeyPrefix,
+  toolName,
+  promptFileName,
   initialValues,
   onCancel,
   onSuccess,
@@ -53,7 +58,7 @@ const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
 
   return (
     <Modal
-      title={initialValues?.id ? t(`${translationKeyPrefix}.editConfig`) : t(`${translationKeyPrefix}.addConfig`)}
+      title={initialValues?.id ? t('common.prompt.editConfig') : t('common.prompt.addConfig')}
       open={open}
       onCancel={onCancel}
       width={920}
@@ -69,7 +74,7 @@ const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
       <div className={styles.modalBody}>
         {initialValues?.id === '__local__' && (
           <Alert
-            message={t(`${translationKeyPrefix}.localConfigHint`)}
+            message={t('common.prompt.localConfigHint', { file: promptFileName })}
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
@@ -82,26 +87,26 @@ const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
           wrapperCol={{ span: 22 }}
         >
           <Form.Item
-            label={t(`${translationKeyPrefix}.name`)}
+            label={t('common.prompt.name')}
             name="name"
             rules={[
-              { required: true, message: t(`${translationKeyPrefix}.nameRequired`) },
-              { max: 100, message: t(`${translationKeyPrefix}.nameTooLong`) },
+              { required: true, message: t('common.prompt.nameRequired') },
+              { max: 100, message: t('common.prompt.nameTooLong') },
             ]}
           >
-            <Input placeholder={t(`${translationKeyPrefix}.namePlaceholder`)} />
+            <Input placeholder={t('common.prompt.namePlaceholder', { tool: toolName })} />
           </Form.Item>
           <Form.Item
-            label={t(`${translationKeyPrefix}.content`)}
+            label={t('common.prompt.content')}
             name="content"
-            rules={[{ required: true, message: t(`${translationKeyPrefix}.contentRequired`) }]}
+            rules={[{ required: true, message: t('common.prompt.contentRequired') }]}
           >
             <MarkdownEditor
               height={320}
               minHeight={220}
               maxHeight={520}
               resizable
-              placeholder={t(`${translationKeyPrefix}.contentPlaceholder`)}
+              placeholder={t('common.prompt.contentPlaceholder', { file: promptFileName })}
             />
           </Form.Item>
         </Form>

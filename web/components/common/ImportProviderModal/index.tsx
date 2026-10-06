@@ -19,7 +19,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
   existingProviderIds,
   title,
   emptyDescription,
-  i18nPrefix = 'opencode',
+  toolName,
   providerFilter,
   providerListTransform,
 }) => {
@@ -108,7 +108,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
         newSet.delete(providerId);
         return newSet;
       });
-      message.success(t(`${i18nPrefix}.provider.favoriteDeleted`));
+      message.success(t('common.provider.favoriteDeleted'));
     } catch (error) {
       console.error('Failed to delete favorite provider:', error);
       message.error(t('common.error'));
@@ -159,7 +159,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
 
   return (
     <Modal
-      title={title || t(`${i18nPrefix}.provider.importModalTitle`)}
+      title={title || t('common.provider.importModalTitle', { tool: toolName ?? '' })}
       open={open}
       onCancel={onClose}
       width={800}
@@ -174,13 +174,13 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
           onClick={handleImport}
           disabled={importableCount === 0}
         >
-          {t(`${i18nPrefix}.provider.importSelected`)} ({importableCount})
+          {t('common.provider.importSelected')} ({importableCount})
         </Button>,
       ]}
     >
       <Spin spinning={loading}>
         {providers.length === 0 && !loading ? (
-          <Empty description={emptyDescription || t(`${i18nPrefix}.provider.noFavoriteProviders`)} />
+          <Empty description={emptyDescription || t('common.provider.noFavoriteProviders', { tool: toolName ?? '' })} />
         ) : (
           <div>
             <div className={styles.toolbar}>
@@ -190,8 +190,8 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                 onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()}
               >
                 {isAllSelected
-                  ? t(`${i18nPrefix}.provider.deselectAllProviders`)
-                  : t(`${i18nPrefix}.provider.selectAllProviders`)}
+                  ? t('common.provider.deselectAllProviders')
+                  : t('common.provider.selectAllProviders')}
               </Checkbox>
             </div>
             <div className={styles.container}>
@@ -218,7 +218,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                         {provider.providerConfig.name || provider.providerId}
                       </Text>
                       {isExisting && (
-                        <Tag className={styles.existsTag}>{t(`${i18nPrefix}.provider.providerExists`)}</Tag>
+                        <Tag className={styles.existsTag}>{t('common.provider.providerExists')}</Tag>
                       )}
                       {isExisting && onOverwrite && (
                         <Button
@@ -235,7 +235,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                       )}
                     </div>
                     <Popconfirm
-                      title={t(`${i18nPrefix}.provider.confirmDeleteFavorite`)}
+                      title={t('common.provider.confirmDeleteFavorite')}
                       onConfirm={(e) => {
                         e?.stopPropagation();
                         handleDelete(provider.providerId);

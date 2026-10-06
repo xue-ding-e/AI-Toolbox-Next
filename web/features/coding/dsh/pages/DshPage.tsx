@@ -437,7 +437,7 @@ const DshPage: React.FC = () => {
     },
     {
       id: 'dsh-global-prompt',
-      title: t('dsh.prompt.title', { defaultValue: '全局提示词' }),
+      title: t('common.prompt.title'),
       order: 3,
     },
     {
@@ -1824,7 +1824,6 @@ const DshPage: React.FC = () => {
         onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(provider.providerKey, modelId, selected)}
         modelsDraggable={!isBatchDeleteMode}
         onReorderModels={(modelIds) => handleReorderModels(provider, modelIds)}
-        i18nPrefix="dsh"
       />
     );
   };
@@ -2106,7 +2105,7 @@ const DshPage: React.FC = () => {
             id="dsh-global-prompt"
             className={`${styles.dshSection} ${styles.promptSection}`}
             data-dsh-sidebar-section="true"
-            data-sidebar-title={t('dsh.prompt.title', { defaultValue: '全局提示词' })}
+            data-sidebar-title={t('common.prompt.title')}
           >
             {!agentInstructionsEnabled ? (
               <Alert
@@ -2135,7 +2134,7 @@ const DshPage: React.FC = () => {
               </div>
             )}
             <GlobalPromptSettings
-              translationKeyPrefix="dsh.prompt"
+              toolName="dsh"
               promptFileName="AGENTS.md"
               service={dshPromptApi}
               collapseKey="dsh-prompt"
@@ -2369,10 +2368,14 @@ const DshPage: React.FC = () => {
           showExtraParams
           limitRequired={false}
           nameRequired={false}
+          messageOverrides={{
+            idPlaceholder: t('dsh.model.idPlaceholder'),
+            extraParamsHint: t('dsh.model.extraParamsHint'),
+            thinkingLevelMapHint: t('dsh.model.thinkingLevelMapHint'),
+          }}
           onCancel={() => setDshModelModal(null)}
           onSuccess={handleSaveDshModel}
           onDuplicateId={() => message.error(t('dsh.model.idExists', { defaultValue: '模型 ID 已存在' }))}
-          i18nPrefix="dsh"
         />
 
         {fetchModelsProviderInfo && (

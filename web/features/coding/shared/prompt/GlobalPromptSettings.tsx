@@ -28,7 +28,6 @@ import styles from './GlobalPromptSettings.module.less';
 const { Text } = Typography;
 
 interface GlobalPromptSettingsProps {
-  translationKeyPrefix: string;
   service: GlobalPromptApi;
   collapseKey: string;
   refreshKey?: number;
@@ -39,26 +38,26 @@ interface GlobalPromptSettingsProps {
    */
   defaultExpanded?: boolean;
   /**
-   * Name of the runtime prompt file this CLI writes (e.g. `CLAUDE.md`,
-   * `AGENTS.md`, `SOUL.md`). When provided, the warning line is rendered from
-   * the shared `common.globalPrompt.sectionWarning` template instead of the
-   * per-CLI `${translationKeyPrefix}.sectionWarning` string, so CLIs that only
-   * differ by file name share one sentence.
-   *
-   * Leave unset for CLIs whose warning genuinely differs (e.g. Gemini CLI
-   * points at a global prompt file rather than a named one, Antigravity cites
-   * an absolute path): those keep their own translated string.
+   * Display name of the tool, interpolated into the section hint and the name
+   * placeholder (e.g. `Grok` → "Default Grok assistant").
    */
-  promptFileName?: string;
+  toolName: string;
+  /**
+   * Runtime prompt file this CLI writes (e.g. `CLAUDE.md`, `AGENTS.md`), or an
+   * absolute path for CLIs whose rules file lives outside the tool's own dir
+   * (Antigravity). Used in the warning line, the local-file hint and the
+   * content placeholder.
+   */
+  promptFileName: string;
 }
 
 const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
-  translationKeyPrefix,
   service,
   collapseKey,
   refreshKey = 0,
   onUpdated,
   defaultExpanded = false,
+  toolName,
   promptFileName,
 }) => {
   const { t } = useTranslation();
@@ -111,7 +110,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
   const handleDeleteConfig = (config: GlobalPromptConfig) => {
     Modal.confirm({
       title: t('common.confirm'),
-      content: t(`${translationKeyPrefix}.confirmDelete`, { name: config.name }),
+      content: t('common.prompt.confirmDelete', { name: config.name }),
       onOk: async () => {
         try {
           await service.deleteConfig(config.id);
@@ -129,7 +128,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
   const handleApplyConfig = async (config: GlobalPromptConfig) => {
     try {
       await service.applyConfig(config.id);
-      message.success(t(`${translationKeyPrefix}.applySuccess`));
+      message.success(t('common.prompt.applySuccess'));
       await loadConfigs();
       await notifyUpdated();
     } catch (error) {
@@ -141,7 +140,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
   const handleDisableConfig = (config: GlobalPromptConfig) => {
     Modal.confirm({
       title: t('common.confirm'),
-      content: t(`${translationKeyPrefix}.confirmDisable`, { name: config.name }),
+      content: t('common.prompt.confirmDisable', { name: config.name }),
       onOk: async () => {
         try {
           await service.disableConfig(config.id);
@@ -217,16 +216,14 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
   const content = (
     <Spin spinning={loading}>
       <div className={styles.hintBlock}>
-        <div>{t(`${translationKeyPrefix}.sectionHint`)}</div>
+        <div>{t('common.prompt.sectionHint', { tool: toolName })}</div>
         <div>
-          {promptFileName
-            ? t('common.globalPrompt.sectionWarning', { fileName: promptFileName })
-            : t(`${translationKeyPrefix}.sectionWarning`)}
+          {t('common.prompt.sectionWarning', { file: promptFileName })}
         </div>
       </div>
 
       {configs.length === 0 ? (
-        <Empty description={t(`${translationKeyPrefix}.emptyText`)} style={{ margin: '24px 0' }} />
+        <Empty description={t('common.prompt.emptyText')} style={{ margin: '24px 0' }} />
       ) : (
         <DndContext
           sensors={sensors}
@@ -240,7 +237,6 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
                 <GlobalPromptConfigCard
                   key={config.id}
                   config={config}
-                  translationKeyPrefix={translationKeyPrefix}
                   onEdit={handleEditConfig}
                   onDelete={handleDeleteConfig}
                   onApply={handleApplyConfig}
@@ -271,11 +267,11 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
               <Space>
                 <Text strong>
                   <FileTextOutlined style={{ marginRight: 8 }} />
-                  {t(`${translationKeyPrefix}.title`)}
+                  {t('common.prompt.title')}
                 </Text>
                 {appliedConfig && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t(`${translationKeyPrefix}.current`)}: {appliedConfig.name}
+                    {t('common.prompt.current')}: {appliedConfig.name}
                   </Text>
                 )}
               </Space>
@@ -291,7 +287,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
                   handleAddConfig();
                 }}
               >
-                {t(`${translationKeyPrefix}.addConfig`)}
+                {t('common.prompt.addConfig')}
               </Button>
             ),
             children: content,
@@ -301,7 +297,8 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
 
       <GlobalPromptConfigModal
         open={configModalOpen}
-        translationKeyPrefix={translationKeyPrefix}
+        toolName={toolName}
+        promptFileName={promptFileName}
         initialValues={editingConfig || undefined}
         onCancel={() => {
           setConfigModalOpen(false);

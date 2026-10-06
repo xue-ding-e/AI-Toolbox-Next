@@ -679,7 +679,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
 
     return (
       <ModelListSection
-        i18nPrefix="codex"
         className="codex-model-list-collapse"
         sectionKey={`codex-models-${provider.id}`}
         bodyStyle={{ paddingLeft: 18, background: 'transparent' }}

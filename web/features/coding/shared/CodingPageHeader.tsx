@@ -18,28 +18,18 @@ export interface CodingPageHeaderProps {
   title: React.ReactNode;
   /** Docs URL. The "official docs" link is hidden when omitted. */
   docsUrl?: string;
-  /** Overrides the default `common.viewDocs` label. */
-  docsText?: string;
   /** Shows the "preview config" link when provided. */
   onPreviewConfig?: () => void;
 
-  /** Overrides the default `common.configPath` label. */
-  configPathLabel?: string;
   /** Resolved config path; callers own their own fallback value. */
   configPath: string;
   /** Shows the "customize config dir" button when provided. */
   onCustomizeConfig?: () => void;
-  /** Overrides the default `common.customizeConfigDir` label. */
-  customizeConfigText?: string;
   customizeConfigDisabled?: boolean;
   /** Shows the "open folder" button when provided. */
   onOpenFolder?: () => void;
-  /** Overrides the default `common.openFolder` label. */
-  openFolderText?: string;
   /** Shows the "refresh config" button when provided. */
   onRefresh?: () => void;
-  /** Overrides the default `common.refreshConfig` label. */
-  refreshText?: string;
 
   /** Shows the "more options" button when provided. */
   onMoreOptions?: () => void;
@@ -57,24 +47,19 @@ const textButtonStyle: React.CSSProperties = { padding: 0, fontSize: 12 };
  *
  * Locks the header skeleton (title + docs/preview links, config path row with
  * customize/open/refresh, and the more-options entry) so newly onboarded CLIs
- * inherit the same layout instead of re-deriving it. Tool-specific wording is
- * passed through the override props; anything that is identical across tools
- * falls back to `common.*` keys.
+ * inherit the same layout instead of re-deriving it. Every label comes from
+ * `common.*`: the wording is identical across tools, so per-CLI overrides only
+ * produced near-duplicates ("刷新" vs "刷新配置") that drifted apart.
  */
 const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
   title,
   docsUrl,
-  docsText,
   onPreviewConfig,
-  configPathLabel,
   configPath,
   onCustomizeConfig,
-  customizeConfigText,
   customizeConfigDisabled,
   onOpenFolder,
-  openFolderText,
   onRefresh,
-  refreshText,
   onMoreOptions,
   extraActions,
   hint,
@@ -98,7 +83,7 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
                   void openUrl(docsUrl);
                 }}
               >
-                <LinkOutlined /> {docsText ?? t('common.viewDocs')}
+                <LinkOutlined /> {t('common.viewDocs')}
               </Link>
             )}
             {onPreviewConfig && (
@@ -116,7 +101,7 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
           </div>
           <Space size="small">
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {configPathLabel ?? t('common.configPath')}:
+              {t('common.configPath')}:
             </Text>
             <Text code style={{ fontSize: 12 }}>
               {configPath}
@@ -130,7 +115,7 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
                 disabled={customizeConfigDisabled}
                 style={textButtonStyle}
               >
-                {customizeConfigText ?? t('common.customizeConfigDir')}
+                {t('common.customizeConfigDir')}
               </Button>
             )}
             {onOpenFolder && (
@@ -141,7 +126,7 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
                 onClick={onOpenFolder}
                 style={textButtonStyle}
               >
-                {openFolderText ?? t('common.openFolder')}
+                {t('common.openFolder')}
               </Button>
             )}
             {onRefresh && (
@@ -152,7 +137,7 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
                 onClick={onRefresh}
                 style={textButtonStyle}
               >
-                {refreshText ?? t('common.refreshConfig')}
+                {t('common.refreshConfig')}
               </Button>
             )}
             {extraActions}
