@@ -5,6 +5,8 @@ import type { KimiCatalogModel } from '../../../../../types/kimi.ts';
 import {
   KIMI_SUPPORTED_CAPABILITIES,
   KIMI_SUPPORTED_EFFORTS,
+  buildKimiCatalogModelsFromPresets,
+  importModelsIntoKimiCatalog,
   kimiCatalogRowKey,
   normalizeKimiCapabilities,
   normalizeKimiStringArray,
@@ -112,4 +114,116 @@ test('capability and effort vocabularies cover the CLI enums', () => {
     'tool_use',
   ]);
   assert.deepEqual([...KIMI_SUPPORTED_EFFORTS], ['low', 'medium', 'high', 'max']);
+});
+
+test('buildKimiCatalogModelsFromPresets derives keys, sizes and capabilities', () => {
+  const rows = buildKimiCatalogModelsFromPresets(
+    [{
+      id: 'kimi-k3',
+      displayName: 'Kimi K3',
+      maxContextSize: 1048576,
+      maxOutputSize: 262144,
+      reasoning: true,
+      inputModalities: ['text', 'image', 'video'],
+      outputModalities: ['text'],
+    }],
+    'moonshotai',
+    [],
+    262144,
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 'moonshotai/kimi-k3');
+  assert.equal(rows[0].model, 'kimi-k3');
+  assert.equal(rows[0].provider, 'moonshotai');
+  assert.equal(rows[0].displayName, 'Kimi K3');
+  assert.equal(rows[0].maxContextSize, 1048576);
+  assert.equal(rows[0].maxOutputSize, 262144);
+  // text has no capability counterpart; image/video map to *_in, output text
+  // implies tool_use, and reasoning adds thinking.
+  assert.deepEqual(rows[0].capabilities, ['image_in', 'video_in', 'tool_use', 'thinking']);
+});
+
+test('buildKimiCatalogModelsFromPresets falls back to the CLI context requirement', () => {
+  const rows = buildKimiCatalogModelsFromPresets(
+    [{
+      id: 'k3',
+      reasoning: false,
+      inputModalities: [],
+      outputModalities: [],
+    }],
+    'custom',
+    [],
+    262144,
+  );
+
+  assert.equal(rows[0].maxContextSize, 262144);
+  assert.equal(rows[0].displayName, undefined);
+  assert.equal(rows[0].capabilities, undefined);
+});
+
+test('buildKimiCatalogModelsFromPresets skips models already in the catalog', () => {
+  const existing = [model({ key: 'moonshotai/kimi-k3', model: 'kimi-k3' })];
+  const rows = buildKimiCatalogModelsFromPresets(
+    [
+      { id: 'kimi-k3', reasoning: false, inputModalities: [], outputModalities: [] },
+      { id: 'kimi-k2.6', reasoning: false, inputModalities: [], outputModalities: [] },
+    ],
+    'moonshotai',
+    existing,
+    262144,
+  );
+
+  // The known upstream id is skipped, the new one is added.
+  assert.deepEqual(rows.map((row) => row.model), ['kimi-k2.6']);
+});
+
+test('importModelsIntoKimiCatalog follows the fetched display order', () => {
+  const current = [model({ key: 'pinned/custom', model: 'custom', provider: 'pinned' })];
+  const result = importModelsIntoKimiCatalog(
+    current,
+    [{ id: 'b' }, { id: 'a' }],
+    [],
+    ['a', 'b'],
+    'relay',
+    262144,
+  );
+
+  // Fetched rows first in display order, then the untouched custom row.
+  assert.deepEqual(result.map((row) => row.key), ['relay/a', 'relay/b', 'pinned/custom']);
+});
+
+test('importModelsIntoKimiCatalog drops only explicitly removed models', () => {
+  const current = [
+    model({ key: 'relay/a', model: 'a', provider: 'relay' }),
+    model({ key: 'relay/b', model: 'b', provider: 'relay' }),
+  ];
+  const result = importModelsIntoKimiCatalog(current, [], ['b'], [], 'relay', 262144);
+
+  assert.deepEqual(result.map((row) => row.model), ['a']);
+});
+
+test('importModelsIntoKimiCatalog preserves an existing row instead of duplicating it', () => {
+  const current = [
+    model({
+      key: 'relay/a',
+      model: 'a',
+      provider: 'relay',
+      displayName: 'My Name',
+      maxContextSize: 999,
+    }),
+  ];
+  const result = importModelsIntoKimiCatalog(current, [{ id: 'a' }], [], ['a'], 'relay', 262144);
+
+  assert.equal(result.length, 1);
+  // User customizations survive the re-import.
+  assert.equal(result[0].displayName, 'My Name');
+  assert.equal(result[0].maxContextSize, 999);
+});
+
+test('importModelsIntoKimiCatalog gives new rows the CLI-required context size', () => {
+  const result = importModelsIntoKimiCatalog([], [{ id: 'x', name: 'X' }], [], ['x'], 'relay', 262144);
+
+  assert.equal(result[0].maxContextSize, 262144);
+  assert.equal(result[0].displayName, 'X');
 });
