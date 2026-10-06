@@ -280,7 +280,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 逐项确认参照 CLI 有的**能力**本 CLI 也有。漏能力不会让界面「长得不对」，只会让界面「少了功能」，所以必须单独列：
 
 - [ ] **模型编辑弹窗有「选择预设模型」入口** —— ⚠️ **最重要的能力之一，不许漏**（见 4.2.4）
-- [ ] 模型列表有「获取模型」（从上游 API 拉取）
+- [ ] 模型列表有「获取模型」（从上游 API 拉取），**且应用时按 model id 匹配预设自动填充**（见 4.2.5）
 - [ ] 模型列表有连通性测试
 - [ ] 供应商有连通性测试 / 批量测试
 - [ ] 有「导入我使用过的供应商」或等价导入入口
@@ -589,6 +589,17 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 #### 4.2.5 「获取模型」的预设匹配
 
 `FetchModelsModal` 的 `onSuccess` 回调里，新增的模型要用 **model id 去预设模型匹配**，命中则自动填充其余参数。Codex 的实现是 `importModelsIntoCatalog(..., (modelId) => findPresetModelById(modelId, sdkType))`，配套 `fillCodexCatalogModelFromPreset`。
+
+> **ZCode 的教训**：`handleFetchModelsApply` 里只写了 `modelId` + 名称，**没有做预设匹配**——用户点「应用」拿到的是一串裸 id，每个参数还得自己查。这个缺口藏得很深：入口存在、能跑通、不报错，只是白拿不到数据。
+>
+> 判据是「**用户在弹窗里点了应用之后，模型列表里那一行是否已经带上了参数**」，不是「有没有这个入口」。预设在这种路径上是**两个**消费点——模型弹窗的标签选择器，和获取模型的应用回调——**只做一个不算完成**。
+
+**两条 `FetchModelsApplyResult` 的义务**（每个 CLI 都要处理，不是可选项）：
+
+| 字段 | 义务 |
+|------|------|
+| `removedModelIds` | 用户在弹窗里勾了「移除已不存在的模型」才非空。**忽略它 = 开关点了没反应**（13.1 静默失效）。ZCode 曾漏掉这一条 |
+| `orderedModelIds` | 按弹窗显示顺序整理列表（含未勾选的 id）。是否重排按本 CLI 是否有手动排序决定——**有手动拖拽排序的 CLI 直接重排会覆盖用户的操作**，需权衡 |
 
 #### 4.2.6 编辑供应商弹窗的分区（`ProviderFormSections`）
 

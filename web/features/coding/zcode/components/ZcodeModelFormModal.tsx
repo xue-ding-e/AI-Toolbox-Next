@@ -20,11 +20,19 @@ import {
   type PresetModel,
 } from '@/constants/presetModels';
 import type {
-  ZcodeModelInputFormat,
   ZcodeModelOptionSpecs,
   ZcodeModelProperties,
   ZcodeModelRow,
 } from '@/types/zcode';
+import {
+  ZCODE_MODALITY_FIELDS,
+  buildInputFormat,
+  compactObject,
+  preferredPresetNpmTypes,
+  presetInputModalities,
+  readInputModalities,
+  zcodeModalityValuesFor,
+} from '../utils/zcodeModelFields';
 
 const { Text } = Typography;
 
@@ -54,34 +62,6 @@ interface ZcodeModelFormValues {
   reasoningLevelMap?: string;
 }
 
-/**
- * Modality switches, in the order the form shows them.
- *
- * `storageKey` is the field inside `properties.inputFormat`; ZCode declares one
- * boolean per modality rather than a list, so the multi-select is projected back
- * into separate booleans on save.
- */
-const ZCODE_MODALITY_FIELDS = [
-  { value: 'text', storageKey: 'supportsText', labelKey: 'zcode.model.text' },
-  { value: 'image', storageKey: 'supportsImage', labelKey: 'zcode.model.image' },
-  { value: 'video', storageKey: 'supportsVideo', labelKey: 'zcode.model.video' },
-  { value: 'audio', storageKey: 'supportsAudio', labelKey: 'zcode.model.audio' },
-  { value: 'pdf', storageKey: 'supportsPdf', labelKey: 'zcode.model.pdf' },
-] as const;
-
-/**
- * ZCode's manual rule schema declares only these three modality flags; `text`
- * and `audio` are smart-only. Offering them in manual mode would let the user
- * pick a value the projection layer then drops.
- */
-const MANUAL_MODALITY_VALUES = new Set(['image', 'video', 'pdf']);
-
-/** Reads the stored per-modality booleans back into the multi-select's list. */
-const readInputModalities = (inputFormat: ZcodeModelInputFormat): string[] =>
-  ZCODE_MODALITY_FIELDS.filter((field) => inputFormat[field.storageKey] === true).map(
-    (field) => field.value,
-  );
-
 interface ZcodeModelFormModalProps {
   open: boolean;
   isEdit: boolean;
@@ -95,20 +75,6 @@ interface ZcodeModelFormModalProps {
   onCancel: () => void;
   onSubmit: (model: ZcodeModelRow) => void | Promise<void>;
 }
-
-/**
- * Preset catalogs to show first, most specific first.
- *
- * ZCode's three formats line up with the AI SDK provider families the preset
- * data is grouped by, so a DeepSeek model appears under the Anthropic entry
- * when the provider speaks `anthropic-messages`. Everything else still shows,
- * below the divider.
- */
-const ZCODE_PRIMARY_PRESET_NPM_TYPES: Record<string, string[]> = {
-  'anthropic-messages': ['@ai-sdk/anthropic'],
-  'openai-chat-completions': ['@ai-sdk/openai', '@ai-sdk/openai-compatible'],
-  'openai-responses': ['@ai-sdk/openai'],
-};
 
 const toFormValues = (row: ZcodeModelRow | undefined): Partial<ZcodeModelFormValues> => {
   if (!row) {
@@ -139,35 +105,13 @@ const toFormValues = (row: ZcodeModelRow | undefined): Partial<ZcodeModelFormVal
   };
 };
 
-/**
- * Drops undefined keys so the projection layer can tell "leave this to ZCode's
- * catalog" from "explicitly set".
- */
-const compactObject = <T extends object>(value: T): T | undefined => {
-  const entries = Object.entries(value).filter(([, item]) => item !== undefined);
-  return entries.length > 0 ? (Object.fromEntries(entries) as T) : undefined;
-};
-
 const toModelRow = (
   values: ZcodeModelFormValues,
   initialValues: ZcodeModelRow | undefined,
 ): ZcodeModelRow => {
-  // Only the modalities the user ticked are written; the rest stay absent so
-  // ZCode's catalog keeps deciding them. An empty selection writes no
-  // `inputFormat` at all.
-  const selectedModalities = new Set(values.inputModalities ?? []);
-  const inputFormat = compactObject<ZcodeModelInputFormat>(
-    Object.fromEntries(
-      ZCODE_MODALITY_FIELDS.map((field) => [
-        field.storageKey,
-        selectedModalities.has(field.value) ? true : undefined,
-      ]),
-    ) as ZcodeModelInputFormat,
-  );
-
   const properties = compactObject<ZcodeModelProperties>({
     contextWindow: values.contextWindow,
-    inputFormat,
+    inputFormat: buildInputFormat(values.inputModalities ?? []),
     // A ticked box writes `true`; an unticked one writes nothing, leaving the
     // value to ZCode's catalog.
     supportsToolCall: values.supportsToolCall || undefined,
@@ -235,7 +179,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
 
   // Protocol-matched presets first; the rest stay reachable below the divider.
   const { primaryPresets, otherPresets } = React.useMemo(() => {
-    const primaryNpmTypes = ZCODE_PRIMARY_PRESET_NPM_TYPES[apiType ?? ''] ?? [];
+    const primaryNpmTypes = preferredPresetNpmTypes(apiType);
     const primaryNpmSet = new Set(primaryNpmTypes);
     const primary: PresetModel[] = [];
     const other: PresetModel[] = [];
@@ -263,14 +207,15 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
     return { primaryPresets: primary, otherPresets: other };
   }, [apiType, presetModelsVersion]);
 
-  /** Modalities the manual schema accepts; `text` and `audio` are smart-only. */
-  const modalityOptions = React.useMemo(
-    () =>
-      ZCODE_MODALITY_FIELDS.filter(
-        (field) => !isManual || MANUAL_MODALITY_VALUES.has(field.value),
-      ).map((field) => ({ value: field.value, label: t(field.labelKey) })),
-    [isManual, t],
-  );
+  const modalityOptions = React.useMemo(() => {
+    // The manual schema accepts fewer modalities than the smart one; the field
+    // table knows the difference.
+    const values = new Set(zcodeModalityValuesFor(isManual ? 'manual' : 'smart'));
+    return ZCODE_MODALITY_FIELDS.filter((field) => values.has(field.value)).map((field) => ({
+      value: field.value,
+      label: t(field.labelKey),
+    }));
+  }, [isManual, t]);
 
   /**
    * Fills the form from a preset.
@@ -281,17 +226,14 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
    * changing it would orphan the row.
    */
   const handlePresetSelect = (preset: PresetModel) => {
-    const presetModalities = preset.modalities?.input ?? [];
-    // Only modalities this mode accepts; a preset listing `text` must not put it
-    // in the box while the manual schema is active.
-    const acceptedValues = new Set<string>(modalityOptions.map((option) => option.value));
-    const inputModalities = presetModalities.filter((value) => acceptedValues.has(value));
     form.setFieldsValue({
       ...(isEdit ? {} : { modelId: preset.id }),
       displayName: preset.name,
       contextWindow: preset.contextLimit,
       maxOutputTokensMax: preset.outputLimit,
-      inputModalities,
+      // Modalities this mode cannot carry are dropped rather than shown and
+      // then silently discarded on save.
+      inputModalities: presetInputModalities(preset, isManual ? 'manual' : 'smart'),
       ...(preset.tool_call === undefined ? {} : { supportsToolCall: preset.tool_call }),
     });
   };

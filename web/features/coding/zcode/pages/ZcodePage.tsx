@@ -64,6 +64,11 @@ import ZcodeCommonConfigModal from '../components/ZcodeCommonConfigModal';
 import ZcodeModelFormModal from '../components/ZcodeModelFormModal';
 import ZcodeProviderFormModal from '../components/ZcodeProviderFormModal';
 import { parseZcodeProviderSettings, resolveZcodeDefaultModelId } from '../utils/zcodeSettingsConfig';
+import {
+  buildZcodeModelRowFromPreset,
+  preferredPresetNpmTypes,
+} from '../utils/zcodeModelFields';
+import { findPresetModelById } from '@/constants/presetModels';
 
 
 const ZcodePage: React.FC = () => {
@@ -594,12 +599,17 @@ const ZcodePage: React.FC = () => {
   }, [fetchModelsProvider]);
 
   /**
-   * Appends the fetched models to the provider's catalog.
+   * Merges the fetched models into the provider's catalog.
    *
-   * Rows are written as `smart` rules: only the id and display name are set, so
-   * ZCode derives capabilities and limits from its own built-in catalog. Writing
-   * them as `manual` would require every field to be filled and would pin values
-   * that ZCode already knows.
+   * Rows are written as `smart` rules and filled from the preset catalog, the
+   * same defaults a manually added row gets — a fetched list otherwise lands as
+   * bare ids and the user has to look every parameter up by hand. A model the
+   * catalog does not know keeps the name the provider's API reported and leaves
+   * ZCode's built-in rules to supply the rest.
+   *
+   * Ids already in the catalog are skipped, so re-fetching never overwrites
+   * edits the user made by hand. Rows the modal reports as gone upstream are
+   * dropped — the modal only fills that list when the user opts in.
    */
   const handleFetchModelsApply = React.useCallback(
     async (result: FetchModelsApplyResult) => {
@@ -610,21 +620,28 @@ const ZcodePage: React.FC = () => {
       if (!settings) {
         return;
       }
-      const existingIds = new Set(settings.models.map((model) => model.modelId));
+      const preferredNpm = preferredPresetNpmTypes(settings.config?.api?.type)[0];
+      const removedIds = new Set(result.removedModelIds);
+      const keptModels = settings.models.filter((model) => !removedIds.has(model.modelId));
+      const existingIds = new Set(keptModels.map((model) => model.modelId));
       const added: ZcodeModelRow[] = result.selectedModels
         .filter((model) => !existingIds.has(model.id))
-        .map((model) => ({
-          modelId: model.id,
-          displayName: model.name || undefined,
-          ruleKind: 'smart' as const,
-          isDefault: false,
-        }));
-      if (added.length === 0) {
+        .map((model) => {
+          const row = buildZcodeModelRowFromPreset(
+            model.id,
+            'smart',
+            findPresetModelById(model.id, preferredNpm),
+          );
+          // A preset name is more precise than the provider's label; the label
+          // is still better than no name at all.
+          return { ...row, displayName: row.displayName ?? (model.name || undefined) };
+        });
+      if (added.length === 0 && keptModels.length === settings.models.length) {
         setFetchModelsModalOpen(false);
         setFetchModelsProviderId(null);
         return;
       }
-      await persistProviderModels(fetchModelsProvider, [...settings.models, ...added]);
+      await persistProviderModels(fetchModelsProvider, [...keptModels, ...added]);
       setFetchModelsModalOpen(false);
       setFetchModelsProviderId(null);
     },
