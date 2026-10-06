@@ -35,9 +35,12 @@
 - `extract_kimi_common_config_from_current_file` 只能读当前根目录 `config.toml`。WSL UNC / 网络路径必须走 `coding::file_io` 的 `spawn_blocking` + 超时读；`read_optional_text` 已统一走 `read_optional_text_file_with_timeout`（预览、投影、本地快照、prompt 读取都经过它），不要在新代码里裸 `fs::read_to_string` runtime 文件。
 - 会话扫描：首屏 recent quick path 复用共享 `collect_recent_files_by_modified` 早停扫描，同一 session 目录的 `state.json` / `summary.json` 按 source_path 去重，一个目录只出一条。resume 命令 `kimi -S <sessionId>` 依据 `docs/plan-kimi-code-cli.md` §8.1（备选 `kimi -c`）。native snapshot 导出递归不限深，UTF-8 存文本、非 UTF-8 用显式 `{"encoding":"base64","data":...}` payload，import 两种编码都要认；`delete_session` 必须校验 session_path 在 sessions_root 之内。
 - Gateway 接管 origin 使用 `/kimi/v1` 前缀，而真实模型请求入口是 `/kimi/v1/chat/completions`；不要把 probe 路径和真实 OpenAI Chat 入站协议混为一谈。
-- Kimi CLI 对每个投影的 `[models.<key>]` 硬校验 `max_context_size` 必须为正数，缺失时拒绝启动会话（`Failed to start a session: Model "x" must define a positive max_context_size`）。投影时缺失/非正数一律兖底 262144（256k，对齐官方 kimi-for-coding 保守值）；官方 k3 参考值是 1048576。前端表单模型目录有对应列（列名直接用字段名 max_context_size），新建行默认 262144。
+- Kimi CLI 对每个投影的 `[models.<key>]` 硬校验 `max_context_size` 必须为正数，缺失时拒绝启动会话（`Failed to start a session: Model "x" must define a positive max_context_size`）。投影时缺失/非正数一律兖底 262144（256k，对齐官方 kimi-for-coding 保守值）；官方 k3 参考值是 1048576。
+- `max_input_size` / `max_output_size` / `reasoning_key` 是 CLI 2.x 模型条目的可选字段，**后两者由 `kimi provider catalog add` 主动写入**，投影链路必须透传，否则导入的数据会被静默丢弃。三者存在时分别校验 `int().min(1)` / 非空字符串，因此**非正数或空值必须整字段省略**，不能写 0（写 0 会让 `kimi doctor` 拒绝整个配置）。
+- `[secondary_model]` 是蜂群（AgentSwarm）子 agent 模型池：`default_model` 是子 agent 默认模型，`[secondary_model.models]` 的 key 是主 agent 可自主挑选的别名池（值恒为空串），`force = true` 把子 agent 钉死到 `default_model` 并剥夺选择权。CLI schema 约束：`force` 与 `models` 互斥、二者任一存在都要求 `default_model`、`models` 的 key `"primary"` 是保留字（恒指调用方自身模型）。池中 key 必须能在 `[models.<key>]` 里解析到，否则 CLI 报错。该段不参与 Gateway 接管（池引用的其他 provider 不经网关，与其他 CLI 的单点接管语义一致）。
 - Kimi CLI 已弃用 `loop_control.max_retries_per_step`；字段级保留会让每次 CLI 运行都打印弃用警告。apply 投影写入前由 `migrate_deprecated_loop_control_fields` 自动重命名为 `max_attempts_per_step`（新键已存在时丢弃旧键，其余字段不动）。
-- 模型目录表单只展示 key / model / max_context_size 三列；`displayName` 不再提供编辑入口（产品决策：key 兼任显示名），但数据层 parse/normalize 仍透传已有记录的 displayName 以兼容旧数据。
+- 模型目录的编辑入口在 **provider 卡片**（折叠的模型区 + 单模型弹窗 `KimiModelFormModal`），不在 provider 编辑表单里——表单只保留基础字段和一条指向卡片的提示。单模型弹窗承载完整字段集：key / 上游模型 / displayName / 三个尺寸 / reasoning_key / capabilities / support_efforts / default_effort。`default_effort` 只在属于已选 `support_efforts` 时写入（CLI 会删除不在档位内的默认值）。
+- 模型目录的**预设匹配**走 `preset_models.rs`：用 `base_url` 在编译期内嵌的 `resources/models.dev.json`（与 `kimi provider catalog add` 同源）里查表，精确 URL 命中优先、host 命中兜底，**故意不做 provider 名模糊匹配**（错配的预设比没有预设更糟）。该查询是纯离线只读，不碰 `open_code::free_models` 的缓存/刷新生命周期（只借用其 `bundled_models_dev_catalog()` 读内嵌副本）。
 - 不要整段删除 `[models]` 或全部 `[providers]`。
 - 删除 prompt 配置只删 SQLite 记录，不删除/清空当前 `AGENTS.md`。
 
@@ -50,4 +53,6 @@
 - `__local__` 投影 category 判定：`cargo test coding::kimi` 覆盖 credentials×providers 四象限。
 - Gateway 接管 round trip 后仅当前生效 provider 表（`default_model` → `[models.<key>].provider` 链解析的 key，回退 `managed:kimi-code`）的 `type/base_url/api_key` 指向本地网关；恢复直连按 manifest 受管字段做字段级还原（空表删除），接管窗口内的其他改动保留。
 - 托盘入口的 provider / model / prompt 切换统一发 `config-changed` 的 `tray` payload（前端收到 tray 才 reload 页面），窗口入口发 `window`。
-- `cargo test kimi` 需覆盖：已应用 provider / 已应用官方账号删除被拒；无 provider 时 common config 合并保留用户手写 `[providers]`；Gateway 门禁 manifest 判定；会话扫描/解析/snapshot 往返 fixture（`tauri/tests/coding/kimi/sessions.rs`）。
+- `cargo test kimi` 需覆盖：已应用 provider / 已应用官方账号删除被拒；无 provider 时 common config 合并保留用户手写 `[providers]`；Gateway 门禁 manifest 判定；会话扫描/解析/snapshot 往返 fixture（`tauri/tests/coding/kimi/sessions.rs`）；`max_input_size` / `max_output_size` / `reasoning_key` 的写入与读回往返、以及非法值（0 / 负数 / 空白）整字段省略。
+- 预设匹配 `cargo test coding::kimi::preset_models` 需覆盖：URL 归一化、精确命中、host 兜底、未知/空白 base_url 返回空。
+- 前端 `pnpm test` 覆盖：`kimiCatalogModels`（rowKey / upsert / remove / 能力与 effort 词表归一化）与 `secondaryModelForm`（解析、校验四条 CLI 约束、行级 splice 保留无关行与注释、禁用时整段移除、重复保存幂等）。

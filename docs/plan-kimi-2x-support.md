@@ -5,6 +5,7 @@
 > 项目现状基线：`docs/plan-kimi-code-cli.md` 基于 **0.39.1**（2026-07-15）
 > 关联 issue：https://github.com/coulsontl/ai-toolbox/issues/398
 > 范围决策：**方案 B**——聚焦 issue 三诉求 + 高频字段，其余留给 Common Config 手写
+> 实现状态：**已落地**（阶段 0-4 全部完成）。
 
 ---
 
@@ -309,3 +310,34 @@ pub struct KimiPresetModel {
 1. **模型目录布局**：改为 **Codex 模式**——从 Provider 编辑弹窗中移除内联表格，改到 provider 卡片的模型区（列表 + 单模型编辑弹窗）
 2. **`[secondary_model]` 位置**：Common Config 弹窗内**分 Tab**
 3. **预设模型匹配**：只做 base_url 精确匹配 + 域名模糊匹配，**不做名称模糊匹配**
+
+---
+
+## 9. 实现记录（2026-10-06 回填）
+
+### 9.1 交付内容
+
+| 阶段 | 内容 | 主要文件 |
+|------|------|---------|
+| 0 | 模型管理迁移到 provider 卡片（纯重构） | `KimiProviderCard.tsx`、`KimiModelFormModal.tsx`、`kimiCatalogModels.ts`、`kimiProviderCatalogSave.ts` |
+| 1 | `max_input_size` / `max_output_size` / `reasoning_key` | `commands.rs`、`settingsConfig.ts`、`types/kimi.ts` |
+| 2 | 拉取上游模型 | `KimiPage.tsx`（`FetchModelsModal` 接线）、`importModelsIntoKimiCatalog` |
+| 3 | 预设模型映射表 | `preset_models.rs`、`free_models.rs`（`bundled_models_dev_catalog`）、`getKimiPresetModels` |
+| 4 | `[secondary_model]` 蜂群模型池 | `secondaryModelForm.ts`、`KimiCommonConfigModal.tsx`（分 Tab） |
+
+### 9.2 与方案的偏差
+
+- **预设匹配的兜底**：方案写的是「域名模糊匹配」，实现为「host 精确匹配」（`api.moonshot.cn/v1/extra` 仍能命中 `api.moonshot.cn` 的条目）。未做名称模糊匹配，与决策一致。
+- **`[secondary_model]` 的写入方式**：方案未指定。实现选择**行级 splice**（`applyKimiSecondaryModelToml`）而非整文档重新序列化，以保留自由 TOML 编辑器里的注释与键序。禁用时整段移除。
+- **阶段 0 的额外产出**：`KimiProviderFormModal` 在移除内联表格后净减约 130 行；单模型弹窗额外提供了 `capabilities` / `support_efforts` / `default_effort` 的编辑入口（原表格没有）。
+
+### 9.3 未做（留给 Common Config 手写）
+
+`protocol`、`adaptive_thinking`、`off_effort`、`beta_api`、模型级 `base_url`、`overrides`、`default_provider`、`model_catalog`、`plan_mode`、`yolo`、`default_plan_mode`、`default_permission_mode`、`auto_session_title`、`experimental`。
+
+### 9.4 验证
+
+- `npx tsc --noEmit` ✅
+- `pnpm test` ✅ 881 passed / 0 failed（新增 20：`kimiCatalogModels` 9 + `secondaryModelForm` 11）
+- `cargo test --lib coding::kimi` ✅ 25 passed / 0 failed（新增 7：3 字段往返 2 + 预设匹配 4 + 读回 1）
+- `pnpm i18n:check` ✅
