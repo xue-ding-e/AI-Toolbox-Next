@@ -26,6 +26,10 @@ use super::types::{
     ConfigPathInfo, ZcodeCommonConfigInput, ZcodePromptConfig, ZcodePromptConfigInput,
     ZcodeProviderInput,
 };
+use crate::coding::open_code::types::{
+    OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult,
+    ResolveOpenCodeAllApiHubProvidersRequest,
+};
 
 /// Serializes every read-modify-write pass over `provider_config.json`.
 ///
@@ -98,6 +102,26 @@ pub fn zcode_prompt_path(state: &SqliteDbState) -> Result<PathBuf, String> {
 #[tauri::command]
 pub async fn get_zcode_config_file_path(state: tauri::State<'_, SqliteDbState>) -> Result<String, String> {
     Ok(zcode_provider_config_path(&state)?.to_string_lossy().to_string())
+}
+
+/// All API Hub listings, straight through from the shared scanner.
+///
+/// The browser extension reports providers with endpoints and keys, which is
+/// all ZCode needs — the conversion into ZCode's own shape happens on the
+/// frontend, so there is nothing to adapt here.
+#[tauri::command]
+pub async fn list_zcode_all_api_hub_providers(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<OpenCodeAllApiHubProvidersResult, String> {
+    crate::coding::open_code::commands::list_opencode_all_api_hub_providers(state).await
+}
+
+#[tauri::command]
+pub async fn resolve_zcode_all_api_hub_providers(
+    state: tauri::State<'_, SqliteDbState>,
+    request: ResolveOpenCodeAllApiHubProvidersRequest,
+) -> Result<Vec<OpenCodeAllApiHubProvider>, String> {
+    crate::coding::open_code::commands::resolve_opencode_all_api_hub_providers(state, request).await
 }
 
 #[tauri::command]
@@ -606,19 +630,55 @@ async fn get_zcode_prompt_record(
         .map(|value| value.map(super::adapter::from_db_value_prompt))
 }
 
+/// Reads the prompt currently sitting in `AGENTS.md` as an unmanaged preset.
+///
+/// `__local__` is the bridge to a file this app does not own: it appears when
+/// nothing stored is applied, so the user can see — and adopt — whatever wrote
+/// that file (ZCode's own editor, or a previous run). An applied record's
+/// content *is* the file, so listing both would show the same prompt twice.
+/// Returns `None` for a missing or blank file.
+async fn get_zcode_local_prompt_config(
+    state: &SqliteDbState,
+) -> Result<Option<ZcodePromptConfig>, String> {
+    let Some(content) = crate::coding::prompt_file::read_prompt_content_file(
+        &zcode_prompt_path(state)?,
+        "ZCode",
+    )?
+    else {
+        return Ok(None);
+    };
+    let now = Local::now().to_rfc3339();
+    Ok(Some(ZcodePromptConfig {
+        id: "__local__".to_string(),
+        name: ZCODE_PROMPT_FILE_NAME.to_string(),
+        content,
+        is_applied: false,
+        // Sorts ahead of every stored preset, which start at 0.
+        sort_index: -1,
+        created_at: now.clone(),
+        updated_at: now,
+    }))
+}
+
 #[tauri::command]
 pub async fn list_zcode_prompt_configs(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<ZcodePromptConfig>, String> {
     let order = prompt_order()?;
-    state
+    let mut prompts = state
         .with_conn(|conn| db_list(conn, DbTable::ZcodePromptConfig, Some(&order)))
         .map(|values| {
             values
                 .into_iter()
                 .map(super::adapter::from_db_value_prompt)
-                .collect()
-        })
+                .collect::<Vec<_>>()
+        })?;
+    if !prompts.iter().any(|prompt| prompt.is_applied) {
+        if let Some(local_prompt) = get_zcode_local_prompt_config(state.inner()).await? {
+            prompts.insert(0, local_prompt);
+        }
+    }
+    Ok(prompts)
 }
 
 #[tauri::command]
@@ -771,12 +831,45 @@ pub async fn reorder_zcode_prompt_configs(
     Ok(())
 }
 
-/// Adopts the current live `AGENTS.md` as a stored prompt record.
+/// Adopts the current live `AGENTS.md` as a stored prompt record, then applies
+/// it.
+///
+/// Saving the local card has to leave both halves in step: the record holds the
+/// edited content, and the file the CLI actually reads gets it too. Creating
+/// the record alone would keep the edit out of `AGENTS.md` until a separate
+/// apply — the content the user just typed would appear saved but not be live.
+/// A blank edit falls back to whatever the file holds now rather than adopting
+/// an empty prompt.
 #[tauri::command]
 pub async fn save_zcode_local_prompt_config(
     state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
     input: ZcodePromptConfigInput,
 ) -> Result<ZcodePromptConfig, String> {
-    create_zcode_prompt_config(state, app, input).await
+    let db = state.inner();
+    let content = if input.content.trim().is_empty() {
+        get_zcode_local_prompt_config(db)
+            .await?
+            .map(|prompt| prompt.content)
+            .unwrap_or_default()
+    } else {
+        input.content
+    };
+    let created = create_zcode_prompt_config(
+        state.clone(),
+        app.clone(),
+        ZcodePromptConfigInput {
+            id: None,
+            name: input.name,
+            content,
+        },
+    )
+    .await?;
+    apply_zcode_prompt_config_internal_without_events(db, &created.id).await?;
+    // `create_*` already emitted `config-changed`; the file itself moved, so
+    // the WSL side needs a nudge as well.
+    let _ = app.emit("wsl-sync-request-zcode", ());
+    get_zcode_prompt_record(db, &created.id)
+        .await?
+        .ok_or_else(|| "Failed to read back the adopted ZCode prompt".to_string())
 }

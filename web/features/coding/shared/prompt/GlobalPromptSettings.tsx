@@ -237,6 +237,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
                 <GlobalPromptConfigCard
                   key={config.id}
                   config={config}
+                  promptFileName={promptFileName}
                   onEdit={handleEditConfig}
                   onDelete={handleDeleteConfig}
                   onApply={handleApplyConfig}

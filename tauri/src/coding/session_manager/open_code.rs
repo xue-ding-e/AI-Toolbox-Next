@@ -1374,11 +1374,23 @@ fn scan_sessions_sqlite_with_limit(
     sessions
 }
 
+/// Splits `sqlite:<database path>:<session id>`.
+///
+/// The separator is the **last** colon. Neither half may be searched from the
+/// left: database paths carry their own colon on Windows (`C:\...`), which the
+/// path itself needs, and the id half must not be assumed to look like
+/// OpenCode's — matching a literal `:ses_` reads only OpenCode's own ids and
+/// returns `None` for every other store that reuses this reader. ZCode's CLI
+/// database is one: it keeps OpenCode's v1 schema but mints `sess_` ids, so
+/// opening or deleting any of its sessions failed outright.
 fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
-    let separator = rest.rfind(":ses_")?;
+    let separator = rest.rfind(':')?;
     let database_path = PathBuf::from(&rest[..separator]);
     let session_id = rest[separator + 1..].to_string();
+    if database_path.as_os_str().is_empty() || session_id.is_empty() {
+        return None;
+    }
     Some((database_path, session_id))
 }
 
@@ -2808,8 +2820,37 @@ mod tests {
     use super::{
         delete_session_json_artifacts, ensure_imported_session_visible,
         extract_session_id_from_snapshot, find_session_json_paths, load_messages,
-        resolve_runtime_project_dir, SessionMessage,
+        parse_sqlite_source, resolve_runtime_project_dir, SessionMessage,
     };
+
+    /// Session ids are not all OpenCode's. ZCode's CLI store reuses this reader
+    /// with `sess_` ids, so parsing must not key off an id prefix at all.
+    #[test]
+    fn sqlite_source_parses_ids_from_every_store() {
+        assert_eq!(
+            parse_sqlite_source("sqlite:/home/u/.local/share/opencode/opencode.db:ses_abc"),
+            Some((
+                PathBuf::from("/home/u/.local/share/opencode/opencode.db"),
+                "ses_abc".to_string(),
+            )),
+        );
+        assert_eq!(
+            parse_sqlite_source(r"sqlite:C:\Users\u\.zcode\cli/db/db.sqlite:sess_48efcad3"),
+            Some((
+                PathBuf::from(r"C:\Users\u\.zcode\cli/db/db.sqlite"),
+                "sess_48efcad3".to_string(),
+            )),
+        );
+    }
+
+    #[test]
+    fn sqlite_source_rejects_a_missing_half() {
+        assert!(parse_sqlite_source("not-sqlite").is_none());
+        assert!(parse_sqlite_source("sqlite:").is_none());
+        assert!(parse_sqlite_source("sqlite:/no/separator.db").is_none());
+        assert!(parse_sqlite_source("sqlite:/db.sqlite:").is_none());
+        assert!(parse_sqlite_source("sqlite::ses_abc").is_none());
+    }
 
     use std::fs;
     use std::path::{Path, PathBuf};

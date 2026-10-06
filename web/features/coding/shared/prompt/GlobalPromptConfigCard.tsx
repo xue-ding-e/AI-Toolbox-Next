@@ -23,6 +23,8 @@ const { Text } = Typography;
 
 interface GlobalPromptConfigCardProps {
   config: GlobalPromptConfig;
+  /** Name of the runtime prompt file, interpolated into the local-file hint. */
+  promptFileName: string;
   onEdit: (config: GlobalPromptConfig) => void;
   onDelete: (config: GlobalPromptConfig) => void;
   onApply: (config: GlobalPromptConfig) => void;
@@ -31,6 +33,7 @@ interface GlobalPromptConfigCardProps {
 
 const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   config,
+  promptFileName,
   onEdit,
   onDelete,
   onApply,
@@ -120,7 +123,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
                 <Text strong className={styles.cardName}>{config.name}</Text>
                 {isLocalConfig && (
                   <Text type="secondary" className={styles.cardHint}>
-                    ({t('common.prompt.localConfigHint')})
+                    ({t('common.prompt.localConfigHint', { file: promptFileName })})
                   </Text>
                 )}
                 {showAsApplied && (
