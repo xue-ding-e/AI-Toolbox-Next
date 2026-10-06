@@ -133,6 +133,14 @@ export function parseKimiSettingsConfig(rawConfig?: string | null): ParsedKimiSe
         ? (item.supportEfforts.filter((e): e is string => typeof e === 'string') as string[])
         : undefined;
       const defaultEffort = typeof item.defaultEffort === 'string' ? item.defaultEffort : undefined;
+      // Per-model TOML keys this app does not model are round-tripped through
+      // `extraConfig`; they must survive parse -> edit -> build or a catalog
+      // edit would delete them from config.toml.
+      const extraConfig = item.extraConfig
+        && typeof item.extraConfig === 'object'
+        && !Array.isArray(item.extraConfig)
+        ? (item.extraConfig as Record<string, unknown>)
+        : undefined;
 
       const catalogModel: KimiCatalogModel = {
         key: key || model,
@@ -147,6 +155,7 @@ export function parseKimiSettingsConfig(rawConfig?: string | null): ParsedKimiSe
       if (capabilities && capabilities.length > 0) catalogModel.capabilities = capabilities;
       if (supportEfforts && supportEfforts.length > 0) catalogModel.supportEfforts = supportEfforts;
       if (defaultEffort) catalogModel.defaultEffort = defaultEffort;
+      if (extraConfig && Object.keys(extraConfig).length > 0) catalogModel.extraConfig = extraConfig;
 
       return catalogModel;
     })
@@ -202,6 +211,13 @@ export function normalizeKimiCatalogModels(
       if (m.capabilities && m.capabilities.length > 0) normalized.capabilities = m.capabilities;
       if (m.supportEfforts && m.supportEfforts.length > 0) normalized.supportEfforts = m.supportEfforts;
       if (m.defaultEffort) normalized.defaultEffort = m.defaultEffort;
+      // `extraConfig` carries the per-model TOML keys this app does not model
+      // (protocol, adaptive_thinking, off_effort, beta_api, ...). The backend
+      // round-trips the bag, so rebuilding a row without it would delete those
+      // keys from the DB on any catalog edit.
+      if (m.extraConfig && typeof m.extraConfig === 'object') {
+        normalized.extraConfig = m.extraConfig;
+      }
 
       return normalized;
     })

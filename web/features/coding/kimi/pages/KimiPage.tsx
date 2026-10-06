@@ -368,12 +368,19 @@ const KimiPage: React.FC = () => {
     models: KimiCatalogModel[],
   ) => {
     const settings = parseKimiSettingsConfig(provider.settingsConfig);
+    // Keep `defaultModelKey` resolvable: the CLI refuses to resolve an unknown
+    // key, and the backend rejects a default with no catalog. Removing or
+    // renaming the default row must therefore re-point it (or clear it).
+    const modelKeys = models.map((model) => model.key.trim()).filter(Boolean);
+    const defaultModelKey = modelKeys.includes(settings.defaultModelKey)
+      ? settings.defaultModelKey
+      : modelKeys[0] ?? '';
     const settingsConfig = buildKimiSettingsConfig({
       category: provider.category,
       apiKey: settings.apiKey,
       baseUrl: settings.baseUrl,
       providerKey: settings.providerKey,
-      defaultModelKey: settings.defaultModelKey,
+      defaultModelKey,
       catalogModels: models,
       customTomlConfig: settings.customTomlConfig,
       rawObject: settings.rawObject,
@@ -490,13 +497,15 @@ const KimiPage: React.FC = () => {
       icon: <ExclamationCircleOutlined />,
       onOk: async () => {
         try {
+          // Re-read the current catalog: the confirm is async, so a concurrent
+          // fetch/import may have changed it. Report what was actually removed
+          // rather than the count captured when the dialog opened.
           const currentModels = parseKimiSettingsConfig(provider.settingsConfig).catalogModels;
-          const nextModels = removeKimiCatalogModels(
-            currentModels,
-            models.map((model) => kimiCatalogRowKey(model)),
-          );
+          const rowKeys = models.map((model) => kimiCatalogRowKey(model));
+          const nextModels = removeKimiCatalogModels(currentModels, rowKeys);
+          const removedCount = currentModels.length - nextModels.length;
           await persistProviderCatalog(provider, nextModels);
-          message.success(t('kimi.model.batchDeleteSuccess', { count: models.length }));
+          message.success(t('kimi.model.batchDeleteSuccess', { count: removedCount }));
         } catch (error) {
           message.error(error instanceof Error ? error.message : String(error));
         }
@@ -1277,6 +1286,10 @@ const KimiPage: React.FC = () => {
           isEdit={Boolean(modelModalRowKey)}
           initialValues={modelModalInitialValues}
           providerKey={parseKimiSettingsConfig(modelModalProvider.settingsConfig).providerKey}
+          existingKeys={parseKimiSettingsConfig(modelModalProvider.settingsConfig)
+            .catalogModels.map((model) => model.key)
+            // The edited row's own key is not a collision.
+            .filter((key) => key !== modelModalRowKey)}
           onCancel={() => {
             setModelModalOpen(false);
             setModelModalProviderId(null);

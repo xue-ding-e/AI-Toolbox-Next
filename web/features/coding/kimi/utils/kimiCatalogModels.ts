@@ -92,7 +92,7 @@ export function normalizeKimiStringArray(value: unknown): string[] | undefined {
  * `text` / `image` / `video` / `audio`; the CLI wants `*_in` input capabilities.
  * `text` has no capability counterpart and is dropped.
  */
-function modalitiesToCapabilities(input: string[], output: string[]): string[] | undefined {
+function modalitiesToCapabilities(input: string[]): string[] | undefined {
   const capabilities: string[] = [];
   const push = (value: string) => {
     if (value && !capabilities.includes(value)) {
@@ -104,9 +104,6 @@ function modalitiesToCapabilities(input: string[], output: string[]): string[] |
     else if (modality === 'video') push('video_in');
     else if (modality === 'audio') push('audio_in');
   }
-  // A model that can emit text is a tool user in the CLI's vocabulary; without
-  // this the projected entry would declare no capabilities at all.
-  if (output.includes('text')) push('tool_use');
   return capabilities.length > 0 ? capabilities : undefined;
 }
 
@@ -146,15 +143,21 @@ export function buildKimiCatalogModelsFromPresets(
     if (preset.displayName?.trim()) {
       row.displayName = preset.displayName.trim();
     }
+    if (preset.maxInputSize) {
+      row.maxInputSize = preset.maxInputSize;
+    }
     if (preset.maxOutputSize) {
       row.maxOutputSize = preset.maxOutputSize;
     }
-    const capabilities = modalitiesToCapabilities(
-      preset.inputModalities ?? [],
-      preset.outputModalities ?? [],
-    );
+    const capabilities = modalitiesToCapabilities(preset.inputModalities ?? []);
     if (capabilities) {
       row.capabilities = capabilities;
+    }
+    // `tool_call` is the catalog's own tool-support flag — the output modality
+    // alone does not imply it, and declaring tool_use on a model that rejects
+    // tool payloads makes the CLI fail at runtime.
+    if (preset.toolCall) {
+      row.capabilities = [...(row.capabilities ?? []), 'tool_use'];
     }
     if (preset.reasoning) {
       row.capabilities = [...(row.capabilities ?? []), 'thinking'];

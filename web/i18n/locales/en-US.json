@@ -6307,7 +6307,14 @@
       "swarmModels": "Model Pool",
       "swarmModelsHint": "Written as [secondary_model.models]. The main agent picks from these; each key must exist as a model alias. The reserved key \"primary\" means the caller's own model and needs no entry.",
       "swarmModelsPlaceholder": "Select pool models",
-      "swarmGatewayNote": "Note: providers referenced by the pool do not go through the gateway, matching the single-point takeover semantics of the other CLIs here."
+      "swarmGatewayNote": "Note: providers referenced by the pool do not go through the gateway, matching the single-point takeover semantics of the other CLIs here.",
+      "swarmError": {
+        "forceWithModels": "force cannot be combined with models: the pool only exists to offer the main agent a choice.",
+        "forceWithoutDefault": "default_model is required when force is set.",
+        "modelsWithoutDefault": "default_model is required when models is configured.",
+        "reservedPrimaryKey": "The pool key \"primary\" is reserved; rename it.",
+        "unresolvableAlias": "A referenced alias is missing from the applied provider's model catalog; the CLI will refuse to start a session. Apply a provider that declares these models first."
+      }
     },
     "pageHint": "Add multiple provider configurations and quickly switch via Apply or the system tray menu. Common configuration is shared across all providers and merged automatically on apply.",
     "addProvider": "Add Provider",
@@ -6426,7 +6433,8 @@
       "editModelHint": "The catalog is written to the [models] table in config.toml; it is projected to the runtime file only after the provider is applied.",
       "selectModel": "Select model {{name}}",
       "catalogMovedHint": "The model catalog now lives in the provider card's \"Model List\" section; edit it there after saving.",
-      "defaultTag": "Default"
+      "defaultTag": "Default",
+      "keyDuplicate": "This model key is already used by another model on this provider."
     }
   },
   "zcode": {

@@ -30,6 +30,8 @@ interface KimiModelFormModalProps {
   initialValues?: KimiCatalogModel;
   /** Provider key used as the default for new rows. */
   providerKey: string;
+  /** Alias keys already taken by the other rows, used to reject collisions. */
+  existingKeys?: string[];
   onCancel: () => void;
   onSubmit: (model: KimiCatalogModel) => void | Promise<void>;
 }
@@ -100,6 +102,12 @@ function fromFormValues(
   if (requestedDefaultEffort && supportEfforts?.includes(requestedDefaultEffort)) {
     row.defaultEffort = requestedDefaultEffort;
   }
+  // The dialog does not edit the per-model keys carried in `extraConfig`
+  // (protocol, adaptive_thinking, ...), so they must ride along or editing an
+  // unrelated field would delete them from config.toml.
+  if (base?.extraConfig && typeof base.extraConfig === 'object') {
+    row.extraConfig = base.extraConfig;
+  }
   return row;
 }
 
@@ -114,6 +122,7 @@ const KimiModelFormModal: React.FC<KimiModelFormModalProps> = ({
   isEdit,
   initialValues,
   providerKey,
+  existingKeys = [],
   onCancel,
   onSubmit,
 }) => {
@@ -122,6 +131,14 @@ const KimiModelFormModal: React.FC<KimiModelFormModalProps> = ({
   const [form] = Form.useForm<KimiModelFormValues>();
   const [submitting, setSubmitting] = React.useState(false);
   const supportEfforts = Form.useWatch('supportEfforts', form) as string[] | undefined;
+
+  // The alias key is the `[models."<key>"]` table name, so two rows sharing one
+  // would collapse into a single config.toml table on projection and make the
+  // card's delete action remove both. Reject the collision at the field.
+  const takenKeys = React.useMemo(
+    () => new Set(existingKeys.map((key) => key.trim()).filter(Boolean)),
+    [existingKeys],
+  );
 
   React.useEffect(() => {
     if (!open) {
@@ -190,7 +207,18 @@ const KimiModelFormModal: React.FC<KimiModelFormModalProps> = ({
         <Form.Item
           name="key"
           label={t('kimi.model.key')}
-          rules={[{ required: true, message: t('common.error') }]}
+          rules={[
+            { required: true, message: t('common.error') },
+            {
+              validator: (_rule, value: string) => {
+                const key = (value ?? '').trim();
+                if (key && takenKeys.has(key)) {
+                  return Promise.reject(new Error(t('kimi.model.keyDuplicate')));
+                }
+                return Promise.resolve();
+              },
+            },
+          ]}
           extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('kimi.model.keyHint')}</Text>}
         >
           <Input placeholder="moonshotai/kimi-k3" />

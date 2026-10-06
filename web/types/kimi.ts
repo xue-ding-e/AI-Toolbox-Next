@@ -35,8 +35,11 @@ export interface KimiPresetModel {
   id: string;
   displayName?: string;
   maxContextSize?: number;
+  maxInputSize?: number;
   maxOutputSize?: number;
   reasoning: boolean;
+  /** The catalog's tool-support flag; gates the `tool_use` capability. */
+  toolCall: boolean;
   inputModalities: string[];
   outputModalities: string[];
 }

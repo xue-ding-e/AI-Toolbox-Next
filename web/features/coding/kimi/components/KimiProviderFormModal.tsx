@@ -119,6 +119,9 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
   // Bundled models.dev catalog models matching the entered base URL. Empty
   // means "no match", which shows no hint rather than a wrong one.
   const [presetModels, setPresetModels] = useState<KimiPresetModel[]>([]);
+  // Guards the blur lookup: overlapping responses must not let an older
+  // provider's matches win, and a reset must invalidate any in-flight request.
+  const presetRequestIdRef = React.useRef(0);
 
   const isOfficial = category === 'official';
 
@@ -127,6 +130,11 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
   // Initialize form data when modal opens or provider changes
   useEffect(() => {
     if (!open) return;
+
+    // Drop any in-flight preset lookup and its result: the hint must never
+    // carry over from the previously edited provider.
+    presetRequestIdRef.current += 1;
+    setPresetModels([]);
 
     if (provider) {
       const parsed = parseKimiSettingsConfig(provider.settingsConfig);
@@ -229,15 +237,22 @@ const KimiProviderFormModal: React.FC<KimiProviderFormModalProps> = ({
    */
   const handleBaseUrlBlur = async (rawValue: string) => {
     const baseUrl = rawValue.trim();
+    const requestId = ++presetRequestIdRef.current;
     if (!baseUrl) {
       setPresetModels([]);
       return;
     }
     try {
-      setPresetModels(await getKimiPresetModels(baseUrl));
+      const models = await getKimiPresetModels(baseUrl);
+      // Two quick blurs can resolve out of order; only the newest wins.
+      if (requestId === presetRequestIdRef.current) {
+        setPresetModels(models);
+      }
     } catch {
       // A lookup failure must never block manual entry.
-      setPresetModels([]);
+      if (requestId === presetRequestIdRef.current) {
+        setPresetModels([]);
+      }
     }
   };
 

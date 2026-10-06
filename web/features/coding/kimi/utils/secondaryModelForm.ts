@@ -26,26 +26,54 @@ export function emptyKimiSecondaryModelConfig(): KimiSecondaryModelConfig {
 }
 
 /**
- * Validation messages mirror the CLI's own schema errors so the user sees the
- * same rule the runtime enforces.
+ * Validation failures, as i18n keys rather than prose: the caller renders them
+ * through i18next so zh-CN users see translated text.
+ */
+export type KimiSecondaryModelValidationError =
+  | 'forceWithModels'
+  | 'forceWithoutDefault'
+  | 'modelsWithoutDefault'
+  | 'reservedPrimaryKey'
+  | 'unresolvableAlias';
+
+/**
+ * Validation mirrors the CLI's own schema rules so the user sees the same rule
+ * the runtime enforces.
+ *
+ * `resolvableKeys` is the set of `[models.<key>]` aliases the applied provider
+ * projects; a pool key that resolves to no table makes the CLI refuse to start
+ * a session. Pass `undefined` when the applied catalog is unknown — the
+ * resolvability check is skipped rather than blocking a save on missing data.
  */
 export function validateKimiSecondaryModelConfig(
   config: KimiSecondaryModelConfig,
-): string | null {
+  resolvableKeys?: string[],
+): KimiSecondaryModelValidationError | null {
   const defaultModel = config.defaultModel.trim();
   const models = config.models.map((model) => model.trim()).filter(Boolean);
 
   if (config.force && models.length > 0) {
-    return 'force cannot be combined with models: the pool only exists to offer the main agent a choice';
+    return 'forceWithModels';
   }
   if (config.force && !defaultModel) {
-    return 'default_model is required when force is set';
+    return 'forceWithoutDefault';
   }
   if (models.length > 0 && !defaultModel) {
-    return 'default_model is required when models is configured';
+    return 'modelsWithoutDefault';
   }
   if (models.some((model) => model === KIMI_SECONDARY_MODEL_PRIMARY_KEY)) {
-    return `models key "${KIMI_SECONDARY_MODEL_PRIMARY_KEY}" is reserved`;
+    return 'reservedPrimaryKey';
+  }
+  if (resolvableKeys) {
+    const known = new Set(resolvableKeys.map((key) => key.trim()).filter(Boolean));
+    // `primary` is legal anywhere it appears as a *value*; it is only rejected
+    // as a pool key above.
+    const unresolvable = [defaultModel, ...models].filter(
+      (key) => key && key !== KIMI_SECONDARY_MODEL_PRIMARY_KEY && !known.has(key),
+    );
+    if (unresolvable.length > 0) {
+      return 'unresolvableAlias';
+    }
   }
   return null;
 }
@@ -132,35 +160,100 @@ export function buildKimiSecondaryModelToml(config: KimiSecondaryModelConfig): s
 }
 
 /**
+ * A table header at the start of a line: `[name]` / `[[name]]`, optionally
+ * quoted, optionally followed by a comment. Trailing content after the closing
+ * bracket is legal TOML, so the match must not require end-of-line.
+ */
+const TABLE_HEADER_PATTERN = /^\s*\[\[?\s*(.+?)\s*\]?\]\s*(?:#.*)?$/;
+
+/** Strip surrounding quotes from a TOML key path segment. */
+function unquoteKeyPath(raw: string): string {
+  return raw
+    .split('.')
+    .map((segment) => {
+      const trimmed = segment.trim();
+      if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2)
+        || (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
+      ) {
+        return trimmed.slice(1, -1);
+      }
+      return trimmed;
+    })
+    .join('.');
+}
+
+/** Whether a header path is `[secondary_model]` or one of its sub-tables. */
+function isSecondaryModelPath(path: string): boolean {
+  const normalized = unquoteKeyPath(path);
+  return normalized === KIMI_SECONDARY_MODEL_SECTION
+    || normalized.startsWith(`${KIMI_SECONDARY_MODEL_SECTION}.`);
+}
+
+/** A dotted top-level key that assigns into the section without a header. */
+const DOTTED_SECTION_PATTERN = new RegExp(
+  `^\\s*(?:"${KIMI_SECONDARY_MODEL_SECTION}"|'${KIMI_SECONDARY_MODEL_SECTION}'|${KIMI_SECONDARY_MODEL_SECTION})\\s*\\.`,
+);
+
+/**
  * Replace (or drop) the `[secondary_model]` section in a common-config TOML
  * payload, leaving every other line byte-identical.
  *
  * A line-based splice is deliberate: re-serializing the whole document would
- * reorder keys and strip the user's comments from the free TOML editor. The
- * section runs from its `[secondary_model]` header to the next table header at
- * the same or a shallower level, including the `[secondary_model.models]`
- * sub-table.
+ * reorder keys and strip the user's comments from the free TOML editor. In
+ * TOML a table body runs until the next table header, so the section is the
+ * run of lines from its header to the next one — including the
+ * `[secondary_model.models]` sub-table.
+ *
+ * Every legal spelling of the header must be recognized (a quoted
+ * `["secondary_model"]`, a trailing comment, the dotted form
+ * `secondary_model.default_model = "x"`). Missing one would leave the old table
+ * in place while appending a fresh one, and the duplicate table makes the whole
+ * config unparseable — so it could never be saved again. Multi-line strings are
+ * tracked so a `[secondary_model]` line inside one is not read as a header.
  */
 export function applyKimiSecondaryModelToml(
   toml: string,
   config: KimiSecondaryModelConfig,
 ): string {
-  const lines = toml.split('\n');
   const kept: string[] = [];
   let skipping = false;
+  let multilineDelimiter: '"""' | "'''" | null = null;
 
-  for (const line of lines) {
-    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]?\]\s*$/.exec(line);
+  for (const line of toml.split('\n')) {
+    // Inside a multi-line string only the closing delimiter is meaningful.
+    if (multilineDelimiter) {
+      if (line.includes(multilineDelimiter)) {
+        multilineDelimiter = null;
+      }
+      if (!skipping) {
+        kept.push(line);
+      }
+      continue;
+    }
+
+    const header = TABLE_HEADER_PATTERN.exec(line);
     if (header) {
-      const path = header[1].trim();
-      // Enter the section on its own header or any sub-table of it.
-      skipping = path === KIMI_SECONDARY_MODEL_SECTION
-        || path.startsWith(`${KIMI_SECONDARY_MODEL_SECTION}.`);
+      skipping = isSecondaryModelPath(header[1]);
       if (skipping) {
         continue;
       }
-    } else if (skipping) {
+      kept.push(line);
       continue;
+    }
+
+    if (skipping) {
+      continue;
+    }
+    if (DOTTED_SECTION_PATTERN.test(line)) {
+      continue;
+    }
+
+    // Track entry into a multi-line string so its body is never parsed as TOML.
+    if ((line.match(/"""/g) ?? []).length % 2 === 1) {
+      multilineDelimiter = '"""';
+    } else if ((line.match(/'''/g) ?? []).length % 2 === 1) {
+      multilineDelimiter = "'''";
     }
     kept.push(line);
   }

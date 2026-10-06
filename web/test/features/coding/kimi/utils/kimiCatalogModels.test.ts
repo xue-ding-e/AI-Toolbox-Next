@@ -122,8 +122,10 @@ test('buildKimiCatalogModelsFromPresets derives keys, sizes and capabilities', (
       id: 'kimi-k3',
       displayName: 'Kimi K3',
       maxContextSize: 1048576,
+      maxInputSize: 900000,
       maxOutputSize: 262144,
       reasoning: true,
+      toolCall: true,
       inputModalities: ['text', 'image', 'video'],
       outputModalities: ['text'],
     }],
@@ -138,10 +140,30 @@ test('buildKimiCatalogModelsFromPresets derives keys, sizes and capabilities', (
   assert.equal(rows[0].provider, 'moonshotai');
   assert.equal(rows[0].displayName, 'Kimi K3');
   assert.equal(rows[0].maxContextSize, 1048576);
+  assert.equal(rows[0].maxInputSize, 900000);
   assert.equal(rows[0].maxOutputSize, 262144);
-  // text has no capability counterpart; image/video map to *_in, output text
-  // implies tool_use, and reasoning adds thinking.
+  // text has no capability counterpart; image/video map to *_in, the catalog's
+  // tool_call flag adds tool_use, and reasoning adds thinking.
   assert.deepEqual(rows[0].capabilities, ['image_in', 'video_in', 'tool_use', 'thinking']);
+});
+
+test('buildKimiCatalogModelsFromPresets does not infer tool_use from the output modality', () => {
+  // 969 catalog models declare `tool_call: false`; the output modality being
+  // text must not promote them, or the CLI fails when the upstream rejects tools.
+  const rows = buildKimiCatalogModelsFromPresets(
+    [{
+      id: 'no-tools',
+      reasoning: false,
+      toolCall: false,
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+    }],
+    'custom',
+    [],
+    262144,
+  );
+
+  assert.equal(rows[0].capabilities, undefined);
 });
 
 test('buildKimiCatalogModelsFromPresets falls back to the CLI context requirement', () => {
@@ -149,6 +171,7 @@ test('buildKimiCatalogModelsFromPresets falls back to the CLI context requiremen
     [{
       id: 'k3',
       reasoning: false,
+      toolCall: false,
       inputModalities: [],
       outputModalities: [],
     }],
@@ -166,8 +189,8 @@ test('buildKimiCatalogModelsFromPresets skips models already in the catalog', ()
   const existing = [model({ key: 'moonshotai/kimi-k3', model: 'kimi-k3' })];
   const rows = buildKimiCatalogModelsFromPresets(
     [
-      { id: 'kimi-k3', reasoning: false, inputModalities: [], outputModalities: [] },
-      { id: 'kimi-k2.6', reasoning: false, inputModalities: [], outputModalities: [] },
+      { id: 'kimi-k3', reasoning: false, toolCall: false, inputModalities: [], outputModalities: [] },
+      { id: 'kimi-k2.6', reasoning: false, toolCall: false, inputModalities: [], outputModalities: [] },
     ],
     'moonshotai',
     existing,

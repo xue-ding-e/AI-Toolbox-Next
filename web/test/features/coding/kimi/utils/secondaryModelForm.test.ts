@@ -43,24 +43,72 @@ test('parse honors the legacy v1 model key as the default', () => {
 
 test('validate mirrors the CLI schema rules', () => {
   // force + pool are mutually exclusive.
-  assert.ok(validateKimiSecondaryModelConfig({
-    defaultModel: 'a/b',
-    models: ['a/c'],
-    force: true,
-  }));
+  assert.equal(
+    validateKimiSecondaryModelConfig({ defaultModel: 'a/b', models: ['a/c'], force: true }),
+    'forceWithModels',
+  );
   // force without a default is rejected.
-  assert.ok(validateKimiSecondaryModelConfig({ defaultModel: '', models: [], force: true }));
+  assert.equal(
+    validateKimiSecondaryModelConfig({ defaultModel: '', models: [], force: true }),
+    'forceWithoutDefault',
+  );
   // A pool without a default is rejected.
-  assert.ok(validateKimiSecondaryModelConfig({ defaultModel: '', models: ['a/c'], force: false }));
+  assert.equal(
+    validateKimiSecondaryModelConfig({ defaultModel: '', models: ['a/c'], force: false }),
+    'modelsWithoutDefault',
+  );
   // "primary" is reserved.
-  assert.ok(validateKimiSecondaryModelConfig({
-    defaultModel: 'a/b',
-    models: ['primary'],
-    force: false,
-  }));
+  assert.equal(
+    validateKimiSecondaryModelConfig({ defaultModel: 'a/b', models: ['primary'], force: false }),
+    'reservedPrimaryKey',
+  );
   // A plain default-only config is valid.
   assert.equal(
     validateKimiSecondaryModelConfig({ defaultModel: 'a/b', models: [], force: false }),
+    null,
+  );
+});
+
+test('validate rejects aliases the applied catalog cannot resolve', () => {
+  // A pool key with no matching [models.<key>] makes the CLI refuse to start.
+  assert.equal(
+    validateKimiSecondaryModelConfig(
+      { defaultModel: 'a/b', models: ['ghost/missing'], force: false },
+      ['a/b'],
+    ),
+    'unresolvableAlias',
+  );
+  // The default itself must resolve too.
+  assert.equal(
+    validateKimiSecondaryModelConfig(
+      { defaultModel: 'ghost/missing', models: [], force: false },
+      ['a/b'],
+    ),
+    'unresolvableAlias',
+  );
+  // "primary" is legal as a value even though it is not a catalog key.
+  assert.equal(
+    validateKimiSecondaryModelConfig(
+      { defaultModel: 'primary', models: [], force: false },
+      ['a/b'],
+    ),
+    null,
+  );
+  // Everything resolvable passes.
+  assert.equal(
+    validateKimiSecondaryModelConfig(
+      { defaultModel: 'a/b', models: ['a/c'], force: false },
+      ['a/b', 'a/c'],
+    ),
+    null,
+  );
+  // Without a known catalog the resolvability check is skipped rather than
+  // blocking a save on missing data.
+  assert.equal(
+    validateKimiSecondaryModelConfig(
+      { defaultModel: 'a/b', models: ['ghost/missing'], force: false },
+      undefined,
+    ),
     null,
   );
 });
@@ -130,6 +178,58 @@ force = true
   assert.doesNotMatch(result, /\[secondary_model\]/);
   assert.doesNotMatch(result, /force/);
   assert.match(result, /default_model = "moonshotai\/kimi-k3"/);
+});
+
+test('apply recognizes every legal spelling of the section header', () => {
+  const config = { defaultModel: 'new/alias', models: [], force: false };
+  // A trailing comment, a quoted table name, and the dotted-key form are all
+  // valid TOML; missing any of them would leave a duplicate table behind.
+  const spellings = [
+    '[secondary_model] # swarm pool\ndefault_model = "old/alias"\n',
+    '["secondary_model"]\ndefault_model = "old/alias"\n',
+    "['secondary_model']\ndefault_model = \"old/alias\"\n",
+    'secondary_model.default_model = "old/alias"\n',
+  ];
+
+  for (const stored of spellings) {
+    const result = applyKimiSecondaryModelToml(stored, config);
+    assert.doesNotMatch(result, /old\/alias/, `stale value survived: ${stored}`);
+    assert.equal(
+      result.match(/\[secondary_model\]/g)?.length ?? 0,
+      1,
+      `expected exactly one section for: ${stored}`,
+    );
+  }
+});
+
+test('apply removes the section when only a trailing-comment header matched', () => {
+  const stored = '[secondary_model] # swarm pool\ndefault_model = "old/alias"\n';
+  const result = applyKimiSecondaryModelToml(stored, emptyKimiSecondaryModelConfig());
+
+  assert.doesNotMatch(result, /\[secondary_model\]/);
+  assert.doesNotMatch(result, /old\/alias/);
+});
+
+test('apply does not treat a section name inside a multi-line string as a header', () => {
+  const stored = [
+    'notes = """',
+    '[secondary_model]',
+    'not a real table',
+    '"""',
+    'default_model = "keep/me"',
+    '',
+  ].join('\n');
+
+  const result = applyKimiSecondaryModelToml(stored, {
+    defaultModel: 'new/alias',
+    models: [],
+    force: false,
+  });
+
+  // The string body survives intact and the real assignment is kept.
+  assert.match(result, /not a real table/);
+  assert.match(result, /keep\/me/);
+  assert.match(result, /new\/alias/);
 });
 
 test('apply is idempotent across repeated saves', () => {

@@ -6304,7 +6304,14 @@
       "swarmModels": "可选模型池",
       "swarmModelsHint": "写入 [secondary_model.models]。主 agent 可从中自主挑选；key 必须已存在于模型的别名中。保留字 primary 表示主 agent 自身模型，无需列出。",
       "swarmModelsPlaceholder": "选择可选模型",
-      "swarmGatewayNote": "注意：模型池中引用的其他供应商不经过网关，与本工具其他 CLI 的单点接管语义一致。"
+      "swarmGatewayNote": "注意：模型池中引用的其他供应商不经过网关，与本工具其他 CLI 的单点接管语义一致。",
+      "swarmError": {
+        "forceWithModels": "force 不能与 models 同时配置：模型池的唯一作用是给主 agent 提供选择，而 force 会取消该选择。",
+        "forceWithoutDefault": "开启 force 时必须填写子 agent 默认模型。",
+        "modelsWithoutDefault": "配置模型池时必须填写子 agent 默认模型。",
+        "reservedPrimaryKey": "模型池的 key \"primary\" 是保留字，请改名。",
+        "unresolvableAlias": "模型池引用的别名在当前供应商的模型目录中不存在，CLI 会拒绝启动会话。请先应用包含这些模型的供应商。"
+      }
     },
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
     "addProvider": "添加供应商",
@@ -6423,7 +6430,8 @@
       "editModelHint": "模型目录写入 config.toml 的 [models] 表；应用供应商后才会投影到运行时文件。",
       "selectModel": "选择模型 {{name}}",
       "catalogMovedHint": "模型目录已移至供应商卡片的「模型列表」区域，保存后在卡片中编辑。",
-      "defaultTag": "默认"
+      "defaultTag": "默认",
+      "keyDuplicate": "该模型 Key 已被同供应商的其他模型占用。"
     }
   },
   "zcode": {

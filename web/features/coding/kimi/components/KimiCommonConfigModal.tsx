@@ -65,10 +65,10 @@ const KimiCommonConfigModal: React.FC<KimiCommonConfigModalProps> = ({
   }, [modelAliasKeys, swarmConfig.models]);
 
   const handleOk = async () => {
-    const swarmError = validateKimiSecondaryModelConfig(swarmConfig);
+    const swarmError = validateKimiSecondaryModelConfig(swarmConfig, modelAliasKeys);
     if (swarmError) {
       setActiveTab('swarm');
-      message.error(swarmError);
+      message.error(t(`kimi.commonConfig.swarmError.${swarmError}`));
       return;
     }
     try {

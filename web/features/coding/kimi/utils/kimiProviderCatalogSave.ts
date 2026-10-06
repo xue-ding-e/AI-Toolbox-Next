@@ -3,6 +3,7 @@ import {
   saveProviderWithGatewayReengage,
   type GatewayReengageMode,
 } from '@/features/coding/shared/gateway';
+import { shouldReengageKimiGatewayOnSave } from './providerSaveFlow';
 
 interface SaveKimiProviderCatalogOptions<TStatus> {
   provider: KimiProvider;
@@ -34,8 +35,9 @@ export async function saveKimiProviderCatalogWithGatewayReengage<TStatus>({
   engageFailover,
   onGatewayStatusChange,
 }: SaveKimiProviderCatalogOptions<TStatus>): Promise<KimiProvider> {
-  const shouldReengageGateway = Boolean(provider.isApplied)
-    && (gatewayMode === 'single' || gatewayMode === 'failover');
+  // The predicate is owned by providerSaveFlow so the catalog path and the
+  // provider-form path cannot drift apart.
+  const shouldReengageGateway = shouldReengageKimiGatewayOnSave(provider, gatewayMode);
 
   return saveProviderWithGatewayReengage({
     gatewayMode: shouldReengageGateway ? gatewayMode : null,

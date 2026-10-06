@@ -833,7 +833,10 @@ const KimiProviderCard: React.FC<KimiProviderCardProps> = ({
           </div>
         </div>
 
-        {!isLocalProvider && renderModelSection()}
+        {/* Official channels carry no client-side catalog — the settings builder
+            deletes `modelCatalog` for them by design, so an editor here would
+            silently discard every save. `__local__` is a read-only bridge. */}
+        {!isLocalProvider && !isOfficialProvider && renderModelSection()}
       </Card>
     </div>
   );
