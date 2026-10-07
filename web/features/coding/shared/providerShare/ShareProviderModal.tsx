@@ -4,6 +4,7 @@ import { sanitizeShareHomepage } from '@/features/shared/deepLink/providerShareU
 import { extractProviderShareVariants, hasUnresolvedShareCredential, normalizeSharedApiFormat, type ProviderShareApp, type ShareableProvider } from '@/features/shared/deepLink/providerTransfer';
 import type { DeepLinkImportRequest } from '@/services/deeplinkApi';
 import { findGatewayProviderEndpointByReference, getGatewayProviderProfileReferenceFromMeta } from '../gateway/providerProfiles';
+import { LOCAL_CONFIG_ID } from '../localConfig';
 
 export type { ShareableProvider } from '@/features/shared/deepLink/providerTransfer';
 
@@ -43,7 +44,7 @@ const ShareProviderModal: React.FC<ShareProviderModalProps> = ({ open, sourceApp
       resource: 'provider', app: sourceApp, name: variants.length > 1 ? `${provider.name} (${selectedVariant.id})` : provider.name,
       category: provider.category === 'third_party' ? 'third_party' : 'custom',
       ...fields, homepage: sanitizeShareHomepage(provider.websiteUrl), notes: provider.notes, icon: provider.icon, iconColor: provider.iconColor,
-      sourceProviderId: provider.id && provider.id !== '__local__' ? `share:${sourceApp}:${provider.id}${selectedVariant.id ? `:${selectedVariant.id}` : ''}` : undefined,
+      sourceProviderId: provider.id && provider.id !== LOCAL_CONFIG_ID ? `share:${sourceApp}:${provider.id}${selectedVariant.id ? `:${selectedVariant.id}` : ''}` : undefined,
       rawUrl: '',
     };
   }, [open, sourceApp, provider, selectedVariant, variants.length]);

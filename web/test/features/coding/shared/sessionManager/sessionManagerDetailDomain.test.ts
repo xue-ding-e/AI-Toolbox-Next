@@ -91,7 +91,7 @@ test('enrichSessionMessagesWithToolExecutions pairs split Claude tool calls and 
         toolName: 'ExitPlanMode',
         input: {
           plan: '# Gateway plan',
-          planFilePath: 'C:\\Users\\MaRuJun\\.claude\\plans\\vast-orbiting-star.md',
+          planFilePath: 'C:\\Users\\tester\\.claude\\plans\\bright-orbiting-star.md',
         },
       }],
     },
@@ -116,7 +116,7 @@ test('enrichSessionMessagesWithToolExecutions pairs split Claude tool calls and 
   assert.equal(enrichedBlock?.normalizedToolName, 'exit_plan_mode');
   assert.deepEqual(enrichedBlock?.input, {
     plan: '# Gateway plan',
-    planFilePath: 'C:\\Users\\MaRuJun\\.claude\\plans\\vast-orbiting-star.md',
+    planFilePath: 'C:\\Users\\tester\\.claude\\plans\\bright-orbiting-star.md',
   });
   assert.equal(enrichedBlock?.output, 'The user does not want to proceed with this tool use.');
   assert.equal(enrichedBlock?.status, 'error');

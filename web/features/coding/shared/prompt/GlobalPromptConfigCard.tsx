@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { LOCAL_CONFIG_ID } from '../localConfig';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import MarkdownPreview from '@/components/common/MarkdownPreview';
@@ -42,7 +43,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const [expanded, setExpanded] = React.useState(false);
-  const isLocalConfig = config.id === '__local__';
+  const isLocalConfig = config.id === LOCAL_CONFIG_ID;
   // `__local__` is only a local-file bridge, not a managed applied preset.
   const showAsApplied = config.isApplied && !isLocalConfig;
   const {

@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Collapse, Empty, Modal, Space, Spin, Typography, message } from 'antd';
 import { FileTextOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { LOCAL_CONFIG_ID } from '../localConfig';
 import {
   DndContext,
   PointerSensor,
@@ -157,13 +158,13 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
 
   const handleConfigSuccess = async (values: GlobalPromptConfigFormValues) => {
     const payload: GlobalPromptConfigInput = {
-      id: editingConfig?.id !== '__local__' ? editingConfig?.id : undefined,
+      id: editingConfig?.id !== LOCAL_CONFIG_ID ? editingConfig?.id : undefined,
       name: values.name,
       content: values.content,
     };
 
     try {
-      if (editingConfig?.id === '__local__') {
+      if (editingConfig?.id === LOCAL_CONFIG_ID) {
         await service.saveLocalConfig(payload);
       } else if (editingConfig?.id) {
         await service.updateConfig(payload);
@@ -188,7 +189,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
       return;
     }
 
-    if (configs.some((config) => config.id === '__local__')) {
+    if (configs.some((config) => config.id === LOCAL_CONFIG_ID)) {
       return;
     }
 
@@ -253,7 +254,7 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
 
   // `__local__` mirrors the local prompt file only; do not present it as a managed applied preset.
   const appliedConfig = configs.find(
-    (config) => config.isApplied && config.id !== '__local__'
+    (config) => config.isApplied && config.id !== LOCAL_CONFIG_ID
   );
 
   return (

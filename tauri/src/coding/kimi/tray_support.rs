@@ -195,7 +195,7 @@ pub async fn get_kimi_prompt_tray_data<R: Runtime>(
         .await?
         .into_iter()
         // The local prompt placeholder read from the live AGENTS.md reuses the
-        // "__local__" sentinel id (get_local_prompt_config), so it is excluded
+        // local-bridge sentinel id (get_local_prompt_config), so it is excluded
         // from the tray like the __local__ provider placeholder above.
         .filter(|item| item.id != KIMI_LOCAL_PROVIDER_ID)
         .map(|item| TrayPromptItem {

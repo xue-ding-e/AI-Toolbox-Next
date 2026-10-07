@@ -1,6 +1,7 @@
 import React from 'react';
 import { Alert, Button, Form, Input, Modal } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { LOCAL_CONFIG_ID } from '../localConfig';
 import MarkdownEditor from '@/components/common/MarkdownEditor';
 import type { GlobalPromptConfig } from '@/types/globalPrompt';
 import styles from './GlobalPromptSettings.module.less';
@@ -72,7 +73,7 @@ const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
       ]}
     >
       <div className={styles.modalBody}>
-        {initialValues?.id === '__local__' && (
+        {initialValues?.id === LOCAL_CONFIG_ID && (
           <Alert
             message={t('common.prompt.localConfigHint', { file: promptFileName })}
             type="warning"
