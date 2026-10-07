@@ -107,21 +107,28 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
 
           {(metaEntries?.length || inlineActions) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-              {metaEntries?.map((entry, index) =>
-                entry.kind === 'tag' ? (
-                  <Tag key={index} color={entry.color ?? 'blue'} style={{ fontSize: 11, margin: 0 }}>
-                    {entry.value}
-                  </Tag>
-                ) : entry.kind === 'code' ? (
-                  <Text key={index} code style={{ fontSize: 11, padding: '0 4px' }}>
-                    {entry.value}
-                  </Text>
-                ) : (
-                  <Text key={index} type="secondary" style={{ fontSize: 12 }}>
-                    {entry.value}
-                  </Text>
-                ),
-              )}
+              {metaEntries?.map((entry, index) => (
+                <span key={index} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {entry.label && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.label}
+                    </Text>
+                  )}
+                  {entry.kind === 'tag' ? (
+                    <Tag color={entry.color ?? 'blue'} style={{ fontSize: 11, margin: 0 }}>
+                      {entry.value}
+                    </Tag>
+                  ) : entry.kind === 'code' ? (
+                    <Text code style={{ fontSize: 11, padding: '0 4px' }}>
+                      {entry.value}
+                    </Text>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.value}
+                    </Text>
+                  )}
+                </span>
+              ))}
               {inlineActions}
             </div>
           )}

@@ -25,6 +25,7 @@ import {
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import ModelItem from '@/components/common/ModelItem';
 import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
+import styles from './ModelListSection.module.less';
 
 const { Text } = Typography;
 
@@ -186,7 +187,9 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
   return (
     <Collapse
       ghost
-      className={className}
+      className={[className, transparentRows ? styles.transparentCollapse : undefined]
+        .filter(Boolean)
+        .join(' ')}
       defaultActiveKey={[]}
       style={{ marginTop: 12, background: 'transparent' }}
       items={[

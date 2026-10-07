@@ -911,9 +911,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       ? {
           models: modelRows.map((row) => row.display),
           rowKeyOf: (model) => rowKeyByDisplay.get(model) ?? model.id,
-          // The model section's Collapse is codex-scoped so the transparent
-          // background and the indent match the bespoke card this replaced.
-          className: 'codex-model-list-collapse',
+          // Indent only: the transparent Collapse layers come from
+          // `transparentRows`, which ModelListSection applies itself.
           bodyStyle: { paddingLeft: 18, background: 'transparent' },
           modelsDraggable: !modelSelectionMode,
           onReorderModels: onReorderModels

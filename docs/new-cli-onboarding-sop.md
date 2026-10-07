@@ -1645,6 +1645,8 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 78 | 共享组件的新 prop **声明了却没渲染** | `ProviderCardModels` 里的 `modelSourceTag`、`onToggleModelDisabled` 等由调用方传入，但某个样式组件里没有渲染点 → 传了等于没传，类型检查全通过 | 同 #70。类型里出现的每个可选 prop，**在组件里指认一次它的渲染位置**；加 prop 时同步补一条守卫或至少在 PR 描述里写「渲染在 X 行」 |
 | 79 | 迁移时**照搬了参照页面的旧 key，而不是共享 key** | 页面迁到 `CodingPageHeader` 后仍传 `<tool>.viewDocs` 这类 per-CLI key——它们在中文下与 `common.*` 逐字相同，所以看不出问题；但英文措辞会两套并存（`Documentation` vs `Official Docs`），且这些 key 永远无法 prune | 迁移前把待迁的 key 与 `common.*` **逐条比对中英文**（命令见 §12.1），同义的统一取 `common.*`，把英文措辞变化写进提交说明；**不要为保住旧措辞加覆盖 prop** |
 | 80 | 迁移卡片时**漏搬了「状态高亮」** | 四张 bespoke 卡片各自抄了一份「批量选中 > 网关 P0 > 已应用」的边框/底色优先级；`CardShell` 只实现了「批量选中」那一条 → 迁完之后**已应用与 P0 的视觉标记全部消失**，卡片一律灰边框。界面不报错，只是用户看不出哪个渠道生效了 | 迁移前把原卡片的 `style` 逐条对照目标组件的渲染点（不只是 props 对照）；本轮补 `providerState.accent` 到 `CardShell`。见 13.1 模式四十八 |
+| 81 | 标签与它的值被拆成**两个** `metaEntries` 项 | Claude Code 的绑定行把 `Haiku:` 与模型 id 分成两个条目 → 行的 `gap: 16px` 插到标签和值之间（读起来像两列），且 `alignItems` 按顶边对齐，`<code>` 的 padding 一撑标签就偏高。**用户一眼看出「没有居中对齐」** | 标签随值走：`{ kind: 'code', label: 'Haiku:', value: '…' }`，组件渲染成同一个 flex 项。见 13.1 模式四十九 |
+| 82 | 迁移时漏 import 了 CLI 自己的 `.less`，白色标题条露出来 | `CodexProviderCard.less` 的 `.codex-model-list-collapse` 负责把模型折叠区的六层 antd Collapse 背景刷成透明；改写卡片时没带这行 import → **已应用卡片（有底色）上的「模型列表 (N)」标题变成白条**。只在卡片有 accent 时才可见，无底色时完全看不出 | 透明规则改由共享 `ModelListSection` 的 `transparentRows` 统一施加（`ModelListSection.module.less`），CLI 侧不再各存一份。见 13.1 模式五十 |
 | 77 | `values.inputTypes` 是 JSON **字符串**，却直接赋给 `nextModel.input` | `ModelFormModal:761` 产出的是 `JSON.stringify(inputModalities)`；上游要的是 `input: ["text","image"]` **数组**。直接赋值写出 `"input": "[\"text\"]"`——引擎读不到，且把原有数组覆盖成字符串 | 弹窗交回的 JSON 字符串**一律 parse** 再落盘（`parseInputTypes` / `parseJsonRecord`）；反向用 `stringifyInputTypes`。回归测试断言 `Array.isArray(model.input)` |
 | 78 | 「获取模型 → 应用」不做预设匹配 | SOP §4.2.5 明令，Pi/OMP/Codex 全部接了 `findPresetModelById`；Native 漏了 → 用户点应用只得到裸 id，参数全要手填（= ZCode 教训 #31 的复现） | 每个 CLI 的 fetch 回调都要接预设匹配；同引擎的兄弟是最好的抄写对象（Native 与 Pi 的 builder 现在同构） |
 | 79 | 页面标题 `OmO Native（Agents 与 Categories）` 指向已删区块 | 标题里点名的能力在页面收敛后已经不存在——用户按标题找区块，找不到 | 撤区块时**同一任务内**检查标题 / hint / 空态文案里有没有点名它；见 13.1 模式二十一 |
@@ -2067,6 +2069,24 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > **判别方法**：迁移一个组件时，把原文件里的 `style={{` / `className=` 全部列出来，逐条问「这条对应目标组件的哪个渲染点？没有对应 → 我要搬到哪？」。**props 清单对照不够**——状态类样式根本不经过 props。
 >
 > **对策**：**状态标记属于外壳**。凡是「由数据推导、影响整块外观」的样式，一并搬进共享外壳（本轮是 `CardShell` 的 `accent`），映射层只负责算出这个语义值。留在映射层会导致每个 CLI 重新抄一遍优先级，正是这次重构要消除的分叉。
+
+**模式四十九：数据等价 ≠ 渲染等价——把「一对」拆成「两个」条目。** 一个列表型 prop（`metaEntries`、toolbar 项、菜单项…）里，属于同一视觉单元的片段必须留在**同一个条目**里。拆成两个条目在数据上完全说得通（一个标签、一个值），在渲染上却会被容器自己的 `gap` / `alignItems` 分开——于是出现「标签与值之间空一格」「两者基线不齐」这类**用户一眼就看出、代码却毫无异常**的问题。把标签放进条目的可选字段（`entry.label`），让「它们是一对」这件事编码在类型里。
+> 例（#81）：Claude Code 卡片第二行 `Haiku:` 与模型名被拆成两项，`gap: 16px` 插进中间。
+>
+> **判别方法**：往列表型 prop 里塞数据前，问「这两个片段**能不能分开换行**？」不能 → 它们是一个条目。
+>
+> **对策**：让条目自己承载它的标签（`{ kind, label?, value }`），而不是让调用方靠「相邻两项」隐式表达配对。相邻关系是渲染层看不见的约定。
+
+**模式五十：把 CLI 专属的样式规则留在 CLI 侧，迁移时随文件一起丢掉。** 一个组件需要的样式，如果写在**调用方**的样式表里（`.codex-model-list-collapse { … }`），那么它和调用方是**隐式耦合**的：迁移、重写、换文件名时它不会跟着走，也不会报错——只是样式失效。更糟的是这类失效**往往只在某个状态下可见**（本例：卡片有 accent 时才看得出白条），所以能潜伏很久。
+> 例（#82）：codex 与 grok 各自 `.less` 里逐字重复的 Collapse 透明规则，迁移 codex 卡片时漏 import。
+>
+> **判别方法**：迁移一个组件时，除了它的 `.tsx`，还要问「**这个组件的样式有没有一部分在别的文件里？**」——按它渲染出的 class 名（`*-collapse`、`*-section`）反查 `.less` / `.css`。
+> ```bash
+> # 该组件渲染的 class 名，在哪些样式表里被定义？（跨文件 = 隐式耦合）
+> grep -rn "<component-class-prefix>" web --include=*.less --include=*.css
+> ```
+>
+> **对策**：**样式跟着组件走**。如果这条规则描述的是「这个组件在自己的容器里该怎么显示」（而不是「这个 CLI 想让它长什么样」），就把它搬进组件的 `*.module.less`，由组件的 prop 触发（如 `transparentRows`）。留在 CLI 侧只会让下一个迁移的人再丢一次。
 
 **反向模式（不是坑但容易误判）：进程 stales。**
 > 排查 UI 异常前，**先确认运行中的进程是当前构建**。曾出现：前端 Vite 热更新到最新代码，而后端进程是 14 小时前启动的旧二进制，DB 迁移也没跑 → 表现为「后端命令不存在/报错」，实际是代码根本没生效。

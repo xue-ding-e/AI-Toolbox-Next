@@ -33,6 +33,8 @@
 - **`useSortable` 每次渲染都必须执行。** 没有 id 时传占位符并置 `disabled`，不要条件调用 hook——违反 hooks 规则会在拖拽开关切换时崩。
 - **卡片自己留底部间距（`marginBottom: 12`），不靠父容器的 `gap`。** 这样重排后间距不会错位；靠父容器 gap 时，把官方账号卡片之类的异类插进列表会丢间距。
 - **「已应用 / 网关 P0」的高亮属于 `CardShell`，不属于映射层。** 四个 bespoke 卡片各自抄了一份「选中 > 网关 P0 > 已应用」的优先级；迁到共享组件时如果不把它一起搬进来，卡片会静默变成统一的灰边框——**没有任何报错，只是状态看不见了**。映射层只负责把 `providerState.accent` 算出来。
+- **标签与它的值必须在同一个 `metaEntries` 项里。** 拆成两个项（`{kind:'text', value:'Haiku:'}` + `{kind:'code', value:'…'}`）数据上等价，渲染上不等价：行的 `gap: 16px` 会插到标签和值之间，而 `alignItems` 让两者的盒子按顶边对齐——`<code>` 的 padding 一撑，标签就明显偏高。这是 Claude Code 卡片上真实出现过的错位。用 `entry.label`，组件把它渲染成同一个 flex 项。
+- **`transparentRows` 自带透明 Collapse**（`ModelListSection.module.less`）。该规则曾以 `.codex-model-list-collapse` / `.grok-model-list-collapse` 的形式在 CLI 侧各存一份，迁移时漏 import 就会在**有底色的卡片**上露出白色标题条——没有底色时完全看不出来，所以能潜伏很久。现在由共享组件统一施加，CLI 侧不要再复制。
 - **改通用行为（间距、按钮、拖拽、选中态）改在变体组件里。** 只在某个 CLI 的卡片里改，样式就会重新分叉——这正是本模块要消除的问题（见根 `AGENTS.md` Hard Rule 14）。
 
 ## 跨模块依赖
@@ -51,7 +53,8 @@
 3. 原卡片里**该 CLI 特有的业务逻辑**（如 ZCode 的 `isDefault` 双写、网关接管按钮）留在映射层，不要塞进样式组件。
 4. 检查被删掉的 props 是否在页面侧变成死代码（`onApply`、`onTest` 之类），一并清理。
 5. 核对原卡片是否有样式组件没有的能力（官方模型只读列表、网关标签、优先级徽章）——有则用 `footer` / `nameTags` / `inlineActions` / `gatewayActions` 插槽补，**不要**为此给样式组件加 CLI 专属 prop。
-6. **跑 `pnpm run test:provider-card-layout`，并从脚本的 `PENDING_MIGRATION` 里删掉这个文件**。守卫是「棘轮」：迁完不删会报错，没迁却不在名单里也会报错。
+6. **逐条对照原卡片的 `style={{` / `className=`**，而不只是对照 props：状态类样式（边框色、底色、透明度）不经过 props，最容易整块丢掉（`accent` 就是这么漏的）。同时按 class 名反查 CLI 的 `.less`，看有没有属于「组件在自己容器里该怎么显示」的规则该搬进来（`transparentRows` 就是这么漏的）。
+7. **跑 `pnpm run test:provider-card-layout`，并从脚本的 `PENDING_MIGRATION` 里删掉这个文件**。守卫是「棘轮」：迁完不删会报错，没迁却不在名单里也会报错。
 
 ## 插槽清单（补能力时先看这里）
 
@@ -59,7 +62,7 @@
 |---|---|---|---|
 | `providerState.accent` | 卡片外框（`CardShell`） | `applied`（主色边框 + 选中底色）/ `gatewayPrimary`（成功色 + 渐变）；批量选中优先于两者 | claudecode、codex |
 | `nameTags` | 名称右侧 | 已应用 / 官方 / 代理 / 网关优先级徽章 | claudecode、codex、zcode |
-| `metaEntries` | 第二行 | 有序的 `text` / `code` / `tag` 项 | claudecode（角色绑定）、codex（端点/模型/key/备注）、zcode |
+| `metaEntries` | 第二行 | 有序的 `text` / `code` / `tag` 项；**标签用 `entry.label`，不要拆成前一个 `text` 项** | claudecode（角色绑定）、codex（端点/模型/key/备注）、zcode |
 | `inlineActions` | 第二行末尾 | 行内动作（连通性测试、CLI 启动） | claudecode、codex（`InlineConnectivityButton`） |
 | `footer` | 第二行下方、模型区上方 | 自由区块（官方账号折叠区） | codex |
 | `actions.gatewayActions` | 头部主操作**之前** | 网关接管/恢复直连/切换主渠道 | claudecode、codex |

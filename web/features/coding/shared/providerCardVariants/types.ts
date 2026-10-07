@@ -36,6 +36,17 @@ export interface ProviderCardMetaEntry {
    */
   kind: 'code' | 'text' | 'tag';
   value: string;
+  /**
+   * Optional label rendered immediately before the value, in secondary text:
+   * `Haiku: claude-haiku-4-5`.
+   *
+   * A label belongs to its value, so it travels in the same entry. Modelling it
+   * as a second entry looks identical in the data but renders wrong: the row's
+   * inter-entry gap lands between the label and its value, and the two boxes
+   * align by their tops instead of sharing a baseline — which is exactly the
+   * misalignment that showed up on the Claude Code card.
+   */
+  label?: string;
   /** Only meaningful for `tag`: the Ant Design color. */
   color?: string;
 }

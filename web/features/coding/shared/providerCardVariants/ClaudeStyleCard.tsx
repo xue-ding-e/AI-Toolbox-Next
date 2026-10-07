@@ -102,20 +102,28 @@ const ClaudeStyleCard: React.FC<ProviderCardVariantProps> = ({
           </div>
 
           {metaEntries && metaEntries.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px 16px', flexWrap: 'wrap', marginTop: 4 }}>
-              {metaEntries.map((entry, index) =>
-                entry.kind === 'code' ? (
-                  <div key={index}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px 16px', flexWrap: 'wrap', marginTop: 4 }}>
+              {metaEntries.map((entry, index) => (
+                // One entry renders as one flex item, so the gap separates
+                // bindings but never splits a label from its value, and
+                // `alignItems: center` lines the label up with the code box.
+                <span key={index} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {entry.label && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.label}
+                    </Text>
+                  )}
+                  {entry.kind === 'code' ? (
                     <Text code style={{ fontSize: 12 }}>
                       {entry.value}
                     </Text>
-                  </div>
-                ) : (
-                  <Text key={index} type="secondary" style={{ fontSize: 12 }}>
-                    {entry.value}
-                  </Text>
-                ),
-              )}
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {entry.value}
+                    </Text>
+                  )}
+                </span>
+              ))}
               {inlineActions}
             </div>
           )}

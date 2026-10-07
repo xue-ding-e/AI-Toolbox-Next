@@ -303,9 +303,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   /**
    * The second line: the model bindings this CLI writes into `settings.json`.
    *
-   * Each binding is a label plus a monospaced model id, which is why the style's
-   * meta line takes an ordered entry list rather than a single string — the
-   * label must stay secondary and the value must stay code-shaped.
+   * Each binding is a label plus a monospaced model id. The label travels
+   * inside its entry rather than as a preceding entry — see
+   * `ProviderCardMetaEntry.label` for why the two are not interchangeable.
    */
   const metaEntries = React.useMemo<ProviderCardMetaEntry[]>(() => {
     const entries: ProviderCardMetaEntry[] = [];
@@ -313,8 +313,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       if (!model) {
         return;
       }
-      entries.push({ kind: 'text', value: `${label}:` });
-      entries.push({ kind: 'code', value: model });
+      entries.push({ kind: 'code', label: `${label}:`, value: model });
     };
 
     push(t('claudecode.model.defaultLabel'), modelConfig.fallbackModel);
