@@ -344,6 +344,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "dsh-mcp"
             | "claude-desktop-config"
             | "zcode-cli-config"
+            | "omo-native-mcp"
     )
 }
 
@@ -371,7 +372,9 @@ async fn strip_cmd_c_from_remote_mcp_file(
                 return Ok(());
             }
         }
-        "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" => {
+        // OmO Native keeps MCP servers in `~/.omo/agent/mcp.json` under
+        // `mcpServers` — the same Claude-shaped stdio config as Pi.
+        "geminicli" | "pi" | "oh_my_pi" | "claude_desktop" | "omo_native" => {
             command_normalize::process_claude_json(&content, false, &identity)?
         }
         // Kimi carries MCP servers in mcp.json (standard mcpServers JSON);
@@ -421,5 +424,15 @@ mod tests {
         assert!(!is_mapped_mcp_config_file("pi-settings"));
         assert!(!is_mapped_mcp_config_file("pi-auth"));
         assert!(!is_mapped_mcp_config_file("pi-prompt"));
+    }
+
+    /// OmO Native 的 `mcp.json` 必须参与 SSH 同步（同 WSL 侧的理由）。
+    #[test]
+    fn recognizes_omo_native_mcp_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("omo-native-mcp"));
+        assert!(!is_mapped_mcp_config_file("omo-native-config"));
+        assert!(!is_mapped_mcp_config_file("omo-native-models"));
+        assert!(!is_mapped_mcp_config_file("omo-native-auth"));
+        assert!(!is_mapped_mcp_config_file("omo-native-prompt"));
     }
 }

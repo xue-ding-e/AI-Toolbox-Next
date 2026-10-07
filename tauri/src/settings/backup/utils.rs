@@ -1323,6 +1323,23 @@ pub async fn list_backup_file_filter_path_options(
         }
     }
 
+    // 与 `write_external_configs_to_backup_zip` 里打包 OmO 的那 5 个文件**逐字对应**：
+    // 少一个，用户在备份设置里就筛不掉它（2026-10-07 复查发现整块缺失）。
+    for file_name in [
+        omo_native::constants::OMO_NATIVE_SETTINGS_FILE,
+        omo_native::constants::OMO_NATIVE_MODELS_FILE,
+        omo_native::constants::OMO_NATIVE_AUTH_FILE,
+        omo_native::constants::OMO_NATIVE_MCP_FILE,
+        omo_native::constants::OMO_NATIVE_PROMPT_FILE,
+    ] {
+        if get_omo_native_runtime_file_path_from_db(db, file_name)
+            .await?
+            .is_some()
+        {
+            push_backup_filter_option(&mut options, &mut seen, "omo_native", file_name);
+        }
+    }
+
     // config.yml/config.yaml 都可能是实际的 OMP 主配置(优先 config.yml,
     // 老用户可能只有 config.yaml),都纳入可过滤选项。
     for file_name in [
@@ -3662,6 +3679,7 @@ async fn write_external_configs_to_backup_zip<W: Write + Seek>(
         omo_native::constants::OMO_NATIVE_MODELS_FILE,
         omo_native::constants::OMO_NATIVE_AUTH_FILE,
         omo_native::constants::OMO_NATIVE_MCP_FILE,
+        omo_native::constants::OMO_NATIVE_PROMPT_FILE,
     ] {
         if let Some(path) = get_omo_native_runtime_file_path_from_db(db, file_name).await? {
             add_external_config_file_to_zip(

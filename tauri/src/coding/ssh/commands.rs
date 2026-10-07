@@ -1145,7 +1145,7 @@ async fn backfill_default_file_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default file_mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 20;
+    const CURRENT_DEFAULTS_VERSION: u64 = 21;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -1187,6 +1187,7 @@ async fn backfill_default_file_mappings(
         "zcode-cli-config",
         "zcode-skills",
     ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V21: &[&str] = &["omo-native-prompt"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1267,6 +1268,11 @@ async fn backfill_default_file_mappings(
                 20,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V20,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                21,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V21,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1750,7 +1756,11 @@ pub async fn resolve_dynamic_paths_with_db(
                     mapping.remote_path = omp_remote_target_path_from_location(&location, "agents");
                 }
             }
-            "omo-native-config" | "omo-native-models" | "omo-native-mcp" | "omo-native-auth" => {
+            "omo-native-config"
+            | "omo-native-models"
+            | "omo-native-mcp"
+            | "omo-native-auth"
+            | "omo-native-prompt" => {
                 if let Ok(location) =
                     runtime_location::get_omo_native_runtime_location_async(db).await
                 {
@@ -1763,6 +1773,9 @@ pub async fn resolve_dynamic_paths_with_db(
                         }
                         "omo-native-auth" => {
                             crate::coding::omo_native::constants::OMO_NATIVE_AUTH_FILE
+                        }
+                        "omo-native-prompt" => {
+                            crate::coding::omo_native::constants::OMO_NATIVE_PROMPT_FILE
                         }
                         _ => crate::coding::omo_native::constants::OMO_NATIVE_SETTINGS_FILE,
                     };
@@ -2440,12 +2453,12 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
-        // OmO Native - the `omo` binary's engine state under `~/.omo/agent`.
+        // OmO - the `omo` binary's engine state under `~/.omo/agent`.
         // The unified `~/.omo/omo.jsonc` is owned by the opencode module, so
         // only the Native-owned engine files are listed here.
         SSHFileMapping {
             id: "omo-native-config".to_string(),
-            name: "OmO Native 设置".to_string(),
+            name: "OmO 设置".to_string(),
             module: "omo_native".to_string(),
             local_path: "~/.omo/agent/settings.json".to_string(),
             remote_path: "~/.omo/agent/settings.json".to_string(),
@@ -2457,7 +2470,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
         },
         SSHFileMapping {
             id: "omo-native-models".to_string(),
-            name: "OmO Native 模型供应商".to_string(),
+            name: "OmO 模型供应商".to_string(),
             module: "omo_native".to_string(),
             local_path: "~/.omo/agent/models.json".to_string(),
             remote_path: "~/.omo/agent/models.json".to_string(),
@@ -2469,7 +2482,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
         },
         SSHFileMapping {
             id: "omo-native-mcp".to_string(),
-            name: "OmO Native MCP 配置".to_string(),
+            name: "OmO MCP 配置".to_string(),
             module: "omo_native".to_string(),
             local_path: "~/.omo/agent/mcp.json".to_string(),
             remote_path: "~/.omo/agent/mcp.json".to_string(),
@@ -2481,10 +2494,22 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
         },
         SSHFileMapping {
             id: "omo-native-auth".to_string(),
-            name: "OmO Native 密钥".to_string(),
+            name: "OmO 密钥".to_string(),
             module: "omo_native".to_string(),
             local_path: "~/.omo/agent/auth.json".to_string(),
             remote_path: "~/.omo/agent/auth.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        SSHFileMapping {
+            id: "omo-native-prompt".to_string(),
+            name: "OmO 全局提示词".to_string(),
+            module: "omo_native".to_string(),
+            local_path: "~/.omo/agent/AGENTS.md".to_string(),
+            remote_path: "~/.omo/agent/AGENTS.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,
@@ -2900,7 +2925,7 @@ mod tests {
         let settings = mappings
             .iter()
             .find(|mapping| mapping.id == "omo-native-config")
-            .expect("OmO Native settings mapping exists");
+            .expect("OmO settings mapping exists");
         assert_eq!(settings.module, "omo_native");
         assert_eq!(settings.local_path, "~/.omo/agent/settings.json");
         assert_eq!(settings.remote_path, "~/.omo/agent/settings.json");

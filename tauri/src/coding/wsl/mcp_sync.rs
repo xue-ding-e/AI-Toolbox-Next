@@ -335,6 +335,7 @@ fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
             | "hermes-config"
             | "dsh-mcp"
             | "zcode-cli-config"
+            | "omo-native-mcp"
     )
 }
 
@@ -382,7 +383,9 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
         // Kimi carries MCP servers in mcp.json (standard mcpServers JSON);
         // config.toml is synced by the kimi-config mapping, not this path.
         "kimi" => command_normalize::process_claude_json(&content, false, &to_wsl)?,
-        "geminicli" | "pi" | "oh_my_pi" => {
+        // OmO Native keeps MCP servers in `~/.omo/agent/mcp.json` under
+        // `mcpServers` — the same Claude-shaped stdio config as Pi.
+        "geminicli" | "pi" | "oh_my_pi" | "omo_native" => {
             command_normalize::process_claude_json(&content, false, &to_wsl)?
         }
         // Hermes mcp_servers lives in YAML; dsh uses the cordis patch DSL
@@ -434,6 +437,18 @@ mod tests {
         assert!(!is_mapped_mcp_config_file("pi-settings"));
         assert!(!is_mapped_mcp_config_file("pi-auth"));
         assert!(!is_mapped_mcp_config_file("pi-prompt"));
+    }
+
+    /// OmO Native 的 `mcp.json` 必须参与 WSL 同步——漏了它会让 Windows 的
+    /// `cmd /c` wrapper 原样复制到 Linux，server 在 WSL 里起不来（2026-10-07 修）。
+    #[test]
+    fn recognizes_omo_native_mcp_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("omo-native-mcp"));
+        // 同一个模块的其它文件不是 MCP 配置，别一起捞进来。
+        assert!(!is_mapped_mcp_config_file("omo-native-config"));
+        assert!(!is_mapped_mcp_config_file("omo-native-models"));
+        assert!(!is_mapped_mcp_config_file("omo-native-auth"));
+        assert!(!is_mapped_mcp_config_file("omo-native-prompt"));
     }
 
     #[test]

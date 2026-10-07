@@ -954,7 +954,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 21;
+    const CURRENT_DEFAULTS_VERSION: u64 = 22;
     const DEFAULTS_VERSION_BEFORE_AGENT_DIRECTORIES: u64 = 7;
     const DEFAULT_MAPPING_IDS_ADDED_IN_V8: &[&str] = &["opencode-agents"];
     const DEFAULT_MAPPING_IDS_ADDED_IN_V9: &[&str] =
@@ -995,6 +995,7 @@ async fn backfill_default_mappings(
         "zcode-cli-config",
         "zcode-skills",
     ];
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V22: &[&str] = &["omo-native-prompt"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -1075,6 +1076,11 @@ async fn backfill_default_mappings(
                 21,
                 &default_mapping.id,
                 DEFAULT_MAPPING_IDS_ADDED_IN_V21,
+            ) || should_backfill_versioned_mapping(
+                stored_version,
+                22,
+                &default_mapping.id,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V22,
             ))
         {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
@@ -1630,7 +1636,11 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     mapping.wsl_path = omp_wsl_target_path_from_location(&location, "agents");
                 }
             }
-            "omo-native-config" | "omo-native-models" | "omo-native-mcp" | "omo-native-auth" => {
+            "omo-native-config"
+            | "omo-native-models"
+            | "omo-native-mcp"
+            | "omo-native-auth"
+            | "omo-native-prompt" => {
                 if let Ok(location) =
                     runtime_location::get_omo_native_runtime_location_async(db).await
                 {
@@ -1643,6 +1653,9 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         }
                         "omo-native-auth" => {
                             crate::coding::omo_native::constants::OMO_NATIVE_AUTH_FILE
+                        }
+                        "omo-native-prompt" => {
+                            crate::coding::omo_native::constants::OMO_NATIVE_PROMPT_FILE
                         }
                         _ => crate::coding::omo_native::constants::OMO_NATIVE_SETTINGS_FILE,
                     };
@@ -2279,13 +2292,13 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             directory_excludes: vec![],
             cleanup_paths: vec![],
         },
-        // OmO Native - the `omo` binary's engine state under `~/.omo/agent`.
+        // OmO - the `omo` binary's engine state under `~/.omo/agent`.
         // The unified `~/.omo/omo.jsonc` above is owned by the opencode module
         // (`opencode-oh-my`), so only the Native-owned engine files are listed
         // here; listing omo.jsonc twice would let the two modules fight over it.
         FileMapping {
             id: "omo-native-config".to_string(),
-            name: "OmO Native 设置".to_string(),
+            name: "OmO 设置".to_string(),
             module: "omo_native".to_string(),
             windows_path: "~/.omo/agent/settings.json".to_string(),
             wsl_path: "~/.omo/agent/settings.json".to_string(),
@@ -2297,7 +2310,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
         },
         FileMapping {
             id: "omo-native-models".to_string(),
-            name: "OmO Native 模型供应商".to_string(),
+            name: "OmO 模型供应商".to_string(),
             module: "omo_native".to_string(),
             windows_path: "~/.omo/agent/models.json".to_string(),
             wsl_path: "~/.omo/agent/models.json".to_string(),
@@ -2309,7 +2322,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
         },
         FileMapping {
             id: "omo-native-mcp".to_string(),
-            name: "OmO Native MCP 配置".to_string(),
+            name: "OmO MCP 配置".to_string(),
             module: "omo_native".to_string(),
             windows_path: "~/.omo/agent/mcp.json".to_string(),
             wsl_path: "~/.omo/agent/mcp.json".to_string(),
@@ -2321,10 +2334,22 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
         },
         FileMapping {
             id: "omo-native-auth".to_string(),
-            name: "OmO Native 密钥".to_string(),
+            name: "OmO 密钥".to_string(),
             module: "omo_native".to_string(),
             windows_path: "~/.omo/agent/auth.json".to_string(),
             wsl_path: "~/.omo/agent/auth.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            directory_excludes: vec![],
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "omo-native-prompt".to_string(),
+            name: "OmO 全局提示词".to_string(),
+            module: "omo_native".to_string(),
+            windows_path: "~/.omo/agent/AGENTS.md".to_string(),
+            wsl_path: "~/.omo/agent/AGENTS.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,
@@ -2956,7 +2981,7 @@ mod tests {
         let settings = mappings
             .iter()
             .find(|mapping| mapping.id == "omo-native-config")
-            .expect("OmO Native settings mapping exists");
+            .expect("OmO settings mapping exists");
         assert_eq!(settings.module, "omo_native");
         assert_eq!(settings.windows_path, "~/.omo/agent/settings.json");
         assert_eq!(settings.wsl_path, "~/.omo/agent/settings.json");

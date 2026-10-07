@@ -198,6 +198,65 @@ mod password_tests {
     }
 }
 
+#[cfg(test)]
+mod coverage_tests {
+    /// 备份侧写出的每个 `external-configs/<tool>/` 前缀，恢复侧都必须有对应分支。
+    ///
+    /// 这两份清单在代码里是**两处独立的字符串**：备份侧在 `utils.rs` 的
+    /// `add_*_to_zip` 调用里，恢复侧在 `restore_from_archive` 的
+    /// `file_name.starts_with(...)` 链里。新增 CLI 时只改一处，另一处不会报错——
+    /// 归档里带着文件，恢复时被 `continue` 静默丢弃（2026-10-07：OmO Native
+    /// 就是这样漏了整整一轮，5 个文件全部恢复不出来）。
+    ///
+    /// 断言方式：把本文件里所有 `external-configs/<tool>/` 字面量收集起来，
+    /// 确认每一个都出现在一个 `file_name.starts_with` 判断里。
+    #[test]
+    fn every_backed_up_external_config_tool_has_a_restore_branch() {
+        const SOURCE: &str = include_str!("restore.rs");
+
+        // 恢复侧的判断形态：`file_name.starts_with("external-configs/<tool>/")`。
+        // 取 `<tool>` 部分：marker 之后到下一个 `/` 为止。
+        let handled: std::collections::HashSet<&str> = SOURCE
+            .match_indices("file_name.starts_with(\"external-configs/")
+            .filter_map(|(index, marker)| {
+                let rest = &SOURCE[index + marker.len()..];
+                rest.split('/').next()
+            })
+            .collect();
+
+        assert!(
+            !handled.is_empty(),
+            "没解析出任何恢复分支——本测试的匹配串已经和实现脱节了"
+        );
+
+        // 这些工具在备份侧会写出 external-configs/<tool>/ 条目，恢复侧必须认识。
+        // 新增 CLI 时**两个清单一起加**（见 SOP §8.2）。
+        for tool in [
+            "antigravity",
+            "claude",
+            "claude_desktop",
+            "codex",
+            "dsh",
+            "geminicli",
+            "grok",
+            "hermes",
+            "kimi",
+            "oh_my_pi",
+            "omo_native",
+            "openclaw",
+            "opencode",
+            "pi",
+            "zcode",
+        ] {
+            assert!(
+                handled.contains(tool),
+                "备份会写出 external-configs/{tool}/，但恢复侧没有分支处理它——\
+                 恢复时这些文件会被静默丢弃"
+            );
+        }
+    }
+}
+
 /// Shared restore pipeline over an already-open archive.
 pub(crate) fn restore_from_archive<R: Read + Seek>(
     app_handle: &tauri::AppHandle,
@@ -339,6 +398,15 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
         should_use_root_override_for_tool("dsh", include_cli_config_files, skip_cli_custom_roots)
             .then(|| read_root_dir_override(archive, "external-configs/dsh/root-dir.txt"))
             .flatten();
+    // OmO Native：备份侧一直会打包它的 5 个引擎文件与 root-dir.txt，但恢复侧
+    // 此前**完全没有对应分支**——文件会被静默丢弃（2026-10-07 复查发现）。
+    let omo_native_restore_dir_override = should_use_root_override_for_tool(
+        "omo_native",
+        include_cli_config_files,
+        skip_cli_custom_roots,
+    )
+    .then(|| read_root_dir_override(archive, "external-configs/omo_native/root-dir.txt"))
+    .flatten();
     let mut restore_result = RestoreResult::default();
     let mut restored_wsl_modules = Vec::new();
 
@@ -444,6 +512,16 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
     let (dsh_restore_dir, dsh_warning) =
         resolve_restore_dir_override("dsh", dsh_restore_dir_override, get_dsh_restore_dir()?);
     if let Some(warning) = dsh_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    // 回退目录与 `resolve_omo_native_path_without_db` 的默认值一致（`~/.omo/agent`）。
+    let (omo_native_restore_dir, omo_native_warning) = resolve_restore_dir_override(
+        "omo_native",
+        omo_native_restore_dir_override,
+        home_dir.join(".omo").join("agent"),
+    );
+    if let Some(warning) = omo_native_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -962,6 +1040,49 @@ pub(crate) fn restore_from_archive<R: Read + Seek>(
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
                 if relative_path == ".credentials.yaml" {
+                    harden_restored_sensitive_file(&outpath)?;
+                }
+            } else if file_name.starts_with("external-configs/omo_native/") {
+                let relative_path = &file_name["external-configs/omo_native/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "omo_native", relative_path) {
+                    continue;
+                }
+
+                if !omo_native_restore_dir.exists() {
+                    fs::create_dir_all(&omo_native_restore_dir).map_err(|e| {
+                        format!("Failed to create OmO Native config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &omo_native_restore_dir,
+                    relative_path,
+                )?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create OmO Native parent directory: {}", e)
+                        })?;
+                    }
+                }
+                record_restored_external_config_wsl_module(&mut restored_wsl_modules, "omo_native");
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                // `auth.json` 是明文凭据，与 Pi 的 `auth.json`、dsh 的
+                // `.credentials.yaml` 同等对待。
+                if relative_path == "auth.json" {
                     harden_restored_sensitive_file(&outpath)?;
                 }
             } else if file_name.starts_with("external-configs/claude_desktop/") {

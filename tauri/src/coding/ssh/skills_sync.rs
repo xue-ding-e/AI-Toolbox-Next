@@ -110,19 +110,40 @@ fn get_remote_tool_skills_dir(tool_key: &str) -> Option<String> {
         })
 }
 
+/// Tools whose remote Skills target follows the runtime location resolved by
+/// `runtime_location::get_tool_skills_path_async`, so a WSL Direct runtime keeps
+/// its custom root instead of silently falling back to the remote default.
+///
+/// Hermes is excluded on purpose: its file mappings always write `~/.hermes/*`,
+/// so its Skills stay at `~/.hermes/skills` even when a Direct state appears
+/// (see the module AGENTS.md).
+const SKILLS_TARGETS_FROM_RUNTIME_LOCATION: &[&str] = &[
+    "claude_code",
+    "codex",
+    "grok",
+    "kimi",
+    "opencode",
+    "openclaw",
+    "pi",
+    "oh_my_pi",
+    "gemini_cli",
+    "zcode",
+    "omo_native",
+];
+
 async fn get_remote_tool_skills_dir_with_db(
     db: &crate::db::SqliteDbState,
     tool_key: &str,
 ) -> Option<String> {
-    match tool_key {
-        "claude_code" | "codex" | "grok" | "kimi" | "opencode" | "openclaw" | "pi" | "oh_my_pi"
-        | "gemini_cli" => runtime_location::get_tool_skills_path_async(db, tool_key)
-            .await
-            .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
-            .map(|wsl| wsl.linux_path)
-            .or_else(|| get_remote_tool_skills_dir(tool_key)),
-        _ => get_remote_tool_skills_dir(tool_key),
+    if !SKILLS_TARGETS_FROM_RUNTIME_LOCATION.contains(&tool_key) {
+        return get_remote_tool_skills_dir(tool_key);
     }
+
+    runtime_location::get_tool_skills_path_async(db, tool_key)
+        .await
+        .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+        .map(|wsl| wsl.linux_path)
+        .or_else(|| get_remote_tool_skills_dir(tool_key))
 }
 
 /// Get all tool keys that support skills
@@ -479,4 +500,48 @@ pub(super) async fn sync_skills_to_ssh_with_warnings(
     let _ = app.emit("ssh-skills-sync-completed", ());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SKILLS_TARGETS_FROM_RUNTIME_LOCATION;
+
+    /// SSH Skills targets must cover every tool that `get_tool_skills_path_async`
+    /// resolves. A missing key does not fail loudly — it silently pins a WSL
+    /// Direct runtime to the remote default directory, so guard the alignment
+    /// here. Hermes is the documented exception (see the const doc comment).
+    #[test]
+    fn runtime_location_skills_tools_are_all_covered() {
+        const SOURCE: &str = include_str!("../runtime_location.rs");
+        let start = SOURCE
+            .find("pub async fn get_tool_skills_path_async")
+            .expect("get_tool_skills_path_async should exist in runtime_location.rs");
+        let body = &SOURCE[start..];
+        let end = body
+            .find("\n}\n")
+            .expect("get_tool_skills_path_async should have a top-level closing brace");
+
+        let mut resolvable: Vec<&str> = Vec::new();
+        for line in body[..end].lines() {
+            let Some(rest) = line.trim().strip_prefix('"') else {
+                continue;
+            };
+            let Some((key, after)) = rest.split_once('"') else {
+                continue;
+            };
+            if after.trim_start().starts_with("=>") {
+                resolvable.push(key);
+            }
+        }
+
+        let mut expected: Vec<&str> = SKILLS_TARGETS_FROM_RUNTIME_LOCATION.to_vec();
+        expected.push("hermes");
+        resolvable.sort_unstable();
+        expected.sort_unstable();
+
+        assert_eq!(
+            resolvable, expected,
+            "SSH Skills target list drifted from runtime_location::get_tool_skills_path_async"
+        );
+    }
 }
