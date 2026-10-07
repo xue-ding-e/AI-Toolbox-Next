@@ -23,13 +23,13 @@ mod desktop;
 mod dsh;
 mod grok;
 mod hermes;
-mod zcode;
 mod kimi;
 mod open_claw;
 mod open_code;
 mod parsers;
 mod pi;
 mod reconciliation;
+mod zcode;
 pub(super) fn mark_archived_contributions(conn: &Connection, cutoff: i64) -> Result<(), String> {
     reconciliation::mark_archived(conn, cutoff)
 }
@@ -171,6 +171,139 @@ impl SourceFailureLog {
 fn source_failures() -> &'static SourceFailureLog {
     static LOG: OnceLock<SourceFailureLog> = OnceLock::new();
     LOG.get_or_init(SourceFailureLog::default)
+}
+
+/// Discard everything this collector derived for `cli_key` and re-import it.
+///
+/// Imported usage is a projection of transcripts that are still on disk, so a
+/// parser fix can be applied by dropping the projection and rebuilding it —
+/// which is the only way to repair rows already written under an older parser,
+/// since the collector never rewrites a row it considers unchanged.
+///
+/// **Proxy rows are never touched**: they describe real requests the gateway
+/// served and have no on-disk source to rebuild from. Only rows this collector
+/// owns are removed — `data_source = 'session'` detail rows, the matching
+/// `provider_id = 'session'` rollups, and the per-file ledger that decides what
+/// has already been read.
+///
+/// The rebuild is guarded by a database backup because the transcripts are the
+/// only remaining source: if a CLI has since deleted a session file, that
+/// session's history is gone from the new import too.
+pub async fn rebuild_session_usage(
+    db: SqliteDbState,
+    input: GatewaySessionUsageImportInput,
+) -> Result<GatewaySessionUsageImportResult, String> {
+    if !super::settings::load_settings_from_sqlite_state(&db)?.session_usage_enabled {
+        return Ok(GatewaySessionUsageImportResult::default());
+    }
+    let guard = sync_mutex().lock().await;
+    let cli_keys = import_cli_keys(input.cli_key);
+    let sources = {
+        let db = db.clone();
+        let cli_keys = cli_keys.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            cli_keys
+                .into_iter()
+                .flat_map(|cli_key| {
+                    default_session_roots(&db, cli_key)
+                        .into_iter()
+                        .map(move |root| (cli_key, root))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| format!("Failed to resolve session roots for rebuild: {error}"))?
+    };
+    let result = {
+        let db = db.clone();
+        let now = Utc::now().timestamp();
+        tauri::async_runtime::spawn_blocking(move || rebuild_sources(&db, &sources, &cli_keys, now))
+            .await
+            .map_err(|error| format!("Failed to rebuild local session usage: {error}"))?
+    };
+    drop(guard);
+    result
+}
+
+/// Backup, clear and re-import for an explicit source list.
+///
+/// Split from [`rebuild_session_usage`] so a test can rebuild against fixture
+/// roots instead of the machine's real CLI directories.
+fn rebuild_sources(
+    db: &SqliteDbState,
+    sources: &[(GatewayUsageTool, PathBuf)],
+    cli_keys: &[GatewayUsageTool],
+    now: i64,
+) -> Result<GatewaySessionUsageImportResult, String> {
+    create_rebuild_backup(db)?;
+    clear_imported_usage(db, cli_keys)?;
+    sync_sources(db, sources, now)
+}
+
+fn create_rebuild_backup(db: &SqliteDbState) -> Result<(), String> {
+    db.with_conn(|conn| {
+        let db_path = db.db_path();
+        if db_path.as_os_str() == ":memory:" {
+            // An in-memory database (tests) has no file to back up and nothing
+            // durable to protect.
+            return Ok(());
+        }
+        let parent = db_path.parent().ok_or_else(|| {
+            format!(
+                "Failed to resolve SQLite database parent for {}",
+                db_path.display()
+            )
+        })?;
+        let backup_dir = parent.join(crate::db::sqlite_state::SQLITE_MIGRATION_BACKUP_DIR);
+        fs::create_dir_all(&backup_dir).map_err(|error| {
+            format!(
+                "Failed to create rebuild backup directory {}: {error}",
+                backup_dir.display()
+            )
+        })?;
+        let backup_path = backup_dir.join(format!(
+            "ai-toolbox-session-usage-rebuild-{}.db",
+            Utc::now().format("%Y%m%d-%H%M%S")
+        ));
+        crate::db::backup::backup_to_path(conn, &backup_path)?;
+        log::info!(
+            "Created pre-rebuild SQLite backup at {}",
+            backup_path.display()
+        );
+        Ok(())
+    })
+}
+
+fn clear_imported_usage(db: &SqliteDbState, cli_keys: &[GatewayUsageTool]) -> Result<(), String> {
+    db.with_conn_mut(|conn| {
+        let transaction = conn.transaction().map_err(|error| error.to_string())?;
+        for cli_key in cli_keys {
+            let app_type = cli_key.as_str();
+            transaction
+                .execute(
+                    "DELETE FROM proxy_request_logs
+                     WHERE data_source = 'session' AND app_type = ?1",
+                    params![app_type],
+                )
+                .map_err(|error| error.to_string())?;
+            // Rollups carry no `data_source`; the collector's own rows are the
+            // ones filed under the reserved `session` provider id.
+            transaction
+                .execute(
+                    "DELETE FROM usage_daily_rollups
+                     WHERE provider_id = 'session' AND app_type = ?1",
+                    params![app_type],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "DELETE FROM gateway_session_usage_state WHERE id LIKE ?1",
+                    params![format!("{app_type}:%")],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())
+    })
 }
 
 pub async fn import_session_usage(
@@ -338,7 +471,8 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
             // so the "root" is the database itself and the resolver for it
             // lives in the session manager.
             if let Some(location) = location {
-                if let Ok(path) = crate::coding::session_manager::resolve_zcode_cli_db_path(&location)
+                if let Ok(path) =
+                    crate::coding::session_manager::resolve_zcode_cli_db_path(&location)
                 {
                     roots.push(path);
                 }
@@ -451,7 +585,10 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
     // Without this the walk below silently returns nothing and the tool looks
     // like it has no usage at all.
     if cli_key == GatewayUsageTool::Zcode {
-        return root.is_file().then(|| vec![root.to_path_buf()]).unwrap_or_default();
+        return root
+            .is_file()
+            .then(|| vec![root.to_path_buf()])
+            .unwrap_or_default();
     }
     if !root.is_dir() {
         return Vec::new();
@@ -467,7 +604,12 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
             let extension = path.extension()?.to_str()?;
             let accepted = match cli_key {
                 GatewayUsageTool::Claude | GatewayUsageTool::ClaudeDesktop => extension == "jsonl",
-                GatewayUsageTool::Codex => extension == "jsonl" && name.starts_with("rollout-"),
+                // Codex rewrites cold rollouts as `<name>.jsonl.zst` and reads
+                // them back transparently; both spellings carry the same usage.
+                GatewayUsageTool::Codex => {
+                    name.starts_with("rollout-")
+                        && (extension == "jsonl" || name.ends_with(".jsonl.zst"))
+                }
                 GatewayUsageTool::Gemini => {
                     matches!(extension, "json" | "jsonl") && name.starts_with("session-")
                 }
@@ -481,9 +623,9 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
                 GatewayUsageTool::Kimi | GatewayUsageTool::KimiCli => {
                     kimi::is_usage_file(cli_key, &path)
                 }
-                GatewayUsageTool::Pi
-                | GatewayUsageTool::OhMyPi
-                | GatewayUsageTool::OmoNative => extension == "jsonl",
+                GatewayUsageTool::Pi | GatewayUsageTool::OhMyPi | GatewayUsageTool::OmoNative => {
+                    extension == "jsonl"
+                }
                 GatewayUsageTool::Dsh => dsh::generation(&path).is_some(),
                 GatewayUsageTool::Hermes => false,
                 // A SQLite database, not a transcript tree; its reader is
@@ -558,6 +700,43 @@ fn save_state(conn: &Connection, source_id: &str, state: &SourceState) -> Result
     Ok(())
 }
 
+/// The token-event timeline a Codex child inherited from its parent.
+///
+/// The child copied the parent's conversation as it stood at fork time. For a
+/// `paginated` parent that conversation is spread over several rollout files
+/// chained by `history_base`, so the timeline is the concatenation of every
+/// page's events up to the byte offset its child recorded — reading only the
+/// newest file would leave most of the copied history unmatched, and the child
+/// would bill it again as its own work.
+fn read_codex_parent_snapshots(
+    parent_paths: &[PathBuf],
+    fallback_timestamp: i64,
+) -> Result<Vec<parsers::CodexSnapshot>, String> {
+    use crate::coding::session_manager::codex_rollout;
+    let mut snapshots = Vec::new();
+    // Several index keys (thread id, rollout id, file stem) can point at the
+    // same file, so a lineage must contribute each rollout exactly once.
+    let mut seen_rollouts = HashSet::new();
+    for parent_path in parent_paths {
+        let lineage = match codex_rollout::sessions_root_of(parent_path) {
+            Some(root) => codex_rollout::resolve_lineage(&root, parent_path),
+            None => codex_rollout::Lineage::single(parent_path.clone()),
+        };
+        let unseen = codex_rollout::Lineage {
+            segments: lineage
+                .segments
+                .into_iter()
+                .filter(|segment| seen_rollouts.insert(segment.path.clone()))
+                .collect(),
+        };
+        snapshots.extend(parsers::read_codex_lineage_snapshots(
+            &unseen,
+            fallback_timestamp,
+        )?);
+    }
+    Ok(snapshots)
+}
+
 fn sync_sources(
     db: &SqliteDbState,
     sources: &[(GatewayUsageTool, PathBuf)],
@@ -584,11 +763,33 @@ fn sync_sources(
         .collect::<Vec<_>>();
     files.sort_by(|left, right| left.1.file_name().cmp(&right.1.file_name()));
     files.dedup();
-    let codex_files = files
+    // A Codex child names its parent by *thread* id, but a paginated thread's
+    // rollover file is named `...-<thread>_<page>` and several files can carry
+    // one thread id. Index every spelling of every rollout — thread id and
+    // rollout id — so a child resolves whichever one its metadata recorded, and
+    // keep them grouped so the parent's whole lineage can be read, not just the
+    // one file that happens to sort last.
+    let mut codex_files = HashMap::<String, Vec<PathBuf>>::new();
+    for (_, path) in files
         .iter()
         .filter(|(cli_key, _)| *cli_key == GatewayUsageTool::Codex)
-        .map(|(_, path)| (source_identity(GatewayUsageTool::Codex, path), path.clone()))
-        .collect::<HashMap<_, _>>();
+    {
+        let mut keys = vec![source_identity(GatewayUsageTool::Codex, path)];
+        if let Some(name) = crate::coding::session_manager::codex_rollout::parse_rollout_path(path)
+        {
+            for key in [name.thread_id, name.rollout_id] {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        for key in keys {
+            let paths = codex_files.entry(key).or_default();
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+    }
     let mut result = GatewaySessionUsageImportResult::default();
     let mut retired_records = Vec::new();
     let mut failed_tools = HashSet::new();
@@ -611,14 +812,14 @@ fn sync_sources(
             let mut parsed = parsers::parse_file(cli_key, &path, fallback)?;
             retired_records.append(&mut parsed.retired_records);
             if let Some(parent_id) = &parsed.parent_thread_id {
-                let parent = if let Some(parent_path) = codex_files.get(parent_id) {
-                    parsers::parse_file(GatewayUsageTool::Codex, parent_path, fallback)?.snapshots
-                } else if let Some(state) = states.get(&format!("codex:{parent_id}")) {
-                    state.codex_snapshots.clone()
-                } else {
-                    return Err(format!(
-                        "Parent Codex rollout {parent_id} is unavailable; deferred child usage"
-                    ));
+                let parent = match codex_files.get(parent_id) {
+                    Some(parent_paths) => read_codex_parent_snapshots(parent_paths, fallback)?,
+                    None => match states.get(&format!("codex:{parent_id}")) {
+                        Some(state) => state.codex_snapshots.clone(),
+                        None => return Err(format!(
+                            "Parent Codex rollout {parent_id} is unavailable; deferred child usage"
+                        )),
+                    },
                 };
                 parsers::exclude_codex_replay(&mut parsed, &parent);
             }

@@ -2,7 +2,9 @@ mod antigravity;
 mod claude_code;
 mod claude_desktop;
 mod codex;
-mod codex_rollout;
+// Shared with the gateway's local-session usage collector, which follows the
+// same rollout lineage when it deduplicates a Codex child's inherited history.
+pub(crate) mod codex_rollout;
 mod codex_scratch;
 mod dsh;
 mod gemini_cli;

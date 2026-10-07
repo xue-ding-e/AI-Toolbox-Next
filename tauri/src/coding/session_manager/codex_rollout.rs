@@ -58,6 +58,7 @@ const ROLLOUT_TIMESTAMP_LEN: usize = 19;
 /// and a compressed reference is still a reference.
 const ROLLOUT_COMPRESSED_SUFFIX: &str = ".zst";
 
+const SESSIONS_DIR_NAME: &str = "sessions";
 const ARCHIVED_SESSIONS_DIR_NAME: &str = "archived_sessions";
 
 /// Bound on how many lines are read while looking for the `session_meta` record.
@@ -100,7 +101,7 @@ pub(super) struct HistoryBase {
 /// The parts of a rollout's `session_meta` record this module needs.
 #[derive(Debug, Clone)]
 pub(super) struct RolloutHead {
-    pub(super) thread_id: String,
+    pub(crate) thread_id: String,
     /// `history_mode == "paginated"`, the only mode that keeps rollouts.
     pub(super) paginated: bool,
     pub(super) history_base: Option<HistoryBase>,
@@ -117,9 +118,9 @@ pub(super) struct RolloutHead {
 /// Ordinary files encode one id that is both ids. A reverted thread's file
 /// appends an underscore and a distinct rollout id after the stable thread id.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RolloutFileName {
-    pub(super) thread_id: String,
-    pub(super) rollout_id: String,
+pub(crate) struct RolloutFileName {
+    pub(crate) thread_id: String,
+    pub(crate) rollout_id: String,
 }
 
 impl RolloutFileName {
@@ -130,7 +131,7 @@ impl RolloutFileName {
     /// must be UUIDs — that keeps unrelated `.jsonl` files in the tree from
     /// parsing as rollouts. The optional compression suffix is Codex's own
     /// cold-rollout representation of the same file.
-    pub(super) fn parse(name: &str) -> Option<Self> {
+    pub(crate) fn parse(name: &str) -> Option<Self> {
         let name = name.strip_suffix(ROLLOUT_COMPRESSED_SUFFIX).unwrap_or(name);
         let core = name
             .strip_prefix(ROLLOUT_PREFIX)?
@@ -154,7 +155,7 @@ impl RolloutFileName {
 }
 
 /// Parses a path's file name as a rollout name.
-pub(super) fn parse_rollout_path(path: &Path) -> Option<RolloutFileName> {
+pub(crate) fn parse_rollout_path(path: &Path) -> Option<RolloutFileName> {
     RolloutFileName::parse(path.file_name()?.to_str()?)
 }
 
@@ -164,24 +165,24 @@ pub(super) fn parse_rollout_path(path: &Path) -> Option<RolloutFileName> {
 /// case, and every `legacy` thread) yields exactly one unbounded segment, so
 /// callers can read a lineage unconditionally.
 #[derive(Debug, Clone)]
-pub(super) struct Lineage {
-    pub(super) segments: Vec<LineageSegment>,
+pub(crate) struct Lineage {
+    pub(crate) segments: Vec<LineageSegment>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct LineageSegment {
-    pub(super) path: PathBuf,
+pub(crate) struct LineageSegment {
+    pub(crate) path: PathBuf,
     /// Read this file only up to here.
     ///
     /// `Some` for every ancestor: the value is the byte offset its child recorded
     /// in `history_base`, i.e. how much of the prefix the child depended on.
     /// `None` for the thread's own newest rollout, which is read to the end.
-    pub(super) end_byte_offset: Option<u64>,
+    pub(crate) end_byte_offset: Option<u64>,
 }
 
 impl Lineage {
     /// A single-segment lineage that reads one file end to end.
-    pub(super) fn single(path: PathBuf) -> Self {
+    pub(crate) fn single(path: PathBuf) -> Self {
         Self {
             segments: vec![LineageSegment {
                 path,
@@ -394,7 +395,7 @@ pub(super) fn is_compressed_rollout_path(path: &Path) -> bool {
 ///
 /// `byte_limit` bounds the *decoded* bytes, which is what keeps a compressed
 /// file from ballooning a scan that only wants its first record.
-pub(super) fn open_rollout_reader(
+pub(crate) fn open_rollout_reader(
     path: &Path,
     byte_limit: Option<u64>,
 ) -> Option<Box<dyn BufRead>> {
@@ -618,6 +619,23 @@ fn wsl_distro_is_unreachable(path: &Path) -> bool {
     std::fs::read_dir(distro_root).is_err()
 }
 
+/// The `sessions/` root a rollout path lives under.
+///
+/// Codex files rollouts in a dated tree (`sessions/<year>/<month>/<day>/`), so
+/// the root is the nearest ancestor named `sessions` — the anchor
+/// [`resolve_lineage`] needs to follow `history_base` pointers across the tree.
+/// `None` for a path outside that layout (an archived copy moved elsewhere),
+/// which callers treat as "cannot follow a chain from here".
+pub(crate) fn sessions_root_of(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| {
+            ancestor
+                .file_name()
+                .is_some_and(|name| name == SESSIONS_DIR_NAME)
+        })
+        .map(Path::to_path_buf)
+}
+
 /// `<codex_home>/archived_sessions`, the sibling of `sessions/`.
 pub(super) fn archived_sessions_root(sessions_root: &Path) -> Option<PathBuf> {
     sessions_root
@@ -649,7 +667,7 @@ fn history_base_from_session_meta(payload: &Value) -> Option<HistoryBase> {
 /// A chain that cannot be started at all — an unreadable or `legacy` rollout —
 /// yields one unbounded segment for the file we were given, so a caller that
 /// cannot follow a chain still shows that file rather than nothing.
-pub(super) fn resolve_lineage(sessions_root: &Path, source_path: &Path) -> Lineage {
+pub(crate) fn resolve_lineage(sessions_root: &Path, source_path: &Path) -> Lineage {
     let single = || Lineage::single(source_path.to_path_buf());
 
     let Some(head) = read_rollout_head(source_path) else {

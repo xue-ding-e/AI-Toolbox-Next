@@ -595,6 +595,239 @@ fn codex_child_does_not_rebill_the_parent_replay_prefix() {
     );
 }
 
+/// A paginated parent writes a second rollout named
+/// `rollout-<ts>-<thread>_<page>`. The trailing id is the page, so a child that
+/// names its parent by *thread* id must still resolve it — and must see the
+/// parent's records from **both** pages, or it re-bills the copied history.
+#[test]
+fn codex_child_sees_every_page_of_a_paginated_parent() {
+    const PAGE: &str = "33333333-3333-4333-8333-333333333333";
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+
+    let first_page = token_event(100, 100, 10, THEN - 20);
+    let second_page = token_event(200, 100, 10, THEN - 10);
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-00-00-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 30,"payload":{"id":PARENT}}),
+            first_page.clone(),
+        ],
+    );
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-50-45-{PARENT}_{PAGE}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 25,
+                "payload":{"id":PARENT,"history_mode":"paginated"}}),
+            second_page.clone(),
+        ],
+    );
+    // The child copied both pages before doing its own work.
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-55-00-{CHILD}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN,"payload":{"id":CHILD,"forked_from_id":PARENT}}),
+            first_page,
+            second_page,
+            token_event(300, 100, 10, THEN + 1),
+        ],
+    );
+
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, &sessions);
+    assert_eq!(
+        result.failed_files, 0,
+        "a paginated parent must resolve, not defer its child"
+    );
+    // Two parent pages + the child's own event. The copied prefix is replay and
+    // must not be billed again; missing the second page would let it through.
+    assert_eq!(result.inserted_records, 3);
+    assert_eq!(count(&db), 3);
+}
+
+/// Both pages carry the same thread id in `session_meta`, so a request id built
+/// from the thread id alone collides and the newer page overwrites the older.
+#[test]
+fn codex_paginated_pages_keep_distinct_request_ids() {
+    const PAGE: &str = "33333333-3333-4333-8333-333333333333";
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-00-00-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","payload":{"id":PARENT}}),
+            token_event(100, 100, 10, THEN - 20),
+        ],
+    );
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-50-45-{PARENT}_{PAGE}.jsonl")),
+        &[
+            json!({"type":"session_meta","payload":{"id":PARENT}}),
+            token_event(200, 100, 10, THEN - 10),
+        ],
+    );
+
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, &sessions);
+    assert_eq!(
+        result.inserted_records, 2,
+        "neither page may overwrite the other"
+    );
+    let ids = db
+        .with_conn(|conn| {
+            let mut statement = conn
+                .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(rows)
+        })
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(
+        ids[0] != ids[1],
+        "paginated pages must not share a request id: {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|id| id.contains(PAGE)),
+        "the page's own rollout id must appear in its key: {ids:?}"
+    );
+}
+
+/// A single-file rollout has rollout id == thread id, so its key must stay
+/// byte-identical to the pre-pagination format. Otherwise every existing
+/// imported row would be re-keyed on the next sync.
+#[test]
+fn codex_single_file_rollout_keeps_its_legacy_request_id() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    write_jsonl(
+        &sessions.join(format!("rollout-2026-09-02T05-00-00-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","payload":{"id":PARENT}}),
+            token_event(100, 100, 10, THEN),
+        ],
+    );
+
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    run_sync(&db, GatewayCliKey::Codex, &sessions);
+    let id = db
+        .with_conn(|conn| {
+            conn.query_row("SELECT request_id FROM proxy_request_logs", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| error.to_string())
+        })
+        .unwrap();
+    assert_eq!(id, format!("SESSION:codex:{PARENT}:token:1"));
+}
+
+/// Codex compresses cold rollouts in place; the collector must still find them.
+#[test]
+fn codex_compressed_rollout_is_scanned() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let text = format!(
+        "{}\n{}\n",
+        json!({"type":"session_meta","payload":{"id":PARENT}}),
+        token_event(100, 100, 10, THEN),
+    );
+    fs::write(
+        sessions.join(format!("rollout-2026-09-02T05-00-00-{PARENT}.jsonl.zst")),
+        zstd::stream::encode_all(text.as_bytes(), 0).unwrap(),
+    )
+    .unwrap();
+
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, &sessions);
+    assert_eq!(
+        result.scanned_files, 1,
+        "the compressed rollout must be walked"
+    );
+    assert_eq!(result.inserted_records, 1);
+    assert_eq!(count(&db), 1);
+}
+
+/// A rebuild drops only what the collector derived, and re-imports it from the
+/// transcripts. Gateway-served requests have no on-disk source and must survive.
+#[test]
+fn rebuild_reimports_session_usage_and_keeps_proxy_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    write_jsonl(
+        &sessions.join(format!("rollout-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","payload":{"id":PARENT}}),
+            token_event(100, 100, 10, THEN),
+        ],
+    );
+
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    run_sync(&db, GatewayCliKey::Codex, &sessions);
+    let imported = count(&db);
+    assert_eq!(imported, 1);
+
+    // A gateway-served request, standing in for real proxy traffic.
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                total_cost_usd, latency_ms, duration_ms, status_code, created_at, data_source)
+             VALUES ('gw-1','provider','codex','gpt-5','gpt-5',5,6,0,0,'0','0','0','0','0',0,0,200,?1,'proxy')",
+            [THEN],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+    // A rollup for the imported session row, which the rebuild must also drop.
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO usage_daily_rollups
+                (date, app_type, provider_id, model, request_count, success_count,
+                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                 total_cost_usd, avg_latency_ms)
+             VALUES ('2026-01-01','codex','session','gpt-5',1,1,1,1,0,0,'0',0)",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+
+    let result = rebuild_sources(
+        &db,
+        &[(GatewayUsageTool::Codex, sessions.clone())],
+        &[GatewayUsageTool::Codex],
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(result.inserted_records, 1, "the transcript is re-imported");
+    assert_eq!(count(&db), 2, "the proxy row survives the rebuild");
+    db.with_conn(|conn| {
+        let rollups: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_daily_rollups WHERE provider_id = 'session'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(rollups, 0, "stale session rollups are dropped, not doubled");
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn codex_archive_keeps_the_same_import_identity() {
     let root = tempfile::tempdir().unwrap();

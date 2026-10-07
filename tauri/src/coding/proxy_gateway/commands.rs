@@ -1455,6 +1455,23 @@ pub async fn proxy_gateway_import_session_usage(
     Ok(result)
 }
 
+/// Discard imported local-session usage and re-read it from the transcripts.
+///
+/// The repair path for rows written by an older parser: imported usage is a
+/// projection of files still on disk, so a parser fix only reaches history by
+/// dropping the projection and rebuilding it. Proxy rows are untouched — they
+/// have no on-disk source. A database backup is written first.
+#[tauri::command]
+pub async fn proxy_gateway_rebuild_session_usage(
+    app: tauri::AppHandle,
+    db_state: tauri::State<'_, SqliteDbState>,
+    input: GatewaySessionUsageImportInput,
+) -> Result<GatewaySessionUsageImportResult, String> {
+    let result = session_import::rebuild_session_usage(db_state.db().clone(), input).await?;
+    session_import::notify_usage_changed(&app, &result);
+    Ok(result)
+}
+
 /// Reads the local-session-usage display toggle from gateway settings.
 fn session_usage_enabled(db_state: &SqliteDbState) -> Result<bool, String> {
     Ok(settings::load_settings_from_sqlite_state(db_state)?.session_usage_enabled)

@@ -32,8 +32,11 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // Revisit cached files to retain envelope identity in the sync ledger
         // and repair matches that joined distinct, identifiable responses.
         GatewayUsageTool::Claude | GatewayUsageTool::ClaudeDesktop => 3,
-        // Reparse native cache writes so existing Codex rows can match proxy usage.
-        GatewayUsageTool::Codex => 3,
+        // 4: resolve a paginated parent through its whole `history_base` lineage
+        // and key each page's events by rollout id, so a child no longer re-bills
+        // a copied prefix and a rollover page no longer overwrites its sibling.
+        // A single-file rollout keeps its old key, so re-reading is a no-op there.
+        GatewayUsageTool::Codex => 4,
         GatewayUsageTool::Dsh => 4,
         _ => 2,
     }
@@ -383,16 +386,67 @@ pub(super) fn parse_value(
 }
 
 fn parse_codex(path: &Path, fallback_timestamp: i64) -> Result<ParsedSession, String> {
-    let file = File::open(path).map_err(|error| error.to_string())?;
+    let Some(reader) =
+        crate::coding::session_manager::codex_rollout::open_rollout_reader(path, None)
+    else {
+        return Err(format!("Cannot open Codex rollout {}", path.display()));
+    };
+    let rollout_id = crate::coding::session_manager::codex_rollout::parse_rollout_path(path)
+        .map(|name| name.rollout_id);
+    parse_codex_lines(
+        reader,
+        source_identity(GatewayUsageTool::Codex, path),
+        rollout_id.as_deref(),
+        fallback_timestamp,
+    )
+}
+
+/// Snapshots of a Codex rollout lineage, oldest segment first.
+///
+/// A paginated thread spreads one conversation over several rollout files
+/// chained by `history_base`, and each ancestor holds only the records its
+/// child did not copy. Reading the leaf alone therefore sees a suffix, not the
+/// thread's real timeline — which is what a child's replay check compares
+/// against. Each segment is read only up to the byte offset its child recorded.
+pub(super) fn read_codex_lineage_snapshots(
+    lineage: &crate::coding::session_manager::codex_rollout::Lineage,
+    fallback_timestamp: i64,
+) -> Result<Vec<CodexSnapshot>, String> {
+    let mut snapshots = Vec::new();
+    for segment in &lineage.segments {
+        let Some(reader) = crate::coding::session_manager::codex_rollout::open_rollout_reader(
+            &segment.path,
+            segment.end_byte_offset,
+        ) else {
+            return Err(format!(
+                "Cannot open Codex rollout {}",
+                segment.path.display()
+            ));
+        };
+        // Only the snapshots are used here, so the thread identity and the
+        // per-event request ids are irrelevant; `parse_codex_lines` computes
+        // them anyway to keep one parser for every Codex rollout read.
+        snapshots
+            .extend(parse_codex_lines(reader, String::new(), None, fallback_timestamp)?.snapshots);
+    }
+    Ok(snapshots)
+}
+
+fn parse_codex_lines(
+    reader: Box<dyn BufRead>,
+    initial_thread_id: String,
+    rollout_id: Option<&str>,
+    fallback_timestamp: i64,
+) -> Result<ParsedSession, String> {
     let mut parsed = ParsedSession::default();
-    let mut thread_id = source_identity(GatewayUsageTool::Codex, path);
+    let mut thread_id = initial_thread_id;
     let mut model = "unknown".to_string();
     let mut high_water = Counters::default();
     let mut signatures_by_source = HashMap::<String, String>::new();
     let mut previous_signature = None;
     let mut event_index = 0u64;
     let mut metadata_seen = false;
-    for line in BufReader::new(file).lines() {
+    for line in reader.lines() {
         let line = line.map_err(|error| error.to_string())?;
         if !line.contains("\"session_meta\"")
             && !line.contains("\"turn_context\"")
@@ -473,7 +527,19 @@ fn parse_codex(path: &Path, fallback_timestamp: i64) -> Result<ParsedSession, St
                 let created_at = timestamp(&value).unwrap_or(fallback_timestamp);
                 let request_id = usage.total_tokens().map(|_| {
                     event_index += 1;
-                    format!("SESSION:codex:{thread_id}:token:{event_index}")
+                    // A paginated thread's pages all carry the same thread id
+                    // in `session_meta`, so the thread id alone would give two
+                    // pages the same key and the newer page would overwrite the
+                    // older one. The rollout id keeps each page's events
+                    // distinct — but an ordinary single-file rollout has
+                    // rollout id == thread id, where adding it would only
+                    // re-key rows that are already correct.
+                    match rollout_id.filter(|rollout_id| *rollout_id != thread_id) {
+                        Some(rollout_id) => {
+                            format!("SESSION:codex:{thread_id}:{rollout_id}:token:{event_index}")
+                        }
+                        None => format!("SESSION:codex:{thread_id}:token:{event_index}"),
+                    }
                 });
                 if let Some(request_id) = &request_id {
                     parsed.records.push(SessionUsageRecord {
