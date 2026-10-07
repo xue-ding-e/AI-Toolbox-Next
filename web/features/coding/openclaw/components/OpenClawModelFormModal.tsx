@@ -79,6 +79,11 @@ export interface ModelFormValues {
 interface Props {
   open: boolean;
   editingModel?: OpenClawModel | null;
+  /**
+   * 表单预填 `editingModel` 但保存为**新**记录（复制）。模型 id 加 `_copy`
+   * 后缀且保持可编辑——`models` 是数组、按 id 索引，不能造出重复 id。
+   */
+  isCopy?: boolean;
   existingIds: string[];
   apiProtocol?: string;
   onCancel: () => void;
@@ -88,6 +93,7 @@ interface Props {
 const OpenClawModelFormModal: React.FC<Props> = ({
   open: modalOpen,
   editingModel,
+  isCopy = false,
   existingIds,
   apiProtocol,
   onCancel,
@@ -96,7 +102,8 @@ const OpenClawModelFormModal: React.FC<Props> = ({
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
   const [form] = Form.useForm();
-  const isEdit = !!editingModel;
+  // 复制走的是「新增」路径（新 id），只是预填了来源模型的值。
+  const isEdit = !!editingModel && !isCopy;
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
   const [presetsExpanded, setPresetsExpanded] = React.useState(false);
   const [extraParamsValue, setExtraParamsValue] = React.useState<unknown>(undefined);
@@ -160,8 +167,10 @@ const OpenClawModelFormModal: React.FC<Props> = ({
     if (modalOpen) {
       if (editingModel) {
         form.setFieldsValue({
-          id: editingModel.id,
-          name: editingModel.name || '',
+          id: isCopy ? `${editingModel.id}_copy` : editingModel.id,
+          name: isCopy
+            ? `${editingModel.name || editingModel.id} copy`
+            : editingModel.name || '',
           contextWindow: editingModel.contextWindow,
           maxTokens: editingModel.maxTokens,
           reasoning: editingModel.reasoning || false,
@@ -182,7 +191,7 @@ const OpenClawModelFormModal: React.FC<Props> = ({
       }
       setPresetsExpanded(false);
     }
-  }, [modalOpen, editingModel, form, hasAdvancedContent]);
+  }, [modalOpen, editingModel, isCopy, form, hasAdvancedContent]);
 
   const handleExtraParamsChange = (value: unknown, isValid: boolean) => {
     if (isValid) {

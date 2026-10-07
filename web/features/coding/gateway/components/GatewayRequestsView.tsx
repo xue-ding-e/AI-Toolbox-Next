@@ -404,6 +404,28 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setPage(1);
   };
 
+  /**
+   * Commits a discrete filter choice immediately.
+   *
+   * Dropdowns are single deliberate actions, so deferring them behind the
+   * search button only makes the list look broken — pick a CLI, see nothing
+   * move. The text inputs keep the draft: those fire on every keystroke, and
+   * searching per keystroke is what the split exists to prevent. The title-bar
+   * switches already apply immediately, so this also makes the bar internally
+   * consistent.
+   */
+  const applyDraft = (patch: Partial<RequestFilterDraft>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    setAppliedRange(next.range);
+    setFilters((current) => ({
+      ...buildFilters(next),
+      exclude_model_list: current.exclude_model_list,
+      only_failed: current.only_failed,
+    }));
+    setPage(1);
+  };
+
   const resetFilters = () => {
     setDraft(defaultDraft);
     setAppliedRange(defaultDraft.range);
@@ -907,7 +929,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               { value: 'all', label: t('gateway.page.requests.filters.allCli') },
               ...GATEWAY_USAGE_TOOLS.map((tool) => ({ value: tool, label: t(`settings.gateway.cli.${tool}`) })),
             ]}
-            onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
+            onChange={(value) => applyDraft({ cliKey: value })}
           />
         </div>
         <div className={styles.filterDivider} />
@@ -928,13 +950,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
                 label: t(`gateway.page.statistics.range.${preset}`),
               })),
             ]}
-            onChange={(preset) => setDraft((current) => ({
-              ...current,
+            onChange={(preset) => applyDraft({
               range: {
                 preset,
-                customRange: preset === 'custom' ? current.range.customRange : undefined,
+                customRange: preset === 'custom' ? draft.range.customRange : undefined,
               },
-            }))}
+            })}
           />
         </div>
         {draft.range.preset === 'custom' ? (
@@ -944,10 +965,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             size="small"
             className={styles.customRangePicker}
             value={draft.range.customRange as never}
-            onChange={(dates) => setDraft((current) => ({
-              ...current,
-              range: { preset: 'custom', customRange: dates as never },
-            }))}
+            onChange={(dates) => applyDraft({ range: { preset: 'custom', customRange: dates as never } })}
           />
         ) : null}
         <div className={styles.filterDivider} />
@@ -965,7 +983,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               { value: 'proxy', label: t('gateway.page.requests.nativeUsage.proxy') },
               { value: 'session', label: t('gateway.page.requests.localSession') },
             ]}
-            onChange={(value) => setDraft((current) => ({ ...current, dataSource: value }))}
+            onChange={(value) => applyDraft({ dataSource: value })}
           />
         </div>
         <div className={styles.filterDivider} />
@@ -986,7 +1004,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
               { value: '429', label: '429' },
               { value: '500', label: '500' },
             ]}
-            onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
+            onChange={(value) => applyDraft({ statusCode: value })}
           />
         </div>
         <div className={styles.filterDivider} />

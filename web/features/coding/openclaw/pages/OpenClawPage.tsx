@@ -281,8 +281,12 @@ const OpenClawPage: React.FC = () => {
     id: string;
     config: OpenClawProviderConfig;
   } | null>(null);
+  /** 表单预填来源 provider，但保存为**新**记录（复制）。 */
+  const [providerCopyMode, setProviderCopyMode] = React.useState(false);
   const [modelModalOpen, setModelModalOpen] = React.useState(false);
   const [editingModel, setEditingModel] = React.useState<OpenClawModel | null>(null);
+  /** 模型弹窗处于复制模式（预填来源模型，保存为新 id）。 */
+  const [modelCopyMode, setModelCopyMode] = React.useState(false);
   const [modelTargetProvider, setModelTargetProvider] = React.useState<string>('');
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [favoriteImportModalOpen, setFavoriteImportModalOpen] = React.useState(false);
@@ -476,6 +480,7 @@ const OpenClawPage: React.FC = () => {
 
   const handleAddProvider = () => {
     setEditingProvider(null);
+    setProviderCopyMode(false);
     setProviderModalOpen(true);
   };
 
@@ -641,6 +646,14 @@ const OpenClawPage: React.FC = () => {
 
   const handleEditProvider = (providerId: string, providerConfig: OpenClawProviderConfig) => {
     setEditingProvider({ id: providerId, config: providerConfig });
+    setProviderCopyMode(false);
+    setProviderModalOpen(true);
+  };
+
+  /** 复制：表单预填来源 provider，保存时落成一条新记录（id 由弹窗预填 `_copy`）。 */
+  const handleCopyProvider = (providerId: string, providerConfig: OpenClawProviderConfig) => {
+    setEditingProvider({ id: providerId, config: providerConfig });
+    setProviderCopyMode(true);
     setProviderModalOpen(true);
   };
 
@@ -857,12 +870,22 @@ const OpenClawPage: React.FC = () => {
   const handleAddModel = (providerId: string) => {
     setModelTargetProvider(providerId);
     setEditingModel(null);
+    setModelCopyMode(false);
     setModelModalOpen(true);
   };
 
   const handleEditModel = (providerId: string, model: OpenClawModel) => {
     setModelTargetProvider(providerId);
     setEditingModel(model);
+    setModelCopyMode(false);
+    setModelModalOpen(true);
+  };
+
+  /** 复制模型：预填来源模型，保存成一条新 id 的记录（`models` 按 id 索引）。 */
+  const handleCopyModel = (providerId: string, model: OpenClawModel) => {
+    setModelTargetProvider(providerId);
+    setEditingModel(model);
+    setModelCopyMode(true);
     setModelModalOpen(true);
   };
 
@@ -1012,7 +1035,9 @@ const OpenClawPage: React.FC = () => {
         ...(values.extraParams || {}),
       };
 
-      if (editingModel) {
+      // 复制模式虽然也带 `editingModel`（表单要从它预填），但落盘是**新增**一条，
+      // 按源 id 找下标会把源模型覆盖掉。
+      if (editingModel && !modelCopyMode) {
         const idx = models.findIndex((m) => m.id === editingModel.id);
         if (idx >= 0) models[idx] = newModel;
       } else {
@@ -1745,6 +1770,7 @@ const OpenClawPage: React.FC = () => {
                                   modelsDraggable
                                   onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
                                   onEdit={() => handleEditProvider(providerId, providerConfig)}
+                                  onCopy={() => handleCopyProvider(providerId, providerConfig)}
                                   onShare={() => shareProvider({
                                     id: providerId, name: providerId, category: 'custom',
                                     settingsConfig: JSON.stringify(providerConfig),
@@ -1763,6 +1789,7 @@ const OpenClawPage: React.FC = () => {
                                   }
                                   onAddModel={() => handleAddModel(providerId)}
                                   onEditModel={(model) => handleEditModel(providerId, model)}
+                                  onCopyModel={(model) => handleCopyModel(providerId, model)}
                                   onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
                                   onConnectivityTest={() => handleOpenConnectivityTest(providerId)}
                                   onFetchModels={() => handleOpenFetchModels(providerId)}
@@ -1923,6 +1950,7 @@ const OpenClawPage: React.FC = () => {
             <OpenClawProviderFormModal
               open={providerModalOpen}
               editingProvider={editingProvider}
+              isCopy={providerCopyMode}
               existingIds={providerEntries.map(([id]) => id)}
               onCancel={() => setProviderModalOpen(false)}
               onSubmit={handleProviderSubmit}
@@ -1976,6 +2004,7 @@ const OpenClawPage: React.FC = () => {
             <OpenClawModelFormModal
               open={modelModalOpen}
               editingModel={editingModel}
+              isCopy={modelCopyMode}
               existingIds={
                 config?.models?.providers?.[modelTargetProvider]?.models?.map((m) => m.id) || []
               }

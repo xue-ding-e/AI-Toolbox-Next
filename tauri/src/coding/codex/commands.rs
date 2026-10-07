@@ -6463,7 +6463,7 @@ approval_policy = "never"
         let sites = vec![
             (
                 "site-a".to_string(),
-                "AxonHub-6 Astra".to_string(),
+                "Relay One".to_string(),
                 json!({
                     "config": "model = \"gpt-6-astra\"\nmodel_provider = \"custom\"\n",
                     "modelCatalog": {
@@ -6476,7 +6476,7 @@ approval_policy = "never"
             ),
             (
                 "site-b".to_string(),
-                "AxonHub-5.6 Sol".to_string(),
+                "Relay Two".to_string(),
                 json!({
                     "config": "model = \"gpt-5.6-sol\"\n",
                     "modelCatalog": {
@@ -6502,9 +6502,9 @@ approval_policy = "never"
         );
         // The site's own model keeps its raw id as display name, like the
         // single-provider catalog does for the seeded default model.
-        assert_eq!(visible[1].display_name, "AxonHub-6 Astra · GPT-6 Astra");
+        assert_eq!(visible[1].display_name, "Relay One · GPT-6 Astra");
         // Site b declares no auto-review override; its own model is still listed.
-        assert_eq!(visible[3].display_name, "AxonHub-5.6 Sol · GPT-5.6 Sol");
+        assert_eq!(visible[3].display_name, "Relay Two · GPT-5.6 Sol");
         // Every listed model also keeps its bare upstream name addressable: Codex
         // sends bare names for `spawn_agent`, `[agents]` defaults, auto-review and
         // memory extraction, so those entries are published as hidden aliases
@@ -6547,7 +6547,7 @@ approval_policy = "never"
         });
         let sites = vec![(
             "site-a".to_string(),
-            "AxonHub-6 Astra".to_string(),
+            "Relay One".to_string(),
             settings.clone(),
         )];
 

@@ -15,6 +15,8 @@
 - OpenClaw 页面采用“整份配置对象 + 多个 section”的模式，而不是 provider/common config 分表模式；这样与 OpenClaw 运行时 JSON 更一致。
 - `OpenClawConfigPathModal` 只在 `source === custom` 时回填当前值，避免把 env/default 等来源误写成用户输入。
 - 保存、导入、删除 provider 后都会显式 reload 和 tray refresh，因为页面 section 状态分散，不能只局部 patch 一个局部状态就结束。
+- **复制供应商 / 复制模型走「新增 + 预填」**（2026-10-07 补：此前两个复制按钮都没有，是全仓唯一缺失的页面）。`handleCopyProvider` / `handleCopyModel` 与编辑共用同一个弹窗，靠 `isCopy` 区分：弹窗预填来源值并把 id 加 `_copy` 后缀且**保持可编辑**，保存时落成一条新记录。⚠️ 复制模式下 `handleModelSubmit` **不能**按 `editingModel.id` 去找下标替换——那会把源模型覆盖掉，必须走 `push` 分支（`isCopy` 的判定要贯穿提交路径，不只是在弹窗里）。
+- **本页的供应商卡片与模型行能力集**（对照 SOP §4.2.2 / §4.2.3 的清单）：供应商卡片 = 编辑 / 复制 / 分享 / 删除（默认模型不可删）/ 拖拽 / 批量选择；模型行 = 新增 / 编辑 / 复制 / 删除 / 拖拽 / 批量删除 / 连通性测试 / 获取模型。**没有**「设为默认模型」（默认模型在 `agents.defaults.model.primary`，由 `AgentsDefaultsCard` 管，不在模型行上）和「模型启用开关」（`models` 条目没有 `enabled` 键）。
 
 ## 关键流程
 
@@ -60,3 +62,4 @@ sequenceDiagram
 - 至少验证：修改任一 section 后配置文件仍保有其它 section 内容。
 - 至少验证：路径变更或配置保存后页面能通过 `openclaw-config-changed` / reload 看到最新状态。
 - Fetch Models 命中大小写不同的 preset 时（例如上游 `minimax-m3` / preset `MiniMax-M3`），保存的 model id 必须仍是上游原文；可运行 `pnpm test:web -- web/test/features/coding/openclaw/utils/openClawFetchedModels.test.ts`。
+- 复制：供应商卡片的复制按钮 → 弹窗预填 `_copy` id 且**可编辑**；保存后 `models.providers` 多一条新 key，**源 provider 原样保留**。模型行的复制同理：保存后 `models` 数组多一条，**源模型不被覆盖**（这两条正是 `isCopy` 判定漏在提交路径上时会失败的地方）。

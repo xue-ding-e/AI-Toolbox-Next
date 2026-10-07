@@ -18,10 +18,12 @@ interface Props {
   modelsDraggable?: boolean;
   onReorderModels?: (modelIds: string[]) => void;
   onEdit: () => void;
+  onCopy: () => void;
   onShare?: () => void;
   onDelete: () => void;
   onAddModel: () => void;
   onEditModel: (model: OpenClawModel) => void;
+  onCopyModel: (model: OpenClawModel) => void;
   onDeleteModel: (modelId: string) => void;
   /** 批量删除模型:多选 + 切换 + 确认执行 */
   modelSelectionMode?: boolean;
@@ -64,10 +66,12 @@ const OpenClawProviderCard: React.FC<Props> = ({
   modelsDraggable,
   onReorderModels,
   onEdit,
+  onCopy,
   onShare,
   onDelete,
   onAddModel,
   onEditModel,
+  onCopyModel,
   onDeleteModel,
   onConnectivityTest,
   onFetchModels,
@@ -110,6 +114,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
       modelsDraggable={modelsDraggable}
       onReorderModels={onReorderModels}
       onEdit={onEdit}
+      onCopy={onCopy}
       onShare={onShare}
       onDelete={onDelete}
       deleteDisabledReason={deleteDisabledReason}
@@ -120,6 +125,10 @@ const OpenClawProviderCard: React.FC<Props> = ({
       onEditModel={(modelId) => {
         const model = modelMap.get(modelId);
         if (model) onEditModel(model);
+      }}
+      onCopyModel={(modelId) => {
+        const model = modelMap.get(modelId);
+        if (model) onCopyModel(model);
       }}
       onDeleteModel={onDeleteModel}
       modelSelectionMode={modelSelectionMode}

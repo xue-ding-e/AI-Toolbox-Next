@@ -2477,18 +2477,10 @@ const CodexPage: React.FC = () => {
             </Space>
           }
           hint={
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--color-text-secondary)',
-                borderLeft: '2px solid var(--color-border)',
-                paddingLeft: 8,
-                marginBottom: 12,
-              }}
-            >
+            <>
               <div>{t('codex.pageHint')}</div>
               <div>{t('codex.pageWarning')}</div>
-            </div>
+            </>
           }
           footer={
             <Space wrap>

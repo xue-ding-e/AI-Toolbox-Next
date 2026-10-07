@@ -26,6 +26,11 @@ export interface ProviderFormValues {
 interface Props {
   open: boolean;
   editingProvider?: { id: string; config: OpenClawProviderConfig } | null;
+  /**
+   * 表单预填 `editingProvider` 但保存为**新**记录（复制）。provider id 加
+   * `_copy` 后缀，且保持可编辑，让用户改成自己要的（与 ZCode / OmO 一致）。
+   */
+  isCopy?: boolean;
   existingIds: string[];
   onCancel: () => void;
   onSubmit: (values: ProviderFormValues) => void;
@@ -36,6 +41,7 @@ interface Props {
 const OpenClawProviderFormModal: React.FC<Props> = ({
   open: modalOpen,
   editingProvider,
+  isCopy = false,
   existingIds,
   onCancel,
   onSubmit,
@@ -44,7 +50,8 @@ const OpenClawProviderFormModal: React.FC<Props> = ({
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
   const [form] = Form.useForm();
-  const isEdit = !!editingProvider;
+  // 复制走的是「新增」路径（新 id），只是预填了来源 provider 的值。
+  const isEdit = !!editingProvider && !isCopy;
   const [showApiKey, setShowApiKey] = React.useState(false);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
@@ -54,7 +61,7 @@ const OpenClawProviderFormModal: React.FC<Props> = ({
     if (modalOpen) {
       if (editingProvider) {
         form.setFieldsValue({
-          providerId: editingProvider.id,
+          providerId: isCopy ? `${editingProvider.id}_copy` : editingProvider.id,
           baseUrl: editingProvider.config.baseUrl || '',
           apiKey: editingProvider.config.apiKey || '',
           api: editingProvider.config.api || 'openai-completions',
@@ -66,7 +73,7 @@ const OpenClawProviderFormModal: React.FC<Props> = ({
       }
       setShowApiKey(false);
     }
-  }, [modalOpen, editingProvider, form]);
+  }, [modalOpen, editingProvider, isCopy, form]);
 
   const handleOk = async () => {
     try {

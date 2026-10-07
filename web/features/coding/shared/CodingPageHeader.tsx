@@ -36,8 +36,6 @@ export interface CodingPageHeaderProps {
 
   /** Extra text buttons appended to the config-path row (e.g. OpenClaw's "Open Web UI"). */
   extraActions?: React.ReactNode;
-  /** Hint block rendered below the config-path row (e.g. OpenCode's page hint). */
-  hint?: React.ReactNode;
 }
 
 const textButtonStyle: React.CSSProperties = { padding: 0, fontSize: 12 };
@@ -62,7 +60,6 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
   onRefresh,
   onMoreOptions,
   extraActions,
-  hint,
 }) => {
   const { t } = useTranslation();
 
@@ -152,8 +149,6 @@ const CodingPageHeader: React.FC<CodingPageHeaderProps> = ({
           </Space>
         )}
       </div>
-
-      {hint}
     </div>
   );
 };
