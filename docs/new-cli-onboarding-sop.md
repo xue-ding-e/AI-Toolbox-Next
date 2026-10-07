@@ -10,7 +10,36 @@
 > - ZCode 集成实证（2026-10-06 合并）：10 个提交、63 个文件，含 3 轮「漏注册」修复
 > - 记忆库 `projects/ai-toolbox/tab-allowlist-misses-new-tabs.md`（头号复发坑）
 >
-> **最近更新**：2026-10-06（ZCode 集成 + 复用轮清理：§4.0.2-F 改为附录 B 台账、7.2 白名单反转、13 节补 31–37 条）
+> **最近更新**：2026-10-07（**「规则本身写错了」这一类的修正 + 小颗粒能力集**：§4.0.2-I **推翻重写**——原版「默认三区块，除此外不许有」是**错的规则**，导致 OmO 少了「其他配置」「官方认证渠道」两块（全仓分别有 7 / 5 个页面有），改为「先取并集再逐块删」并给出可复现的 grep 命令；新增 13.1 模式二十六「SOP 自己给出过强规则」、模式二十七「区块是大颗粒、卡片能力集是小颗粒，后者没人枚举过」、模式二十八「迁移做了一半就宣布完成——判据是旧写法残留数为 0，不是新写法出现了」与模式二十九「照搬了区块的『形』，没照搬它的『筛选』」、模式三十「『保存失败』的报告往往其实是『读取端看不见』」、模式三十一「把『安全最佳实践』套到不该套的场景」、模式三十二「同源工具不等于同语法」。13 节补 85–95：SOP 区块清单本身错、手工内建名单与引擎脱节（48 条并加三条回归测试）、预览标签只写文件名导致空块显示成「配置文件是空的」、保留 id/名字散在 **33 个后端文件（51 处字面量）** 各写各的（抽 `local_bridge.rs` / `shared/localConfig.ts`）、「抽成常量」只做了一半就宣布完成（旧写法残留数必须为 0）、卡片能力集靠记忆补（ZCode 缺复制 / OmO 缺批量删除）、**同一缺陷在别的页面也存在只是没人报**（按新清单全仓扫出 OpenClaw 供应商与模型**两个复制都缺**，已补）、**只读区块把全量都列了出来没筛掉不可用的**（内建渠道列了 49 个、48 个未配置凭据；改为照 OpenCode 只列已配置的，新增 13.1 模式二十九）、**写入端与读取端用了不同的字段导致界面永远显示空**（密钥存 `models.json` 的 `apiKey` 而 `has_key` 只查 `auth.json`；统一到 `auth.json` 并迁移旧值、**界面回填明文密钥**，新增 13.1 模式三十 / 三十一）、**「获取模型」没传密钥导致 401 且用错了 config value 模式**（OmO 的 `apiKey` 支持 `$ENV_VAR` 插值而 OMP 不支持，传 `"omp"` 会把 `$MY_KEY` 当字面量；新增 `ConfigValueMode::Omo` 复用 Pi 解析器 + 新增 13.1 模式三十二）。上一轮为共享组件的样式归属 + 交互三件套：13 节补 80–84 与 13.1 模式二十四「插槽只共享文案，样式留给调用方手抄」/ 模式二十五「拖拽是把手 + 行为 + 存取三件套，缺一件就表现成坏掉」。再上一轮为同源引擎字段核对：13 节补 76–79 与 13.1 模式二十三「抄了『名字像的』而不是『同引擎的』兄弟」——**字段形状以引擎自己的 `docs/models.md` 为准**）
+
+---
+
+## ⚠️ 本文件的自省规则（最高优先级，先读这条）
+
+> **用户每指出一个问题，就说明本文件存在一处缺陷**——要么漏写了这一条，要么写错了。用户不需要明确指出「去改 SOP」；**只要他提出问题，就必须主动回来检查本文件并强化修正**。
+
+**为什么**：本文件是**跨对话交接的唯一操作手册**。下一个接入新 CLI 的对话没有本次的上下文，它只会照本文件执行。本文件漏一条，下一个 CLI 就漏一项；本文件写错一条，下一个 CLI 就照着错的做。**用户亲自发现问题，说明本文件本该拦住它的那道关卡不存在。**
+
+**发现任何问题（用户指出 / 自己排查 / 收尾复盘）后，除了修代码，必须做这四件事**：
+
+1. **定位本该拦截它的关卡**——是 4.0.2 的某个核对项没写？是第 3 节的某个接入点清单漏了？是 13.1 缺一个模式？还是 §12 的验收项不够？
+2. **补上或改正那一节**，并在**第 13 节**加一条编号教训（说明：现象 → 错因 → 正确做法）。
+3. **若能归纳成模式**，在 **13.1** 补一个「模式 N」（说明：什么样的代码结构会静默失败 + 对策）。
+4. **若该问题能被机械检查出来**，把检查命令写进对应的核对清单（4.0.2 / §12.1 / §12.3），让它下次能自动被发现。
+
+**用户说「把之前的问题都反思一遍」时**：逐条回溯会话（及能查到的历史）中用户提过的每个问题，对照本文件现状列出「已覆盖 / 未覆盖 / 覆盖但不够具体」，把未覆盖的补上。**不许只补最后一条**。
+
+**判断补在哪里的速查表**：
+
+| 问题性质 | 补在哪里 |
+|---|---|
+| 某个具体控件/字段的形态不对 | 4.0.2 的 A–H 对应小节 |
+| 某个能力整体缺失 | 4.0.2-H（能力核对）或附录 B.3 |
+| 某个页面上「和列表并列」的区块 | 附录 B.2（页面级区块） |
+| 后端漏注册某处 | 第 3 节的下游清单 + 3.6 |
+| 一类会静默失败的结构 | 13.1 新模式 |
+| 编译通过但形态不对的返工 | 4.0.2 的核对项（**这条最容易被漏**） |
+| 跨模块铁律 | 同时写回根 `AGENTS.md` |
 
 ---
 
@@ -26,6 +55,22 @@
 | **根目录型** | 配置根目录 | claudecode、codex、grok、geminicli、antigravity、kimi、zcode | 改 `root_dir`，其余路径全部由根派生 |
 
 判断依据：上游 CLI 是否提供「一个根目录 + 固定内部结构」（根目录型），还是「直接指向某个配置文件」（配置文件型）。
+
+### 0.1.1 再定性：单一 active provider vs 多渠道路由
+
+**这个定性决定三件事：卡片样式、「应用」按钮存不存在、默认模型在哪里选。** 在 0.1 之后、写代码之前必须定。
+
+| | 单一 active provider | 多渠道路由 |
+|---|---|---|
+| 语义 | 同一时刻只有**一个** provider 生效，切走即停用其他 | 多个 provider **同时可用**，「用哪个」由某个指针（默认模型/默认选择）表达 |
+| 现有工具 | claudecode、codex、grok、kimi、geminicli、antigravity、claudedesktop | opencode、pi、oh_my_pi、dsh、hermes、**zcode** |
+| 卡片样式 | `ClaudeStyleCard` / `CodexStyleCard` | `OpenCodeStyleCard`（见 §4.2.1） |
+| 卡片上的「应用」按钮 | **有**（语义 = 切到这一个） | **没有**——会误导用户以为其他渠道被关掉 |
+| 默认模型入口 | 卡片头部「应用」 | **模型行**上的「设为默认」 |
+
+**判断依据**：问一句「同时配两个 provider，上游是都用还是只用一个？」都用 → 多渠道路由。
+
+> **多渠道路由的 CLI 有一个必查项**：「谁是默认」这个状态**存在哪里**。它通常同时存在于两处——CLI 自己目录内的偏好（如 ZCode 的 `settings.models[].isDefault`）和运行时实际读的指针（如 `defaultModelSelection`）。**两处都要写，缺一就会出现「界面显示默认、运行时不用」**（见 13.1 模式十五 / #55）。
 
 ### 0.2 再定范围：做哪些能力
 
@@ -78,8 +123,12 @@
 ├── tray_support.rs   # 托盘数据获取 + apply 函数
 ├── projection.rs     # 配置投影（按需）
 ├── templates.rs      # 默认模板（按需）
-└── official_accounts.rs  # 官方 OAuth（按需）
+├── official_accounts.rs  # 账号快照 / 切换 / 去重 / Tauri commands（按需）
+├── oauth_login.rs    # 登录流程本身：发起 → 浏览器 → 轮询（按需）
+└── credential_cipher.rs  # 凭证解密，仅供展示身份（按需）
 ```
+
+> **官方账号不是一个文件。** 参考实现（ZCode，2026-10-06）拆成三件，因为三件事的失败代价不同：**搬运**（`official_accounts.rs`，必须字节等价，不许失败）、**登录**（`oauth_login.rs`，可失败、有超时/取消）、**展示**（`credential_cipher.rs`，失败只损失一个显示名）。混在一个文件里最容易犯的错就是拿展示用的解析结果去驱动搬运逻辑（见 13.1 模式六）。
 
 - [ ] `tauri/src/coding/mod.rs` 加 `pub mod <tool>;`
 - [ ] `tauri/src/db/schema.rs` 的 `DbTable` 枚举加表名（`<tool>_provider` / `_common_config` / `_prompt_config` / `_official_account`，按需）
@@ -145,9 +194,11 @@ ZCode 是唯一一个**业务 id 合法含冒号**的模块——它的托管供
 - [ ] `tauri/src/settings/types.rs` 的 `AppSettings::default()`（visible_tabs）+ `default_sidebar_hidden_by_page()`
 - [ ] `tauri/src/settings/adapter.rs` 的 `CURRENT_DEFAULT_VISIBLE_TABS` + 新增 `PRE_<TOOL>_DEFAULT_VISIBLE_TABS` 基线 + 匹配判断分支
 - [ ] `web/services/settingsApi.ts` 的 `createDefaultSidebarHiddenByPage()` + `defaultSettings.visible_tabs`
-- [ ] `tauri/src/coding/runtime_location.rs` 的 `MODULE_KEYS`（当前 14 个）
+- [ ] `tauri/src/coding/runtime_location.rs` 的 `MODULE_KEYS`（当前 14 个）+ `get_tool_skills_path_async` / `get_tool_mcp_config_path_async` 的 arm
 - [ ] `tauri/src/coding/reapply_applied_runtime.rs` 的 `ALL_WSL_FILE_MODULES` + `wsl_module_for_reapply_label`
-- [ ] `tauri/src/settings/backup/utils.rs` 的 `ALWAYS_BACKUP_CLI_TOOLS` / `OPTIONAL_BACKUP_CLI_TOOLS` + `tool_prefixes` + `get_custom_root_dir_path_info`
+- [ ] `tauri/src/settings/backup/utils.rs` 的 `ALWAYS_BACKUP_CLI_TOOLS` / `OPTIONAL_BACKUP_CLI_TOOLS` + `tool_prefixes` + `get_custom_root_dir_path_info` + **`write_external_configs_to_backup_zip` 的打包段**
+- [ ] `tauri/src/settings/backup/restore.rs` 的 **解压分支 + root-dir override 读取 + restore dir 解析**（三处，漏一处数据就丢；见 8.2-C）
+- [ ] `tauri/src/coding/ssh/skills_sync.rs` 的 `SKILLS_TARGETS_FROM_RUNTIME_LOCATION`（必须 = `get_tool_skills_path_async` 的 arm 集 − hermes；见 7.2.1）
 - [ ] `tauri/src/tray.rs` 的 section builders + `is_tab_visible("<tab>")` 门控
 - [ ] `web/features/settings/hooks/useWSLSync.ts` / `useSSHSync.ts` 的 `TAB_TO_MODULE` + `ALL_CODING_MODULES`
 - [ ] `web/features/settings/components/WSLSyncModal.tsx` / `SSHSyncModal.tsx` 的 `MODULE_TO_TAB` + `ALL_MODULE_KEYS`
@@ -222,6 +273,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 | 模型编辑弹窗 | **Pi / Hermes** | 可选字段最多，`show*` 覆盖面最广 |
 | 页面头部 | **Codex** | 首个消费方，无遗留覆盖 prop |
 | 模型列表工具栏 | **Codex** | 传全了全部 handler |
+| **模型/供应商字段形状** | **同引擎的兄弟** | ⚠️ 不是「名字像的」。先确认运行时同源（读同一个文件？同一个二进制？），再抄它的字段；最终**以该引擎自己的 `docs/models.md` 为准**——兄弟页面也可能是错的（13.1 模式二十三） |
 
 #### 4.0.2 第二步：逐项核对（机械清单，不许凭印象）
 
@@ -236,6 +288,10 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
   >
   > `labelCol` 的 span 各 CLI 不同（shared 4/6、codex 6/8、grok 5/7、kimi 7/9、openclaw 5/7），**按本 CLI 最长的标签选**，不是照抄。**标签改了就要重算**：ZCode 原用 7/9，是因为最长标签是「推理等级（从低到高）」；标签简化为「推理等级」后改成 6/8。
 - [ ] `width` / `title` / `okText` / `cancelText` / `destroyOnHidden`
+- [ ] **弹窗的「进行中」状态用正文 `Spin` 表达，不要用 `okButtonProps={{ loading: true }}`。**
+  > Ant Design 的 `loading` 会给按钮加 `pointer-events: none`，**同时锁死取消按钮**——用户看到的是一个变灰、点不动的「取消」，登录/提交卡住时无法退出（ZCode OAuth 登录弹窗踩过）。
+  >
+  > 正确做法：`okButtonProps` 只设 `disabled`，把进行中的视觉反馈放进弹窗正文（`<Spin>` 或局部 loading），保证「取消」始终可点。**任何有长耗时操作的弹窗都要单独验一次「操作进行中点取消」**。
 - [ ] 表单字段的**顺序与数量**：逐字段列出「参照有我没有」「我有参照没有」，确认每一处差异都是**有意的**
 - [ ] **分组子字段**（如「一组三态下拉」）：横向布局下内层 `Form.Item` 若带 `label` 会继承外层 labelCol 百分比，布局错乱。改成「纯文本子标签 + 无 label 的 `Form.Item`（`labelCol={{span:0}}` / `wrapperCol={{span:24}}`）」，既保持分组又保留校验错误显示。
   > **何时可以用 `noStyle`**：分组内**没有**逐字段校验时（如「模型能力」勾选组——布尔字段永远有值，不存在「漏填」）用 `noStyle` 是正确的，它让勾选框自然横向排列。**有** `rules` 的字段必须留出 `wrapperCol`，否则校验错误无处渲染，手动模式漏填会「点了保存没反应」（13.1 模式三）。判断依据是**该字段有没有 rules**，不是「在不在分组里」。
@@ -247,9 +303,24 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 
 **C. 每个字段的交互细节**
 
-- [ ] API Key 是否有**显示/隐藏按钮**（4/5 的 CLI 用 `masked input + addonAfter` 按钮；ZCode 用了朴素的 `Input.Password`）
+- [ ] API Key 是否有**显示/隐藏按钮**。
+  > ⚠️ **antd 6 的 `Input.Password` 自带显示/隐藏按钮**（`visibilityToggle` 默认 `true`，见 `antd/es/input/Password.js`），所以「用了 `Input.Password`」本身就满足这条，不需要额外 `addonAfter`。这条核对的是**结果**（用户能不能切换明文），不是写法。若某处 `visibilityToggle={false}` 或有自定义 `iconRender`，才需要单独确认。
 - [ ] 是否该用 `ImeSafeInput` / `ImeSafeAutoComplete`（IME 组合输入安全）
 - [ ] hint 走 `help` 还是 `extra`，字号是 11 还是 12
+- [ ] **说明性文字放在它所说明的控件下方**（输入框 / 编辑器之后），不是上方。
+  > 放在上方时它读起来像一条需要先关掉的横幅；放在下方才是「这个框里该写什么」的说明。ZCode 通用配置的 `description` 原本在 `JsonEditor` **上方**，参照 Codex 挪到下方后才读得通。
+  >
+  > 通用判据：**「解释这个控件」的文字跟着控件走**（下方）；**「警告/阻断」类信息才置顶**（错误、不兼容提示）。核对方法：把弹窗从上往下读一遍，每段文字问一次「它在解释谁」——解释不到任何控件的，就是放错了位置。
+- [ ] **含义不自明的字段，标题后有问号，hover 显示说明**——用 `components/common/FieldHelp`（**通用组件，不要各 CLI 重写**）。
+  > 判据：**遮住说明、只看标签，用户能填对吗？** 「上下文窗口」「名称」能；「推理参数映射」「模型能力」「输入类型」不能。给每个字段都挂问号会让界面变吵。
+  >
+  > **文案优先逐字取自上游**的对应帮助文本（ZCode 取自 `settings.modelProvider.help.*`）——自己重写一遍会与官方文档产生第二套说法，用户对照官方文档时对不上。
+  >
+  > ⚠️ **文案是纯字符串，不能直接丢给 `Tooltip title`**：`\n` 不换行、`**粗体**` 会原样显示星号，整段挤成一行。`FieldHelp` 已处理分段/列表/粗体/行内代码（见其模块 `AGENTS.md`）。
+- [ ] **长文本输入用多行编辑器**，不是单行 `Input`。
+  > 判据：**内容里会不会出现换行或嵌套括号？** 会 → `Input.TextArea`（`autoSize`）。JSON / CEL / 表达式类字段一律多行；单行只用于确实是一行的值（URL、key、名称）。
+  >
+  > ZCode 的「推理参数映射」是带嵌套花括号的 CEL 表达式，单行输入框里读不成句、改不动。
 
 **D. 下拉的选项列表**
 
@@ -261,8 +332,18 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 
 - [ ] Codex 是**一行**：`baseUrl` + 格式 Tag + API Key + 备注，用 `|` 分隔。
   > ZCode 渲染了**三行**（id / baseUrl / 备注）。注意参照不显示 provider id —— 对自动生成的 id 它只是名称的 slug 副本。
+- [ ] **操作按钮的位置：贴着它作用的那个对象**，不要集中放在卡片顶部。
+  > 一个按钮作用在哪一行/哪个条目，就渲染在那一行/那个条目的操作区里。放在卡片顶部时，用户要先读按钮文案才知道它作用于谁，条件渲染（「只在这一行满足条件时显示」）也会让顶部多出一个含义不明的按钮。
+  >
+  > ZCode 的「保存当前登录」原本在卡片顶部，而它只对 `isVirtual`（未保存的 live 登录）那一条有效——用户看不出它作用于哪一行。移到那一行的操作区后，**「它作用的条目就是携带它的条目」**，不需要解释。
+  >
+  > 判据：**按钮的作用域如果是「某一行」，它就该在那一行里**；只有作用域是「整张卡片」的操作（编辑、删除、应用）才放头部。
 - [ ] 操作按钮的数量、**样式**（`type="link"` / `type="text"` / default）、图标、禁用条件
   > ZCode 的「应用」用了 default 按钮（带边框），其他 CLI 全是 `type="link"`（蓝色文字）。
+  >
+  > **卡片内的次要操作一律无边框**（`type="text"` + `style={{ fontSize: 12 }}`），与模型列表右侧一致；带边框的按钮在一排图标里视觉过重，会抢走名称的注意力。**这一排的密度是统一判据**：数一数参照卡片上每个按钮的边框，多一个带框的按钮就是不一致。
+  >
+  > **同一个动作在所有 CLI 上必须同款**：如果「删除」在某 CLI 是图标、在另一个是文字链，用户就要重新学一遍。跨 CLI 的一致性优先于单页美观——这也是 §4.2.1 把三种卡片样式固定的原因之一。
 
 **F. 三层「可选项」台账（最容易漏的一类）**
 
@@ -294,6 +375,7 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 
 - [ ] **模型编辑弹窗有「选择预设模型」入口** —— ⚠️ **最重要的能力之一，不许漏**（见 4.2.4）
 - [ ] 模型列表有「获取模型」（从上游 API 拉取），**且应用时按 model id 匹配预设自动填充**（见 4.2.5）
+  > ⚠️ **这条在 OmO Native 上重犯过一次**（2026-10-07）：入口有、能跑通、不报错，只是「应用」后拿到的是裸 id——与 ZCode 完全同一个缺陷。**入口存在 ≠ 能力完成**，判据是「应用后那一行有没有带上参数」
 - [ ] 模型列表有连通性测试
 - [ ] 供应商有连通性测试 / 批量测试
 - [ ] 有「导入我使用过的供应商」或等价导入入口
@@ -302,6 +384,49 @@ rg -n "<tool>" web/ tauri/src/ --glob '!node_modules' --glob '!*.test.*'
 - [ ] 有「预览配置」「打开文件夹」「刷新配置」
 
 > 对照方法：打开参照 CLI 的页面**逐个点一遍**，列出它有的入口；回到本 CLI 页面逐个找。找不到的要么补上，要么在提交说明里写明「有意不做 + 理由」。
+
+**I. 页面区块清单（先「取并集」再「逐块删」）**
+
+> ⚠️ **这一节在 2026-10-07 被推翻重写过一次。** 原版写的是「默认三区块，除此外不许有别的」——
+> 那条规则**本身是错的**，而且它导致了一个更严重的后果：按它收敛完 OmO Native，
+> 用户立刻指出缺了「其他配置」和「官方认证渠道」，而这两块在 **7 个已有页面**上都有。
+> 详见 13.1 模式二十六。
+
+**做法：从「全部已有页面实际有什么」取并集，再逐块决定留不留。**
+
+先跑这条命令，把**现状**列出来（不要凭印象，也不要只读一个参照页）：
+
+```bash
+# 每个 coding 页面的区块 id（去掉 CLI 前缀，只看功能名）
+for f in web/features/coding/*/pages/*.tsx; do
+  echo "== $(basename $f .tsx)"
+  grep -oE "id: '[a-z-]+'" "$f" | sed "s/id: '//;s/'//" | sort -u
+done
+```
+
+**截至 2026-10-07 的全仓并集**（这才是「标准区块」的事实来源）：
+
+| 区块 | 有它的页面数 | 判定 |
+|---|---|---|
+| 供应商列表 | 15 | **必备** |
+| 全局提示词 | 15 | **必备** |
+| 会话管理 | 13 | 必备（有会话概念就有） |
+| **其他配置** | **7**（opencode / pi / oh_my_pi / dsh / hermes / openclaw / kimi） | **配置型 CLI 基本都要**——它承载「本页不专门管理、但属于同一份配置」的键 |
+| **官方认证渠道** | **5**（opencode / codex / grok / geminicli / antigravity） | 有官方 OAuth/账号体系的 CLI 都要 |
+| 插件 / 扩展 | 5 | 该 CLI 有插件体系时 |
+| 配置目录 / 设置 | 6 | 见 §11 |
+| 记忆 / agents / 工具 / env | 各 1–3 | 单页专属，不要推广 |
+
+- [ ] **先跑上面的命令，把并集列出来**。**不许只对照一个「参照 CLI」就下结论**——参照 CLI 自己也可能缺块（Codex 就没有「其他配置」，但那不代表新 CLI 不该有）。
+- [ ] **逐块回答「本 CLI 有没有这类数据」**，而不是「别的 tab 有没有」：
+      「其他配置」问的是**这份配置文件里有没有本页不管理的键**；「官方认证渠道」问的是**这个 CLI 有没有官方登录/OAuth**。有数据就加，没有才不加——**并写进模块 `AGENTS.md` 说明为什么不加**。
+- [ ] 只有**确实回答不了上面两问**的区块才删，并在提交说明里写明理由（13.1 模式二十一）。
+- [ ] 侧栏 `sections` 标记与页面区块**一一对应**，没有指向已删区块的残留项。
+- [ ] 撤下某个区块时**只删 UI**：命令、DB 表、托盘接线、备份恢复链路全部保留，并在模块 `AGENTS.md` 写明「无 UI 入口但后端保留」（判据见 §12.1 的死封装审计）。
+
+> **实证（正反两面）**：
+> - **该删的**：OmO Native 曾有「生效配置」（与页头「预览配置」重复）、「更多选项」（⋯ 弹窗里已有同一份）、「MCP 与 Skills」（只是一段指向别处的指引）——这三块删得对。
+> - **不该删的**：同一轮把「其他配置」和「官方认证渠道」也一并当成「Native 专属」删掉了，而这两块在 7 / 5 个已有页面上都有。用户看到别的 tab 有、OmO 没有，立刻指了出来。**「这个区块只有本 CLI 有」不等于「本 CLI 不需要它」**——前者是独特性，后者是缺失，两者在页面上长得一模一样。
 
 #### 4.0.3 第三步：核对共享组件的**前置条件**
 
@@ -393,7 +518,7 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 >
 > **教训**：不要为了"迁移时不动文案"而预先加覆盖 prop。先把各页面的值统计出来，同义的直接统一，只有真正不同的才参数化。
 
-### 4.2 供应商列表标准（`ProviderListSection` / `ProviderCard` / `ModelListSection`）
+### 4.2 供应商列表标准（`ProviderListSection` / `providerCardVariants` / `ModelListSection`）
 
 供应商列表按 CLI 能力分**两种形态**，但共用同一套外壳。
 
@@ -401,6 +526,22 @@ import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 |------|------|------|
 | **不支持自定义模型** | Claude Code | 卡片只有字段区（Haiku/Sonnet/Opus 等），无模型列表 |
 | **支持自定义模型** | Codex | 卡片内多一个「模型列表 (N)」折叠区 |
+
+#### 4.2.1 卡片样式：固定三种，不再新增（Hard Rule 14）
+
+**新建 CLI 时从下面三种里选一种，不要新写 `*ProviderCard.tsx` 布局。** 选型依据是 provider 模型形状（§0.1.1 的两个定性），不是个人偏好：
+
+| 样式组件 | 何时用 | 判定问题 | 第二行 | 头部主操作 |
+|---|---|---|---|---|
+| `ClaudeStyleCard` | 没有模型目录（模型写在 provider 配置里） | CLI 是否管理一个模型清单？否 → 此样式 | 带标签的绑定（`默认: …` / `Haiku: …`） | 文字链「应用」 |
+| `CodexStyleCard` | 有模型目录，且有单一 active provider | 是，且「应用」有意义 → 此样式 | 自由格式（端点/模型/masked key/备注） | 文字链「应用」 |
+| `OpenCodeStyleCard` | 有模型目录，且**没有**单一 active provider | 是，且「启用哪个渠道」不成立 → 此样式 | 固定顺序 `ID • SDK • 端点` | **无**（默认在模型行上选） |
+
+**关键区分：OpenCode 式没有头部「应用」按钮**，因为该 CLI 里多个渠道同时可用，「应用」会误导用户以为其他渠道被关掉了。这类 CLI 的「用哪个」表达在**模型行**的「设为默认」上。
+
+三种样式都在 `web/features/coding/shared/providerCardVariants/`，共用一个 `CardShell`（拖拽注册、选中复选框、卡片外框）。**通用行为改动（间距、拖拽、选中态、按钮样式）改在变体组件里**，一处生效于所有使用该样式的 CLI；只在某个 CLI 的卡片里改会让样式重新分叉，这正是本轮重构要消除的问题。
+
+`CardShell` 的两个约束：`useSortable` 每次渲染都必须执行（无 id 时传占位符并 `disabled`，不要条件调用 hook）；`setNodeRef` **无条件**挂载（dnd-kit 需要测量节点，未注册的节点在父级重新启用拖拽时无法拖动）。
 
 **三个组件**（均在 `web/features/coding/shared/` 或 `web/components/common/`）：
 
@@ -452,7 +593,7 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
   onAddProvider={handleAddProvider}
   headerExtra={<GatewayFailoverButton ... />} // 可选：Gateway 胶囊等
   emptyTextHint={t('<tool>.importFromX')}      // 可选：仅当能从此处导入时
-  hint={<div>…两行提示…</div>}                // 文案由调用方提供
+  hint={<><div>…第一行提示…</div><div>…第二行…</div></>}  // 只传文案，样式在组件里
   footer={<Space wrap>…三个导入按钮…</Space>}  // 可选
 >
   {/* 卡片列表（含 DndContext） */}
@@ -467,7 +608,7 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `batch` / `batchSelectableIds` | 供应商级多选状态（`useProviderBatchSelection`） |
 | `headerExtra` | 插槽：渲染在标题旁（Gateway 的 Failover / Aggregate 胶囊走这里） |
 | `emptyTextHint` | 追加在通用空态文案**下方**的一句补充，仅用于说明导入来源 |
-| `hint` / `footer` | 提示块 / 底部导入按钮；**文案由调用方传**，组件不硬编码 |
+| `hint` / `footer` | 提示块 / 底部导入按钮；**只传文案，组件不硬编码**。⚠️ `hint` 的**样式由组件负责**（12px / 次要色 / 左侧竖线），调用方**不要**自带 `style`——手抄会漏（13.1 模式二十四） |
 | `onBatchTest` / `onOpenCommonConfig` | 传了才渲染对应按钮 |
 
 > ⚠️ **`hint` 与 `footer` 是最容易整体漏掉的两个插槽**：ZCode 两个都没传，于是提示块和「导入我使用过的供应商」**整块消失**，而界面看起来完全正常；已迁移的两个试点（claudecode / codex）都传了。`hint` 是两行（`pageHint` + `pageWarning`），`footer` 含三个导入源。
@@ -505,11 +646,14 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 ```
 模型列表 (6)                    🗑批量删除  🧪模型测试  ☁获取模型  +添加模型
 自动审批模型: deepseek-v4.1-flash  清除自动审批模型          ← aboveList
-┌──────────────────────────────────────────────────┐
-│ ⠿ DeepSeek V4.1 Flash (deepseek-v4.1-flash) ·当前主模型 │ ✏️ 📋 🗑 │
-│   上下文限制: 400,000                              │
-└──────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│ ⠿ DeepSeek V4.1 Flash (deepseek-v4.1-flash | 400K) ·当前主模型 │ [◯] ✏️ 📋 🗑 │
+└────────────────────────────────────────────────────────────┘
 ```
+
+**模型行是一行**（`ModelItem`，全 CLI 共用）：名称 + `(id | 上下文限制)` + `· 当前默认` + 右侧操作。
+- **上下文限制写进括号，不另起一行**，也不显示完整数字——用 `200K` / `1M` 这种可扫读的形式（`formatModelLimit`，`web/utils/modelLimits.ts`）。
+- **输出限制不在卡片上展示**（编辑弹窗里照常可改）。它的值仍参与校验与保存，只是不再占列表的一行。
 
 **关键 props**：
 
@@ -610,6 +754,50 @@ import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 | `variants` / `options` | 高级字段（若本 CLI 支持） |
 
 > 本 CLI 没有对应字段的，**留空/继承**，不要硬塞。有对应字段但预设没给的，也保持继承态。
+
+#### 4.2.4.1 自建模型弹窗：字段集合必须来自上游的「可编辑白名单」
+
+> **只有当本 CLI 的模型字段语义与共享 `ModelFormModal` 差异过大、必须自建弹窗时才读这一节。** 能复用共享组件的，字段集合已由它的 `show*` 开关决定。
+
+**问题**：共享组件有 `show*` 开关决定字段集合；自建弹窗没有这个约束，于是**字段集合变成「实现者认为该有哪些」**。结果是想当然地加上上游根本不开放编辑的字段——用户能填、能保存、看起来正常，但写出的键官方编辑器永远不产生，而且**同一字段在不同模式下可编辑性还不一致**（上游 schema 允许与否）。
+
+**做法：先找上游的「可编辑 schema」，以它为准，不要凭直觉增减字段。**
+
+每个 CLI 都可能有一份「用户可编辑字段」的独立 schema，**它与完整的存储 schema 不是同一份**。ZCode 的例子：
+
+```ts
+// packages/provider/src/config/manual-model-config.ts
+// 手动模式只冻结产品明确开放的叶子；新增系统字段默认不属于个人手动配置。
+export const manualModelConfigSchema = completeModelConfigDataSchema
+  .pick({ enabled: true })
+  .extend({
+    properties: complete.properties.pick({
+      contextWindow: true,
+      supportsJsonSchemaOutput: true,
+      supportsNativeWebSearch: true,
+      supportsMidConversationSystem: true,
+    }).extend({ inputFormat: ...pick({ supportsImage, supportsVideo, supportsPdf }) }),
+    optionSpecs: complete.optionSpecs.pick({ reasoningLevel: true }).extend({ maxOutputTokens: ...pick({ max }) }),
+  });
+```
+
+**核对步骤**（每个自建模型弹窗都要走一遍）：
+
+1. **在上游源码里找可编辑 schema**——搜 `manual*`、`editable*`、`userConfig*`，或看官方设置界面的字段渲染组件（ZCode 是 `ProviderModelMetadataDialog.tsx` 里硬编码的三个能力项）。
+2. **逐字段对照**：本弹窗的每个控件，在可编辑 schema 里吗？
+   - **不在 → 删掉控件**。多一个控件就是多一个「能填但官方不认」的字段。
+   - **在但弹窗没有 → 补上**（除非有明确理由，写进模块 `AGENTS.md`）。
+3. **被删掉的字段要「原样保留」**：上游自己写的行带着这些键，重新保存**不能静默删除**。写一个 `pick<上游系统字段>()` 只复制「存在的」键——**不要补默认值**，因为「键缺失 = 让 CLI 目录决定」与「显式 false = 覆盖」语义不同。
+4. **预设构造器同样不能写系统字段**，即使预设目录声称有该能力——上游也是由 CLI 而非预设决定。
+5. **加回归测试**：断言 (a) 预设不写系统字段；(b) 系统字段经保存后仍在；(c) 键缺失时保持缺失。
+6. **每个字段还要问一句「官方把它放在哪一层」**——字段存在不等于放对位置。同一个开关可能在官方是**行级**（列表行上的 `Switch`）、而我们放进了编辑弹窗。
+   > ZCode 的「启用」：官方在模型列表行右侧（`ProviderFormControls.tsx` 的 `Switch`），编辑弹窗里**没有**；我们原本放在弹窗里，而 `ModelItem` 当时根本没有行级开关——照官方改会直接丢掉「禁用单个模型」的能力。
+   >
+   > 判据：**这个状态作用于整张卡片，还是某一行？** 整张卡 → 卡片头部；某一行 → 那一行上。放错层级的表现是「能用，但找不到」或「在那里，但说不清作用于谁」。
+
+**ZCode 实证**（2026-10-06）：弹窗多了「工具调用」「MFJS 工具 Schema」「最大输出参数映射」三个控件。前两个官方 UI 完全不渲染（`ProviderModelMetadata.ts` 注释：「系统字段不由编辑草稿产生」），第三个官方只保留、不提供编辑入口。而 `manual` 模式下前两个又被代码隐藏——**同一字段两种行为**。
+
+> **判据一句话**：**「这个字段上游让用户改吗？」** 答案不在本仓库的代码里，在上游源码里。**没查过上游就加字段，等于猜。**
 
 #### 4.2.5 「获取模型」的预设匹配
 
@@ -749,7 +937,10 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 |------|------|
 | claudecode | ✅ 已迁移（`ProviderListSection` 试点 1） |
 | codex | ✅ 已迁移（`ProviderListSection` + `ModelListSection` 试点 2） |
+| omo_native | ✅ 已迁移（2026-10-07，含弹窗抽取） |
 | 其余 8 个页面 | 结构合规，可参照两个试点迁移；卡片行数合计约 5900 行 |
+
+> ⚠️ **守卫扫不到「内联弹窗」**：`scripts/verify-form-modal-layout.mjs` 只检查文件名匹配 `*ProviderFormModal.tsx` / `*ModelFormModal.tsx` 的文件。把供应商/模型弹窗**内联写在页面或 section 里**（pi / oh_my_pi / dsh / hermes 目前都是这样，`layout="vertical"` + 网格）就完全逃过这道守卫。**迁移时先把弹窗抽成独立文件**（omo_native 2026-10-07 就是这么做的，守卫文件数 13 → 14），再改布局——否则改完无人拦回归（教训 #83）。
 
 ### 4.3 页面头部尚未迁移的页面
 
@@ -781,6 +972,23 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 | `async fn get_<tool>_tray_data(app)` | 返回当前选择 |
 | `async fn apply_<tool>_provider(app, row_id)` | 处理托盘点击 |
 | `async fn get_<tool>_prompt_tray_data` / `apply_<tool>_prompt_config` | 提示词侧 |
+
+**托盘区块必须与页面区块一一对应**：页面上有的能力，托盘里也要有入口（2026-10-07 用户指出 OmO 托盘缺「默认模型」「全局提示词」）。核对方法：把页面 sidebar 的区块列表抄下来，逐个问「托盘里点得到吗」。**不要凭印象判断某个能力「托盘里没有意义」**——OmO 的 `tray_support.rs` 曾写着「Native 的默认模型由 model_profile 与 agents 共同决定，没有单一的全局默认模型字段」，这句话是错的（`settings.json` 的 `defaultProvider` / `defaultModel` 就是），直接导致两个区块缺席。
+
+**子菜单排序规则（硬规则，2026-10-07 统一）**：**主选择项在前，全局提示词紧随其后**。
+
+| 区块形态 | 顺序 |
+|---|---|
+| 只有供应商（Claude Code / Codex / Gemini CLI / Antigravity / ZCode） | 供应商 → 全局提示词 |
+| 只有默认模型（Pi / OMP / OmO / Hermes / Dsh） | 默认模型 → 全局提示词 |
+| 模型组 + 供应商（Grok / Kimi） | 模型 → 供应商 → 全局提示词 |
+| 主模型 + 小模型（OpenCode） | 主模型 → 小模型 → 全局提示词 |
+
+核对方法：把所有区块的 append 顺序抽出来并排打印（一条正则），逐行对表——**单看一个区块永远觉得「挺合理」**（见 13.1 模式四十）。
+
+**托盘的空态 ≠ 页面的空态**：两边常调同一个列表命令，但托盘可能额外过滤掉「桥接记录」（`__local__`）。过滤前先问「这条记录能不能被应用」，并把结论写进模块 `AGENTS.md`（见 13.1 模式四十一）。
+
+**如果某 CLI 的模型列表要铺平展示，优先复用现成 builder**：`build_named_prompt_submenu(app, prefix, data, texts)` 是泛型的，任何实现了 `NamedPromptTrayData` / `NamedPromptTrayItem` 的 `TrayPromptData` 都能直接用。模型子菜单没有泛型版（`build_pi_model_submenu` / `build_omp_model_submenu` 各自一份），新 CLI 照抄一份即可——它们做的是「按 `<provider>/<model>` 的斜杠前半段分组，一个渠道一个二级子菜单」。
 
 **关键陷阱（ZCode 踩过）**：托盘回传的是 **DB 行 id**，但很多 CLI 内部按自己的 providerId 索引。ZCode 在 `tray_support.rs:96-119` 做了一次 row_id → providerId 的解析（查 DB 行 → 解析 settingsConfig → 调 `select_*_internal_without_events`）。**直接拿 row_id 当 providerId 用会选错或选不中。**
 
@@ -827,9 +1035,11 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 |------|------|
 | `runtime_location.rs:16` | `const MODULE_KEYS: [&str; 14]`（zcode 在 `:25`）—— WSL Direct 状态、缓存刷新、`get_wsl_direct_status_map_async` 的唯一来源 |
 | `:199` | `normalize_module_key()` match（`"zcode" \| "zcode_cli" => Some("zcode")`） |
-| `:276` | `get_runtime_location_async` dispatch match |
-| `:1200-1253` | `get_<tool>_config_path_*` / `get_<tool>_mcp_config_path_*` / `get_<tool>_prompt_path_*` / **`get_<tool>_wsl_target_path_async(db, file_name)`** |
-| `:1149` | `resolve_<tool>_root_dir_without_db()`（给 backup restore 用的无 DB 入口） |
+| `:272` | `refresh_runtime_location_cache_for_module_async()` dispatch match |
+| `:1242` | **`get_<tool>_wsl_target_path_async(db, file_name)`**（zcode 范本） |
+| `:1922` / `:2025` | `get_tool_skills_path_sync` / `_async` —— **SSH Skills 名单要对齐这个函数的 arm**（§7.2.1） |
+| `:2249` / `:2278` | `get_tool_mcp_config_path_sync` / `_async` |
+| `:1149` / `:1457` | `resolve_<tool>_root_dir_without_db()` / `resolve_<tool>_path_without_db()`（给 backup restore 用的无 DB 入口；**restore 的 fallback 目录必须与后者一致**） |
 
 `get_<tool>_wsl_target_path_async` 就是「Windows 路径 → WSL 内路径」的映射器，范式：
 
@@ -872,16 +1082,31 @@ ZCode 的 4 条映射：
 | 位置 | 符号 | 漏改后果 |
 |------|------|---------|
 | `wsl/mcp_sync.rs:324` | `is_mapped_mcp_config_file()` 白名单 | 该 CLI 的 MCP 配置**完全不参与 WSL 同步**（静默） |
-| `wsl/mcp_sync.rs:366` | `strip_cmd_c_from_wsl_mcp_file()` 的 match | **注册了 id 但没 arm → `_ => return Ok(())`，Windows `cmd /c` wrapper 原样复制到 Linux，WSL 里 server 起不来**（ZCode 实证） |
-| `ssh/mcp_sync.rs:332` / `:386` | SSH 版同上 | 同上 |
+| `wsl/mcp_sync.rs:367` | `strip_cmd_c_from_wsl_mcp_file()` 的 `let processed = match module` | **注册了 id 但没 arm → `_ => return Ok(())`，Windows `cmd /c` wrapper 原样复制到 Linux，WSL 里 server 起不来**（ZCode 实证） |
+| `ssh/mcp_sync.rs:332` / `:366` | SSH 版同上（`strip_cmd_c_from_remote_mcp_file`） | 同上 |
+
+> ⚠️ **这两处是「两文件 × 两位置」共 4 个点，漏任意一个都会静默失效。** 2026-10-07 复查时发现 OmO Native **4 个点全漏**：`omo-native-mcp` 既不在 WSL/SSH 的白名单里，也不在两个 `strip_cmd_c` 的 match 里。后果是 MCP 页写得进 `~/.omo/agent/mcp.json`，同步到 WSL 后 `cmd /c` wrapper 原样带过去，server 起不来。
+>
+> **自查命令**（把 `<tool>` 换成模块 key，四处都应命中）：
+> ```bash
+> grep -rn '<tool>' tauri/src/coding/wsl/mcp_sync.rs tauri/src/coding/ssh/mcp_sync.rs
+> ```
+> 预期至少 4 行：两处白名单 + 两处 match arm。**少于 4 行就是漏了**。
+>
+> 另一个易漏点：**模块的映射 id 未必叫 `<tool>-mcp`**。ZCode 的 MCP 文件是 `zcode-cli-config`（MCP 与 CLI 配置同一个文件），OmO/Pi 是 `<tool>-mcp`。查映射 id 要去 `default_mappings()` 里按 `module` 字段找，别按名字猜。
 | `mcp/command_normalize.rs` | 按需新增 `process_<tool>_json` | 无专用 processor 就用通用形状，CLI 可能读不懂 |
 | `mcp/format_configs.rs:80` | `get_format_config()` match | `_ => None` → 用通用 key 写入，CLI 只认自己的 key 就**静默丢值**（zcode 的 `timeoutMs` vs `timeout` 实证） |
+
+> **`get_format_config()` 返回 `None` 不一定是缺陷**——`None` 表示「这个 CLI 就是标准 Claude 形状」（`{"type":"stdio","command","args","env"}` / `{"type","url","headers"}`）。判定方法是拿它上游的 schema 对一遍：**字段名和形状都对得上，就不需要加条目**；加了反而可能把 `type` 写成别的值。OmO Native / Pi / Kimi 都走这条路（它们都是 Claude 形状的 `mcpServers`），只有字段名或形状真的不同才建常量（`ZCODE_FORMAT` 的 `timeoutMs`、`GEMINI_LIKE_FORMAT` 的 `httpUrl` 就是这类）。
+>
+> 反过来说：**新增 CLI 时这里不用动**，只有当你在 WSL/SSH 侧发现「写进去的 key 上游不认」时才回来补。
 
 ### 6.4 事件、reapply、状态
 
 | 位置 | 符号 | 漏改后果 |
 |------|------|---------|
-| `lib.rs:1663` | `app.listen("wsl-sync-request-<tool>", ...)` | 保存配置后**不自动同步**（当前 14 个监听器，对照补） |
+| `lib.rs:1320` | `app.listen("wsl-sync-request-<tool>", ...)` 块（**当前 14 个**，对照补） | 保存配置后**不自动同步**（静默） |
+| `lib.rs:1688` / `:1706` | `mcp-changed` / `skills-changed` 监听器 | 全局各一个，**新增 CLI 不用动**——它们调 `sync_mcp_to_wsl` / `sync_skills_to_wsl`，链路内部按映射 id / `BUILTIN_TOOLS` 遍历 |
 | `reapply_applied_runtime.rs:234` | `wsl_module_for_reapply_label()` match | **漏 arm → 该模块不进 `changed_modules` → 被 `unchanged_wsl_modules` 判为「未变」→ 恢复后 WSL sync 静默跳过它** |
 | `reapply_applied_runtime.rs:264` | `const ALL_WSL_FILE_MODULES: &[&str]` | 漏项 → 该模块永远不被 skip（可能误覆盖本机运行时文件） |
 | `reapply_applied_runtime.rs:105` | `reapply_cli(&mut summary, "<tool>", ...)` 调用点 | 恢复后不 re-apply |
@@ -906,6 +1131,7 @@ ZCode 的 4 条映射：
 4. **`runtime_location::MODULE_KEYS` 漏项**（issue #331）：模块不在 Direct 状态列表里 → 后端不知道它已是 WSL Direct → 把 Windows UNC 路径 `//wsl.localhost/...` 交给 Linux `cp`。
 5. **`is_mapped_mcp_config_file` 注册了但 `strip_cmd_c` 没 arm**：`cmd /c` 原样进 Linux（ZCode 实证）。
 6. **`wsl_module_for_reapply_label` 漏 arm**：恢复后 WSL sync 把该模块当「未变更」跳过。
+7. **`SKILLS_TARGETS_FROM_RUNTIME_LOCATION` 漏 key**（`ssh/skills_sync.rs:113`）：WSL Direct 自定义根目录在 SSH 远端静默退回默认目录，同步「成功」但写到 CLI 不读的位置（见 §7.2.1）。**已由源码扫描型测试钉住**。
 
 ---
 
@@ -963,7 +1189,28 @@ BuiltinTool {
 | `resolve_skills_path_with_db` | `:228` | 同上 |
 | `resolve_skills_path_with_db_async` | `:237` | 同上 |
 
-配套的 backend resolver 在 `runtime_location.rs` 的 `get_tool_mcp_config_path_sync/_async`（`:2250` / `:2281`）和 `get_tool_skills_path_*`（`:1960` / `:2082`）。
+#### 7.2.1 SSH Skills 目标解析的独立白名单（第 9 处）
+
+`tauri/src/coding/ssh/skills_sync.rs` 的 `SKILLS_TARGETS_FROM_RUNTIME_LOCATION`（`:113`）是**又一份独立于 `runtime_location` 的白名单**：
+
+```rust
+const SKILLS_TARGETS_FROM_RUNTIME_LOCATION: &[&str] = &[
+    "claude_code", "codex", "grok", "kimi", "opencode", "openclaw",
+    "pi", "oh_my_pi", "gemini_cli", "zcode", "omo_native",
+];
+```
+
+**语义**：名单内的工具，远端 Skills 目录跟随 `runtime_location::get_tool_skills_path_async` 解析（WSL Direct 自定义根目录时用 UNC 解析出的 Linux 路径）；名单外的退回 `get_remote_tool_skills_dir()` 的 `BUILTIN_TOOLS.relative_skills_dir` 字面值。
+
+**漏项的后果**：WSL Direct 自定义根目录在 SSH 远端**静默退回默认目录**，同步「成功」，但文件写到 CLI 不读的位置。
+
+**维护规则**：这份名单必须 = `runtime_location::get_tool_skills_path_async`（`:2025`）的所有 arm，**减去 hermes**（hermes 是文档化例外：文件映射固定写 `~/.hermes/*`，Skills 也固定写 `~/.hermes/skills`，见 `ssh/AGENTS.md:56`）。
+
+> 2026-10-07 复查发现 `zcode` 与 `omo_native` 两个 key 都漏了——两者在 `get_tool_skills_path_async` 里都有 arm（`:2082` / `:2146`），在 `BUILTIN_TOOLS` 里也都有 `relative_skills_dir`，所以 `get_all_skill_tool_keys()` 会遍历到它们，但目标路径永远走回退分支。
+>
+> **已加源码扫描型回归测试**（`ssh/skills_sync.rs` 的 `runtime_location_skills_tools_are_all_covered`）：测试直接 `include_str!("../runtime_location.rs")` 解析 `get_tool_skills_path_async` 的函数体，抽出所有 `"<key>" =>` arm，与本名单断言相等（预期集 = 名单 + `hermes`）。**名单再漂移，测试立刻失败**，不需要人肉 `grep`。改 `get_tool_skills_path_async` 的 arm 时记得同步这个测试的预期。
+
+配套的 backend resolver 在 `runtime_location.rs` 的 `get_tool_mcp_config_path_sync/_async`（`:2249` / `:2278`）和 `get_tool_skills_path_sync/_async`（`:1922` / `:2025`）。
 
 > **历史上的坑（已结构性修复，2026-10-06）**：`*_with_db*` 原本是**白名单 match**，每个 CLI 在 `detection.rs` 里抄一份自己的 key，zcode 不在其中 → `_ =>` 走静态路径。后果：**用户在「自定义配置目录」里改了 root_dir 后，MCP 页读写的仍是默认路径——无报错、无日志。**
 >
@@ -1022,19 +1269,21 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 
 | 位置 | 符号 | 说明 |
 |------|------|------|
-| `utils.rs:1477` | `const ALWAYS_BACKUP_CLI_TOOLS` | 运行时文件为真源、不可 re-apply → 开关关闭也进包 |
-| `utils.rs:1487` | `const OPTIONAL_BACKUP_CLI_TOOLS` | SQLite 为真源、可 re-apply → 受 `backup_cli_config_files_enabled` 门控 |
-| `utils.rs:1498` / `:1502` | `is_always_backup_cli_tool()` / `is_optional_backup_cli_tool()` | |
-| `utils.rs:1593` | `wsl_module_for_external_config_tool()` match | **漏 arm → 恢复出的文件永远不会被 post-restore WSL sync 传播**（拿不到 module 就静默 return） |
-| `utils.rs:1578` | `record_restored_external_config_wsl_module()` | 依赖上面那个 match |
+| `utils.rs:1494` | `const ALWAYS_BACKUP_CLI_TOOLS`（7 个） | 运行时文件为真源、不可 re-apply → 开关关闭也进包 |
+| `utils.rs:1504` | `const OPTIONAL_BACKUP_CLI_TOOLS`（8 个） | SQLite 为真源、可 re-apply → 受 `backup_cli_config_files_enabled` 门控 |
+| `utils.rs:1515` / `:1519` | `is_always_backup_cli_tool()` / `is_optional_backup_cli_tool()` | |
+| `utils.rs:1610` | `wsl_module_for_external_config_tool()` match | **漏 arm → 恢复出的文件永远不会被 post-restore WSL sync 传播**（拿不到 module 就静默 return） |
+| `utils.rs:1595` | `record_restored_external_config_wsl_module()` | 依赖上面那个 match |
 
-#### B. 打包写入（`write_external_configs_to_backup_zip`，`utils.rs:3004`）
+> 这两个常量是 **§8.3 第 1 条陷阱的另一半**：`should_skip_external_config_on_restore()` 的兜底是 `_ => true`（跳过）。新增工具若只写了打包段、忘了登记进这两个常量之一，**开关关闭的机器上恢复时它的文件被静默跳过**。
+
+#### B. 打包写入（`write_external_configs_to_backup_zip`，`utils.rs:3021`）
 
 每个工具一段，标准形态是「写 `external-configs/<tool>/` 目录 entry + 写 `root-dir.txt` + 逐个文件调 `add_external_config_file_to_zip`」。
 
 配套 helper：
-- `utils.rs:2911` `add_external_config_file_to_zip(...)`
-- `add_external_config_directory_contents_to_zip(...)`（目录递归）
+- `utils.rs:2928` `add_external_config_file_to_zip(...)`
+- `utils.rs:2954` `add_external_config_directory_contents_to_zip(...)`（目录递归）
 - `utils.rs:390` `harden_restored_sensitive_file()`（敏感文件 0600）
 - 每个工具的 `get_<tool>_*_path_from_db()`
 - **无 DB 的 restore 期 fallback**：`utils.rs:425` → 调 `runtime_location::resolve_<tool>_root_dir_without_db()`
@@ -1043,15 +1292,16 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 
 #### C. 恢复解压（`restore.rs`）
 
-`restore.rs` 里是一长串 `else if file_name.starts_with("external-configs/<tool>/")`，**当前 14 个分支**。新增工具要加三处：
+`restore.rs` 里是一长串 `else if file_name.starts_with("external-configs/<tool>/")`，**当前 15 个分支**。新增工具要加三处：
 
-1. **root-dir override 读取**（`restore.rs:316` 的写法）
-2. **解析 restore dir**（`restore.rs:408`）
-3. **解压分支**（`restore.rs:776` 是 zcode 范本）。分支内必须：
+1. **root-dir override 读取**（`restore.rs:328` 是 opencode 范本；`should_use_root_override_for_tool` 用**工具名**不是模块名，如 `"geminicli"` / `"omo_native"`）
+2. **解析 restore dir**（`restore.rs:413` 是范本；fallback 目录要与 `runtime_location::resolve_<tool>_path_without_db` 的默认值一致）
+3. **解压分支**（`restore.rs:854` 是 zcode 范本）。分支内必须：
    - 跳过空/目录/`root-dir.txt`（**漏了会在 CLI 数据根目录留下垃圾文件**）
    - `should_filter_external_config_entry(&filter_rules, "<tool>", relative_path)`
    - `resolve_external_config_restore_output_path(&<tool>_restore_dir, restore_relative_path)?`（**安全 helper，禁止直接 `join`**）
    - `record_restored_external_config_wsl_module(&mut restored_wsl_modules, "<tool>")`
+   - 敏感文件（`auth.json` / `.credentials.yaml` / 含 key 的 `config.toml`）调 `harden_restored_sensitive_file(&outpath)?`
 
 #### D. 其余备份相关清单
 
@@ -1059,19 +1309,26 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 |------|------|---------|
 | `utils.rs:1035` | `backup_filter_option_path()` match | 过滤规则下拉显示裸相对路径而非 `~/.<tool>/...` |
 | `utils.rs:1112` | `list_backup_file_filter_path_options()` | 「文件过滤规则」里没有该工具的任何可选项 |
-| `utils.rs:2828` | `normalize_backup_filter_rule_path()` 的 `tool_prefixes` match | 用户写的 `~/.<tool>/AGENTS.md` **归一化不到** `AGENTS.md`，规则静默不匹配（**安全影响**） |
-| `utils.rs:1876` | `get_custom_root_dir_path_info()` match | `_ => None` → 归档里不写 `root-dir.txt`，自定义根目录不被备份 |
-| `utils.rs:1637` | `clear_restored_cli_custom_roots()` | `skip_cli_custom_roots=true` 时旧机器路径残留 |
-| `restore.rs:1136` | `write_post_restore_flags(...)` | 恢复后不触发 WSL resync |
+| `utils.rs:2845` | `normalize_backup_filter_rule_path()` 的 `tool_prefixes` match | 用户写的 `~/.<tool>/AGENTS.md` **归一化不到** `AGENTS.md`，规则静默不匹配（**安全影响**） |
+| `utils.rs:1893` | `get_custom_root_dir_path_info()` match | `_ => None` → 归档里不写 `root-dir.txt`，自定义根目录不被备份 |
+| `utils.rs:1654` | `clear_restored_cli_custom_roots()` | `skip_cli_custom_roots=true` 时旧机器路径残留 |
+| `restore.rs:1289` | `write_post_restore_flags(...)` | 恢复后不触发 WSL resync |
 | `db/schema.rs` / `db/migrations.rs` | `DbTable` 枚举 + 建表 | **编译器会抓**（exhaustive match），非静默 |
 | `BackupSettingsModal.tsx:72` | `TOOL_ORDER` | 该工具不出现在备份设置的排序里 |
-| i18n ×2 | `settings.backupSettings.cliConfigFilesDesc` | **文案里点名工具列表**，中英各一份 |
+| i18n ×2 | `settings.backupSettings.cliConfigFilesDesc` / `restoreWillReapply` / `fileFilterRules.disabledByCliConfigFiles` | **三段文案各自点名工具列表**（always 组 + DB 型组），中英各一份 = 6 处。2026-10-07 复查时这三段都只列了 3 个 always 工具（实际 7 个）、optional 组还漏了 zcode/antigravity/claude_desktop。**改 `ALWAYS_`/`OPTIONAL_BACKUP_CLI_TOOLS` 时必须同步这 6 处**，否则用户读到的是过期的规则说明 |
 
 ### 8.3 备份侧的静默失效陷阱
 
 1. **`should_skip_external_config_on_restore()` 的兜底是 `_ => true`（跳过）**。新增工具若**只写了打包段**、忘了登记进 `ALWAYS_`/`OPTIONAL_BACKUP_CLI_TOOLS`，那么在开关关闭的机器上恢复时，它的文件被**静默跳过**，恢复结果 `success=true`、0 warning。
 2. **`wsl_module_for_external_config_tool` 漏 arm**：恢复出的文件永远不会被 post-restore WSL sync 传播。无日志。
-3. **`restore.rs` 漏分支**：`else if` 链走到底什么都不做，entry 被丢弃，恢复「成功」。
+3. **`restore.rs` 漏分支**：`else if` 链走到底什么都不做，entry 被丢弃，恢复「成功」。**这是本组里最严重的一条**——打包侧完整、恢复侧静默丢弃，用户换机后整个 CLI 的配置全没了却看到「恢复成功」。
+   > 2026-10-07 实证：`omo_native` 是当时唯一「在打包段里、却不在恢复分支里」的模块（其余 14 个都有分支）。**已加回归测试**（`restore.rs` 的 `coverage_tests::every_backed_up_external_config_tool_has_a_restore_branch`）：扫描自身源码里所有 `file_name.starts_with("external-configs/` 标记，抽出工具名集合，对 `ALWAYS_` + `OPTIONAL_BACKUP_CLI_TOOLS` 逐个断言命中。新增工具若只改打包段，测试立刻失败。
+   >
+   > **自查命令**（两条输出应一一对应）：
+   > ```bash
+   > grep -on '"external-configs/[a-z_]*' tauri/src/settings/backup/utils.rs | sed 's/.*external-configs\///' | sort -u
+   > grep -on 'external-configs/[a-z_]*' tauri/src/settings/backup/restore.rs | sed 's/.*external-configs\///' | sort -u
+   > ```
 4. **打包段漏写但没漏 `root-dir.txt`**：`root-dir.txt` 被当普通 entry 解压到 `<restore_dir>/root-dir.txt`，留下垃圾文件。
 5. **归档路径扁平化**：zcode 曾把 `v2/provider_config.json` 存成 `provider_config.json`，恢复后文件落在 CLI **不读取**的位置（commit `312529b7` 修复，回归测试 `utils.rs:4560`）。**归档 entry 的相对路径必须保留 data-root 下的子目录层级。**
 6. **`tool_prefixes` 漏项**：过滤规则「存在即生效」，归一化失败 = 用户以为排除了敏感文件，实际照打进去。
@@ -1118,13 +1375,86 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 - [ ] `cargo check`（或 `cargo test`）通过
 - [ ] `pnpm build` 成功
 - [ ] 至少一条「表单提交 → 持久化 → 再读取」的往返用例
+- [ ] **测试夹具里没有开发者的真实信息**（13.1 模式三十八）——本机用户名、真实工作目录、真实渠道 key、真实实例名，以及**输入框 placeholder**（最容易漏，它不在测试文件里）
+  ```bash
+  # 逐条替换成通用名（tester / sample-workspace / example-provider），输出应为空
+  grep -rn "<本机用户名>" --include=*.rs --include=*.ts --include=*.tsx tauri/src web
+  grep -rn "<真实工作目录名>\|<真实渠道 key>" --include=*.rs --include=*.ts --include=*.tsx tauri/src web
+  ```
+  > **别误伤产品数据**：`tauri/resources/*.json`（`preset_models.json` / `dsh_builtin_models.json`）里打包的模型名是公开数据，测试里可以照用；注释里引用**公开开源项目**的 commit 也保留——先确认那个项目是公开的。
 - [ ] 3.4 的全局 grep 兜底通过
+- [ ] **动态 i18n 前缀已登记进工具的保护表**（13.1 模式二十二）：只要页面用了会拼 key 的共享组件（`useRootDirectoryConfig`、`GlobalPromptSettings` 的 `translationKeyPrefix`、`ModelFormModal` 的 `i18nPrefix`…），就把该模块的前缀加进 `scripts/i18n-keys.mjs` 的 `DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE`。**漏登记 = 那一整块文案会被 `i18n:prune` 判为未使用并删除**
+  ```bash
+  # 每个用 translationKeyPrefix 的页面，其前缀都应出现在工具的保护表里
+  for p in $(grep -rho "translationKeyPrefix: '[^']*'" web/features/coding/*/pages/*.tsx | sed "s/.*'\(.*\)'/\1/" | sort -u); do
+    grep -q "'$p'" scripts/i18n-keys.mjs || echo "UNREGISTERED PREFIX: $p"
+  done
+  ```
+  输出应为空。**补完保护表后必须重跑 `i18n:check`**——它会把之前被掩盖的真实缺口一次性暴露（缺 key 的模块会立刻报错），逐条补齐，不要用「加白名单消音」收场。
+- [ ] **自动清理前先抽查**：跑 `i18n:prune --write` 或任何批量删除之前，手工确认几条被判「未使用」的 key 真没人用（尤其名字带 `Hint` / `Placeholder` / `Success` 的）。工具的保护表过期时，它会主动给出**错误**的删除建议（13.1 模式二十二）
+- [ ] **模型/供应商字段形状与引擎核对**（13.1 模式二十三）：本 CLI 与哪个已有 CLI **运行时同源**（读同一个文件？同一个二进制）？照着它核对每个写入键，并**以该引擎自己的 `docs/models.md`（或等价 schema）为准**——兄弟页面的代码也可能是错的
+  ```bash
+  # 1. 找出本 CLI 实际写的模型键。
+  #    两种写法都要抓：直接赋值 `nextModel.foo = ...`，以及经 helper 传字符串键名
+  #    的 `setOptionalStringField(nextModel, 'foo', ...)`——后者用点号模式抓不到。
+  grep -rho "nextModel\.[a-zA-Z]*" web/features/coding/<tool>/ | sed 's/nextModel\.//' > /tmp/written.txt
+  grep -rho "nextModel, '[a-zA-Z]*'" web/features/coding/<tool>/ | sed "s/nextModel, '//;s/'//" >> /tmp/written.txt
+  sort -u /tmp/written.txt
+  # 2. 逐个在上游字段表里找得到吗？（以 OmO Native 为例，文档随引擎安装）
+  ls ~/.omo/binary-runtime/*/docs/models.md
+  # 3. 对同一个真实文件列出引擎自己写的键，与第 1 步求差集
+  node -e "const j=require(process.env.USERPROFILE+'/.omo/agent/models.json');const s=new Set();for(const p of Object.values(j.providers||{}))for(const m of(p.models||[]))Object.keys(m).forEach(k=>s.add(k));console.log([...s].sort().join('\n'))"
+  ```
+  > 第 3 步的样本文件只包含**用户已经用到的**字段——差集非空**不一定是错**。正确做法是拿第 1 步的每个键去**上游字段表**（第 2 步的 `docs/models.md`）核对：表里有 → 合规的可选字段；表里没有 → 抄错了兄弟。
+  **差集里只应有「本 CLI 有意支持的可选字段」**；出现引擎从不写的键（如 `thinking`）就是抄错了兄弟。同理，**共享弹窗交回的 JSON 字符串必须 parse 后再落盘**（数组/对象），不能就地赋值——`web/test/features/coding/omo_native/utils/omoNativeProviders.test.ts` 是可抄的回归测试样例
+- [ ] **死封装核对**（13.1 模式十四）：新 CLI 的每个前端 API 封装、每个后端 command，都要有 UI 调用点。只有定义没有调用的，要么接上、要么删掉——**留着会被后来者当成「功能已完成」**
+  ```bash
+  # 对每个新封装名跑一次；除 services/ 下的定义外，应至少有一个调用点
+  for api in $(grep -o "^export const [a-zA-Z]*" web/services/<tool>Api.ts | awk '{print $3}'); do
+    n=$(grep -rn "\b$api\b" web/ --include=*.ts --include=*.tsx | grep -v "services/" | wc -l)
+    [ "$n" -eq 0 ] && echo "UNUSED API: $api"
+  done
+  ```
+  输出应为空（或每一项都有「有意保留」的理由）。
+- [ ] **读写键同名核对**（13.1 模式十六）：新页面里每一对「读一个 key / 写一个 key」都同名——侧栏折叠键、`visible_tabs`、模块名、事件名。从别的 CLI 复制页面时，读侧最容易残留来源 CLI 的键
+  ```bash
+  for f in web/features/coding/*/pages/*.tsx; do
+    r=$(grep -o "sidebarHiddenByPage\.[A-Za-z_]*" "$f" | head -1 | cut -d. -f2)
+    w=$(grep -o "setSidebarHidden('[a-z_]*'" "$f" | head -1 | sed "s/setSidebarHidden('//;s/'//")
+    [ -n "$r" ] && [ -n "$w" ] && [ "$r" != "$w" ] && echo "MISMATCH $f: reads=$r writes=$w"
+  done
+  ```
+  输出应为空。
+- [ ] **集合对账：备份打包段 ↔ 恢复分支**（13.1 模式四十四）。两条命令的输出必须**完全相等**，缺一个工具就是「备份里有、恢复时静默丢弃」——这是备份链路唯一会让用户**真丢数据**的漏法
+  ```bash
+  diff <(grep -on '"external-configs/[a-z_]*' tauri/src/settings/backup/utils.rs | sed 's/.*external-configs\///' | sort -u) \
+       <(grep -on 'external-configs/[a-z_]*' tauri/src/settings/backup/restore.rs | sed 's/.*external-configs\///' | sort -u)
+  ```
+  输出应为空。`restore.rs` 的 `coverage_tests::every_backed_up_external_config_tool_has_a_restore_branch` 已把这条不变量固化成测试，跑测试也能发现。
+- [ ] **集合对账：SSH Skills 名单 ↔ `get_tool_skills_path_async`**（13.1 模式四十五，见 §7.2.1）。已由 `ssh/skills_sync.rs` 的 `runtime_location_skills_tools_are_all_covered` 固化——**新增 CLI 若在 `get_tool_skills_path_async` 里加了 arm，这个测试会立刻失败**，按提示同步名单（或按 §7.2 的方向把白名单反过来）
+- [ ] **模块级 `AGENTS.md` 已建，且已登记进根 `AGENTS.md` 的 Index 表**（13.1 模式十二）
+  ```bash
+  # 前端：每个 feature 模块
+  for d in web/features/coding/*/; do [ -f "$d/AGENTS.md" ] || echo "MISSING $d"; done
+  # 后端：编码域 + 非编码域（db / settings / resources 都要覆盖）
+  for d in tauri/src/*/ tauri/src/coding/*/; do
+    case "$d" in *fixtures*|*transformer/*|*runtime/*) continue;; esac
+    [ -f "$d/AGENTS.md" ] || echo "MISSING $d"
+  done
+  ```
+  **两条命令都要跑**，输出应为空（有正当例外的目录要在本 SOP 里显式登记，见下方说明）；再确认新模块在根 `AGENTS.md` 的 Index 表里有一行。
+
+  已知例外（不要求建文档）：`web/features/coding/claude/` 是占位 stub（未接入路由）；`web/services/` 是扁平 API 封装目录，不是模块。
+
+  > **教训 #51**：只跑前端那条命令会漏掉后端。`tauri/src/db`、`tauri/src/settings`、`tauri/src/coding/zcode` 三个模块就是这样被漏掉的。审计必须前后端各一遍。
 
 ### 12.2 端到端行为（逐条对照前面各节）
 
 - [ ] **本机**：页面能加载配置、增删改供应商、应用默认、模型 CRUD
 - [ ] **WSL Direct**：路径解析正确、CLI 调用走 `wsl -d <distro> --exec`（6.1）
 - [ ] **托盘**：新 CLI 的供应商/提示词子菜单**真实出现**且点击生效；中英两种语言标题都不为空（5.2 第 3 点）
+- [ ] **托盘区块与页面区块一一对应**：把页面 sidebar 的区块名抄下来，逐个在托盘菜单里找入口。**页面上有的能力，托盘里必须有对应项**（2026-10-07：OmO 托盘缺「默认模型」「全局提示词」，与 Pi 不一致）
+- [ ] **托盘的「当前值」回显正确**：子菜单标题括号里显示的是当前生效项，且点击后刷新（不是点完还显示旧值）
 - [ ] **WSL/SSH 同步**：新映射在**老库**上也生效（`CURRENT_DEFAULTS_VERSION` 已 bump，6.2）；同步结果消息显示本地化名而非裸 id
 - [ ] **MCP 页 / Skills 页**：新工具出现、图标正确、读写路径在自定义根目录下也对（7.2 的白名单）
 - [ ] **备份/恢复**：打包 → 换机恢复 → 文件落在 CLI 能读到的位置；恢复后 WSL 自动 resync（8.3）
@@ -1136,15 +1466,27 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 
 **编译只保证类型正确，不保证形态正确。** 逐项在界面上指认，对照 §4.0.1 指定的参照 CLI：
 
+- [ ] **页面上每一个区块都能折叠/展开，且形态与参照 CLI 一致**——「模型设置」这类区块在 Pi / OpenCode 里是**不可折叠的卡片**（`modelCard` + `Title level={5}`），别用 `Collapse`（见 13.1 模式三十九）
+- [ ] **页面上每个展示位，用户都能自己产生那份数据**。逐个问：「我（新用户）能从哪里让这里出现内容？」答不上来的展示位要么删掉、要么写清它是只读的（见 13.1 模式三十五）
+- [ ] **预览弹窗显示的是文件全文**，不是本页拥有的那一片段。带注释的文件要用 `jsonc` 语言，否则满屏红波浪线（见 13.1 模式三十六）
+- [ ] **每个「保存」按钮的 loading 只覆盖写入，不覆盖刷新**：点保存 → 应立刻关闭/停止转圈，而不是等重查列表（见 13.1 模式三十七）
 - [ ] 供应商弹窗：标签在左（`layout="horizontal"`）、第一行是渠道、API Key 有显示/隐藏按钮
 - [ ] 供应商弹窗：**没有**该 CLI 用不上的分区（非网关 CLI 不应出现计费/请求头/改写，见 4.0.3）
 - [ ] 供应商卡片：详情**一行**、应用按钮是蓝色文字（`type="link"`）
+- [ ] **卡片内的次要操作全部无边框**（`type="text"` + `fontSize: 12`）；逐个摸一遍边框，多一个带框的按钮就是不一致（见 4.0.2-E / #59）
+- [ ] **同款动作跨 CLI 同款**：把参照 CLI 和本 CLI 的同一动作（删除、编辑、复制、分享、测试）并排看，样式与图标一致
 - [ ] 模型列表工具栏：按钮**数量与参照一致**（逐个指着数，见 4.0.2-F）
 - [ ] **模型行**：编辑 / 复制 / 删除 / 设为主模型**四个按钮都在**（附录 B.1）
 - [ ] 页面头部：「预览配置」「自定义配置目录」「打开文件夹」「刷新配置」「更多选项」**五个都在**（附录 B.1）
 - [ ] 供应商列表：提示块在、底部导入按钮在（附录 B.1）
+- [ ] **官方账号区块在列表里的位置**：若它与供应商卡片视觉同级，**拖动它**，确认能参与排序且位置被记住（附录 B.2）
 - [ ] 空态 / 搜索空态 / 加载态文案与参照一致
+- [ ] **文案里的断言仍然成立**：逐个读区块说明、按钮 tooltip、空态措辞，确认没有过期断言（见 13.1 模式三十四）。重点词：`只读` / `不可编辑` / `不支持` / `不能` / `仅展示`，以及 en-US 的 `read-only` / `display only` / `cannot be edited`
+- [ ] **把列表里的卡片随机调换顺序**，每两张之间都还有间距（见 13.1 模式十）
+- [ ] **每个筛选/下拉都试一遍**，选中后列表立刻跟着变（见 13.1 模式十一的对立面与 #49）
 - [ ] 失败路径有可见反馈，不是静默空列表（见 13.1 模式三）
+- [ ] **每个弹窗读一遍从上到下**：每段说明文字问一次「它在解释谁」——解释不到任何控件的，位置就错了（见 4.0.2-C / #58）
+- [ ] **每个有长耗时操作的弹窗**：在操作进行中**点取消**，确认取消按钮可点、能退出（见 4.0.2-A / #57）
 
 > **核对的单位是「界面上的块」，不是「代码里有没有」。** 漏传一个 prop 在代码里毫无痕迹，只有把参照 CLI 和本 CLI 并排打开、一块一块数，才能发现。附录 B 的台账是这个动作的记录载体。
 
@@ -1164,6 +1506,8 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 场景 | 参考 |
 |------|------|
 | 归档路径保留子目录层级 | `settings/backup/utils.rs:4560`（zcode 回归测试） |
+| **打包段 ↔ 恢复分支一一对应** | `settings/backup/restore.rs` 的 `coverage_tests::every_backed_up_external_config_tool_has_a_restore_branch`（2026-10-07 补，源码扫描型） |
+| **SSH Skills 名单 ↔ `get_tool_skills_path_async`** | `ssh/skills_sync.rs` 的 `runtime_location_skills_tools_are_all_covered`（2026-10-07 补，源码扫描型） |
 | 业务 id 含冒号的往返读取 | `zcode/adapter.rs` 的 `managed_provider_id_survives_the_db_round_trip`（见 2.1） |
 | 预设字段 → 本 CLI 字段的映射 | `web/test/features/coding/zcode/utils/zcodeModelFields.test.ts`（对着 `preset_models.json` 断言，数据漂移即失败） |
 | 自定义根目录下 MCP/Skills 路径解析 | `tauri/tests/coding/tools/detection_paths.rs`（2026-10-06 补）。#13 这个 bug 拖了几轮没被发现，就是因为没有这个测试 |
@@ -1197,7 +1541,7 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 17 | 共享组件：`omoNative.model.*` / `hermes.model.thinkingLevelHint` 整组键不存在 | 页面渲染字面键名 | 改为 `common.model.*` |
 | 18 | 共享组件：`ModelFormModal` 覆盖值存 i18n key | `i18n:prune` 把 key 判为未使用并删除 | 覆盖值存 `t(key)` 的结果（已是终态文本） |
 | 19 | zcode：迁移共享组件时保留 `layout="vertical"` | 标签在输入框上方，与其余 5 个 CLI 全不同 | 改 `horizontal` + `labelCol`/`wrapperCol`（见 4.0.2-A） |
-| 20 | zcode：API Key 用朴素 `Input.Password` | 缺显示/隐藏按钮，4/5 的 CLI 都有 | 改 `masked input + addonAfter`（见 4.0.2-C） |
+| 20 | zcode：API Key 用朴素 `Input.Password` | 当时判断为「缺显示/隐藏按钮，4/5 的 CLI 都有」 | 改 `masked input + addonAfter`（见 4.0.2-C）。**后注（2026-10-07）**：antd 6 的 `Input.Password` 其实**自带**切换按钮（`visibilityToggle` 默认开），这条的**结论对、理由不准**——真正要核对的是「用户能不能切到明文」，不是「有没有写 `addonAfter`」。两种写法都合规，不必统一 |
 | 21 | zcode：渠道字段排在第 3、4 位且分两行 | 用户第一眼看到「名称」而非「选渠道」 | 提为第一行，左渠道 + 右格式（见 4.0.2-B） |
 | 22 | zcode：用 `allowClear` + placeholder 表达「不选」 | 用户看不出「留空 = 自定义」 | 加显式「自定义」选项（见 4.0.2-D） |
 | 23 | zcode：给非网关 CLI 加计费/请求头/改写分区 | 填了没有代码读，且写进 `meta` 造成"已生效"假象 | `show*=false` + 不合并 meta（见 4.0.3） |
@@ -1215,10 +1559,68 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 35 | zcode：`ProviderListSection.hint` / `footer` 未传 | 提示块与导入入口整块消失 | 补 hint + 三个导入源；顺带修好「删除不备份」（见 4.2.1） |
 | 36 | 「预设模型选择器」在弹窗里有、在获取模型路径里没有 | 同一能力两个消费点只做了一个 | 抽成共享映射模块，一处定义（见 4.2.5） |
 | 37 | 用正则批量改 TSX 源文件 | 跨行多匹配吃掉整个 `Form.Item`，文件无法编译 | **不要对 TSX 用正则批量改写**；用 AST 或逐处 Edit |
+| 38 | zcode：官方账号切换还原了 `config.json` | 新一代安装上该文件已无人读取，恢复动作「成功」但无效果 | 用与运行时**同一个**代际判断（`provider_config.json` 是否存在）gate 住写入；见 13.1 模式五 |
+| 39 | zcode：官方凭证是 `enc:v1:` 密文 | 不解密就拿不到邮箱，账号只能按供应商命名，重复登录无法识别 | 实现解密（`credential_cipher.rs`）；**但切换本身不解密**——快照整块原样复制（见 13.1 模式六） |
+| 40 | 账户去重只按解密出的身份 | 密钥不匹配（快照来自另一台机器）时身份为空 → 每次「保存当前登录」都新增一行 | 先按快照字节比对，再退到身份比对（见 13.1 模式六） |
+| 41 | zcode：「预览配置」只读 1 个文件 | ZCode 实际读 3 个（`provider_config.json` / `cli/config.json` / `setting.json`），只看第一个会以为其余不存在 | 新增 `get_zcode_preview` 一次返回全部 + `FileConfigPreviewModal` 分页签 |
+| 42 | zcode：官方账号卡片挂在 `ProviderListSection` 的 children 里 | 供应商为空或搜索无结果时，`ProviderListSection` 用 `Empty` **替换掉整个 children**，卡片整块消失 | 新增 `alwaysVisible` 插槽，空态也渲染（见 13.1 模式七） |
+| 43 | zcode：「通用配置」弹窗编辑的是 `cli/config.json` | 该文件是 MCP / hooks / 插件 / 权限，**已有专门页签**；通用配置该管的是 `provider_config.json` 的共享部分 | 改读 `get_zcode_common_config`，走 `JsonEditor`；`cli/config.json` 交回 MCP 页签（见 13.1 模式八） |
+| 44 | 网关本地 session 统计：`session_files()` 以 `root.is_dir()` 开头 | ZCode 的「根」是 `cli/db/db.sqlite` **一个文件**，walk 静默返回空 → 该 CLI 永远统计不到任何用量 | 在函数开头为「根是文件」的工具加分支（见 13.1 模式九） |
+| 45 | 网关本地 session 统计：新增一个 CLI 要改 7 处 | `GatewayUsageTool` 枚举 / `all()` / `as_str()` / `GatewaySessionImportCli` / `import_cli_keys` / `default_session_roots` / `session_files` + 前端 `GATEWAY_USAGE_TOOLS` 与 i18n | 见 13.1 模式九的清单；漏任何一处都不报错 |
+| 46 | zcode：卡片间距借自「下一张卡」 | 把官方账号卡片插到中间/调换顺序后，两张卡贴在一起（谁都没有 margin） | **每张卡自己带 `marginBottom`**，间距不依赖邻居；见 13.1 模式十 |
+| 47 | zcode：`is_applied` 只由切换命令写入 | 「保存当前登录」和「在 ZCode 里直接登录」都没走切换命令 → 已生效的账号不显示「默认」标签 | 列表接口以**磁盘上的 `credentials.json` 为准**回填 `is_applied`；见 13.1 模式十一 |
+| 48 | zcode：「保存当前登录」保存后按钮仍在 | 再次点击什么都不会发生，用户以为坏了 | 虚拟条目（`isVirtual`）只在「当前登录尚未保存」时存在，用它作为按钮的显示条件 |
+| 49 | 网关请求页：下拉筛选必须点搜索图标才生效 | 选了 CLI 后列表不动，看起来像筛选坏了；顶栏两个开关却是即时的 | 下拉（CLI/日期预设/来源/状态）改为**选中即生效**；文本输入保留草稿（见 `web/features/coding/gateway/AGENTS.md`） |
+| 50 | 模块级 `AGENTS.md` 缺失 | 根 `AGENTS.md` 第 11–31 行要求每个模块目录有 `AGENTS.md` 并登记进 Index；web 侧 zcode/pi/oh_my_pi/dsh/claudedesktop 一直缺 | 新增模块时**同一任务内**建文档 + 登记 Index；见 13.1 模式十二 |
+| 51 | 缺失的 `AGENTS.md` 不只在 web 侧 | 审计只跑了 `web/features/coding/*/`，漏掉了后端 `tauri/src/db`、`tauri/src/settings`、`tauri/src/coding/zcode` | 审计命令必须**前后端各跑一次**且覆盖 `tauri/src/*/`，见 12.1；根因同 13.1 模式十二 |
+| 52 | 通用配置是**死存储**：写进去，没人读 | 「通用配置」把 JSON 存进 DB 的 `config` 字段，但**没有任何代码把它合并进 `provider_config.json`**。上游 schema 是 `.strict()`，只接受 `providerConfigRules` / `modelConfigRules` / `providerOrder` / `defaultModelSelection` 四个键，写别的会被 ZCode 直接拒绝。用户以为改了配置，实际运行时完全没变 | 实现「通用配置 → 落盘合并」或**移除该功能**；本轮选择**移除 UI 入口**（保留 `saveZcodeCommonConfig` 命令，根目录弹窗仍复用它）。见 13.1 模式十三 |
+| 53 | 供应商卡片样式各写各的，逐页分叉 | 11 个 CLI 有 9 份 bespoke `*ProviderCard.tsx`（最长的 1148 行），同样的间距/按钮/拖拽/选中态逻辑抄了 9 遍；改一处通用行为要改 9 个文件，且很容易漏 | 固定为**三种样式**（`shared/providerCardVariants/`）：按 provider 模型形状选用，见根 `AGENTS.md` Hard Rule 14 与 §4.2 选型表 |
+| 54 | 前端 API 封装存在但**全仓无调用** | `toggleZcodeProviderDisabled` 在 `zcodeApi.ts` 有封装、后端命令也注册了，但没有任何 UI 调用它——「禁用」开关从未接上。这类死封装看起来像功能已完成 | 接新 CLI 时对每个 API 封装跑一次 `rg "<apiName>" web/ \| grep -v services/`，确认除定义外还有调用点；本轮已在迁移卡片时接上 |
+| 55 | 两个「默认」标记语义脱节 | ZCode 的 `settings.models[].isDefault`（provider 目录内的偏好）与注册表的 `defaultModelSelection`（运行时实际用哪个）是两个东西，前端 `onSetPrimaryModel` 只写前者 → 卡片显示「当前默认」但 ZCode 从不使用 | 设默认必须**两处都写**，见 `handleSetPrimaryModel`；判断「谁是默认」以运行时事实源（`defaultModelSelection`）为准 |
+| 56 | 侧栏开关**读一个键、写另一个键** | `OhMyPiPage` 读 `sidebarHiddenByPage.pi`（Pi 的槽位）却写 `setSidebarHidden('oh_my_pi')` → 开关静默无效，翻转的是本页不显示的槽位；同时显示的是 Pi 页的开关状态。`pi` 与 `oh_my_pi` 在 `SIDEBAR_PAGE_KEYS` 里是两个独立键 | 每个 CLI 只碰自己那个键，读与写必须同名。见 13.1 模式十六；审计：`for f in web/features/coding/*/pages/*.tsx; do r=$(grep -o "sidebarHiddenByPage\.\w*" "$f"\|head -1\|cut -d. -f2); w=$(grep -o "setSidebarHidden('[a-z_]*'" "$f"\|head -1\|sed "s/setSidebarHidden('//;s/'//"); [ -n "$r" ] && [ -n "$w" ] && [ "$r" != "$w" ] && echo "MISMATCH $f: $r vs $w"; done` |
+| 57 | 弹窗用 `okButtonProps={{ loading: true }}` 表达进行中 | Ant Design 的 `loading` 会给按钮加 `pointer-events: none`，**把取消按钮一起锁死**——登录/提交卡住时用户无法退出 | 进行中改用正文 `Spin`；`okButtonProps` 只设 `disabled`。任何长耗时弹窗都要验「操作中点取消」（见 4.0.2-A） |
+| 58 | 说明性文字放在它说明的控件**上方** | 读起来像需要先关掉的横幅，而不是「这个框里该写什么」的说明 | 解释控件的文字跟控件走（下方）；只有警告/阻断类才置顶（见 4.0.2-C） |
+| 59 | 卡片内的次要操作用了带边框的 default 按钮 | 在一排无边框图标里视觉过重，抢走供应商名称的注意力；与其他 CLI 同款动作样式不一致 | 卡片内次要操作一律 `type="text"` + `fontSize: 12`；同款动作跨 CLI 同款（见 4.0.2-E） |
+| 60 | 作用域是「某一行」的按钮放在卡片顶部 | ZCode「保存当前登录」在卡片头部，但它只对未保存的那一条有效；用户看不出它作用于谁，条件渲染也让顶部多出含义不明的按钮 | 按钮放进它所作用那一行的操作区（见 4.0.2-E）；判据：作用域是「某一行」→ 放行内，是「整张卡」→ 放头部 |
+| 61 | 官方账号卡片固定置顶，不能参与排序 | 它与供应商卡片视觉同级（同款外壳、同一列表容器），用户期望能一起拖动；固定置顶让「位置」这个用户可见的状态无法表达 | 作为列表成员参与排序，位置存 `official_account_index`（按「上面有几张供应商卡」计，不用列表下标）；见附录 B.2 |
+| 62 | 多渠道路由的 CLI 卡片上仍有「应用」按钮 | ZCode 没有单一 active provider，多个渠道同时可用；「应用」暗示其他渠道被关掉，且把「选哪个模型」误表达成「启用哪个渠道」 | 改用 `OpenCodeStyleCard`（无头部应用按钮），默认在模型行上选；见 §4.2.1 选型表 |
+| 63 | 模型弹窗的字段集合是**猜的**，不是查上游得来的 | 多了「工具调用」「MFJS 工具 Schema」「最大输出参数映射」三个控件。前两个官方 UI 完全不渲染（系统字段），第三个官方只保留不给编辑入口；且 `manual` 模式下前两个又被隐藏 → **同一字段两种行为**，还写出了官方编辑器永不产生的键 | 字段集合以上游**可编辑 schema** 为准（ZCode 是 `manualModelConfigSchema` 的 `pick`）；删掉多余控件，被删字段**原样保留**。见 §4.2.4.1 与 13.1 模式十八 |
+| 64 | 含义不自明的字段没有说明入口 | 「推理参数映射」「模型能力」等标签本身说不清字段含义（允许什么值、为什么、注意什么），用户只能猜 | 标题后加问号 + hover 说明（`FieldHelp`）；文案逐字取自上游 `help.*`。见 4.0.2-C |
+| 65 | 推理参数映射用单行 `Input` | 内容是带嵌套花括号的 CEL/JSON 表达式，单行输入框里读不成句、改不动 | 改 `Input.TextArea`（`autoSize`），对齐官方的 textarea。见 4.0.2-C |
+| 66 | 帮助文案直接丢给 `Tooltip title={字符串}` | `\n` 不换行、`**粗体**` 原样显示星号——整段说明挤成一行，比没有说明更难读 | 走 `components/common/FieldHelp`（纯字符串 → 段落/列表/粗体/代码）。见 4.0.2-C 与 `FieldHelp/AGENTS.md` |
+| 67 | 字段开关放错层级（弹窗里 vs 列表行上） | 「启用」官方放在**模型列表行**的 `Switch` 上，我们放进了编辑弹窗；而我们的 `ModelItem` 当时**根本没有**这个开关——照做会丢能力 | 先查官方把它放在哪一层：行级状态放行上、卡片级状态放头部。见 §4.2.4.1 第 6 步 |
+| 68 | 模型行排了两行，第二行整行重复 | `上下文限制: 400,000 \| 输出限制: 128,000` 每个模型都占一行，而这一行携带的信息（量级）一眼就能从名称旁读完；列表被撑高一倍 | 合并成一行：`(id \| 400K)`；数字用 `formatModelLimit` 压成 `200K`/`1M`。见 §4.2.3 与 13.1 模式二十 |
+| 69 | 页面挂着 4 个只有本 CLI 有的区块 | OmO Native 有「生效配置」「Agent·Category 方案」「MCP 与 Skills」「更多选项」四块，与其余 tab 的形态完全不同；其中「生效配置」与页头「预览配置」重复、「更多选项」的内容在 ⋯ 弹窗里已有同一份 | 收敛成标准三区块（供应商 / 全局提示词 / 会话管理）；**撤下 UI 但保留后端**——先例见 `oh_my_pi/AGENTS.md` 对 `listOmpAgents` 的说明。见 13.1 模式二十一 |
+| 70 | `OpenCodeStyleCard` 声明了 `actions.extraActions` 却从不渲染 | 类型里有这个 prop、调用方也传了（连通性测试 / 获取模型两个按钮），但样式组件里没有渲染点 → **两个按钮静默消失**，且类型检查完全通过 | 类型里出现的可选 prop，必须在组件里指认一次它的渲染位置。同 13.1 模式二，但**发生在共享组件自己的 props 上**——比调用方漏传更隐蔽 |
+| 71 | `useRootDirectoryConfig` 的动态前缀白名单只列了 3 个模块 | 该 hook 用 `t(\`${translationKeyPrefix}.rootPathSource.modal.*\`)` 拼 12 个模块的 key，但 `scripts/i18n-keys.mjs` 的 `DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE` 只登记了 claudecode/codex/geminicli → 其余 9 个模块的整块文案被判「未使用」，`i18n:prune` 会删掉运行时仍在读的 key | 白名单必须与**实际调用方**同步（12 个前缀全部登记）。新增 CLI 时把前缀加进去 |
+| 72 | 嵌套动态表达式永不展开 | `${translationKeyPrefix}.rootPathSource.modal.${pathInfo.source}Hint` 有两层占位符，工具的 `expandDynamicExpression` 只做单层展开 → `envHint`/`shellHint` 永远算「未使用」 | 每个占位符都要有对应的 identifier 值表：加 `'pathInfo.source': ['env', 'shell']` |
+| 73 | 6 个模块的 `envHint` / `shellHint` 根本没写 | 补完白名单（#71）后 `i18n:check` 立刻报出 claudecode / codex / geminicli / grok / ohMyPi / pi 六个模块缺这两条——它们的根目录决议**都能返回 `env` / `shell` 来源**，走到那条分支时界面显示的是字面 key | 白名单补全不只是「消音」，它会把一直存在的缺口暴露出来。逐条补齐（用各自真实的环境变量名：`CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `GROK_HOME` / `PI_CODING_AGENT_DIR` / `GEMINI_CLI_HOME`） |
+| 74 | 共享 `ModelItem` 的开关文案 key 不存在 | `common.model.disabled` / `enabled` / `toggleEnabled` 三条被新代码引用但从未创建 → 开关的 hover 提示显示字面 key。`i18n:check` 抓到了（静态 `t('...')`），`tsc` 抓不到 | 加 UI 的同时加 key；把 `pnpm i18n:check` 当作 UI 改动的**必跑项**（见 §12.1） |
+| 75 | 根 `AGENTS.md` 的 Index 缺 `omo_native` 两行 | 模块建了、模块级 `AGENTS.md` 也建了，但根 Index 里 `tauri/src/coding/omo_native/` 与 `web/features/coding/omo_native/` 两行都没有——违反了 Hard Rule 6，且没有任何机制会报错 | 新增模块时**同一任务内**补根 Index；见 13.1 模式十二 |
+| 76 | 模型弹窗传 `showOmpThinking`，把 OMP 的 `thinking` 写进 senpi 的 `models.json` | OmO Native 与 Pi 同用 **senpi** 引擎、同读 `models.json`（OMP 读 `models.yml`）。但字段开关照 OMP 抄了 `showOmpThinking` → 写出 `thinking: { efforts, defaultLevel }`。上游 `docs/models.md` 的模型字段表里**根本没有** `thinking`，只有 `thinkingLevelMap`/`defaultThinkingLevel` → 用户编辑思考级别，引擎完全不读；而真实文件里的 `thinkingLevelMap` 被静默覆盖 | 先确认**引擎同源**再决定抄谁：同引擎 → 抄同引擎的兄弟（Pi），别抄名字像的（OMP）。字段集合以该引擎的 `docs/models.md` 为准；见 13.1 模式二十三 |
+| 77 | `values.inputTypes` 是 JSON **字符串**，却直接赋给 `nextModel.input` | `ModelFormModal:761` 产出的是 `JSON.stringify(inputModalities)`；上游要的是 `input: ["text","image"]` **数组**。直接赋值写出 `"input": "[\"text\"]"`——引擎读不到，且把原有数组覆盖成字符串 | 弹窗交回的 JSON 字符串**一律 parse** 再落盘（`parseInputTypes` / `parseJsonRecord`）；反向用 `stringifyInputTypes`。回归测试断言 `Array.isArray(model.input)` |
+| 78 | 「获取模型 → 应用」不做预设匹配 | SOP §4.2.5 明令，Pi/OMP/Codex 全部接了 `findPresetModelById`；Native 漏了 → 用户点应用只得到裸 id，参数全要手填（= ZCode 教训 #31 的复现） | 每个 CLI 的 fetch 回调都要接预设匹配；同引擎的兄弟是最好的抄写对象（Native 与 Pi 的 builder 现在同构） |
+| 79 | 页面标题 `OmO Native（Agents 与 Categories）` 指向已删区块 | 标题里点名的能力在页面收敛后已经不存在——用户按标题找区块，找不到 | 撤区块时**同一任务内**检查标题 / hint / 空态文案里有没有点名它；见 13.1 模式二十一 |
+| 80 | `ProviderListSection` / `CodingPageHeader` 的 `hint` 插槽**裸渲染**，视觉契约留给调用方手抄 | 三个已迁移页面各自复制同一段 `style={{fontSize:12, color:secondary, borderLeft:'2px solid', paddingLeft:8, marginBottom:12}}`；第四个（omo_native）漏抄 → 提示块渲染成**正文大小、全黑**，看起来像一段说明段落而不是提示 | 共享组件的插槽只让调用方传**文案**，样式（连同它的常量）进组件；见 13.1 模式二十四 |
+| 81 | 卡片渲染了拖拽把手，却没有 `DndContext` | 复制了 ZCode 的 `draggable: !selectable`，但没复制它的 `DndContext` → 把手在、光标是 `grab`、**拖不动**。用户报「排序拖动不了」 | 把手只在**真的能拖**时渲染：`draggable: !selectable && !dragDisabled`；`dragDisabled` 要覆盖「非 custom 排序 / 有搜索词」。见 13.1 模式二十五 |
+| 82 | 顺序**存进去读不出来**：`list_*` 结尾 `sort_by(key)` | 就算补上 DndContext + reorder 命令，读取端仍按 key 字母序返回 → 拖完一刷新跳回原样，表现为「拖了没用」 | 顺序的**写入点与读取点必须成对核对**：存哪就读哪（这里是 `preserve_order` 的键序）。见 13.1 模式二十五 |
+| 83 | 供应商弹窗内联在 `*ProvidersSection.tsx` 里，`layout="vertical"` | 与其余 CLI 的弹窗形态不同；且因为**文件名不匹配**，`scripts/verify-form-modal-layout.mjs` 扫不到它（守卫只扫 `*ProviderFormModal.tsx` / `*ModelFormModal.tsx`）→ 布局回归无人拦 | 把弹窗**抽成 `*ProviderFormModal.tsx`** 再改布局：既统一形态，也让守卫覆盖到。守卫的文件数会 +1（13 → 14） |
+| 84 | `__local__` 桥接项的 `name` 各写各的 | 三类写法并存：`default`（6 个 CLI）/ `Local <文件名>`（5 个，含 omo_native）/ 裸文件名（ZCode）。用户看到 `Local AGENTS.md` 而别处是 `default`，问「为什么多了个 local」 | 新增 CLI 用 `default`（多数派）；顺带查卡片副标题是否已在说同一件事（omo_native 的副标题本来就写「来自本地 AGENTS.md」，名字里再来一次是重复） |
+| 85 | **SOP 的区块清单本身写错了**（「只许三块」），导致 OmO Native 少了两块全仓 7/5 个页面都有的区块 | §4.0.2-I 原版把「默认三区块」写成硬规则，并让执行者用「别的 tab 为什么不需要它」自证——诱导否定的问法，任何区块都能被问倒。用户随后指出缺「其他配置」「官方认证渠道」 | §4.0.2-I 重写为「先取并集再逐块删」，并给出可执行命令；13.1 模式二十六。**规则本身要拿现有代码反查**：按这条规则现存哪些东西违规？若「7 个页面都违规」，违规的是规则 |
+| 86 | `OMO_NATIVE_BUILTIN_PROVIDERS` 手工副本与引擎脱节 | 漏了 `anthropic-subscription` / `cursor-cli-oauth`（于是被当自定义 provider 列进可编辑列表），还留着 `bai` / `ollama` / `typesafe`（早已不是内建）。**同一份名单还另抄了一份给 OAuth**，两处各自过期 | 按引擎实际输出重建（48 条）；加三条回归测试（有序无重复 / OAuth 是内建子集 / kebab-case）。⚠️ `--list-models` **不列「目录按账号发现」的 provider**（如原生 `cursor`），要对着 `docs/providers.md` 补回——别只看一条命令 |
+| 87 | 预览标签写文件名，实际只显示一个块 | 标签是 `omo.jsonc`，内容却只有 `[native]` 块。文件里只有 `[opencode]` 块时（常见），预览显示 `{}` —— 用户以为「配置文件是空的」，实际文件有 3KB | 标签写明 `omo.jsonc → [native]`；空块时给出解释文案（说明本页尚未应用过方案、文件可能仍有 `[opencode]` 块、要看整份文件请用「打开文件夹」） |
+| 88 | 同一个保留 id / 名字，**33 个后端文件 + 约 14 个前端文件各写各的字面量** | `"__local__"` 后端实测 **51 处**（`commands.rs` 里构造桥接记录、`if config_id ==` 判定、`tray_support.rs` 过滤、各模块 `constants.rs` 的 const 别名）；前端另有 4 个 `utils/localProvider.ts` 是逐字复制的副本。改名要全仓 grep 手工对齐，漏一处就出现「同一个桥接项在不同页面名字不同」（教训 #84 的直接成因） | 抽成**单一来源**：后端 `coding/local_bridge.rs`（`LOCAL_CONFIG_ID` / `LOCAL_CONFIG_NAME`），前端 `features/coding/shared/localConfig.ts`；旧路径留薄 re-export 兼容既有 import。**保留字面量出现在 >3 个文件里就该抽**；抽完加断言测试钉住取值 |
+| 89 | **「抽成常量」做了一半就宣布完成** | 第一轮只迁移了 9 个「构造桥接记录」的文件就报「已统一」，剩下 33 个文件（判定、过滤、const 别名）仍写死字面量——**同一份名单在仓库里存在两种表达**，比全用字面量更难发现（grep 一次看到的是一半结果） | 迁移类改动的完成判据是**旧写法的残留数为 0**，不是「新的写对了」。用 `grep -rn '<旧字面量>' --include=*.rs` 收尾核对（注释里的提及也要一起改，否则下次 grep 又看到它） |
+| 90 | 供应商卡片 / 模型列表的**能力集没被枚举**，于是新建的卡片静默缺功能 | ZCode 卡片少「复制供应商」、OmO 模型列表少「批量删除」。这些功能在别的页面都有，但 SOP 从没列过「一张卡片至少要有什么」——照着旧文档从零写，缺哪个全凭记忆 | 建卡片/列表前先**横向 diff 三张已有卡片**，把按钮列出来再逐项决定「要 / 不要 / 为什么不要」；不要的写明理由（如「内建渠道只读，故无编辑」）。见 §4.2.3 与 13.1 模式二十七 |
+| 91 | 同一个缺陷**在另一个页面也存在，只是没人报** | 用户报 ZCode 卡片缺「复制供应商」后按新清单全仓扫了一遍，发现 **OpenClaw 才是缺得最狠的**：供应商卡片没有复制、模型行也没有复制（`ProviderCard` 支持 `onCopy` / `onCopyModel`，OpenClaw 一个都没传），而它是全仓唯一这样的页面 | 用户报「少了 X」时，**不要只修他指的那一处**——把「X 这个能力」在全仓做一次横向审计（`for f in */components/*ProviderCard*.tsx; do grep -q onCopy $f || echo $f; done`），一次修完。同一个模板复制出来的页面，缺陷往往也是复制出来的 |
+| 92 | **「只读区块」把全量都列了出来，没筛掉不可用的** | OmO 的「引擎内建渠道」列了 49 个内建 provider，其中 48 个未配置凭据——用户在页面上看到一屏自己用不了的东西。OpenCode 的同类区块从 `auth.json` 的键派生，只显示配好的那几个 | 照搬一个已有区块时，**要连它的筛选条件一起照搬**，不只是样式和数据源。判断「这个区块该显示哪些条目」时先问：**用户在这个区块里能对哪些条目做操作 / 哪些条目对他有意义**？无意义的条目就是噪音。见 13.1 模式二十九 |
+| 93 | **写入端与读取端用了不同的字段，界面永远显示空** | OmO 的编辑弹窗把 key 写进 `auth.json`，`has_key` 也只查 `auth.json`；但用户的 `shangtang` 是更早（或引擎侧）写在 `models.json` 的 `apiKey` 里的。弹窗打开时 `apiKey: ''` 硬编码清空、placeholder 也是空的 → 用户看到「没保存成功」。**数据其实好着**，`omo auth print-api-key` 正常返回 | ① 「保存成功了吗」这类问题**先查磁盘事实**（文件内容 + 引擎自己的读取命令），不要从界面推断——界面为空不等于没存。② **写和读必须是同一处**：有多个合法存储位置时（OmO 是 `auth.json` 优先于 `models.json` 的 `apiKey`），要么统一到一处并迁移旧值，要么读取端两处都认。③ **密钥字段要回填明文**（见教训 #94）。见 13.1 模式三十 |
+| 94 | **自作聪明地把密钥藏起来，制造了「看不见」的 bug** | 修 #93 时把弹窗改成「不回填明文 + `••••••••` placeholder + 『已保存密钥』文案」，自以为符合安全最佳实践。用户当场否掉：「这个应用就是管理配置的，前端都可以展示所有的秘钥，不要再出现这种看不到回退的情况了」。同仓 Claude Code / Codex / Kimi 的弹窗**一直**都是直接回填明文的 | **本项目定位是「配置管理器」，密钥是它管理的对象之一，明文展示是产品要求不是缺陷**。给密钥字段做「防肩窥」处理是**反模式**：它让「存了 key」和「没存 key」在界面上无法区分，直接制造误报。要展示明文就展示——包括列表接口直接返回 `apiKey`、预览弹窗列出 `auth.json`。见记忆库 `projects/ai-toolbox/ai-toolbox-shows-plaintext-credentials.md` 与 13.1 模式三十一 |
+| 95 | **「获取模型」没传密钥 → 401**，且**用错了 config value 模式** | 卡片把 `baseUrl` / `headers` / `configValueMode` 传给了 `FetchModelsModal`，唯独没传 `apiKey` → 请求不带 `Authorization`。更要命的是 `configValueMode` 传的是 `"omp"`：OmO 与 OMP 都是 `oh-my-*`，但 **OmO 的 `apiKey` 支持 `$ENV_VAR` 插值、OMP 不支持**（实测确认），传错模式会把 `$MY_KEY` 当字面量发出去 | ① 「拉取模型 / 连通性测试」这类出网动作，**逐个核对四个字段**：`baseUrl` / `apiKey` / `headers` / `configValueMode`——漏传 `apiKey` 是最常见的一种。② **同源工具 ≠ 同语法**：`oh-my-*` 家族里 OmO 与 OMP 的凭据语法不同，选 config value 模式要按**引擎**而不是按名字像。新增模式时把「为什么不是隔壁那个」写进注释。见 13.1 模式三十二 |
 
-### 13.1 静默失效的三种模式（归纳）
+### 13.1 静默失效的模式（归纳）
 
-上表 28 条坑可以归成三类，识别出模式就能提前防：
+上表的坑可以归成下面几类，识别出模式就能提前防：
 
 **模式一：白名单 / 映射表漏项。** 用一个手工维护的列表去 gate 行为，新增实体时漏改一处 → 该实体永久静默失效。
 > 例：#2 `TAB_TO_MODULE`、#13 `detection.rs` 白名单、#15 `wsl_module_for_reapply_label`、#5 kimi Gateway 注册。
@@ -1239,6 +1641,353 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > 例：#31 预设匹配、#36 同一条。
 >
 > **对策**：实现一个能力时先问「**谁还会消费这份数据**」，把转换逻辑抽成共享模块（如 `utils/zcodeModelFields.ts`），两个调用点共用一个定义。**两处各写一遍必然漂移**——这正是 #31 的成因。
+
+**模式五：写进了运行时不读的文件 / 键。** 目标路径选错不会报错——写盘成功、返回成功、界面打勾，只是那份数据没人看。工具自己换了一代存储、或同一份状态有新旧两个落点时必然出现。
+> 例：#38 ZCode 官方账号切换还原 `config.json`；而 `provider_config.json` 一旦存在，运行时**完全不读** `config.json`。
+>
+> **对策**：写入前用**运行时的判断依据**做 gate，而不是「文件存在就写」。ZCode 的代际判断已有现成的 `provider_config_exists()`——照抄它，不要在调用侧另写一套（同模式一）。
+
+**模式六：把「显示用」和「搬运用」混成一件事。** 快照/搬运类能力应当**整块原样复制**，只有为了展示才去解析内容。混起来要么搬丢数据，要么在不该失败的地方失败。
+> 例：#39 官方凭证是 `enc:v1:` 密文，切换**不解密**（原样复制，字节等价），只有取名/去重才解密；#40 去重若只依赖解密结果，密钥不匹配（快照来自另一台机器）时身份为空 → 每次都当新账号。
+>
+> **对策**：搬运路径与展示路径分开写；去重先比**字节**再退到**语义**（身份），这样解密失败只损失一个显示名，不损失正确性。
+
+**模式七：把内容塞进「空态会替换掉」的插槽。** 列表组件的空态分支（无数据 / 搜索无结果）常常是 `Empty` **取代** `children`，而不是追加在它旁边。凡是「和列表并列存在」的区块塞进 `children`，就会在空态整块消失，且只在**恰好为空**时才复现。
+> 例：#42 官方账号卡片；搜索无结果时同样消失。
+>
+> **对策**：区分「列表内容」与「和列表并列的区块」——后者要单独的插槽（ZCode 的 `alwaysVisible`），并**在空态、搜索无结果态各看一遍**。空态是新区块最容易被漏测的状态：开发时手上总有数据。
+
+**模式八：把「已经归属别人的文件」又编辑了一遍。** 一个 CLI 的配置文件往往各有归属：MCP、Skills、权限都有专门页签，通用配置再打开同一个文件，就有两处在写同一份内容，而界面上看不出谁才是权威。
+> 例：#43 ZCode 的通用配置编辑 `cli/config.json`（MCP / hooks / 插件 / 权限），与 MCP 页签撞车；它真正该管的是 `provider_config.json` 的共享部分。
+>
+> **对策**：动手前先问「**这个文件还有谁在写**」。若已有专门页签，通用配置应退回到「不随实体变化的共享部分」，并在弹窗描述里写明边界——否则用户会以为这里是唯一的入口。
+
+**模式九：新 CLI 的接入点散在多个 match 里，漏一个不报错。** 「本地 session 统计」这类能力要改 7 处后端 + 2 处前端，每一处都是 `match`/数组的一项；漏掉的后果是**该 CLI 静默地永远没有数据**，而其它 CLI 一切正常，很难联想到是漏注册。
+> 例：#44 `session_files()` 的 `root.is_dir()` 让 ZCode 的数据库文件永远扫不到；#45 是完整的接入点清单。
+>
+> **对策**：照抄一个**同类**工具（同为「根是文件/有专门解析器」的：Hermes / Dsh / ClaudeDesktop）逐处对照，而不是从零找。清单见下表。
+
+**「网关本地 session 统计」新增 CLI 的接入点清单**（2026-10-06 实测）：
+
+| # | 位置 | 作用 |
+|---|---|---|
+| 1 | `proxy_gateway/types.rs` `GatewayUsageTool` 枚举 | 新增变体 |
+| 2 | 同文件 `GatewayUsageTool::all()` | 加进全量列表 |
+| 3 | 同文件 `as_str()` | 落库的 `app_type` 字符串 |
+| 4 | 同文件 `GatewaySessionImportCli` 枚举 | 前端单选值的反序列化目标 |
+| 5 | `session_import.rs` `import_cli_keys()` | 单选值 → 工具 |
+| 6 | 同文件 `default_session_roots()` | 扫描根（**根可以是文件**，见 #44） |
+| 7 | 同文件 `session_files()` / `parsers.rs::parse_file()` | 文件筛选与解析器分派 |
+| 8 | `usage_stats.rs` `load_provider_names()` | 供应商名映射（否则列表里只剩 id） |
+| 9 | 前端 `proxyGatewayApi.ts` `GATEWAY_USAGE_TOOLS` | 筛选下拉项 |
+| 10 | i18n `settings.gateway.cli.<key>` | 显示名 |
+
+**模式十：布局间距借自「邻居」，顺序一变就塌。** 让 A 依赖 B 存在（或依赖 B 的 margin）来产生间距，在列表里是隐形耦合：顺序一换、B 被删、B 被条件隐藏，间距就没了，而**代码里两处都看不出问题**。
+> 例：#46 ZCode 供应商卡片自己没有 `marginBottom`，靠下方官方账号卡片的 margin 撑开；两张卡调换顺序后贴在一起。
+>
+> **对策**：列表项**各自带完整的间距**（自己的 `marginBottom` 或父容器 `gap`），不依赖相邻项。核对方法：把列表里的项**随机调换顺序**看一遍——顺序无关的布局才是对的。
+
+**模式十一：状态标记只在一个写入路径上维护。** 同一个「当前生效的是哪个」的语义，如果有多个写入路径（切换、保存、外部工具直接改），只在一处写标记，另外两条路径就会显示成「没有生效项」。
+> 例：#47 ZCode 官方账号的 `is_applied` 只在切换命令里写；「保存当前登录」和「在 ZCode 里直接登录」都不经过它，于是已生效的账号不显示「默认」。
+>
+> **对策**：这类标记应当**从事实源推导**，而不是当状态存。事实源是磁盘上的配置文件时，列表接口就每次读它回填，别指望每个写入路径都记得更新。
+
+**模式十二：模块建了，文档没建。** 根 `AGENTS.md` 要求每个模块目录有 `AGENTS.md` 并登记进 Index，但**没有任何机制会在缺失时报错**——新模块往往是先写代码、文档「下次再说」，然后就一直缺。缺文档的代价不是「少一份说明」，而是**下一个人（或 agent）会照着错误的心智模型改代码**。
+> 例：#50 web 侧 `zcode` / `pi` / `oh_my_pi` / `dsh` / `claudedesktop` 五个目录一直没有 `AGENTS.md`。
+>
+> **对策**：把「建模块目录」和「建 `AGENTS.md` + 登记 Index」当成**同一个动作**，写进收尾清单（见 4.0.2）。审计方法见 12.1——**前后端各一条命令**（`tauri/src/*/` 也要覆盖，否则 `db` / `settings` 这类非编码域模块会被整片漏掉，见 #51）。
+
+**模式十三：配置存了，但没有任何代码读它。** 界面提供一个「通用配置 / 高级配置」编辑器，保存成功、重新打开还能读回——于是**看起来完全正常**。但没有任何代码把存下的内容合并进真正生效的文件。用户改的是 DB 里的一个字符串，运行时读的是磁盘上的另一份文件，两者永不交汇。这比「保存失败」更危险：失败至少会报错，而它只给一个成功的假象。
+> 例：#52 ZCode「通用配置」把 JSON 存进 DB，却从未合并进 `provider_config.json`；而且上游 `storedProviderConfigSchema` 是 `.strict()` 的，只认 `providerConfigRules` / `modelConfigRules` / `providerOrder` / `defaultModelSelection` 四个键——就算真去合并，写任何别的键也会被 ZCode 拒绝。
+>
+> **对策**：新增任何「配置编辑器」时，必须能指着一条**读回路径**说出「这份内容在哪里被消费」。只写不读的字段应当在实现前就暴露出来，而不是等用户发现「改了没反应」。核对方法：对每个存储键跑一次全仓 `rg`，确认除 get/save 命令外还有**第三方消费者**。
+>
+> **附带教训**：`.strict()` 的上游 schema 是硬边界。设计「共享/通用配置」这类自由编辑区之前，先读上游 schema，确认它到底允许哪些键——否则功能从第一天起就是死的。
+
+**模式十四：API 封装写好了，UI 从未接上。** 前端 `services/*Api.ts` 里有 invoke 封装、后端命令也注册进了 `lib.rs`——两层都「完成」了，只有第三层（调用它的组件）不存在。读代码时看到封装会以为功能已实现，实际用户永远碰不到。与模式十三的区别：那个是**存了没人读**，这个是**能调没人调**。
+> 例：#54 `toggleZcodeProviderDisabled` 全仓只有定义、没有调用；ZCode 的「禁用」开关从未接上。
+>
+> **对策**：接新 CLI 时，对每个 API 封装跑一次 `rg "<apiName>" web/ --glob '!services/**'`，确认除定义外还有调用点。反过来，删除 UI 入口后也要反向确认封装是否变成了死代码。
+
+**模式十五：同一个概念有两个存储位置，只有一个被写。** 「默认」这类状态常常在两层各存一份：一层是 CLI 自己的目录内偏好，一层是运行时的实际指针。前端只写了其中一层 → 界面显示的状态与运行时行为不一致，而且**两边都不报错**。
+> 例：#55 ZCode 的 `settings.models[].isDefault`（provider 目录偏好）与注册表 `defaultModelSelection`（运行时指针）脱节；卡片显示「当前默认」，ZCode 却从不使用那个模型。
+>
+> **对策**：判断「当前是哪个」时以**运行时事实源**为准，不以 UI 自己写的标记为准。写入时如果两个位置都要改，就封装成一个动作，不要在两个入口各写一半。
+
+**模式十六：读一个键，写另一个键。** 一个状态在组件里出现两次——一次读、一次写——用的是两个不同的标识。因为两边都不报错（读有默认值，写有合法目标），界面看起来完全正常，只是**开关不起作用**。最容易发生在新 CLI 从另一个 CLI 复制页面时：复制来的读侧还指着来源 CLI 的键，写侧已经改成了自己的。
+> 例：#56 `OhMyPiPage` 读 `sidebarHiddenByPage.pi`、写 `setSidebarHidden('oh_my_pi')`；`pi` 与 `oh_my_pi` 是两个独立键，开关因此静默无效，还顺带把 Pi 页的开关状态显示到了 OMP 页。
+>
+> **对策**：任何「一个 key 读、一个 key 写」的配对（侧栏折叠、`visible_tabs`、`runtime_location` 的模块键、WSL 映射的模块名、事件名），复制页面后必须逐对核对读写同名。**命名相近的两个实体**（`pi` / `oh_my_pi`、`claude` / `claudecode` / `claudedesktop`）是重灾区。
+
+**模式十七：视觉/交互一致性问题，任何自动化检查都发现不了。** 前面十六个模式大多能靠 `rg`、编译或测试兜住；这一类不行。文案位置、按钮边框、间距、排序能力、空态措辞——**编译器不管、类型系统不管、i18n 检查不管、测试也不管**。它们的共同特征是「功能都正常，只是看起来/用起来不对」，所以只有**打开参照 CLI 并排看**才会发现。
+> 例：#58 说明文字放在控件上方、#59 卡片按钮带边框、官方账号卡片不能排序。三者都不影响功能，都能编译通过，用户一看就觉得不对。
+>
+> **对策**：
+> 1. **视觉核对不可省略**（§12.3）。它是这一整类问题唯一的检出手段——没有跑起来看过，就不算验证过。
+> 2. **并排比对，不是「凭印象」**：把参照 CLI 的同一屏和本 CLI 的同一屏放在一起，逐个元素指认。单独看一个页面永远觉得「挺正常的」。
+> 3. **把判据写下来**（如「卡片内次要操作一律无边框」「解释性文字在控件下方」「视觉同级的区块要能一起排序」），而不是记住某个具体页面的样子——判据才能迁移到下一个 CLI。
+> 4. 新出现的这一类问题，除了记进第 13 节，还要判断它是否该变成 4.0.2 的一个核对项——**能问出来的问题才是可复用的问题**。
+
+**模式十八：字段集合是「实现者认为该有」，不是上游开放的。** 给某个 CLI 自建表单时，字段往往按「这个模型有哪些属性」来定，而不是按「上游允许用户改哪些」。两者不等——上游通常有一份**独立于完整 schema 的「可编辑白名单」**，剩下的字段由 CLI 自己管理。凭空多加一个控件不会报错：能填、能保存、能读回，只是写出的键官方编辑器永远不产生，而且同一字段在不同模式下可编辑性还可能不一致（上游 schema 允许与否）。与模式十三（存了没人读）的区别：那个是**存了没有消费者**，这个是**存了但官方根本不接受用户写**。
+> 例：#63 ZCode 模型弹窗的「工具调用」「MFJS 工具 Schema」「最大输出参数映射」。上游 `manual-model-config.ts` 明确写着「手动模式只冻结产品明确开放的叶子；新增系统字段默认不属于个人手动配置」，官方 UI 对这三个字段完全不渲染控件。
+>
+> **对策**：字段集合**以上游的可编辑 schema 为准**，不凭直觉增减。核对步骤见 §4.2.4.1——找到上游的 `manual*` / `editable*` / 官方设置界面渲染组件，逐字段对照。被删掉的字段要**原样保留**（上游自己写的行带着它们），且「键缺失」与「显式 false」语义不同，不要补默认值。
+>
+> **判据一句话**：「这个字段上游让用户改吗？」——答案不在本仓库代码里，在上游源码里。**没查过上游就加字段，等于猜。**
+
+**模式十九：功能存在，但放错了层级。** 同一个开关可能属于**行**（列表某一项的属性）也可能属于**卡/弹窗**（整条记录）。放错层级不会报错——功能照常工作，只是**用户找不到它**，或者找到后**说不清它作用于谁**。最容易发生在照抄官方功能清单时：只核对了「有没有这个开关」，没核对「它在哪一层」。
+> 例：#67 ZCode 的「启用」官方在**模型列表行**的 `Switch` 上（`ProviderFormControls.tsx`），编辑弹窗里没有；我们放进了弹窗，而行级开关当时根本不存在。
+>
+> **对策**：字段/开关的核对要**两步**——先问「官方有没有」（模式十八），再问「官方放在哪一层」。判据：**这个状态作用于整张卡片，还是某一行？** 整张卡 → 卡片头部；某一行 → 那一行上。
+>
+> 同源问题还有：**行级状态必须能一眼扫到**。模型行的「启用」开关刻意不做 hover 隐藏——开关报告状态，只能靠 hover 才看见的状态，用户无法扫列表发现。
+
+**模式二十：行高被「每个字段一行」撑开。** 列表行里逐字段换行（一个字段一行、带完整标签），单看一行很规整，但列表是**重复 n 次**的：每多一行就多一倍高度，而扫读时真正需要的往往只是量级（大小、长短），不是精确值。与模式十七同属「能编译、能跑、只是不好用」，但它的代价是**累积的**——第 1 行看不出问题，第 50 行才发现列表长得没法用。
+> 例：#68 模型行原本两行，第二行是 `上下文限制: 400,000 | 输出限制: 128,000`。合并后 `(id | 400K)` 一行说完，且 `400K` 比 `400,000` 更容易比较大小。
+>
+> **对策**：
+> 1. **列表行默认一行**。要加第二个字段时先问「能不能并进已有的括号/分隔里」，而不是直接换行。
+> 2. **列表里的数字按「可比较」呈现，不按「精确」呈现**（`200K` / `1M`）。精确值属于编辑弹窗和 tooltip——那里用户是来核对数字的。
+> 3. **判断是否该有第二行**：这一行的信息，用户是「扫」还是「读」？扫 → 压进第一行；读 → 它可能不该在列表里，而该进详情。
+>
+> 反过来也成立：**不要为了压成一行而丢掉比较维度**。如果两个限制都需要看，就并进括号（`id \| 200K / 128K`），而不是删掉一个。
+
+**模式二十一：页面区块是「本 CLI 特有」而不是「本 CLI 需要」。** 每个 CLI 都有自己独有的配置面，于是页面很容易长成一堆专属区块的堆叠——单看每一块都有理由（「Native 确实有 agents 概念」），但**没有一块被问过「它是不是重复了别处的信息」或「别的 tab 为什么不这么放」**。后果不是功能坏了，而是每个 tab 都长得像不同的产品，用户每换一个 tab 就要重新找一遍入口。
+> 例：OmO Native 曾有 6 个区块，其中「生效配置」与页头「预览配置」重复、「更多选项」的内容在 ⋯ 弹窗里已有同一份、「MCP 与 Skills」只是一段指向别处的指引。收敛成标准三区块（供应商 / 全局提示词 / 会话管理）后，与 ZCode 完全同构。
+>
+> **对策**：新 CLI 的页面**默认只放标准区块**（见 §4.0.2-H 的能力清单），任何额外区块都要先回答两个问题——① **它承载的信息在别处有没有**（页头链接 / ⋯ 弹窗 / 顶层独立页面）？② **别的 tab 为什么不需要它**？两个问题都答不上来就不加。真需要加的，写进模块 `AGENTS.md` 说明理由。
+>
+> ⚠️ **撤下一个区块的 UI ≠ 删除它的后端。** 页面收敛时最容易顺手把「没人用了」的命令、表、托盘接线一起删掉——但那些往往还有**非页面消费者**（托盘菜单、备份恢复、深链导入）。判断依据是 §12.1 的死封装审计命令：`rg "<apiName>" web/ --glob '!services/**'` 为空**只说明前端没入口**，还要再查后端命令是否被 `tray.rs` / `reapply_applied_runtime.rs` / 备份链路调用。查不清就保留，并在模块 `AGENTS.md` 里写明「无 UI 入口但后端保留」（先例：`oh_my_pi/AGENTS.md` 的 `listOmpAgents`）。
+
+**模式二十二：工具的「保护名单」自己过期了。** 静态分析类工具（i18n key 检查、死代码扫描）靠一份**手工维护的标识符取值表**来展开动态调用。那份表是**另一个白名单**——它会随代码增长而过期，而过期的后果是**工具给出错误结论**：把仍在使用的资源判为「未使用」，接着自动清理就把它删了。比工具不报错更危险，因为它主动提供了错误建议。
+> 例（本轮连中两处）：`scripts/i18n-keys.mjs` 的 `DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE` 里，`useRootDirectoryConfig.ts` 只登记了 3 个 `translationKeyPrefix`（实际 12 个）→ 9 个模块的整块 `rootPathSource.*` 文案被列为可删。同一张表还不支持**嵌套**占位符（`${a}.${b}Hint`），于是 `envHint`/`shellHint` 永远算未使用。
+>
+> **对策**：① 每次新增「会拼 key 的共享组件调用方」时，**同一任务内**把取值加进工具的保护表（与 §3.1 的 allowlist 同步是同一件事）；② 执行任何自动清理（`i18n:prune --write`、批量删除）**之前**，先手工抽查几条被判「未使用」的 key 是否真没人用——尤其那些名字里带 `Hint` / `Placeholder` / `Success` 的；③ 补全保护表后**必须重跑 `check`**：它会把一直存在的缺口一次性暴露出来（本轮暴露了 6 个模块缺 `envHint`/`shellHint`、共享 `ModelItem` 缺 3 条开关文案）。**「补白名单」的收益不只是消音，更是把被掩盖的真实缺陷翻出来。**
+
+**模式二十三：抄了「名字像的」而不是「同引擎的」兄弟。** 新 CLI 的字段形状总要找个参照抄，而最容易被选中参照的是**名字最像**的那个（`omo_native` 抄 `oh_my_pi`，都带 `omo`/`pi`），不是**运行时真正同源**的那个。两者的差别在界面上完全看不出来：字段能填、能保存、不报错，只是写出的键引擎不读——**用户的编辑静默丢失，而旧值被覆盖**。
+> 例（#76）：OmO Native 与 **Pi** 同用 senpi 引擎、同读 `models.json`；OMP 读的是 `models.yml`，字段形状不同。但思考级别的开关照 OMP 抄了 `showOmpThinking`，写出 OMP 的 `thinking: { efforts, defaultLevel }`——上游 `docs/models.md` 的模型字段表里没有这个键，只有 `thinkingLevelMap`/`defaultThinkingLevel`。
+>
+> **对策**：
+> 1. **先确认「同源」再决定抄谁**。判据不是名字，是**运行时事实**：读同一个文件吗？同一个二进制/引擎吗？（`omo` 与 `pi` 都是 senpi；OMP 是另一个实现。）查法：看两边的常量文件名（`models.json` vs `models.yml`）与上游 docs 路径。
+> 2. **字段形状以该引擎自己的文档为准**，不以「兄弟页面的代码」为准——兄弟页面也可能是错的（本次就是两边都错，只是 OMP 那边恰好对）。
+> 3. **每个字段问一句「引擎读它吗」**：在上游 `docs/models.md`（或对应 schema）的字段表里找得到吗？找不到的键写进去就是死数据。
+> 4. **JSON 字符串 ↔ 文件形状的边界要显式**：共享弹窗交回的是**字符串**（`JSON.stringify(...)`），文件里要的是**数组/对象**。转换点集中到 util（`parseInputTypes` / `stringifyInputTypes` / `parseJsonRecord` / `stringifyRecordField`），别在 handler 里就地赋值。
+>
+> **一句话**：**字段名对不对，不看代码像不像，看引擎读不读。**
+
+**模式二十四：共享组件只共享了「文案」，把「样式」留给了调用方手抄。** 共享组件暴露一个 `ReactNode` 插槽（`hint` / `footer` / `extra`），文档写「文案由调用方传」——但那个插槽在视觉上是**有样式的**（小字、次要色、左侧竖线）。于是每个调用方都要复制同一段 style 对象，而**漏抄的那一个不会报错**：内容在、位置对、字也能读，只是渲染成了正文大小，看起来像设计如此。
+> 例（#80）：claudecode / codex / zcode 逐字复制同一段六属性 style；omo_native 没抄 → 提示块变成一段全黑大字。而 SOP §4.2.1 的示例本身就写着 `hint={<div>…两行提示…</div>}`（裸 div），**照着 SOP 抄就会抄错**。
+>
+> **对策**：
+> 1. **区分「文案」与「样式」**：插槽共享的是**文案**，样式属于组件。把 style 连同常量一起放进组件（`HINT_BLOCK_STYLE`），插槽只接受内容。
+> 2. **判据**：如果某个插槽的使用方都要写同一段 style，那它就不该是插槽，而该是组件内部的一层。
+> 3. **同步改示例**：SOP / AGENTS.md 里的示例代码要跟着改成「只传内容」——示例是别人抄的对象，示例错等于源头错。
+
+**模式二十五：交互能力是「三件套」，缺一件就表现成坏掉。** 拖拽排序看起来是一个功能，实际由三个独立的部分组成：**把手（渲染）→ context/命令（行为）→ 存储的写入端与读取端（持久化）**。任何一件缺失，用户看到的都是同一句话：「拖不动」或「拖了没用」——而三者的修复位置分别在前端组件、后端命令、后端读取函数里，不查全就会只修一半。
+> 例（#81/#82）：omo_native 抄了 ZCode 的把手但没有它的 `DndContext`（缺行为）；就算补上前端，`list_*` 结尾的 `sort_by(key)` 还会把顺序抹掉（缺读取端）。
+>
+> **对策**（顺序照这个查）：
+> 1. **把手只在能拖时渲染**：`draggable: !selectable && !dragDisabled`，并让 `dragDisabled` 覆盖所有「展示顺序 ≠ 存储顺序」的情形（非 `custom` 排序、有搜索词）。
+> 2. **能力存在也别急着开**：先确认后端有对应的 reorder 命令；没有就先别渲染把手（一个拖不动的把手比没有把手更糟）。
+> 3. **写入点与读取点成对核对**：存哪就读哪。「存了 A、读时又按 B 排序」是这类 bug 最隐蔽的一半——它只在**重载之后**才显形。
+> 4. **回归测试落在纯逻辑上**：把重排逻辑从 Tauri 命令里抽成纯函数（`reorder_provider_map`）再断言键序，否则 `State`/`AppHandle` 让这条路径无法直测。
+
+**模式二十六：SOP 自己给出了「过强的规则」，于是照着做反而做错。** 前面的模式都是「SOP 漏了某条」，这一条相反：**SOP 写了一条看起来更严格、更省事的规则，而它是错的**。执行者照着做，产出比不做还差——因为错误被 SOP 的权威性掩盖了，没人会去质疑它。
+> 例：§4.0.2-I 原版写「页面默认三个区块，除此外不许有别的」，并让执行者「回答两个问题」来决定要不要加第四块。问题在于那两个问题问的是「**别的 tab 为什么不需要它**」——这是个**诱导否定**的问法，任何区块都能被问倒（「别的 tab 没有这个数据」）。结果是：OmO Native 被收敛到 3 块，而全仓并集显示「其他配置」有 7 个页面、「官方认证渠道」有 5 个页面。用户立刻发现缺块。
+>
+> **根因有三层，缺一不可**：
+> 1. **用「参照 CLI」代替「全部页面」**：参照 CLI（Codex）自己就没有「其他配置」，于是这个区块从未进入候选。
+> 2. **把「独特」当成了「多余」**：「只有本 CLI 有」是独特性，「本 CLI 缺」是缺失——两者在页面上长得一模一样，但结论相反。
+> 3. **规则用了「默认禁止 + 举证例外」的结构**：这种结构在证据不全时会系统性地偏向「删」。
+>
+> **对策**：
+> 1. **先取并集，再做减法**。判断「该有哪些区块」的输入必须是**全部页面的实际现状**（一条 `grep` 命令就能列出来），不是一两个参照页。命令见 §4.0.2-I。
+> 2. **提问要中立**。「别的 tab 为什么不需要它」是诱导否定；改成「**本 CLI 有没有这类数据**」——有数据就加，没数据才不加。前者问的是别人，后者问的是自己。
+> 3. **写完规则要反查它拦住了什么**。任何「默认禁止」型的清单，都要拿现有代码验一遍：**按这条规则，现存的哪些东西会被判违规？** 如果答案是「7 个页面都违规」，那违规的是规则，不是代码。
+> 4. **用户提出的每一个「缺了 X」，都要先问「别的页面有没有 X」**——如果多数页面都有，那就是 SOP 的区块清单漏了 X，不只是这一个 CLI 漏了。
+
+**模式二十七：区块是「大颗粒」，卡片/列表的「能力集」是小颗粒——后者没人枚举过。** 模式二十六解决的是「这个页面该有哪几块」；但**每一块内部有哪些按钮**，SOP 从头到尾没列过。于是即使区块齐了，卡片仍会缺功能：ZCode 的供应商卡片少了「复制」，OmO 的模型列表少了「批量删除」。这两个都是**别的页面有、本页静默没有**——用户得挨个点开才发现。
+> 为什么这类缺失特别难自查：区块缺失是**结构性的**，扫一眼页面就知道少一块；按钮缺失是**局部的**，卡片看起来「是完整的」，只是少一个图标。而且它的信息来源是「别的页面」，不是「本页」——只看本页永远看不出来。
+>
+> **对策**：
+> 1. **写卡片前，先横向 diff 三张已有的同类卡片**（供应商卡片挑 3 个不同风格的，模型列表挑 3 个）。把每个按钮列成一张表，逐项标「要 / 不要 / 为什么不要」。
+> 2. **「不要」必须写理由**，且理由要落在数据上，不是感觉上。合格：「内建渠道是只读的，没有可写的落盘目标，故无编辑/删除」。不合格：「暂时不需要」。
+> 3. **把清单写进模块 `AGENTS.md`**，下次接入时是「对着清单打勾」，而不是「重新想一遍」。
+> 4. **用户报「少了 X」时，先查别的页面有没有 X**——同模式二十六第 4 条。若多数页面都有，就是清单漏了，要补进 SOP，不只补这一个页面。
+> 5. **修完还要反向扫一遍：哪些页面也缺 X？** 用户报的是 ZCode 缺复制，扫完发现 OpenClaw 连供应商复制带模型复制**两个都缺**。同一个能力在全仓做一次 `grep` 审计（比"逐页打开看"快得多），比只修被指出的那一处更接近"把这类问题解决掉"。
+
+**模式二十八：迁移做了一半就宣布完成——「新的写对了」不等于「旧的清干净了」。** 把 `"__local__"` 抽成共享常量时，第一轮只改了 9 个「构造桥接记录」的文件，就报告「已统一」。实际还有 33 个文件（判定 `if config_id ==`、托盘过滤、各模块 `const` 别名）写死字面量。**这种半迁移比不迁移更难发现**：`grep` 一次只看到一半结果，而两种写法同时存在时，改一处不影响另一处——下一个人要改 id，看到常量以为改完了，字面量那 33 处纹丝不动。
+> **对策**：
+> 1. **完成判据是「旧写法残留数为 0」，不是「新写法出现了」**。收尾必须跑一次 `grep -rn '<旧字面量>' <源码根>`，把输出当作 checklist 逐条消灭。
+> 2. **注释里的提及也要一起改**——`/// Returns a config with id "__local__"` 这类文档注释会让下一次 grep 命中，制造「还没改完」的假象，也会误导读代码的人。
+> 3. **别只改「明显的那一类」**。同一个值在代码里有多种角色：构造、判定、过滤、别名常量。构造点最容易看见（它就在你正在写的函数里），判定与过滤点散在 `tray_support.rs` 这种你不常打开的文件里。
+> 4. **模块自己的 const 别名保留名字、值指到共享常量**（`const CODEX_LOCAL_PROVIDER_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;`）——这样调用方一行不用改，单一来源也建立了。
+
+**模式二十九：照搬了区块的「形」，没照搬它的「筛选」。** 一个区块在参照页面之所以好用，往往不只是因为样式和数据源对，而是因为**它只显示该显示的那几条**。照搬时最容易漏的恰恰是这一层——因为筛选条件通常藏在一句不显眼的代码里（OpenCode 是 `read_auth_channels()`，一行），而样式和数据源是看得见的。
+> 例：OmO 的「引擎内建渠道」抄了 OpenCode 的卡片、布局、文案，但**数据源直接用了 `omo --list-models` 的全量**——49 个内建 provider 全列出来，其中 48 个未配置凭据。用户看到一屏用不了的东西，问「应该只有配置了 key 的才展示吧」。
+>
+> **对策**：
+> 1. **照搬一个区块前，先回答三个问题**：数据从哪来（✅ 容易想到）、**显示哪些**（❌ 最常漏）、用户能对它做什么。第二个问题的答案通常是一句过滤，而不是数据源本身。
+> 2. **判据是「这个条目对用户有没有意义」**，不是「它在数据里存不存在」。未配置凭据的渠道既不能用也不能改，列出来只有噪音。
+> 3. **筛选可能拿不到现成的数据源**。OmO 这里要逐个跑 `omo auth check`（引擎没有批量接口），代价 8 秒——**这种代价要主动告诉用户并让他决定放在哪**（页面加载时 / 展开时 / 先全列后收敛），不要自己闷头选一个。
+> 4. **筛选后要区分「还没查完」和「一个都没有」**：慢查询下这两者长得一样，但用户看到「空列表」会以为功能坏了。
+
+**模式三十：「保存失败」的报告，往往其实是「读取端看不见」。** 用户说「我写了 api key，重新打开又变成空的，没保存成功」——第一反应是查写入路径。但**先查磁盘**能省掉一整轮排查：OmO 这个案例里两个文件都在用户操作的那一分钟被写过，`omo auth print-api-key` 也正常返回，数据完全没丢。
+> 真正的问题有三层，每层单独看都不像 bug：
+> 1. **写和读用的不是同一个字段**。写入端写 `auth.json`、读取端也只查 `auth.json`，但用户的记录是写在 `models.json` 的 `apiKey` 里的（引擎两处都认，且优先 `auth.json`）。
+> 2. **弹窗把字段硬编码清空**（`apiKey: ''`），placeholder 也是空的 —— 于是「有一条已存的密钥」和「从来没有过」在界面上**完全同形**。
+> 3. **没有「已存过」的信号**。密码框显示空白本身不奇怪，奇怪的是它和「真的没有」无法区分。
+>
+> **对策**：
+> 1. **「保存失败」先做三件事，再动代码**：看文件 mtime 与内容、跑一次引擎自己的读取命令、确认写入端与读取端用的是不是同一个位置。界面为空 ≠ 数据没写进去。
+> 2. **一个值有多个合法存储位置时，先定一个权威位置**，然后：写入端统一到它 + **迁移旧值**（本案例：保存时顺手把 `models.json` 的 `apiKey` 移进 `auth.json`），读取端在迁移期**两处都认**。只做一半会出现「同一个 key 两处不一致、引擎取的那个不是用户改的那个」。
+> 3. **密钥类字段一律「不回填明文 + 显示已存过」**：placeholder 用 `••••••••`，说明文案换成「已保存密钥；留空表示不改动」。这条对密码框是硬要求——因为它天生就是空白的，没有信号就必然被误读。
+> 4. **凭据的界面状态要由后端算**（`hasKey`），不要让前端自己推断存储位置——否则存储位置一变，界面就悄悄错。
+
+**模式三十一：把「安全最佳实践」套到不该套的场景，反而制造 bug。** 「密钥不回填明文、只显示占位符」在给别人看的只读界面上是对的；但在**配置管理器**里，用户看自己的密钥是天经地义的，藏起来只会让他分不清「存了」和「没存」。
+> 例：修 OmO 的「api key 显示为空」时，我把弹窗改成 `••••••••` placeholder + 「已保存密钥；留空表示不改动」文案。用户当场否掉：「这个应用就是管理配置的，前端都可以展示所有的秘钥，不要再出现这种看不到回退的情况了」。同仓 Claude Code / Codex / Kimi 的弹窗一直就是回填明文的——**既有约定早就摆在那里，是我没去看**。
+>
+> **对策**：
+> 1. **先问「这个产品的定位是什么」**。ai-toolbox 是配置管理器：它的用户就是配置的主人，展示明文是**功能**不是漏洞。同类判断：给一个 Git 客户端做 diff 视图，不该因为「diff 里有密钥」就把它打码。
+> 2. **照抄同仓既有做法，别照抄通用最佳实践**。动手前先看**同类字段在别的页面怎么做**（这里 3 个页面的弹窗都是明文回填）——同仓约定优先于行业惯例。
+> 3. **「看不见」本身就是缺陷**。任何让用户「分不清有没有」的设计，在这个项目里按 bug 处理。占位符方案的问题不是不够安全，是**它让两种状态同形**。
+> 4. **用户否掉一次，就要写成硬规则**（本项目已写进记忆库 `ai-toolbox-shows-plaintext-credentials.md`），不要下次换个模块再犯一遍。
+
+**模式三十二：同源工具不等于同语法——「名字像」的兄弟会误导你。** OmO Native 与 OMP 都是 `oh-my-*` 家族的、都读一个 `models.json`/`models.yml`，但**凭据的 config value 语法不同**：OmO 支持 `$ENV_VAR` 插值（与 Pi 一致），OMP 只认「`!command` 或整值精确匹配环境变量名」。
+> 例：给 OmO 的「获取模型」传了 `configValueMode: "omp"`，于是 `$MY_KEY` 不会被插值、被当字面量发出去。这个错误**不会报错**，只会 401——和「没传 key」长得一模一样，所以排查时先怀疑了后者。
+>
+> **对策**：
+> 1. **选实现要按「引擎」不按「名字」**。同源工具（同一作者、同一命名前缀）常常在细节上分叉，抄之前先确认它读的是不是同一个文件、走的是不是同一套语法。
+> 2. **拿引擎自己验证一次语法**，别从文档推断。这里用「把值改成 `$VAR` 再跑一次引擎的读取命令」两分钟就确认了。
+> 3. **新增枚举值时，把「为什么不是隔壁那个」写进注释**。`ConfigValueMode::Omo` 的文档注释里明确写了「OmO is not OMP despite both being `oh-my-*` tools」——否则下一个人看到两个几乎一样的模式会想合并它们。
+> 4. **401 有两个常见根因，要一起查**：没传凭据 / 凭据语法没解析。先看请求有没有 `Authorization` 头，再看值是不是字面量。
+
+**模式三十三：凭据换存储位置时，只改了「写」，没改「读」的另一半。** 把自定义渠道的 key 从 `auth.json` 挪到 `models.json`（因为写进 `auth.json` 会和内建渠道的凭据混淆）本身是对的，但**读取端如果只查新位置，老用户的旧值就凭空消失**——界面上是「空」，磁盘上还在，引擎也还在用。用户会报「我的 key 没了」，而排查会发现两份文件里一份有、一份没有。
+> 更麻烦的是**优先级与写入位置的耦合**：引擎的优先级是「`auth.json` 优先于 `models.json`」。所以「写新位置」必须**同时删掉旧位置的同键条目**，否则用户改的新值永远不生效（旧值赢）；而「读新位置为主」又必须**保留读旧位置兜底**，否则没迁移过的用户看不到值。
+>
+> **对策**：
+> 1. **换存储位置是一次三端改动**：写入端（写到哪）、读取端（从哪读，且**新旧都读**）、清理端（旧位置的同键条目要不要删）。缺任何一端都有用户可见的症状。
+> 2. **兜底读取要保留至少一个大版本**，并在模块 `AGENTS.md` 写明「主位置 / 兜底位置 / 何时可以撤掉兜底」。
+> 3. **优先级由引擎决定，不由界面决定**。写之前先用引擎自己的读取命令确认「两处都有值时它取哪个」，再决定要不要顺手删旧的。
+> 4. **删旧条目要限定「同键」**：`auth.json` 里还有内建渠道的条目，整文件覆盖会一起清掉。
+
+**模式三十四：提示文案没跟着功能更新，于是它在骗用户。** 一个区块的说明文字写着「本模块只做展示，不提供编辑能力」——这句在写它的时候是对的，后来这个区块加了「在应用内编辑」的入口，文案却没动。**没有任何检查会发现它**：i18n key 存在、组件正常渲染、功能完全可用，只是**用户读了这句话就不会去找那个按钮**。同类还有按钮 tooltip（「点击打开配置文件」——实际打开的是应用内编辑弹窗，不是系统文件管理器）。
+>
+> **对策**：
+> 1. **给区块加能力时，同一次改动里改文案**。把「说明文字 / tooltip / 空态措辞」列进这类改动的 checklist——它们是**对功能的断言**，功能变了断言就过期了。
+> 2. **文案里的否定词是重点排查对象**：「只读」「不可编辑」「不支持」「不能」。对全仓这些词做一次 `grep`，逐个核对当前是否仍然成立（本轮修了两处：OpenCode 与 OmO 的「官方/内建渠道」说明）。
+> 3. **区分「模型列表只读」与「渠道凭据可编辑」**——同一个区块里两者可以同时成立。含糊成一句「本模块只读」会连可编辑的部分一起否掉。措辞要落到**具体对象**上（「模型列表只读；渠道凭据可在应用内编辑」）。
+> 4. **`grep` 要覆盖两种语言**：只改 zh-CN 会留下 en-US 的旧断言。
+
+**模式三十五：撤了编辑界面，却把它的「空态提示」和「托盘入口」留在原地。** 页面收敛时把一个区块的 UI 拿掉了，但那个区块**独有的数据源**（这里是 `omo.jsonc` 的 `[native]` 块）仍然被两处引用：预览里显示它、托盘里挂它的切换菜单。撤 UI 时只检查了「页面上还看得见吗」，没检查「还有谁在引用这份数据」——于是用户看到一句永远消不掉的提示（「还没有 `[native]` 块」）和一个永远写着「暂无配置」的菜单组，而**页面上根本没有任何入口能产生这份数据**。
+> 例（#83/#84）：OmO 页面撤掉「Agent·Category 方案」编辑界面后，`[native]` 块只剩托盘能写；预览里那一栏对它显示「本页尚未应用过任何方案」，托盘的方案组显示「暂无配置」。用户两次追问「我本地已经有2个渠道了啊，这个提示是啥意思？新用户进来也会困惑吧」——他看到的「2 个渠道」是 provider（`models.json`），与 `[native]` 块无关，但界面上没有任何东西解释这个区别。
+>
+> **对策**：
+> 1. **撤 UI 的同一动作里，列出该能力的全部引用点**：预览 / 托盘 / 备份 / reapply / 深链。跑 `rg "<该区块独有的数据键名>"` 而不是只搜组件名。
+> 2. **判据是「用户能不能产生这份数据」**，不是「数据是否存在」。没有产生入口 → 它的展示位与切换位都该一起撤（或改成明确的只读说明），否则就是**永久空态**。
+> 3. **后端保留 ≠ 前端保留**。按 §12.1 的惯例，后端命令、表、reapply 逻辑照旧保留（备份恢复要用），但**展示层要撤干净**，并在模块 `AGENTS.md` 里写明「无 UI 入口但后端保留」。
+> 4. **区分同名不同物的数据源**：用户说「我有 2 个配置」时，先确认他说的是哪一份（provider 还是方案），再解释为什么界面上看不到——**这个解释本身就该写进界面**，而不是只在对话里说一次。
+
+**模式三十六：预览只显示「本页拥有的那一层」，用户以为文件里只有这些。** 一个共享文件（`omo.jsonc` 同时被 OpenCode 插件版和本页写）在预览里只渲染本页负责的那部分（先是 `[native]` 块，后是「共享键」），用户看不到文件的另一半。这类截断**不会报错**，但会让人对「文件里到底有什么」形成错误认知，进而做出错误判断（「我配置怎么没了」）。
+> 例（#85）：两轮修正——先是从 `[native]` 块改成共享键（仍是片段），用户直接要求「直接展示完整的 json」。
+>
+> **对策**：
+> 1. **预览文件 = 显示文件的完整内容**。这是「预览」这个词的字面承诺；显示片段要改名叫「XX 视图」并说明范围。
+> 2. **共享文件尤其如此**：它被多个模块写，任何一方只显示自己那层，都会让用户误判「另一层不存在」。
+> 3. **实现上优先读原文**（`read_file_optional(&config_path)`）而不是 `JSON.stringify(解析后的对象)`——原文保留注释与格式，且不会因为解析器丢了未知字段而少显示内容。注意给编辑器选对语言（`jsonc` 而不是 `json`，否则带注释的文件会满屏报错）。
+> 4. **空态文案要跟着改**：显示片段时写的「还没有 XX 块」在改成显示全文后就是错的（文件明明有内容）。
+
+**模式三十七：`await` 一个「刷新」把已完成的保存拖成了长时间 loading。** 保存成功后调刷新回调是常规做法，但刷新**可能很慢**（要重查依赖凭据的列表、跑外部命令）。写成 `await onSave(); await onSaved(); close();` 时，用户看到的是保存按钮一直转圈，**而数据其实早就写完了**——他会以为保存失败或卡住。
+> 例（#86）：`AuthConfigModal` 保存后 `await onSaved()`，而 OmO 的 `onSaved` 要重跑 `omo auth check`（48 个渠道约 8 秒）。用户报告「提示操作成功之后一直不消失在 loading，很长时间之后才会消失掉」。
+>
+> **对策**：
+> 1. **关界面的时机是「写入成功」，不是「刷新完成」**。先 `close()`，再把刷新丢进后台：`void Promise.resolve(onSaved()).catch(...)`。
+> 2. **刷新失败不能回滚已保存的内容**，但也不能静默——`console.error` 留痕，必要时给一条 toast。
+> 3. **判据**：这个 `await` 里的操作，用户需要等它才能继续操作吗？不需要 → 不该 await。
+> 4. **共享组件里更要小心**：同一个 `onSaved` 契约，快的调用方（读一个 JSON）和慢的调用方（跑 48 次外部命令）差三个数量级，**慢的那一个会把共享组件的体验定义成「很慢」**。
+
+**模式三十八：测试夹具里照抄了自己机器上的真实信息。** 写测试时从本机跑通的实际数据里复制样本最省事——真实路径、真实渠道名、真实模型名。这些都**不是**隐私意义上的敏感数据，但会：① 把开发者的机器与账号暴露在公开仓库里；② 让测试与某个特定环境耦合；③ 用户看到自己的私有命名出现在代码里会直接要求清理。
+> 例（#87）：`C:\Users\<真实用户名>\.claude\plans\...`、`D:\GitHub\<真实仓库名>`、真实 provider key `axonhub-chat`、真实网关实例名 `AxonHub-6 Astra`，以及**输入框的 placeholder**（`placeholder="axonhub-chat"`——最容易漏，因为它不在测试文件里）。
+>
+> **对策**：
+> 1. **判据**：这个名字/路径**只有我这台机器上有**吗？是 → 换掉。判据不是「敏不敏感」。
+> 2. **但别误伤产品数据**：先查 `tauri/resources/*.json`（打包进产品的预设清单）。`deepseek-v4-flash`、`glm-5.2` 这类在里面 → 是公开产品数据，可以用。同理，注释里引用**公开开源项目**的 commit（`(AxonHub 7444f537)` 指 `looplj/axonhub`）保留——先搜一下确认那个项目是公开的。
+> 3. **替换要保留测试语义**：路径要有盘符与反斜杠（Windows 路径解析测试）、要有空格（引号包裹测试）。换成 `C:\Users\tester\...` / `D:\GitHub\sample-workspace` 这类通用名。
+> 4. **自查命令**（改动前后各跑一次，逐条清零）：
+>    ```bash
+>    grep -rn "<本机用户名>" --include=*.rs --include=*.ts --include=*.tsx tauri/src web
+>    grep -rn "<真实工作目录名>\|<真实渠道 key>" --include=*.rs --include=*.ts --include=*.tsx tauri/src web
+>    ```
+>    **placeholder 与注释最容易漏**——它们不在测试文件里，但同样是「照抄自己机器」的产物。
+> 5. **这条是硬规则**：用户 2026-10-07 明确要求「以后都不可以在测试用例里面写我的真实信息」。
+
+**模式三十九：同一个区块在不同页面用了不同的「外壳」——一个可折叠，一个不可折叠。** 区块的内容与数据源都对，只是外层容器不同：这边用 `Collapse`（带展开箭头、默认折叠），参照页面用固定卡片（`modelCard` + `Title level={5}`）。**功能完全正常，所以只有并排看才发现**。它的实际代价是：用户在新 CLI 上要**多点一次**才能看到同样的信息，而且每个 tab 的「哪块默认展开」规则都不一样。
+> 例（#88）：OmO 的「模型设置」用了 `Collapse`，而 Pi 与 OpenCode 的同名区块都是不可折叠的卡片。用户要求「改成不可以折叠，和 pi 还有 Opencode 一样」。
+>
+> **对策**：
+> 1. **「模型设置」这类「当前值」区块一律不可折叠**：它只有三个下拉、一行就能放下，折叠省不下版面，只多一次点击。**判据**：这块内容用户是不是每次进页面都要看一眼？是 → 不折叠。
+> 2. **照抄参照页面的外壳，不只照抄内容**：搬一个区块时把它的容器（卡片 / Collapse / 内边距 / 标题层级）一起搬。`modelCard` 那三个 class 在各页面的 `.module.less` 里是逐字相同的，可以直接复制一份。
+> 3. **横向核对**：把「哪些区块可折叠」列成表，跨页面比对。同类区块的折叠行为应当一致——不一致的地方就是这一条要找的。
+> 4. **折叠态默认值也要一致**：`Collapse` 默认展开还是收起，同类型区块应当相同。
+
+**模式四十：同一组菜单项在各区块的**排列顺序**没有统一规则，逐块写下来就漂移了。** `tray.rs` 里每个 CLI 区块都是一串 `if let Some(submenu) = ... { menu.append(...) }`，顺序靠**写代码时的直觉**决定。结果同一个「全局提示词」在 8 个区块里有 3 种位置（第 1 / 第 2 / 第 3），用户扫菜单时找不到规律。
+> 例（#89）：Claude Code / Codex / Gemini CLI / Antigravity / Grok / Kimi 把「全局提示词」放在最前，而 Pi / OMP / OmO / Hermes / Dsh / ZCode 放在主选择项之后。用户要求「全部统一放在第二个」。
+>
+> **根因**：没有一条**可陈述的排序规则**。一旦规则是「凭感觉」，新增 CLI 时就没有可对照的答案，必然再漂移一次。
+>
+> **对策**：
+> 1. **写下规则**：**主选择项在前，全局提示词紧随其后**。「主选择项」= 该区块用户最常改的那个（默认模型 / 供应商 / 主+小模型组）。Claude / Codex 这类只有供应商的，「供应商 → 提示词」；OpenCode 的主选择项是「主模型 + 小模型」一组，「两个模型 → 提示词」。
+> 2. **规则要能回答边界情况**：某区块有两个主项时怎么办（→ 主项都排完再排提示词）；某区块没有提示词时怎么办（→ 不显示，不占位）。
+> 3. **核对方式**：把 `tray.rs` 里所有区块的 append 顺序抽出来并排打印（一条正则就够），逐行对规则。**这个检查只能靠并排看**——单看一个区块永远觉得「挺合理」。
+> 4. **同源提醒**：与模式三十九（区块外壳）是同一类问题——**跨页面的「形态」要一致，不只是「功能」要一致**。新增 CLI 时，除了核对「有没有这一项」，还要核对「它在第几位」。
+
+**模式四十一：托盘的空态与页面的空态不一致，用户以为功能坏了。** 托盘和页面常常调**同一个**后端列表命令，但托盘额外过滤掉「桥接记录」（`__local__`——磁盘上现成内容生成的只读态）。于是当数据库里没有真实记录、只有磁盘文件时：**页面显示一条「来自本地 X 文件」，托盘一片空白**。用户看到的是「页面上明明有，快捷菜单里却没有」。
+> 例（#90）：OmO 的 `omo_native_prompt_config` 表 0 条，但 `~/.omo/agent/AGENTS.md` 存在 → 页面有「default（来自本地）」，托盘不显示「全局提示词」整项。
+>
+> **判断这是不是 bug**：先看**这条记录能不能被应用**。`__local__` 是可应用的（`apply_*_prompt_config_internal` 有专门分支），所以过滤掉它**是有意为之还是遗漏**要问清楚——两种答案都合理（过滤：它点了等于把原文重写一遍，看起来像没反应；保留：用户至少能看到「当前有提示词」）。**不要自己拍板**，这是产品决策。
+> 例中用户的答复是「不改，这是预期行为」——但**这个结论要写进 SOP**，否则下一个人会当成 bug 再修一遍。
+>
+> **对策**：
+> 1. **托盘的过滤条件要能说出理由**，并写进模块 `AGENTS.md`。没有理由的过滤就是遗漏。
+> 2. **排查这类「托盘为空」时，先数数据库条数**（一条 SQL），再决定是代码问题还是数据问题——**先查数据能省一整轮代码排查**。
+> 3. **页面与托盘的空态措辞要能对上**：页面说「来自本地文件」，托盘就不该完全没有这一项——要么都显示，要么托盘给出「暂无预设」的占位（现在用的是 `no_config` 文案，但它只在整块为空时才出现，容易与「这一项没有」混淆）。
+
+**模式四十二：同步链路的「清单」与「实现」各自独立，新增 CLI 时只补了清单。** WSL/SSH 同步在代码里是**一串并列的 match/数组**，每个都要单独加一项。最容易发生的是：加了文件映射（`default_mappings` + 版本回填），就以为接入完了——而 MCP 同步还额外要求「白名单 + 转换 arm」两处。**漏掉的后果是静默的**：文件同步正常，只有 MCP 在 WSL/SSH 里起不来，用户看到的是「server 报错」，很难联想到是同步漏了转换。
+> 例（#91）：OmO Native 的 5 条文件映射齐全（V20/V22 版本回填也在），但 MCP 的 4 个点全漏——`omo-native-mcp` 不在 WSL/SSH 的白名单里，也不在两个 `strip_cmd_c` 的 match 里。MCP 页能写 `~/.omo/agent/mcp.json`，同步过去却带着 Windows 的 `cmd /c`。
+>
+> **根因**：`default_mappings()` 是**一份数据**（看得见、容易想到），而 MCP 的 4 个点是**散在两个文件里的逻辑分支**（看不见，靠记得）。补数据时不会提醒你还漏了逻辑。
+>
+> **对策**：
+> 1. **接入点清单要按「能力」分组，不按「文件」分组**——SOP §6.2/§6.3 就是这么分的，照着逐组打勾，别跳。
+> 2. **每组都要有自查命令**，跑一条命令看命中数（见 §6.3 的 `grep` 与预期行数）。**「我觉得加了」不算，命令输出才算。**
+> 3. **模块 key ≠ 映射 id**。ZCode 的 MCP 文件是 `zcode-cli-config`（MCP 与 CLI 配置同文件），OmO/Pi 是 `<tool>-mcp`。查 id 要去 `default_mappings()` 里按 `module` 字段找，**别按名字猜**。
+> 4. **复查同类模块**：发现一处漏，立刻用同样的 `grep` 扫其余 CLI——同一批接入的模块往往漏在同一处（本次复查同时确认了 ZCode 的 4 个点都在）。
+
+**模式四十三：审查「有没有问题」时，先跑清单，别凭印象。** 用户问「检查 X 和 Y 的同步/备份逻辑有没有问题」时，直接读代码找 bug 会**漏掉整类接入点**——因为你不知道要找什么。正确顺序是：**先把 SOP 里该能力的接入点清单抄出来 → 逐条跑 `grep` 核对 → 命中数对不上就是缺陷**。
+> 例（#91）：OmO 的 MCP 缺失就是这样找到的——不是读代码读出来的，是拿 §6.3 的 4 个点逐个 `grep`，发现 OmO 一个都不命中。
+>
+> **对策**：
+> 1. **清单驱动，不凭印象**。SOP 里已有的接入点表就是审查脚本，逐条执行。
+> 2. **命中数写下来**。每条检查都记「预期 N 处 / 实际 M 处」，M < N 就是缺陷，M = N 才算过。
+> 3. **顺带验证同类模块**（同模式四十二第 4 条）：本次顺带确认了 ZCode 完整、OmO 缺 4 处。
+> 4. **把新发现的检查点补回 SOP**——审查过程本身会暴露清单的缺口（如「映射 id 未必叫 `<tool>-mcp`」这条）。
+
+**模式四十四：打包段写了、恢复分支忘了——这是备份链路里唯一「数据真丢」的漏法。** 其余静默失效最多让功能不生效，这一种是：备份包里**完整装着**用户的配置，恢复时 `else if` 链走到底、entry 被丢弃，界面报「恢复成功」。用户换机后打开 CLI，配置全空。
+> 例（#91）：`omo_native` 是当时 15 个工具里**唯一**「在 `write_external_configs_to_backup_zip` 里有打包段、在 `restore.rs` 里没有解压分支」的模块。它的 5 个引擎文件与 `root-dir.txt` 都进了包，恢复时全部静默丢弃。
+>
+> **根因**：打包与恢复是**两个方向相反的函数**，写打包段时脑子在「往里放」，不会自然想到「另一头得取出来」。而且两者在不同文件、行号差几千行，review 时看不到一起。
+>
+> **对策**：
+> 1. **用集合对账，不靠通读**。两侧各 `grep` 出工具名集合，`diff` 一下（§8.3 第 3 条有命令）。**两侧的集合必须完全相等**。
+> 2. **加源码扫描型回归测试**（已加，见 §8.3 第 3 条）。这类「A 文件里有一份清单、B 文件里必须有对应处理」的不变量，**测试可以直接读自己的源码来断言**——比人肉 review 可靠，也比「记得检查」可靠。
+> 3. **恢复分支里那三行样板别省**：跳过 `root-dir.txt`/目录/空路径、`should_filter_external_config_entry`、`resolve_external_config_restore_output_path`（安全 helper）。漏第 1 条会在 CLI 数据根目录留垃圾文件，漏第 3 条是路径穿越风险。
+
+**模式四十五：「白名单 + 兜底」的组合里，兜底看起来像正常工作，所以漏项永远不报错。** 同步/解析链路大量使用「命中白名单 → 走精确逻辑；否则 → 走默认值」的写法。漏加一个 key 时，代码走的是**设计好的正常分支**（返回默认目录、用通用格式、跳过转换），返回 `Ok`、日志无 warning、界面显示成功。**没有任何信号告诉你「你本该命中却没命中」。**
+> 例（#91）：SSH Skills 的 `SKILLS_TARGETS_FROM_RUNTIME_LOCATION` 漏了 `zcode` / `omo_native`。两者在 `BUILTIN_TOOLS` 里有 `relative_skills_dir`，所以 `get_all_skill_tool_keys()` 会遍历到它们、会去同步、会写文件——只是**写到远端默认目录**而不是解析出的真实目录。同步「成功」。
+>
+> **判别方法**：看到一个 `match key { <白名单> => <精确逻辑>, _ => <默认值> }`，就问一句：**「这个 `_` 分支在正常情况下会返回一个看起来合理的结果吗？」** 会 → 这就是静默失效点，必须有一条清单或测试盯着它。
+>
+> **对策**：**优先把白名单反过来**（让共享 resolver 处理未知 key，调用侧不维护副本列表，见 §7.2 的历史坑），而不是补一行 key。反过来之后，新增 CLI 不需要改这里，问题从根上消失。只有在「确实存在真例外」时才保留白名单，并且**必须配一条断言对齐的测试**（如 `runtime_location_skills_tools_are_all_covered`）。
 
 **反向模式（不是坑但容易误判）：进程 stales。**
 > 排查 UI 异常前，**先确认运行中的进程是当前构建**。曾出现：前端 Vite 热更新到最新代码，而后端进程是 14 小时前启动的旧二进制，DB 迁移也没跑 → 表现为「后端命令不存在/报错」，实际是代码根本没生效。
@@ -1378,8 +2127,13 @@ const existingModels = provider
 - [ ] 页面提示块（两行 `pageHint` + `pageWarning`）
 - [ ] 导入入口：从 CC Switch 导入 / **导入我使用过的供应商** / 从 All API Hub 导入
 - [ ] 页面级 `Alert`（未迁移提示、兼容性警告…）
+- [ ] **空态与搜索无结果态**：把搜索框敲到无结果，再删光所有供应商，各看一遍——「和列表并列」的区块必须两种状态下都在（13.1 模式七）
 - [ ] 会话管理面板、全局提示词区块
 - [ ] 「更多选项」弹窗里的内容
+- [ ] **官方账号区块**（Codex / Grok / Kimi / Gemini CLI / Antigravity / ZCode）：登录入口、账号列表、切换、保存当前登录。它在**参照 CLI 的对比里最容易被整块忽略**——因为它常被画在官方供应商卡片**内部**，而 ZCode 这类「官方登录独立于供应商表」的 CLI 必须自己另起一块
+  > **追问一句：这个区块在列表里的位置由谁决定？** 如果它和供应商卡片并排显示，用户会期望它能**跟着排序/拖拽**。ZCode 的官方账号卡片最初固定在最上方，用户提出后才改为「作为列表的一个成员参与排序」（位置存 `official_account_index`）。
+  >
+  > 判断依据：**它与供应商卡片是视觉同级（同样的卡片外壳、同样的列表容器）就应可排序**；只有真正「置顶横幅」式的区块才固定。实现要点：它要占一个 sortable id、和其他卡片共用同一个 `DndContext` / `SortableContext`，索引按「它上面有几张供应商卡」记录（不是列表下标——下标会随搜索/排序模式变化）。
 
 ### B.3 能力（同 4.0.2-H）
 
