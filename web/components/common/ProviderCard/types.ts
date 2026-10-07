@@ -21,6 +21,13 @@ export interface ModelDisplayData {
   contextLimit?: number;
   outputLimit?: number;
   isPrimary?: boolean;
+  /**
+   * The CLI has this model switched off.
+   *
+   * Only rendered as a switch when the list also passes `onToggleDisabled`; a
+   * list that cannot change the flag shows nothing.
+   */
+  isDisabled?: boolean;
 }
 
 /**

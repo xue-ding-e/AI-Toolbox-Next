@@ -73,6 +73,11 @@ export interface ModelListSectionProps {
   onDeleteModel?: (modelId: string) => void;
   onSetPrimaryModel?: (modelId: string) => void;
   /**
+   * Flips a model's enabled flag. Omit for CLIs that cannot disable a single
+   * model — the row then shows no switch rather than a dead one.
+   */
+  onToggleModelDisabled?: (modelId: string, isDisabled: boolean) => void;
+  /**
    * Per-row extra action (e.g. Codex "set as auto-review model").
    *
    * `rowKey` is the same key the row was rendered with, so callers can hand it
@@ -119,6 +124,7 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
   onCopyModel,
   onDeleteModel,
   onSetPrimaryModel,
+  onToggleModelDisabled,
   renderModelExtraActions,
   modelsDraggable = false,
   onReorderModels,
@@ -161,6 +167,12 @@ const ModelListSection: React.FC<ModelListSectionProps> = ({
         onCopy={onCopyModel ? () => onCopyModel(rowKey) : undefined}
         onDelete={onDeleteModel ? () => onDeleteModel(rowKey) : undefined}
         onSetPrimary={onSetPrimaryModel ? () => onSetPrimaryModel(rowKey) : undefined}
+        isDisabled={model.isDisabled}
+        onToggleDisabled={
+          onToggleModelDisabled
+            ? () => onToggleModelDisabled(rowKey, !model.isDisabled)
+            : undefined
+        }
         selectionMode={selectionMode}
         selected={selectedIds.includes(rowKey)}
         onSelectChange={

@@ -128,7 +128,7 @@ pub async fn get_oh_my_opencode_slim_config_path(
 
 /// Load a temporary config from local file without writing to database
 /// This is used when the database is empty and we want to show the local config
-/// Returns a config with id "__local__" to indicate it's from local file
+/// Returns a config with id `local_bridge::LOCAL_CONFIG_ID` to indicate it's from local file
 async fn load_temp_config_from_file(
     db: &crate::db::SqliteDbState,
 ) -> Result<OhMyOpenCodeSlimConfig, String> {
@@ -183,7 +183,7 @@ async fn load_temp_config_from_file(
     let now = Local::now().to_rfc3339();
     let agents = adapter::resolve_slim_agents_from_config_value(&json_value);
     Ok(adapter::from_db_value(serde_json::json!({
-        "id": "__local__",
+        "id": crate::coding::local_bridge::LOCAL_CONFIG_ID,
         "name": "default",
         "is_applied": true,
         "is_disabled": false,
@@ -197,7 +197,7 @@ async fn load_temp_config_from_file(
 }
 
 /// Load a temporary global config from local file without writing to database
-/// Returns a config with id "__local__" to indicate it's from local file
+/// Returns a config with id `local_bridge::LOCAL_CONFIG_ID` to indicate it's from local file
 async fn load_temp_global_config_from_file(
     db: &crate::db::SqliteDbState,
 ) -> Result<OhMyOpenCodeSlimGlobalConfig, String> {
@@ -272,7 +272,7 @@ async fn load_temp_global_config_from_file(
 
     let now = Local::now().to_rfc3339();
     Ok(OhMyOpenCodeSlimGlobalConfig {
-        id: "__local__".to_string(), // Special ID to indicate this is from local file
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(), // Special ID to indicate this is from local file
         sisyphus_agent,
         disabled_agents,
         disabled_mcps,
@@ -411,7 +411,7 @@ pub async fn clear_oh_my_opencode_slim_applied_config(
     app: tauri::AppHandle,
     config_id: String,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         return Err("Local config must be saved before clearing the runtime file".to_string());
     }
 

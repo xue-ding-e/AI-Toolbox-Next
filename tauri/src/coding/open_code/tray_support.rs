@@ -271,7 +271,7 @@ pub async fn get_opencode_prompt_tray_data<R: Runtime>(
 
     let items: Vec<TrayPromptItem> = configs
         .into_iter()
-        .filter(|config| config.id != "__local__")
+        .filter(|config| config.id != crate::coding::local_bridge::LOCAL_CONFIG_ID)
         .map(|config| TrayPromptItem {
             id: config.id,
             display_name: config.name,

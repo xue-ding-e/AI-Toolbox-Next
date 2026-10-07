@@ -17,6 +17,23 @@ import type { ProviderBatchSelection } from './providerList/useProviderBatchSele
 
 const { Text } = Typography;
 
+/**
+ * The hint block's visual contract: small, secondary-coloured text behind a
+ * thin left rule.
+ *
+ * This lives here rather than in each caller because every caller used to
+ * hand-copy the same style object — and the one that forgot silently rendered
+ * its hint as full-size body text. The caller still owns the *wording*;
+ * only the styling is the component's.
+ */
+const HINT_BLOCK_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--color-text-secondary)',
+  borderLeft: '2px solid var(--color-border)',
+  paddingLeft: 8,
+  marginBottom: 12,
+};
+
 export interface ProviderListSectionProps {
   /** Sidebar section anchor id, e.g. `codex-providers`. */
   sectionId: string;
@@ -56,8 +73,23 @@ export interface ProviderListSectionProps {
    */
   emptyTextHint?: React.ReactNode;
 
-  /** Hint block under the toolbar. Callers pass their own wording. */
+  /**
+   * Hint block under the toolbar. Callers pass their own **wording only** —
+   * the block's styling (small secondary text behind a left rule) is applied
+   * by this component, so pass bare `<div>`s rather than a styled wrapper.
+   */
   hint?: React.ReactNode;
+
+  /**
+   * Rendered in place of nothing when the list is empty or a search matches
+   * nothing.
+   *
+   * The empty and search-empty branches replace `children` wholesale, which is
+   * right for provider cards and wrong for anything that is merely *listed*
+   * alongside them: a section the user can only reach by having at least one
+   * provider, or by clearing their search, has silently gone missing.
+   */
+  alwaysVisible?: React.ReactNode;
   /** Rendered above the list (below the hint), e.g. the provider cards. */
   children: React.ReactNode;
   /** Import buttons rendered below the list (CC Switch / All API Hub / favorites). */
@@ -94,6 +126,7 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
   headerExtra,
   emptyTextHint,
   hint,
+  alwaysVisible,
   children,
   footer,
 }) => {
@@ -197,7 +230,8 @@ const ProviderListSection: React.FC<ProviderListSectionProps> = ({
             ),
             children: (
               <Spin spinning={loading}>
-                {hint}
+                {hint && <div style={HINT_BLOCK_STYLE}>{hint}</div>}
+                {(providerCount === 0 || visibleCount === 0) && alwaysVisible}
                 {providerCount === 0 ? (
                   <Empty
                     description={

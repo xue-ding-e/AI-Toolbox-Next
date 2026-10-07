@@ -834,7 +834,7 @@ async fn get_local_prompt_config(
     };
     let now = Local::now().to_rfc3339();
     Ok(Some(AntigravityPromptConfig {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: "default".to_string(),
         content: prompt_content,
         is_applied: true,

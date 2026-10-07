@@ -906,8 +906,8 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<OmpPromptC
         return Ok(None);
     };
     Ok(Some(OmpPromptConfig {
-        id: "__local__".to_string(),
-        name: "Local AGENTS.md".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
+        name: crate::coding::local_bridge::LOCAL_CONFIG_NAME.to_string(),
         content,
         is_applied: false,
         sort_index: Some(-1),
@@ -1035,7 +1035,7 @@ pub async fn apply_omp_prompt_config_internal<R: Runtime>(
     from_tray: bool,
 ) -> Result<(), String> {
     let db = state.db();
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let local_prompt = get_local_prompt_config(&db)
             .await?
             .ok_or_else(|| "Local OMP prompt not found".to_string())?;
@@ -1060,7 +1060,7 @@ pub async fn apply_omp_prompt_config_internal_without_events<R: Runtime>(
     app: &tauri::AppHandle<R>,
     config_id: &str,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let db = state.db();
         let local_prompt = get_local_prompt_config(&db)
             .await?

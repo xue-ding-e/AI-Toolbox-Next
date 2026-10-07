@@ -6,9 +6,10 @@
 export type ApiType = 'native' | 'openai_compat';
 
 /** Config value syntax the backend resolves for this request.
- * Pi and OMP resolve `apiKey` / header values in their own runtime, so the
- * modal must not treat `apiKey` as a URL credential or as a plain literal. */
-export type ConfigValueMode = 'pi' | 'omp';
+ * Pi, OMP and OmO Native resolve `apiKey` / header values in their own runtime,
+ * so the modal must not treat `apiKey` as a URL credential or as a plain
+ * literal. `omo` uses Pi's syntax but OmO's runtime location. */
+export type ConfigValueMode = 'pi' | 'omp' | 'omo';
 
 /** Fetched model info from API */
 export interface FetchedModel {

@@ -4,6 +4,7 @@ pub mod auth_refresh;
 pub mod cc_switch;
 pub mod claude_code;
 pub mod claude_desktop;
+pub mod cli_extensions;
 pub mod cli_resolver;
 pub mod codex;
 pub mod config_cleanup;
@@ -16,6 +17,9 @@ pub mod grok;
 pub mod hermes;
 pub mod image;
 pub mod kimi;
+// Shared identity of the "local file bridge" record every CLI shows when no
+// preset is applied (`__local__` / `default`).
+pub mod local_bridge;
 pub mod magic_context;
 pub mod mcp;
 pub mod oh_my_openagent;

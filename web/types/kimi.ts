@@ -1,7 +1,15 @@
+// 相对路径（不用 `@/` 别名）：本模块被 node:test 单测直接 import，而测试用的
+// loader 只解析相对 specifier。
+import { LOCAL_CONFIG_ID } from '../features/coding/shared/localConfig';
+
 export type KimiProviderCategory = 'official' | 'custom' | string;
 
-/** Temporary provider projected from the on-disk config when the DB has none. */
-export const KIMI_LOCAL_PROVIDER_ID = '__local__';
+/**
+ * Temporary provider projected from the on-disk config when the DB has none.
+ *
+ * 与其余 CLI 共用同一个保留 id（见 `shared/localConfig.ts`），不再各写各的字面量。
+ */
+export const KIMI_LOCAL_PROVIDER_ID = LOCAL_CONFIG_ID;
 
 export interface KimiProviderFormData {
   name: string;

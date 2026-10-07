@@ -144,7 +144,7 @@ pub async fn get_antigravity_prompt_tray_data<R: Runtime>(
     let configs = super::commands::list_antigravity_prompt_configs(app.state()).await?;
     let items: Vec<TrayPromptItem> = configs
         .into_iter()
-        .filter(|config| config.id != "__local__")
+        .filter(|config| config.id != crate::coding::local_bridge::LOCAL_CONFIG_ID)
         .map(|config| TrayPromptItem {
             id: config.id,
             display_name: config.name,

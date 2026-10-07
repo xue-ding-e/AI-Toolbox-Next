@@ -78,7 +78,7 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
     let gateway_running = gateway_running(app);
     let mut items: Vec<TrayProviderItem> = providers
         .into_iter()
-        .filter(|provider| provider.id != "__local__")
+        .filter(|provider| provider.id != crate::coding::local_bridge::LOCAL_CONFIG_ID)
         .map(|provider| {
             let provider_needs_proxy = provider_protocol::provider_needs_gateway_proxy(
                 GatewayCliKey::Claude,
@@ -173,7 +173,7 @@ pub async fn get_claude_prompt_tray_data<R: Runtime>(
 
     let items: Vec<TrayPromptItem> = configs
         .into_iter()
-        .filter(|config| config.id != "__local__")
+        .filter(|config| config.id != crate::coding::local_bridge::LOCAL_CONFIG_ID)
         .map(|config| TrayPromptItem {
             id: config.id,
             display_name: config.name,

@@ -1,5 +1,5 @@
 pub const GROK_ENV_KEY: &str = "GROK_HOME";
-pub const GROK_LOCAL_PROVIDER_ID: &str = "__local__";
+pub const GROK_LOCAL_PROVIDER_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
 pub const GROK_CONFIG_FILE: &str = "config.toml";
 pub const GROK_AUTH_FILE: &str = "auth.json";
 pub const GROK_PROMPT_FILE: &str = "AGENTS.md";

@@ -40,8 +40,8 @@ const ANTIGRAVITY_OAUTH_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v
 const ANTIGRAVITY_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const ANTIGRAVITY_USER_INFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinfo?alt=json";
 const ANTIGRAVITY_CODE_ASSIST_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal";
-const LOCAL_PROVIDER_ID: &str = "__local__";
-const LOCAL_OFFICIAL_ACCOUNT_ID: &str = "__local__";
+const LOCAL_PROVIDER_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
+const LOCAL_OFFICIAL_ACCOUNT_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
 const AUTH_REFRESH_LEAD_SECONDS: i64 = 5 * 60;
 static ACCOUNT_OPERATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static OAUTH_LOGIN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1567,7 +1567,14 @@ mod tests {
         credentials
             .fail_read
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        db.with_conn(|conn| conn.execute_batch("CREATE TRIGGER reject_default_snapshot BEFORE INSERT ON antigravity_official_account WHEN NEW.id = '__local__' BEGIN SELECT RAISE(ABORT, 'snapshot save failure'); END;").map_err(|e| e.to_string())).unwrap();
+        // 触发器里比对的就是桥接态那个 id：用常量插值，改名时这里不会脱节。
+        let trigger_sql = format!(
+            "CREATE TRIGGER reject_default_snapshot BEFORE INSERT ON antigravity_official_account \
+             WHEN NEW.id = '{LOCAL_OFFICIAL_ACCOUNT_ID}' \
+             BEGIN SELECT RAISE(ABORT, 'snapshot save failure'); END;"
+        );
+        db.with_conn(|conn| conn.execute_batch(&trigger_sql).map_err(|e| e.to_string()))
+            .unwrap();
         assert!(
             apply_official_account_with_store(&db, "official", "B", &credentials)
                 .await

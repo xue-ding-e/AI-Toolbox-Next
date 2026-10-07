@@ -500,8 +500,8 @@ async fn load_local_agents_config(db: &SqliteDbState) -> Result<OmpAgentsConfig,
 
     let now = Local::now().to_rfc3339();
     Ok(OmpAgentsConfig {
-        id: "__local__".to_string(),
-        name: "Local agents/*.md".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
+        name: crate::coding::local_bridge::LOCAL_CONFIG_NAME.to_string(),
         is_applied: true,
         is_disabled: false,
         model_roles: if model_roles_map.is_empty() {
@@ -778,7 +778,7 @@ pub async fn clear_omp_agents_applied_config(
     app: tauri::AppHandle,
     config_id: String,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         return Err(
             "Local config cannot be cleared; save it as a managed config first".to_string(),
         );
@@ -862,7 +862,7 @@ pub async fn apply_omp_agents_config_internal<R: tauri::Runtime>(
     config_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let root = omp_root_dir_async(db).await?;
         remove_managed_agent_files(&root)?;
         apply_model_roles_to_settings(db, None).await?;

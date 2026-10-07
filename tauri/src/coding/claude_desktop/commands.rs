@@ -762,7 +762,7 @@ pub async fn import_claude_desktop_providers_from_claude(
 
     let mut imported = 0usize;
     for claude in claude_providers {
-        if claude.id == "__local__" {
+        if claude.id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
             continue;
         }
         let source_id = format!("claude:{}", claude.id);

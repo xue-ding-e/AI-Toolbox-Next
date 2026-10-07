@@ -1,10 +1,11 @@
 import React from 'react';
-import { Button, Space, Typography, Popconfirm, Checkbox } from 'antd';
+import { Button, Space, Typography, Popconfirm, Checkbox, Switch, Tooltip } from 'antd';
 import { EditOutlined, DeleteOutlined, HolderOutlined, CopyOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
+import { formatModelLimit } from '@/utils/modelLimits';
 import styles from './styles.module.less';
 
 const { Text } = Typography;
@@ -35,6 +36,15 @@ interface ModelItemProps {
    * through. Borders stay. Used by Grok multi-model lists.
    */
   transparentBackground?: boolean;
+
+  /**
+   * Whether this model is switched off in the CLI.
+   *
+   * Only meaningful together with `onToggleDisabled`: a model list that cannot
+   * change the flag should not render a switch it cannot honour.
+   */
+  isDisabled?: boolean;
+  onToggleDisabled?: () => void;
 }
 
 /**
@@ -53,6 +63,8 @@ const ModelItem: React.FC<ModelItemProps> = ({
   onSelectChange,
   extraActions,
   transparentBackground = false,
+  isDisabled = false,
+  onToggleDisabled,
 }) => {
   const { t } = useTranslation();
 
@@ -81,7 +93,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
     gap: 8,
   };
 
-  const hasLimits = model.contextLimit !== undefined || model.outputLimit !== undefined;
+  const contextLimit = formatModelLimit(model.contextLimit);
   const showPrimaryAction = !selectionMode && onSetPrimary;
 
   return (
@@ -112,28 +124,21 @@ const ModelItem: React.FC<ModelItemProps> = ({
         />
       )}
 
-      <div style={{ flex: 1 }}>
-        <div>
-          <Text strong style={{ fontSize: 13 }}>
-            {model.name}
-          </Text>
+      {/* One line: name, id, context limit, default marker. The limits used to
+          sit on a second line labelled in full; folding the context window into
+          the parentheses keeps the row scannable and drops a line that repeated
+          the same information for every model in the list. */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Text strong style={{ fontSize: 13 }}>
+          {model.name}
+        </Text>
+        <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+          {contextLimit ? `(${model.id} | ${contextLimit})` : `(${model.id})`}
+        </Text>
+        {model.isPrimary && (
           <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-            ({model.id})
+            · {t('common.model.currentPrimary')}
           </Text>
-          {model.isPrimary && (
-            <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-              · {t('common.model.currentPrimary')}
-            </Text>
-          )}
-        </div>
-        {hasLimits && (
-          <div style={{ marginTop: 2 }}>
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {model.contextLimit !== undefined && `${t('common.model.contextLimit')}: ${model.contextLimit.toLocaleString()}`}
-              {model.contextLimit !== undefined && model.outputLimit !== undefined && ' | '}
-              {model.outputLimit !== undefined && `${t('common.model.outputLimit')}: ${model.outputLimit.toLocaleString()}`}
-            </Text>
-          </div>
         )}
       </div>
 
@@ -173,6 +178,25 @@ const ModelItem: React.FC<ModelItemProps> = ({
           >
             <Button size="small" type="text" danger icon={<DeleteOutlined />} />
           </Popconfirm>
+        )}
+        {!selectionMode && onToggleDisabled && (
+          // Always visible, unlike the hover-revealed actions above: a switch
+          // reports state, and a state you can only see by hovering is one the
+          // user cannot scan the list for.
+          <Tooltip
+            title={
+              isDisabled
+                ? t('common.model.disabled')
+                : t('common.model.enabled')
+            }
+          >
+            <Switch
+              size="small"
+              checked={!isDisabled}
+              onChange={() => onToggleDisabled()}
+              aria-label={t('common.model.toggleEnabled', { name: model.name })}
+            />
+          </Tooltip>
         )}
       </Space>
     </div>

@@ -92,7 +92,7 @@ async fn get_local_prompt_config() -> Result<Option<ClaudeDesktopPromptConfig>, 
 
     let now = Local::now().to_rfc3339();
     Ok(Some(ClaudeDesktopPromptConfig {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: "default".to_string(),
         content: prompt_content,
         is_applied: true,
@@ -255,7 +255,7 @@ async fn apply_prompt_config_internal_with_events<R: tauri::Runtime>(
     from_tray: bool,
     emit_events: bool,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let local_prompt = get_local_prompt_config()
             .await?
             .ok_or_else(|| "Local default prompt not found".to_string())?;

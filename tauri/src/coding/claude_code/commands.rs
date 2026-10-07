@@ -264,7 +264,7 @@ async fn load_temp_provider_from_file_with_db(
 
     let now = Local::now().to_rfc3339();
     Ok(ClaudeCodeProvider {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: "default".to_string(),
         category: inferred_category,
         settings_config: serde_json::to_string(&provider_settings)
@@ -461,7 +461,7 @@ async fn get_local_prompt_config(
 
     let now = Local::now().to_rfc3339();
     Ok(Some(ClaudePromptConfig {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: "default".to_string(),
         content: prompt_content,
         is_applied: true,
@@ -1432,7 +1432,7 @@ async fn apply_prompt_config_internal_with_events<R: tauri::Runtime>(
     from_tray: bool,
     emit_events: bool,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let db = state.db();
         let local_prompt = get_local_prompt_config(Some(&db))
             .await?

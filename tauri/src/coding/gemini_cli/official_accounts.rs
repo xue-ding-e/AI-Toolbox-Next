@@ -47,8 +47,8 @@ const GEMINI_USER_INFO_URL: &str = "https://www.googleapis.com/oauth2/v1/userinf
 const GEMINI_CODE_ASSIST_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const GEMINI_OAUTH_DEFAULT_PORT: u16 = 8085;
 const GEMINI_OAUTH_CALLBACK_PATH: &str = "/oauth2callback";
-const LOCAL_PROVIDER_ID: &str = "__local__";
-const LOCAL_OFFICIAL_ACCOUNT_ID: &str = "__local__";
+const LOCAL_PROVIDER_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
+const LOCAL_OFFICIAL_ACCOUNT_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
 const AUTH_REFRESH_LEAD_SECONDS: i64 = 5 * 60;
 
 #[derive(Debug, Clone, Deserialize)]

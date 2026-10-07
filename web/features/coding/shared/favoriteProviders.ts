@@ -4,7 +4,7 @@ import type { ClaudeDesktopMeta } from '@/types/claudedesktop';
 import type { OpenCodeProvider } from '@/types/opencode';
 import { isJsonObject } from '../../../utils/json.ts';
 
-export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp' | 'dsh' | 'hermes' | 'claudedesktop' | 'zcode';
+export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'grok' | 'openclaw' | 'pi' | 'omp' | 'dsh' | 'hermes' | 'claudedesktop' | 'zcode' | 'omo_native';
 
 export interface ClaudeFavoriteProviderPayload {
   name: string;
@@ -32,6 +32,16 @@ export interface GrokFavoriteProviderPayload extends CodexFavoriteProviderPayloa
  * `createZcodeProvider` and the catalog comes back intact.
  */
 export interface ZcodeFavoriteProviderPayload extends CodexFavoriteProviderPayload {}
+
+/**
+ * OmO Native 的 provider 存在引擎的 `models.json` 里（provider 级 `name` /
+ * `baseUrl` / `api` / `headers` / `models[]`），密钥在 `auth.json`。payload 保存
+ * `models.json` 条目原文——它没有公开 schema，任何按字段重建都会丢掉引擎写的键。
+ */
+export interface OmoNativeFavoriteProviderPayload {
+  name: string;
+  config: Record<string, unknown>;
+}
 
 export interface OpenClawFavoriteProviderPayload {
   providerId: string;
@@ -96,6 +106,7 @@ const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   hermes: 'hermes',
   claudedesktop: 'claudedesktop',
   zcode: 'zcode',
+  omo_native: 'omo_native',
 };
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
 const OPENCODE_STORAGE_PREFIX = `${STORAGE_KEY_PREFIX.opencode}${SOURCE_PREFIX_SEPARATOR}`;

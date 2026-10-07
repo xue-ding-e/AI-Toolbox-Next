@@ -1294,7 +1294,7 @@ fn parse_local_grok_provider_snapshot(
     }
 
     Ok(LocalGrokProviderSnapshot {
-        name: "Local Grok".to_string(),
+        name: crate::coding::local_bridge::LOCAL_CONFIG_NAME.to_string(),
         category: category.to_string(),
         settings_config,
         common_config: common_document.to_string(),

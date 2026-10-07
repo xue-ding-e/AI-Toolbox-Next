@@ -1155,8 +1155,8 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<DshPromptC
         return Ok(None);
     };
     Ok(Some(DshPromptConfig {
-        id: "__local__".to_string(),
-        name: "Local AGENTS.md".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
+        name: crate::coding::local_bridge::LOCAL_CONFIG_NAME.to_string(),
         content,
         is_applied: false,
         sort_index: Some(-1),
@@ -1304,7 +1304,7 @@ async fn apply_dsh_prompt_config_internal_with_events<R: Runtime>(
     emit_events: bool,
 ) -> Result<(), String> {
     let db = state.db();
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let local_prompt = get_local_prompt_config(&db)
             .await?
             .ok_or_else(|| "Local dsh prompt not found".to_string())?;
