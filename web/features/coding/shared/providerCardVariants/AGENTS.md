@@ -36,6 +36,9 @@
 - **标签与它的值必须在同一个 `metaEntries` 项里。** 拆成两个项（`{kind:'text', value:'Haiku:'}` + `{kind:'code', value:'…'}`）数据上等价，渲染上不等价：行的 `gap: 16px` 会插到标签和值之间，而 `alignItems` 让两者的盒子按顶边对齐——`<code>` 的 padding 一撑，标签就明显偏高。这是 Claude Code 卡片上真实出现过的错位。用 `entry.label`，组件把它渲染成同一个 flex 项。
 - **`transparentRows` 自带透明 Collapse**（`ModelListSection.module.less`）。该规则曾以 `.codex-model-list-collapse` / `.grok-model-list-collapse` 的形式在 CLI 侧各存一份，迁移时漏 import 就会在**有底色的卡片**上露出白色标题条——没有底色时完全看不出来，所以能潜伏很久。现在由共享组件统一施加，CLI 侧不要再复制。
 - **改通用行为（间距、按钮、拖拽、选中态）改在变体组件里。** 只在某个 CLI 的卡片里改，样式就会重新分叉——这正是本模块要消除的问题（见根 `AGENTS.md` Hard Rule 14）。
+- **有状态的回调必须**透传新值**，不要让调用方自己算。** `onToggleDisabled: (enabled: boolean) => void` 与 antd `Switch.onChange` 同契约；组件里写 `onChange={onToggleDisabled}`，**不要**写成 `onChange={() => onToggleDisabled()}`。后者迫使映射层从当前状态反推新值，推反了就得到一个「渲染正常、点了没反应」的开关——不报错、类型也通过。2026-10-07 在 Claude Code / Codex 卡片上真实发生过。
+- **props 的分组按语义层级，不按「当初谁在用」。** 卡片级的东西（拖拽、选中、禁用、高亮）进 `providerState`；模型列表级的（行、工具栏、批量删除）进 `modelSection`。判据是「**没有模型列表的样式还需不需要它**」——需要就放卡片级。`draggable` / `sortableId` 曾误放在 `modelSection` 下，于是 Claude 式卡片（无模型区）的拖拽把手静默消失。
+- **同一个 interface 里的字段，不代表所有样式都会读。** `ProviderCardVariantProps` 是三个样式共用的扁平结构，加字段时要在**每个**样式的渲染点指认一次（同 13.1 模式二 / #70）。
 
 ## 跨模块依赖
 
@@ -61,17 +64,25 @@
 | 插槽 | 位置 | 用途 | 现有消费方 |
 |---|---|---|---|
 | `providerState.accent` | 卡片外框（`CardShell`） | `applied`（主色边框 + 选中底色）/ `gatewayPrimary`（成功色 + 渐变）；批量选中优先于两者 | claudecode、codex |
+| `providerState.draggable` / `sortableId` | 卡片级拖拽把手（`CardShell`） | **卡片级**顺序；不带模型区的样式也要能拖，所以不放 `modelSection` | claudecode、codex、zcode、omo_native |
 | `nameTags` | 名称右侧 | 已应用 / 官方 / 代理 / 网关优先级徽章 | claudecode、codex、zcode |
 | `metaEntries` | 第二行 | 有序的 `text` / `code` / `tag` 项；**标签用 `entry.label`，不要拆成前一个 `text` 项** | claudecode（角色绑定）、codex（端点/模型/key/备注）、zcode |
 | `inlineActions` | 第二行末尾 | 行内动作（连通性测试、CLI 启动） | claudecode、codex（`InlineConnectivityButton`） |
 | `footer` | 第二行下方、模型区上方 | 自由区块（官方账号折叠区） | codex |
 | `actions.gatewayActions` | 头部主操作**之前** | 网关接管/恢复直连/切换主渠道 | claudecode、codex |
 | `actions.primaryAction` | 头部主操作 | 文字链「应用」 | claudecode、codex |
-| `actions.extraActions` | 头部图标按钮（仅 OpenCode 式） | 批量删除、连通性 | zcode、omo_native |
+| `actions.extraActions` | 头部图标按钮，在「更多」**之前** | 工具专属头部动作 | zcode、omo_native（OpenCode 式）；Claude/Codex 式亦可 |
+| `actions.enabledStateLabel` | 「更多」菜单里启用开关的副标题 | `配置已启用` / `配置已禁用`（各 CLI 措辞不同，不共用 `common.provider.*`） | claudecode、codex |
 | `modelSection.aboveList` / `renderModelExtraActions` | 模型区内 | Codex 的自动审批行与行级动作 | codex |
-| `modelSection.className` / `bodyStyle` | 模型 Collapse | 透明背景与缩进适配 | codex |
+| `modelSection.className` / `bodyStyle` | 模型 Collapse | 缩进适配（透明背景由 `transparentRows` 负责） | codex |
 
-> **每个可选 prop 都必须在某个样式里有渲染点**。声明了却没渲染 = 调用方传了等于没传，且类型检查完全通过（历史坑 #70、#78）。2026-10-07 删掉了三个零消费方 prop：`metaEntries` 的 `kind: 'id'` / `'sdk'` 与 `ProviderCardModels.modelSourceTag`。
+## 「更多」菜单是契约，不是装饰
+
+Claude / Codex 式的菜单**固定为**：启用（含副标题）→ 编辑 → 复制 → 分享 → 分隔线 → 删除，每项带图标，`trigger={['click']}`。
+
+这些细节（图标、分隔线、副标题文案、点击而非 hover）**迁移前就存在**，用户看得见。迁移时把它们简化掉——比如只留 `{ key, label }` 而丢掉 `icon` / `divider`，或把「编辑」提到头部——**不会有任何报错**，只是菜单长得像另一个产品。改这个菜单前先 `git show <迁移前的 commit>:<原文件>` 对照一遍。
+
+> **每个可选 prop 都必须在某个样式里有渲染点**。声明了却没渲染 = 调用方传了等于没传，且类型检查完全通过（历史坑 #70、#97）。2026-10-07 删掉了三个零消费方 prop：`metaEntries` 的 `kind: 'id'` / `'sdk'` 与 `ProviderCardModels.modelSourceTag`。
 
 ## 最小验证
 

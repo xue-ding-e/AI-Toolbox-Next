@@ -864,11 +864,15 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       baseUrl,
     },
     providerState: {
-      isApplied: showRuntimeApplied,
       isDisabled: provider.isDisabled,
-      onToggleDisabled: isLocalProvider
-        ? undefined
-        : () => handleToggleDisabled(!provider.isDisabled),
+      // Passed through unchanged: the style card hands it the switch's **new**
+      // enabled state, which is exactly what it takes.
+      onToggleDisabled: isLocalProvider ? undefined : handleToggleDisabled,
+      // Card-level drag handle. The bespoke card registered `useSortable` under
+      // `provider.id` and showed the handle whenever batch selection was off; the
+      // page disables dragging by emptying the DndContext sensors.
+      draggable: !selectable,
+      sortableId: provider.id,
       connectivityStatus,
       selectable,
       selected,
@@ -884,6 +888,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       onShare: () => onShare(provider),
       // `__local__` is the local-file bridge: it has no delete path.
       onDelete: isLocalProvider ? undefined : () => onDelete(provider),
+      enabledStateLabel: provider.isDisabled
+        ? t('codex.configDisabled')
+        : t('codex.configEnabled'),
       gatewayActions,
       primaryAction: showDirectApplyAction
         ? {

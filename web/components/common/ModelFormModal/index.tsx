@@ -857,7 +857,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           {t('common.save')}
         </Button>,
       ]}
-      width={width ?? (showOptions ? 700 : 500)}
+      // 640 matches the Codex catalog model modal, which was the reference the
+      // other CLIs' model forms were compared against. Callers can still pass
+      // `width` to override.
+      width={width ?? 640}
     >
       <Form
         form={form}

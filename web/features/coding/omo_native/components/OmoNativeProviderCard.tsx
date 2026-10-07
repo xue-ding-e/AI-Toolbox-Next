@@ -114,6 +114,9 @@ const OmoNativeProviderCard: React.FC<OmoNativeProviderCardProps> = ({
       baseUrl,
     },
     providerState: {
+      // 卡片级拖拽把手：顺序存在 `models.json` 的键序里（见 reorder 命令）。
+      draggable: !selectable && !dragDisabled,
+      sortableId: provider.key,
       connectivityStatus,
       selectable,
       selected,
@@ -129,9 +132,6 @@ const OmoNativeProviderCard: React.FC<OmoNativeProviderCardProps> = ({
     },
     modelSection: {
       models: modelRows,
-      // 卡片级拖拽把手：顺序存在 `models.json` 的键序里（见 reorder 命令）。
-      draggable: !selectable && !dragDisabled,
-      sortableId: provider.key,
       modelsDraggable: Boolean(onReorderModels),
       onReorderModels,
       onAddModel,

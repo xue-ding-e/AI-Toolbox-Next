@@ -1412,7 +1412,7 @@ restore.rs::restore_from_archive                                 ← 恢复：�
   "
   ```
   > 删孤儿 key 时**只删真正无引用的**：`grep -rn "t('<tool>.<key>'" web` 输出为空才删。相邻的 key 可能仍被别的入口用（如 `claudecode.rootPathSource.customize` 可删，`claudecode.rootPathSource.modal.*` 必须留）。
-- [ ] **共享组件声明的可选 prop 都有渲染点**（13.1 模式二 / #70、#78）：给 `ProviderCardVariantProps` 之类加了新 prop 后，确认**每个样式组件里都指认了一次它渲染在哪**——类型里有、组件里没渲染 = 传了等于没传
+- [ ] **共享组件声明的可选 prop 都有渲染点**（13.1 模式二 / #70、#97）：给 `ProviderCardVariantProps` 之类加了新 prop 后，确认**每个样式组件里都指认了一次它渲染在哪**——类型里有、组件里没渲染 = 传了等于没传
 - [ ] `cargo check`（或 `cargo test`）通过
 - [ ] `pnpm build` 成功
 - [ ] 至少一条「表单提交 → 持久化 → 再读取」的往返用例
@@ -1533,6 +1533,29 @@ restore.rs::restore_from_archive                                 ← 恢复：�
 
 > 若本次无法运行界面，**必须在提交说明里写明「未做视觉核对」**。ZCode 这一轮 8 次返工全部出在这一步——每一处都是「编译通过但形态不对」。
 
+#### 12.3.1 迁移类改动：三遍核对（功能项 / 形态 / 行为）
+
+**迁移（bespoke → 共享组件）与「新写一个页面」是两类改动，核对方式不同。** 迁移的验收标准是**「和迁移前一模一样」**——不是「编译通过」，也不是「看起来差不多」。必须按下面三遍走，**每一遍都拿迁移前的实现当参照物**（`git show <迁移前的 commit>:<原文件>`）：
+
+**第一遍：功能项对照（有哪些可点的东西）。** 把两边所有交互元素列成清单，逐项点名，而不是凭印象扫一眼。可点的东西包括 `onClick` / `onChange`、菜单项、开关、拖拽把手、复选框——**不只按钮**。
+> ```bash
+> # 迁移前 / 后各跑一次，diff 两份输出；只该剩下写法差异（如 `() => void f()` vs `f`）
+> git show <before>:<file> | grep -oP 'onClick=\{[^}]*\}|onChange=\{[^}]*\}' | sort -u
+> grep -oP 'onClick=\{[^}]*\}|onChange=\{[^}]*\}' <file> | sort -u
+> ```
+> 同时对照 i18n key 清单（`t('<key>')` 去重排序后 diff）——key 从卡片消失**只有两种合法原因**：搬进了共享组件，或有意统一到 `common.*`。两者都要能指着新代码说出落点。
+
+**第二遍：形态对照（每个东西长什么样）。** 见 §12.3 主清单。重点是**菜单与列表的呈现细节**：图标、分隔线、副标题、`type`（`link` / `text` / 默认）、`danger`、tooltip、顺序。
+
+**第三遍：行为对照（点了会发生什么）——最容易漏，必须真的点。** 前两遍都过了，功能仍可能是死的：**回调被接上了，但传的值不对**。
+> 例（#104）：`onToggleDisabled` 从「antd 的 `onChange(checked)`」被收敛成「无参 `() => void`」，映射层只好自己重算新值，算成了**当前值**——开关看着正常、点下去没有任何反应，类型检查全通过。用户点了一下就发现了。
+>
+> **判别方法**：对每个有状态的交互（开关、复选框、拖拽、下拉选择），**点下去，然后确认界面与磁盘状态都变了**；对每个出网动作（测试连通性、获取模型、应用、网关接管），**点下去并确认成功提示或错误提示出现**。逐项在提交说明里写出「点了 X → 观察到 Y」。
+>
+> **传值的核对法**：一个回调把值**传进来**还是让调用方**自己算**？凡是「让调用方自己算」的契约（无参回调、只有 id 没有新值），都要检查调用方算的方向对不对——这类 bug 不报错，只表现为「点了没反应」。**优先让共享组件把值透传下去**（`onChange={onToggleDisabled}` 而不是 `onChange={() => onToggleDisabled()}`）。
+
+**三遍都做完才算迁移完成。** 只做第一遍 = 东西都在但长得不对（#102）；只做前两遍 = 长得对但点不动（#104）。
+
 ### 12.4 排查前先确认「跑的是当前构建」
 
 UI 表现异常时，**先排除进程 stale**，再怀疑代码：
@@ -1641,12 +1664,6 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 74 | 共享 `ModelItem` 的开关文案 key 不存在 | `common.model.disabled` / `enabled` / `toggleEnabled` 三条被新代码引用但从未创建 → 开关的 hover 提示显示字面 key。`i18n:check` 抓到了（静态 `t('...')`），`tsc` 抓不到 | 加 UI 的同时加 key；把 `pnpm i18n:check` 当作 UI 改动的**必跑项**（见 §12.1） |
 | 75 | 根 `AGENTS.md` 的 Index 缺 `omo_native` 两行 | 模块建了、模块级 `AGENTS.md` 也建了，但根 Index 里 `tauri/src/coding/omo_native/` 与 `web/features/coding/omo_native/` 两行都没有——违反了 Hard Rule 6，且没有任何机制会报错 | 新增模块时**同一任务内**补根 Index；见 13.1 模式十二 |
 | 76 | 模型弹窗传 `showOmpThinking`，把 OMP 的 `thinking` 写进 senpi 的 `models.json` | OmO Native 与 Pi 同用 **senpi** 引擎、同读 `models.json`（OMP 读 `models.yml`）。但字段开关照 OMP 抄了 `showOmpThinking` → 写出 `thinking: { efforts, defaultLevel }`。上游 `docs/models.md` 的模型字段表里**根本没有** `thinking`，只有 `thinkingLevelMap`/`defaultThinkingLevel` → 用户编辑思考级别，引擎完全不读；而真实文件里的 `thinkingLevelMap` 被静默覆盖 | 先确认**引擎同源**再决定抄谁：同引擎 → 抄同引擎的兄弟（Pi），别抄名字像的（OMP）。字段集合以该引擎的 `docs/models.md` 为准；见 13.1 模式二十三 |
-| 77 | 硬规则写了「三种样式，不再新增」，但**两种样式零消费方** | `providerCardVariants/` 落地时只有 `OpenCodeStyleCard` 有调用方；`ClaudeStyleCard` / `CodexStyleCard` 从建立起就没有消费者，而它们各自最典型的对应 CLI（Claude Code 776 行 / Codex 1134 行）仍在持 bespoke 卡片。规则本身正确，**没有任何检查能发现它被绕过**——迁移进度只存在于一句文档描述里 | 补源码扫描型守卫 `scripts/verify-provider-card-layout.mjs`（禁止映射层自己 `useSortable` / `<Card>` / `ManagementCheckbox`），未迁移的登记在 `PENDING_MIGRATION` 里**只减不增**。见 13.1 模式四十六 |
-| 78 | 共享组件的新 prop **声明了却没渲染** | `ProviderCardModels` 里的 `modelSourceTag`、`onToggleModelDisabled` 等由调用方传入，但某个样式组件里没有渲染点 → 传了等于没传，类型检查全通过 | 同 #70。类型里出现的每个可选 prop，**在组件里指认一次它的渲染位置**；加 prop 时同步补一条守卫或至少在 PR 描述里写「渲染在 X 行」 |
-| 79 | 迁移时**照搬了参照页面的旧 key，而不是共享 key** | 页面迁到 `CodingPageHeader` 后仍传 `<tool>.viewDocs` 这类 per-CLI key——它们在中文下与 `common.*` 逐字相同，所以看不出问题；但英文措辞会两套并存（`Documentation` vs `Official Docs`），且这些 key 永远无法 prune | 迁移前把待迁的 key 与 `common.*` **逐条比对中英文**（命令见 §12.1），同义的统一取 `common.*`，把英文措辞变化写进提交说明；**不要为保住旧措辞加覆盖 prop** |
-| 80 | 迁移卡片时**漏搬了「状态高亮」** | 四张 bespoke 卡片各自抄了一份「批量选中 > 网关 P0 > 已应用」的边框/底色优先级；`CardShell` 只实现了「批量选中」那一条 → 迁完之后**已应用与 P0 的视觉标记全部消失**，卡片一律灰边框。界面不报错，只是用户看不出哪个渠道生效了 | 迁移前把原卡片的 `style` 逐条对照目标组件的渲染点（不只是 props 对照）；本轮补 `providerState.accent` 到 `CardShell`。见 13.1 模式四十八 |
-| 81 | 标签与它的值被拆成**两个** `metaEntries` 项 | Claude Code 的绑定行把 `Haiku:` 与模型 id 分成两个条目 → 行的 `gap: 16px` 插到标签和值之间（读起来像两列），且 `alignItems` 按顶边对齐，`<code>` 的 padding 一撑标签就偏高。**用户一眼看出「没有居中对齐」** | 标签随值走：`{ kind: 'code', label: 'Haiku:', value: '…' }`，组件渲染成同一个 flex 项。见 13.1 模式四十九 |
-| 82 | 迁移时漏 import 了 CLI 自己的 `.less`，白色标题条露出来 | `CodexProviderCard.less` 的 `.codex-model-list-collapse` 负责把模型折叠区的六层 antd Collapse 背景刷成透明；改写卡片时没带这行 import → **已应用卡片（有底色）上的「模型列表 (N)」标题变成白条**。只在卡片有 accent 时才可见，无底色时完全看不出 | 透明规则改由共享 `ModelListSection` 的 `transparentRows` 统一施加（`ModelListSection.module.less`），CLI 侧不再各存一份。见 13.1 模式五十 |
 | 77 | `values.inputTypes` 是 JSON **字符串**，却直接赋给 `nextModel.input` | `ModelFormModal:761` 产出的是 `JSON.stringify(inputModalities)`；上游要的是 `input: ["text","image"]` **数组**。直接赋值写出 `"input": "[\"text\"]"`——引擎读不到，且把原有数组覆盖成字符串 | 弹窗交回的 JSON 字符串**一律 parse** 再落盘（`parseInputTypes` / `parseJsonRecord`）；反向用 `stringifyInputTypes`。回归测试断言 `Array.isArray(model.input)` |
 | 78 | 「获取模型 → 应用」不做预设匹配 | SOP §4.2.5 明令，Pi/OMP/Codex 全部接了 `findPresetModelById`；Native 漏了 → 用户点应用只得到裸 id，参数全要手填（= ZCode 教训 #31 的复现） | 每个 CLI 的 fetch 回调都要接预设匹配；同引擎的兄弟是最好的抄写对象（Native 与 Pi 的 builder 现在同构） |
 | 79 | 页面标题 `OmO Native（Agents 与 Categories）` 指向已删区块 | 标题里点名的能力在页面收敛后已经不存在——用户按标题找区块，找不到 | 撤区块时**同一任务内**检查标题 / hint / 空态文案里有没有点名它；见 13.1 模式二十一 |
@@ -1666,6 +1683,16 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 | 93 | **写入端与读取端用了不同的字段，界面永远显示空** | OmO 的编辑弹窗把 key 写进 `auth.json`，`has_key` 也只查 `auth.json`；但用户的 `shangtang` 是更早（或引擎侧）写在 `models.json` 的 `apiKey` 里的。弹窗打开时 `apiKey: ''` 硬编码清空、placeholder 也是空的 → 用户看到「没保存成功」。**数据其实好着**，`omo auth print-api-key` 正常返回 | ① 「保存成功了吗」这类问题**先查磁盘事实**（文件内容 + 引擎自己的读取命令），不要从界面推断——界面为空不等于没存。② **写和读必须是同一处**：有多个合法存储位置时（OmO 是 `auth.json` 优先于 `models.json` 的 `apiKey`），要么统一到一处并迁移旧值，要么读取端两处都认。③ **密钥字段要回填明文**（见教训 #94）。见 13.1 模式三十 |
 | 94 | **自作聪明地把密钥藏起来，制造了「看不见」的 bug** | 修 #93 时把弹窗改成「不回填明文 + `••••••••` placeholder + 『已保存密钥』文案」，自以为符合安全最佳实践。用户当场否掉：「这个应用就是管理配置的，前端都可以展示所有的秘钥，不要再出现这种看不到回退的情况了」。同仓 Claude Code / Codex / Kimi 的弹窗**一直**都是直接回填明文的 | **本项目定位是「配置管理器」，密钥是它管理的对象之一，明文展示是产品要求不是缺陷**。给密钥字段做「防肩窥」处理是**反模式**：它让「存了 key」和「没存 key」在界面上无法区分，直接制造误报。要展示明文就展示——包括列表接口直接返回 `apiKey`、预览弹窗列出 `auth.json`。见记忆库 `projects/ai-toolbox/ai-toolbox-shows-plaintext-credentials.md` 与 13.1 模式三十一 |
 | 95 | **「获取模型」没传密钥 → 401**，且**用错了 config value 模式** | 卡片把 `baseUrl` / `headers` / `configValueMode` 传给了 `FetchModelsModal`，唯独没传 `apiKey` → 请求不带 `Authorization`。更要命的是 `configValueMode` 传的是 `"omp"`：OmO 与 OMP 都是 `oh-my-*`，但 **OmO 的 `apiKey` 支持 `$ENV_VAR` 插值、OMP 不支持**（实测确认），传错模式会把 `$MY_KEY` 当字面量发出去 | ① 「拉取模型 / 连通性测试」这类出网动作，**逐个核对四个字段**：`baseUrl` / `apiKey` / `headers` / `configValueMode`——漏传 `apiKey` 是最常见的一种。② **同源工具 ≠ 同语法**：`oh-my-*` 家族里 OmO 与 OMP 的凭据语法不同，选 config value 模式要按**引擎**而不是按名字像。新增模式时把「为什么不是隔壁那个」写进注释。见 13.1 模式三十二 |
+| 96 | 硬规则写了「三种样式，不再新增」，但**两种样式零消费方** | `providerCardVariants/` 落地时只有 `OpenCodeStyleCard` 有调用方；`ClaudeStyleCard` / `CodexStyleCard` 从建立起就没有消费者，而它们各自最典型的对应 CLI（Claude Code 776 行 / Codex 1134 行）仍在持 bespoke 卡片。规则本身正确，**没有任何检查能发现它被绕过**——迁移进度只存在于一句文档描述里 | 补源码扫描型守卫 `scripts/verify-provider-card-layout.mjs`（禁止映射层自己 `useSortable` / `<Card>` / `ManagementCheckbox`），未迁移的登记在 `PENDING_MIGRATION` 里**只减不增**。见 13.1 模式四十六 |
+| 97 | 共享组件的新 prop **声明了却没渲染** | `ProviderCardModels` 里的 `modelSourceTag`、`onToggleModelDisabled` 等由调用方传入，但某个样式组件里没有渲染点 → 传了等于没传，类型检查全通过 | 同 #70。类型里出现的每个可选 prop，**在组件里指认一次它的渲染位置**；加 prop 时同步补一条守卫或至少在 PR 描述里写「渲染在 X 行」 |
+| 98 | 迁移时**照搬了参照页面的旧 key，而不是共享 key** | 页面迁到 `CodingPageHeader` 后仍传 `<tool>.viewDocs` 这类 per-CLI key——它们在中文下与 `common.*` 逐字相同，所以看不出问题；但英文措辞会两套并存（`Documentation` vs `Official Docs`），且这些 key 永远无法 prune | 迁移前把待迁的 key 与 `common.*` **逐条比对中英文**（命令见 §12.1），同义的统一取 `common.*`，把英文措辞变化写进提交说明；**不要为保住旧措辞加覆盖 prop** |
+| 99 | 迁移卡片时**漏搬了「状态高亮」** | 四张 bespoke 卡片各自抄了一份「批量选中 > 网关 P0 > 已应用」的边框/底色优先级；`CardShell` 只实现了「批量选中」那一条 → 迁完之后**已应用与 P0 的视觉标记全部消失**，卡片一律灰边框。界面不报错，只是用户看不出哪个渠道生效了 | 迁移前把原卡片的 `style` 逐条对照目标组件的渲染点（不只是 props 对照）；本轮补 `providerState.accent` 到 `CardShell`。见 13.1 模式四十八 |
+| 100 | 标签与它的值被拆成**两个** `metaEntries` 项 | Claude Code 的绑定行把 `Haiku:` 与模型 id 分成两个条目 → 行的 `gap: 16px` 插到标签和值之间（读起来像两列），且 `alignItems` 按顶边对齐，`<code>` 的 padding 一撑标签就偏高。**用户一眼看出「没有居中对齐」** | 标签随值走：`{ kind: 'code', label: 'Haiku:', value: '…' }`，组件渲染成同一个 flex 项。见 13.1 模式四十九 |
+| 101 | 迁移时漏 import 了 CLI 自己的 `.less`，白色标题条露出来 | `CodexProviderCard.less` 的 `.codex-model-list-collapse` 负责把模型折叠区的六层 antd Collapse 背景刷成透明；改写卡片时没带这行 import → **已应用卡片（有底色）上的「模型列表 (N)」标题变成白条**。只在卡片有 accent 时才可见，无底色时完全看不出 | 透明规则改由共享 `ModelListSection` 的 `transparentRows` 统一施加（`ModelListSection.module.less`），CLI 侧不再各存一份。见 13.1 模式五十 |
+| 102 | 迁移时把菜单**简化成了等价的数据**，丢掉了图标 / 分隔线 / 副标题 | 原实现是 `MenuProps['items']`（每项带 `icon`，删除前有 `{type:'divider'}`，启用项有 `配置已启用` 副标题）；重写成 `{ key, label }[]` 后**类型全通过、菜单照常弹出**，只是长得像另一个产品。用户逐项对照后说「不要丢东西了」 | 菜单的呈现契约写进组件文档（`providerCardVariants/AGENTS.md`），结构由共享组件持有，调用方只给 handler 与文案。见 13.1 模式五十一 |
+| 103 | 迁移时**顺手提升了某个动作的位置** | 「编辑」原本在「更多」菜单里，迁到共享组件后被提到了头部显眼的 `primaryAction` 位——功能没丢，但用户按肌肉记忆去菜单里找，找不到，问「现在跑外面来了」 | **迁移的验收标准是「和迁移前一模一样」**，不是「更合理」。想调位置就单独提出来当一次显式改动。见 13.1 模式五十二 |
+| 104 | 回调**契约收窄**，值算反了：开关点了没反应 | `onToggleDisabled` 原本是 antd 的 `(checked) => void`；迁到共享组件时被收窄成无参 `() => void`，映射层只好用当前状态重算新值（`!provider.isDisabled`），再交给一个内部又会取反的处理器 → **写回的就是原值**。开关渲染正常、点了毫无反应，类型检查全通过。用户点了一下就发现 | 共享组件**透传**值而不是让调用方重算：`onChange={onToggleDisabled}`，类型 `(enabled: boolean) => void`。见 13.1 模式五十三、§12.3.1 第三遍 |
+| 105 | 卡片级拖拽属性挂在了**模型区**的 props 下，无模型区的样式读不到 | `draggable` / `sortableId` 定义在 `ProviderCardModels` 里（因为最早的消费方都带模型列表）。Claude 式没有模型区 → 迁移后 `useSortable` 从未被喂 id、拖拽把手整个消失。**同一个类型里的 prop，不代表所有样式都会读** | 提到 `providerState`（卡片级 chrome 的归属处），三个样式都在 `CardShell` 上渲染它。见 13.1 模式五十四 |
 
 ### 13.1 静默失效的模式（归纳）
 
@@ -2039,14 +2066,14 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > **对策**：**优先把白名单反过来**（让共享 resolver 处理未知 key，调用侧不维护副本列表，见 §7.2 的历史坑），而不是补一行 key。反过来之后，新增 CLI 不需要改这里，问题从根上消失。只有在「确实存在真例外」时才保留白名单，并且**必须配一条断言对齐的测试**（如 `runtime_location_skills_tools_are_all_covered`）。
 
 **模式四十六：硬规则只写在文档里，没有任何机械守卫，于是它被绕过且无人发现。** Hard Rule 14 写着「不得再新建 per-CLI 卡片布局」，三种样式也确实建好了——但其中两种**从建立起就是零消费方**，而它们各自最典型的对应 CLI 仍在持 776 / 1134 行的 bespoke 卡片。规则没被违反过（没人新建布局），只是**没人执行迁移**；而「迁移到哪了」只存在于一句文档描述里，写错了没有任何东西会报错。
-> 例（#77）：`ClaudeStyleCard` / `CodexStyleCard` 零消费方。
+> 例（#96）：`ClaudeStyleCard` / `CodexStyleCard` 零消费方。
 >
 > **判别方法**：一条硬规则如果**没有对应的检查脚本或测试**，就问「我怎么知道现在还有多少处没遵守？」——答案若是「读文档」或「grep 一下看看」，这条规则迟早会漂移。共享组件的「新东西已经建好」和「旧东西已经换掉」是两件事，规则通常只写了前者。
 >
 > **对策**：把规则固化成**棘轮（ratchet）**——脚本列出尚未迁移的文件，断言「不在名单里的文件不得违规」+「名单里的文件不得已经合规」。这样名单**只减不增**，且迁完忘了删条目也会报错。参考 `scripts/verify-provider-card-layout.mjs`（另见 `scripts/verify-form-modal-layout.mjs` 的同类做法）。**新建共享组件时同步建这条守卫**，不要等下次审计。
 
 **模式四十七：迁移时比对的是「长得像不像」，而不是「用的 key 是不是同一个」。** 页面从一个内联实现迁到共享组件时，最自然的做法是把原来的 `t('<tool>.xxx')` 原样抄过去——尤其当共享组件的文案 key 在中文下与 per-CLI key **逐字相同**时，界面上完全看不出区别。后果是：英文出现两套措辞（`Documentation` vs `Official Docs`），per-CLI 的那批 key 永远无法 prune，而「这个 key 到底该不该存在」这个问题再也没人回答。
-> 例（#79）：Claude Code 页迁 `CodingPageHeader` 时，`claudecode.viewDocs` / `configPath` / `customizeConfigDir` 三处中文与 `common.*` 全同、英文不同。
+> 例（#98）：Claude Code 页迁 `CodingPageHeader` 时，`claudecode.viewDocs` / `configPath` / `customizeConfigDir` 三处中文与 `common.*` 全同、英文不同。
 >
 > **判别方法**：迁移前把待迁的 key 与目标组件的 key **逐条比对中英文**，不要只比中文。
 > ```bash
@@ -2064,21 +2091,21 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > **对策**：中文相同 → 一律取共享 key，并把英文措辞变化**写进提交说明**（这是有意的统一，不是回归）；中文不同 → 说明确有差异，先判断该差异是否真实，再决定统一还是加插值 prop。**永远不要为了保住旧措辞给共享组件加覆盖 prop**——那正是 §4.1 记录的、已被删除的 5 个 prop 的老路。
 
 **模式四十八：迁移「布局」时只对照了 props，没对照原组件的 `style`，于是状态标记静默消失。** 把 bespoke 组件换成共享组件时，注意力全在「传哪些 prop」上；而原组件里**由数据推导出的内联样式**（边框色、背景、透明度、间距）不属于任何 prop，一眼看去像是「渲染细节」，很容易整块丢掉。丢掉的后果通常不是崩溃，而是**某个状态看不见了**——卡片还在、内容还对，只是分不出哪个是当前生效的。
-> 例（#80）：四张卡片各自实现的 `cardBorderColor` / `cardBackground`（批量选中 > 网关 P0 > 已应用）没有被 `CardShell` 继承。
+> 例（#99）：四张卡片各自实现的 `cardBorderColor` / `cardBackground`（批量选中 > 网关 P0 > 已应用）没有被 `CardShell` 继承。
 >
 > **判别方法**：迁移一个组件时，把原文件里的 `style={{` / `className=` 全部列出来，逐条问「这条对应目标组件的哪个渲染点？没有对应 → 我要搬到哪？」。**props 清单对照不够**——状态类样式根本不经过 props。
 >
 > **对策**：**状态标记属于外壳**。凡是「由数据推导、影响整块外观」的样式，一并搬进共享外壳（本轮是 `CardShell` 的 `accent`），映射层只负责算出这个语义值。留在映射层会导致每个 CLI 重新抄一遍优先级，正是这次重构要消除的分叉。
 
 **模式四十九：数据等价 ≠ 渲染等价——把「一对」拆成「两个」条目。** 一个列表型 prop（`metaEntries`、toolbar 项、菜单项…）里，属于同一视觉单元的片段必须留在**同一个条目**里。拆成两个条目在数据上完全说得通（一个标签、一个值），在渲染上却会被容器自己的 `gap` / `alignItems` 分开——于是出现「标签与值之间空一格」「两者基线不齐」这类**用户一眼就看出、代码却毫无异常**的问题。把标签放进条目的可选字段（`entry.label`），让「它们是一对」这件事编码在类型里。
-> 例（#81）：Claude Code 卡片第二行 `Haiku:` 与模型名被拆成两项，`gap: 16px` 插进中间。
+> 例（#100）：Claude Code 卡片第二行 `Haiku:` 与模型名被拆成两项，`gap: 16px` 插进中间。
 >
 > **判别方法**：往列表型 prop 里塞数据前，问「这两个片段**能不能分开换行**？」不能 → 它们是一个条目。
 >
 > **对策**：让条目自己承载它的标签（`{ kind, label?, value }`），而不是让调用方靠「相邻两项」隐式表达配对。相邻关系是渲染层看不见的约定。
 
 **模式五十：把 CLI 专属的样式规则留在 CLI 侧，迁移时随文件一起丢掉。** 一个组件需要的样式，如果写在**调用方**的样式表里（`.codex-model-list-collapse { … }`），那么它和调用方是**隐式耦合**的：迁移、重写、换文件名时它不会跟着走，也不会报错——只是样式失效。更糟的是这类失效**往往只在某个状态下可见**（本例：卡片有 accent 时才看得出白条），所以能潜伏很久。
-> 例（#82）：codex 与 grok 各自 `.less` 里逐字重复的 Collapse 透明规则，迁移 codex 卡片时漏 import。
+> 例（#101）：codex 与 grok 各自 `.less` 里逐字重复的 Collapse 透明规则，迁移 codex 卡片时漏 import。
 >
 > **判别方法**：迁移一个组件时，除了它的 `.tsx`，还要问「**这个组件的样式有没有一部分在别的文件里？**」——按它渲染出的 class 名（`*-collapse`、`*-section`）反查 `.less` / `.css`。
 > ```bash
@@ -2087,6 +2114,34 @@ UI 表现异常时，**先排除进程 stale**，再怀疑代码：
 > ```
 >
 > **对策**：**样式跟着组件走**。如果这条规则描述的是「这个组件在自己的容器里该怎么显示」（而不是「这个 CLI 想让它长什么样」），就把它搬进组件的 `*.module.less`，由组件的 prop 触发（如 `transparentRows`）。留在 CLI 侧只会让下一个迁移的人再丢一次。
+
+**模式五十一：菜单被「简化」成了等价的数据，丢掉了它的结构。** 把一个 `MenuProps['items']` 菜单重写成更「干净」的 `{ key, label }[]`，类型检查完全通过、菜单也照样弹出、每一项也都点得动——但**图标没了、分隔线没了、某项的副标题退回了通用文案**。菜单项在数据上「等价」，在用户眼里是另一个产品；而这些装饰性细节**没有任何测试会覆盖**。
+> 例（#102）：Claude Code / Codex 卡片迁移后，「更多」菜单丢了全部图标、删除前的分隔线，启用开关的副标题从 `配置已启用` 退化成 `已启用`。用户逐项对照后指出「不要丢东西了」。
+>
+> **判别方法**：改写一个 UI 元素前，先问「**它现在长什么样**」而不只是「它现在有哪些项」。把原实现整个读一遍（`git show <迁移前>:<文件>`），列出**每项的 key + icon + 分隔线 + 文案来源**，逐个确认新实现里有对应物。
+>
+> **对策**：把菜单的**呈现契约写进组件文档**（见 `providerCardVariants/AGENTS.md` 的「『更多』菜单是契约，不是装饰」），并让共享组件持有菜单结构、调用方只提供 handler 与文案——这样下一个迁移的人**没有机会**简化它。
+
+**模式五十二：迁移顺手「提升」了某个动作的位置，改变了它的可见性。** 共享组件有个显眼的 `primaryAction` 插槽，迁移时就把原来藏在「更多」菜单里的「编辑」提了上去——因为「编辑是常用动作」。功能没丢、点击也有效，只是**卡片上多了一个按钮、菜单里少了一项**：用户按肌肉记忆去菜单里找，找不到。
+> 例（#103）：Claude Code / Codex 卡片的「编辑」被从「更多」提到头部；用户问「编辑按钮之前是不是放在更多选项里的啊，现在跑外面来了」。
+>
+> **判别方法**：迁移一个组件时，对每个动作问一句「**它在原实现里是主操作还是次级操作？**」——共享组件提供了更显眼的插槽，不代表原动作该升级。**位置是设计决定，不是实现细节**。
+>
+> **对策**：迁移的默认姿势是**逐项原位复刻**；想调整位置就单独提出来当一次显式改动（说明理由、让用户确认），不要混在「迁移」这一次改动里。迁移的验收标准是「**和迁移前一模一样**」，不是「比迁移前更合理」。
+
+**模式五十三：把「传值回调」收窄成「无参回调」，调用方把新值算反了。** 原组件用 antd 的 `onChange={handler}`，antd 把**新值**传进来；迁移到共享组件时把契约简化成 `() => void`（「你帮我翻一下」），于是调用方必须自己从当前状态算出新值。这一步不报错、UI 也正常——只是**算出来的新值等于当前值**，开关变成一个装饰品。这类 bug 的隐蔽之处在于：**回调确实被调用了**，只是参数错了。
+> 例（#104）：`onToggleDisabled` 在 Claude Code / Codex 卡片上点了没反应（用户一点就发现）。
+>
+> **判别方法**：看到一个无参的「请执行 X」回调，就问「**它怎么知道该执行成什么样？**」——若答案是「调用方从当前状态推算」，那么推算方向就是唯一的正确性来源，而它没有任何类型保护。
+>
+> **对策**：**共享组件透传值，不要让调用方重算**。`onChange={onToggleDisabled}` + `(enabled: boolean) => void`，与 antd 的契约一致——映射层于是变成纯透传，没有可算错的地方。凡是「有状态、可双向」的交互（开关、复选框、步进器），契约里都要带**新值**，不要只带 id。
+
+**模式五十四：把 prop 放在「最早那批消费方都恰好有」的容器下，后来者读不到。** `draggable` / `sortableId` 描述的是**卡片自己**能不能拖，却定义在 `ProviderCardModels`（模型区）里——因为最初的消费方（ZCode / OmO）都带模型列表，作者顺手就放进去了。Claude 式卡片没有模型区，迁移后**整个拖拽把手消失**：prop 从没被读到，类型检查也不会提醒（调用方根本没传它）。
+> 例（#105）：Claude Code / Codex 卡片迁移后拖不动。
+>
+> **判别方法**：给共享 props 加字段时问「**它描述的是哪一层？**」——卡片级（拖拽、选中、禁用、高亮）归 `providerState`；列表级（行、工具栏、批量删除）归 `modelSection`。判断标准是「**没有模型列表的样式还需不需要它**」：需要 → 放卡片级。
+>
+> **对策**：props 的分组按**语义层级**，不按「当初谁在用」。同一个 interface 里的字段**不代表所有样式都会读**——`ProviderCardVariantProps` 是三个样式共用的扁平结构，每个样式只读自己那部分，**加字段时必须在每个样式的渲染点指认一次**（同 13.1 模式二 / #70）。
 
 **反向模式（不是坑但容易误判）：进程 stales。**
 > 排查 UI 异常前，**先确认运行中的进程是当前构建**。曾出现：前端 Vite 热更新到最新代码，而后端进程是 14 小时前启动的旧二进制，DB 迁移也没跑 → 表现为「后端命令不存在/报错」，实际是代码根本没生效。
@@ -2208,19 +2263,22 @@ const existingModels = provider
 | prop | 渲染出的东西 | 现有消费方 |
 |------|-------------|-----------|
 | `provider` | 名称 + baseUrl（名称链到端点 origin） | 全部 |
-| `providerState.isApplied` / `isDisabled` / `onToggleDisabled` | 已应用态；启用开关（`onToggleDisabled` 不传则菜单里没有开关） | claudecode、codex、zcode |
+| `providerState.isDisabled` / `onToggleDisabled` | 已禁用态；启用开关（`onToggleDisabled` 不传则菜单里没有开关）。回调收到的是**新的启用状态**（同 antd `Switch.onChange`） | claudecode、codex、zcode |
+| `providerState.draggable` / `sortableId` | 卡片级拖拽把手（**不是** `modelSection.*`） | claudecode、codex、zcode、omo_native |
+| `providerState.accent` | 卡片外框高亮：`applied` / `gatewayPrimary` | claudecode、codex |
 | `providerState.connectivityStatus` | 名称左侧状态点 | claudecode、codex、zcode |
 | `providerState.selectable` / `selected` / `onSelectChange` | 多选复选框（取代拖拽手柄） | 全部 |
 | `actions.onEdit` / `onCopy` / `onShare` / `onDelete` | 头部/菜单里的四个标准动作 | 全部 |
 | `actions.deleteDisabledReason` / `deleteConfirm` | 删除的禁用原因 / 内置二次确认 | zcode（`deleteConfirm: false`，自己确认） |
 | **`actions.primaryAction`** | 头部文字链「应用」（含 `locked` 置灰态） | claudecode、codex |
 | **`actions.gatewayActions`** | 主操作**之前**的网关按钮组（代理/恢复直连/切换主渠道） | claudecode、codex |
-| `actions.extraActions` | 头部图标按钮（仅 OpenCode 式） | zcode、omo_native |
+| `actions.extraActions` | 头部图标按钮，在「更多」**之前** | zcode、omo_native（OpenCode 式）；Claude/Codex 式亦可 |
+| `actions.enabledStateLabel` | 「更多」菜单里启用开关的副标题 | claudecode、codex |
 | `nameTags` | 名称右侧徽章（已应用/官方/代理/优先级） | claudecode、codex、zcode |
 | `metaEntries` | 第二行（`text` / `code` / `tag` / `id` / `sdk` 有序项） | claudecode、codex、zcode |
 | `inlineActions` | 第二行末尾（连通性测试、CLI 启动） | claudecode、codex |
 | `footer` | 第二行下方、模型区上方（官方账号折叠区） | codex |
-| `modelSection.*` | 见下方 `ModelListSection` 表，多出 `sortableId` / `draggable`（卡片级拖拽把手） | codex、zcode、omo_native |
+| `modelSection.*` | 见下方 `ModelListSection` 表 | codex、zcode、omo_native |
 
 > **加新 prop 的门槛**：先确认**至少两个**调用方需要它（判据与实例见 §4.2.1 的「样式能力不够时怎么办」）。**零消费方的 prop 当场删掉，不要留着「以后可能用到」**：2026-10-07 已删除 `metaEntries` 的 `kind: 'id'` / `'sdk'`（OpenCode 式自己按 `provider.id` / `sdkName` / `baseUrl` 拼第二行，另两种样式由调用方给 `metaEntries`）与 `ProviderCardModels.modelSourceTag`（只有 `components/common/ProviderCard` 渲染它，那是另一条链）。查零消费方的命令：
 > ```bash

@@ -1,6 +1,14 @@
 import React from 'react';
 import { Button, Dropdown, Space, Switch, Tag, Tooltip, Typography } from 'antd';
-import { MoreOutlined, ApiOutlined } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
+import {
+  ApiOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  MoreOutlined,
+} from '@ant-design/icons';
+import { Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
@@ -14,7 +22,7 @@ const { Text } = Typography;
  * The Codex-style provider card.
  *
  * ```
- * ⠿  Name  [default] [proxy]                [应用] [更多 ▾]
+ * ⠿  Name  [default] [proxy]                      [应用] [更多 ▾]
  *    `https://…`  [gpt-5]  API Key: sk-…  | notes   [连通性测试]
  *    > 模型列表 (3)   [批量删除] [模型测试] [获取模型] [+ 添加模型]
  * ```
@@ -51,12 +59,22 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
     selected = false,
     onSelectChange,
     dimmed = false,
+    draggable = false,
+    sortableId,
     accent,
   } = providerState ?? {};
 
   const primary = actions?.primaryAction;
 
-  const menuItems = [
+  /**
+   * The "more" menu, in the order the bespoke cards used:
+   * enable → edit → copy → share → ─── → delete.
+   *
+   * Every entry carries its icon, and delete sits behind a divider — the
+   * bespoke cards had both, and a menu that silently loses them looks like a
+   * different product while still working.
+   */
+  const menuItems: MenuProps['items'] = [
     // The enable/disable switch lives in the menu, not the header: it is a
     // rarely-used, stateful toggle, and a Switch in the header row would sit
     // beside the primary action and compete with it.
@@ -67,26 +85,49 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span>{t('common.enable', { defaultValue: '启用' })}</span>
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {isDisabled
-                    ? t('common.provider.disabled')
-                    : t('common.provider.enabled')}
-                </Text>
+                {actions?.enabledStateLabel && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {actions.enabledStateLabel}
+                  </Text>
+                )}
               </div>
-              <Switch checked={!isDisabled} onChange={() => onToggleDisabled()} size="small" />
+              <Switch checked={!isDisabled} onChange={onToggleDisabled} size="small" />
             </div>
           ),
         }]
       : []),
-    actions?.onCopy && { key: 'copy', label: t('common.copy', { defaultValue: '复制' }) },
-    actions?.onShare && { key: 'share', label: t('common.share') },
-    actions?.onDelete && { key: 'delete', label: t('common.delete', { defaultValue: '删除' }), danger: true },
-  ].filter(Boolean) as { key: string; label: React.ReactNode; danger?: boolean }[];
+    actions?.onEdit && {
+      key: 'edit',
+      label: t('common.edit', { defaultValue: '编辑' }),
+      icon: <EditOutlined />,
+    },
+    actions?.onCopy && {
+      key: 'copy',
+      label: t('common.copy', { defaultValue: '复制' }),
+      icon: <CopyOutlined />,
+    },
+    actions?.onShare && {
+      key: 'share',
+      label: t('common.share'),
+      icon: <Share2 size={14} />,
+    },
+    ...(actions?.onDelete
+      ? [
+          { type: 'divider' as const },
+          {
+            key: 'delete',
+            label: t('common.delete', { defaultValue: '删除' }),
+            icon: <DeleteOutlined />,
+            danger: true,
+          },
+        ]
+      : []),
+  ].filter(Boolean) as NonNullable<MenuProps['items']>;
 
   return (
     <CardShell
-      sortableId={modelSection?.sortableId}
-      draggable={modelSection?.draggable}
+      sortableId={sortableId}
+      draggable={draggable}
       selectable={selectable}
       selected={selected}
       onSelectChange={onSelectChange}
@@ -162,19 +203,14 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
               </span>
             </Tooltip>
           ))}
-          {actions?.onEdit && (
-            <Tooltip title={t('common.edit', { defaultValue: '编辑' })}>
-              <Button type="link" size="small" onClick={actions.onEdit}>
-                {t('common.edit', { defaultValue: '编辑' })}
-              </Button>
-            </Tooltip>
-          )}
+          {actions?.extraActions}
           {menuItems.length > 0 && (
             <Dropdown
+              trigger={['click']}
               menu={{
                 items: menuItems,
                 onClick: ({ key }) => {
-                  if (key === 'toggle') onToggleDisabled?.();
+                  if (key === 'edit') actions?.onEdit?.();
                   else if (key === 'copy') actions?.onCopy?.();
                   else if (key === 'share') actions?.onShare?.();
                   else if (key === 'delete') actions?.onDelete?.();

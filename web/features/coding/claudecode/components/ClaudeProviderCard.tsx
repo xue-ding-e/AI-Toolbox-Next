@@ -580,13 +580,18 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       baseUrl: configuredBaseUrl,
     },
     providerState: {
-      isApplied: showRuntimeApplied,
       isDisabled: provider.isDisabled,
       // `__local__` is the current file's bridge record, not a managed preset:
       // there is nothing to switch on or off.
-      onToggleDisabled: isLocalProvider
-        ? undefined
-        : () => handleToggleDisabled(!provider.isDisabled),
+      //
+      // `handleToggleDisabled` is passed through unchanged: the style card hands
+      // it the switch's **new** enabled state, which is exactly what it takes.
+      onToggleDisabled: isLocalProvider ? undefined : handleToggleDisabled,
+      // Card-level drag handle. The bespoke card registered `useSortable` under
+      // `provider.id` and showed the handle whenever batch selection was off; the
+      // page disables dragging by emptying the DndContext sensors.
+      draggable: !selectable,
+      sortableId: provider.id,
       connectivityStatus,
       selectable,
       selected,
@@ -602,6 +607,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       onShare: () => onShare(provider),
       // `__local__` is not a managed preset: it has no delete path.
       onDelete: isLocalProvider ? undefined : () => onDelete(provider),
+      enabledStateLabel: provider.isDisabled
+        ? t('claudecode.configDisabled')
+        : t('claudecode.configEnabled'),
       gatewayActions,
       primaryAction: showDirectApplyAction
         ? {

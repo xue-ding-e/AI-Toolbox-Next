@@ -140,9 +140,11 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
       baseUrl,
     },
     providerState: {
-      isApplied: provider.isApplied,
       isDisabled: provider.isDisabled,
       onToggleDisabled,
+      // Card-level drag handle: the provider order is what is being sorted here.
+      draggable: !selectable,
+      sortableId: provider.id,
       connectivityStatus,
       selectable,
       selected,
@@ -158,8 +160,6 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
     nameTags,
     modelSection: {
       models: modelRows,
-      draggable: !selectable,
-      sortableId: provider.id,
       modelsDraggable: !modelSelectionMode && Boolean(onReorderModels),
       onReorderModels,
       modelSelectionMode,

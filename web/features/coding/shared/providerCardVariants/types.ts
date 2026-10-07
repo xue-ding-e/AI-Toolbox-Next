@@ -69,6 +69,15 @@ export interface ProviderCardActions {
   /** Wraps delete in a Popconfirm; the OpenCode style relies on the caller's own confirm. */
   deleteConfirm?: boolean;
   /**
+   * Sub-label under the enable switch in the "more" menu, describing the
+   * current state. The Claude and Codex styles render it; without it the menu
+   * shows the bare switch.
+   *
+   * Per-CLI because the wording is: Claude Code and Codex say "配置已启用" /
+   * "配置已禁用", which is not the generic `common.provider.enabled`.
+   */
+  enabledStateLabel?: string;
+  /**
    * Primary action, rendered as a text link ("应用" / "设为默认") in the Claude
    * and Codex styles. The OpenCode style has no header-level primary action:
    * its equivalent lives on the model row, so it ignores this.
@@ -96,16 +105,32 @@ export interface ProviderCardActions {
    * over). The OpenCode style has no header action rail and ignores it.
    */
   gatewayActions?: React.ReactNode;
-  /** Extra header actions for the OpenCode style (batch delete, connectivity). */
+  /**
+   * Extra header actions for the OpenCode style (batch delete, connectivity).
+   *
+   * In the Claude and Codex styles these render as icon buttons **before** the
+   * "more" menu — the place the bespoke cards put their tool-specific header
+   * actions.
+   */
   extraActions?: React.ReactNode;
 }
 
 export interface ProviderCardState {
-  /** The provider is the one currently applied / selected. */
-  isApplied?: boolean;
   /** The provider is disabled (only meaningful with `onToggleDisabled`). */
   isDisabled?: boolean;
-  onToggleDisabled?: () => void;
+  /**
+   * Called with the **new enabled state** when the switch is flipped — the same
+   * contract antd's `Switch.onChange` uses.
+   *
+   * It deliberately does not take zero arguments: a no-arg "please flip it"
+   * callback forces every caller to recompute the next value from the current
+   * one, and a caller that inverts it twice (`!provider.isDisabled` fed into a
+   * handler that inverts again) writes back the value it already had — the
+   * switch then looks alive but does nothing, with no type error. Passing the
+   * value through keeps the mapper a pass-through, exactly like the bespoke
+   * cards did.
+   */
+  onToggleDisabled?: (enabled: boolean) => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
   /** Batch-selection mode: the drag handle is replaced by a checkbox. */
   selectable?: boolean;
@@ -113,6 +138,16 @@ export interface ProviderCardState {
   onSelectChange?: (checked: boolean) => void;
   /** Renders the card at reduced opacity, e.g. while a disabled provider is listed. */
   dimmed?: boolean;
+  /**
+   * Card-level drag handle.
+   *
+   * Lives here, not on `modelSection`, because it orders the **cards**, not the
+   * model rows — a Claude-style card has no model section and still needs to be
+   * draggable. Nesting it under `modelSection` made the handle vanish for
+   * exactly those CLIs: the prop was never read, and nothing failed.
+   */
+  draggable?: boolean;
+  sortableId?: string;
   /**
    * Chrome accent, forwarded to `CardShell`. See that component for the
    * precedence rules (batch selection > gateway primary > applied).
@@ -122,11 +157,6 @@ export interface ProviderCardState {
 
 export interface ProviderCardModels {
   models: ModelDisplayData[];
-  /** Read-only catalog rows merged into the list (OpenCode/Codex). */
-  officialModels?: import('@/components/common/ProviderCard/types').OfficialModelDisplayData[];
-  /** Drag handle for the card itself. */
-  draggable?: boolean;
-  sortableId?: string;
   /**
    * Row identity for selection / reorder / drag. Defaults to `model.id`.
    *

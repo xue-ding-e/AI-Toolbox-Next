@@ -56,6 +56,8 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
     selected = false,
     onSelectChange,
     dimmed = false,
+    draggable = false,
+    sortableId,
     accent,
   } = providerState ?? {};
 
@@ -63,8 +65,8 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
 
   return (
     <CardShell
-      sortableId={modelSection?.sortableId}
-      draggable={modelSection?.draggable}
+      sortableId={sortableId}
+      draggable={draggable}
       selectable={selectable}
       selected={selected}
       onSelectChange={onSelectChange}
@@ -121,7 +123,7 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
           {actions?.extraActions}
           {onToggleDisabled && (
             <Tooltip title={isDisabled ? t('common.provider.disabled') : t('common.provider.enabled')}>
-              <Switch size="small" checked={!isDisabled} onChange={() => onToggleDisabled()} />
+              <Switch size="small" checked={!isDisabled} onChange={onToggleDisabled} />
             </Tooltip>
           )}
           {actions?.onEdit && (

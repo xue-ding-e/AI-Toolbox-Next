@@ -93,6 +93,36 @@ const FORBIDDEN = [
 
 const isGovernedFile = (filename) => filename.endsWith('ProviderCard.tsx');
 
+/**
+ * Every prop declared on `ProviderCardVariantProps` (and the three sub-shapes)
+ * must have a render point in at least one style card.
+ *
+ * Why: the prop shapes are one flat structure shared by all three styles, and a
+ * style reads only what it renders. A prop that **no** style renders is
+ * invisible to the type checker — callers pass it, nothing happens, and the
+ * next reader assumes the capability exists. This is the same defect family as
+ * lesson #70 (`extraActions` declared but never rendered) and #97; `isApplied`
+ * sat dead from the day it was introduced until an audit removed it in favour
+ * of `accent`.
+ */
+const PROP_SOURCE_FILES = [
+  'web/features/coding/shared/providerCardVariants/types.ts',
+  'web/features/coding/shared/providerCardVariants/CardShell.tsx',
+];
+const STYLE_CARD_FILES = [
+  'web/features/coding/shared/providerCardVariants/ClaudeStyleCard.tsx',
+  'web/features/coding/shared/providerCardVariants/CodexStyleCard.tsx',
+  'web/features/coding/shared/providerCardVariants/OpenCodeStyleCard.tsx',
+];
+
+/**
+ * Props that intentionally have no render point, each with the reason.
+ *
+ * Keep this empty if at all possible: a prop here is a prop callers can pass
+ * with no effect.
+ */
+const PROPS_WITHOUT_RENDER_POINT = new Map();
+
 async function collectGovernedFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const found = [];
@@ -163,6 +193,74 @@ if (files.length === 0) {
 }
 
 let failed = false;
+
+/**
+ * Prop names declared across the variant prop shapes.
+ *
+ * Read from the source rather than hard-coded so the check follows the types;
+ * an interface added later is covered without touching this script.
+ */
+async function collectDeclaredProps() {
+  const declared = new Set();
+  for (const relative of PROP_SOURCE_FILES) {
+    const source = await readFile(path.join(webRoot, '..', relative), 'utf8');
+    // Only the variant prop shapes; `CardShellProps` is a component-internal API
+    // whose every field is rendered by definition.
+    const blocks = source.matchAll(
+      /export interface (ProviderCardState|ProviderCardActions|ProviderCardModels|ProviderCardVariantProps|ProviderCardMetaEntry|ProviderCardModel)\b[^{]*\{([\s\S]*?)\n\}/g,
+    );
+    for (const [, , body] of blocks) {
+      for (const line of body.split('\n')) {
+        const match = /^\s{2}([a-zA-Z][a-zA-Z0-9]*)\??:/.exec(line);
+        if (match) {
+          declared.add(match[1]);
+        }
+      }
+    }
+  }
+  return declared;
+}
+
+const styleCardSources = await Promise.all(
+  STYLE_CARD_FILES.map(async (relative) => ({
+    relative,
+    source: await readFile(path.join(webRoot, '..', relative), 'utf8'),
+  })),
+);
+
+// `modelSection.*` props are forwarded straight into `ModelListSection`, so its
+// source is the render point for them.
+const modelSectionSource = await readFile(
+  path.join(webRoot, 'features', 'coding', 'shared', 'ModelListSection.tsx'),
+  'utf8',
+);
+
+const declaredProps = await collectDeclaredProps();
+const unrendered = [];
+for (const prop of declaredProps) {
+  if (PROPS_WITHOUT_RENDER_POINT.has(prop)) {
+    continue;
+  }
+  // A prop counts as rendered if any style card or the shared model section
+  // mentions it: `modelSection.*` is forwarded straight into `ModelListSection`.
+  const mentioned = styleCardSources.some(({ source }) => source.includes(prop));
+  const inModelSection = modelSectionSource.includes(prop);
+  if (!mentioned && !inModelSection) {
+    unrendered.push(prop);
+  }
+}
+
+if (unrendered.length > 0) {
+  failed = true;
+  console.error(
+    '\nThese props are declared on the variant prop shapes but no style card renders them.',
+  );
+  console.error('A caller can pass them and nothing happens. Either render them in a style card');
+  console.error('(and in every style that should honour them), or delete them from types.ts:\n');
+  for (const prop of unrendered) {
+    console.error(`  ${prop}`);
+  }
+}
 
 if (violations.length > 0) {
   failed = true;

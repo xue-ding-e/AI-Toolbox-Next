@@ -289,7 +289,10 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
           {t('common.save')}
         </Button>,
       ]}
-      width={800}
+      // `min(960px, 92vw)` matches the Codex provider modal, the widest and
+      // most complete provider form; the old 800px clipped its sections on
+      // smaller windows.
+      width="min(960px, 92vw)"
     >
       <Form
         form={form}
