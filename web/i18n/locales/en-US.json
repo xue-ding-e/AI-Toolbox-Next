@@ -2679,10 +2679,8 @@
     "title": "Claude Code Configuration",
     "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically merged when applying.",
     "pageWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
-    "configPath": "Configuration File Path",
     "openFolder": "Open Folder",
     "refreshConfig": "Refresh Config",
-    "viewDocs": "Documentation",
     "importFromOpenCode": "Import from OpenCode",
     "settings": {
       "title": "More Options",
@@ -2803,7 +2801,6 @@
       "extractTimeout": "Timed out while reading the current Claude config. If the root is a WSL or network path, check that the distro/share is accessible and try again."
     },
     "rootPathSource": {
-      "customize": "Customize Root Directory",
       "modal": {
         "title": "Customize Claude Code Root Directory",
         "currentSource": "Current Source",

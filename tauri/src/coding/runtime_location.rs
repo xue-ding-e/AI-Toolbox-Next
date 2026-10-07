@@ -2383,6 +2383,16 @@ fn resolve_opencode_path_without_db() -> (PathBuf, String) {
     )
 }
 
+/// Claude Code's root directory, resolved from the environment and shell
+/// config only.
+///
+/// Exposed for the backup restore path (which runs before the database is
+/// available) and for `claude_code::get_claude_root_dir_without_db`, which used
+/// to carry a second, byte-identical copy of this logic.
+pub fn resolve_claude_root_dir_without_db() -> PathBuf {
+    resolve_claude_path_without_db().0
+}
+
 fn resolve_claude_path_without_db() -> (PathBuf, String) {
     if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
         if !env_path.trim().is_empty() {
@@ -2400,6 +2410,15 @@ fn resolve_claude_path_without_db() -> (PathBuf, String) {
         claude_code::get_claude_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.claude")),
         "default".to_string(),
     )
+}
+
+/// Codex's root directory, resolved from the environment and shell config only.
+///
+/// Same reason as `resolve_claude_root_dir_without_db`: the restore path needs
+/// it without a database, and `codex::get_codex_root_dir_without_db` used to
+/// carry a second copy.
+pub fn resolve_codex_root_dir_without_db() -> PathBuf {
+    resolve_codex_path_without_db().0
 }
 
 fn resolve_codex_path_without_db() -> (PathBuf, String) {

@@ -32,6 +32,7 @@
 - **`CardShell` 的 `setNodeRef` 必须无条件挂载。** dnd-kit 需要测量节点来计算 transform；未注册的节点在父级重新启用拖拽时拖不动。写成 `draggable ? setNodeRef : undefined` 会引入「禁用一次就再也拖不动」的隐性 bug。
 - **`useSortable` 每次渲染都必须执行。** 没有 id 时传占位符并置 `disabled`，不要条件调用 hook——违反 hooks 规则会在拖拽开关切换时崩。
 - **卡片自己留底部间距（`marginBottom: 12`），不靠父容器的 `gap`。** 这样重排后间距不会错位；靠父容器 gap 时，把官方账号卡片之类的异类插进列表会丢间距。
+- **「已应用 / 网关 P0」的高亮属于 `CardShell`，不属于映射层。** 四个 bespoke 卡片各自抄了一份「选中 > 网关 P0 > 已应用」的优先级；迁到共享组件时如果不把它一起搬进来，卡片会静默变成统一的灰边框——**没有任何报错，只是状态看不见了**。映射层只负责把 `providerState.accent` 算出来。
 - **改通用行为（间距、按钮、拖拽、选中态）改在变体组件里。** 只在某个 CLI 的卡片里改，样式就会重新分叉——这正是本模块要消除的问题（见根 `AGENTS.md` Hard Rule 14）。
 
 ## 跨模块依赖
@@ -40,21 +41,42 @@
 - `features/coding/shared/management`（`ManagementCheckbox`）：批量选择的复选框。
 - `features/coding/shared/providerConnectivity/ProviderConnectivityStatus`：连通性状态点。
 - `components/common/ProviderNameLink`、`components/common/SdkTag`：名称链接与 SDK 标签。
-- 使用方：`zcode`（OpenCode 式）。其余 CLI 尚未迁移，各自仍持有 bespoke 卡片。
+- 使用方：`claudecode`（Claude 式）、`codex`（Codex 式）、`zcode` + `omo_native`（OpenCode 式）。三种样式**均已落地**。
+- 仍持 bespoke 卡片的四个（claudedesktop / geminicli / grok / kimi）已登记在 `scripts/verify-provider-card-layout.mjs` 的 `PENDING_MIGRATION` 里，只减不增。
 
 ## 迁移一个 CLI 的步骤
 
 1. 按上表判定该 CLI 属于哪种样式（看它有没有模型目录、有没有单一 active provider）。
 2. 把原 `*ProviderCard.tsx` 改成薄映射层：解析自己的存储形状 → 构造 `ProviderCardVariantProps` → 渲染对应样式组件。
-3. 原卡片里**该 CLI 特有的业务逻辑**（如 ZCode 的 `isDefault` 双写、网关接管按钮）留在页面或映射层，不要塞进样式组件。
+3. 原卡片里**该 CLI 特有的业务逻辑**（如 ZCode 的 `isDefault` 双写、网关接管按钮）留在映射层，不要塞进样式组件。
 4. 检查被删掉的 props 是否在页面侧变成死代码（`onApply`、`onTest` 之类），一并清理。
-5. 核对原卡片是否有样式组件没有的能力（官方模型只读列表、网关标签、优先级徽章）——有则用 `footer` / `nameTags` / `inlineActions` 插槽补，**不要**为此给样式组件加 CLI 专属 prop。
+5. 核对原卡片是否有样式组件没有的能力（官方模型只读列表、网关标签、优先级徽章）——有则用 `footer` / `nameTags` / `inlineActions` / `gatewayActions` 插槽补，**不要**为此给样式组件加 CLI 专属 prop。
+6. **跑 `pnpm run test:provider-card-layout`，并从脚本的 `PENDING_MIGRATION` 里删掉这个文件**。守卫是「棘轮」：迁完不删会报错，没迁却不在名单里也会报错。
+
+## 插槽清单（补能力时先看这里）
+
+| 插槽 | 位置 | 用途 | 现有消费方 |
+|---|---|---|---|
+| `providerState.accent` | 卡片外框（`CardShell`） | `applied`（主色边框 + 选中底色）/ `gatewayPrimary`（成功色 + 渐变）；批量选中优先于两者 | claudecode、codex |
+| `nameTags` | 名称右侧 | 已应用 / 官方 / 代理 / 网关优先级徽章 | claudecode、codex、zcode |
+| `metaEntries` | 第二行 | 有序的 `text` / `code` / `tag` 项 | claudecode（角色绑定）、codex（端点/模型/key/备注）、zcode |
+| `inlineActions` | 第二行末尾 | 行内动作（连通性测试、CLI 启动） | claudecode、codex（`InlineConnectivityButton`） |
+| `footer` | 第二行下方、模型区上方 | 自由区块（官方账号折叠区） | codex |
+| `actions.gatewayActions` | 头部主操作**之前** | 网关接管/恢复直连/切换主渠道 | claudecode、codex |
+| `actions.primaryAction` | 头部主操作 | 文字链「应用」 | claudecode、codex |
+| `actions.extraActions` | 头部图标按钮（仅 OpenCode 式） | 批量删除、连通性 | zcode、omo_native |
+| `modelSection.aboveList` / `renderModelExtraActions` | 模型区内 | Codex 的自动审批行与行级动作 | codex |
+| `modelSection.className` / `bodyStyle` | 模型 Collapse | 透明背景与缩进适配 | codex |
+
+> **每个可选 prop 都必须在某个样式里有渲染点**。声明了却没渲染 = 调用方传了等于没传，且类型检查完全通过（历史坑 #70、#78）。2026-10-07 删掉了三个零消费方 prop：`metaEntries` 的 `kind: 'id'` / `'sdk'` 与 `ProviderCardModels.modelSourceTag`。
 
 ## 最小验证
 
+- `pnpm run test:provider-card-layout` 通过（薄映射层守卫）。
 - 该 CLI 页面能正常列出卡片：名称、第二行、操作按钮、模型折叠区（若有）与迁移前一致。
 - 拖拽：能拖动排序；在搜索/非自定义排序下拖拽被禁用；批量选择模式下拖拽句柄换成复选框。
 - 选中态：批量选择时卡片边框变主色。
+- **高亮态**（若有 `accent`）：已应用的卡片是主色边框 + 选中底色；网关 failover 的 P0 卡片是成功色边框 + 渐变底。两者同时成立时 P0 胜出。
 - 若该 CLI 有「设为默认」：点击后卡片标记与磁盘上的运行时指针**同时**更新（只查一处会漏掉脱节）。
 - 禁用开关（若有）：能翻转状态，卡片随之变灰。
 

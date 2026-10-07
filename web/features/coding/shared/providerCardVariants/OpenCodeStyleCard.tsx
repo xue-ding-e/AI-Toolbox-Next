@@ -56,6 +56,7 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
     selected = false,
     onSelectChange,
     dimmed = false,
+    accent,
   } = providerState ?? {};
 
   const showId = provider.name !== provider.id;
@@ -68,6 +69,7 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
       selected={selected}
       onSelectChange={onSelectChange}
       dimmed={dimmed}
+      accent={accent}
     >
       <div
         style={{
@@ -165,7 +167,10 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
       {modelSection && (
         <ModelListSection
           models={modelSection.models}
+          rowKeyOf={modelSection.rowKeyOf}
           sectionKey={`provider-models-${provider.id}`}
+          className={modelSection.className}
+          bodyStyle={modelSection.bodyStyle}
           transparentRows
           modelsDraggable={modelSection.modelsDraggable}
           onReorderModels={modelSection.onReorderModels}
@@ -186,6 +191,8 @@ const OpenCodeStyleCard: React.FC<ProviderCardVariantProps> = ({
           onDeleteModel={modelSection.onDeleteModel}
           onSetPrimaryModel={modelSection.onSetPrimaryModel}
           onToggleModelDisabled={modelSection.onToggleModelDisabled}
+          renderModelExtraActions={modelSection.renderModelExtraActions}
+          aboveList={modelSection.aboveList}
         />
       )}
     </CardShell>

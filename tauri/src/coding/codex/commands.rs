@@ -24,7 +24,6 @@ use super::types::*;
 use super::unified_history;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
-use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::proxy_gateway::aggregate_naming::AggregateSlugEntry;
 use crate::coding::proxy_gateway::{
@@ -176,24 +175,14 @@ pub fn get_codex_default_root_dir() -> Result<PathBuf, String> {
     Ok(get_home_dir()?.join(".codex"))
 }
 
-fn get_codex_root_dir_from_shell() -> Option<PathBuf> {
-    shell_env::get_env_from_shell_config("CODEX_HOME")
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-}
-
+/// Codex's root directory when no database is available.
+///
+/// The resolution order (env → shell config → default) lives in
+/// `runtime_location::resolve_codex_root_dir_without_db`; this is the
+/// `Result`-shaped alias the backup restore path and the official-account
+/// helpers call.
 pub(crate) fn get_codex_root_dir_without_db() -> Result<PathBuf, String> {
-    if let Ok(env_path) = std::env::var("CODEX_HOME") {
-        if !env_path.trim().is_empty() {
-            return Ok(PathBuf::from(env_path));
-        }
-    }
-
-    if let Some(shell_path) = get_codex_root_dir_from_shell() {
-        return Ok(shell_path);
-    }
-
-    get_codex_default_root_dir()
+    Ok(runtime_location::resolve_codex_root_dir_without_db())
 }
 
 pub(super) async fn get_codex_custom_root_dir_async(
@@ -409,17 +398,13 @@ pub(crate) async fn get_codex_config_dir_from_db_async(
 async fn get_codex_auth_path_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir_from_db_async(db)
-        .await?
-        .join("auth.json"))
+    runtime_location::get_codex_auth_path_async(db).await
 }
 
 async fn get_codex_config_path_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir_from_db_async(db)
-        .await?
-        .join("config.toml"))
+    runtime_location::get_codex_config_path_async(db).await
 }
 
 fn get_codex_prompt_file_path() -> Result<std::path::PathBuf, String> {

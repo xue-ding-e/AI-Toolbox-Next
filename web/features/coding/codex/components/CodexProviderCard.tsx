@@ -1,27 +1,26 @@
 import React from 'react';
-import './CodexProviderCard.less';
-import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, message } from 'antd';
+import {
+  Button,
+  Space,
+  Tag,
+  Typography,
+  Tooltip,
+  message,
+} from 'antd';
 import {
   ApiOutlined,
   CheckOutlined,
-  EditOutlined,
   DeleteOutlined,
-  CopyOutlined,
-  MoreOutlined,
-  HolderOutlined,
   DownOutlined,
-  RightOutlined,
-  LinkOutlined,
-  SyncOutlined,
   EyeOutlined,
+  LinkOutlined,
+  RightOutlined,
   SafetyOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
-import type { MenuProps } from 'antd';
-import { BarChart2, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { BarChart2 } from 'lucide-react';
 import type {
   CodexCatalogModel,
   CodexOfficialAccount,
@@ -37,8 +36,6 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import AppliedTag from '@/components/common/AppliedTag';
-import ModelListSection from '@/features/coding/shared/ModelListSection';
-import ProviderNameLink from '@/components/common/ProviderNameLink';
 import ProxyTag from '@/components/common/ProxyTag';
 import type { ModelDisplayData } from '@/components/common/ProviderCard/types';
 import {
@@ -49,9 +46,14 @@ import {
   isGatewayProxyMode,
   subscribeGatewayProviderProfiles,
 } from '@/features/coding/shared/gateway';
-import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
-import { ManagementCheckbox } from '@/features/coding/shared/management';
+import CodexStyleCard, {
+  InlineConnectivityButton,
+} from '@/features/coding/shared/providerCardVariants/CodexStyleCard';
+import type {
+  ProviderCardMetaEntry,
+  ProviderCardVariantProps,
+} from '@/features/coding/shared/providerCardVariants/types';
 import {
   CODEX_LOCAL_PROVIDER_ID,
   isCodexLocalProviderId,
@@ -111,6 +113,25 @@ interface CodexProviderCardProps {
   onSelectChange?: (checked: boolean) => void;
 }
 
+/**
+ * A Codex provider, rendered in the Codex style.
+ *
+ * The layout lives in the shared variant; this file only maps Codex's storage
+ * shape onto it, so the card cannot drift from the other CLIs that share the
+ * style.
+ *
+ * Three Codex-specific facts drive the mapping:
+ *
+ * - The endpoint, the active model and the catalog all live inside the
+ *   `settings_config` JSON blob (`config.toml` text + `modelCatalog`), not on
+ *   the row, so they are parsed out here.
+ * - The model catalog is this CLI's own list, so the card carries a model
+ *   section — but the official and `__local__` rows have no persisted catalog
+ *   and must not show one.
+ * - Official accounts are a Codex concept with their own row actions; they go
+ *   through the style's `footer`, which renders below the meta line and above
+ *   the model section.
+ */
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   provider,
   isApplied,
@@ -158,22 +179,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
   const [restoringDirect, setRestoringDirect] = React.useState(false);
   const [switchingGatewayProvider, setSwitchingGatewayProvider] = React.useState(false);
-
-  // 拖拽排序
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: provider.id });
-
-  const sortableStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : (provider.isDisabled ? 0.6 : 1),
-  };
 
   // Parse settingsConfig JSON string
   const settingsConfig: CodexSettingsConfig = React.useMemo(() => {
@@ -338,13 +343,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
   const applyWithProxyDisabled = provider.isDisabled || !gatewayCanApplyProxy;
-  // Match Claude: size the action rail from actual action flags, not applied chrome.
-  const actionAreaWidth =
-    showApplyWithProxyAction
-      ? 160
-      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
-        ? 140
-        : 40;
 
   const handleToggleDisabled = (checked: boolean) => {
     if (showRuntimeApplied && !checked) {
@@ -353,22 +351,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
     onToggleDisabled(provider, !checked);
   };
-  const cardBorderColor = selectable && selected
-    ? 'var(--ant-color-primary)'
-    : isGatewayPrimary
-      ? 'var(--color-status-success)'
-      : showRuntimeApplied
-        ? 'var(--ant-color-primary)'
-        : 'var(--color-border-card)';
-  const cardBackground = isGatewayPrimary
-    ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
-    : showRuntimeApplied
-      ? 'var(--color-bg-selected)'
-      : undefined;
-  const shouldShowOfficialAccounts = shouldShowCodexOfficialAccounts(
-    provider,
-    officialAccounts.length,
-  );
 
   const refreshTrayAfterGatewayChange = () => {
     void refreshTrayMenu().catch((error) => {
@@ -383,9 +365,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     return account.email || account.name;
   };
 
-  const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleEngageGatewayProxy = async () => {
     setEngagingGatewayProxy(true);
     try {
       const nextStatus = await engageProxyGatewaySingle('codex', provider.id);
@@ -400,9 +380,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
   };
 
-  const handleApplyWithGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleApplyWithGatewayProxy = async () => {
     setEngagingGatewayProxy(true);
     try {
       const nextStatus = await switchProxyGatewayPrimaryProvider('codex', provider.id);
@@ -417,9 +395,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
   };
 
-  const handleRestoreDirect = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleRestoreDirect = async () => {
     setRestoringDirect(true);
     try {
       const nextStatus = await restoreProxyGatewayCliDirect('codex');
@@ -434,9 +410,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
   };
 
-  const handleSwitchGatewayProvider = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleSwitchGatewayProvider = async () => {
     setSwitchingGatewayProvider(true);
     try {
       const nextStatus = await switchProxyGatewayPrimaryProvider('codex', provider.id);
@@ -464,7 +438,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   };
 
   const renderOfficialAccounts = () => {
-    if (!shouldShowOfficialAccounts) {
+    if (!shouldShowCodexOfficialAccounts(provider, officialAccounts.length)) {
       return null;
     }
 
@@ -672,78 +646,334 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     );
   };
 
-  const renderModelList = () => {
-    if (!showModelList) {
-      return null;
+  /**
+   * The second line: endpoint, active model, masked key and notes, each
+   * optional, in whatever order the CLI supplies. This is what the Codex style
+   * means by "free-form" — the OpenCode style fixes that line to id/SDK/endpoint.
+   */
+  const metaEntries = React.useMemo<ProviderCardMetaEntry[]>(() => {
+    const entries: ProviderCardMetaEntry[] = [];
+    if (baseUrl) {
+      entries.push({ kind: 'code', value: baseUrl });
     }
+    if (displayModelName) {
+      entries.push({ kind: 'tag', value: displayModelName, color: 'blue' });
+    }
+    if (maskedApiKey) {
+      entries.push({ kind: 'text', value: `API Key: ${maskedApiKey}` });
+    }
+    if (provider.notes) {
+      entries.push({ kind: 'text', value: provider.notes });
+    }
+    return entries;
+  }, [baseUrl, displayModelName, maskedApiKey, provider.notes]);
 
-    return (
-      <ModelListSection
-        className="codex-model-list-collapse"
-        sectionKey={`codex-models-${provider.id}`}
-        bodyStyle={{ paddingLeft: 18, background: 'transparent' }}
-        transparentRows
-        models={modelRows.map((row) => row.display)}
-        rowKeyOf={(model) => rowKeyByDisplay.get(model) ?? model.id}
-        modelsDraggable={!modelSelectionMode}
-        onReorderModels={(orderedRowKeys) => onReorderModels?.(provider, orderedRowKeys)}
-        selectionMode={modelSelectionMode}
-        selectedIds={selectedModelRowKeys}
-        onToggleSelection={
-          onToggleModelSelection
-            ? (rowKey, selected) => onToggleModelSelection(provider, rowKey, selected)
-            : undefined
-        }
-        onToggleBatchDeleteMode={
-          onToggleBatchDeleteMode ? () => onToggleBatchDeleteMode(provider) : undefined
-        }
-        onBatchDelete={onBatchDeleteModels ? () => onBatchDeleteModels(provider) : undefined}
-        onTest={() => onTest(provider)}
-        testDisabled={!canRunConnectivityTest}
-        testDisabledTooltip={
-          isOfficialProvider
-            ? t('codex.provider.officialConnectivityHint')
-            : t('common.modelMissing')
-        }
-        onFetchModels={onFetchModels ? () => onFetchModels(provider) : undefined}
-        fetchDisabled={!canFetchModels}
-        fetchDisabledTooltip={t('opencode.provider.completeUrlAndKey')}
-        onAddModel={onAddModel ? () => onAddModel(provider) : undefined}
-        onEditModel={
-          onEditModel ? (rowKey) => onEditModel(provider, rowKey) : undefined
-        }
-        onCopyModel={
-          onCopyModel ? (rowKey) => onCopyModel(provider, rowKey) : undefined
-        }
-        onDeleteModel={
-          onDeleteModel ? (rowKey) => onDeleteModel(provider, rowKey) : undefined
-        }
-        onSetPrimaryModel={
-          onSetPrimaryModel ? (rowKey) => onSetPrimaryModel(provider, rowKey) : undefined
-        }
-        renderModelExtraActions={(model, rowKey) => {
-          if (!onSetAutoReviewModel) {
-            return undefined;
-          }
-          const isAutoReviewRow =
-            Boolean(codexAutoReviewModelOverride) &&
-            model.id.trim() === codexAutoReviewModelOverride;
-          return (
-            <Button
-              size="small"
-              type="text"
-              icon={<SafetyOutlined />}
-              disabled={isAutoReviewRow}
-              onClick={() => onSetAutoReviewModel(provider, rowKey)}
+  const nameTags = (
+    <>
+      {isLocalProvider && (
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          ({t('codex.localConfigHint')})
+        </Text>
+      )}
+      {isOfficialProvider && (
+        <Tag>{t('codex.provider.modeOfficial')}</Tag>
+      )}
+      {isOfficialProvider && gatewayTakeoverActive && (
+        <Tooltip title={t('gateway.takeover.officialBypassedTooltip')}>
+          <Tag color="gold">{t('gateway.takeover.officialBypassedTag')}</Tag>
+        </Tooltip>
+      )}
+      {showRuntimeApplied && (
+        <AppliedTag>
+          {t('codex.provider.applied')}
+        </AppliedTag>
+      )}
+      {showProxyTag && (
+        <ProxyTag>
+          {t('gateway.proxy.proxyTag')}
+        </ProxyTag>
+      )}
+      {showProxyTag && (
+        <Tooltip title={t('gateway.proxy.statisticsTooltip')}>
+          <BarChart2
+            size={14}
+            aria-label={t('gateway.proxy.statisticsTooltip')}
+            onClick={(event) => {
+              event.stopPropagation();
+              navigate('/gateway/statistics');
+            }}
+            style={{
+              color: 'var(--color-text-tertiary)',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          />
+        </Tooltip>
+      )}
+      {priorityEntry && (
+        <>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '0 6px',
+              height: 20,
+              borderRadius: 10,
+              fontSize: 10,
+              fontWeight: 500,
+              background: 'rgba(16,185,129,0.08)',
+              color: '#059669',
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: '#10b981',
+              }}
+            />
+            {t('gateway.page.modelHealthState.healthy')}
+          </span>
+          <Tooltip
+            title={
+              isGatewayPrimary
+                ? t('gateway.failover.priorityP0')
+                : t('gateway.failover.priorityPn', { label: priorityEntry.label })
+            }
+          >
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '0 6px',
+                height: 20,
+                borderRadius: 4,
+                fontSize: 10,
+                fontWeight: 650,
+                background: 'rgba(16,185,129,0.08)',
+                color: '#059669',
+              }}
             >
-              {isAutoReviewRow
-                ? t('codex.model.alreadyAutoReview')
-                : t('codex.model.autoReview')}
+              {priorityEntry.label}
+            </span>
+          </Tooltip>
+        </>
+      )}
+    </>
+  );
+
+  const gatewayActions = (
+    <>
+      {canShowGatewayProxyButton && (
+        <Tooltip title={t('gateway.proxy.singleHint')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<ApiOutlined />}
+            onClick={() => void handleEngageGatewayProxy()}
+            loading={engagingGatewayProxy}
+          >
+            {t('gateway.proxy.singleButton')}
+          </Button>
+        </Tooltip>
+      )}
+      {canShowRestoreDirectButton && (
+        <Tooltip title={t('gateway.proxy.restoreDirectHint')}>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => void handleRestoreDirect()}
+            loading={restoringDirect}
+          >
+            {t('gateway.proxy.restoreDirectButton')}
+          </Button>
+        </Tooltip>
+      )}
+      {canShowRestoreDirectUnavailable && (
+        <Tooltip title={restoreDirectUnavailableTitle}>
+          <Button
+            type="link"
+            size="small"
+            disabled
+          >
+            {t('gateway.proxy.restoreDirectButton')}
+          </Button>
+        </Tooltip>
+      )}
+      {showApplyWithProxyAction && (
+        <Tooltip
+          title={
+            gatewayCanApplyProxy
+              ? t('gateway.proxy.applyWithProxyHint')
+              : t('gateway.proxy.applyWithProxyDisabledTooltip')
+          }
+        >
+          <span>
+            <Button
+              type="link"
+              size="small"
+              icon={<CheckOutlined />}
+              onClick={() => void handleApplyWithGatewayProxy()}
+              disabled={applyWithProxyDisabled}
+              loading={engagingGatewayProxy}
+            >
+              {t('gateway.proxy.applyWithProxyButton')}
             </Button>
-          );
-        }}
-        aboveList={
-          codexAutoReviewModelOverride ? (
+          </span>
+        </Tooltip>
+      )}
+      {showGatewaySwitchAction && (
+        <Tooltip
+          title={
+            gatewayFailoverActive
+              ? t('gateway.proxy.switchPrimaryFailoverHint')
+              : t('gateway.proxy.switchPrimaryHint')
+          }
+        >
+          <Button
+            type="link"
+            size="small"
+            icon={<CheckOutlined />}
+            onClick={() => void handleSwitchGatewayProvider()}
+            loading={switchingGatewayProvider}
+          >
+            {gatewayFailoverActive
+              ? t('gateway.proxy.switchPrimaryP0Button')
+              : t('gateway.proxy.switchPrimaryButton')}
+          </Button>
+        </Tooltip>
+      )}
+      {showGatewayLockedApply && (
+        <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>
+          <span>
+            <Button type="link" size="small" icon={<CheckOutlined />} disabled>
+              {t('codex.provider.apply')}
+            </Button>
+          </span>
+        </Tooltip>
+      )}
+    </>
+  );
+
+  const props: ProviderCardVariantProps = {
+    provider: {
+      id: provider.id,
+      name: provider.name,
+      baseUrl,
+    },
+    providerState: {
+      isApplied: showRuntimeApplied,
+      isDisabled: provider.isDisabled,
+      onToggleDisabled: isLocalProvider
+        ? undefined
+        : () => handleToggleDisabled(!provider.isDisabled),
+      connectivityStatus,
+      selectable,
+      selected,
+      onSelectChange,
+      dimmed: provider.isDisabled,
+      // A provider can be both applied and the failover P0; CardShell gives the
+      // gateway role precedence.
+      accent: isGatewayPrimary ? 'gatewayPrimary' : showRuntimeApplied ? 'applied' : undefined,
+    },
+    actions: {
+      onEdit: () => onEdit(provider),
+      onCopy: () => onCopy(provider),
+      onShare: () => onShare(provider),
+      // `__local__` is the local-file bridge: it has no delete path.
+      onDelete: isLocalProvider ? undefined : () => onDelete(provider),
+      gatewayActions,
+      primaryAction: showDirectApplyAction
+        ? {
+            label: t('codex.provider.apply'),
+            icon: <CheckOutlined />,
+            onClick: () => onSelect(provider),
+            disabled: provider.isDisabled,
+          }
+        : undefined,
+    },
+    nameTags,
+    metaEntries,
+    inlineActions: (
+      <>
+        <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
+        <InlineConnectivityButton
+          onClick={() => onTest(provider)}
+          disabled={!canRunConnectivityTest}
+          tooltip={isOfficialProvider ? t('codex.provider.officialConnectivityHint') : undefined}
+        />
+      </>
+    ),
+    footer: renderOfficialAccounts() ?? undefined,
+    modelSection: showModelList
+      ? {
+          models: modelRows.map((row) => row.display),
+          rowKeyOf: (model) => rowKeyByDisplay.get(model) ?? model.id,
+          // The model section's Collapse is codex-scoped so the transparent
+          // background and the indent match the bespoke card this replaced.
+          className: 'codex-model-list-collapse',
+          bodyStyle: { paddingLeft: 18, background: 'transparent' },
+          modelsDraggable: !modelSelectionMode,
+          onReorderModels: onReorderModels
+            ? (orderedRowKeys) => onReorderModels(provider, orderedRowKeys)
+            : undefined,
+          modelSelectionMode,
+          selectedModelIds: selectedModelRowKeys,
+          onToggleModelSelection: onToggleModelSelection
+            ? (rowKey, isSelected) => onToggleModelSelection(provider, rowKey, isSelected)
+            : undefined,
+          onToggleBatchDeleteMode: onToggleBatchDeleteMode
+            ? () => onToggleBatchDeleteMode(provider)
+            : undefined,
+          onBatchDeleteModels: onBatchDeleteModels
+            ? () => onBatchDeleteModels(provider)
+            : undefined,
+          onTestModels: () => onTest(provider),
+          testModelsDisabled: !canRunConnectivityTest,
+          testModelsDisabledTooltip: isOfficialProvider
+            ? t('codex.provider.officialConnectivityHint')
+            : t('common.modelMissing'),
+          onFetchModels: onFetchModels ? () => onFetchModels(provider) : undefined,
+          fetchDisabled: !canFetchModels,
+          fetchDisabledTooltip: t('opencode.provider.completeUrlAndKey'),
+          onAddModel: onAddModel ? () => onAddModel(provider) : undefined,
+          onEditModel: onEditModel
+            ? (rowKey) => onEditModel(provider, rowKey)
+            : undefined,
+          onCopyModel: onCopyModel
+            ? (rowKey) => onCopyModel(provider, rowKey)
+            : undefined,
+          onDeleteModel: onDeleteModel
+            ? (rowKey) => onDeleteModel(provider, rowKey)
+            : undefined,
+          onSetPrimaryModel: onSetPrimaryModel
+            ? (rowKey) => onSetPrimaryModel(provider, rowKey)
+            : undefined,
+          // The per-row auto-review action and the line above the rows are
+          // Codex-only; both go through the model section's own slots.
+          renderModelExtraActions: onSetAutoReviewModel
+            ? (model, rowKey) => {
+                const isAutoReviewRow =
+                  Boolean(codexAutoReviewModelOverride) &&
+                  model.id.trim() === codexAutoReviewModelOverride;
+                return (
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<SafetyOutlined />}
+                    disabled={isAutoReviewRow}
+                    onClick={() => onSetAutoReviewModel(provider, rowKey)}
+                  >
+                    {isAutoReviewRow
+                      ? t('codex.model.alreadyAutoReview')
+                      : t('codex.model.autoReview')}
+                  </Button>
+                );
+              }
+            : undefined,
+          aboveList: codexAutoReviewModelOverride ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <Text type="secondary" style={{ fontSize: 10 }}>
                 {t('codex.model.autoReviewCurrent')}: {codexAutoReviewModelOverride}
@@ -759,376 +989,12 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 </Button>
               )}
             </div>
-          ) : undefined
+          ) : undefined,
         }
-      />
-    );
+      : undefined,
   };
 
-
-  const menuItems: MenuProps['items'] = [
-    ...(!isLocalProvider ? [{
-      key: 'toggle',
-      label: (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span>{t('common.enable')}</span>
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {provider.isDisabled ? t('codex.configDisabled') : t('codex.configEnabled')}
-            </Text>
-          </div>
-          <Switch
-            checked={!provider.isDisabled}
-            onChange={handleToggleDisabled}
-            size="small"
-          />
-        </div>
-      ),
-    }] : []),
-    {
-      key: 'edit',
-      label: t('common.edit'),
-      icon: <EditOutlined />,
-      onClick: () => onEdit(provider),
-    },
-    {
-      key: 'copy',
-      label: t('common.copy'),
-      icon: <CopyOutlined />,
-      onClick: () => onCopy(provider),
-    },
-    {
-      key: 'share',
-      label: t('common.share'),
-      icon: <Share2 size={14} />,
-      onClick: () => onShare(provider),
-    },
-    // Hide delete button for __local__ provider
-    ...(!isLocalProvider
-      ? [
-          {
-            type: 'divider' as const,
-          },
-          {
-            key: 'delete',
-            label: t('common.delete'),
-            icon: <DeleteOutlined />,
-            danger: true,
-            onClick: () => onDelete(provider),
-          },
-        ]
-      : []),
-  ].filter(Boolean) as MenuProps['items'];
-
-  return (
-    <div ref={setNodeRef} style={sortableStyle}>
-      <Card
-        size="small"
-        style={{
-          marginBottom: 12,
-          borderColor: cardBorderColor,
-          background: cardBackground,
-          boxShadow: 'var(--shadow-card-sm)',
-          transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
-        }}
-        styles={{ body: { padding: 16 } }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-card-sm-hover)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.boxShadow = 'var(--shadow-card-sm)';
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            {selectable ? (
-              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
-                <ManagementCheckbox
-                  checked={selected}
-                  ariaLabel={t('common.batch.selectItem')}
-                  onChange={onSelectChange ?? (() => {})}
-                  style={{ width: 13, height: 13 }}
-                />
-              </div>
-            ) : (
-              <div
-                {...attributes}
-                {...listeners}
-                style={{
-                  cursor: isDragging ? 'grabbing' : 'grab',
-                  color: 'var(--color-text-tertiary)',
-                  padding: '4px 0',
-                  touchAction: 'none',
-                }}
-              >
-                <HolderOutlined />
-              </div>
-            )}
-            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {/* Provider name and status */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <ProviderConnectivityStatus item={connectivityStatus} />
-                <ProviderNameLink
-                  name={provider.name}
-                  baseUrl={baseUrl}
-                  style={{ fontSize: 14, fontWeight: 600 }}
-                />
-                {isLocalProvider && (
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    ({t('codex.localConfigHint')})
-                  </Text>
-                )}
-                {isOfficialProvider && (
-                  <Tag>{t('codex.provider.modeOfficial')}</Tag>
-                )}
-                {isOfficialProvider && gatewayTakeoverActive && (
-                  <Tooltip title={t('gateway.takeover.officialBypassedTooltip')}>
-                    <Tag color="gold">{t('gateway.takeover.officialBypassedTag')}</Tag>
-                  </Tooltip>
-                )}
-                {showRuntimeApplied && (
-                  <AppliedTag>
-                    {t('codex.provider.applied')}
-                  </AppliedTag>
-                )}
-                {showProxyTag && (
-                  <ProxyTag>
-                    {t('gateway.proxy.proxyTag')}
-                  </ProxyTag>
-                )}
-                {showProxyTag && (
-                  <Tooltip title={t('gateway.proxy.statisticsTooltip')}>
-                    <BarChart2
-                      size={14}
-                      aria-label={t('gateway.proxy.statisticsTooltip')}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        navigate('/gateway/statistics');
-                      }}
-                      style={{
-                        color: 'var(--color-text-tertiary)',
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                      }}
-                    />
-                  </Tooltip>
-                )}
-                {priorityEntry && (
-                  <>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        padding: '0 6px',
-                        height: 20,
-                        borderRadius: 10,
-                        fontSize: 10,
-                        fontWeight: 500,
-                        background: 'rgba(16,185,129,0.08)',
-                        color: '#059669',
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: '50%',
-                          background: '#10b981',
-                        }}
-                      />
-                      {t('gateway.page.modelHealthState.healthy')}
-                    </span>
-                    <Tooltip
-                      title={
-                        isGatewayPrimary
-                          ? t('gateway.failover.priorityP0')
-                          : t('gateway.failover.priorityPn', { label: priorityEntry.label })
-                      }
-                    >
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '0 6px',
-                          height: 20,
-                          borderRadius: 4,
-                          fontSize: 10,
-                          fontWeight: 650,
-                          background: 'rgba(16,185,129,0.08)',
-                          color: '#059669',
-                        }}
-                      >
-                        {priorityEntry.label}
-                      </span>
-                    </Tooltip>
-                  </>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {baseUrl && (
-                    <Text code style={{ fontSize: 11, padding: '0 4px' }}>
-                      {baseUrl}
-                    </Text>
-                  )}
-                  {displayModelName && (
-                    <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
-                      {displayModelName}
-                    </Tag>
-                  )}
-                  {(baseUrl || modelName) && maskedApiKey && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                  )}
-                  {maskedApiKey && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      API Key: {maskedApiKey}
-                    </Text>
-                  )}
-                  {(baseUrl || modelName || maskedApiKey) && provider.notes && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                  )}
-                  {provider.notes && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {provider.notes}
-                    </Text>
-                  )}
-                <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ApiOutlined />}
-                  onClick={() => onTest(provider)}
-                  disabled={!canRunConnectivityTest}
-                  title={isOfficialProvider ? t('codex.provider.officialConnectivityHint') : undefined}
-                  style={{ fontSize: 11, padding: '0 4px', height: 'auto', flexShrink: 0 }}
-                >
-                  {t('opencode.connectivity.button')}
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'flex-end',
-              gap: 8,
-              width: actionAreaWidth,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {canShowGatewayProxyButton && (
-              <Tooltip title={t('gateway.proxy.singleHint')}>
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ApiOutlined />}
-                  onClick={handleEngageGatewayProxy}
-                  loading={engagingGatewayProxy}
-                >
-                  {t('gateway.proxy.singleButton')}
-                </Button>
-              </Tooltip>
-            )}
-            {canShowRestoreDirectButton && (
-              <Tooltip title={t('gateway.proxy.restoreDirectHint')}>
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={handleRestoreDirect}
-                  loading={restoringDirect}
-                >
-                  {t('gateway.proxy.restoreDirectButton')}
-                </Button>
-              </Tooltip>
-            )}
-            {canShowRestoreDirectUnavailable && (
-              <Tooltip title={restoreDirectUnavailableTitle}>
-                <Button
-                  type="link"
-                  size="small"
-                  disabled
-                >
-                  {t('gateway.proxy.restoreDirectButton')}
-                </Button>
-              </Tooltip>
-            )}
-            {showDirectApplyAction && (
-              <Button
-                type="link"
-                size="small"
-                icon={<CheckOutlined />}
-                onClick={() => onSelect(provider)}
-                disabled={provider.isDisabled}
-              >
-                {t('codex.provider.apply')}
-              </Button>
-            )}
-            {showApplyWithProxyAction && (
-              <Tooltip
-                title={
-                  gatewayCanApplyProxy
-                    ? t('gateway.proxy.applyWithProxyHint')
-                    : t('gateway.proxy.applyWithProxyDisabledTooltip')
-                }
-              >
-                <span>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<CheckOutlined />}
-                    onClick={handleApplyWithGatewayProxy}
-                    disabled={applyWithProxyDisabled}
-                    loading={engagingGatewayProxy}
-                  >
-                    {t('gateway.proxy.applyWithProxyButton')}
-                  </Button>
-                </span>
-              </Tooltip>
-            )}
-            {showGatewaySwitchAction && (
-              <Tooltip
-                title={
-                  gatewayFailoverActive
-                    ? t('gateway.proxy.switchPrimaryFailoverHint')
-                    : t('gateway.proxy.switchPrimaryHint')
-                }
-              >
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<CheckOutlined />}
-                  onClick={handleSwitchGatewayProvider}
-                  loading={switchingGatewayProvider}
-                >
-                  {gatewayFailoverActive
-                    ? t('gateway.proxy.switchPrimaryP0Button')
-                    : t('gateway.proxy.switchPrimaryButton')}
-                </Button>
-              </Tooltip>
-            )}
-            {showGatewayLockedApply && (
-              <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>
-                <span>
-                  <Button type="link" size="small" icon={<CheckOutlined />} disabled>
-                    {t('codex.provider.apply')}
-                  </Button>
-                </span>
-              </Tooltip>
-            )}
-            <Dropdown menu={{ items: menuItems }} trigger={['click']}>
-              <Button type="text" size="small" icon={<MoreOutlined />} />
-            </Dropdown>
-          </div>
-      </div>
-        {renderOfficialAccounts()}
-        {renderModelList()}
-    </Card>
-    </div>
-  );
+  return <CodexStyleCard {...props} />;
 };
 
 export default CodexProviderCard;

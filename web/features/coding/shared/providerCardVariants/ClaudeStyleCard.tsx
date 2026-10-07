@@ -47,6 +47,7 @@ const ClaudeStyleCard: React.FC<ProviderCardVariantProps> = ({
     selected = false,
     onSelectChange,
     dimmed = false,
+    accent,
   } = providerState ?? {};
 
   const primary = actions?.primaryAction;
@@ -86,6 +87,7 @@ const ClaudeStyleCard: React.FC<ProviderCardVariantProps> = ({
       selected={selected}
       onSelectChange={onSelectChange}
       dimmed={dimmed}
+      accent={accent}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -122,6 +124,7 @@ const ClaudeStyleCard: React.FC<ProviderCardVariantProps> = ({
         </div>
 
         <Space size={0} style={{ whiteSpace: 'nowrap' }}>
+          {actions?.gatewayActions}
           {primary && (primary.locked ? (
             <Tooltip title={primary.tooltip}>
               <span>

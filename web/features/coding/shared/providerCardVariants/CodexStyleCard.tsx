@@ -51,6 +51,7 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
     selected = false,
     onSelectChange,
     dimmed = false,
+    accent,
   } = providerState ?? {};
 
   const primary = actions?.primaryAction;
@@ -90,6 +91,7 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
       selected={selected}
       onSelectChange={onSelectChange}
       dimmed={dimmed}
+      accent={accent}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -128,6 +130,7 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
         </div>
 
         <Space size={0} style={{ whiteSpace: 'nowrap' }}>
+          {actions?.gatewayActions}
           {primary && (primary.locked ? (
             <Tooltip title={primary.tooltip}>
               <span>
@@ -180,7 +183,10 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
       {modelSection && (
         <ModelListSection
           models={modelSection.models}
+          rowKeyOf={modelSection.rowKeyOf}
           sectionKey={`provider-models-${provider.id}`}
+          className={modelSection.className}
+          bodyStyle={modelSection.bodyStyle}
           transparentRows
           modelsDraggable={modelSection.modelsDraggable}
           onReorderModels={modelSection.onReorderModels}
@@ -200,6 +206,8 @@ const CodexStyleCard: React.FC<ProviderCardVariantProps> = ({
           onCopyModel={modelSection.onCopyModel}
           onDeleteModel={modelSection.onDeleteModel}
           onSetPrimaryModel={modelSection.onSetPrimaryModel}
+          renderModelExtraActions={modelSection.renderModelExtraActions}
+          aboveList={modelSection.aboveList}
         />
       )}
     </CardShell>

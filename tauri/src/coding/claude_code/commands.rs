@@ -16,7 +16,6 @@ use super::settings_merge::KNOWN_ENV_FIELDS;
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
-use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::proxy_gateway::{
     cli_proxy, paths::ProxyGatewayPaths, provider_protocol, types::GatewayCliKey,
@@ -78,24 +77,13 @@ pub fn get_claude_default_root_dir() -> Result<PathBuf, String> {
     Ok(get_home_dir()?.join(".claude"))
 }
 
+/// Claude Code's root directory when no database is available.
+///
+/// The resolution order (env → shell config → default) lives in
+/// `runtime_location::resolve_claude_root_dir_without_db`; this is the
+/// `Result`-shaped alias the backup restore path and the plugin helpers call.
 pub(crate) fn get_claude_root_dir_without_db() -> Result<PathBuf, String> {
-    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
-        if !env_path.trim().is_empty() {
-            return Ok(PathBuf::from(env_path));
-        }
-    }
-
-    if let Some(shell_path) = get_claude_root_dir_from_shell() {
-        return Ok(shell_path);
-    }
-
-    get_claude_default_root_dir()
-}
-
-fn get_claude_root_dir_from_shell() -> Option<PathBuf> {
-    shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR")
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
+    Ok(runtime_location::resolve_claude_root_dir_without_db())
 }
 
 async fn get_claude_custom_root_dir_async(db: &crate::db::SqliteDbState) -> Option<PathBuf> {
@@ -165,15 +153,15 @@ async fn get_claude_prompt_file_path_from_db_async(
     Ok(get_claude_prompt_file_path_from_root(&root_dir))
 }
 
-pub(crate) fn get_claude_settings_path_from_root(root_dir: &Path) -> PathBuf {
-    root_dir.join("settings.json")
-}
-
+/// `settings.json` under the resolved root.
+///
+/// The path comes from `runtime_location::get_claude_settings_path_async` — the
+/// same derivation `runtime_location` uses for every other Claude Code file.
+/// This wrapper only exists to keep the `*_from_db_async` naming the callers use.
 async fn get_claude_settings_path_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<PathBuf, String> {
-    let root_dir = get_claude_root_dir_from_db_async(db).await?;
-    Ok(get_claude_settings_path_from_root(&root_dir))
+    runtime_location::get_claude_settings_path_async(db).await
 }
 
 async fn get_claude_plugin_config_path_from_db_async(

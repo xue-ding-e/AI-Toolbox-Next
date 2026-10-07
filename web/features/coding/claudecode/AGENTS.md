@@ -57,7 +57,9 @@ sequenceDiagram
 ## 跨模块依赖
 
 - 依赖共享 `RootDirectoryModal` / `useRootDirectoryConfig`。
-- 供应商列表区用共享 `ProviderListSection`（`shared/ProviderListSection.tsx`），是本组件的试点（2026-10-06 迁移）。Claude Code 属于**不支持自定义模型**的形态，因此只传卡片列表、不渲染 `ModelListSection`；卡片仍是本模块自己的 `ClaudeProviderCard`（字段区显示 Haiku/Sonnet/Opus 映射）。Gateway 的 Failover 胶囊走 `headerExtra`。改列表外壳时改共享组件，不要改回页面内联。
+- 页面头部用共享 `CodingPageHeader`（`shared/CodingPageHeader.tsx`，2026-10-07 迁移）。文案一律走 `common.*`，没有 per-CLI 覆盖 prop——迁移时删掉了 `claudecode.viewDocs` / `claudecode.configPath` / `claudecode.rootPathSource.customize` 三个孤儿 key，**英文措辞随之变化**（`Documentation` → `Official Docs`、`Configuration File Path` → `Config Path`、`Customize Root Directory` → `Customize Config Dir`），与 Codex 页此前的迁移口径一致。`claudecode.rootPathSource.modal.*` 仍在用（`RootDirectoryModal` 与 `ClaudePluginsPanel`），不要一起删。
+- 供应商列表区用共享 `ProviderListSection`（`shared/ProviderListSection.tsx`），是本组件的试点（2026-10-06 迁移）。Claude Code 属于**不支持自定义模型**的形态，因此只传卡片列表、不渲染 `ModelListSection`。Gateway 的 Failover 胶囊走 `headerExtra`。改列表外壳时改共享组件，不要改回页面内联。
+- 卡片用 `shared/providerCardVariants/ClaudeStyleCard`（2026-10-07 迁移），本模块只负责把 `settings_config` 映射成 `ProviderCardVariantProps`。角色绑定（默认/Haiku/Sonnet/Opus/Fable/Reasoning）走 `metaEntries` 的 `text` + `code` 交替项；连通性测试与「CLI 启动」走 `inlineActions`；网关五个按钮走 `actions.gatewayActions`（渲染在主操作**之前**）。映射层不得自己 `useSortable` / 自己渲染 `<Card>` / 自己写 `ManagementCheckbox`——`pnpm run test:provider-card-layout` 守护这条。
 - 依赖后端 `claude_code::commands`、共享 favorite provider、All API Hub 导入组件，以及共享 `ImportFromCcSwitchModal`（CC Switch 只读导入；无 db 时不显示按钮）。
 - 与 `settings/` 间接共享根目录来源和 WSL Direct 语义，但本页面自己只展示 `source/path`。
 

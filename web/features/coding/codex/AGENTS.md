@@ -93,9 +93,10 @@ sequenceDiagram
 ## 跨模块依赖
 
 - 依赖共享 `RootDirectoryModal` / `useRootDirectoryConfig`。
-- 页面头部用共享 `CodingPageHeader`（`web/features/coding/shared/CodingPageHeader.tsx`），是本组件的首个消费方（2026-10-06 迁移）。它锁定标题行 + 路径行 + 更多选项的骨架；Codex 通过 `docsText`/`configPathLabel`/`customizeConfigText`/`refreshText` 传入自己的措辞，保证英文文案（`Documentation`/`Configuration Path`/`Customize Root Directory`）不变。改头部结构时改组件，不要改回页面内联。
+- 页面头部用共享 `CodingPageHeader`（`web/features/coding/shared/CodingPageHeader.tsx`），是本组件的首个消费方（2026-10-06 迁移）。文案一律走 `common.*`，没有 per-CLI 覆盖 prop（迁移时 `codex.*` 那批头部 key 已被 prune）。改头部结构时改组件，不要改回页面内联。
 - 供应商列表区用共享 `ProviderListSection`（`shared/ProviderListSection.tsx`），是本组件的试点 1（2026-10-06 迁移）。Gateway 的两个胶囊（Failover + Aggregate）走 `headerExtra`；`codex.pageWarning` 比 claudecode 多一句"需重启 Codex"，这正是 hint 由调用方传而非组件硬编码的原因。
-- 模型列表区用共享 `ModelListSection`（`shared/ModelListSection.tsx`），是本组件的试点 2。**Codex 的 `rowKeyOf` 不能从 display 反推**：catalog 行标识是 `model + displayName`，而 `display.name` 在无 displayName 时回退成上游 id，重建键会错位。`rowKeyByDisplay` 这个 `Map<display 对象, rowKey>` 是唯一正确来源，改模型行相关逻辑时不要绕过它。Codex 通过 `transparentRows` + `bodyStyle` 保留原有的透明背景与 `paddingLeft: 18` 缩进。
+- 卡片用 `shared/providerCardVariants/CodexStyleCard`（2026-10-07 迁移），本模块只负责把 `settings_config` 映射成 `ProviderCardVariantProps`。端点/模型 Tag/masked key/备注走 `metaEntries`，连通性走 `inlineActions` 的 `InlineConnectivityButton`，官方账号折叠区走 `footer`，网关五个按钮走 `actions.gatewayActions`。映射层不得自己 `useSortable` / 自己渲染 `<Card>` / 自己写 `ManagementCheckbox`——`pnpm run test:provider-card-layout` 守护这条。
+- 模型列表经 `modelSection` 转给 `CodexStyleCard`，后者再传给 `ModelListSection`（本组件的试点 2）。**Codex 的 `rowKeyOf` 不能从 display 反推**：catalog 行标识是 `model + displayName`，而 `display.name` 在无 displayName 时回退成上游 id，重建键会错位。`rowKeyByDisplay` 这个 `Map<display 对象, rowKey>` 是唯一正确来源，改模型行相关逻辑时不要绕过它。自动审批行与行级「设为自动审批模型」分别走 `modelSection.aboveList` 与 `modelSection.renderModelExtraActions`。
 - 依赖后端 `codex::commands` 和共享 favorite provider、All API Hub 组件、以及共享 `ImportFromCcSwitchModal`（CC Switch 只读导入；无 db 不显示按钮；Codex TOML 经白名单重建后写入）。
 - 间接受 `settings/` 和 `runtime_location` 的 WSL Direct 语义影响，但页面本身只显示 path info。
 

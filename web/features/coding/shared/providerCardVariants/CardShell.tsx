@@ -16,6 +16,19 @@ interface CardShellProps {
   onSelectChange?: (checked: boolean) => void;
   /** Renders the whole card at reduced opacity. */
   dimmed?: boolean;
+  /**
+   * Chrome accent, mirroring the four bespoke cards this shell replaced:
+   *
+   * - `applied` — this is the provider currently in effect (primary border,
+   *   selected background).
+   * - `gatewayPrimary` — this is the failover P0 provider (success border,
+   *   success-tinted gradient). Wins over `applied`: a provider can be both,
+   *   and the gateway role is the more specific fact.
+   *
+   * Batch selection wins over both — the user is acting on the selection, and a
+   * selected card that does not look selected is the worse failure.
+   */
+  accent?: 'applied' | 'gatewayPrimary';
   /** The card body. */
   children: React.ReactNode;
 }
@@ -37,6 +50,7 @@ const CardShell: React.FC<CardShellProps> = ({
   selected = false,
   onSelectChange,
   dimmed = false,
+  accent,
   children,
 }) => {
   const { t } = useTranslation();
@@ -56,6 +70,20 @@ const CardShell: React.FC<CardShellProps> = ({
 
   const showHandle = draggable && !selectable;
 
+  const isSelected = selectable && selected;
+  const borderColor = isSelected || accent === 'applied'
+    ? 'var(--ant-color-primary)'
+    : accent === 'gatewayPrimary'
+      ? 'var(--color-status-success)'
+      : 'var(--color-border-card)';
+  const background = isSelected
+    ? undefined
+    : accent === 'gatewayPrimary'
+      ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
+      : accent === 'applied'
+        ? 'var(--color-bg-selected)'
+        : undefined;
+
   // The ref is attached even when dragging is off: dnd-kit measures the node to
   // compute transforms, and an unregistered node cannot be dragged the moment
   // the parent re-enables it.
@@ -66,7 +94,8 @@ const CardShell: React.FC<CardShellProps> = ({
       <Card
         style={{
           marginBottom: 12,
-          borderColor: selectable && selected ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
+          borderColor,
+          background,
           boxShadow: 'var(--shadow-card-sm)',
           transition: 'box-shadow 0.16s ease',
         }}

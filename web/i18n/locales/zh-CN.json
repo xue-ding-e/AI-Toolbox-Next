@@ -2676,10 +2676,8 @@
     "title": "Claude Code 配置管理",
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
     "pageWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
-    "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "refreshConfig": "刷新配置",
-    "viewDocs": "官方文档",
     "importFromOpenCode": "从 OpenCode 导入",
     "settings": {
       "title": "更多选项",
@@ -2800,7 +2798,6 @@
       "extractTimeout": "读取当前 Claude 配置超时。若根目录是 WSL 或网络路径，请确认发行版/共享可访问后重试。"
     },
     "rootPathSource": {
-      "customize": "自定义配置目录",
       "modal": {
         "title": "自定义 Claude Code 配置目录",
         "currentSource": "当前来源",

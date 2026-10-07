@@ -17,18 +17,24 @@ export interface ProviderCardModel {
   sdkName?: string;
   baseUrl?: string;
   /**
-   * Free-form second-line facts, rendered in the order given.
+   * Free-form facts, rendered in the order given.
    *
-   * The three styles differ in *where* the second line goes, not in what it
-   * carries, so the caller decides the content and the style decides the
-   * placement. A `code` entry renders monospaced (ids, model names); a `text`
-   * entry renders secondary (labels, notes).
+   * The three styles differ in *where* these go, not in what they carry, so the
+   * caller decides the content and the style decides the placement. A `code`
+   * entry renders monospaced (ids, model names); a `text` entry renders
+   * secondary (labels, notes); a `tag` entry renders as a coloured Tag.
    */
   meta?: ProviderCardMetaEntry[];
 }
 
 export interface ProviderCardMetaEntry {
-  kind: 'id' | 'code' | 'text' | 'tag' | 'sdk';
+  /**
+   * Only the kinds a style actually renders are listed. `id` and `sdk` were
+   * removed on 2026-10-07: nothing produced them (the OpenCode style builds its
+   * own id/SDK line from `provider.id` / `sdkName`), so they were a contract
+   * with no reader.
+   */
+  kind: 'code' | 'text' | 'tag';
   value: string;
   /** Only meaningful for `tag`: the Ant Design color. */
   color?: string;
@@ -66,6 +72,19 @@ export interface ProviderCardActions {
     /** A disabled primary action with a tooltip still renders, greyed out. */
     locked?: boolean;
   };
+  /**
+   * Gateway takeover actions (代理 / 恢复直连 / 切换主渠道), rendered **before**
+   * `primaryAction` so the row reads "take over" → "apply" → "edit".
+   *
+   * A slot rather than a data prop: the four actions are conditional on the
+   * gateway's own status shape, and each caller's handlers already read that
+   * status itself. The card has nothing to add — it only has to put the node in
+   * the right place, which is the part that used to drift.
+   *
+   * Rendered by the Claude and Codex styles (the CLIs the gateway can take
+   * over). The OpenCode style has no header action rail and ignores it.
+   */
+  gatewayActions?: React.ReactNode;
   /** Extra header actions for the OpenCode style (batch delete, connectivity). */
   extraActions?: React.ReactNode;
 }
@@ -83,6 +102,11 @@ export interface ProviderCardState {
   onSelectChange?: (checked: boolean) => void;
   /** Renders the card at reduced opacity, e.g. while a disabled provider is listed. */
   dimmed?: boolean;
+  /**
+   * Chrome accent, forwarded to `CardShell`. See that component for the
+   * precedence rules (batch selection > gateway primary > applied).
+   */
+  accent?: 'applied' | 'gatewayPrimary';
 }
 
 export interface ProviderCardModels {
@@ -92,6 +116,15 @@ export interface ProviderCardModels {
   /** Drag handle for the card itself. */
   draggable?: boolean;
   sortableId?: string;
+  /**
+   * Row identity for selection / reorder / drag. Defaults to `model.id`.
+   *
+   * Providers whose rows are keyed by more than the model id (Codex keys on
+   * `model + displayName`) pass a resolver so callbacks receive their own key.
+   * See `ModelListSection` for why it must not be re-derived from the display
+   * object.
+   */
+  rowKeyOf?: (model: ModelDisplayData) => string;
   /** Model-row actions. Omit one to hide its button. */
   onAddModel?: () => void;
   onEditModel?: (modelId: string) => void;
@@ -113,8 +146,14 @@ export interface ProviderCardModels {
   onFetchModels?: () => void;
   fetchDisabled?: boolean;
   fetchDisabledTooltip?: string;
-  /** Short tag beside the model-section title. */
-  modelSourceTag?: string;
+  /** Per-row extra action (Codex's "设为自动审批模型"). */
+  renderModelExtraActions?: (model: ModelDisplayData, rowKey: string) => React.ReactNode;
+  /** Rendered directly under the toolbar, above the rows (Codex's auto-review line). */
+  aboveList?: React.ReactNode;
+  /** Extra class on the model Collapse, e.g. to scope a style override. */
+  className?: string;
+  /** Style applied to the content wrapper inside the model Collapse body. */
+  bodyStyle?: React.CSSProperties;
 }
 
 /**

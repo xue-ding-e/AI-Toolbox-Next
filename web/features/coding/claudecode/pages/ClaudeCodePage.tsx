@@ -1,8 +1,8 @@
 import React from 'react';
 import { Typography, Button, Space, message, Modal, Collapse } from 'antd';
-import { FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, EditOutlined, MessageOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, MessageOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import {
   DndContext,
@@ -61,6 +61,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ImportFromCcSwitchModal from '@/features/coding/shared/ccSwitch/ImportFromCcSwitchModal';
 import ShareProviderModal from '@/features/coding/shared/providerShare';
 import { hasCcSwitchDb, type CcSwitchProviderCandidate } from '@/services/ccSwitchApi';
+import CodingPageHeader from '@/features/coding/shared/CodingPageHeader';
 import ProviderListSection from '@/features/coding/shared/ProviderListSection';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
@@ -132,7 +133,7 @@ import {
 } from '../utils/claudeModelConfig';
 import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
-const { Title, Text, Link } = Typography;
+const { Text } = Typography;
 
 function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
   const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig);
@@ -1248,78 +1249,16 @@ const ClaudeCodePage: React.FC = () => {
     >
       <div>
         {/* 页面头部 */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-                  {t('claudecode.title')}
-                </Title>
-                <Link
-                  type="secondary"
-                  style={{ fontSize: 12 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openUrl('https://code.claude.com/docs/en/settings#environment-variables');
-                  }}
-                >
-                  <LinkOutlined /> {t('claudecode.viewDocs')}
-                </Link>
-                <Link
-                  type="secondary"
-                  style={{ fontSize: 12, marginLeft: 16 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePreviewCurrentConfig();
-                  }}
-                >
-                  <EyeOutlined /> {t('common.previewConfig')}
-                </Link>
-              </div>
-              <Space>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('claudecode.configPath')}:
-                </Text>
-                <Text code style={{ fontSize: 12 }}>
-                  {configPath || '~/.claude/settings.json'}
-                </Text>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => setRootDirectoryModalOpen(true)}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('claudecode.rootPathSource.customize')}
-                </Button>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<FolderOpenOutlined />}
-                  onClick={handleOpenFolder}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('claudecode.openFolder')}
-                </Button>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<SyncOutlined />}
-                  onClick={handleRefreshPage}
-                  style={{ padding: 0, fontSize: 12 }}
-                >
-                  {t('claudecode.refreshConfig')}
-                </Button>
-              </Space>
-            </div>
-
-            <Space>
-              <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
-                {t('common.moreOptions')}
-              </Button>
-            </Space>
-          </div>
-        </div>
+        <CodingPageHeader
+          title={t('claudecode.title')}
+          docsUrl="https://code.claude.com/docs/en/settings#environment-variables"
+          onPreviewConfig={handlePreviewCurrentConfig}
+          configPath={configPath || '~/.claude/settings.json'}
+          onCustomizeConfig={() => setRootDirectoryModalOpen(true)}
+          onOpenFolder={handleOpenFolder}
+          onRefresh={handleRefreshPage}
+          onMoreOptions={() => setSettingsModalOpen(true)}
+        />
 
         {/* Provider 列表 */}
         <ProviderListSection

@@ -25,7 +25,7 @@ This document provides essential information for AI coding agents working on thi
 11. 仓库内用于给 agent 阅读的模块文档 `AGENTS.md` 不是应用运行时资源；本地开发 watcher 和类似热重载链路应尽量忽略它们，避免把文档编辑误当成代码改动。
 12. 不要把上一条误用到产品运行时 prompt 文件上。当前仓库里的 OpenCode / Codex 运行时 prompt 文件名就是 `AGENTS.md`，Claude Code 运行时 prompt 文件名是 `CLAUDE.md`；它们属于真实业务数据，备份、恢复、WSL/SSH 同步和页面交互都依赖这些文件，不能按“仅 agent 文档”排除。
 13. 修改 `web/**` 中任何可见 UI、样式、布局、组件视觉、交互密度、空态、图标、颜色、字号、间距或弹窗表单前，必须先完整阅读根目录 `DESIGN.md`。没有读取 `DESIGN.md` 就不得设计方案、不得写前端 UI 代码、不得声称遵循项目设计系统。
-14. 新增或修改 CLI 供应商卡片时，必须使用 `web/features/coding/shared/providerCardVariants/` 中已固定的三种样式之一，不得再新建 per-CLI 卡片布局。选型依据是该 CLI 的 provider 模型形状（是否有模型目录、是否有单一 active provider），不是个人偏好；三种样式的适用条件写在 `providerCardVariants/index.ts` 的表里。共享卡片的通用改动（间距、按钮、拖拽、选中态）改在变体组件内，一处生效于所有使用该样式的 CLI；只在某个 CLI 卡片里改这些会让样式重新分叉。
+14. 新增或修改 CLI 供应商卡片时，必须使用 `web/features/coding/shared/providerCardVariants/` 中已固定的三种样式之一，不得再新建 per-CLI 卡片布局。选型依据是该 CLI 的 provider 模型形状（是否有模型目录、是否有单一 active provider），不是个人偏好；三种样式的适用条件写在 `providerCardVariants/index.ts` 的表里。共享卡片的通用改动（间距、按钮、拖拽、选中态）改在变体组件内，一处生效于所有使用该样式的 CLI；只在某个 CLI 卡片里改这些会让样式重新分叉。**本规则由 `scripts/verify-provider-card-layout.mjs`（`pnpm run test:provider-card-layout`）机械守护**：每个 `*ProviderCard.tsx` 都不得自己 `useSortable` / 自己渲染 `<Card>` / 自己写 `ManagementCheckbox`；尚未迁移的文件登记在该脚本的 `PENDING_MIGRATION` 里，只减不增，迁完必须同步删掉条目。
 
 ### Template
 
@@ -70,7 +70,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/oh_my_pi/` | Oh My Pi 前端页面、models.yml provider、subagent 方案与 OMP 语义诊断（复用 pi 样式） |
 | `web/features/coding/omo_native/` | OmO Native 前端页面（供应商 / 全局提示词 / 会话管理三区块）、`models.json` provider 映射与插件版 OMO 的边界 |
 | `web/features/coding/zcode/` | ZCode 前端页面、provider/模型、官方账号与 OAuth 登录、通用配置与导入 |
-| `web/features/coding/shared/providerCardVariants/` | 三种固定供应商卡片样式（Claude/Codex/OpenCode）的单一实现，各 CLI 按 provider 模型形状选用 |
+| `web/features/coding/shared/providerCardVariants/` | 三种固定供应商卡片样式（Claude/Codex/OpenCode）的单一实现，各 CLI 按 provider 模型形状选用；由 `scripts/verify-provider-card-layout.mjs` 守护 |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
