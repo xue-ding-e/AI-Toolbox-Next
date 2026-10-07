@@ -743,7 +743,7 @@ async fn get_local_prompt_config(
 
     let now = chrono::Local::now().to_rfc3339();
     Ok(Some(OpenCodePromptConfig {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: "default".to_string(),
         content: prompt_content,
         is_applied: true,
@@ -1064,6 +1064,41 @@ pub async fn get_opencode_preview(
     })
 }
 
+/// 保存整份 `auth.json`（OpenCode 的官方渠道凭据文件）。
+///
+/// 「官方Auth认证渠道」标题栏的 `auth.json` 入口用它——本应用是配置管理器，
+/// 密钥要能在应用内**查看并编辑**，而不是只丢一个「用资源管理器打开」的入口
+/// （2026-10-07 用户要求，与 OmO Native 的同类入口一致）。
+///
+/// ⚠️ **整份覆盖**：用户在编辑器里删掉一个渠道就是要删掉它。
+///
+/// ⚠️ **不做 config value 转义**（与 OmO 不同）：OpenCode 的 `auth.json` 值按
+/// 字面量使用，`$` 不会被插值，写进去什么就是什么。
+#[tauri::command]
+pub async fn save_opencode_auth_config(
+    app: tauri::AppHandle,
+    config: Value,
+) -> Result<(), String> {
+    if !config.is_object() {
+        return Err("auth.json must be a JSON object".to_string());
+    }
+    let auth_path_str = super::free_models::get_opencode_auth_config_path()?;
+    let auth_path = Path::new(&auth_path_str);
+    if let Some(parent) = auth_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+    let text =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("Failed to serialize: {e}"))?;
+    fs::write(auth_path, format!("{text}\n"))
+        .map_err(|e| format!("Failed to write auth.json: {e}"))?;
+
+    let _ = app.emit("config-changed", "opencode");
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-opencode", ());
+    Ok(())
+}
+
 /// Backup OpenCode configuration file by renaming it with .bak.{timestamp} suffix
 #[tauri::command]
 pub async fn backup_opencode_config(
@@ -1277,7 +1312,7 @@ async fn apply_prompt_config_internal_with_events<R: tauri::Runtime>(
     from_tray: bool,
     emit_events: bool,
 ) -> Result<(), String> {
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let local_prompt = get_local_prompt_config(state.clone())
             .await?
             .ok_or_else(|| "Local default prompt not found".to_string())?;

@@ -46,7 +46,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { useProviderSharing } from '@/features/coding/shared/providerShare';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeV2ConfigMode, setOpenCodeV2ConfigMode, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, getOpenCodePreview, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig, type OpenCodePreviewData, type ReadConfigResult } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeV2ConfigMode, setOpenCodeV2ConfigMode, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, getOpenCodePreview, saveOpenCodeAuthConfig, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig, type OpenCodePreviewData, type ReadConfigResult } from '@/services/opencodeApi';
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
@@ -90,6 +90,7 @@ import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { MagicContextSettings } from '@/features/coding/shared/magicContext';
 import JsonEditor from '@/components/common/JsonEditor';
 import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
+import AuthConfigModal from '@/components/common/AuthConfigModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
@@ -150,6 +151,7 @@ import {
 } from '@/features/coding/shared/providerList';
 
 import styles from './OpenCodePage.module.less';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Title, Text, Link } = Typography;
 
@@ -400,7 +402,10 @@ const OpenCodePage: React.FC = () => {
   const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
   const [unifiedModels, setUnifiedModels] = React.useState<UnifiedModelOption[]>([]);
   const [authProvidersData, setAuthProvidersData] = React.useState<GetAuthProvidersResponse | null>(null);
-  const [authConfigPath, setAuthConfigPath] = React.useState<string>('');
+  const [authModalOpen, setAuthModalOpen] = React.useState(false);
+  /** `auth.json` 原文 + 路径，打开弹窗时现读。 */
+  const [authContent, setAuthContent] = React.useState<string | undefined>(undefined);
+  const [authConfigPath, setAuthConfigPath] = React.useState<string | undefined>(undefined);
   const resolvedAuthProviderIds = React.useMemo(
     () => new Set(authProvidersData?.resolvedAuthProviderIds ?? []),
     [authProvidersData],
@@ -726,7 +731,7 @@ const OpenCodePage: React.FC = () => {
       // Only auto-apply when plugin changes from disabled to enabled
       if (!prevOmoPluginEnabledRef.current && omoPluginEnabled && omoConfigs.length > 0) {
         // Find the managed applied config (exclude local-file bridge).
-        const appliedConfig = omoConfigs.find((c) => c.isApplied && c.id !== '__local__');
+        const appliedConfig = omoConfigs.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
         if (appliedConfig) {
           try {
             await applyOhMyOpenAgentConfig(appliedConfig.id);
@@ -872,16 +877,21 @@ const OpenCodePage: React.FC = () => {
     loadFavProviders();
   }, [config, omosConfigRefreshKey]);
 
-  // Open auth.json config file
+  /**
+   * 打开 `auth.json` 的**应用内编辑弹窗**（不是跳系统文件管理器）。
+   *
+   * 本应用是配置管理器，密钥要能在应用内看到并修改（2026-10-07 用户要求）。
+   * 每次打开都重新读一遍磁盘原文——别处（官方登录、WSL 同步）改过的内容
+   * 不能因为拿着旧副本而被覆盖。
+   */
   const handleOpenAuthConfig = async () => {
-    if (!authConfigPath) {
-      message.warning(t('opencode.official.configNotFound'));
-      return;
-    }
     try {
-      await revealItemInDir(authConfigPath);
+      const preview = await getOpenCodePreview();
+      setAuthContent(preview.authContent ?? undefined);
+      setAuthConfigPath(preview.authPath ?? undefined);
+      setAuthModalOpen(true);
     } catch (error) {
-      console.error('Failed to open auth config:', error);
+      console.error('Failed to read OpenCode auth.json:', error);
       message.error(t('common.error'));
     }
   };
@@ -2995,6 +3005,20 @@ const OpenCodePage: React.FC = () => {
             )}
 
             {/* Preview Modal */}
+            <AuthConfigModal
+              open={authModalOpen}
+              content={authContent}
+              path={authConfigPath}
+              onSave={saveOpenCodeAuthConfig}
+              onCancel={() => setAuthModalOpen(false)}
+              onSaved={async () => {
+                // 改完凭据要重查官方渠道列表——它是按 auth.json 的键派生的。
+                const data = await getOpenCodeAuthProviders();
+                setAuthProvidersData(data);
+                incrementOpenCodeConfigRefresh();
+              }}
+            />
+
             <FileConfigPreviewModal
               open={previewModalOpen}
               onClose={() => setPreviewModalOpen(false)}
