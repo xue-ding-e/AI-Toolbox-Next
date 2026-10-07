@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   PiExtensionActionInput,
   PiExtensionCommandResult,
+  PiExtensionEnabledInput,
   PiExtensionInstallInput,
   PiExtensionListResult,
   PiExtensionUpdateInput,
@@ -84,4 +85,10 @@ export const updatePiExtensions = async (
   input?: PiExtensionUpdateInput,
 ): Promise<PiExtensionCommandResult> => {
   return await invoke<PiExtensionCommandResult>('update_pi_extensions', { input });
+};
+
+export const setPiExtensionEnabled = async (
+  input: PiExtensionEnabledInput,
+): Promise<void> => {
+  await invoke('set_pi_extension_enabled', { input });
 };

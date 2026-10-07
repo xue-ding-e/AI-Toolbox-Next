@@ -253,6 +253,18 @@ pub struct PiExtensionSummary {
     /// True when `latest_version` is newer than `current_version`.
     #[serde(default)]
     pub update_available: bool,
+    /// Resolved from `settings.json` filters: false when the package loads no
+    /// resources (`[]` filters) or the local extension is force-excluded (`-path`).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// False when the page must not offer an enable/disable switch because the
+    /// filter this app can write would not actually change what pi loads.
+    #[serde(default = "default_true")]
+    pub switch_supported: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,4 +314,13 @@ pub struct PiExtensionActionInput {
 pub struct PiExtensionCommandResult {
     pub command: String,
     pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionEnabledInput {
+    pub source: String,
+    pub kind: PiExtensionKind,
+    /// True writes the resource back on; false writes the disable filter.
+    pub enabled: bool,
 }

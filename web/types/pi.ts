@@ -98,6 +98,14 @@ export interface PiExtensionSummary {
   currentVersion?: string;
   latestVersion?: string;
   updateAvailable?: boolean;
+  /** Resolved from `settings.json` filters; absent means enabled. */
+  enabled?: boolean;
+  /**
+   * False when the page must not offer an enable/disable switch: the filter this
+   * app can write would not change what pi actually loads (e.g. a directory
+   * extension whose `package.json` manifest lists other entry files).
+   */
+  switchSupported?: boolean;
 }
 
 export interface PiExtensionListResult {
@@ -130,4 +138,10 @@ export interface PiExtensionActionInput {
 export interface PiExtensionCommandResult {
   command: string;
   output: string;
+}
+
+export interface PiExtensionEnabledInput {
+  source: string;
+  kind: PiExtensionKind;
+  enabled: boolean;
 }

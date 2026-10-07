@@ -25,7 +25,10 @@ use tauri::{Emitter, Runtime};
 const PI_THINKING_LEVEL_KEYS: [&str; 7] =
     ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const PI_EXTENDED_THINKING_LEVEL_KEYS: [&str; 2] = ["xhigh", "max"];
-const PI_OTHER_SETTINGS_PROTECTED_KEYS: [&str; 1] = ["packages"];
+/// Keys owned by other surfaces: hidden from the "Other Configuration" editor and
+/// preserved on save. `extensions` carries the extension enable/disable filters, so
+/// a stale editor snapshot must not write it back.
+const PI_OTHER_SETTINGS_PROTECTED_KEYS: [&str; 2] = ["packages", "extensions"];
 
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -137,7 +140,7 @@ pub async fn get_pi_prompt_path_async(db: &SqliteDbState) -> Result<PathBuf, Str
     ))
 }
 
-fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
+pub(super) fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
     if !path.exists() {
         return Ok(Value::Object(Map::new()));
     }
@@ -155,7 +158,7 @@ fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
     }
 }
 
-fn write_json_object(path: &Path, value: &Value) -> Result<(), String> {
+pub(super) fn write_json_object(path: &Path, value: &Value) -> Result<(), String> {
     if !value.is_object() {
         return Err(format!(
             "{} must be written as a JSON object",
@@ -190,7 +193,7 @@ fn object_ref(value: &Value) -> Option<&Map<String, Value>> {
     value.as_object()
 }
 
-fn object_mut(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
+pub(super) fn object_mut(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
     value
         .as_object_mut()
         .ok_or_else(|| "Expected JSON object".to_string())
@@ -874,8 +877,8 @@ async fn get_local_prompt_config(db: &SqliteDbState) -> Result<Option<PiPromptCo
         return Ok(None);
     };
     Ok(Some(PiPromptConfig {
-        id: "__local__".to_string(),
-        name: "Local AGENTS.md".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
+        name: crate::coding::local_bridge::LOCAL_CONFIG_NAME.to_string(),
         content,
         is_applied: false,
         sort_index: Some(-1),
@@ -1024,7 +1027,7 @@ async fn apply_pi_prompt_config_internal_with_events<R: Runtime>(
     emit_events: bool,
 ) -> Result<(), String> {
     let db = state.db();
-    if config_id == "__local__" {
+    if config_id == crate::coding::local_bridge::LOCAL_CONFIG_ID {
         let local_prompt = get_local_prompt_config(&db)
             .await?
             .ok_or_else(|| "Local Pi prompt not found".to_string())?;
@@ -1197,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn build_other_settings_excludes_model_defaults_and_packages() {
+    fn build_other_settings_excludes_model_defaults_and_extension_filters() {
         let settings = json!({
             "defaultProvider": "anthropic",
             "defaultModel": "claude-sonnet-4",
@@ -1207,28 +1210,25 @@ mod tests {
             "extensions": ["./extensions"]
         });
 
-        assert_eq!(
-            build_other_settings(&settings),
-            json!({
-                "theme": "dark",
-                "extensions": ["./extensions"]
-            })
-        );
+        // `packages` and `extensions` are owned by the extensions section, so the
+        // "Other Configuration" editor never sees them (and cannot clobber them).
+        assert_eq!(build_other_settings(&settings), json!({ "theme": "dark" }));
     }
 
     #[test]
-    fn apply_pi_other_settings_preserves_packages_and_defaults() {
+    fn apply_pi_other_settings_preserves_packages_and_extension_filters() {
         let mut settings = json!({
             "defaultProvider": "anthropic",
             "defaultModel": "claude-sonnet-4",
             "defaultThinkingLevel": "high",
             "theme": "dark",
             "packages": ["npm:context-mode"],
-            "extensions": ["./extensions"]
+            "extensions": ["./extensions", "-extensions/foo.ts"]
         });
         let other_settings = json!({
             "theme": "light",
             "packages": ["npm:should-not-overwrite"],
+            "extensions": ["should-not-overwrite"],
             "enabledModels": ["anthropic/*"]
         });
 
@@ -1245,6 +1245,7 @@ mod tests {
                 "defaultThinkingLevel": "high",
                 "theme": "light",
                 "packages": ["npm:context-mode"],
+                "extensions": ["./extensions", "-extensions/foo.ts"],
                 "enabledModels": ["anthropic/*"]
             })
         );

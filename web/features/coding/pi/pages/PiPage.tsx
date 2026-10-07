@@ -2221,7 +2221,15 @@ const PiPage: React.FC = () => {
             data-pi-sidebar-section="true"
             data-sidebar-title={t('pi.extensions.title')}
           >
-            <PiExtensionsSection refreshKey={extensionsRefreshKey} />
+            <PiExtensionsSection
+              refreshKey={extensionsRefreshKey}
+              // 扩展变更会改 `settings.json` 的 packages / extensions 过滤器，
+              // 页面的其他部分（如 magic-context 区块）也读同一份文件。
+              onChanged={async () => {
+                await loadConfig(true);
+                await refreshTrayMenu();
+              }}
+            />
           </div>
 
           <div

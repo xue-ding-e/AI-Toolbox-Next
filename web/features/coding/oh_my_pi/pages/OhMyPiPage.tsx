@@ -536,7 +536,10 @@ const OhMyPiPage: React.FC = () => {
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
     const modelSettingsSaveSeqRef = React.useRef(0);
-  const sidebarHidden = sidebarHiddenByPage.pi;
+  // `oh_my_pi`, not `pi`: PiPage reads `pi`, and each CLI owns its own slot.
+  // Reading Pi's key here made this page's sidebar toggle a no-op — it wrote
+  // `oh_my_pi` while displaying `pi`.
+  const sidebarHidden = sidebarHiddenByPage.oh_my_pi;
 
   const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
     {
