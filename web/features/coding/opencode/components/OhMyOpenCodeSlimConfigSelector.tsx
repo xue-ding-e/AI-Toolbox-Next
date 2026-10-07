@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
 import { listOhMyOpenCodeSlimConfigs, applyOhMyOpenCodeSlimConfig } from '@/services/ohMyOpenCodeSlimApi';
 import { useRefreshStore } from '@/stores';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 interface OhMyOpenCodeSlimConfigSelectorProps {
   disabled?: boolean;
@@ -32,7 +33,7 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
       const data = await listOhMyOpenCodeSlimConfigs();
       setConfigs(data);
       // `__local__` is a local-file bridge, not a managed applied preset.
-      const applied = data.find((c) => c.isApplied && c.id !== '__local__');
+      const applied = data.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
       if (applied) {
         setSelectedConfigId(applied.id);
       } else {
@@ -65,7 +66,7 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
     }
   };
 
-  const managedConfigs = configs.filter((config) => config.id !== '__local__');
+  const managedConfigs = configs.filter((config) => config.id !== LOCAL_CONFIG_ID);
   const options = managedConfigs.map((config) => ({
     label: config.isApplied
       ? `${config.name} ✓`

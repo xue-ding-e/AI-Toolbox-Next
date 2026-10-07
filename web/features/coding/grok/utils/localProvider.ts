@@ -1,20 +1,25 @@
 import type { GrokProvider } from '@/types/grok';
+import {
+  LOCAL_CONFIG_ID,
+  isLocalConfigId,
+  shouldLoadOfficialAccounts,
+  shouldShowOfficialAccounts,
+} from '../../shared/localConfig';
 
-export const GROK_LOCAL_PROVIDER_ID = '__local__';
+/**
+ * Grok 的本地文件桥接态判定。
+ *
+ * id 与判定逻辑全仓共用（见 shared/localConfig.ts），这里只保留本 CLI 的
+ * 命名与类型签名——调用点不用改，改动集中在共享模块一处。
+ */
 
-export function isGrokLocalProviderId(providerId: string | null | undefined): boolean {
-  return providerId === GROK_LOCAL_PROVIDER_ID;
-}
+export const GROK_LOCAL_PROVIDER_ID = LOCAL_CONFIG_ID;
 
-export function shouldLoadGrokOfficialAccounts(provider: Pick<GrokProvider, 'id'>): boolean {
-  return !isGrokLocalProviderId(provider.id);
-}
+export const isGrokLocalProviderId = isLocalConfigId;
 
-export function shouldShowGrokOfficialAccounts(
+export const shouldLoadGrokOfficialAccounts = shouldLoadOfficialAccounts;
+
+export const shouldShowGrokOfficialAccounts = (
   provider: Pick<GrokProvider, 'id' | 'category'>,
   officialAccountCount: number,
-): boolean {
-  return shouldLoadGrokOfficialAccounts(provider) && (
-    provider.category === 'official' || officialAccountCount > 0
-  );
-}
+): boolean => shouldShowOfficialAccounts(provider, officialAccountCount);

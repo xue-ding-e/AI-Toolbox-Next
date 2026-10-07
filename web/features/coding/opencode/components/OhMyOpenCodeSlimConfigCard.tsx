@@ -7,6 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import AppliedTag from '@/components/common/AppliedTag';
 import { SLIM_AGENT_TYPES, getSlimAgentDisplayNameKey, type OhMyOpenCodeSlimConfig, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 import { splitSlimModelValue } from './ohMyOpenCodeSlimFormUtils';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Text } = Typography;
 
@@ -57,7 +58,7 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
     opacity: isDragging ? 0.5 : (config.isDisabled ? 0.6 : 1),
   };
 
-  const isLocalConfig = config.id === '__local__';
+  const isLocalConfig = config.id === LOCAL_CONFIG_ID;
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showAsApplied = isSelected && !isLocalConfig;
 

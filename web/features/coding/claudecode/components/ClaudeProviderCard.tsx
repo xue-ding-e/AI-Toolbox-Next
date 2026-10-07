@@ -49,6 +49,7 @@ import {
   getClaudeProviderModelConfig,
   parseClaudeSettingsConfig,
 } from '../utils/claudeModelConfig';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Text } = Typography;
 
@@ -134,7 +135,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     '';
   const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
   const isOfficialProvider = provider.category === 'official';
-  const isLocalProvider = provider.id === '__local__';
+  const isLocalProvider = provider.id === LOCAL_CONFIG_ID;
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showRuntimeApplied = isApplied && !isLocalProvider;
   const settingsConfigApiFormat = settingsConfig as {

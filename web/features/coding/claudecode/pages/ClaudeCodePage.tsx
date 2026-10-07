@@ -130,6 +130,7 @@ import {
   getClaudeConfiguredModelIds,
   parseClaudeSettingsConfig,
 } from '../utils/claudeModelConfig';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Title, Text, Link } = Typography;
 
@@ -237,7 +238,7 @@ const ClaudeCodePage: React.FC = () => {
     const primaryProvider = providers.find(
       (provider) => provider.id === gatewayCliStatus?.primary_provider_id,
     );
-    if (!primaryProvider || primaryProvider.category === 'official' || primaryProvider.id === '__local__') {
+    if (!primaryProvider || primaryProvider.category === 'official' || primaryProvider.id === LOCAL_CONFIG_ID) {
       return false;
     }
     const settingsConfig = parseClaudeSettingsConfig(primaryProvider.settingsConfig) as {
@@ -513,7 +514,7 @@ const ClaudeCodePage: React.FC = () => {
   );
 
   const canBatchDeleteProvider = React.useCallback(
-    (provider: ClaudeCodeProvider) => provider.id !== '__local__',
+    (provider: ClaudeCodeProvider) => provider.id !== LOCAL_CONFIG_ID,
     [],
   );
 
@@ -1065,7 +1066,7 @@ const ClaudeCodePage: React.FC = () => {
         notes: values.notes,
       };
 
-      let savedProviderId = isLocalTemp ? '__local__' : '';
+      let savedProviderId = isLocalTemp ? LOCAL_CONFIG_ID : '';
       let savedProvider: ClaudeCodeProvider | null = null;
       const gatewayModeBeforeSave = resolveGatewayReengageMode(gatewayCliStatus);
       const gatewayAggregateBeforeSave = toGatewayAggregateReengageConfig(gatewayCliStatus);
@@ -1350,18 +1351,10 @@ const ClaudeCodePage: React.FC = () => {
             />
           }
           hint={
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--color-text-secondary)',
-                borderLeft: '2px solid var(--color-border)',
-                paddingLeft: 8,
-                marginBottom: 12,
-              }}
-            >
+            <>
               <div>{t('claudecode.pageHint')}</div>
               <div>{t('claudecode.pageWarning')}</div>
-            </div>
+            </>
           }
           footer={
             <Space wrap>
@@ -1523,7 +1516,7 @@ const ClaudeCodePage: React.FC = () => {
             setCommonConfigModalOpen(false);
             message.success(t('common.success'));
           }}
-          isLocalProvider={providers.some((provider) => provider.id === '__local__')}
+          isLocalProvider={providers.some((provider) => provider.id === LOCAL_CONFIG_ID)}
           gatewaySaveLocked={gatewayTakeoverActive}
         />
 

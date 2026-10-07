@@ -1,22 +1,25 @@
 import type { AntigravityProvider } from '@/types/antigravity';
+import {
+  LOCAL_CONFIG_ID,
+  isLocalConfigId,
+  shouldLoadOfficialAccounts,
+  shouldShowOfficialAccounts,
+} from '../../shared/localConfig';
 
-export const ANTIGRAVITY_LOCAL_PROVIDER_ID = '__local__';
+/**
+ * Antigravity 的本地文件桥接态判定。
+ *
+ * id 与判定逻辑全仓共用（见 shared/localConfig.ts），这里只保留本 CLI 的
+ * 命名与类型签名——调用点不用改，改动集中在共享模块一处。
+ */
 
-export function isAntigravityLocalProviderId(providerId: string | null | undefined): boolean {
-  return providerId === ANTIGRAVITY_LOCAL_PROVIDER_ID;
-}
+export const ANTIGRAVITY_LOCAL_PROVIDER_ID = LOCAL_CONFIG_ID;
 
-export function shouldLoadAntigravityOfficialAccounts(
-  provider: Pick<AntigravityProvider, 'id'>,
-): boolean {
-  return !isAntigravityLocalProviderId(provider.id);
-}
+export const isAntigravityLocalProviderId = isLocalConfigId;
 
-export function shouldShowAntigravityOfficialAccounts(
+export const shouldLoadAntigravityOfficialAccounts = shouldLoadOfficialAccounts;
+
+export const shouldShowAntigravityOfficialAccounts = (
   provider: Pick<AntigravityProvider, 'id' | 'category'>,
   officialAccountCount: number,
-): boolean {
-  return shouldLoadAntigravityOfficialAccounts(provider) && (
-    provider.category === 'official' || officialAccountCount > 0
-  );
-}
+): boolean => shouldShowOfficialAccounts(provider, officialAccountCount);

@@ -6,6 +6,7 @@ import type { OhMyOpenAgentConfig } from '@/types/ohMyOpenAgent';
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { useRefreshStore } from '@/stores';
 import { useOmoUpgradeGate } from './useOmoUpgradeGate';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 interface OhMyOpenAgentConfigSelectorProps {
   disabled?: boolean;
@@ -34,7 +35,7 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
       const data = await listOhMyOpenAgentConfigs();
       setConfigs(data);
       // `__local__` is a local-file bridge, not a managed applied preset.
-      const applied = data.find((c) => c.isApplied && c.id !== '__local__');
+      const applied = data.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
       if (applied) {
         setSelectedConfigId(applied.id);
       } else {
@@ -70,7 +71,7 @@ const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = 
     });
   };
 
-  const managedConfigs = configs.filter((config) => config.id !== '__local__');
+  const managedConfigs = configs.filter((config) => config.id !== LOCAL_CONFIG_ID);
   const options = managedConfigs.map((config) => ({
     label: config.isApplied
       ? `${config.name} ✓`

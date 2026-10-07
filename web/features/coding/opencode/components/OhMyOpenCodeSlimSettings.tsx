@@ -37,6 +37,7 @@ import {
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import { useRefreshStore } from '@/stores';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Text, Link } = Typography;
 
@@ -243,7 +244,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   const handleModalSuccess = async (values: OhMyOpenCodeSlimConfigFormValues) => {
     try {
       // Check if this is a __local__ config (temporary config from local file)
-      const isLocalConfig = editingConfig?.id === '__local__';
+      const isLocalConfig = editingConfig?.id === LOCAL_CONFIG_ID;
 
       if (isLocalConfig) {
         // Save local config to database using saveOhMyOpenCodeSlimLocalConfig
@@ -307,7 +308,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   const handleSaveGlobalConfig = async (values: OhMyOpenCodeSlimGlobalConfigInput) => {
     try {
       // Check if this is a __local__ config (temporary config from local file)
-      const isLocalConfig = globalConfig?.id === '__local__';
+      const isLocalConfig = globalConfig?.id === LOCAL_CONFIG_ID;
 
       if (isLocalConfig) {
         // Save local config to database using saveOhMyOpenCodeSlimLocalConfig
@@ -336,7 +337,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   };
 
   // `__local__` is a local-file bridge; do not present it as a managed applied preset.
-  const appliedConfig = configs.find((c) => c.isApplied && c.id !== '__local__');
+  const appliedConfig = configs.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
 
   const content = (
     <Spin spinning={loading}>
@@ -486,7 +487,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
 
       <OhMyOpenCodeSlimGlobalConfigModal
         open={globalModalOpen}
-        isLocal={globalConfig?.id === '__local__'}
+        isLocal={globalConfig?.id === LOCAL_CONFIG_ID}
         initialConfig={globalConfig || undefined}
         modelOptions={modelOptions}
         modelVariantsMap={modelVariantsMap}

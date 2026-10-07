@@ -62,6 +62,7 @@ import {
   getOmpModelRoleDisplay,
 } from '../utils/ompAgentsUtils';
 import OmpAgentsConfigModal, { type GroupedModelOptions } from './OmpAgentsConfigModal';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Text } = Typography;
 
@@ -96,7 +97,7 @@ const SortableCard: React.FC<{
   onClearApplied,
 }) => {
   const { t } = useTranslation();
-  const isLocalConfig = config.id === '__local__';
+  const isLocalConfig = config.id === LOCAL_CONFIG_ID;
   const showAsApplied = isSelected && !isLocalConfig;
 
   const {
@@ -341,7 +342,7 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
     try {
       const data = await listOmpAgentsConfigs();
       setConfigs(data);
-      const applied = data.find((c) => c.isApplied && c.id !== '__local__');
+      const applied = data.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
       setSelectedConfigId(applied?.id ?? '');
     } catch (error) {
       console.error('Failed to load OMP agents configs:', error);
@@ -493,7 +494,7 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
   }): Promise<void> => {
     const agentsForApi = Object.keys(values.agents).length > 0 ? values.agents : null;
     const modelRolesForApi = values.modelRoles ?? null;
-    if (editingConfig && editingConfig.id === '__local__') {
+    if (editingConfig && editingConfig.id === LOCAL_CONFIG_ID) {
       // 保存本地桥接态:新建并应用
       const created = await createOmpAgentsConfig({
         name: values.name,
@@ -538,8 +539,8 @@ const OmpAgentsSettings: React.FC<OmpAgentsSettingsProps> = ({
     [editingConfig, isCopyMode],
   );
 
-  const managedConfigs = configs.filter((c) => c.id !== '__local__');
-  const appliedConfig = configs.find((c) => c.isApplied && c.id !== '__local__');
+  const managedConfigs = configs.filter((c) => c.id !== LOCAL_CONFIG_ID);
+  const appliedConfig = configs.find((c) => c.isApplied && c.id !== LOCAL_CONFIG_ID);
   const selectOptions = managedConfigs.map((config) => ({
     label: config.isApplied ? `${config.name} ✓` : config.name,
     value: config.id,

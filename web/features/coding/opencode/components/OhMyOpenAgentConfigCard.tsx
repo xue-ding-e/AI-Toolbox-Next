@@ -8,6 +8,7 @@ import AppliedTag from '@/components/common/AppliedTag';
 import { OH_MY_OPENAGENT_AGENTS, type OhMyOpenAgentConfig, type OhMyOpenAgentAgentType } from '@/types/ohMyOpenAgent';
 import { getOpenAgentDisplayName } from '@/services/ohMyOpenAgentApi';
 import { getAgentModelDisplay } from '../utils/ohMyOpenAgentModelChain';
+import { LOCAL_CONFIG_ID } from '../../shared/localConfig';
 
 const { Text } = Typography;
 
@@ -57,7 +58,7 @@ const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
     opacity: isDragging ? 0.5 : (config.isDisabled ? 0.6 : 1),
   };
 
-  const isLocalConfig = config.id === '__local__';
+  const isLocalConfig = config.id === LOCAL_CONFIG_ID;
   // `__local__` is a local-file bridge, not a managed applied preset.
   const showAsApplied = isSelected && !isLocalConfig;
 
