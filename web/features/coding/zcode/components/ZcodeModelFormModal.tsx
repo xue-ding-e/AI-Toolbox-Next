@@ -12,6 +12,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
+import { labelWithHelp } from '@/components/common/FieldHelp';
 import { useTranslation } from 'react-i18next';
 import {
   PRESET_MODELS,
@@ -30,6 +31,7 @@ import {
   compactObject,
   preferredPresetNpmTypes,
   presetInputModalities,
+  pickZcodeSystemProperties,
   readInputModalities,
   zcodeModalityValuesFor,
 } from '../utils/zcodeModelFields';
@@ -47,17 +49,13 @@ interface ZcodeModelFormValues {
   modelId: string;
   displayName?: string;
   ruleKind: 'smart' | 'manual';
-  enabled: boolean;
   contextWindow?: number;
   /** Selected modalities; an empty list leaves ZCode's catalog to decide. */
   inputModalities: string[];
-  supportsToolCall: boolean;
   supportsJsonSchemaOutput: boolean;
   supportsNativeWebSearch: boolean;
   supportsMidConversationSystem: boolean;
-  requiresMfjsToolSchema: boolean;
   maxOutputTokensMax?: number;
-  maxOutputTokensMap?: string;
   reasoningLevels?: string[];
   reasoningLevelMap?: string;
 }
@@ -78,7 +76,7 @@ interface ZcodeModelFormModalProps {
 
 const toFormValues = (row: ZcodeModelRow | undefined): Partial<ZcodeModelFormValues> => {
   if (!row) {
-    return { ruleKind: 'smart', enabled: true };
+    return { ruleKind: 'smart' };
   }
   const properties: ZcodeModelProperties = row.properties ?? {};
   const optionSpecs: ZcodeModelOptionSpecs = row.optionSpecs ?? {};
@@ -86,20 +84,14 @@ const toFormValues = (row: ZcodeModelRow | undefined): Partial<ZcodeModelFormVal
     modelId: row.modelId,
     displayName: row.displayName,
     ruleKind: row.ruleKind,
-    // ZCode treats an absent key as enabled, so only an explicit `false` reads
-    // as off.
-    enabled: row.enabled !== false,
     contextWindow: properties.contextWindow,
     inputModalities: readInputModalities(properties.inputFormat ?? {}),
     // Capabilities are plain switches: unchecked leaves the key unwritten, so
     // ZCode's catalog keeps deciding; checked asserts the model has it.
-    supportsToolCall: properties.supportsToolCall === true,
     supportsJsonSchemaOutput: properties.supportsJsonSchemaOutput === true,
     supportsNativeWebSearch: properties.supportsNativeWebSearch === true,
     supportsMidConversationSystem: properties.supportsMidConversationSystem === true,
-    requiresMfjsToolSchema: properties.requiresMfjsToolSchema === true,
     maxOutputTokensMax: optionSpecs.maxOutputTokens?.max,
-    maxOutputTokensMap: optionSpecs.maxOutputTokens?.map,
     reasoningLevels: optionSpecs.reasoningLevel?.values,
     reasoningLevelMap: optionSpecs.reasoningLevel?.map,
   };
@@ -109,22 +101,28 @@ const toModelRow = (
   values: ZcodeModelFormValues,
   initialValues: ZcodeModelRow | undefined,
 ): ZcodeModelRow => {
+  const existing = initialValues?.properties ?? {};
+  const existingSpecs = initialValues?.optionSpecs ?? {};
+
   const properties = compactObject<ZcodeModelProperties>({
     contextWindow: values.contextWindow,
     inputFormat: buildInputFormat(values.inputModalities ?? []),
     // A ticked box writes `true`; an unticked one writes nothing, leaving the
     // value to ZCode's catalog.
-    supportsToolCall: values.supportsToolCall || undefined,
     supportsJsonSchemaOutput: values.supportsJsonSchemaOutput || undefined,
     supportsNativeWebSearch: values.supportsNativeWebSearch || undefined,
     supportsMidConversationSystem: values.supportsMidConversationSystem || undefined,
-    requiresMfjsToolSchema: values.requiresMfjsToolSchema || undefined,
+    // System fields: carried through untouched, never edited here. ZCode's own
+    // dialog does the same — see `ZCODE_SYSTEM_PROPERTY_KEYS`.
+    ...pickZcodeSystemProperties(existing),
   });
 
   const optionSpecs = compactObject<ZcodeModelOptionSpecs>({
     maxOutputTokens: compactObject({
       max: values.maxOutputTokensMax,
-      map: values.maxOutputTokensMap?.trim() || undefined,
+      // Also a system field: ZCode's dialog never offers to edit it, only to
+      // keep it when the rest of the max-output spec is rewritten.
+      map: existingSpecs.maxOutputTokens?.map,
     }),
     reasoningLevel: compactObject({
       values:
@@ -139,12 +137,16 @@ const toModelRow = (
     modelId: values.modelId.trim(),
     displayName: values.displayName?.trim() || undefined,
     ruleKind: values.ruleKind,
-    enabled: values.enabled !== false,
+    // Carried over, not edited here: ZCode's own dialog has no enabled control
+    // either — the model list row owns that switch. An absent key means
+    // enabled, so only an explicit `false` must survive.
+    enabled: initialValues?.enabled === false ? false : undefined,
     properties,
     optionSpecs,
     isDefault: initialValues?.isDefault ?? false,
   };
 };
+
 
 /**
  * Model editor for one ZCode provider — the AI Toolbox counterpart of ZCode's
@@ -245,13 +247,10 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
     form.resetFields();
     form.setFieldsValue({
       ruleKind: 'smart',
-      enabled: true,
       inputModalities: [],
-      supportsToolCall: false,
       supportsJsonSchemaOutput: false,
       supportsNativeWebSearch: false,
       supportsMidConversationSystem: false,
-      requiresMfjsToolSchema: false,
       ...toFormValues(initialValues),
     });
   }, [form, initialValues, open]);
@@ -275,25 +274,15 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
     : undefined;
 
   /**
-   * Capability switches, as checkboxes. `tool_call` and `requiresMfjsToolSchema`
-   * are smart-only: ZCode's manual rule schema does not declare them, so they are
-   * hidden rather than silently dropped on save.
+   * Capability switches, as checkboxes — exactly the three ZCode's own dialog
+   * offers. It renders no control for `supportsToolCall` or
+   * `requiresMfjsToolSchema` and treats them as system fields, so neither does
+   * this form (see `SYSTEM_PROPERTY_KEYS`).
    */
   const capabilityFields: Array<{ name: keyof ZcodeModelFormValues; labelKey: string }> = [
-    ...(isManual
-      ? []
-      : [{ name: 'supportsToolCall' as const, labelKey: 'zcode.model.supportsToolCall' }]),
     { name: 'supportsJsonSchemaOutput', labelKey: 'zcode.model.supportsJsonSchemaOutput' },
     { name: 'supportsNativeWebSearch', labelKey: 'zcode.model.supportsNativeWebSearch' },
     { name: 'supportsMidConversationSystem', labelKey: 'zcode.model.supportsMidConversationSystem' },
-    ...(isManual
-      ? []
-      : [
-          {
-            name: 'requiresMfjsToolSchema' as const,
-            labelKey: 'zcode.model.requiresMfjsToolSchema',
-          },
-        ]),
   ];
 
   return (
@@ -397,21 +386,8 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
         </Form.Item>
 
         <Form.Item
-          name="enabled"
-          label={t('zcode.model.enabledLabel')}
-          valuePropName="checked"
-          extra={
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('zcode.model.enabledHint')}
-            </Text>
-          }
-        >
-          <Checkbox />
-        </Form.Item>
-
-        <Form.Item
           name="contextWindow"
-          label={t('zcode.model.contextWindow')}
+          label={labelWithHelp(t('zcode.model.contextWindow'), t('zcode.model.help.contextWindow'))}
           rules={manualRequiredRule}
         >
           <InputNumber
@@ -423,7 +399,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
 
         <Form.Item
           name="maxOutputTokensMax"
-          label={t('zcode.model.maxOutputTokens')}
+          label={labelWithHelp(t('zcode.model.maxOutputTokens'), t('zcode.model.help.maxOutputTokens'))}
           rules={manualRequiredRule}
         >
           <InputNumber
@@ -435,7 +411,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
 
         <Form.Item
           name="inputModalities"
-          label={t('zcode.model.inputModalities')}
+          label={labelWithHelp(t('zcode.model.inputModalities'), t('zcode.model.help.inputModalities'))}
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('zcode.model.inputModalitiesHint')}
@@ -451,7 +427,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
         </Form.Item>
 
         <Form.Item
-          label={t('zcode.model.capabilities')}
+          label={labelWithHelp(t('zcode.model.capabilities'), t('zcode.model.help.capabilities'))}
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('zcode.model.capabilitiesHint')}
@@ -469,7 +445,7 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
 
         <Form.Item
           name="reasoningLevels"
-          label={t('zcode.model.reasoningLevels')}
+          label={labelWithHelp(t('zcode.model.reasoningLevels'), t('zcode.model.help.reasoningLevels'))}
           rules={manualRequiredRule}
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -487,7 +463,10 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
 
         <Form.Item
           name="reasoningLevelMap"
-          label={t('zcode.model.reasoningLevelMapping')}
+          label={labelWithHelp(
+            t('zcode.model.reasoningLevelMapping'),
+            t('zcode.model.help.reasoningLevelMapping'),
+          )}
           rules={manualRequiredRule}
           extra={
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -495,26 +474,14 @@ const ZcodeModelFormModal: React.FC<ZcodeModelFormModalProps> = ({
             </Text>
           }
         >
-          <Input
-            placeholder={'{"reasoning_effort": reasoningLevel}'}
+          {/* Multi-line, like ZCode's own editor: a CEL expression is JSON with
+              nested braces, which a single-line input makes unreadable. */}
+          <Input.TextArea
+            autoSize={{ minRows: 3, maxRows: 10 }}
+            placeholder={'{\n  "reasoning_effort": reasoningLevel\n}'}
             disabled={!reasoningLevels || reasoningLevels.length === 0}
           />
         </Form.Item>
-
-        {/* Smart-only: ZCode's manual rule schema does not declare this map. */}
-        {!isManual && (
-          <Form.Item
-            name="maxOutputTokensMap"
-            label={t('zcode.model.maxOutputTokensMapping')}
-            extra={
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('zcode.model.mapHint')}
-              </Text>
-            }
-          >
-            <Input placeholder={'{"max_tokens": maxOutputTokens}'} />
-          </Form.Item>
-        )}
       </Form>
     </Modal>
   );

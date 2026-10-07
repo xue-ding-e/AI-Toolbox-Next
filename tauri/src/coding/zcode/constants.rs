@@ -14,6 +14,15 @@ pub(crate) const ZCODE_PROVIDER_CONFIG_RELATIVE_PATH: &str = "v2/provider_config
 /// Desktop settings (locale, workspace list, `dataBaseDir`, plan selection).
 pub(crate) const ZCODE_SETTING_RELATIVE_PATH: &str = "v2/setting.json";
 
+/// Official-account login state: a flat `string -> string` map whose values are
+/// `enc:v1:` ciphertext. Snapshotting and restoring this file is what switching
+/// accounts does.
+pub(crate) const ZCODE_CREDENTIALS_RELATIVE_PATH: &str = "v2/credentials.json";
+
+/// Legacy provider map. Only relevant before the new-generation registry
+/// exists — see [`ZCODE_PROVIDER_CONFIG_RELATIVE_PATH`].
+pub(crate) const ZCODE_LEGACY_CONFIG_RELATIVE_PATH: &str = "v2/config.json";
+
 /// CLI configuration: MCP servers, hooks, feature switches.
 pub(crate) const ZCODE_CLI_CONFIG_RELATIVE_PATH: &str = "cli/config.json";
 

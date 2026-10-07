@@ -1,31 +1,22 @@
 import React from 'react';
-import { Button, Card, Dropdown, Space, Tag, Tooltip, Typography } from 'antd';
-import {
-  CheckOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  HolderOutlined,
-  MoreOutlined,
-} from '@ant-design/icons';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { Tag } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { ManagementCheckbox } from '@/features/coding/shared/management/ManagementControls';
-import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
-import ModelListSection from '@/features/coding/shared/ModelListSection';
+import AppliedTag from '@/components/common/AppliedTag';
+import OpenCodeStyleCard from '@/features/coding/shared/providerCardVariants/OpenCodeStyleCard';
+import type { ProviderCardVariantProps } from '@/features/coding/shared/providerCardVariants/types';
 import type {
   ModelDisplayData,
   ProviderConnectivityStatusItem,
 } from '@/components/common/ProviderCard/types';
 import type { ZcodeProvider } from '@/types/zcode';
 import { parseZcodeProviderSettings } from '../utils/zcodeSettingsConfig';
-
-const { Text } = Typography;
+import { zcodeSdkName } from '../utils/zcodeFavoriteProvider';
 
 interface ZcodeProviderCardProps {
   provider: ZcodeProvider;
   onEdit: () => void;
-  onApply: () => void;
+  /** 复制成一条新 provider（预填来源值、新 id）。 */
+  onCopy?: () => void;
   onDelete: () => void;
   /** Renders a checkbox instead of the drag handle while batch selection is on. */
   selectable?: boolean;
@@ -33,13 +24,23 @@ interface ZcodeProviderCardProps {
   onSelectChange?: (selected: boolean) => void;
   /** Latest result of the batch connectivity test for this provider. */
   connectivityStatus?: ProviderConnectivityStatusItem;
+  /** Flips the provider's disabled flag. */
+  onToggleDisabled: () => void;
 
   /** Model catalog actions. Omit a handler to hide its button. */
   onAddModel?: () => void;
   onEditModel?: (modelId: string) => void;
   onCopyModel?: (modelId: string) => void;
   onDeleteModel?: (modelId: string) => void;
+  /**
+   * Makes this model the one ZCode starts new sessions with.
+   *
+   * This is the card's only "apply" path: a ZCode provider is never switched on
+   * or off, so there is nothing to apply at the provider level.
+   */
   onSetPrimaryModel?: (modelId: string) => void;
+  /** Switches one model on or off in ZCode's catalog. */
+  onToggleModelDisabled?: (modelId: string, isDisabled: boolean) => void;
   onReorderModels?: (orderedModelIds: string[]) => void;
   /** Connectivity test for the whole catalog; hidden while it cannot run. */
   onTestModels?: () => void;
@@ -53,20 +54,36 @@ interface ZcodeProviderCardProps {
   onBatchDeleteModels?: () => void;
 }
 
+/**
+ * A ZCode provider, rendered in the OpenCode style.
+ *
+ * The layout lives in the shared variant; this file only maps ZCode's storage
+ * shape onto it, so the card cannot drift from the other OpenCode-style CLIs.
+ *
+ * Two ZCode-specific facts drive the mapping:
+ *
+ * - The provider's API format and endpoint live inside the `settings_config`
+ *   JSON blob, not on the row, so they are parsed out here.
+ * - A provider is always usable; "which one is active" is expressed per model,
+ *   not per card. That is why the header carries no apply button and the
+ *   `设为默认` action sits on the model row.
+ */
 const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   provider,
   onEdit,
-  onApply,
+  onCopy,
   onDelete,
   selectable = false,
   selected = false,
   onSelectChange,
   connectivityStatus,
+  onToggleDisabled,
   onAddModel,
   onEditModel,
   onCopyModel,
   onDeleteModel,
   onSetPrimaryModel,
+  onToggleModelDisabled,
   onReorderModels,
   onTestModels,
   testModelsDisabled = false,
@@ -81,7 +98,7 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
   const { t } = useTranslation();
   const settings = parseZcodeProviderSettings(provider.settingsConfig);
   const apiType = settings?.config?.api?.type;
-  const baseUrl = settings?.config?.api?.baseUrl;
+  const baseUrl = settings?.config?.api?.baseUrl ?? '';
   const models = settings?.models ?? [];
   const defaultModelId = models.find((model) => model.isDefault)?.modelId;
 
@@ -90,7 +107,7 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
    * here. The row key is the `modelId` — ZCode keys models by it, and the
    * default flag travels separately in `isPrimary`.
    */
-  const modelDisplayRows = React.useMemo<ModelDisplayData[]>(
+  const modelRows = React.useMemo<ModelDisplayData[]>(
     () =>
       models.map((model) => ({
         id: model.modelId,
@@ -98,155 +115,74 @@ const ZcodeProviderCard: React.FC<ZcodeProviderCardProps> = ({
         contextLimit: model.properties?.contextWindow,
         outputLimit: model.optionSpecs?.maxOutputTokens?.max,
         isPrimary: model.modelId === defaultModelId,
+        // An absent flag means enabled — only an explicit `false` is off.
+        isDisabled: model.enabled === false,
       })),
     [models, defaultModelId],
   );
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: provider.id,
-  });
+  const nameTags = (
+    <>
+      {provider.isApplied && (
+        <AppliedTag>{t('zcode.provider.applied', { defaultValue: '默认' })}</AppliedTag>
+      )}
+      {provider.isDisabled && (
+        <Tag style={{ margin: 0 }}>{t('zcode.provider.disabled', { defaultValue: '已禁用' })}</Tag>
+      )}
+    </>
+  );
 
-  const sortableStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : provider.isDisabled ? 0.6 : 1,
+  const props: ProviderCardVariantProps = {
+    provider: {
+      id: provider.id,
+      name: provider.name,
+      sdkName: zcodeSdkName(apiType),
+      baseUrl,
+    },
+    providerState: {
+      isApplied: provider.isApplied,
+      isDisabled: provider.isDisabled,
+      onToggleDisabled,
+      connectivityStatus,
+      selectable,
+      selected,
+      onSelectChange,
+      dimmed: provider.isDisabled,
+    },
+    actions: {
+      onEdit,
+      onCopy,
+      onDelete,
+      deleteConfirm: false,
+    },
+    nameTags,
+    modelSection: {
+      models: modelRows,
+      draggable: !selectable,
+      sortableId: provider.id,
+      modelsDraggable: !modelSelectionMode && Boolean(onReorderModels),
+      onReorderModels,
+      modelSelectionMode,
+      selectedModelIds,
+      onToggleModelSelection,
+      onToggleBatchDeleteMode,
+      onBatchDeleteModels,
+      onTestModels,
+      testModelsDisabled,
+      testModelsDisabledTooltip,
+      onFetchModels,
+      fetchDisabled: !baseUrl,
+      fetchDisabledTooltip: t('opencode.provider.completeUrlAndKey'),
+      onAddModel,
+      onEditModel,
+      onCopyModel,
+      onDeleteModel,
+      onSetPrimaryModel,
+      onToggleModelDisabled,
+    },
   };
 
-  const menuItems = [
-    {
-      key: 'edit',
-      icon: <EditOutlined />,
-      label: t('common.edit', { defaultValue: '编辑' }),
-    },
-    {
-      key: 'delete',
-      icon: <DeleteOutlined />,
-      danger: true,
-      label: t('common.delete', { defaultValue: '删除' }),
-    },
-  ];
-
-  return (
-    <div ref={setNodeRef} style={sortableStyle}>
-      <Card size="small" styles={{ body: { padding: 12 } }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            {selectable ? (
-              <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
-                <ManagementCheckbox
-                  checked={selected}
-                  ariaLabel={t('common.batch.selectItem')}
-                  onChange={onSelectChange ?? (() => {})}
-                />
-              </div>
-            ) : (
-              <div
-                {...attributes}
-                {...listeners}
-                style={{
-                  cursor: isDragging ? 'grabbing' : 'grab',
-                  color: '#999',
-                  padding: '4px 0',
-                  touchAction: 'none',
-                }}
-              >
-                <HolderOutlined />
-              </div>
-            )}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <Space size="small" wrap>
-                <ProviderConnectivityStatus item={connectivityStatus} />
-                <Text strong>{provider.name}</Text>
-                {provider.isApplied && (
-                  <Tag color="green">{t('zcode.provider.applied', { defaultValue: '默认' })}</Tag>
-                )}
-                {provider.isDisabled && (
-                  <Tag>{t('zcode.provider.disabled', { defaultValue: '已禁用' })}</Tag>
-                )}
-              </Space>
-              {/* One detail line, as on the Codex card: base URL, format and
-                  notes inline. The provider id is not shown — it duplicates the
-                  name for auto-derived ids and means nothing to the user. */}
-              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {baseUrl && (
-                  <Text code style={{ fontSize: 12 }}>
-                    {baseUrl}
-                  </Text>
-                )}
-                {apiType && <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{apiType}</Tag>}
-                {baseUrl && provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                )}
-                {provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {provider.notes}
-                  </Text>
-                )}
-              </div>
-            </div>
-          </div>
-          <Space size="small">
-            <Tooltip
-              title={t('zcode.provider.applyHint', {
-                defaultValue: '设为 ZCode 新建会话的默认供应商与模型',
-              })}
-            >
-              {/* Link-style action, matching the apply button on every other
-                  provider card. */}
-              <Button
-                type="link"
-                size="small"
-                icon={<CheckOutlined />}
-                onClick={onApply}
-                disabled={provider.isDisabled}
-              >
-                {t('zcode.provider.apply', { defaultValue: '应用' })}
-              </Button>
-            </Tooltip>
-            <Dropdown
-              menu={{
-                items: menuItems,
-                onClick: ({ key }) => {
-                  if (key === 'edit') {
-                    onEdit();
-                  } else if (key === 'delete') {
-                    onDelete();
-                  }
-                },
-              }}
-            >
-              <Button size="small" type="text" icon={<MoreOutlined />} />
-            </Dropdown>
-          </Space>
-        </div>
-
-        <ModelListSection
-          models={modelDisplayRows}
-          rowKeyOf={(model) => model.id}
-          sectionKey={`zcode-models-${provider.id}`}
-          transparentRows
-          modelsDraggable={!modelSelectionMode && Boolean(onReorderModels)}
-          onReorderModels={onReorderModels}
-          selectionMode={modelSelectionMode}
-          selectedIds={selectedModelIds}
-          onToggleSelection={onToggleModelSelection}
-          onToggleBatchDeleteMode={onToggleBatchDeleteMode}
-          onBatchDelete={onBatchDeleteModels}
-          onTest={onTestModels}
-          testDisabled={testModelsDisabled}
-          testDisabledTooltip={testModelsDisabledTooltip}
-          onFetchModels={onFetchModels}
-          fetchDisabled={!baseUrl}
-          fetchDisabledTooltip={t('opencode.provider.completeUrlAndKey')}
-          onAddModel={onAddModel}
-          onEditModel={onEditModel}
-          onCopyModel={onCopyModel}
-          onDeleteModel={onDeleteModel}
-          onSetPrimaryModel={onSetPrimaryModel}
-        />
-      </Card>
-    </div>
-  );
+  return <OpenCodeStyleCard {...props} />;
 };
 
 export default ZcodeProviderCard;

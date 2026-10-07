@@ -160,7 +160,26 @@ export interface ZcodeProviderTemplate {
 export interface ZcodeCommonConfig {
   config: string;
   rootDir?: string | null;
+  /**
+   * Where the official-account card sits in the provider list, counted as the
+   * number of provider cards above it. UI state; absent means "at the top".
+   */
+  officialAccountIndex?: number | null;
   updatedAt: string;
+}
+
+/** One file as the config preview shows it; `content` is absent when it does not exist. */
+export interface ZcodePreviewFile {
+  path: string;
+  content?: string;
+}
+
+export interface ZcodeConfigPreview {
+  providerConfig: ZcodePreviewFile;
+  /** Only present on installations that have not migrated past `config.json`. */
+  legacyConfig?: ZcodePreviewFile;
+  cliConfig: ZcodePreviewFile;
+  setting: ZcodePreviewFile;
 }
 
 export interface ZcodeCommonConfigInput {
@@ -190,4 +209,31 @@ export const ZCODE_API_TYPES = [
   { value: 'anthropic-messages', label: 'Anthropic Messages' },
   { value: 'openai-chat-completions', label: 'Chat Completions' },
   { value: 'openai-responses', label: 'Responses' },
+] as const;
+
+/** An official-account snapshot, or the virtual entry mirroring the live login. */
+export interface ZcodeOfficialAccount {
+  id: string;
+  /** OAuth namespace the snapshot logs into: `zai` or `bigmodel`. */
+  providerId: string;
+  name: string;
+  /** `oauth` for a saved snapshot, `local` for the live-login mirror. */
+  kind: 'oauth' | 'local';
+  email?: string;
+  accountId?: string;
+  isApplied: boolean;
+  isVirtual: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZcodeOfficialAccountApplyResult {
+  /** Name of the login saved aside before it was overwritten, when there was one. */
+  preservedAs?: string;
+}
+
+/** The providers `zcode login` accepts, in the order its help lists them. */
+export const ZCODE_LOGIN_PROVIDERS = [
+  { value: 'zai', label: 'z.ai' },
+  { value: 'bigmodel', label: 'BigModel' },
 ] as const;

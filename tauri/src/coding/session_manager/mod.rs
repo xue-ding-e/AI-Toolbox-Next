@@ -3279,6 +3279,24 @@ async fn resolve_context(
     }
 }
 
+/// Resolves ZCode's CLI session database — `cli/db/db.sqlite`.
+///
+/// ZCode keeps one SQLite database rather than a tree of transcripts, and the
+/// gateway's local-usage importer needs to point at the file itself rather than
+/// at a directory to walk.
+pub(crate) fn resolve_zcode_cli_db_path(
+    location: &RuntimeLocationInfo,
+) -> Result<PathBuf, String> {
+    if let Some(wsl) = &location.wsl {
+        let linux_path = expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.zcode");
+        return Ok(build_windows_unc_path(&wsl.distro, &linux_path)
+            .join(crate::coding::zcode::constants::ZCODE_CLI_DB_RELATIVE_PATH));
+    }
+    Ok(location
+        .host_path
+        .join(crate::coding::zcode::constants::ZCODE_CLI_DB_RELATIVE_PATH))
+}
+
 pub(crate) fn resolve_opencode_data_root(
     location: &RuntimeLocationInfo,
 ) -> Result<PathBuf, String> {

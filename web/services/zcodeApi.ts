@@ -7,6 +7,9 @@ import type {
   ConfigPathInfo,
   ZcodeCommonConfig,
   ZcodeCommonConfigInput,
+  ZcodeConfigPreview,
+  ZcodeOfficialAccount,
+  ZcodeOfficialAccountApplyResult,
   ZcodeProvider,
   ZcodeProviderInput,
   ZcodeProviderTemplate,
@@ -122,4 +125,57 @@ export const resolveZcodeAllApiHubProviders = async (
   });
 };
 
-export type { ZcodeProvider };
+/**
+ * Reads every file ZCode loads: `provider_config.json`, `cli/config.json` and
+ * `setting.json` (plus the legacy `config.json` where it is still live).
+ */
+export const getZcodePreview = async (): Promise<ZcodeConfigPreview> => {
+  return await invoke<ZcodeConfigPreview>('get_zcode_preview');
+};
+
+/** Persists where the official-account card sits among the provider cards. */
+export const saveZcodeOfficialAccountIndex = async (index: number): Promise<void> => {
+  await invoke('save_zcode_official_account_index', { index });
+};
+
+/** Every saved official account, plus the live login when it is not saved. */
+export const listZcodeOfficialAccounts = async (): Promise<ZcodeOfficialAccount[]> => {
+  return await invoke<ZcodeOfficialAccount[]>('list_zcode_official_accounts');
+};
+
+/** Captures the current login as a snapshot that can be switched back to. */
+export const saveZcodeOfficialLocalAccount = async (): Promise<ZcodeOfficialAccount> => {
+  return await invoke<ZcodeOfficialAccount>('save_zcode_official_local_account');
+};
+
+/** Switches ZCode to a saved account, saving the outgoing login first. */
+export const applyZcodeOfficialAccount = async (
+  accountId: string,
+): Promise<ZcodeOfficialAccountApplyResult> => {
+  return await invoke<ZcodeOfficialAccountApplyResult>('apply_zcode_official_account', {
+    accountId,
+  });
+};
+
+export const deleteZcodeOfficialAccount = async (accountId: string): Promise<void> => {
+  await invoke('delete_zcode_official_account', { accountId });
+};
+
+/**
+ * Runs a browser login and applies it. Resolves when the flow does, so callers
+ * hold a pending state across the whole wait and cancel through the command
+ * below.
+ */
+export const startZcodeOfficialAccountOauth = async (
+  providerId: string,
+): Promise<ZcodeOfficialAccount> => {
+  return await invoke<ZcodeOfficialAccount>('start_zcode_official_account_oauth', {
+    providerId,
+  });
+};
+
+export const cancelZcodeOfficialAccountOauth = async (): Promise<void> => {
+  await invoke('cancel_zcode_official_account_oauth');
+};
+
+export type { ZcodeProvider, ZcodeOfficialAccount };

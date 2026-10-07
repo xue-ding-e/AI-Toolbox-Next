@@ -1324,7 +1324,7 @@ mod tests {
                     "content": [
                         {
                             "type": "input_text",
-                            "text": r#"# AGENTS.md instructions for D:\GitHub\ai-toolbox"#
+                            "text": r#"# AGENTS.md instructions for D:\GitHub\sample-workspace"#
                         }
                     ]
                 }
@@ -1340,7 +1340,7 @@ mod tests {
                     "content": [
                         {
                             "type": "input_text",
-                            "text": r#"Inspect D:\GitHub\claude-code-history-viewer source"#
+                            "text": r#"Inspect D:\GitHub\sample-workspace source"#
                         }
                     ]
                 }
@@ -1362,7 +1362,7 @@ mod tests {
         assert_eq!(messages[2].role, "user");
         assert!(messages[2]
             .content
-            .contains(r#"D:\GitHub\claude-code-history-viewer"#));
+            .contains(r#"D:\GitHub\sample-workspace"#));
     }
 
     /// A `session_meta` record in the shape Codex writes.

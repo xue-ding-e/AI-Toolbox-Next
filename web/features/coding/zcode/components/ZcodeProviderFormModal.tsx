@@ -22,6 +22,11 @@ const { Text } = Typography;
 interface ZcodeProviderFormModalProps {
   open: boolean;
   provider: ZcodeProvider | null;
+  /**
+   * 表单预填 `provider` 但保存为**新**记录（复制）。provider id 与名称各加
+   * `_copy` 后缀；id 可编辑，让用户改成自己要的。
+   */
+  isCopy?: boolean;
   onCancel: () => void;
   onSaved: () => Promise<void> | void;
 }
@@ -43,6 +48,7 @@ interface ZcodeProviderFormValues {
 const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   open,
   provider,
+  isCopy = false,
   onCancel,
   onSaved,
 }) => {
@@ -55,7 +61,8 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
   const [templates, setTemplates] = React.useState<ZcodeProviderTemplate[]>([]);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
-  const isEditing = Boolean(provider);
+  // 复制走的是「新增」路径（新 id），只是预填了来源 provider 的值。
+  const isEditing = Boolean(provider) && !isCopy;
 
   React.useEffect(() => {
     if (!open) {
@@ -72,9 +79,10 @@ const ZcodeProviderFormModal: React.FC<ZcodeProviderFormModalProps> = ({
     }
     if (provider) {
       const settings = parseZcodeProviderSettings(provider.settingsConfig);
+      const sourceProviderId = settings?.providerId ?? provider.id;
       form.setFieldsValue({
-        name: provider.name,
-        providerId: settings?.providerId ?? provider.id,
+        name: isCopy ? `${provider.name}_copy` : provider.name,
+        providerId: isCopy ? `${sourceProviderId}_copy` : sourceProviderId,
         // The "custom" option is the empty string; a provider without a stored
         // template must land on it rather than showing a blank select.
         templateId: settings?.templateId ?? '',

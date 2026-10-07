@@ -120,6 +120,7 @@ pub(super) fn parse_file(
             return super::kimi::parse(cli_key, path, fallback_timestamp)
         }
         GatewayUsageTool::OpenClaw => return super::open_claw::parse(path, fallback_timestamp),
+        GatewayUsageTool::Zcode => return super::zcode::parse(path, fallback_timestamp),
         GatewayUsageTool::Antigravity => {
             return super::antigravity::parse(path, fallback_timestamp)
         }

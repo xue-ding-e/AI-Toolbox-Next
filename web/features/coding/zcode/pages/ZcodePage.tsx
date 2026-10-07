@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Button, Modal, Space, message } from 'antd';
+import { Alert, Button, Modal, Space, Spin, Typography, message } from 'antd';
 import {
   DatabaseOutlined,
   FileTextOutlined,
@@ -38,6 +38,10 @@ import {
   buildProviderConnectivityBatchTarget,
   runProviderConnectivityBatch,
 } from '@/features/coding/shared/providerConnectivity/batchTest';
+import ProviderConnectivityTestModal, {
+  buildZcodeProviderConnectivityInfo,
+  type ProviderConnectivityInfo,
+} from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import {
   buildFavoriteProviderStorageKey,
   dedupeFavoriteProvidersByPayload,
@@ -66,44 +70,63 @@ import {
 } from '../utils/zcodeImportMapping';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import FileConfigPreviewModal from '@/components/common/FileConfigPreviewModal';
 import type { FetchModelsApplyResult } from '@/components/common/FetchModelsModal/types';
 import { useSettingsStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
 import {
+  applyZcodeOfficialAccount,
+  cancelZcodeOfficialAccountOauth,
   createZcodeProvider,
+  deleteZcodeOfficialAccount,
   deleteZcodeProvider,
   getZcodeCommonConfig,
   getZcodeConfigFilePath,
   getZcodeGenerationStatus,
+  getZcodePreview,
   getZcodeRootPathInfo,
+  listZcodeOfficialAccounts,
   listZcodeProviders,
-  readZcodeSettings,
   reorderZcodeProviders,
   revealZcodeConfigFolder,
   saveZcodeCommonConfig,
+  saveZcodeOfficialAccountIndex,
+  saveZcodeOfficialLocalAccount,
   saveZcodeProvider,
   selectZcodeProvider,
+  startZcodeOfficialAccountOauth,
+  toggleZcodeProviderDisabled,
   updateZcodeProvider,
 } from '@/services/zcodeApi';
 import { zcodePromptApi } from '@/services/zcodePromptApi';
-import type {
-  ConfigPathInfo,
-  ZcodeModelRow,
-  ZcodeProvider,
-  ZcodeSettingsConfig,
+import {
+  ZCODE_LOGIN_PROVIDERS,
+  type ConfigPathInfo,
+  type ZcodeConfigPreview,
+  type ZcodeModelRow,
+  type ZcodeOfficialAccount,
+  type ZcodeProvider,
+  type ZcodeSettingsConfig,
 } from '@/types/zcode';
 import ZcodeProviderCard from '../components/ZcodeProviderCard';
-import ZcodeCommonConfigModal from '../components/ZcodeCommonConfigModal';
+import ZcodeOfficialAccountCard from '../components/ZcodeOfficialAccountCard';
 import ZcodeModelFormModal from '../components/ZcodeModelFormModal';
 import ZcodeProviderFormModal from '../components/ZcodeProviderFormModal';
-import { parseZcodeProviderSettings, resolveZcodeDefaultModelId } from '../utils/zcodeSettingsConfig';
+import { parseZcodeProviderSettings } from '../utils/zcodeSettingsConfig';
 import {
   buildZcodeModelRowFromPreset,
   preferredPresetNpmTypes,
 } from '../utils/zcodeModelFields';
 import { findPresetModelById } from '@/constants/presetModels';
 
+
+/**
+ * Sortable id of the official-account card.
+ *
+ * The card is not a provider row, so it has no id of its own to sort by; this
+ * sentinel stands in for it in the one ordering that mixes the two.
+ */
+const OFFICIAL_ACCOUNT_CARD_ID = 'zcode-official-account';
 
 const ZcodePage: React.FC = () => {
   const { t } = useTranslation();
@@ -115,13 +138,27 @@ const ZcodePage: React.FC = () => {
   const [rootPathInfo, setRootPathInfo] = React.useState<ConfigPathInfo | null>(null);
   const [providers, setProviders] = React.useState<ZcodeProvider[]>([]);
   const [hasNewGenerationRegistry, setHasNewGenerationRegistry] = React.useState(true);
+  const [officialAccounts, setOfficialAccounts] = React.useState<ZcodeOfficialAccount[]>([]);
+  /** Provider cards above the official-account card; UI state, not ZCode's. */
+  const [officialAccountIndex, setOfficialAccountIndex] = React.useState(0);
+  const [applyingOfficialAccountId, setApplyingOfficialAccountId] = React.useState<string | null>(
+    null,
+  );
+  const [savingOfficialAccount, setSavingOfficialAccount] = React.useState(false);
+  /**
+   * The provider a browser login is currently waiting on. Non-null means a flow
+   * is open in the browser: the modal owns the pending state and the cancel
+   * button is the only way out, because the command resolves when the flow does.
+   */
+  const [officialLoginProviderId, setOfficialLoginProviderId] = React.useState<string | null>(null);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [formModalOpen, setFormModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<ZcodeProvider | null>(null);
+  /** 弹窗预填了 provider 但要存成新记录（复制），而不是改原来那条。 */
+  const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
-  const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [providerKeyword, setProviderKeyword] = React.useState('');
   const [connectivityStatuses, setConnectivityStatuses] = React.useState<
     Record<string, ProviderConnectivityStatusItem>
@@ -141,13 +178,17 @@ const ZcodePage: React.FC = () => {
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string | null>(null);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
-  const [previewData, setPreviewData] = React.useState<unknown>(null);
+  const [previewData, setPreviewData] = React.useState<ZcodeConfigPreview | null>(null);
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [ccSwitchImportModalOpen, setCcSwitchImportModalOpen] = React.useState(false);
   const [ccSwitchAvailable, setCcSwitchAvailable] = React.useState(false);
-  const [testingModelsFor, setTestingModelsFor] = React.useState<string | null>(null);
+  /** 单个 provider 的连通性测试弹窗（共享 `ProviderConnectivityTestModal`）。 */
+  const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
+  const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(
+    null,
+  );
   /** Provider whose model list is in batch-delete mode, if any. */
   const [modelBatchDeleteProviderId, setModelBatchDeleteProviderId] = React.useState<string | null>(
     null,
@@ -202,16 +243,27 @@ const ZcodePage: React.FC = () => {
   const loadConfig = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [path, nextRootPathInfo, generation, nextProviders] = await Promise.all([
+      const [
+        path,
+        nextRootPathInfo,
+        generation,
+        nextProviders,
+        nextOfficialAccounts,
+        nextCommonConfig,
+      ] = await Promise.all([
         getZcodeConfigFilePath(),
         getZcodeRootPathInfo(),
         getZcodeGenerationStatus(),
         listZcodeProviders(),
+        listZcodeOfficialAccounts(),
+        getZcodeCommonConfig(),
       ]);
       setConfigPath(path);
       setRootPathInfo(nextRootPathInfo);
       setHasNewGenerationRegistry(generation);
       setProviders(nextProviders);
+      setOfficialAccounts(nextOfficialAccounts);
+      setOfficialAccountIndex(nextCommonConfig.officialAccountIndex ?? 0);
     } catch (error) {
       console.error('Failed to load ZCode config:', error);
       const detail = error instanceof Error ? error.message : String(error);
@@ -226,6 +278,123 @@ const ZcodePage: React.FC = () => {
       void loadConfig();
     }
   }, [isActive, loadConfig]);
+
+  /**
+   * Official accounts live in their own file, so they refresh on their own
+   * rather than through `loadConfig` — switching one must not reload the
+   * provider registry, which the user may be mid-edit on.
+   */
+  const loadOfficialAccounts = React.useCallback(async () => {
+    try {
+      setOfficialAccounts(await listZcodeOfficialAccounts());
+    } catch (error) {
+      console.error('Failed to load ZCode official accounts:', error);
+      const detail = error instanceof Error ? error.message : String(error);
+      void message.error(
+        detail
+          ? `${t('zcode.officialAccount.loadFailed')}：${detail}`
+          : t('zcode.officialAccount.loadFailed'),
+      );
+    }
+  }, [t]);
+
+  const handleSaveOfficialLocalAccount = React.useCallback(async () => {
+    setSavingOfficialAccount(true);
+    try {
+      await saveZcodeOfficialLocalAccount();
+      await loadOfficialAccounts();
+      void message.success(t('zcode.officialAccount.saveSuccess'));
+    } catch (error) {
+      console.error('Failed to save ZCode official account:', error);
+      const detail = error instanceof Error ? error.message : String(error);
+      void message.error(
+        detail
+          ? `${t('zcode.officialAccount.saveFailed')}：${detail}`
+          : t('zcode.officialAccount.saveFailed'),
+      );
+    } finally {
+      setSavingOfficialAccount(false);
+    }
+  }, [loadOfficialAccounts, t]);
+
+  const handleApplyOfficialAccount = React.useCallback(
+    async (account: ZcodeOfficialAccount) => {
+      setApplyingOfficialAccountId(account.id);
+      try {
+        const result = await applyZcodeOfficialAccount(account.id);
+        await loadOfficialAccounts();
+        // The outgoing login is captured automatically, so say so — otherwise
+        // an account the user never created appears with no explanation.
+        if (result.preservedAs) {
+          void message.success(
+            t('zcode.officialAccount.appliedWithBackup', { name: result.preservedAs }),
+          );
+        } else {
+          void message.success(t('zcode.officialAccount.applySuccess'));
+        }
+      } catch (error) {
+        console.error('Failed to apply ZCode official account:', error);
+        const detail = error instanceof Error ? error.message : String(error);
+        void message.error(
+          detail
+            ? `${t('zcode.officialAccount.applyFailed')}：${detail}`
+            : t('zcode.officialAccount.applyFailed'),
+        );
+      } finally {
+        setApplyingOfficialAccountId(null);
+      }
+    },
+    [loadOfficialAccounts, t],
+  );
+
+  const handleDeleteOfficialAccount = React.useCallback(
+    async (account: ZcodeOfficialAccount) => {
+      try {
+        await deleteZcodeOfficialAccount(account.id);
+        await loadOfficialAccounts();
+        void message.success(t('zcode.officialAccount.deleteSuccess'));
+      } catch (error) {
+        console.error('Failed to delete ZCode official account:', error);
+        const detail = error instanceof Error ? error.message : String(error);
+        void message.error(
+          detail
+            ? `${t('zcode.officialAccount.deleteFailed')}：${detail}`
+            : t('zcode.officialAccount.deleteFailed'),
+        );
+      }
+    },
+    [loadOfficialAccounts, t],
+  );
+
+  const handleCancelOfficialLogin = React.useCallback(async () => {
+    try {
+      await cancelZcodeOfficialAccountOauth();
+    } catch (error) {
+      console.error('Failed to cancel ZCode login:', error);
+    }
+  }, []);
+
+  const handleStartOfficialLogin = React.useCallback(
+    async (providerId: string) => {
+      setOfficialLoginProviderId(providerId);
+      try {
+        await startZcodeOfficialAccountOauth(providerId);
+        await loadOfficialAccounts();
+        void message.success(t('zcode.officialAccount.loginSuccess'));
+      } catch (error) {
+        console.error('Failed to log in to ZCode:', error);
+        const detail = error instanceof Error ? error.message : String(error);
+        void message.error(
+          detail
+            ? `${t('zcode.officialAccount.loginFailed')}：${detail}`
+            : t('zcode.officialAccount.loginFailed'),
+        );
+      } finally {
+        setOfficialLoginProviderId(null);
+      }
+    },
+    [loadOfficialAccounts, t],
+  );
 
   const {
     rootDirectoryModalOpen,
@@ -253,25 +422,6 @@ const ZcodePage: React.FC = () => {
       }
     } catch {
       await revealZcodeConfigFolder();
-    }
-  };
-
-  const handleApplyProvider = async (provider: ZcodeProvider) => {
-    try {
-      const modelId = resolveZcodeDefaultModelId(provider.settingsConfig);
-      if (!modelId) {
-        void message.warning(
-          t('zcode.apply.noModel', { defaultValue: '该供应商还没有模型，请先添加模型再应用。' }),
-        );
-        return;
-      }
-      await selectZcodeProvider(provider.id, modelId);
-      await refreshTrayMenu();
-      await loadConfig();
-      void message.success(t('zcode.apply.success', { defaultValue: '已设为默认供应商' }));
-    } catch (error) {
-      console.error('Failed to apply ZCode provider:', error);
-      void message.error(String(error));
     }
   };
 
@@ -474,22 +624,59 @@ const ZcodePage: React.FC = () => {
     }
   };
 
+  /**
+   * Flips a provider's disabled flag.
+   *
+   * Disabling hides the provider from ZCode's picker without deleting it; it
+   * does not clear a `defaultModelSelection` that points here, so a disabled
+   * provider can still be the active one until another is chosen.
+   */
+  const handleToggleProviderDisabled = async (provider: ZcodeProvider, isDisabled: boolean) => {
+    try {
+      await toggleZcodeProviderDisabled(provider.id, isDisabled);
+      await loadConfig();
+    } catch (error) {
+      console.error('Failed to toggle ZCode provider:', error);
+      void message.error(String(error));
+    }
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) {
       return;
     }
-    const oldIndex = providers.findIndex((provider) => provider.id === active.id);
-    const newIndex = providers.findIndex((provider) => provider.id === over.id);
+    // Indices come from the merged ordering, not from `providers`: the official
+    // -account card is one of the items and shifts every index below it.
+    const oldIndex = sortableItemIds.indexOf(String(active.id));
+    const newIndex = sortableItemIds.indexOf(String(over.id));
     if (oldIndex < 0 || newIndex < 0) {
       return;
     }
-    const nextOrder = arrayMove(providers, oldIndex, newIndex).map((provider) => provider.id);
-    // Optimistic: the list reorders immediately and reloads from the backend
+
+    const nextIds = arrayMove(sortableItemIds, oldIndex, newIndex);
+    const nextProviderIds = nextIds.filter((id) => id !== OFFICIAL_ACCOUNT_CARD_ID);
+    const nextCardIndex = nextIds.indexOf(OFFICIAL_ACCOUNT_CARD_ID);
+    const providerOrderChanged = nextProviderIds.some((id, index) => id !== providers[index]?.id);
+    const cardSlotChanged = nextCardIndex !== officialAccountIndex;
+
+    // Optimistic: the list resequences immediately and reloads from the backend
     // afterwards, so a failure still converges on the stored order.
-    setProviders(arrayMove(providers, oldIndex, newIndex));
+    const providerById = new Map(providers.map((provider) => [provider.id, provider]));
+    setProviders(
+      nextProviderIds
+        .map((id) => providerById.get(id))
+        .filter((provider): provider is ZcodeProvider => Boolean(provider)),
+    );
+    setOfficialAccountIndex(nextCardIndex);
+
     try {
-      await reorderZcodeProviders(nextOrder);
+      if (providerOrderChanged) {
+        await reorderZcodeProviders(nextProviderIds);
+      }
+      if (cardSlotChanged) {
+        await saveZcodeOfficialAccountIndex(nextCardIndex);
+      }
       await loadConfig();
     } catch (error) {
       console.error('Failed to reorder ZCode providers:', error);
@@ -604,15 +791,16 @@ const ZcodePage: React.FC = () => {
   );
 
   /**
- * Shows the provider file the CLI will actually read.
+ * Shows every file ZCode loads, one tab each.
  *
- * ZCode has no single applied provider — every enabled one is written at once —
- * so the preview is the whole generated file, not one provider's contribution.
- * A missing file reads as an empty config rather than an error.
+ * ZCode reads three: the provider registry AI Toolbox writes, the CLI's own
+ * `config.json`, and the desktop `setting.json` that decides where the rest of
+ * them live. Showing only the provider registry reads as though the other two
+ * were not part of the picture.
  */
   const handlePreviewCurrentConfig = async () => {
     try {
-      setPreviewData(await readZcodeSettings());
+      setPreviewData(await getZcodePreview());
       setPreviewModalOpen(true);
     } catch (error) {
       console.error('Failed to preview ZCode config:', error);
@@ -654,12 +842,53 @@ const ZcodePage: React.FC = () => {
     [persistProviderModels],
   );
 
+  /**
+   * Makes one model the default, both in the provider's own catalog and in
+   * ZCode's registry.
+   *
+   * Two writes, deliberately: `isDefault` is a ZCode catalog flag (which model
+   * the provider prefers), while `defaultModelSelection` is the runtime's
+   * "start new sessions with this" pointer. Writing only the first would leave
+   * the two disagreeing — the card would show a default that ZCode never uses.
+   */
   const handleSetPrimaryModel = React.useCallback(
     async (provider: ZcodeProvider, modelId: string) => {
       const models = parseZcodeProviderSettings(provider.settingsConfig)?.models ?? [];
       await persistProviderModels(
         provider,
         models.map((model) => ({ ...model, isDefault: model.modelId === modelId })),
+      );
+      try {
+        await selectZcodeProvider(provider.id, modelId);
+        noteProviderUsed(provider.id);
+        await refreshTrayMenu();
+        await loadConfig();
+      } catch (error) {
+        console.error('Failed to set ZCode default model:', error);
+        void message.error(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [loadConfig, noteProviderUsed, persistProviderModels],
+  );
+
+  /**
+   * Switches one model on or off in the provider's catalog.
+   *
+   * ZCode's own dialog puts this switch on the model list row, not in the edit
+   * dialog, so that is where it lives here too. An enabled model writes no key
+   * at all — only an explicit `false` is stored — so switching back on removes
+   * the flag rather than writing `true`.
+   */
+  const handleToggleModelDisabled = React.useCallback(
+    async (provider: ZcodeProvider, modelId: string, isDisabled: boolean) => {
+      const models = parseZcodeProviderSettings(provider.settingsConfig)?.models ?? [];
+      await persistProviderModels(
+        provider,
+        models.map((model) =>
+          model.modelId === modelId
+            ? { ...model, enabled: isDisabled ? false : undefined }
+            : model,
+        ),
       );
     },
     [persistProviderModels],
@@ -693,38 +922,66 @@ const ZcodePage: React.FC = () => {
   });
   const providerBatchDragDisabled = providerDragDisabled || providerBatch.selectionMode;
 
+  /**
+   * The one ordering that mixes provider cards with the official-account card.
+   *
+   * `officialAccountIndex` counts providers, so it must be clamped before use:
+   * deleting providers can leave it pointing past the end.
+   */
+  const sortableItemIds = React.useMemo(() => {
+    const ids: string[] = providers.map((provider) => provider.id);
+    ids.splice(Math.min(officialAccountIndex, ids.length), 0, OFFICIAL_ACCOUNT_CARD_ID);
+    return ids;
+  }, [providers, officialAccountIndex]);
+
+  /**
+   * Where the card lands among the *visible* provider cards.
+   *
+   * A search filter hides providers the index still counts, so the slot is the
+   * number of providers above the card that survived the filter — otherwise a
+   * filtered list would push the card to the bottom for no visible reason.
+   */
+  const officialAccountSlot = React.useMemo(() => {
+    const visibleIds = new Set(visibleProviders.map((provider) => provider.id));
+    const above = providers
+      .slice(0, Math.min(officialAccountIndex, providers.length))
+      .filter((provider) => visibleIds.has(provider.id));
+    return Math.min(above.length, visibleProviders.length);
+  }, [providers, officialAccountIndex, visibleProviders]);
+
+  const officialAccountCard = (
+    <ZcodeOfficialAccountCard
+      accounts={officialAccounts}
+      applyingAccountId={applyingOfficialAccountId}
+      savingCurrent={savingOfficialAccount}
+      loginPending={officialLoginProviderId !== null}
+      loginProviders={ZCODE_LOGIN_PROVIDERS}
+      sortableId={OFFICIAL_ACCOUNT_CARD_ID}
+      dragDisabled={providerBatchDragDisabled}
+      onLogin={(providerId) => void handleStartOfficialLogin(providerId)}
+      onApply={(account) => void handleApplyOfficialAccount(account)}
+      onDelete={(account) => void handleDeleteOfficialAccount(account)}
+      onSaveCurrent={() => void handleSaveOfficialLocalAccount()}
+    />
+  );
+
   const handleBatchTestProviders = React.useCallback(async () => {
     setBatchTestingProviders(true);
     try {
-      const targets = visibleProviders.map((provider) => {
-        const settings = parseZcodeProviderSettings(provider.settingsConfig);
-        const modelIds = (settings?.models ?? []).map((model) => model.modelId);
-        return buildProviderConnectivityBatchTarget(
-          {
-            providerId: provider.id,
-            providerName: provider.name,
-            providerConfig: {
-              options: {
-                baseURL: settings?.config?.api?.baseUrl ?? '',
-                apiKey: settings?.config?.access?.apiKey ?? '',
-                headers: settings?.config?.api?.headers,
-              },
-            },
-            modelIds,
+      // 单个测试与批量测试共用同一个 builder，避免两处形状漂移。
+      const targets = visibleProviders.map((provider) =>
+        buildProviderConnectivityBatchTarget(buildZcodeProviderConnectivityInfo(provider), {
+          requireBaseUrl: true,
+          requireApiKey: true,
+          errorMessages: {
+            missingBaseUrl: t('zcode.test.missingBaseUrl', {
+              name: provider.name,
+            }),
+            missingApiKey: t('zcode.test.missingApiKey', { name: provider.name }),
+            missingModel: t('zcode.test.missingModel', { name: provider.name }),
           },
-          {
-            requireBaseUrl: true,
-            requireApiKey: true,
-            errorMessages: {
-              missingBaseUrl: t('zcode.test.missingBaseUrl', {
-                name: provider.name,
-              }),
-              missingApiKey: t('zcode.test.missingApiKey', { name: provider.name }),
-              missingModel: t('zcode.test.missingModel', { name: provider.name }),
-            },
-          },
-        );
-      });
+        }),
+      );
       setConnectivityStatuses({});
       await runProviderConnectivityBatch(targets, (providerId, status) => {
         setConnectivityStatuses((previous) => ({ ...previous, [providerId]: status }));
@@ -802,53 +1059,18 @@ const ZcodePage: React.FC = () => {
   );
 
   /** Runs the connectivity probe for one provider's catalog only. */
-  const handleTestProviderModels = React.useCallback(
-    async (provider: ZcodeProvider) => {
-      const settings = parseZcodeProviderSettings(provider.settingsConfig);
-      const modelIds = (settings?.models ?? []).map((model) => model.modelId);
-      setTestingModelsFor(provider.id);
-      setConnectivityStatuses((previous) => {
-        const next = { ...previous };
-        delete next[provider.id];
-        return next;
-      });
-      try {
-        await runProviderConnectivityBatch(
-          [
-            buildProviderConnectivityBatchTarget(
-              {
-                providerId: provider.id,
-                providerName: provider.name,
-                providerConfig: {
-                  options: {
-                    baseURL: settings?.config?.api?.baseUrl ?? '',
-                    apiKey: settings?.config?.access?.apiKey ?? '',
-                    headers: settings?.config?.api?.headers,
-                  },
-                },
-                modelIds,
-              },
-              {
-                requireBaseUrl: true,
-                requireApiKey: true,
-                errorMessages: {
-                  missingBaseUrl: t('zcode.test.missingBaseUrl', { name: provider.name }),
-                  missingApiKey: t('zcode.test.missingApiKey', { name: provider.name }),
-                  missingModel: t('zcode.test.missingModel', { name: provider.name }),
-                },
-              },
-            ),
-          ],
-          (providerId, status) => {
-            setConnectivityStatuses((previous) => ({ ...previous, [providerId]: status }));
-          },
-        );
-      } finally {
-        setTestingModelsFor(null);
-      }
-    },
-    [t],
-  );
+  /**
+   * 单个 provider 的「模型测试」：打开共享的连通性测试弹窗。
+   *
+   * ⚠️ **不要退回 inline 状态徽标**。共享 `ProviderConnectivityTestModal` 是
+   * 其余 10 个页面的标准做法（逐个模型列出结果、可移除失败项），本页此前是
+   * 全仓仅有的两个例外之一（另一个是 OmO Native），用户报「模型测试没弹窗」
+   * （2026-10-07 修）。卡片头部的**批量**测试仍走 inline 徽标——那与 Codex 一致。
+   */
+  const handleTestProviderModels = React.useCallback((provider: ZcodeProvider) => {
+    setConnectivityInfo(buildZcodeProviderConnectivityInfo(provider));
+    setConnectivityModalOpen(true);
+  }, []);
 
   const fetchModelsProvider = React.useMemo(
     () => providers.find((provider) => provider.id === fetchModelsProviderId) ?? null,
@@ -995,24 +1217,16 @@ const ZcodePage: React.FC = () => {
           onSortModeChange={setSortMode}
           onBatchTest={handleBatchTestProviders}
           batchTesting={batchTestingProviders}
-          onOpenCommonConfig={() => setCommonConfigModalOpen(true)}
           onAddProvider={() => {
             setEditingProvider(null);
+            setIsCopyMode(false);
             setFormModalOpen(true);
           }}
           hint={
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--color-text-secondary)',
-                borderLeft: '2px solid var(--color-border)',
-                paddingLeft: 8,
-                marginBottom: 12,
-              }}
-            >
+            <>
               <div>{t('zcode.pageHint')}</div>
               <div>{t('zcode.pageWarning')}</div>
-            </div>
+            </>
           }
           footer={
             <Space wrap>
@@ -1043,6 +1257,7 @@ const ZcodePage: React.FC = () => {
               )}
             </Space>
           }
+          alwaysVisible={officialAccountCard}
         >
           <DndContext
             sensors={providerBatchDragDisabled ? [] : undefined}
@@ -1050,24 +1265,29 @@ const ZcodePage: React.FC = () => {
             modifiers={[restrictToVerticalAxis]}
             onDragEnd={(event) => void handleDragEnd(event)}
           >
-            <SortableContext
-              items={providers.map((provider) => provider.id)}
-              strategy={verticalListSortingStrategy}
-            >
+            <SortableContext items={sortableItemIds} strategy={verticalListSortingStrategy}>
               <div>
-                {visibleProviders.map((provider) => (
-                  <ZcodeProviderCard
-                    key={provider.id}
+                {visibleProviders.map((provider, providerIndex) => (
+                  <React.Fragment key={provider.id}>
+                    {/* The card shares this ordering with the provider cards, so
+                        it is rendered in place rather than pinned above them. */}
+                    {providerIndex === officialAccountSlot && officialAccountCard}
+                    <ZcodeProviderCard
                     provider={provider}
                     onEdit={() => {
                       setEditingProvider(provider);
+                      setIsCopyMode(false);
                       setFormModalOpen(true);
                     }}
-                    onApply={() => {
-                      noteProviderUsed(provider.id);
-                      void handleApplyProvider(provider);
+                    onCopy={() => {
+                      setEditingProvider(provider);
+                      setIsCopyMode(true);
+                      setFormModalOpen(true);
                     }}
                     onDelete={() => void handleDeleteProvider(provider)}
+                    onToggleDisabled={() =>
+                      void handleToggleProviderDisabled(provider, !provider.isDisabled)
+                    }
                     selectable={
                       providerBatch.selectionMode && providerBatch.isSelectable(provider.id)
                     }
@@ -1079,6 +1299,9 @@ const ZcodePage: React.FC = () => {
                     onCopyModel={(modelId) => handleCopyModel(provider, modelId)}
                     onDeleteModel={(modelId) => void handleDeleteModel(provider, modelId)}
                     onSetPrimaryModel={(modelId) => void handleSetPrimaryModel(provider, modelId)}
+                    onToggleModelDisabled={(modelId, isDisabled) =>
+                      void handleToggleModelDisabled(provider, modelId, isDisabled)
+                    }
                     onReorderModels={(orderedModelIds) =>
                       void handleReorderModels(provider, orderedModelIds)
                     }
@@ -1089,9 +1312,8 @@ const ZcodePage: React.FC = () => {
                     }
                     onToggleBatchDeleteMode={() => handleToggleModelBatchDeleteMode(provider)}
                     onBatchDeleteModels={() => handleBatchDeleteModels(provider)}
-                    onTestModels={() => void handleTestProviderModels(provider)}
+                    onTestModels={() => handleTestProviderModels(provider)}
                     testModelsDisabled={
-                      testingModelsFor === provider.id ||
                       !(parseZcodeProviderSettings(provider.settingsConfig)?.models ?? []).length
                     }
                     testModelsDisabledTooltip={t('common.modelMissing')}
@@ -1099,8 +1321,11 @@ const ZcodePage: React.FC = () => {
                       setFetchModelsProviderId(provider.id);
                       setFetchModelsModalOpen(true);
                     }}
-                  />
+                    />
+                  </React.Fragment>
                 ))}
+                {/* Past the last provider, so the card can sit at the bottom. */}
+                {officialAccountSlot >= visibleProviders.length && officialAccountCard}
               </div>
             </SortableContext>
           </DndContext>
@@ -1149,13 +1374,16 @@ const ZcodePage: React.FC = () => {
         <ZcodeProviderFormModal
           open={formModalOpen}
           provider={editingProvider}
+          isCopy={isCopyMode}
           onCancel={() => {
             setFormModalOpen(false);
             setEditingProvider(null);
+            setIsCopyMode(false);
           }}
           onSaved={async () => {
             setFormModalOpen(false);
             setEditingProvider(null);
+            setIsCopyMode(false);
             await refreshTrayMenu();
             await loadConfig();
           }}
@@ -1182,16 +1410,6 @@ const ZcodePage: React.FC = () => {
         />
       )}
 
-      {commonConfigModalOpen && (
-        <ZcodeCommonConfigModal
-          open={commonConfigModalOpen}
-          onCancel={() => setCommonConfigModalOpen(false)}
-          onSuccess={() => {
-            setCommonConfigModalOpen(false);
-          }}
-        />
-      )}
-
       {fetchModelsProviderInfo && (
         <FetchModelsModal
           open={fetchModelsModalOpen}
@@ -1208,11 +1426,81 @@ const ZcodePage: React.FC = () => {
         />
       )}
 
-      <JsonPreviewModal
+      <ProviderConnectivityTestModal
+        open={connectivityModalOpen}
+        connectivityInfo={connectivityInfo}
+        onCancel={() => setConnectivityModalOpen(false)}
+      />
+
+      <FileConfigPreviewModal
         open={previewModalOpen}
         onClose={() => setPreviewModalOpen(false)}
-        data={previewData}
+        title={t('zcode.preview.title')}
+        files={[
+          {
+            key: 'provider-config',
+            label: 'provider_config.json',
+            content: previewData?.providerConfig.content,
+            language: 'json',
+          },
+          {
+            key: 'cli-config',
+            label: 'cli/config.json',
+            content: previewData?.cliConfig.content,
+            language: 'json',
+          },
+          {
+            key: 'setting',
+            label: 'setting.json',
+            content: previewData?.setting.content,
+            language: 'json',
+          },
+          // Only present while the runtime still reads the legacy map.
+          {
+            key: 'legacy-config',
+            label: 'config.json',
+            content: previewData?.legacyConfig?.content,
+            language: 'json',
+          },
+        ]}
       />
+
+      {/**
+       * The login command resolves only when the browser flow finishes, so the
+       * modal *is* the pending state: it stays open for the whole wait and
+       * cannot be dismissed except by cancelling, which is what tells the
+       * backend to stop polling.
+       */}
+      <Modal
+        open={officialLoginProviderId !== null}
+        title={t('zcode.officialAccount.loginTitle')}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+        okText={t('common.cancel')}
+        cancelButtonProps={{ style: { display: 'none' } }}
+        onOk={() => void handleCancelOfficialLogin()}
+      >
+        <Space direction="vertical" size="small">
+          {/* The spinner sits with the text, not on the cancel button: the
+              wait is in the browser, and a spinning "取消" reads as though the
+              cancellation itself were still in progress. */}
+          <Space size="small">
+            <Spin size="small" />
+            <Typography.Text>
+              {t('zcode.officialAccount.loginPending', {
+                provider:
+                  ZCODE_LOGIN_PROVIDERS.find(
+                    (provider) => provider.value === officialLoginProviderId,
+                  )?.label ?? officialLoginProviderId ?? '',
+              })}
+            </Typography.Text>
+          </Space>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('zcode.officialAccount.loginPendingHint')}
+          </Typography.Text>
+        </Space>
+      </Modal>
 
       <ImportProviderModal
         open={importModalOpen}

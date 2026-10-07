@@ -23,6 +23,7 @@ mod desktop;
 mod dsh;
 mod grok;
 mod hermes;
+mod zcode;
 mod kimi;
 mod open_claw;
 mod open_code;
@@ -260,6 +261,7 @@ fn import_cli_keys(selection: GatewaySessionImportCli) -> Vec<GatewayUsageTool> 
         GatewaySessionImportCli::Hermes => vec![GatewayUsageTool::Hermes],
         GatewaySessionImportCli::OpenClaw => vec![GatewayUsageTool::OpenClaw],
         GatewaySessionImportCli::KimiCli => vec![GatewayUsageTool::KimiCli],
+        GatewaySessionImportCli::Zcode => vec![GatewayUsageTool::Zcode],
     }
 }
 
@@ -277,6 +279,7 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
         GatewayUsageTool::OhMyPi => get_oh_my_pi_runtime_location_sync(db).ok(),
         GatewayUsageTool::OmoNative => get_omo_native_runtime_location_sync(db).ok(),
         GatewayUsageTool::OpenClaw => get_openclaw_runtime_location_sync(db).ok(),
+        GatewayUsageTool::Zcode => get_zcode_runtime_location_sync(db).ok(),
         _ => None,
     };
     let mut roots = Vec::new();
@@ -327,6 +330,18 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
                 roots.push(PathBuf::from(root).join("sessions"));
             } else if let Some(home) = dirs::home_dir() {
                 roots.push(home.join(".kimi/sessions"));
+            }
+            return roots;
+        }
+        GatewayUsageTool::Zcode => {
+            // The CLI keeps one SQLite database rather than a transcript tree,
+            // so the "root" is the database itself and the resolver for it
+            // lives in the session manager.
+            if let Some(location) = location {
+                if let Ok(path) = crate::coding::session_manager::resolve_zcode_cli_db_path(&location)
+                {
+                    roots.push(path);
+                }
             }
             return roots;
         }
@@ -432,6 +447,12 @@ fn source_identity(cli_key: GatewayUsageTool, path: &Path) -> String {
 }
 
 fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
+    // ZCode's "root" is its SQLite database, not a directory of transcripts.
+    // Without this the walk below silently returns nothing and the tool looks
+    // like it has no usage at all.
+    if cli_key == GatewayUsageTool::Zcode {
+        return root.is_file().then(|| vec![root.to_path_buf()]).unwrap_or_default();
+    }
     if !root.is_dir() {
         return Vec::new();
     }
@@ -465,6 +486,9 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
                 | GatewayUsageTool::OmoNative => extension == "jsonl",
                 GatewayUsageTool::Dsh => dsh::generation(&path).is_some(),
                 GatewayUsageTool::Hermes => false,
+                // A SQLite database, not a transcript tree; its reader is
+                // chosen in `parse_file` and never reaches this walk.
+                GatewayUsageTool::Zcode => false,
                 GatewayUsageTool::OpenClaw => open_claw::is_transcript(&path),
                 GatewayUsageTool::OpenCode => {
                     extension == "json"

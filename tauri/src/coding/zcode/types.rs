@@ -281,6 +281,10 @@ pub struct ZcodeCommonConfigRecord {
     pub id: String,
     pub config: String,
     pub root_dir: Option<String>,
+    /// Where the official-account card sits in the provider list, counted as
+    /// the number of provider cards above it. UI state, not ZCode state — it
+    /// lives here because this record is the module's only singleton row.
+    pub official_account_index: Option<i64>,
     pub updated_at: String,
 }
 
@@ -289,6 +293,7 @@ pub struct ZcodeCommonConfigRecord {
 pub struct ZcodeCommonConfig {
     pub config: String,
     pub root_dir: Option<String>,
+    pub official_account_index: Option<i64>,
     pub updated_at: String,
 }
 
@@ -340,4 +345,87 @@ pub struct ZcodePromptConfig {
     pub sort_index: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// An official-account snapshot as returned to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodeOfficialAccount {
+    pub id: String,
+    /// OAuth namespace the snapshot logs into: `zai` or `bigmodel`.
+    pub provider_id: String,
+    pub name: String,
+    /// `oauth` for a saved snapshot, `local` for the virtual entry that mirrors
+    /// whatever is logged in right now without having been saved.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// The provider's own user id, used to recognise the same login again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    pub is_applied: bool,
+    pub is_virtual: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// The stored half of an official account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodeOfficialAccountContent {
+    pub provider_id: String,
+    pub name: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// `v2/credentials.json` verbatim, ciphertext included.
+    pub credentials_snapshot: String,
+    /// `v2/config.json` verbatim, and only for installations that have not
+    /// migrated to `provider_config.json` yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_snapshot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i64>,
+    pub is_applied: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What applying an account did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodeOfficialAccountApplyResult {
+    /// Name of the login that was saved aside before being overwritten, when
+    /// the live credentials held one that was not already in the list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preserved_as: Option<String>,
+}
+
+/// One file as the preview modal shows it. `content` is `None` when the file
+/// does not exist yet, which the modal skips rather than rendering empty.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodePreviewFile {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+/// Every file ZCode reads, so the preview shows the same picture the runtime
+/// sees rather than the one file AI Toolbox happens to own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZcodeConfigPreview {
+    /// `v2/provider_config.json` — the current-generation provider registry.
+    pub provider_config: ZcodePreviewFile,
+    /// Legacy `v2/config.json`. Absent on migrated installations, where the
+    /// runtime no longer reads it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_config: Option<ZcodePreviewFile>,
+    /// `cli/config.json` — MCP servers, hooks, plugins, permissions.
+    pub cli_config: ZcodePreviewFile,
+    /// `v2/setting.json` — desktop settings, including `dataBaseDir`.
+    pub setting: ZcodePreviewFile,
 }

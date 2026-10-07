@@ -2,8 +2,8 @@ use chrono::Local;
 use serde_json::{json, Value};
 
 use super::types::{
-    ZcodeCommonConfig, ZcodeCommonConfigRecord, ZcodePromptConfig, ZcodeProvider,
-    ZcodeProviderContent,
+    ZcodeCommonConfig, ZcodeCommonConfigRecord, ZcodeOfficialAccount, ZcodeOfficialAccountContent,
+    ZcodePromptConfig, ZcodeProvider, ZcodeProviderContent,
 };
 
 /// Reads a row id verbatim.
@@ -47,6 +47,13 @@ fn get_i64_compat(value: &Value, snake_key: &str, camel_key: &str) -> i64 {
         .unwrap_or(0)
 }
 
+fn get_opt_i64_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<i64> {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(|v| v.as_i64())
+}
+
 fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: bool) -> bool {
     value
         .get(snake_key)
@@ -87,14 +94,27 @@ pub fn from_db_value_common(value: Value) -> ZcodeCommonConfigRecord {
         id: zcode_row_id(&value),
         config: get_str_compat(&value, "config", "config", "{}"),
         root_dir: get_opt_str_compat(&value, "root_dir", "rootDir"),
+        official_account_index: get_opt_i64_compat(
+            &value,
+            "official_account_index",
+            "officialAccountIndex",
+        ),
         updated_at: get_str_compat(&value, "updated_at", "updatedAt", ""),
     }
 }
 
-pub fn to_db_value_common(config: &str, root_dir: Option<&str>) -> Value {
+/// Writes the whole common-config record, so every caller must pass every
+/// field: a blind `db_put` of a partial payload is how a field gets erased by
+/// an unrelated save.
+pub fn to_db_value_common(
+    config: &str,
+    root_dir: Option<&str>,
+    official_account_index: Option<i64>,
+) -> Value {
     json!({
         "config": config,
         "root_dir": root_dir,
+        "official_account_index": official_account_index,
         "updated_at": Local::now().to_rfc3339(),
     })
 }
@@ -117,6 +137,7 @@ impl From<ZcodeCommonConfigRecord> for ZcodeCommonConfig {
         Self {
             config: record.config,
             root_dir: record.root_dir,
+            official_account_index: record.official_account_index,
             updated_at: record.updated_at,
         }
     }
@@ -161,11 +182,11 @@ mod tests {
     #[test]
     fn managed_provider_id_survives_the_db_round_trip() {
         let parsed = from_db_value_provider(json!({
-            "id": "custom:axonhub-deepseek",
-            "name": "AxonHub-DeepSeek",
+            "id": "custom:example-relay",
+            "name": "Example Relay",
             "settings_config": "{}"
         }));
-        assert_eq!(parsed.id, "custom:axonhub-deepseek");
+        assert_eq!(parsed.id, "custom:example-relay");
     }
 
     #[test]
@@ -222,10 +243,13 @@ mod tests {
         let common = ZcodeCommonConfig {
             config: "{}".to_string(),
             root_dir: Some("/tmp/zcode".to_string()),
+            official_account_index: Some(2),
             updated_at: "t".to_string(),
         };
         let value = serde_json::to_value(&common).expect("serialize common");
         assert_eq!(value["rootDir"], json!("/tmp/zcode"));
+        // The web layer reads camelCase; the card's slot must survive the trip.
+        assert_eq!(value["officialAccountIndex"], json!(2));
     }
 
     /// Storage keeps snake_case, and the readers accept either spelling.
@@ -258,5 +282,52 @@ mod tests {
         assert_eq!(parsed.settings_config, "{\"providerId\":\"custom:x\"}");
         assert!(parsed.is_applied);
         assert_eq!(parsed.sort_index, 5);
+    }
+}
+
+pub fn from_db_value_official_account(value: Value) -> ZcodeOfficialAccountContent {
+    ZcodeOfficialAccountContent {
+        provider_id: get_str_compat(&value, "provider_id", "providerId", ""),
+        name: get_str_compat(&value, "name", "name", "Unnamed Account"),
+        kind: get_str_compat(&value, "kind", "kind", "oauth"),
+        email: get_opt_str_compat(&value, "email", "email"),
+        account_id: get_opt_str_compat(&value, "account_id", "accountId"),
+        credentials_snapshot: get_str_compat(
+            &value,
+            "credentials_snapshot",
+            "credentialsSnapshot",
+            "{}",
+        ),
+        config_snapshot: get_opt_str_compat(&value, "config_snapshot", "configSnapshot"),
+        sort_index: Some(get_i64_compat(&value, "sort_index", "sortIndex")),
+        is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
+        created_at: get_str_compat(&value, "created_at", "createdAt", ""),
+        updated_at: get_str_compat(&value, "updated_at", "updatedAt", ""),
+    }
+}
+
+pub fn to_db_value_official_account(content: &ZcodeOfficialAccountContent) -> Value {
+    serde_json::to_value(content).unwrap_or_else(|error| {
+        eprintln!("Failed to serialize ZCode official account content: {error}");
+        json!({})
+    })
+}
+
+impl ZcodeOfficialAccountContent {
+    /// The account as the frontend sees it. Snapshots stay behind: the page
+    /// never needs a token, and the virtual entry has no row to read.
+    pub fn into_api(self, account_id: String, is_virtual: bool) -> ZcodeOfficialAccount {
+        ZcodeOfficialAccount {
+            id: account_id,
+            provider_id: self.provider_id,
+            name: self.name,
+            kind: self.kind,
+            email: self.email,
+            account_id: self.account_id,
+            is_applied: self.is_applied,
+            is_virtual,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
     }
 }

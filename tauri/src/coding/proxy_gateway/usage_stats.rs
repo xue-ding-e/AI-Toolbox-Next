@@ -3601,7 +3601,7 @@ mod tests {
     #[test]
     fn kimi_usage_rows_appear_in_request_logs_and_resolve_provider_name() {
         let db = test_db();
-        insert_provider_for_cli(&db, GatewayCliKey::Kimi, "provider-kimi", "AxonHub Kimi");
+        insert_provider_for_cli(&db, GatewayCliKey::Kimi, "provider-kimi", "Relay Kimi");
         record_request_summary(
             &db,
             &ProxyGatewaySettings::default(),
@@ -3623,7 +3623,7 @@ mod tests {
         assert_eq!(logs.data[0].cli_key, GatewayUsageTool::Kimi);
         assert_eq!(
             logs.data[0].provider_name.as_deref(),
-            Some("AxonHub Kimi"),
+            Some("Relay Kimi"),
             "Kimi request rows must not be dropped and must resolve display names from kimi_provider"
         );
 
@@ -3632,7 +3632,7 @@ mod tests {
         assert_eq!(provider_rows.len(), 1);
         assert_eq!(
             provider_rows[0].provider_name.as_deref(),
-            Some("AxonHub Kimi")
+            Some("Relay Kimi")
         );
     }
 

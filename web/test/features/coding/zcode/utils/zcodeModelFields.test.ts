@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import {
   buildInputFormat,
   buildZcodeModelRowFromPreset,
+  pickZcodeSystemProperties,
   preferredPresetNpmTypes,
   presetInputModalities,
   readInputModalities,
@@ -41,14 +42,13 @@ test('a known preset fills every field ZCode stores', () => {
     properties: {
       contextWindow: 1_000_000,
       inputFormat: { supportsText: true, supportsImage: true, supportsPdf: true },
-      supportsToolCall: true,
     },
     optionSpecs: { maxOutputTokens: { max: 128_000 } },
     isDefault: false,
   });
 });
 
-test('a manual rule carries neither the smart-only modalities nor tool call', () => {
+test('a manual rule carries only the modalities its schema declares', () => {
   updatePresetModels(bundledPresets);
 
   const row = buildZcodeModelRowFromPreset(
@@ -57,10 +57,46 @@ test('a manual rule carries neither the smart-only modalities nor tool call', ()
     findPresetModelById('claude-opus-4-8'),
   );
 
-  // `text` is smart-only, and ZCode rejects a manual rule that carries
-  // `supportsToolCall` — the whole provider file is refused, not just the row.
+  // `text` is smart-only: ZCode's manual rule schema does not declare it.
   assert.deepEqual(row.properties?.inputFormat, { supportsImage: true, supportsPdf: true });
+});
+
+test('a preset never writes the system properties, whatever the catalog says', () => {
+  updatePresetModels(bundledPresets);
+
+  // The bundled catalog reports `tool_call: true` for this model, and ZCode's
+  // own dialog still leaves `supportsToolCall` to the CLI rather than to the
+  // preset. Writing it here would produce a key the official editor never sets.
+  const row = buildZcodeModelRowFromPreset(
+    'claude-opus-4-8',
+    'smart',
+    findPresetModelById('claude-opus-4-8'),
+  );
+
   assert.equal(row.properties?.supportsToolCall, undefined);
+  assert.equal(row.properties?.requiresMfjsToolSchema, undefined);
+});
+
+test('system properties survive a save that does not expose them', () => {
+  // A row ZCode itself wrote carries these; re-saving from a form that has no
+  // control for them must not delete them.
+  const existing = {
+    supportsToolCall: true,
+    requiresMfjsToolSchema: false,
+    contextWindow: 200_000,
+  };
+
+  assert.deepEqual(pickZcodeSystemProperties(existing), {
+    supportsToolCall: true,
+    requiresMfjsToolSchema: false,
+  });
+});
+
+test('an absent system property stays absent rather than becoming false', () => {
+  // "Not set" and "set to false" are different to ZCode: an absent key lets its
+  // catalog decide, an explicit false overrides it.
+  assert.deepEqual(pickZcodeSystemProperties({ contextWindow: 1 }), {});
+  assert.deepEqual(pickZcodeSystemProperties(undefined), {});
 });
 
 test('a model the catalog does not know still yields a usable row', () => {

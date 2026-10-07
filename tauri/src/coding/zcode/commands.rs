@@ -23,8 +23,8 @@ use crate::db::SqliteDbState;
 use super::constants::*;
 use super::projection;
 use super::types::{
-    ConfigPathInfo, ZcodeCommonConfigInput, ZcodePromptConfig, ZcodePromptConfigInput,
-    ZcodeProviderInput,
+    ConfigPathInfo, ZcodeCommonConfigInput, ZcodeConfigPreview, ZcodePreviewFile,
+    ZcodePromptConfig, ZcodePromptConfigInput, ZcodeProviderInput,
 };
 use crate::coding::open_code::types::{
     OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult,
@@ -51,7 +51,7 @@ fn prompt_order() -> Result<OrderSpec, String> {
     provider_order()
 }
 
-fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
@@ -189,8 +189,29 @@ pub async fn get_zcode_common_config(
             let parsed: super::types::ZcodeCommonConfig = record.into();
             Ok(serde_json::to_value(parsed).unwrap_or_else(|_| serde_json::json!({})))
         }
-        None => Ok(serde_json::json!({ "config": "{}", "rootDir": Value::Null, "updatedAt": "" })),
+        None => Ok(serde_json::json!({
+            "config": "{}",
+            "rootDir": Value::Null,
+            "officialAccountIndex": Value::Null,
+            "updatedAt": ""
+        })),
     }
+}
+
+/// Reads the common-config record, or an empty one when nothing is stored yet.
+fn read_common_record(state: &SqliteDbState) -> Result<super::types::ZcodeCommonConfigRecord, String> {
+    let record = state.with_conn(|conn| {
+        crate::db::helpers::db_get(conn, DbTable::ZcodeCommonConfig, "common")
+    })?;
+    Ok(record
+        .map(super::adapter::from_db_value_common)
+        .unwrap_or(super::types::ZcodeCommonConfigRecord {
+            id: "common".to_string(),
+            config: "{}".to_string(),
+            root_dir: None,
+            official_account_index: None,
+            updated_at: String::new(),
+        }))
 }
 
 #[tauri::command]
@@ -205,7 +226,14 @@ pub async fn save_zcode_common_config(
     } else {
         input.root_dir.as_deref().map(str::trim).filter(|v| !v.is_empty())
     };
-    let payload = super::adapter::to_db_value_common(&input.config, root_dir);
+    // Read-modify-write: the record also carries the official-account card's
+    // position, and a blind put of just `config` + `root_dir` would erase it.
+    let existing = read_common_record(&state)?;
+    let payload = super::adapter::to_db_value_common(
+        &input.config,
+        root_dir,
+        existing.official_account_index,
+    );
     state.with_conn(|conn| {
         crate::db::helpers::db_put(conn, DbTable::ZcodeCommonConfig, "common", &payload)
     })?;
@@ -216,6 +244,27 @@ pub async fn save_zcode_common_config(
     Ok(())
 }
 
+/// Records where the official-account card sits in the provider list.
+///
+/// Kept apart from `save_zcode_common_config` so a drag never rewrites the
+/// config blob, and so the config modal never has to carry a field it does not
+/// show. `index` counts the provider cards above the official-account card.
+#[tauri::command]
+pub async fn save_zcode_official_account_index(
+    state: tauri::State<'_, SqliteDbState>,
+    index: i64,
+) -> Result<(), String> {
+    let existing = read_common_record(&state)?;
+    let payload = super::adapter::to_db_value_common(
+        &existing.config,
+        existing.root_dir.as_deref(),
+        Some(index.max(0)),
+    );
+    state.with_conn(|conn| {
+        crate::db::helpers::db_put(conn, DbTable::ZcodeCommonConfig, "common", &payload)
+    })
+}
+
 /// Resolves `~/.zcode/cli/config.json`.
 ///
 /// This is the CLI's own settings file — MCP servers, hooks, plugins and
@@ -224,6 +273,61 @@ pub async fn save_zcode_common_config(
 /// does for providers.
 pub fn zcode_cli_config_path(state: &SqliteDbState) -> Result<PathBuf, String> {
     Ok(resolve_zcode_root_dir(state)?.join(ZCODE_CLI_CONFIG_RELATIVE_PATH))
+}
+
+/// Resolves `~/.zcode/v2/setting.json`.
+///
+/// Unlike every other ZCode file this one does **not** follow the data root:
+/// it is the bootstrap file that says where the data root is, so it is always
+/// read from the home directory.
+pub(crate) fn zcode_setting_path() -> Option<PathBuf> {
+    Some(
+        dirs::home_dir()?
+            .join(ZCODE_DEFAULT_ROOT_DIR_NAME)
+            .join(ZCODE_SETTING_RELATIVE_PATH),
+    )
+}
+
+fn preview_file(path: PathBuf) -> ZcodePreviewFile {
+    // A missing file is a normal state — the CLI creates `cli/config.json` on
+    // first run — so it becomes `None` and the modal skips the tab.
+    let content = std::fs::read_to_string(&path).ok();
+    ZcodePreviewFile {
+        path: path.to_string_lossy().to_string(),
+        content,
+    }
+}
+
+/// Every file ZCode reads, for the "preview config" modal.
+///
+/// One file is not the picture: `provider_config.json` holds the providers AI
+/// Toolbox manages, `cli/config.json` holds the CLI's own settings, and
+/// `setting.json` decides where everything else even lives. Previewing only the
+/// first reads as though the others do not exist.
+#[tauri::command]
+pub async fn get_zcode_preview(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<ZcodeConfigPreview, String> {
+    let root_dir = resolve_zcode_root_dir(&state)?;
+    // The legacy map is only part of the picture while the runtime still reads
+    // it; on a migrated install it is a leftover, and showing it would suggest
+    // it still matters.
+    let legacy_config = (!projection::provider_config_exists(
+        &root_dir.join(ZCODE_PROVIDER_CONFIG_RELATIVE_PATH),
+    ))
+    .then(|| preview_file(root_dir.join(ZCODE_LEGACY_CONFIG_RELATIVE_PATH)));
+
+    Ok(ZcodeConfigPreview {
+        provider_config: preview_file(root_dir.join(ZCODE_PROVIDER_CONFIG_RELATIVE_PATH)),
+        legacy_config,
+        cli_config: preview_file(root_dir.join(ZCODE_CLI_CONFIG_RELATIVE_PATH)),
+        setting: zcode_setting_path()
+            .map(preview_file)
+            .unwrap_or(ZcodePreviewFile {
+                path: String::new(),
+                content: None,
+            }),
+    })
 }
 
 #[tauri::command]
@@ -649,7 +753,7 @@ async fn get_zcode_local_prompt_config(
     };
     let now = Local::now().to_rfc3339();
     Ok(Some(ZcodePromptConfig {
-        id: "__local__".to_string(),
+        id: crate::coding::local_bridge::LOCAL_CONFIG_ID.to_string(),
         name: ZCODE_PROMPT_FILE_NAME.to_string(),
         content,
         is_applied: false,

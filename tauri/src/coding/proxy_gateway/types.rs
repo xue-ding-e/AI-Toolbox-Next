@@ -63,6 +63,9 @@ pub enum GatewayUsageTool {
     #[serde(rename = "openclaw", alias = "open_claw")]
     OpenClaw,
     KimiCli,
+    /// ZCode's CLI session database (`cli/db/db.sqlite`). Usage-only, like the
+    /// other native-transcript tools: the gateway never proxies it.
+    Zcode,
 }
 
 impl GatewayUsageTool {
@@ -83,6 +86,7 @@ impl GatewayUsageTool {
             Self::Hermes,
             Self::OpenClaw,
             Self::KimiCli,
+            Self::Zcode,
         ]
     }
 
@@ -103,6 +107,7 @@ impl GatewayUsageTool {
             Self::Hermes => "hermes",
             Self::OpenClaw => "openclaw",
             Self::KimiCli => "kimi_cli",
+            Self::Zcode => "zcode",
         }
     }
 
@@ -1334,6 +1339,9 @@ pub enum GatewaySessionImportCli {
     #[serde(rename = "openclaw", alias = "open_claw")]
     OpenClaw,
     KimiCli,
+    /// ZCode's CLI session database (`cli/db/db.sqlite`). Usage-only, like the
+    /// other native-transcript tools: the gateway never proxies it.
+    Zcode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
