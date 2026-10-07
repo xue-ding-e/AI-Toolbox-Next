@@ -24,15 +24,25 @@ pub enum ApiType {
 
 /// Config value syntax a request opts into for its credential fields.
 ///
-/// Pi stores `$ENV_VAR` / `!command` templates in `models.json` and OMP stores
-/// `!command` / environment-variable names in `models.yml`. Callers that opt in
-/// ask the shared discovery/connectivity commands to resolve them before the
-/// value reaches an HTTP request; every other caller keeps sending raw literals.
+/// Pi and OmO Native both store `$ENV_VAR` / `${ENV_VAR}` interpolation,
+/// `!command` and `$$` / `$!` escapes in a `models.json`; OMP stores only
+/// `!command` / exact environment-variable names in `models.yml`. Callers that
+/// opt in ask the shared discovery/connectivity commands to resolve them before
+/// the value reaches an HTTP request; every other caller keeps sending raw
+/// literals.
+///
+/// ⚠️ **OmO Native is not OMP** despite both being `oh-my-*` tools: OmO's
+/// `apiKey` accepts `$ENV_VAR` interpolation (verified against the engine) while
+/// OMP's does not. Sending an OmO key through `Omp` silently skips
+/// interpolation and forwards the literal `$MY_KEY` as the credential.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigValueMode {
     Pi,
     Omp,
+    /// OmO Native (`omo` binary / senpi engine). Same syntax as Pi, but the
+    /// `!command` host follows OmO's runtime location.
+    Omo,
 }
 
 /// Request parameters for fetching models from provider API
@@ -368,13 +378,17 @@ fn resolve_provider_request(
 /// another tool's auth store (e.g. OpenCode `auth.json`) would authenticate the
 /// request with the wrong secret. Requests without a configured key keep the
 /// existing provider fallback.
+///
+/// OmO Native gets the same treatment: its credentials live in its own
+/// `auth.json` (which the page passes through), so a same-named provider in
+/// OpenCode's store must not silently stand in for a missing OmO key.
 fn stored_credential_fallback_allowed(
     config_value_mode: Option<ConfigValueMode>,
     configured_api_key: Option<&str>,
 ) -> bool {
     let has_configured_key = configured_api_key.is_some_and(|key| !key.trim().is_empty());
     match config_value_mode {
-        Some(ConfigValueMode::Omp) => !has_configured_key,
+        Some(ConfigValueMode::Omp | ConfigValueMode::Omo) => !has_configured_key,
         _ => true,
     }
 }
@@ -439,6 +453,9 @@ async fn config_value_host(
         ConfigValueMode::Omp => {
             runtime_location::get_oh_my_pi_runtime_location_async(state).await?
         }
+        ConfigValueMode::Omo => {
+            runtime_location::get_omo_native_runtime_location_async(state).await?
+        }
     };
     Ok(config_value_host_from_location(&location))
 }
@@ -447,7 +464,7 @@ async fn config_value_host(
 fn resolves_config_values(config_value_mode: Option<ConfigValueMode>) -> bool {
     matches!(
         config_value_mode,
-        Some(ConfigValueMode::Pi | ConfigValueMode::Omp)
+        Some(ConfigValueMode::Pi | ConfigValueMode::Omp | ConfigValueMode::Omo)
     )
 }
 
@@ -478,10 +495,14 @@ async fn resolve_credentials(
     let provider_label = provider_id.unwrap_or(match mode {
         ConfigValueMode::Pi => "pi",
         ConfigValueMode::Omp => "omp",
+        ConfigValueMode::Omo => "omo",
     });
 
     match mode {
-        ConfigValueMode::Pi => {
+        // OmO Native's `models.json` follows the same config-value syntax as Pi
+        // (`$ENV_VAR` / `${ENV_VAR}` / `!command` / `$$` / `$!`), so it reuses
+        // that resolver — only the `!command` host differs.
+        ConfigValueMode::Pi | ConfigValueMode::Omo => {
             let resolved_api_key = match api_key {
                 Some(raw_api_key) => {
                     let label = format!("API key for provider \"{provider_label}\"");

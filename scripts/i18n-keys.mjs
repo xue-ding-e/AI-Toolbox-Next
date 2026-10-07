@@ -77,8 +77,29 @@ const DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE = {
   'web/features/coding/shared/prompt/GlobalPromptSettings.tsx': {
     translationKeyPrefix: ['claudecode.prompt', 'codex.prompt', 'geminicli.prompt', 'opencode.prompt'],
   },
+  // Every module that renders the shared root-directory modal. A prefix missing
+  // here makes that module's whole `rootPathSource.*` block look unused, and
+  // `i18n:prune` then deletes copy the modal still asks for at runtime.
   'web/features/coding/shared/useRootDirectoryConfig.ts': {
-    translationKeyPrefix: ['claudecode', 'codex', 'geminicli'],
+    translationKeyPrefix: [
+      'antigravity',
+      'claudecode',
+      'codex',
+      'dsh',
+      'geminicli',
+      'grok',
+      'hermes',
+      'kimi',
+      'ohMyPi',
+      'omoNative',
+      'pi',
+      'zcode',
+    ],
+    // The second placeholder in
+    // `${translationKeyPrefix}.rootPathSource.modal.${pathInfo.source}Hint`.
+    // Without it the expression never expands and `envHint` / `shellHint` look
+    // unused — `i18n:prune` then deletes copy the modal renders.
+    'pathInfo.source': ['env', 'shell'],
   },
 };
 

@@ -20,7 +20,7 @@
     "grok": "Grok",
     "ohMyPi": "omp",
     "oh_my_pi": "omp",
-    "omo_native": "OmO Native",
+    "omo_native": "OmO",
     "claudedesktop": "Claude Desktop",
     "hermes": "Hermes",
     "dsh": "dsh",
@@ -28,7 +28,7 @@
     "dshFull": "DeepSeek Harness",
     "kimi": "Kimi",
     "zcode": "ZCode",
-    "omoNative": "OmO Native"
+    "omoNative": "OmO"
   },
   "providerBilling": {
     "title": "计费配置",
@@ -830,11 +830,12 @@
         "opencode": "OpenCode",
         "pi": "Pi",
         "oh_my_pi": "Oh My Pi",
-        "omo_native": "OmO Native",
+        "omo_native": "OmO",
         "dsh": "DSH",
         "hermes": "Hermes",
         "openclaw": "OpenClaw",
-        "kimi_cli": "Kimi CLI (Python)"
+        "kimi_cli": "Kimi CLI (Python)",
+        "zcode": "ZCode"
       },
       "cliStatus": {
         "direct": "未接管",
@@ -908,10 +909,10 @@
       "scopeSectionTitle": "备份范围",
       "imageAssets": "备份生图图片",
       "cliConfigFiles": "备份 DB 型 CLI 运行时文件",
-      "cliConfigFilesDesc": "控制是否备份/恢复 Codex、Claude、Grok、Gemini、Kimi CLI 的本机运行时文件（config、auth、prompt 等）。关闭后这些文件不进包、不覆盖本机；其渠道与提示词仍可由 SQLite 在重启后重新应用。OpenCode、OpenClaw、Pi 的渠道、模型与主配置以运行时文件为主数据，始终随备份迁移（仍可用下方「文件过滤规则」排除单个敏感文件）。",
+      "cliConfigFilesDesc": "控制是否备份/恢复 Codex、Claude、Grok、Gemini、Kimi、ZCode 的本机运行时文件（config、auth、prompt 等）。关闭后这些文件不进包、不覆盖本机；其渠道与提示词仍可由 SQLite 在重启后重新应用。OpenCode、OpenClaw、Pi、Oh My Pi、OmO、Hermes、DeepSeek Harness 的渠道、模型与主配置以运行时文件为主数据，始终随备份迁移（仍可用下方「文件过滤规则」排除单个敏感文件）。",
       "skipCliCustomRoots": "不恢复各 CLI 自定义根目录",
       "skipCliCustomRootsDesc": "勾选后清空备份库中的自定义 root/config 路径，改用本机默认或环境变量路径。跨设备恢复时建议勾选。",
-      "restoreWillReapply": "已跳过或备份未包含 DB 型 CLI（Codex/Claude/Grok/Gemini/Kimi）运行时文件：重启后将从数据库重新应用渠道与提示词。OpenCode、OpenClaw、Pi 仍以备份中的运行时文件为准。",
+      "restoreWillReapply": "已跳过或备份未包含 DB 型 CLI（Codex/Claude/Grok/Gemini/Kimi/ZCode）运行时文件：重启后将从数据库重新应用渠道与提示词。OpenCode、OpenClaw、Pi、Oh My Pi、OmO、Hermes、DeepSeek Harness 仍以备份中的运行时文件为准。",
       "customEntries": {
         "title": "自定义备份项",
         "description": "将额外的本地文件或目录加入备份。",
@@ -959,7 +960,7 @@
         "filePathPlaceholder": "选择要排除的备份路径",
         "selectToolFirst": "请先选择工具",
         "addTitle": "添加过滤规则",
-        "disabledByCliConfigFiles": "当前未备份 DB 型 CLI 运行时文件时，Codex/Claude/Grok/Gemini/Kimi 的过滤规则无对象；OpenCode/OpenClaw/Pi 的过滤规则仍生效。"
+        "disabledByCliConfigFiles": "当前未备份 DB 型 CLI 运行时文件时，Codex/Claude/Grok/Gemini/Kimi/ZCode 的过滤规则无对象；OpenCode/OpenClaw/Pi/Oh My Pi/OmO/Hermes/DeepSeek Harness 的过滤规则仍生效。"
       },
       "noPathConfigured": "请先配置备份路径",
       "noWebDAVConfigured": "请先配置 WebDAV 服务器",
@@ -1731,7 +1732,10 @@
       "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。",
       "thinkingLevelHint": "覆盖默认思考等级；留空则继承全局默认设置。",
       "thinkingLevelMapHint": "不是默认思考等级；这是模型级支持/映射表。",
-      "reasoning": "推理"
+      "reasoning": "推理",
+      "disabled": "已禁用",
+      "enabled": "已启用",
+      "toggleEnabled": "启用或禁用模型 {{name}}"
     },
     "official": {
       "models": "官方模型",
@@ -1763,6 +1767,57 @@
       "sectionHint": "可通过右上角「添加全局提示词」预设多套 {{tool}} 全局提示词方案，并通过「应用」或系统托盘快捷切换。",
       "contentPlaceholder": "# 请输入提示词内容\\\\n\\\\n支持 Markdown，应用后会写入 {{file}}。",
       "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `{{file}}` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。"
+    },
+    "authConfig": {
+      "title": "编辑 auth.json",
+      "hint": "引擎凭据文件（含明文密钥）。保存后立即生效；删掉某个渠道的条目等于删除它的凭据。",
+      "path": "文件位置：{{path}}",
+      "openHint": "在应用内查看并编辑 auth.json"
+    },
+    "jsonInvalid": "JSON 格式不正确",
+    "cliExtensions": {
+      "title": "扩展管理",
+      "openDirectory": "打开本地扩展目录",
+      "openPackagesDirectory": "打开已装包目录",
+      "updateAll": "更新全部",
+      "updateAllWithCount": "更新全部（{{count}}）",
+      "updateAvailable": "可更新",
+      "updateAvailableCount": "{{count}} 个可更新",
+      "loadFailed": "扩展列表加载失败",
+      "cliPathLabel": "CLI",
+      "cliVersionLabel": "版本",
+      "pathLabel": "本地扩展目录",
+      "packagesPathLabel": "已装包目录",
+      "restartHint": "安装、卸载、启用/停用或删除后需要重启会话才生效。",
+      "enableAction": "启用扩展",
+      "disableAction": "停用扩展",
+      "disabledTag": "已停用",
+      "enableDisabledReason": "项目级扩展不在本页管控范围。",
+      "scopeProject": "项目",
+      "sourcePlaceholder": "输入 npm:package、github:owner/repo、git:url 或 file:path",
+      "sourceRequired": "请输入扩展来源",
+      "install": "安装",
+      "installed": "已安装",
+      "installSuccess": "扩展已安装",
+      "uninstallSuccess": "扩展已卸载",
+      "deleteSuccess": "本地扩展已删除",
+      "recommendedTitle": "推荐扩展",
+      "officialPackages": "扩展市场",
+      "recommendedCount": "{{count}} 个推荐",
+      "installedTitle": "已安装扩展",
+      "count": "{{count}} 个扩展",
+      "loading": "正在加载扩展列表...",
+      "emptyInstalled": "暂无已安装扩展",
+      "openPackage": "打开扩展主页",
+      "builtIn": "内置",
+      "uninstall": "卸载",
+      "deleteLocal": "删除本地扩展",
+      "confirmUninstallTitle": "卸载扩展",
+      "confirmDeleteTitle": "删除本地扩展",
+      "confirmUninstallContent": "将通过 CLI 卸载该扩展。",
+      "confirmDeleteContent": "将删除扩展目录中的本地扩展文件或目录。",
+      "updateResultTitle": "扩展更新结果",
+      "emptyCommandOutput": "命令未产生输出"
     }
   },
   "sessionManager": {
@@ -2502,7 +2557,7 @@
     },
     "official": {
       "title": "官方Auth认证渠道",
-      "description": "以下渠道来自 OpenCode 官方 Auth 认证，本模块只做展示，不提供编辑能力。",
+      "description": "以下渠道来自 OpenCode 官方 Auth 认证，模型列表只读；渠道凭据可点右上角 auth.json 在应用内查看和编辑。",
       "authProvider": "官方认证",
       "readOnly": "只读",
       "officialModels": "官方认证模型",
@@ -2512,7 +2567,7 @@
       "contextLimit": "上下文限制",
       "outputLimit": "输出限制",
       "configNotFound": "未找到 auth.json 配置文件",
-      "openConfigHint": "点击打开配置文件"
+      "openConfigHint": "在应用内查看并编辑 auth.json"
     },
     "agentSettings": {
       "title": "Agent 模型",
@@ -2762,7 +2817,9 @@
         "saveSuccess": "Claude Code 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Claude Code 会在所选文件夹下派生 settings.json、config.json 和 CLAUDE.md。"
+        "folderOnlyDesc": "不要选择具体文件，Claude Code 会在所选文件夹下派生 settings.json、config.json 和 CLAUDE.md。",
+        "envHint": "检测到环境变量 CLAUDE_CONFIG_DIR：{{path}}",
+        "shellHint": "检测到 Shell 配置 CLAUDE_CONFIG_DIR：{{path}}"
       }
     },
     "plugin": {
@@ -3048,7 +3105,9 @@
         "saveSuccess": "Codex 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Codex 会在所选文件夹下派生 auth.json、config.toml 和 AGENTS.md。"
+        "folderOnlyDesc": "不要选择具体文件，Codex 会在所选文件夹下派生 auth.json、config.toml 和 AGENTS.md。",
+        "envHint": "检测到环境变量 CODEX_HOME：{{path}}",
+        "shellHint": "检测到 Shell 配置 CODEX_HOME：{{path}}"
       }
     },
     "model": {
@@ -3462,7 +3521,9 @@
         "saveSuccess": "Gemini 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Gemini CLI 会在所选文件夹下派生 .env、settings.json、全局提示词、oauth_creds.json 和 tmp。"
+        "folderOnlyDesc": "不要选择具体文件，Gemini CLI 会在所选文件夹下派生 .env、settings.json、全局提示词、oauth_creds.json 和 tmp。",
+        "envHint": "检测到环境变量 GEMINI_CLI_HOME：{{path}}",
+        "shellHint": "检测到 Shell 配置 GEMINI_CLI_HOME：{{path}}"
       }
     }
   },
@@ -4603,7 +4664,9 @@
         "saveSuccess": "Pi 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Pi 会在所选文件夹下派生 settings.json、auth.json、models.json 和 AGENTS.md。"
+        "folderOnlyDesc": "不要选择具体文件，Pi 会在所选文件夹下派生 settings.json、auth.json、models.json 和 AGENTS.md。",
+        "envHint": "检测到环境变量 PI_CODING_AGENT_DIR：{{path}}",
+        "shellHint": "检测到 Shell 配置 PI_CODING_AGENT_DIR：{{path}}"
       }
     },
     "title": "Pi 配置管理",
@@ -4772,45 +4835,6 @@
     },
     "extensions": {
       "title": "扩展管理",
-      "openDirectory": "打开本地扩展目录",
-      "updateAll": "更新全部",
-      "updateAllWithCount": "更新全部（{{count}}）",
-      "updateAvailable": "可更新",
-      "updateAvailableCount": "{{count}} 个可更新",
-      "loadFailed": "扩展列表加载失败",
-      "cliPathLabel": "Pi CLI",
-      "cliVersionLabel": "版本",
-      "pathLabel": "本地扩展目录",
-      "restartHint": "安装、卸载或删除后，需要重启 Pi 会话后生效。",
-      "sourcePlaceholder": "输入 npm:package、github:owner/repo、git:url 或 file:path",
-      "sourceRequired": "请输入扩展来源",
-      "install": "安装",
-      "installed": "已安装",
-      "installSuccess": "扩展已安装",
-      "uninstallSuccess": "扩展已卸载",
-      "deleteSuccess": "本地扩展已删除",
-      "recommendedTitle": "常用扩展",
-      "installedTitle": "已安装扩展",
-      "count": "{{count}} 个扩展",
-      "loading": "正在加载扩展列表...",
-      "emptyInstalled": "暂无已安装扩展",
-      "kindLocalFile": "本地文件",
-      "kindLocalDirectory": "本地目录",
-      "kindPackage": "包",
-      "scopeUser": "全局",
-      "scopeProject": "项目",
-      "scopeUnknown": "未知范围",
-      "openPackage": "打开扩展详情",
-      "builtIn": "内置",
-      "currentVersion": "当前 {{version}}",
-      "uninstall": "卸载",
-      "deleteLocal": "删除本地扩展",
-      "confirmUninstallTitle": "卸载扩展",
-      "confirmDeleteTitle": "删除本地扩展",
-      "confirmUninstallContent": "将通过 Pi CLI 卸载该扩展。",
-      "confirmDeleteContent": "将删除 Pi 扩展目录中的本地扩展文件或目录。",
-      "updateResultTitle": "扩展更新结果",
-      "emptyCommandOutput": "命令未返回输出",
       "recommended": {
         "cometixFooter": "Cometix 风格单行 footer，一览模型、路径、Git、上下文占用与 token；可用 /cometix-footer 开关。",
         "hashlineEditPro": "用哈希锚定版 read/edit 替换内置工具，降低读写错位与陈旧上下文误改。",
@@ -4834,11 +4858,7 @@
         "rawPaste": "添加 /paste，方便直接贴入大段原始文本。",
         "curatedThemes": "提供一组精选主题，可在 /settings 中切换。",
         "magicContext": "Magic Context 上下文与长期记忆扩展，支持跨 OpenCode 和 Pi 共享项目记忆；安装后可用官方 setup/doctor 配置后台 Agent 模型。"
-      },
-      "recommendedCount": "{{count}} 个",
-      "officialPackages": "官方链接",
-      "openPackagesDirectory": "打开包目录",
-      "packagesPathLabel": "包目录"
+      }
     }
   },
   "magicContext": {
@@ -5228,7 +5248,9 @@
         "folderOnlyDesc": "不要选择具体文件，Grok CLI 会在所选文件夹下派生 config.toml、auth.json、AGENTS.md 和 plugins。",
         "saveSuccess": "Grok 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
-        "reset": "重置为默认"
+        "reset": "重置为默认",
+        "envHint": "检测到环境变量 GROK_HOME：{{path}}",
+        "shellHint": "检测到 Shell 配置 GROK_HOME：{{path}}"
       }
     },
     "title": "Grok 配置管理",
@@ -5253,7 +5275,9 @@
         "saveSuccess": "Oh My Pi 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
         "folderOnlyTitle": "请选择文件夹",
-        "folderOnlyDesc": "不要选择具体文件，Oh My Pi 会在所选文件夹下派生 config.yml、models.yml 和 AGENTS.md。"
+        "folderOnlyDesc": "不要选择具体文件，Oh My Pi 会在所选文件夹下派生 config.yml、models.yml 和 AGENTS.md。",
+        "envHint": "检测到环境变量 PI_CODING_AGENT_DIR：{{path}}",
+        "shellHint": "检测到 Shell 配置 PI_CODING_AGENT_DIR：{{path}}"
       }
     },
     "title": "Oh My Pi 配置管理",
@@ -6049,6 +6073,9 @@
     }
   },
   "zcode": {
+    "preview": {
+      "title": "ZCode 配置预览"
+    },
     "title": "ZCode 配置管理",
     "loadFailed": "加载 ZCode 配置失败",
     "pageHint": "可添加多套供应商配置，通过「应用」或系统托盘快捷菜单切换。「通用配置」的内容为所有供应商共享，应用时会自动合并写入。",
@@ -6056,13 +6083,31 @@
     "provider": {
       "title": "供应商",
       "applied": "默认",
-      "disabled": "已禁用",
-      "apply": "应用",
-      "applyHint": "设为 ZCode 新建会话的默认供应商与模型"
+      "disabled": "已禁用"
     },
-    "apply": {
-      "success": "已设为默认供应商",
-      "noModel": "该供应商还没有模型，请先添加模型再应用。"
+    "officialAccount": {
+      "title": "官方账号",
+      "empty": "尚未登录任何官方账号。",
+      "login": "登录",
+      "loginTitle": "登录 ZCode 官方账号",
+      "loginPending": "正在浏览器中登录 {{provider}}…",
+      "loginPendingHint": "请在打开的浏览器页面完成登录。完成后本窗口会自动关闭。",
+      "loginSuccess": "官方账号登录成功",
+      "loginFailed": "官方账号登录失败",
+      "saveCurrent": "保存当前登录",
+      "saveSuccess": "已保存当前登录",
+      "saveFailed": "保存当前登录失败",
+      "apply": "切换",
+      "applyHint": "将 ZCode 切换到该账号",
+      "applySuccess": "已切换官方账号",
+      "applyFailed": "切换官方账号失败",
+      "appliedWithBackup": "已切换官方账号，原登录已保存为「{{name}}」",
+      "deleteSuccess": "已删除该账号快照",
+      "deleteFailed": "删除账号快照失败",
+      "loadFailed": "加载官方账号失败",
+      "currentTag": "当前登录",
+      "unnamed": "未命名账号",
+      "hint": "切换会覆盖 ZCode 的登录凭证，请先保存需要保留的登录；切换后需要重启 ZCode 才会生效。"
     },
     "legacyGeneration": {
       "title": "ZCode 尚未迁移到新版供应商配置",
@@ -6116,7 +6161,6 @@
       "contextWindowPlaceholder": "例如 128000",
       "maxOutputTokens": "最大输出 Token",
       "maxOutputTokensPlaceholder": "例如 8192",
-      "maxOutputTokensMapping": "最大输出参数映射",
       "inputModalities": "输入模态",
       "inputModalitiesHint": "不选表示沿用 ZCode 内置规则，不写入该字段。",
       "inputModalitiesPlaceholder": "选择该模型支持的输入模态",
@@ -6127,23 +6171,23 @@
       "pdf": "PDF",
       "capabilities": "模型能力",
       "capabilitiesHint": "勾选表示该模型具备此能力；不勾选则沿用 ZCode 内置规则。",
-      "supportsToolCall": "工具调用",
       "supportsJsonSchemaOutput": "结构化输出",
       "supportsNativeWebSearch": "原生联网搜索",
       "supportsMidConversationSystem": "对话中系统消息",
-      "requiresMfjsToolSchema": "需要 MFJS 工具 Schema",
       "reasoningLevels": "推理等级",
       "reasoningLevelsHint": "可多选或直接输入自定义等级，顺序即为从低到高。",
       "reasoningLevelsPlaceholder": "选择或输入等级",
       "reasoningLevelMapping": "推理参数映射",
       "mapHint": "映射表达式会作为字符串原样写入，不做解析。",
-      "actions": "操作"
-    },
-    "commonConfig": {
-      "title": "通用配置",
-      "description": "编辑 ~/.zcode/cli/config.json：MCP 服务器、hooks、插件与权限开关。这些内容不在供应商配置里，由 ZCode CLI 独立读取。",
-      "invalidJson": "JSON 格式不正确",
-      "reload": "从当前文件重新载入"
+      "actions": "操作",
+      "help": {
+        "inputModalities": "设置模型能够接收的内容类型：\n\n- **文本**：接收文本内容，为必选项。\n- **图片**：接收图片内容。\n- **视频**：接收视频内容。\n- **PDF**：直接接收 PDF 文档。",
+        "capabilities": "- **结构化输出**：支持通过 JSON Schema 约束模型输出的字段、类型和结构。\n- **原生联网搜索**：支持使用模型接口内置的联网搜索能力。\n- **对话中系统消息**：支持在对话中途插入系统指令。\n\n请勿勾选模型不支持的能力。",
+        "reasoningLevels": "设置聊天时可选择的推理等级，**必须按推理强度从低到高排列**。\n请勿配置模型不支持的推理等级。",
+        "reasoningLevelMapping": "使用 CEL 表达式，将当前推理等级 `reasoningLevel` 映射为模型接口的请求字段。表达式返回的 JSON 对象会合并到实际发送的请求体中。",
+        "contextWindow": "模型一次可处理的上下文容量，单位为 Token。ZCode 会据此管理上下文。\n请勿超过模型的实际上限。",
+        "maxOutputTokens": "单次模型请求允许生成的最大 Token 数。\n请勿超过模型的实际上限。"
+      }
     },
     "test": {
       "missingBaseUrl": "{{name}}：未填写 Base URL，无法测试",
@@ -6229,77 +6273,12 @@
     "tabLoad": "打开这个标签页"
   },
   "omoNative": {
-    "fullName": "OmO Native",
-    "title": "OmO Native（Agents 与 Categories）",
-    "docs": "文档",
-    "applied": "已应用",
-    "disabled": "已禁用",
-    "localTag": "本地文件",
-    "apply": "应用",
-    "reapply": "重新应用",
-    "current": "当前",
-    "addConfig": "新增方案",
-    "clearApplied": "清除已应用",
-    "clearAppliedTitle": "清除已应用的 OmO Native 配置？",
-    "clearAppliedContent": "将把「{{name}}」写入 ~/.omo/omo.jsonc 的 [native] 块移除。[opencode] 块与共享键不受影响。",
-    "clearAppliedSuccess": "已清除应用配置",
-    "confirmDelete": "删除方案「{{name}}」？",
-    "applySuccess": "已应用 OmO Native 配置",
-    "disableAppliedTitle": "禁用已应用的方案？",
-    "disableAppliedContent": "禁用「{{name}}」会同时从运行文件撤回（移除 [native] 块）。",
-    "toggleDisabledHint": "启用 / 禁用该方案",
-    "sectionHint": "只写入 ~/.omo/omo.jsonc 的 [native] 块，绝不触碰同一文件里 OpenCode 插件版的 [opencode] 块。",
-    "emptyText": "还没有 OmO Native 方案",
-    "loadError": "读取 OmO Native 配置失败",
-    "effectiveHint": "Native 生效视图：共享 base 键被 [native] 块覆盖后的结果（块胜）。这才是 omo 引擎实际读取的配置。",
-    "configPath": "配置文件",
-    "rootPath": "运行时根目录",
-    "emptyEffective": "[native] 块为空——引擎使用内建默认值运行。",
-    "keyColumn": "键",
-    "sourceColumn": "来源",
-    "valueColumn": "生效值",
-    "sharedBase": "共享 base",
-    "sections": {
-      "modelSettings": "生效配置",
-      "providers": "Providers",
-      "mcpSkills": "MCP 与 Skills",
-      "moreOptions": "更多选项"
-    },
-    "modal": {
-      "addTitle": "新增 OmO Native 方案",
-      "editTitle": "编辑 OmO Native 方案",
-      "localNotice": "这是从本地文件读取的当前 [native] 块。保存后会收编进数据库，成为可管理的方案。",
-      "name": "方案名称",
-      "namePlaceholder": "例如：工作配置",
-      "nameRequired": "请输入方案名称",
-      "tabAgents": "Agents",
-      "tabCategories": "Categories",
-      "tabModelProfiles": "模型档",
-      "tabTask": "任务引擎",
-      "tabOther": "其他",
-      "agents": "agents",
-      "agentsHint": "内建 agents：{{names}}",
-      "categories": "categories",
-      "categoriesHint": "内建 categories：{{names}}",
-      "modelProfiles": "model_profiles",
-      "modelProfilesHint": "命名模型链。与内建档同名的条目会整体替换该内建档。",
-      "modelProfile": "model_profile",
-      "modelProfilePlaceholder": "daily-normal，或 provider/model 作为 pin",
-      "modelProfileHint": "车道 id（daily-normal、geeky-heavy 等）或字面 provider/model pin。留空表示使用 Recommended。",
-      "task": "task",
-      "taskHint": "任务引擎设置（执行模式、并发、daemon 生命周期）。",
-      "otherFields": "其他 [native] 键",
-      "otherFieldsHint": "[native] 块接受的其余键（memory、telemetry、git_master、teams 等）。集合之外的键会在保存时被丢弃。"
-    },
+    "title": "OmO 配置管理",
+    "loadError": "读取 OmO 配置失败",
     "pageHint": "只写 ~/.omo/omo.jsonc 的 [native] 块；同一文件里 OpenCode 插件版的 [opencode] 块与共享键不会被改动。",
-    "openFolder": "打开目录",
-    "refreshConfig": "刷新配置",
-    "mcpSkillsHint": "MCP 与 Skills 由顶部独立页面管理",
-    "mcpSkillsHintDesc": "与其他工具一致，请在顶部的「MCP」与「Skills」页里统一管理 Native 的服务器与技能；它们读写的就是下面的引擎文件。",
     "rootPathSource": {
-      "customize": "自定义目录",
       "modal": {
-        "title": "自定义 OmO Native 根目录",
+        "title": "自定义 OmO 根目录",
         "currentSource": "当前来源",
         "description": "留空则按环境变量 → shell 配置 → ~/.omo/agent 的顺序自动决议。",
         "envWarningTitle": "环境变量优先",
@@ -6311,22 +6290,36 @@
         "sourceCustom": "自定义",
         "sourceEnv": "环境变量",
         "sourceShell": "shell 配置",
-        "sourceDefault": "默认"
+        "sourceDefault": "默认",
+        "reset": "重置为默认",
+        "saveSuccess": "OmO 根目录已保存",
+        "resetSuccess": "已重置为默认根目录",
+        "folderOnlyTitle": "请选择文件夹",
+        "folderOnlyDesc": "不要选择具体文件，OmO 会在所选文件夹下派生 settings.json、models.json、auth.json、AGENTS.md 等引擎文件。"
       }
     },
     "preview": {
       "title": "预览配置"
     },
+    "modelSettings": {
+      "title": "模型设置",
+      "hint": "引擎启动时选中的供应商、模型与思考级别，也就是 /model 里 Ctrl+S 保存的三个键，存在 settings.json。",
+      "defaultProvider": "默认供应商",
+      "defaultProviderPlaceholder": "选择默认供应商",
+      "defaultModel": "默认模型",
+      "defaultModelPlaceholder": "选择默认模型",
+      "thinkingLevel": "思考级别",
+      "thinkingLevelPlaceholder": "选择思考级别",
+      "noProviders": "暂无可用供应商",
+      "noModels": "该供应商没有模型",
+      "noThinkingLevels": "该模型没有可用的思考级别"
+    },
     "providers": {
       "title": "供应商",
-      "sectionHint": "自定义 provider 写入引擎的 models.json，API key 写入 auth.json。",
-      "builtinHint": "引擎内建 provider 由 omo 自带，不在 models.json 里重复定义；这里只列出可以自定义的那些。",
+      "sectionHint": "自定义 provider 写入引擎的 models.json，API key 写在同一条目里。",
       "builtinCount": "另有 {{count}} 个引擎内建",
-      "emptyText": "还没有自定义 provider",
-      "modelsJsonSource": "models.json",
-      "addSupplier": "新增供应商",
       "addSupplierTitle": "新增供应商",
-      "editSupplierTitle": "编辑供应商 {{name}}",
+      "editSupplierTitle": "编辑供应商",
       "providerKey": "Provider Key",
       "providerKeyRequired": "Provider Key 不能为空",
       "displayName": "显示名称",
@@ -6335,13 +6328,34 @@
       "apiType": "API 类型",
       "baseUrl": "Base URL",
       "providerApiKey": "API Key",
-      "apiKeyHint": "写入 auth.json；留空表示不改动已保存的密钥。",
+      "apiKeyHint": "存在该 provider 的 models.json 条目里；留空表示不改动已保存的密钥。",
       "headersJson": "自定义请求头（JSON）",
-      "deleteConfirmTitle": "删除供应商 {{name}}？",
-      "deleteConfirmContent": "会从 models.json 移除该 provider，并删除 auth.json 里的密钥。此操作不可撤销。",
       "modelIdExists": "该模型 ID 已存在",
       "invalidJson": "JSON 格式不正确",
       "noTestableProvider": "没有可测试的供应商（需要 Base URL 与至少一个模型）"
+    },
+    "otherConfig": {
+      "title": "其他配置",
+      "hint": "此处可编辑 omo.jsonc 中不属于任何 harness 块的共享键",
+      "autoSaveHint": "点击输入框以外的区域即可自动保存"
+    },
+    "official": {
+      "title": "引擎内建渠道",
+      "description": "以下渠道由 omo 引擎内建且已配置凭据，模型列表只读；渠道凭据可点右上角 auth.json 在应用内查看和编辑。",
+      "authProvider": "引擎内建",
+      "readOnly": "只读",
+      "freeModel": "免费",
+      "modelReadOnlyHint": "引擎内建模型，只读不可编辑",
+      "contextLimit": "上下文限制",
+      "outputLimit": "输出限制",
+      "noConfigured": "暂无已配置的内建渠道"
+    },
+    "model": {
+      "title": "模型列表"
+    },
+    "provider": {
+      "disabled": "已禁用",
+      "enabled": "启用"
     }
   }
 }

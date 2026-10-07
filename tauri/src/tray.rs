@@ -153,7 +153,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             opencode_plugins_header: "OpenCode Plugins",
             omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
-            omo_native_header: "OmO Native",
+            omo_native_header: "OmO",
             claude_header: "Claude Code",
             codex_header: "Codex",
             grok_header: "Grok",
@@ -188,7 +188,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             opencode_plugins_header: "OpenCode 插件",
             omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
-            omo_native_header: "OmO Native",
+            omo_native_header: "OmO",
             claude_header: "Claude Code",
             codex_header: "Codex",
             grok_header: "Grok",
@@ -322,17 +322,32 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
-            } else if let Some(config_id) = event_id.strip_prefix("omo_native_config_") {
+            } else if let Some(selection) = event_id.strip_prefix("omo_native_model_") {
+                let selection = selection.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some((provider_key, model_id)) = selection.split_once('/') else {
+                        eprintln!("Invalid OmO Native model tray selection: {}", selection);
+                        return;
+                    };
+                    if let Err(e) =
+                        omo_native_tray::apply_omo_native_model(&app_handle, provider_key, model_id)
+                            .await
+                    {
+                        eprintln!("Failed to apply OmO Native model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("omo_native_prompt_") {
                 let config_id = config_id.to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) =
-                        omo_native_tray::apply_omo_native_agents_config(&app_handle, &config_id)
+                        omo_native_tray::apply_omo_native_prompt_config(&app_handle, &config_id)
                             .await
                     {
-                        eprintln!("Failed to apply OmO Native config: {}", e);
+                        eprintln!("Failed to apply OmO Native prompt config: {}", e);
                     }
-                    // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             } else if let Some(config_id) = event_id.strip_prefix("omo_slim_config_") {
@@ -911,12 +926,31 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
     omo_slim_data.title = texts.omo_slim_header.to_string();
 
-    let mut omo_native_data = if omo_native_enabled {
-        omo_native_tray::get_omo_native_tray_data(app).await?
+    // ⚠️ 这里**不再**取「Agent·Category 方案」列表。
+    //
+    // 那一组菜单项是本页早期的方案切换（`omo_native_config_`），页面收敛后
+    // 编辑界面已撤，只剩托盘在写——于是托盘里永远挂着一个「暂无配置」，
+    // 而用户在页面上根本没有入口去创建方案（2026-10-07 用户指出「提示没有配置，
+    // 我本地现在有2个配置的啊，同时快捷菜单里放配置好像是没有用的」）。
+    //
+    // 后端命令与 `omo_native_agents_config` 表**保留**（备份恢复、
+    // `reapply_applied_runtime` 还在用），只是托盘不再展示。
+
+    // 与 Pi 对齐的两个区块（2026-10-07 用户指出此前缺失）。
+    // 标题由本模块重新盖章（数据源拿不到托盘语言），与 pi/omp 的写法一致。
+    let mut omo_native_model_data = if omo_native_enabled {
+        omo_native_tray::get_omo_native_tray_model_data(app).await?
     } else {
-        omo_native_tray::TrayAgentsConfigData::empty(texts.omo_native_header)
+        omo_native_tray::TrayModelData::empty("")
     };
-    omo_native_data.title = texts.omo_native_header.to_string();
+    omo_native_model_data.title = texts.default_model.to_string();
+
+    let mut omo_native_prompt_data = if omo_native_enabled {
+        omo_native_tray::get_omo_native_prompt_tray_data(app).await?
+    } else {
+        omo_native_tray::TrayPromptData::empty(texts.global_prompt)
+    };
+    omo_native_prompt_data.title = texts.global_prompt.to_string();
 
     let mut claude_data = if claude_enabled {
         claude_tray::get_claude_code_tray_data(app).await?
@@ -1396,13 +1430,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     }
 
-    // OmO Native section (only if enabled)
+    // OmO Native section (only if enabled)：与 Pi 同形，只有「默认模型」+「全局提示词」
+    // 两个子菜单（2026-10-07 用户要求撤掉方案切换组，标题也去掉 Native）。
     let omo_native_header = if omo_native_enabled {
         Some(
             MenuItem::with_id(
                 app,
                 "omo_native_header",
-                &omo_native_data.title,
+                texts.omo_native_header,
                 false,
                 None::<&str>,
             )
@@ -1411,32 +1446,6 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     } else {
         None
     };
-
-    // Build OmO Native items
-    let mut omo_native_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if omo_native_enabled && omo_native_data.items.is_empty() {
-        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-            MenuItem::with_id(app, "omo_native_empty", texts.no_config, false, None::<&str>)
-                .map_err(|e| e.to_string())?,
-        );
-        omo_native_items.push(empty_item);
-    } else if omo_native_enabled {
-        for item in omo_native_data.items {
-            let item_id = format!("omo_native_config_{}", item.id);
-            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(
-                    app,
-                    &item_id,
-                    &item.display_name,
-                    !item.is_disabled,
-                    item.is_selected,
-                    None::<&str>,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-            omo_native_items.push(menu_item);
-        }
-    }
 
     // Oh My OpenCode Slim section (only if enabled)
     let omo_slim_header = if omo_slim_enabled {
@@ -1501,6 +1510,31 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         antigravity_enabled && !antigravity_prompt_data.items.is_empty();
     let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
     let omp_has_prompt_items = omp_enabled && !omp_prompt_data.items.is_empty();
+    let omo_native_has_model_items =
+        omo_native_enabled && !omo_native_model_data.items.is_empty();
+    let omo_native_has_prompt_items =
+        omo_native_enabled && !omo_native_prompt_data.items.is_empty();
+
+    // 默认模型 / 全局提示词两个子菜单，与 Pi 对齐（2026-10-07 用户指出此前缺失）。
+    let omo_native_model_submenu = if omo_native_has_model_items {
+        Some(build_omo_native_model_submenu(
+            app,
+            &omo_native_model_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let omo_native_prompt_submenu = if omo_native_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "omo_native",
+            &omo_native_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
     let claude_desktop_has_items = claude_desktop_enabled && !claude_desktop_data.items.is_empty();
     let hermes_has_items = hermes_enabled && !hermes_data.items.is_empty();
     let hermes_has_prompt_items = hermes_enabled && !hermes_prompt_data.items.is_empty();
@@ -1986,10 +2020,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = claude_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = claude_prompt_submenu {
+        // 全局提示词排在该区块的主选择项之后（供应商是本区块的主项）。
+        if let Some(ref submenu) = claude_provider_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = claude_provider_submenu {
+        if let Some(ref submenu) = claude_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -1999,10 +2034,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = codex_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = codex_prompt_submenu {
+        // 全局提示词排在主选择项之后。
+        if let Some(ref submenu) = codex_provider_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = codex_provider_submenu {
+        if let Some(ref submenu) = codex_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2011,13 +2047,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = grok_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = grok_prompt_submenu {
-            menu.append(submenu).map_err(|e| e.to_string())?;
-        }
+        // 全局提示词排在主选择项（模型、供应商）之后。
         if let Some(ref submenu) = grok_model_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = grok_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = grok_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2027,10 +2064,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = gemini_cli_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = gemini_cli_prompt_submenu {
+        // 全局提示词排在主选择项之后。
+        if let Some(ref submenu) = gemini_cli_provider_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = gemini_cli_provider_submenu {
+        if let Some(ref submenu) = gemini_cli_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2040,10 +2078,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = antigravity_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = antigravity_prompt_submenu {
+        // 全局提示词排在主选择项之后。
+        if let Some(ref submenu) = antigravity_provider_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = antigravity_provider_submenu {
+        if let Some(ref submenu) = antigravity_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2053,13 +2092,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = kimi_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        if let Some(ref submenu) = kimi_prompt_submenu {
-            menu.append(submenu).map_err(|e| e.to_string())?;
-        }
+        // 全局提示词排在主选择项（模型、供应商）之后。
         if let Some(ref submenu) = kimi_model_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         if let Some(ref submenu) = kimi_provider_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = kimi_prompt_submenu {
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -2095,8 +2135,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         if let Some(ref header) = omo_native_header {
             menu.append(header).map_err(|e| e.to_string())?;
         }
-        for item in &omo_native_items {
-            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        if let Some(ref submenu) = omo_native_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = omo_native_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -2391,6 +2434,122 @@ fn build_pi_model_submenu<R: Runtime>(
                 &item_id,
                 model_label,
                 !item.is_disabled,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            provider_submenu
+                .append(&menu_item)
+                .map_err(|e| e.to_string())?;
+        }
+
+        submenu
+            .append(&provider_submenu)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(submenu)
+}
+
+fn build_omo_native_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &omo_native_tray::TrayModelData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu = Submenu::with_id(app, "omo_native_model_submenu", &title, true)
+        .map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item = MenuItem::with_id(
+            app,
+            "omo_native_model_empty",
+            texts.no_model,
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+        return Ok(submenu);
+    }
+
+    // 与 Pi 一致：按 `<provider>/<model>` 的斜杠前半段分组，一个渠道一个二级子菜单。
+    let mut provider_map: std::collections::HashMap<
+        String,
+        (String, Vec<&omo_native_tray::TrayModelItem>),
+    > = std::collections::HashMap::new();
+
+    for item in &data.items {
+        let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+        let provider_label = item
+            .display_name
+            .split(" / ")
+            .next()
+            .unwrap_or(&provider_id)
+            .to_string();
+        let entry = provider_map
+            .entry(provider_id)
+            .or_insert_with(|| (provider_label, Vec::new()));
+        entry.1.push(item);
+    }
+
+    let mut providers: Vec<(String, String, Vec<&omo_native_tray::TrayModelItem>)> = provider_map
+        .into_iter()
+        .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+        .collect();
+    providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (provider_id, provider_label, mut items) in providers {
+        items.sort_by(|a, b| {
+            let a_model = a
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&a.display_name);
+            let b_model = b
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&b.display_name);
+            a_model.cmp(b_model)
+        });
+
+        // 菜单 ID 里不能带斜杠等字符，渠道名里的非 ASCII 字母数字一律折成下划线。
+        let safe_provider_id: String = provider_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let provider_submenu = Submenu::with_id(
+            app,
+            format!("omo_native_provider_{}_submenu", safe_provider_id),
+            &provider_label,
+            true,
+        )
+        .map_err(|e| e.to_string())?;
+
+        for item in &items {
+            let item_id = format!("omo_native_model_{}", item.id);
+            let model_label = item
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&item.display_name);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                model_label,
+                true,
                 item.is_selected,
                 None::<&str>,
             )
@@ -3272,6 +3431,36 @@ impl NamedPromptTrayData for omp_tray::TrayPromptData {
 
 impl NamedPromptTrayData for pi_tray::TrayPromptData {
     type Item = pi_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for omo_native_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for omo_native_tray::TrayPromptData {
+    type Item = omo_native_tray::TrayPromptItem;
 
     fn title(&self) -> &str {
         &self.title

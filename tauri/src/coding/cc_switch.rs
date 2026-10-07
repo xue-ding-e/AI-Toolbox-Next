@@ -925,7 +925,7 @@ mod tests {
         assert!(is_local_endpoint_url(Some("http://127.0.0.1:8317/v1")));
         assert!(is_local_endpoint_url(Some("http://localhost:8080")));
         assert!(!is_local_endpoint_url(Some(
-            "http://192.168.31.3:3018/claude"
+            "http://10.20.30.40:3018/claude"
         )));
         assert!(!is_local_endpoint_url(Some(
             "https://vps.example.com/claude"
@@ -995,7 +995,7 @@ disable_response_storage = true
 name = "cli-proxy"
 wire_api = "responses"
 requires_openai_auth = true
-base_url = "http://192.168.31.3:8317/v1"
+base_url = "http://10.20.30.40:8317/v1"
 
 [mcp_servers.mcp-router]
 type = "stdio"
@@ -1007,7 +1007,7 @@ command = "npx"
         assert!(config.contains("disable_response_storage"));
         assert!(config.contains("model_providers"));
         assert!(!config.contains("mcp_servers"));
-        assert_eq!(base_url.as_deref(), Some("http://192.168.31.3:8317/v1"));
+        assert_eq!(base_url.as_deref(), Some("http://10.20.30.40:8317/v1"));
         assert_eq!(model.as_deref(), Some("qwen3-coder-plus"));
     }
 

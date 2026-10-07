@@ -25,6 +25,7 @@ This document provides essential information for AI coding agents working on thi
 11. 仓库内用于给 agent 阅读的模块文档 `AGENTS.md` 不是应用运行时资源；本地开发 watcher 和类似热重载链路应尽量忽略它们，避免把文档编辑误当成代码改动。
 12. 不要把上一条误用到产品运行时 prompt 文件上。当前仓库里的 OpenCode / Codex 运行时 prompt 文件名就是 `AGENTS.md`，Claude Code 运行时 prompt 文件名是 `CLAUDE.md`；它们属于真实业务数据，备份、恢复、WSL/SSH 同步和页面交互都依赖这些文件，不能按“仅 agent 文档”排除。
 13. 修改 `web/**` 中任何可见 UI、样式、布局、组件视觉、交互密度、空态、图标、颜色、字号、间距或弹窗表单前，必须先完整阅读根目录 `DESIGN.md`。没有读取 `DESIGN.md` 就不得设计方案、不得写前端 UI 代码、不得声称遵循项目设计系统。
+14. 新增或修改 CLI 供应商卡片时，必须使用 `web/features/coding/shared/providerCardVariants/` 中已固定的三种样式之一，不得再新建 per-CLI 卡片布局。选型依据是该 CLI 的 provider 模型形状（是否有模型目录、是否有单一 active provider），不是个人偏好；三种样式的适用条件写在 `providerCardVariants/index.ts` 的表里。共享卡片的通用改动（间距、按钮、拖拽、选中态）改在变体组件内，一处生效于所有使用该样式的 CLI；只在某个 CLI 卡片里改这些会让样式重新分叉。
 
 ### Template
 
@@ -51,6 +52,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/oh_my_openagent/` | Oh My OpenAgent 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
 | `tauri/src/coding/oh_my_opencode_slim/` | Oh My OpenCode Slim 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
 | `tauri/src/coding/oh_my_pi/` | Oh My Pi 运行时根目录、models.yml provider、config.yml 设置、subagent 集中配置方案(agents/*.md)与本地 MCP/Skills 路径边界 |
+| `tauri/src/coding/omo_native/` | OmO Native 后端：`[native]` 块 JSONC 原地补丁、引擎 `models.json`/`auth.json` provider、全局提示词（`AGENTS.md`）与托盘方案切换 |
 | `tauri/src/coding/proxy_gateway/` | 本机代理网关、CLI 接管 manifest、配置备份恢复与模型级健康/日志文件 |
 | `tauri/src/coding/proxy_gateway/transformer/` | 网关协议转换独立模块：Anthropic/OpenAI Chat/OpenAI Responses/Gemini Native JSON 与 SSE 互转 |
 | `tauri/src/coding/session_manager/` | 会话浏览、详情、重命名、导入导出与运行时路径解析 |
@@ -58,10 +60,17 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/tools/` | Skills/MCP 共用工具适配、检测与自定义工具存储 |
 | `tauri/src/coding/wsl/` | WSL 同步配置、自动同步监听、WSL Direct 状态消费 |
 | `tauri/src/coding/ssh/` | SSH 连接、文件映射、手动同步、MCP/Skills 远端同步 |
+| `tauri/src/coding/zcode/` | ZCode provider 注册表（`v2/provider_config.json`）、官方账号快照切换与 OAuth 登录、全局提示词与托盘/会话接入 |
 | `tauri/resources/` | 编译期嵌入的模型默认数据资源：`preset_models.json`/`models.dev.json` 的来源、顺序语义与缓存边界 |
 | `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/claudedesktop/` | Claude Desktop 前端页面、provider/模型映射与通用配置交互（复用 claudecode 样式与网关接管按钮） |
+| `web/features/coding/dsh/` | DSH 前端页面、runtime 配置整份替换语义、凭证共享与删除计划、模型字段白名单 |
 | `web/features/coding/hermes/` | Hermes 前端页面、custom_providers 与模型设置交互（复用 pi 样式） |
+| `web/features/coding/pi/` | Pi 前端页面、provider/models、extensions 与导入映射 |
+| `web/features/coding/oh_my_pi/` | Oh My Pi 前端页面、models.yml provider、subagent 方案与 OMP 语义诊断（复用 pi 样式） |
+| `web/features/coding/omo_native/` | OmO Native 前端页面（供应商 / 全局提示词 / 会话管理三区块）、`models.json` provider 映射与插件版 OMO 的边界 |
+| `web/features/coding/zcode/` | ZCode 前端页面、provider/模型、官方账号与 OAuth 登录、通用配置与导入 |
+| `web/features/coding/shared/providerCardVariants/` | 三种固定供应商卡片样式（Claude/Codex/OpenCode）的单一实现，各 CLI 按 provider 模型形状选用 |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/grok/` | Grok CLI 前端页面、根目录配置、provider、官方账号、plugin、prompt 与 session 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
@@ -77,6 +86,9 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/shared/deepLink/` | `aitoolbox://` 深链接前端两侧：导入确认弹窗与分享链接生成（URL 格式事实源在后端 `deeplink/parser.rs`） |
 | `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
 | `web/components/common/` | 共享编辑器与基础交互组件的性能和正确性约束 |
+| `web/components/common/FieldHelp/` | 字段说明问号：纯字符串文案的分段/列表/粗体/行内代码解析与 Tooltip 渲染，供各 CLI 表单复用 |
+| `tauri/src/db/` | SQLite JSONB 存储层：schema/迁移、读改写语义、change hook 与备份拷贝边界 |
+| `tauri/src/settings/` | 应用设置存储、adapter 全量替换语义、CLI 路径覆盖与托盘联动 |
 | `tauri/src/settings/backup/` | 备份恢复（本地/WebDAV/GitHub-Gitee 仓库）、可选加密、自动备份与恢复后续链路 |
 | `tauri/src/coding/image/` | Image 后端渠道配置、任务、资产落盘、图片 API 调用与备份联动 |
 
