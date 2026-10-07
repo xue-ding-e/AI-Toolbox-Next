@@ -1,0 +1,53 @@
+// 「模型设置」区块的卡片外壳。
+//
+// 与 Pi / OpenCode 的同名区块逐属性一致（`PiPage.module.less` 的 `.modelCard`
+// 系列）：这是一张**不可折叠**的卡片，标题栏与内容区各有一层背景与内边距。
+// 2026-10-07 用户要求「改成不可以折叠，和 pi 还有 Opencode 一样」——此前用的是
+// `Collapse`，展开态与另外两个页面不同形。
+
+.modelCard {
+  background: var(--color-bg-container);
+  border-radius: 12px;
+  box-shadow: var(--shadow-container);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.modelCardTitle {
+  margin: 0;
+  padding: 12px 20px;
+  background: var(--color-bg-container);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-size: 15px;
+
+  // 禁用 antd Typography h5 的默认 margin-bottom
+  &:global(.ant-typography) {
+    margin-bottom: 0 !important;
+  }
+}
+
+.modelCardContent {
+  padding: 16px 20px;
+
+  h1, h2, h3, h4, h5, h6,
+  :global(.ant-typography) {
+    margin-bottom: 0;
+  }
+}
+
+// 三项并排一行：它们本来就是一组（provider → model → thinking level 的级联），
+// 竖排三行纯占版面。与 Pi 的 `.modelSettingsGrid` 同一写法，窄屏自动折成单列。
+.modelSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+@media (max-width: 768px) {
+  .modelSettingsGrid {
+    grid-template-columns: 1fr;
+  }
+}

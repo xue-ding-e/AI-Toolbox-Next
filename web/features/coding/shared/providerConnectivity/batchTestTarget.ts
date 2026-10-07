@@ -2,6 +2,7 @@ import {
   resolveModelConnection,
   type ProviderModelConnections,
 } from './modelConnection';
+import type { ConfigValueMode } from '@/components/common/FetchModelsModal/types';
 
 export interface ProviderConnectivityInfo {
   providerId: string;
@@ -17,7 +18,7 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
-  configValueMode?: 'pi' | 'omp';
+  configValueMode?: ConfigValueMode;
   /** Models whose own api/baseUrl overrides the provider connection (OMP). */
   modelConnections?: ProviderModelConnections;
 }
@@ -27,7 +28,7 @@ export interface ProviderConnectivityBatchTarget {
   request?: {
     npm: string;
     apiFormat?: 'openai-codex-responses';
-    configValueMode?: 'pi' | 'omp';
+    configValueMode?: ConfigValueMode;
     providerId: string;
     baseUrl: string;
     apiKey?: string;

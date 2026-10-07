@@ -36,6 +36,37 @@ export const zcodeModalityValuesFor = (ruleKind: ZcodeModelRuleKind): string[] =
   ).map((field) => field.value);
 
 /**
+ * Model properties this app never edits, carried over verbatim on save.
+ *
+ * ZCode treats these as system fields. Its own model dialog renders no control
+ * for them and passes the stored value through untouched
+ * (`ProviderModelMetadata.ts`: "系统字段不由编辑草稿产生"), and its manual-mode
+ * schema does not even declare them — `manualModelConfigSchema` picks only the
+ * leaves the product deliberately opens up.
+ *
+ * Two consequences for this app:
+ *
+ * - **Do not render inputs for them.** Doing so made the value editable in
+ *   smart mode and uneditable in manual mode: one field with two behaviours.
+ * - **Do not drop them on save.** A row written by ZCode (or by an older build
+ *   of this app) carries them, and re-saving must not silently delete them.
+ */
+export const ZCODE_SYSTEM_PROPERTY_KEYS = ['supportsToolCall', 'requiresMfjsToolSchema'] as const;
+
+/** Copies the system properties present on `existing`, leaving absent ones absent. */
+export const pickZcodeSystemProperties = (
+  existing: ZcodeModelProperties | undefined,
+): Pick<ZcodeModelProperties, (typeof ZCODE_SYSTEM_PROPERTY_KEYS)[number]> => {
+  const carried: Partial<ZcodeModelProperties> = {};
+  for (const key of ZCODE_SYSTEM_PROPERTY_KEYS) {
+    if (existing?.[key] !== undefined) {
+      carried[key] = existing[key];
+    }
+  }
+  return carried as Pick<ZcodeModelProperties, (typeof ZCODE_SYSTEM_PROPERTY_KEYS)[number]>;
+};
+
+/**
  * Drops undefined keys so the projection layer can tell "leave this to ZCode's
  * catalog" from "explicitly set".
  */
@@ -109,19 +140,17 @@ export const buildZcodeModelRowFromPreset = (
   ruleKind: ZcodeModelRuleKind,
   preset?: PresetModel,
 ): ZcodeModelRow => {
-  // `supportsToolCall` is smart-only: ZCode's manual rule schema does not
-  // declare it, so a manual row must not carry it.
-  const supportsToolCall = ruleKind === 'smart' && preset?.tool_call === true;
-
   return {
     modelId,
     displayName: preset?.name?.trim() || undefined,
     ruleKind,
     enabled: true,
+    // `supportsToolCall` is deliberately not written here: it is a system
+    // property (see `ZCODE_SYSTEM_PROPERTY_KEYS`), and ZCode's own dialog sets
+    // it from the model catalog rather than from what a preset claims.
     properties: compactObject<ZcodeModelProperties>({
       contextWindow: preset?.contextLimit,
       inputFormat: preset ? buildInputFormat(presetInputModalities(preset, ruleKind)) : undefined,
-      supportsToolCall: supportsToolCall || undefined,
     }),
     optionSpecs: compactObject<ZcodeModelOptionSpecs>({
       maxOutputTokens: compactObject({ max: preset?.outputLimit }),

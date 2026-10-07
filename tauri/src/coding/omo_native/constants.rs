@@ -41,6 +41,12 @@ pub const OMO_NATIVE_MCP_FILE: &str = "mcp.json";
 pub const OMO_NATIVE_SKILLS_DIR: &str = "skills";
 pub const OMO_NATIVE_SESSIONS_DIR: &str = "sessions";
 
+/// 全局提示词文件，写在引擎状态目录里（默认 `~/.omo/agent/AGENTS.md`）。
+///
+/// senpi 引擎的项目规则文件；OMP 的 `OMP_PROMPT_FILE` 与 Pi 的 `PI_PROMPT_FILE`
+/// 同为 `AGENTS.md`，三者的「全局提示词」区块语义一致。
+pub const OMO_NATIVE_PROMPT_FILE: &str = "AGENTS.md";
+
 /// pre-unification 扁平布局的哨兵文件：`~/.omo/settings.json` 存在说明是旧布局
 /// （上游 `resolve-agent-home.ts` `AGENT_HOME_SENTINEL`）。
 pub const OMO_NATIVE_AGENT_HOME_SENTINEL: &str = "settings.json";
@@ -100,22 +106,36 @@ pub const OMO_NATIVE_BLOCK_KEYS: [&str; 14] = [
     "disabled_skills",
 ];
 
-/// 引擎内建 provider id，来自 `packages/omo-native/bin/lib/provider-map.json`
-/// 的 `builtinProviderIds`（v5.1.19，49 个）。该表随 senpi pin 变化，
-/// 升级上游时用 `provider-map.json` 重新生成。
-pub const OMO_NATIVE_BUILTIN_PROVIDERS: [&str; 49] = [
+/// 引擎内建 provider id。
+///
+/// ⚠️ **这是引擎的事实，不是我们维护的名单**。它随 senpi 版本变化，而我们这份
+/// 手抄的副本已经错过一次：2026-10-07 发现 `anthropic-subscription` /
+/// `cursor-cli-oauth` 是内建却被漏掉（于是被当成自定义 provider 列进「可编辑」
+/// 列表），而 `bai` / `ollama` / `typesafe` 早已不是内建却还留着。
+///
+/// **重新生成**（升级 senpi 后跑一次）：
+/// ```bash
+/// # 1. 引擎报出的全部 provider（含自定义），减掉 models.json 里的自定义
+/// omo --list-models | tail -n +2 | awk '{print $1}' | sort -u
+/// # 2. 但 --list-models 只列「当前有模型可列」的 provider：像原生 `cursor`
+/// #    这种目录按账号发现的（docs/providers.md 的 Cursor 一节）不会出现，
+/// #    要对着 docs/providers.md 手工补回。
+/// ```
+/// 拿不到 CLI 时这份常量就是兜底。
+pub const OMO_NATIVE_BUILTIN_PROVIDERS: [&str; 48] = [
     "alibaba-token-plan",
     "amazon-bedrock",
     "ant-ling",
     "anthropic",
+    "anthropic-subscription",
     "azure-openai-responses",
-    "bai",
     "baseten",
     "cerebras",
     "chatgpt-subscription",
     "cloudflare-ai-gateway",
     "cloudflare-workers-ai",
     "cursor",
+    "cursor-cli-oauth",
     "deepseek",
     "devin",
     "fireworks",
@@ -132,7 +152,6 @@ pub const OMO_NATIVE_BUILTIN_PROVIDERS: [&str; 49] = [
     "moonshotai",
     "moonshotai-cn",
     "nvidia",
-    "ollama",
     "openai",
     "opencode",
     "opencode-go",
@@ -143,7 +162,6 @@ pub const OMO_NATIVE_BUILTIN_PROVIDERS: [&str; 49] = [
     "qwen-token-plan-individual",
     "radius",
     "together",
-    "typesafe",
     "venice",
     "vercel-ai-gateway",
     "xai",
@@ -195,4 +213,46 @@ pub fn is_builtin_provider(provider_key: &str) -> bool {
 
 pub fn is_oauth_provider(provider_key: &str) -> bool {
     OMO_NATIVE_OAUTH_PROVIDERS.contains(&provider_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 名单必须**有序且无重复**：它是手抄自引擎的，排序让「与引擎对照」变成
+    /// 一次逐行 diff，而不是人工扫。
+    #[test]
+    fn builtin_providers_are_sorted_and_unique() {
+        let mut sorted = OMO_NATIVE_BUILTIN_PROVIDERS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted, OMO_NATIVE_BUILTIN_PROVIDERS,
+            "OMO_NATIVE_BUILTIN_PROVIDERS 必须按字典序排列"
+        );
+        let mut deduped = sorted.clone();
+        deduped.dedup();
+        assert_eq!(deduped.len(), sorted.len(), "OMO_NATIVE_BUILTIN_PROVIDERS 有重复项");
+    }
+
+    /// OAuth 名单必须是内建名单的子集：不是内建的 provider 不可能有 OAuth 流程。
+    #[test]
+    fn oauth_providers_are_a_subset_of_builtins() {
+        for provider in OMO_NATIVE_OAUTH_PROVIDERS {
+            assert!(
+                is_builtin_provider(provider),
+                "`{provider}` 在 OAuth 名单里却不在内建名单里"
+            );
+        }
+    }
+
+    /// 上游把 provider id 写成 kebab-case；出现下划线通常意味着手抄时看错了。
+    #[test]
+    fn builtin_provider_ids_use_kebab_case() {
+        for provider in OMO_NATIVE_BUILTIN_PROVIDERS {
+            assert!(
+                !provider.contains('_') && provider == provider.to_lowercase(),
+                "`{provider}` 不像引擎的 provider id（应是小写 kebab-case）"
+            );
+        }
+    }
 }

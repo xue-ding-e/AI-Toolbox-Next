@@ -248,11 +248,13 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
-    // OmO Native - the `omo` binary (senpi engine), distinct from the OpenCode
+    // OmO - the `omo` binary (senpi engine), distinct from the OpenCode
     // plugin edition under the opencode tab. Runtime root ~/.omo/agent.
+    // Display name is just "OmO": the UI drops the "Native" qualifier
+    // everywhere (tab, settings, Skills/MCP tool lists).
     BuiltinTool {
         key: "omo_native",
-        display_name: "OmO Native",
+        display_name: "OmO",
         relative_skills_dir: Some("~/.omo/agent/skills"),
         relative_detect_dir: Some("~/.omo/agent"),
         mcp_config_path: Some("~/.omo/agent/mcp.json"),

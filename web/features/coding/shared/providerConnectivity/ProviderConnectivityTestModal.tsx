@@ -19,6 +19,17 @@ import {
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 import type { ProviderModelConnections } from '@/features/coding/shared/providerConnectivity/modelConnection';
 import type { GatewayCliKey } from '@/services/proxyGatewayApi';
+import type { ConfigValueMode } from '@/components/common/FetchModelsModal/types';
+import type { ZcodeProvider } from '@/types/zcode';
+import { parseZcodeProviderSettings } from '@/features/coding/zcode/utils/zcodeSettingsConfig';
+import { zcodeSdkName } from '@/features/coding/zcode/utils/zcodeFavoriteProvider';
+import type { OmoNativeProvider } from '@/types/omoNative';
+import {
+  asRecord,
+  getOmoNativeModelEntries,
+  getStringField,
+  omoNativeApiToNpm,
+} from '@/features/coding/omo_native/utils/omoNativeProviders';
 
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com/v1';
 const DEFAULT_CODEX_BASE_URL = 'https://api.openai.com/v1';
@@ -31,7 +42,7 @@ export interface ProviderConnectivityInfo {
   modelIds: string[];
   reasoningEffort?: string;
   apiFormat?: 'openai-codex-responses';
-  configValueMode?: 'pi' | 'omp';
+  configValueMode?: ConfigValueMode;
   /** Models whose own api/baseUrl overrides the provider connection (OMP). */
   modelConnections?: ProviderModelConnections;
 }
@@ -129,6 +140,75 @@ export function buildCodexProviderConnectivityInfo(provider: CodexProvider): Pro
     },
     modelIds,
     ...(reasoningEffort ? { reasoningEffort } : {}),
+  };
+}
+
+/**
+ * OmO Native 的连通性测试入参。
+ *
+ * ⚠️ `configValueMode` 必须是 `'omo'`，**不是** `'omp'`：两者同属 `oh-my-*`
+ * 家族但配置值语法不同——OmO 支持 `$ENV_VAR` 插值 / `!command` / `$$` 转义
+ * （与 Pi 同引擎），OMP 只认 `!command` 或环境变量名精确匹配。传错会把
+ * `$MY_KEY` 当字面量发给上游（2026-10-07 实测 401）。
+ *
+ * 密钥走 `provider.apiKey`（列表接口回填的明文，`auth.json` 优先），不从
+ * `config.apiKey` 取——保存时那条已经被迁移进 `auth.json` 了。
+ */
+export function buildOmoNativeProviderConnectivityInfo(
+  provider: OmoNativeProvider,
+): ProviderConnectivityInfo {
+  const modelIds = getOmoNativeModelEntries(provider.config).map((entry) => entry.id);
+  const headers = asRecord(provider.config.headers);
+  const apiKey = provider.apiKey?.trim();
+
+  return {
+    providerId: provider.key,
+    providerName: getStringField(provider.config, 'name') || provider.key,
+    providerConfig: {
+      npm: omoNativeApiToNpm(getStringField(provider.config, 'api')),
+      name: getStringField(provider.config, 'name') || provider.key,
+      options: {
+        baseURL: getStringField(provider.config, 'baseUrl'),
+        ...(apiKey ? { apiKey } : {}),
+        ...(Object.keys(headers).length > 0
+          ? { headers: headers as Record<string, string> }
+          : {}),
+      },
+      models: buildProviderModels(modelIds),
+    },
+    modelIds,
+    configValueMode: 'omo',
+  };
+}
+
+/**
+ * ZCode 的连通性测试入参。
+ *
+ * ZCode 的 baseUrl / apiKey / 模型目录全在 `settingsConfig` 的 JSON 里
+ * （与 Claude / Codex / Grok 同形），所以这里解一次就够。
+ */
+export function buildZcodeProviderConnectivityInfo(
+  provider: ZcodeProvider,
+): ProviderConnectivityInfo {
+  const settings = parseZcodeProviderSettings(provider.settingsConfig);
+  const modelIds = (settings?.models ?? []).map((model) => model.modelId);
+  const apiKey = settings?.config?.access?.apiKey?.trim();
+  const baseUrl = settings?.config?.api?.baseUrl?.trim() ?? '';
+
+  return {
+    providerId: provider.id,
+    providerName: provider.name,
+    providerConfig: {
+      npm: zcodeSdkName(settings?.config?.api?.type),
+      name: provider.name,
+      options: {
+        baseURL: baseUrl,
+        ...(apiKey ? { apiKey } : {}),
+        ...(settings?.config?.api?.headers ? { headers: settings.config.api.headers } : {}),
+      },
+      models: buildProviderModels(modelIds),
+    },
+    modelIds,
   };
 }
 

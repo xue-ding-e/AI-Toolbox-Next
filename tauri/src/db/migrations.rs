@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 25;
+pub const TARGET_SCHEMA_VERSION: i32 = 26;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -82,6 +82,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 25 {
         run_migration_step(conn, 25, migrate_v25)?;
+    }
+    if current_version < 26 {
+        run_migration_step(conn, 26, migrate_v26)?;
     }
 
     Ok(())
@@ -528,6 +531,24 @@ fn migrate_v25(conn: &Connection) -> Result<(), String> {
         conn,
         DbTable::ZcodeOfficialAccount,
         &JsonFieldPath::new("provider_id")?,
+    )
+}
+
+/// OmO Native 的全局提示词（`<agentDir>/AGENTS.md`）预设表。
+///
+/// 与其余 CLI 的 prompt 表同构：v6（Pi）、v23（ZCode）等各建各的表，这里补上
+/// Native 这一份——Native 的页面在 2026-10-07 才加上全局提示词区块。
+fn migrate_v26(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::OmoNativePromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::OmoNativePromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::OmoNativePromptConfig,
+        &JsonFieldPath::new("sort_index")?,
     )
 }
 

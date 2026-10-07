@@ -13,11 +13,15 @@ import { parseZcodeProviderSettings } from './zcodeSettingsConfig';
  * another CLI. An unknown format falls back to the openai-compatible family,
  * which is what an unspecified OpenAI-shaped endpoint most likely is.
  */
-const ZCODE_FAVORITE_NPM_BY_API_TYPE: Record<string, string> = {
+export const ZCODE_FAVORITE_NPM_BY_API_TYPE: Record<string, string> = {
   'anthropic-messages': '@ai-sdk/anthropic',
   'openai-chat-completions': '@ai-sdk/openai',
   'openai-responses': '@ai-sdk/openai',
 };
+
+/** The SDK family a ZCode provider's API format belongs to, for the card tag. */
+export const zcodeSdkName = (apiType: string | undefined): string =>
+  ZCODE_FAVORITE_NPM_BY_API_TYPE[apiType ?? ''] ?? '@ai-sdk/openai-compatible';
 
 /**
  * Builds the favorites-store record for one ZCode provider.
@@ -39,7 +43,7 @@ export function buildZcodeFavoriteProviderConfig(provider: ZcodeProvider) {
 
   return buildFavoriteProviderOptions(
     {
-      npm: ZCODE_FAVORITE_NPM_BY_API_TYPE[apiType] ?? '@ai-sdk/openai-compatible',
+      npm: zcodeSdkName(apiType),
       name: provider.name,
       options: {
         ...(baseUrl ? { baseURL: baseUrl } : {}),

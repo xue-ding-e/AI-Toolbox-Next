@@ -1,0 +1,139 @@
+import React from 'react';
+import { App, Form, Modal, Typography } from 'antd';
+import { useTranslation } from 'react-i18next';
+import JsonEditor from '@/components/common/JsonEditor';
+
+const { Text } = Typography;
+
+export interface AuthConfigModalProps {
+  open: boolean;
+  /** `auth.json` 的原文（含明文密钥）。每次打开都从这里重读。 */
+  content: string | undefined;
+  /** 文件在磁盘上的位置，只用于在弹窗底部显示。 */
+  path?: string;
+  /**
+   * 落盘。**整份覆盖**——用户在编辑器里删掉一个渠道就是要删掉它。
+   *
+   * 各 CLI 的凭据语义不同（OmO 的值是 config value 语法、需要转义；OpenCode 的
+   * 是字面量），所以转义与写入都在各自的后端命令里，这个组件不碰。
+   */
+  onSave: (config: Record<string, unknown>) => Promise<void>;
+  onCancel: () => void;
+  /** 保存成功后的刷新回调（重读配置 + 重查依赖凭据的列表）。 */
+  onSaved: () => Promise<void> | void;
+}
+
+/**
+ * 引擎凭据文件（`auth.json`）的应用内编辑弹窗。
+ *
+ * **为什么不做成「用资源管理器打开」**：本应用是配置管理器，密钥是它管理的对象
+ * 之一，要能在应用内看到并修改（2026-10-07 用户明确要求）。跳系统文件管理器
+ * 等于把编辑体验丢给记事本，而且用户在应用内根本看不到自己配了什么。
+ *
+ * 形态对齐各页面的「其他配置」区块（`JsonEditor` + 失焦/确定保存），只是放在
+ * 弹窗里——凭据属于「偶尔改一次」的东西，不值得占页面版面。
+ *
+ * 目前有两个消费者：OpenCode 与 OmO Native 的「官方认证渠道」标题栏入口。
+ */
+const AuthConfigModal: React.FC<AuthConfigModalProps> = ({
+  open,
+  content,
+  path,
+  onSave,
+  onCancel,
+  onSaved,
+}) => {
+  const { t } = useTranslation();
+  const { message } = App.useApp();
+  const [value, setValue] = React.useState<Record<string, unknown>>({});
+  const [valid, setValid] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+
+  // 每次打开都从磁盘原文重读：这个弹窗不是常驻编辑面，拿着上次关闭时的副本
+  // 会让用户在别处改过的内容被静默覆盖。
+  React.useEffect(() => {
+    if (!open) return;
+    let parsed: Record<string, unknown> = {};
+    if (content?.trim()) {
+      try {
+        const candidate = JSON.parse(content);
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          parsed = candidate as Record<string, unknown>;
+        }
+      } catch (error) {
+        console.error('Failed to parse auth.json:', error);
+      }
+    }
+    setValue(parsed);
+    setValid(true);
+  }, [open, content]);
+
+  const handleSave = async () => {
+    if (!valid) {
+      message.error(t('common.jsonInvalid'));
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(value);
+      message.success(t('common.success'));
+      // 落盘成功后**立刻关弹窗**，刷新放后台跑。
+      //
+      // 刷新可能要重查依赖凭据的列表——OmO 的「引擎内建渠道」要逐个跑
+      // `omo auth check`（引擎没有批量接口，48 个实测约 8 秒）。之前是
+      // `await onSaved()` 之后才关，用户对着一个转圈的「保存」按钮等 8 秒，
+      // 而数据其实早就写完了（2026-10-07 用户报告）。
+      onCancel();
+      void Promise.resolve(onSaved()).catch((error) => {
+        // 刷新失败不该回滚已保存的内容，但要留下痕迹。
+        console.error('Failed to refresh after saving auth.json:', error);
+      });
+    } catch (error) {
+      console.error('Failed to save auth.json:', error);
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={t('common.authConfig.title')}
+      open={open}
+      width={720}
+      onCancel={onCancel}
+      confirmLoading={saving}
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
+      onOk={() => void handleSave()}
+      destroyOnHidden
+    >
+      <Form layout="vertical">
+        <Form.Item
+          help={<span style={{ fontSize: 12 }}>{t('common.authConfig.hint')}</span>}
+          style={{ marginBottom: 0 }}
+        >
+          <JsonEditor
+            value={value && Object.keys(value).length > 0 ? value : undefined}
+            height={320}
+            onChange={(next, isValid) => {
+              setValue(
+                next && typeof next === 'object' && !Array.isArray(next)
+                  ? (next as Record<string, unknown>)
+                  : {},
+              );
+              setValid(isValid);
+            }}
+          />
+        </Form.Item>
+        {path && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {t('common.authConfig.path', { path })}
+          </Text>
+        )}
+      </Form>
+    </Modal>
+  );
+};
+
+export default AuthConfigModal;

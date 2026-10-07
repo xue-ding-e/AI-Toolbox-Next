@@ -69,6 +69,25 @@ export interface OmoNativeAgentsConfigInput {
   otherFields?: Record<string, unknown> | null;
 }
 
+/**
+ * `settings.json` 里的默认模型选择。
+ *
+ * 引擎文档 `docs/settings.md` 的 "Model & Thinking" 一节：`/model` 里 Ctrl+S
+ * 保存的就是这三个键。与 Pi 同名同语义（两边都是 senpi 引擎）。
+ */
+export interface OmoNativeDefaultSelection {
+  providerKey?: string;
+  modelId?: string;
+  thinkingLevel?: string;
+}
+
+/** `save_omo_native_model_settings` 的入参：`''` 删除该键，`undefined` 不动。 */
+export interface OmoNativeModelSettingsInput {
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultThinkingLevel?: string;
+}
+
 /** `read_omo_native_runtime_config` 的返回。 */
 export interface OmoNativeRuntimeConfig {
   /** 折叠后的 Native 生效视图（共享 base 键被 `[native]` 块覆盖）。 */
@@ -77,12 +96,18 @@ export interface OmoNativeRuntimeConfig {
   nativeBlock: Record<string, unknown>;
   /** 被 Native 视图采纳的共享 base 键。 */
   sharedBase: Record<string, unknown>;
+  /** `settings.json` 的默认模型选择。 */
+  modelSettings: OmoNativeDefaultSelection;
   configPath: string;
+  /** `omo.jsonc` 整份原文（含 `[opencode]` / `[native]` 块、控制键与注释）。 */
+  configContent?: string;
   parsed: boolean;
   parseError?: string;
   settingsContent?: string;
   modelsContent?: string;
   mcpContent?: string;
+  /** `<agentDir>/auth.json` 原文（**含明文密钥**）。 */
+  authContent?: string;
 }
 
 export interface OmoNativeModelProfile {
@@ -100,6 +125,18 @@ export interface OmoNativeProvider {
   oauth: boolean;
   config: Record<string, unknown>;
   hasKey: boolean;
+  /**
+   * 当前生效的密钥明文（已还原 config value 转义）。
+   *
+   * 每个 provider 的「写入落点」就是它的读取优先处：
+   * - **自定义 provider**：`models.json` 的 `apiKey` 优先，`auth.json` 兜底
+   *   （早先版本把自定义 provider 写进过 `auth.json`，那些记录还在）；
+   * - **内建 provider**：`auth.json` 优先——那是 `/login` 的落点，引擎真正读的地方。
+   *
+   * 本应用是配置管理器，密钥要能在界面上看到并编辑——弹窗直接回填这个值，
+   * 不要用 `••••••••` 之类的占位（那会让「存了密钥」和「没存」长得一样）。
+   */
+  apiKey?: string;
   custom: boolean;
 }
 
@@ -112,6 +149,71 @@ export interface OmoNativeProviderInput {
 export interface OmoNativeMcpServer {
   name: string;
   config: Record<string, unknown>;
+}
+
+// ============================================================================
+// 扩展（`settings.json` 的 `packages` + `<agentDir>/extensions`）
+// ============================================================================
+//
+// 与 Pi 的 `PiExtension*` 同形：两个 CLI 共用 senpi 引擎的包体系
+// （`omo list` 与 `pi list` 的输出格式逐字相同）。后端逻辑在
+// `coding/cli_extensions.rs`，两侧只是类型名不同。
+
+export type OmoNativeExtensionScope = 'user' | 'project' | 'unknown';
+
+export type OmoNativeExtensionKind = 'package' | 'local_file' | 'local_directory';
+
+export interface OmoNativeExtensionSummary {
+  id: string;
+  source: string;
+  scope: OmoNativeExtensionScope;
+  kind: OmoNativeExtensionKind;
+  path?: string;
+  builtIn: boolean;
+  currentVersion?: string;
+  /** npm registry 的 `dist-tags.latest`（仅未钉版本且能连上 registry 时）。 */
+  latestVersion?: string;
+  updateAvailable: boolean;
+  /** 由 `settings.json` 的过滤器推导；`false` 表示这个包什么都不加载。 */
+  enabled: boolean;
+  /** `false` 表示界面不该给开关——能写的过滤器改不动它实际加载什么。 */
+  switchSupported: boolean;
+}
+
+export interface OmoNativeExtensionListResult {
+  extensionsPath: string;
+  packagesPath: string;
+  extensions: OmoNativeExtensionSummary[];
+  raw: string;
+  cliPath?: string;
+  cliVersion?: string;
+}
+
+export interface OmoNativeExtensionInstallInput {
+  source: string;
+}
+
+export interface OmoNativeExtensionUpdateInput {
+  /** 有值只更新这一个（`omo update <source>`）；省略则更新全部。 */
+  source?: string;
+}
+
+export interface OmoNativeExtensionActionInput {
+  source: string;
+  scope?: OmoNativeExtensionScope;
+  kind?: OmoNativeExtensionKind;
+  path?: string;
+}
+
+export interface OmoNativeExtensionCommandResult {
+  command: string;
+  output: string;
+}
+
+export interface OmoNativeExtensionEnabledInput {
+  source: string;
+  kind: OmoNativeExtensionKind;
+  enabled: boolean;
 }
 
 /**
@@ -180,3 +282,34 @@ export const OMO_NATIVE_MANAGED_KEYS: string[] = [
   'model_profile',
   'task',
 ];
+
+/** 全局提示词文件（写在引擎状态目录里，默认 `~/.omo/agent/AGENTS.md`）。 */
+export const OMO_NATIVE_PROMPT_FILE = 'AGENTS.md';
+
+/** 引擎内建 provider 下的一条内建模型。 */
+export interface OmoNativeBuiltinModel {
+  id: string;
+  context?: number;
+  output?: number;
+  thinking: boolean;
+  images: boolean;
+}
+
+/** 引擎内建的 provider（官方认证渠道），只读展示。 */
+/**
+ * 一个**已配置凭据**的引擎内建 provider。
+ *
+ * 列表接口只返回就绪的那些（与 OpenCode 的「官方 Auth 认证渠道」同语义），
+ * 所以这里的 `ready` 恒为 `true`——留着它是为了让「为什么它出现在列表里」
+ * 在类型上也读得出来，而不是靠调用方记住这条约定。
+ */
+export interface OmoNativeBuiltinProvider {
+  id: string;
+  name: string;
+  /** 需要 OAuth 登录（`omo auth check` 的判定输入之一）。 */
+  oauth: boolean;
+  ready: boolean;
+  authType?: string;
+  reason?: string;
+  models: OmoNativeBuiltinModel[];
+}

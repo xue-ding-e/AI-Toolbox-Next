@@ -24,7 +24,7 @@ use crate::settings::backup::utils::REAPPLY_APPLIED_FLAG_FILENAME;
 
 const PER_CLI_TIMEOUT: Duration = Duration::from_secs(30);
 const PATH_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const LOCAL_ID: &str = "__local__";
+const LOCAL_ID: &str = crate::coding::local_bridge::LOCAL_CONFIG_ID;
 
 #[derive(Debug, Default)]
 pub struct ReapplySummary {
@@ -923,6 +923,30 @@ async fn reapply_omo_native<R: Runtime>(app: &AppHandle<R>) -> ReapplyCliResult 
     let db_state = app.state::<SqliteDbState>();
     let db = db_state.db();
     let mut result = ReapplyCliResult::default();
+
+    // 全局提示词：运行时文件是 `<agentDir>/AGENTS.md`，恢复后要按同一份预设重新写。
+    let prompt_record = first_applied_prompt_id(&db, DbTable::OmoNativePromptConfig);
+    let prompt_id = resolve_record_id(&mut result, "prompt", prompt_record);
+    if prompt_id.is_some() {
+        match omo_native::get_omo_native_prompt_path_async(&db).await {
+            Ok(path) => {
+                if let Err(error) = probe_runtime_path(path).await {
+                    result.warnings.push(error);
+                } else {
+                    apply_record(&mut result, "prompt", prompt_id, |prompt_id| async move {
+                        omo_native::apply_omo_native_prompt_config_internal_without_events(
+                            &db, &prompt_id,
+                        )
+                        .await
+                    })
+                    .await;
+                }
+            }
+            Err(error) => result
+                .warnings
+                .push(format!("failed to resolve prompt path: {error}")),
+        }
+    }
 
     // Agent/Category 方案：applied 标记在库里，但 `[native]` 块可能被备份跳过或整份缺失，
     // 恢复后要按同一份方案重新写入。恢复期间不 emit 事件。

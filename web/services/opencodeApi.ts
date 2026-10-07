@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { OpenCodeAgentConfig, OpenCodeConfig, OpenCodeProvider } from '@/types/opencode';
+import type { ConfigValueMode } from '@/components/common/FetchModelsModal/types';
 
 /**
  * Configuration path information
@@ -374,6 +375,18 @@ export const getOpenCodeAuthConfigPath = async (): Promise<string> => {
   return await invoke<string>('get_opencode_auth_config_path');
 };
 
+/**
+ * 保存整份 `auth.json`（OpenCode 官方渠道的凭据文件）。
+ *
+ * **整份覆盖**：用户在编辑器里删掉一个渠道就是要删掉它。OpenCode 的值是
+ * 字面量，后端不做 config value 转义（与 OmO 不同）。
+ */
+export const saveOpenCodeAuthConfig = async (
+  config: Record<string, unknown>,
+): Promise<void> => {
+  await invoke('save_opencode_auth_config', { config });
+};
+
 // ============================================================================
 // Favorite Plugin Types and Functions
 // ============================================================================
@@ -527,7 +540,7 @@ export interface ConnectivityTestRequest {
   npm: string;
   apiFormat?: 'openai-codex-responses';
   /** Opt in to the provider tool's own config value syntax (Pi / OMP). */
-  configValueMode?: 'pi' | 'omp';
+  configValueMode?: ConfigValueMode;
   providerId?: string;
   baseUrl: string;
   apiKey?: string;
