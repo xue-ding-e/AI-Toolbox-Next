@@ -1,0 +1,36 @@
+name: Maintenance structural checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  structure:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify linear development history
+        shell: bash
+        run: test "$(git rev-list --count --merges HEAD)" = 0
+      - name: Validate package JSON and maintenance records
+        shell: bash
+        run: |
+          python3 - <<'CHECK'
+          import json, pathlib
+          p = pathlib.Path('.')
+          json.loads((p / 'package.json').read_text())
+          for name in ['LICENSE', 'README.md', 'MAINTENANCE.md', 'docs/upstream-history-map.tsv']:
+              assert (p / name).is_file(), name
+          rows = (p / 'docs/upstream-history-map.tsv').read_text().splitlines()
+          assert rows[0] == 'original\tlinear\tkind'
+          assert len(rows) > 1
+          print('Structural checks passed. Build and runtime tests are separate.')
+          CHECK
