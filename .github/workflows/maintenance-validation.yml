@@ -1,0 +1,65 @@
+name: Maintenance validation
+on:
+  push:
+    branches: [validation/cloud-checks]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ai-toolbox-maintenance-validation
+  cancel-in-progress: false
+jobs:
+  frontend:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Record toolchain and available browser
+        run: |
+          node --version
+          pnpm --version
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+          df -h
+      - name: Install locked frontend dependencies
+        id: install
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm exec tsc --noEmit
+      - name: Full upstream frontend suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm test
+  rust:
+    needs: frontend
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record toolchain and disk
+        run: |
+          rustc --version
+          cargo --version
+          df -h
+      - name: Full upstream Rust suite
+        run: cargo test --locked --manifest-path tauri/Cargo.toml
