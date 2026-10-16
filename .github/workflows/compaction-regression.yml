@@ -1,7 +1,5 @@
 name: Compaction regression
 on:
-  push:
-    branches: [maintenance/compaction-refusal-memory]
   workflow_dispatch:
 permissions:
   contents: read
