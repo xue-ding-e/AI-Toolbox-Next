@@ -1,3 +1,11 @@
+# AI-Toolbox-Next
+
+Independent maintenance edition of [coulsontl/ai-toolbox](https://github.com/coulsontl/ai-toolbox). This repository is maintained independently and is not an official upstream release. Original authorship, licenses and third-party notices are retained.
+
+See [maintenance and history notes](MAINTENANCE.md). The upstream README follows unchanged below.
+
+---
+
 # AI Toolbox
 
 <p align="center">
