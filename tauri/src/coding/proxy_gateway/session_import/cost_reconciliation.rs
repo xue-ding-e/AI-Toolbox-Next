@@ -171,6 +171,21 @@ pub(super) fn reconcile_session_costs(
                     .into_iter()
                     .map(|path| (path, true)),
             ),
+            GatewayUsageTool::Antigravity => {
+                // Usage comes from `conversations/<uuid>.db`, so the pricing
+                // retry must read the same databases rather than the mirror.
+                if let Ok(entries) = fs::read_dir(root.join("conversations")) {
+                    files.extend(
+                        entries
+                            .flatten()
+                            .map(|entry| entry.path())
+                            .filter(|path| {
+                                path.extension().and_then(|value| value.to_str()) == Some("db")
+                            })
+                            .map(|path| (path, true)),
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -252,6 +267,7 @@ pub(super) fn reconcile_session_costs(
             let records = match cli_key {
                 GatewayUsageTool::OpenCode => super::open_code::cost_records(&file.path)?,
                 GatewayUsageTool::OpenClaw => super::open_claw::cost_records(&file.path)?,
+                GatewayUsageTool::Antigravity => super::antigravity::cost_records(&file.path)?,
                 _ => return Err("Unsupported native cost database".into()),
             };
             parsers::ParsedSession {

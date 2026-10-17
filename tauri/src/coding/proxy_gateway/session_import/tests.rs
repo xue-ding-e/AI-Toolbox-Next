@@ -1981,8 +1981,10 @@ fn opencode_v2_records_only_the_settled_aggregate_remainder() {
     );
 }
 
+/// A transcript mirror carries no token counts: Antigravity usage comes from
+/// `conversations/<uuid>.db`. The mirror must not add zero-token rows.
 #[test]
-fn antigravity_transcripts_import_turns_into_usage() {
+fn antigravity_transcripts_do_not_import_zero_token_rows() {
     let root = tempfile::tempdir().unwrap();
     let db = SqliteDbState::in_memory_for_test().unwrap();
     let logs_dir = root
@@ -2000,10 +2002,11 @@ fn antigravity_transcripts_import_turns_into_usage() {
     fs::write(logs_dir.join("transcript_full.jsonl"), content).unwrap();
 
     let stats = run_sync(&db, GatewayUsageTool::Antigravity, root.path());
-    assert_eq!(stats.inserted_records, 2);
+    assert_eq!(stats.failed_files, 0);
+    assert_eq!(stats.inserted_records, 0);
 
     let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
-    assert_eq!(summary.total_requests, 2);
+    assert_eq!(summary.total_requests, 0);
 }
 
 /// Compaction rewrites the transcript, so a crash mid-flush can leave a broken
@@ -2030,5 +2033,5 @@ fn antigravity_transcripts_skip_broken_rows_instead_of_failing() {
     let stats = run_sync(&db, GatewayUsageTool::Antigravity, root.path());
 
     assert_eq!(stats.failed_files, 0);
-    assert_eq!(stats.inserted_records, 1);
+    assert_eq!(stats.inserted_records, 0);
 }
