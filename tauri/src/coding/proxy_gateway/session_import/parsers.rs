@@ -36,7 +36,9 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // and key each page's events by rollout id, so a child no longer re-bills
         // a copied prefix and a rollover page no longer overwrites its sibling.
         // A single-file rollout keeps its old key, so re-reading is a no-op there.
-        GatewayUsageTool::Codex => 4,
+        // 5: parse `token_usage_record` as the authoritative per-response
+        // source and deduct the legacy `token_count` mirror that repeats it.
+        GatewayUsageTool::Codex => 5,
         GatewayUsageTool::Dsh => 4,
         // 3: subtract the cached part from `input_tokens` (the column includes
         // it), prefer `completed_at`, and re-read old databases to repair the
@@ -52,7 +54,7 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 struct Counters {
     input: u64,
     output: u64,
@@ -456,11 +458,17 @@ fn parse_codex_lines(
     let mut previous_signature = None;
     let mut event_index = 0u64;
     let mut metadata_seen = false;
+    // Dual-write bookkeeping; see `apply_codex_token_usage_record`.
+    let mut response_ids = std::collections::HashSet::<String>::new();
+    let mut pending_responses = Vec::<Counters>::new();
+    let mut legacy_before_response: Option<(Counters, String)> = None;
     for line in reader.lines() {
         let line = line.map_err(|error| error.to_string())?;
         if !line.contains("\"session_meta\"")
             && !line.contains("\"turn_context\"")
-            && !(line.contains("\"event_msg\"") && line.contains("\"token_count\""))
+            && !line.contains("\"token_usage_record\"")
+            && !(line.contains("\"event_msg\"")
+                && (line.contains("\"token_count\"") || line.contains("\"task_started\"")))
         {
             continue;
         }
@@ -496,6 +504,15 @@ fn parse_codex_lines(
                 }
             }
             Some("event_msg")
+                if payload.get("type").and_then(Value::as_str) == Some("task_started") =>
+            {
+                // A new turn cannot inherit a twin from the previous one. Any
+                // still-unmatched authoritative record is an orphan (its mirror
+                // never arrived); keep it pending rather than risk pairing it
+                // with the next turn's numbers.
+                legacy_before_response = None;
+            }
+            Some("event_msg")
                 if payload.get("type").and_then(Value::as_str) == Some("token_count") =>
             {
                 let Some(info) = payload.get("info").filter(|value| value.is_object()) else {
@@ -520,10 +537,22 @@ fn parse_codex_lines(
                     signatures_by_source.insert(lane, signature.clone());
                 }
                 previous_signature = Some(signature.clone());
-                let usage = if duplicate {
+                // The legacy notification mirrors an authoritative
+                // `token_usage_record` that already counted this response. The
+                // record normally arrives first, so its usage block is in
+                // `pending_responses`; a mirror that consumes one must not
+                // produce a second row.
+                let mirrored = last.as_ref().is_some_and(|last| {
+                    pending_responses
+                        .iter()
+                        .position(|pending| pending == last)
+                        .map(|index| pending_responses.remove(index))
+                        .is_some()
+                });
+                let usage = if duplicate || mirrored {
                     TokenUsage::default()
                 } else {
-                    last.unwrap_or_else(|| {
+                    last.clone().unwrap_or_else(|| {
                         total
                             .as_ref()
                             .map(|value| value.delta(&high_water))
@@ -551,6 +580,12 @@ fn parse_codex_lines(
                         None => format!("SESSION:codex:{thread_id}:token:{event_index}"),
                     }
                 });
+                if let (Some(request_id), Some(last)) = (&request_id, last) {
+                    // Remember that this call was counted before its
+                    // authoritative record arrived; that record will adopt this
+                    // row's identity instead of billing the same call again.
+                    legacy_before_response = Some((last, request_id.clone()));
+                }
                 if let Some(request_id) = &request_id {
                     parsed.records.push(SessionUsageRecord {
                         metadata: Default::default(),
@@ -568,6 +603,74 @@ fn parse_codex_lines(
                     signature,
                     timestamp: created_at,
                     request_id,
+                });
+            }
+            Some("token_usage_record") => {
+                let Some(usage) = payload.get("usage").and_then(Counters::parse) else {
+                    continue;
+                };
+                let response_id = string(payload, &["/response_id"]);
+                if let Some(response_id) = &response_id {
+                    if !response_ids.insert(response_id.clone()) {
+                        // A copied or repeated record: the same response cannot
+                        // be billed twice.
+                        continue;
+                    }
+                }
+                let created_at = timestamp(&value).unwrap_or(fallback_timestamp);
+                // A fork copies its parent's records wholesale; the thread id
+                // names the owner, and only the owner may bill the usage.
+                let owner_mismatch = string(payload, &["/thread_id", "/session_id"])
+                    .is_some_and(|owner| owner != thread_id);
+                if owner_mismatch {
+                    // Still remember it, so a fork's legacy mirror — if one
+                    // follows — is consumed instead of counted.
+                    pending_responses.push(usage);
+                    continue;
+                }
+                if let Some((mirror, request_id)) = legacy_before_response.take() {
+                    if mirror == usage {
+                        // The legacy notification came first and was counted.
+                        // Hijack its identity so an overlapping runtime segment
+                        // (or a later scan) still sees one call.
+                        if let Some(response_id) = &response_id {
+                            if let Some(record) =
+                                parsed.records.iter_mut().find(|record| record.request_id == request_id)
+                            {
+                                record
+                                    .legacy_request_ids
+                                    .push(record.request_id.clone());
+                                record.request_id =
+                                    format!("SESSION:codex:{thread_id}:{response_id}");
+                            }
+                        }
+                        continue;
+                    }
+                }
+                let token_usage = usage.clone().into_usage();
+                if token_usage.total_tokens().is_none() {
+                    continue;
+                }
+                pending_responses.push(usage);
+                // `usage` includes the cached and cache-write parts; the
+                // importer's input bucket is the fresh remainder.
+                let request_id = match &response_id {
+                    Some(response_id) => format!("SESSION:codex:{thread_id}:{response_id}"),
+                    None => {
+                        event_index += 1;
+                        format!("SESSION:codex:{thread_id}:token_usage:{event_index}")
+                    }
+                };
+                parsed.records.push(SessionUsageRecord {
+                    metadata: Default::default(),
+                    request_id,
+                    legacy_request_ids: Vec::new(),
+                    cli_key: GatewayUsageTool::Codex,
+                    model: model.clone(),
+                    usage: token_usage,
+                    created_at,
+                    session_id: thread_id.clone(),
+                    reported_cost_usd: None,
                 });
             }
             _ => {}
