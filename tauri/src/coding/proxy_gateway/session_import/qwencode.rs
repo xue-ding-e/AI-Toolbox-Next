@@ -158,6 +158,12 @@ pub(super) fn parse(path: &Path, fallback: i64) -> Result<ParsedSession, String>
 
 /// Imports the merged view as one source whose cursor is the runtime tree's
 /// newest write. The merge is cheap enough to redo whenever any file changes.
+///
+/// The ordinary per-file walk also parses these files; both write the same
+/// request IDs, and this merged view runs afterwards, so the rows converge on
+/// the corrected values (the rollup remainder replaces the full session total).
+/// Do not remove one path without teaching the other the remainder rule: the
+/// per-file walk also feeds cost reconciliation, which needs `session_files`.
 pub(super) fn sync_root(
     db: &super::SqliteDbState,
     root: &Path,
