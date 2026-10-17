@@ -2148,3 +2148,211 @@ fn antigravity_transcripts_skip_broken_rows_instead_of_failing() {
     assert_eq!(stats.failed_files, 0);
     assert_eq!(stats.inserted_records, 0);
 }
+
+#[test]
+fn prime_agent_reads_model_changes_and_deduplicates_shared_events() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let nested = root.path().join("session-artifacts/run-1");
+    fs::create_dir_all(&nested).unwrap();
+    let entry = json!({"type":"message","id":"reply-1","timestamp":THEN,
+        "message":{"role":"assistant","model":"unknown","responseId":"resp-1",
+            "usage":{"input":100,"output":10,"cacheRead":80,"cacheWrite":20}}});
+    write_jsonl(
+        &sessions.join("prime.jsonl"),
+        &[
+            json!({"type":"session","id":"prime-session","timestamp":THEN-10}),
+            json!({"type":"model_change","timestamp":THEN-5,"provider":"prime","modelId":"prime-model"}),
+            entry.clone(),
+            // A sub-agent attribution event must not bill the child again.
+            json!({"type":"child_usage_attributed","id":"child","timestamp":THEN,
+                "usage":{"input":999,"output":999}}),
+        ],
+    );
+    // The same logical session's artifact copy repeats the event, including
+    // the session header that names it.
+    write_jsonl(
+        &nested.join("artifact.jsonl"),
+        &[
+            json!({"type":"session","id":"prime-session","timestamp":THEN-10}),
+            entry,
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayUsageTool::PrimeAgent, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 1);
+    let logs = usage_stats::request_logs(
+        &db,
+        &GatewayRequestLogFilters {
+            cli_key: Some(GatewayUsageTool::PrimeAgent),
+            ..Default::default()
+        },
+        0,
+        10,
+        true,
+    )
+    .unwrap();
+    assert_eq!(logs.data[0].upstream_model_id, "prime-model");
+    assert_eq!(logs.data[0].input_tokens, 100);
+    assert_eq!(logs.data[0].cache_read_tokens, 80);
+    assert_eq!(logs.data[0].cache_creation_tokens, 20);
+}
+
+#[test]
+fn musecode_reads_completed_model_events_and_folds_reasoning_into_output() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("sessions/2026/09/02/run-a");
+    fs::create_dir_all(&session).unwrap();
+    write_jsonl(
+        &session.join("session.jsonl"),
+        &[
+            json!({"stream":{"id":"muse-session"},"payload_type":"run.model.configured",
+                "payload":{"record":{"run_stream":{"id":"run-1"},"model_id":"muse-model"}}}),
+            json!({"stream":{"id":"muse-session"},"payload_type":"runtime.session",
+                "payload":{"kind":"run","run_id":"run-1","event":{"kind":"model_completed",
+                    "usage":{"input_tokens":1000,"cached_tokens":400,"output_tokens":50,
+                        "cache_write_tokens":10,"reasoning_tokens":20}}},
+                "recorded_at": THEN * 1000, "source_run_record_id":"record-1"}),
+            // The same record id is a duplicate, not a second call.
+            json!({"stream":{"id":"muse-session"},"payload_type":"runtime.session",
+                "payload":{"kind":"run","run_id":"run-1","event":{"kind":"model_completed",
+                    "usage":{"input_tokens":1000,"cached_tokens":400,"output_tokens":50,
+                        "cache_write_tokens":10,"reasoning_tokens":20}}},
+                "recorded_at": THEN * 1000, "source_run_record_id":"record-1"}),
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayUsageTool::Musecode, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 1);
+    let logs = usage_stats::request_logs(
+        &db,
+        &GatewayRequestLogFilters {
+            cli_key: Some(GatewayUsageTool::Musecode),
+            ..Default::default()
+        },
+        0,
+        10,
+        true,
+    )
+    .unwrap();
+    assert_eq!(logs.data[0].input_tokens, 600);
+    assert_eq!(logs.data[0].cache_read_tokens, 400);
+    assert_eq!(logs.data[0].cache_creation_tokens, 10);
+    assert_eq!(logs.data[0].output_tokens, 50);
+    assert_eq!(logs.data[0].upstream_model_id, "muse-model");
+}
+
+#[test]
+fn cmdcode_reads_both_usage_locations_and_skips_checkpoints() {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("projects/example");
+    fs::create_dir_all(&project).unwrap();
+    let top_level = json!({"type":"message","id":"msg-1","timestamp":THEN,
+        "role":"assistant","sessionId":"cmd-session","model":"cmd-model",
+        "usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":30,
+            "cacheWriteTokens":5,"costUsd":0.0012}});
+    let nested = json!({"type":"message","id":"msg-2","timestamp":THEN+1,
+        "message":{"role":"assistant","usage":{"inputTokens":10,"outputTokens":2,
+            "cacheReadTokens":0,"cacheWriteTokens":0}}});
+    write_jsonl(
+        &project.join("cmd-session.jsonl"),
+        &[
+            json!({"type":"session","id":"cmd-session","model":"cmd-model"}),
+            top_level,
+            nested,
+        ],
+    );
+    // Audit and checkpoint files are not session transcripts.
+    write_jsonl(
+        &project.join("hooks-audit-1.jsonl"),
+        &[json!({"role":"assistant","usage":{"inputTokens":999,"outputTokens":999}})],
+    );
+    write_jsonl(
+        &project.join("cmd-session.1.jsonl"),
+        &[json!({"role":"assistant","usage":{"inputTokens":888,"outputTokens":888}})],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayUsageTool::Cmdcode, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 2);
+    let logs = usage_stats::request_logs(
+        &db,
+        &GatewayRequestLogFilters {
+            cli_key: Some(GatewayUsageTool::Cmdcode),
+            ..Default::default()
+        },
+        0,
+        10,
+        true,
+    )
+    .unwrap();
+    // 100 + 20 + 30 + 5 from the top-level row, 10 + 2 from the nested one.
+    let total: u64 = logs.data.iter().map(|row| row.total_tokens).sum();
+    assert_eq!(total, 167);
+}
+
+#[test]
+fn workbuddy_selects_one_usage_source_and_respects_inclusive_totals() {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("projects/example");
+    fs::create_dir_all(&project).unwrap();
+    // `total == input + output` marks the input as cache-inclusive.
+    let inclusive = json!({"type":"message","id":"item-1","timestamp":THEN,
+        "sessionId":"wb-session","cwd":"D:/work/example",
+        "message":{"role":"assistant","model":"wb-model",
+            "usage":{"input_tokens":1000,"output_tokens":100,"total_tokens":1100,
+                "cache_read_input_tokens":400}}});
+    // An exclusive total leaves the buckets untouched.
+    let exclusive = json!({"type":"message","id":"item-2","timestamp":THEN+1,
+        "sessionId":"wb-session",
+        "providerData":{"messageId":"provider-msg","requestModelName":"wb-model",
+            "usage":{"input_tokens":10,"output_tokens":2,"total_tokens":17,
+                "cache_read_input_tokens":5}}});
+    write_jsonl(&project.join("wb-session.jsonl"), &[inclusive, exclusive]);
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayUsageTool::Workbuddy, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 2);
+    let summary =
+        usage_stats::usage_summary(&db, None, None, Some(GatewayUsageTool::Workbuddy), true)
+            .unwrap();
+    assert_eq!(summary.total_input_tokens, 600 + 10);
+    assert_eq!(summary.total_output_tokens, 102);
+    assert_eq!(summary.total_cache_read_tokens, 405);
+}
+
+#[test]
+fn qwencode_merges_per_request_files_with_the_session_rollup_remainder() {
+    let root = tempfile::tempdir().unwrap();
+    let usage = root.path().join("usage");
+    fs::create_dir_all(&usage).unwrap();
+    write_jsonl(
+        &usage.join("token-usage-2026-09-20.jsonl"),
+        &[json!({"schemaVersion":1,"id":"req-1","sessionId":"qwen-session",
+            "model":"qwen-model","timestamp":THEN,
+            "inputTokens":1000,"cachedTokens":400,"outputTokens":50,"thoughtsTokens":10,
+            "localDate":"2026-09-20"})],
+    );
+    // The rollup covers the whole session: 1500 prompt/60 out, of which the
+    // request file already reported 1000 prompt/60 out.
+    write_jsonl(
+        &root.path().join("usage_record.jsonl"),
+        &[json!({"version":1,"sessionId":"qwen-session","timestamp":THEN,
+            "models":{"qwen-model":{"inputTokens":1500,"cachedTokens":400,"outputTokens":50,
+                "thoughtsTokens":10}}})],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayUsageTool::Qwencode, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 2);
+    let summary =
+        usage_stats::usage_summary(&db, None, None, Some(GatewayUsageTool::Qwencode), true)
+            .unwrap();
+    // Requests: 600 fresh + 400 cached + 60 out; the rollup adds 500 more prompt.
+    assert_eq!(summary.total_input_tokens, 600 + 500);
+    assert_eq!(summary.total_cache_read_tokens, 400);
+    assert_eq!(summary.total_output_tokens, 60);
+}
