@@ -866,7 +866,17 @@
         "hermes": "Hermes",
         "openclaw": "OpenClaw",
         "kimi_cli": "Kimi CLI (Python)",
-        "zcode": "ZCode"
+        "zcode": "ZCode",
+        "mimocode": "MiMoCode",
+        "prime_agent": "Prime Agent",
+        "devin": "Devin CLI",
+        "musecode": "Muse Code",
+        "cmdcode": "Command Code",
+        "qwencode": "Qwen Code",
+        "workbuddy": "WorkBuddy",
+        "workbuddy_ai": "WorkBuddy Intl.",
+        "codebuddy": "CodeBuddy",
+        "minimax": "MiniMax Code"
       },
       "cliStatus": {
         "direct": "Direct",

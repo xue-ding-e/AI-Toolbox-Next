@@ -891,11 +891,32 @@ export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModel
 };
 
 /** Collecting local usage does not enable proxy takeover for a tool. */
-export type GatewayUsageTool = GatewayCliKey | 'pi' | 'oh_my_pi' | 'omo_native' | 'dsh' | 'hermes' | 'openclaw' | 'kimi_cli' | 'zcode';
+export type GatewayUsageTool =
+  | GatewayCliKey
+  | 'pi'
+  | 'oh_my_pi'
+  | 'omo_native'
+  | 'dsh'
+  | 'hermes'
+  | 'openclaw'
+  | 'kimi_cli'
+  | 'zcode'
+  | 'mimocode'
+  | 'prime_agent'
+  | 'devin'
+  | 'musecode'
+  | 'cmdcode'
+  | 'qwencode'
+  | 'workbuddy'
+  | 'workbuddy_ai'
+  | 'codebuddy'
+  | 'minimax';
 
 export const GATEWAY_USAGE_TOOLS: readonly GatewayUsageTool[] = [
   'claude', 'claude_desktop', 'codex', 'grok', 'kimi', 'gemini', 'antigravity', 'opencode',
   'pi', 'oh_my_pi', 'omo_native', 'dsh', 'hermes', 'openclaw', 'kimi_cli', 'zcode',
+  'mimocode', 'prime_agent', 'devin', 'musecode', 'cmdcode', 'qwencode',
+  'workbuddy', 'workbuddy_ai', 'codebuddy', 'minimax',
 ];
 
 export interface SessionUsageMetadata {

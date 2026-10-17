@@ -50,6 +50,17 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // 3: token counts come from `conversations/<uuid>.db`; the transcript
         // mirror no longer emits zero-token rows.
         GatewayUsageTool::Antigravity => 3,
+        // Tools added after the original sixteen start on 2.
+        GatewayUsageTool::Mimocode
+        | GatewayUsageTool::PrimeAgent
+        | GatewayUsageTool::Devin
+        | GatewayUsageTool::Musecode
+        | GatewayUsageTool::Cmdcode
+        | GatewayUsageTool::Qwencode
+        | GatewayUsageTool::Workbuddy
+        | GatewayUsageTool::WorkbuddyAi
+        | GatewayUsageTool::Codebuddy
+        | GatewayUsageTool::Minimax => 2,
         _ => 2,
     }
 }
@@ -138,6 +149,18 @@ pub(super) fn parse_file(
         GatewayUsageTool::Zcode => return super::zcode::parse(path, fallback_timestamp),
         GatewayUsageTool::Antigravity => {
             return super::antigravity::parse(path, fallback_timestamp)
+        }
+        GatewayUsageTool::PrimeAgent => {
+            return super::prime_agent::parse(path, fallback_timestamp)
+        }
+        GatewayUsageTool::Musecode => return super::musecode::parse(path, fallback_timestamp),
+        GatewayUsageTool::Cmdcode => return super::cmdcode::parse(path, fallback_timestamp),
+        GatewayUsageTool::Qwencode => return super::qwencode::parse(path, fallback_timestamp),
+        GatewayUsageTool::Workbuddy | GatewayUsageTool::WorkbuddyAi => {
+            return super::workbuddy_family::parse(cli_key, path, fallback_timestamp)
+        }
+        GatewayUsageTool::Codebuddy => {
+            return super::codebuddy::parse(path, fallback_timestamp)
         }
         _ => {}
     }
