@@ -38,6 +38,10 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // A single-file rollout keeps its old key, so re-reading is a no-op there.
         GatewayUsageTool::Codex => 4,
         GatewayUsageTool::Dsh => 4,
+        // 3: subtract the cached part from `input_tokens` (the column includes
+        // it), prefer `completed_at`, and re-read old databases to repair the
+        // doubled cache totals.
+        GatewayUsageTool::Zcode => 3,
         _ => 2,
     }
 }
