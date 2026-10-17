@@ -1057,18 +1057,26 @@ fn sync_sources(
             }
         }
         if *cli_key == GatewayUsageTool::Hermes {
-            match hermes::sync_database(
-                db,
-                &root.join("state.db"),
-                &mut states,
-                &mut claimed_proxies,
-                now,
-            ) {
-                Ok(changes) => result.merge(changes),
-                Err(error) => {
-                    result.failed_files += 1;
-                    failed_tools.insert(*cli_key);
-                    log::warn!("Hermes session usage sync failed: {error}");
+            // Hermes keeps one database per profile beside the root one; a
+            // profile run is invisible if only `state.db` is opened.
+            for (path, source_prefix) in hermes::database_paths(root) {
+                match hermes::sync_database(
+                    db,
+                    &path,
+                    &source_prefix,
+                    &mut states,
+                    &mut claimed_proxies,
+                    now,
+                ) {
+                    Ok(changes) => result.merge(changes),
+                    Err(error) => {
+                        result.failed_files += 1;
+                        failed_tools.insert(*cli_key);
+                        log::warn!(
+                            "Hermes session usage sync failed for {}: {error}",
+                            path.display()
+                        );
+                    }
                 }
             }
         }
