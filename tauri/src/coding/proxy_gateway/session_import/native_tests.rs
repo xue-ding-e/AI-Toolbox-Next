@@ -739,7 +739,7 @@ fn hermes_cumulative_wal_updates_charge_only_deltas_and_reconcile_actual_cost() 
             api_call_count INTEGER, input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
             estimated_cost_usd REAL, actual_cost_usd REAL, first_seen REAL, last_seen REAL, cost_status TEXT);
         INSERT INTO sessions VALUES ('hermes-session',999999,999999,999);").unwrap();
-    source.execute("INSERT INTO session_model_usage VALUES ('hermes-session','hermes-model','historical','https://example.test/v1','api','main',3,100,20,80,10,0.03,0,?1,?2,'estimated')", params![THEN-86400, THEN]).unwrap();
+    source.execute("INSERT INTO session_model_usage VALUES ('hermes-session','hermes-model','historical','https://example.test/v1','api','',3,100,20,80,10,0.03,0,?1,?2,'estimated')", params![THEN-86400, THEN]).unwrap();
     let db = SqliteDbState::in_memory_for_test().unwrap();
     assert_eq!(
         run_sync(&db, GatewayUsageTool::Hermes, root.path()).inserted_records,
@@ -859,6 +859,92 @@ fn hermes_richer_schema_does_not_rebill_an_imported_legacy_total() {
             .total_tokens,
         122
     );
+}
+
+#[test]
+fn hermes_merges_the_v21_table_and_keeps_the_larger_row_per_key() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Connection::open(root.path().join("state.db")).unwrap();
+    source
+        .execute_batch(
+            "CREATE TABLE session_model_usage_v21(session_id TEXT, model TEXT, input_tokens INTEGER,
+                output_tokens INTEGER, api_call_count INTEGER, last_seen INTEGER);
+             CREATE TABLE session_model_usage(session_id TEXT, model TEXT, input_tokens INTEGER,
+                output_tokens INTEGER, api_call_count INTEGER, last_seen INTEGER);
+             -- One shared logical row: the newer table holds more of it.
+             INSERT INTO session_model_usage_v21 VALUES ('shared','model-a',100,10,1,?1);
+             INSERT INTO session_model_usage     VALUES ('shared','model-a',120,12,1,?1);
+             -- A session that only exists in the retired table.
+             INSERT INTO session_model_usage_v21 VALUES ('old-only','model-b',50,5,1,?1);",
+        )
+        .unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    assert_eq!(
+        run_sync(&db, GatewayUsageTool::Hermes, root.path()).inserted_records,
+        2
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_tokens, 187);
+}
+
+#[test]
+fn hermes_reads_one_database_per_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let root_db = Connection::open(root.path().join("state.db")).unwrap();
+    root_db
+        .execute_batch(
+            "CREATE TABLE session_model_usage(session_id TEXT, model TEXT, input_tokens INTEGER,
+                output_tokens INTEGER, api_call_count INTEGER, last_seen INTEGER);
+             INSERT INTO session_model_usage VALUES ('root-session','model-a',100,10,1,0);",
+        )
+        .unwrap();
+    let profile_dir = root.path().join("profiles/alt");
+    fs::create_dir_all(&profile_dir).unwrap();
+    let profile_db = Connection::open(profile_dir.join("state.db")).unwrap();
+    profile_db
+        .execute_batch(
+            "CREATE TABLE session_model_usage(session_id TEXT, model TEXT, input_tokens INTEGER,
+                output_tokens INTEGER, api_call_count INTEGER, last_seen INTEGER);
+             INSERT INTO session_model_usage VALUES ('profile-session','model-b',200,20,1,0);",
+        )
+        .unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    assert_eq!(
+        run_sync(&db, GatewayUsageTool::Hermes, root.path()).inserted_records,
+        2
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_tokens, 330);
+    // A second pass is still a no-op, which proves the two databases kept
+    // separate ledger identities instead of overwriting one another.
+    assert_eq!(
+        run_sync(&db, GatewayUsageTool::Hermes, root.path()).inserted_records,
+        0
+    );
+}
+
+#[test]
+fn hermes_does_not_add_the_session_rollup_when_a_main_loop_row_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Connection::open(root.path().join("state.db")).unwrap();
+    source
+        .execute_batch(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, input_tokens INTEGER, output_tokens INTEGER,
+                api_call_count INTEGER);
+             CREATE TABLE session_model_usage(session_id TEXT, model TEXT, task TEXT,
+                input_tokens INTEGER, output_tokens INTEGER, api_call_count INTEGER,
+                last_seen INTEGER);
+             INSERT INTO sessions VALUES ('loop-session',999999,999999,999);
+             INSERT INTO session_model_usage VALUES ('loop-session','model-a','',100,10,1,0);",
+        )
+        .unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    assert_eq!(
+        run_sync(&db, GatewayUsageTool::Hermes, root.path()).inserted_records,
+        1
+    );
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_tokens, 110);
 }
 
 #[test]
