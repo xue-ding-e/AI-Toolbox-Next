@@ -1,7 +1,25 @@
 # 网关 Session 统计对齐 tokei 补齐实现计划
 
-> 状态：研究完毕，按阶段增量实施。
+> 状态：**阶段一至阶段四已实施**（2026-10-17，分支 `worktree-tokei-parity`）；阶段五（项目维度）按计划顺延为独立任务。
 > 参照物：cclank/tokei（`D:\GitHub\tokei`，macOS/Windows 用量监控应用，采集器为单文件 Python `usage.30s.py`，17,947 行）。
+
+## 交付状态（2026-10-17）
+
+| 阶段 | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| 一 | P0 采集修复 ×5（ZCode、Hermes、Grok、Antigravity、Codex） | 已完成 | `9a275894` `09f5e6cd` `f03cde18` `7e3a1373` `11215c5d` |
+| 二/三 | 10 个 usage-only 新工具 | 已完成 | `96a8ef11` |
+| 四 | 时间区间自然边界 + 模型行展开单价 | 已完成 | `98567a97` |
+| 五 | 项目维度（schema v28 + cwd 采集 + 项目视图） | 未开始（顺延） | — |
+
+门禁：`cargo test` 2863 + 229 + 4 + 29 + 11 通过；`pnpm test` 974 通过；`tsc --noEmit` 与 `pnpm i18n:check` 通过。
+
+**相对原计划的简化与偏离**（均已在模块注释/AGENTS.md 记录）：
+
+- Codex 双写去重不做跨扫描持久化：文件变化必然整文件重解析，`pending_responses`/`response_ids`/`legacy_before_response` 只在单次解析内有效，`SourceState` 未新增 serde 字段。
+- WorkBuddy/CodeBuddy 的 `providerData.messageId` 去重按文件进行（tokei 为全局）；CodeBuddy Credit 不折算美元、未接运行日志 TTFT；MiniMax 模型名只取库内列 + 会话回退，未实现日志增量状态机。
+- Qwen Code 的 `sync_root` 读的是合并视图，文件遍历仍会单独解析同一批文件；request id 相同、合并视图后写收敛，结果正确但有冗余读取。
+- 新工具验证以合成 fixture + tokei 源码口径对齐为准（本机无真实用量），未声称实测账号数据。
 
 ## Context（背景）
 
