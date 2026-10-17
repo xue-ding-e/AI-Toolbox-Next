@@ -508,6 +508,50 @@ fn dsh_parser_upgrade_backfills_resume_history_without_rebilling_old_identities(
 }
 
 #[test]
+fn grok_unified_log_yields_one_request_record_per_inference() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let logs = root.path().join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    // The log's own timestamps must fall inside the default retention window;
+    // a months-old fixture would be rolled up and pruned before the read.
+    let first = json!({"ts":THEN,"sid":"grok-session","msg":"shell.turn.build_request_done","ctx":{"loop_index":1}});
+    let timing_only = json!({"ts":THEN,"sid":"grok-session","msg":"shell.turn.inference_done","ctx":{"loop_index":1,"model_elapsed_ms":900}});
+    let inference = json!({"ts":THEN,"sid":"grok-session","msg":"shell.turn.inference_done",
+        "ctx":{"loop_index":1,"attempts":1,"prompt_tokens":26132,"cached_prompt_tokens":6132,
+            "completion_tokens":409,"reasoning_tokens":155,"model_elapsed_ms":5466}});
+    write_jsonl(
+        &logs.join("unified.jsonl"),
+        // The last entry is a byte-for-byte duplicate: the same inference, not
+        // a second one.
+        &[first, timing_only, inference.clone(), inference],
+    );
+    assert_eq!(
+        run_sync(&db, GatewayUsageTool::Grok, root.path()).inserted_records,
+        1
+    );
+    let logs = usage_stats::request_logs(
+        &db,
+        &GatewayRequestLogFilters {
+            cli_key: Some(GatewayUsageTool::Grok),
+            ..Default::default()
+        },
+        0,
+        10,
+        true,
+    )
+    .unwrap();
+    assert_eq!(logs.data[0].input_tokens, 20_000);
+    assert_eq!(logs.data[0].cache_read_tokens, 6_132);
+    // Reasoning is part of the completion count, not an extra bucket.
+    assert_eq!(logs.data[0].output_tokens, 409);
+    assert_eq!(
+        logs.data[0].usage_metadata.as_ref().unwrap().granularity,
+        SessionUsageGranularity::Request
+    );
+}
+
+#[test]
 fn grok_turns_preserve_model_call_counts_and_ignore_total_and_subagent_mirrors() {
     let root = tempfile::tempdir().unwrap();
     let db = SqliteDbState::in_memory_for_test().unwrap();
