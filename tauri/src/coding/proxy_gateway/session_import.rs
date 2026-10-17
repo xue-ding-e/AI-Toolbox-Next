@@ -1086,6 +1086,16 @@ fn sync_sources(
                 }
             }
         }
+        if *cli_key == GatewayUsageTool::Antigravity {
+            match antigravity::sync_databases(db, root, &mut states, &mut claimed_proxies, now) {
+                Ok(changes) => result.merge(changes),
+                Err(error) => {
+                    result.failed_files += 1;
+                    failed_tools.insert(*cli_key);
+                    log::warn!("Antigravity session usage sync failed: {error}");
+                }
+            }
+        }
         if *cli_key == GatewayUsageTool::OpenCode {
             match open_code::sync_database(
                 db,

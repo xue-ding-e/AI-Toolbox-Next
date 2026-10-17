@@ -45,6 +45,9 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // 3: read `logs/unified.jsonl` as the primary source; older installs
         // still import from the `updates.jsonl` mirror.
         GatewayUsageTool::Grok => 3,
+        // 3: token counts come from `conversations/<uuid>.db`; the transcript
+        // mirror no longer emits zero-token rows.
+        GatewayUsageTool::Antigravity => 3,
         _ => 2,
     }
 }
