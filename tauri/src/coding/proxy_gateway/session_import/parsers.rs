@@ -42,6 +42,9 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // it), prefer `completed_at`, and re-read old databases to repair the
         // doubled cache totals.
         GatewayUsageTool::Zcode => 3,
+        // 3: read `logs/unified.jsonl` as the primary source; older installs
+        // still import from the `updates.jsonl` mirror.
+        GatewayUsageTool::Grok => 3,
         _ => 2,
     }
 }

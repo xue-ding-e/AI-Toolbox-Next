@@ -626,6 +626,11 @@ fn default_session_roots(db: &SqliteDbState, cli_key: GatewayUsageTool) -> Vec<P
             roots.push(location.host_path.join("store"));
         }
         roots.push(location.host_path.join(suffix));
+        // Grok's per-request token counts live in `logs/unified.jsonl`, not in
+        // the session mirror tree; the mirror is kept for older installs.
+        if cli_key == GatewayUsageTool::Grok {
+            roots.push(location.host_path.join("logs"));
+        }
     }
     if let Some(home) = dirs::home_dir() {
         let default = home.join(home_name).join(suffix);
@@ -754,10 +759,11 @@ fn session_files(cli_key: GatewayUsageTool, root: &Path) -> Vec<PathBuf> {
                 }
                 GatewayUsageTool::Antigravity => antigravity::is_transcript(&path),
                 GatewayUsageTool::Grok => {
-                    name == "updates.jsonl"
+                    (name == "updates.jsonl"
                         && !path
                             .components()
-                            .any(|part| part.as_os_str() == "subagents")
+                            .any(|part| part.as_os_str() == "subagents"))
+                        || grok::is_unified_log(&path)
                 }
                 GatewayUsageTool::Kimi | GatewayUsageTool::KimiCli => {
                     kimi::is_usage_file(cli_key, &path)
