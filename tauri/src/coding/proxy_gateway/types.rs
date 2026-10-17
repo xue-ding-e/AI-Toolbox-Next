@@ -1199,6 +1199,11 @@ pub struct GatewayModelStats {
     /// already stored are only requoted by the session cost reconciliation, not
     /// by pricing CRUD.
     pub has_pricing: bool,
+    /// The four per-million prices that actually priced this model, when the
+    /// pricing table matched one. Mirrors what the write path used, so the row
+    /// can be expanded without re-implementing the matcher in the frontend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
