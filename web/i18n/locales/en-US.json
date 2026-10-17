@@ -143,7 +143,13 @@
             "2": "Wed",
             "4": "Fri"
           }
-        }
+        },
+        "pricingUnit": "Per million tokens, USD:",
+        "pricingInput": "Input {{value}}",
+        "pricingOutput": "Output {{value}}",
+        "pricingCacheRead": "Cache read {{value}}",
+        "pricingCacheCreation": "Cache creation {{value}}",
+        "pricingUnavailable": "No price matched this model, so the amount only counts reported or priced usage."
       },
       "pricing": {
         "open": "Pricing config",

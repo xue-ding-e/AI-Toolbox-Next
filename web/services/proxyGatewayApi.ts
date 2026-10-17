@@ -397,6 +397,8 @@ export interface GatewayModelStats {
   cache_hit_rate: number | null;
   /** Whether `model_pricing` can price this model id at all (backend matcher). */
   has_pricing: boolean;
+  /** The per-million prices the backend's matcher resolved, when any. */
+  pricing?: ModelPricing | null;
 }
 
 export interface GatewayRequestLogSummary {
