@@ -755,6 +755,119 @@ fn codex_compressed_rollout_is_scanned() {
     assert_eq!(count(&db), 1);
 }
 
+fn codex_token_usage_record(response_id: &str, usage: Value, at: i64) -> Value {
+    json!({"type":"token_usage_record","timestamp":at,"payload":{
+        "thread_id":PARENT,"session_id":PARENT,"response_id":response_id,
+        "usage":usage,"thread_token_usage":usage,"turn_token_usage":usage}})
+}
+
+#[test]
+fn codex_token_usage_record_is_counted_once_and_deducts_its_legacy_mirror() {
+    let root = tempfile::tempdir().unwrap();
+    let usage = json!({"input_tokens":1000,"cached_input_tokens":400,
+        "cache_write_input_tokens":100,"output_tokens":50,"reasoning_output_tokens":10,
+        "total_tokens":1050});
+    // The authoritative record arrives first, then the legacy notification
+    // repeating the same numbers as `last_token_usage`.
+    let mirror = json!({"type":"event_msg","timestamp":THEN + 1,"payload":{
+        "type":"token_count","info":{
+            "total_token_usage":usage,"last_token_usage":usage},
+        "rate_limits":{"limit_id":"codex"}}});
+    write_jsonl(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+            json!({"type":"event_msg","timestamp":THEN - 9,"payload":{"type":"task_started"}}),
+            json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            codex_token_usage_record("resp-one", usage.clone(), THEN),
+            mirror,
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.inserted_records, 1, "the mirror must not add a row");
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_input_tokens, 500);
+    assert_eq!(summary.total_cache_read_tokens, 400);
+    assert_eq!(summary.total_cache_creation_tokens, 100);
+    assert_eq!(summary.total_output_tokens, 50);
+    let logs =
+        usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true).unwrap();
+    assert_eq!(logs.data[0].trace_id, format!("SESSION:codex:{PARENT}:resp-one"));
+}
+
+#[test]
+fn codex_legacy_first_keeps_one_call_and_adopts_the_response_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let usage = json!({"input_tokens":1000,"cached_input_tokens":400,
+        "cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,
+        "total_tokens":1050});
+    let legacy = json!({"type":"event_msg","timestamp":THEN,"payload":{
+        "type":"token_count","info":{
+            "total_token_usage":usage,"last_token_usage":usage},
+        "rate_limits":{"limit_id":"codex"}}});
+    write_jsonl(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+            json!({"type":"event_msg","timestamp":THEN - 9,"payload":{"type":"task_started"}}),
+            json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            legacy,
+            codex_token_usage_record("resp-late", usage, THEN + 1),
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.inserted_records, 1, "one call, not two");
+    let ids = db
+        .with_conn(|conn| {
+            let mut statement = conn
+                .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            Ok(rows)
+        })
+        .unwrap();
+    assert_eq!(ids, vec![format!("SESSION:codex:{PARENT}:resp-late")]);
+}
+
+#[test]
+fn codex_fork_records_never_bill_the_child() {
+    let root = tempfile::tempdir().unwrap();
+    let usage = json!({"input_tokens":1000,"cached_input_tokens":0,
+        "cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,
+        "total_tokens":1050});
+    // A copied record still names its owner in `thread_id`; the child's own
+    // record names the child.
+    let mut copied = codex_token_usage_record("resp-parent", usage.clone(), THEN);
+    copied["payload"]["thread_id"] = json!(PARENT);
+    let mut own = codex_token_usage_record("resp-child", usage, THEN + 1);
+    own["payload"]["thread_id"] = json!(CHILD);
+    write_jsonl(
+        &root.path().join(format!("rollout-{CHILD}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":CHILD}}),
+            json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            copied,
+            own,
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.inserted_records, 1);
+    assert_eq!(
+        usage_stats::usage_summary(&db, None, None, None, true)
+            .unwrap()
+            .total_input_tokens,
+        1000
+    );
+}
+
 /// A rebuild drops only what the collector derived, and re-imports it from the
 /// transcripts. Gateway-served requests have no on-disk source and must survive.
 #[test]
