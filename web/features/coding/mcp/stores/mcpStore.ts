@@ -29,7 +29,10 @@ interface McpState {
   setImportJsonModalOpen: (open: boolean) => void;
 }
 
-export const useMcpStore = create<McpState>()((set) => ({
+export const useMcpStore = create<McpState>()((set) => {
+  let serverFetchRevision = 0;
+
+  return ({
   servers: [],
   tools: [],
   loading: false,
@@ -40,14 +43,19 @@ export const useMcpStore = create<McpState>()((set) => ({
   isImportJsonModalOpen: false,
 
   fetchServers: async () => {
+    const requestRevision = ++serverFetchRevision;
     set({ loading: true });
     try {
       const servers = await mcpApi.listMcpServers();
-      set({ servers });
+      if (requestRevision === serverFetchRevision) {
+        set({ servers });
+      }
     } catch (error) {
       console.error('Failed to fetch MCP servers:', error);
     } finally {
-      set({ loading: false });
+      if (requestRevision === serverFetchRevision) {
+        set({ loading: false });
+      }
     }
   },
 
@@ -104,4 +112,5 @@ export const useMcpStore = create<McpState>()((set) => ({
   setImportModalOpen: (open) => set({ isImportModalOpen: open }),
 
   setImportJsonModalOpen: (open) => set({ isImportJsonModalOpen: open }),
-}));
+  });
+});
