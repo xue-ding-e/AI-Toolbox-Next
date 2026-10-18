@@ -105,3 +105,41 @@ jobs:
         run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::session_manager::dsh -- --nocapture
       - name: Run DSH configuration and catalog regressions
         run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::dsh -- --nocapture
+  opencode-v2-regression:
+    # Deliberately scoped to the reviewed OpenCode V2 validation candidate only.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/validate-opencode-v2-20261018'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify all fifteen OpenCode V2 regressions are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --list > /tmp/opencode-v2-tests.txt
+          cat /tmp/opencode-v2-tests.txt
+          for name in v1_provider_migrates_to_official_v2_provider_and_model_shapes v1_agent_mode_and_small_model_migrate_to_v2_agents v1_mcp_nests_oauth_and_uses_request_timeout v1_top_level_names_and_skills_migrate disabled_and_enabled_providers_round_trip_through_policies v1_anthropic_provider_keeps_its_key_in_settings v2_auth_headers_lift_back_into_provider_options v2_explicit_api_key_wins_over_auth_header model_capabilities_round_trip_reasoning_and_temperature untouched_model_writes_no_capabilities_block released_v2_flat_provider_restores_the_v1_editor_shape dual_shape_provider_survives_a_read_write_round_trip v2_provider_agent_and_mcp_restore_v1_editor_shapes set_mode_restores_the_original_v1_bytes explicit_provider_header_overrides_generated_auth_header; do
+            grep -Fx "coding::open_code::v2_migration::tests::${name}: test" /tmp/opencode-v2-tests.txt
+          done
+          test "$(grep -c '^coding::open_code::v2_migration::tests::.*: test$' /tmp/opencode-v2-tests.txt)" = 15
+      - name: Run OpenCode V2 migration regressions
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --nocapture
