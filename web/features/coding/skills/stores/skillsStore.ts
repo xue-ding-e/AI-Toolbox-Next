@@ -48,7 +48,10 @@ interface SkillsState {
   getAllTools: () => ToolOption[];
 }
 
-export const useSkillsStore = create<SkillsState>()((set, get) => ({
+export const useSkillsStore = create<SkillsState>()((set, get) => {
+  let skillsRequestRevision = 0;
+
+  return ({
   // Data
   skills: [],
   toolStatus: null,
@@ -86,13 +89,18 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   },
 
   loadSkills: async () => {
+    const requestRevision = ++skillsRequestRevision;
     set({ loading: true, error: null });
     try {
       const skills = await api.getManagedSkills();
-      set({ skills, loading: false });
+      if (requestRevision === skillsRequestRevision) {
+        set({ skills, loading: false });
+      }
     } catch (error) {
       console.error('Failed to load skills:', error);
-      set({ error: String(error), loading: false });
+      if (requestRevision === skillsRequestRevision) {
+        set({ error: String(error), loading: false });
+      }
     }
   },
 
@@ -163,4 +171,5 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       iconUrl: t.icon_url ?? null,
     }));
   },
-}));
+});
+});
