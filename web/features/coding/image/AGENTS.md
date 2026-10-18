@@ -41,6 +41,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- 历史列表读取使用 store 实例内仅作用于 jobs 的请求代次：新读取以及成功删除/生成会使旧列表快照失效，避免已删除任务复活或新结果被旧刷新覆盖。失败删除不推进代次；workspace 的渠道更新与 loading 收尾不能被 jobs 代次拦截。最新读取失败时保留当前状态，不恢复更旧快照。
+
 - 不要把 `Image` 当成第 5 个 coding runtime 模块去接 `visibleTabs -> WSL/SSH skipModules` 那套语义。它没有对应的 WSL/SSH runtime-location 逻辑。
 - 不要再把图片接口配置理解成单个 `settings` 对象；当前真实配置源已经是 `image_channel` 表，而不是旧的 `base_url/api_key/default_model` 单记录。
 - 图片模块从数据库读出的 `image_channel` / `image_job` / `image_asset` `id` 不能直接信任 `type::string(id)` 的原样值；前后端对外使用前必须先清洗成干净业务 id，否则编辑渠道、删除渠道、拖拽排序和按 `channel_id` 提交任务都会因为 record id 前缀而找不到记录。

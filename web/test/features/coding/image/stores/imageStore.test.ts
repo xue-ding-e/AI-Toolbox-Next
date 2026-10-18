@@ -120,3 +120,124 @@ test('submitJob prefers refreshed jobs list when background refresh succeeds', a
   assert.equal(state.jobs[0]?.error_message, 'refreshed status');
   assert.equal(state.lastJobId, sampleJob.id);
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('refresh started before successful deletion cannot restore the deleted job', async () => {
+  const response = deferred<ImageJob[]>();
+  const store = createImageStore(createTestDependencies({ listImageJobs: () => response.promise }));
+  store.setState({ jobs: [sampleJob], lastJobId: sampleJob.id });
+  const refresh = store.getState().refreshJobs();
+  await store.getState().removeJob(sampleJob.id, false);
+  response.resolve([sampleJob]);
+  await refresh;
+  assert.deepEqual(store.getState().jobs, []);
+  assert.equal(store.getState().lastJobId, null);
+});
+
+test('stale workspace jobs are ignored without dropping channel state or loading cleanup', async () => {
+  const response = deferred<ImageWorkspace>();
+  const channel: ImageChannel = {
+    id: 'channel-1', name: 'Synthetic channel', provider_kind: 'openai_compatible',
+    base_url: 'https://example.invalid', api_key: '', enabled: true, sort_order: 0,
+    models: [], created_at: 1, updated_at: 1,
+  };
+  const store = createImageStore(createTestDependencies({ getImageWorkspace: () => response.promise }));
+  store.setState({ jobs: [sampleJob], lastJobId: sampleJob.id });
+  const workspace = store.getState().loadWorkspace();
+  assert.equal(store.getState().loading, true);
+  await store.getState().removeJob(sampleJob.id, false);
+  response.resolve({ channels: [channel], jobs: [sampleJob] });
+  await workspace;
+  assert.deepEqual(store.getState().jobs, []);
+  assert.equal(store.getState().lastJobId, null);
+  assert.deepEqual(store.getState().channels, [channel]);
+  assert.equal(store.getState().editingChannelId, channel.id);
+  assert.equal(store.getState().loading, false);
+});
+
+test('failed deletion does not invalidate a pending legitimate refresh', async () => {
+  const response = deferred<ImageJob[]>();
+  const store = createImageStore(createTestDependencies({
+    listImageJobs: () => response.promise,
+    deleteImageJob: async () => { throw new Error('delete failed'); },
+  }));
+  const refresh = store.getState().refreshJobs();
+  await assert.rejects(store.getState().removeJob(sampleJob.id, false), /delete failed/);
+  response.resolve([sampleJob]);
+  await refresh;
+  assert.deepEqual(store.getState().jobs, [sampleJob]);
+  assert.equal(store.getState().lastJobId, sampleJob.id);
+});
+
+test('the latest history refresh wins when responses arrive out of order', async () => {
+  const older = deferred<ImageJob[]>();
+  const newer = deferred<ImageJob[]>();
+  let reads = 0;
+  const store = createImageStore(createTestDependencies({
+    listImageJobs: () => ++reads === 1 ? older.promise : newer.promise,
+  }));
+  const first = store.getState().refreshJobs();
+  const second = store.getState().refreshJobs();
+  newer.resolve([]);
+  await second;
+  older.resolve([sampleJob]);
+  await first;
+  assert.deepEqual(store.getState().jobs, []);
+  assert.equal(store.getState().lastJobId, null);
+});
+
+test('submit follow-up refresh cannot resurrect a successfully deleted job', async () => {
+  const response = deferred<ImageJob[]>();
+  const started = deferred<void>();
+  const store = createImageStore(createTestDependencies({
+    listImageJobs: () => { started.resolve(); return response.promise; },
+  }));
+  const submit = store.getState().submitJob(sampleJobInput);
+  await started.promise;
+  assert.equal(store.getState().lastJobId, sampleJob.id);
+  await store.getState().removeJob(sampleJob.id, false);
+  response.resolve([sampleJob]);
+  await submit;
+  assert.deepEqual(store.getState().jobs, []);
+  assert.equal(store.getState().lastJobId, null);
+  assert.equal(store.getState().submitting, false);
+});
+
+test('a new refresh after deletion can still apply backend state', async () => {
+  const survivor = { ...sampleJob, id: 'job-2' };
+  const store = createImageStore(createTestDependencies({ listImageJobs: async () => [survivor] }));
+  store.setState({ jobs: [sampleJob], lastJobId: sampleJob.id });
+  await store.getState().removeJob(sampleJob.id, false);
+  await store.getState().refreshJobs();
+  assert.deepEqual(store.getState().jobs, [survivor]);
+  assert.equal(store.getState().lastJobId, survivor.id);
+});
+
+test('an older refresh cannot hide a successful generation before its follow-up resolves', async () => {
+  const older = deferred<ImageJob[]>();
+  const followUp = deferred<ImageJob[]>();
+  const started = deferred<void>();
+  let reads = 0;
+  const store = createImageStore(createTestDependencies({
+    listImageJobs: () => {
+      if (++reads === 1) return older.promise;
+      started.resolve();
+      return followUp.promise;
+    },
+  }));
+  const refresh = store.getState().refreshJobs();
+  const submit = store.getState().submitJob(sampleJobInput);
+  await started.promise;
+  older.resolve([]);
+  await refresh;
+  assert.deepEqual(store.getState().jobs, [sampleJob]);
+  assert.equal(store.getState().lastJobId, sampleJob.id);
+  followUp.resolve([sampleJob]);
+  await submit;
+  assert.deepEqual(store.getState().jobs, [sampleJob]);
+});
