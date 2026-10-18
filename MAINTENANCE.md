@@ -1,10 +1,10 @@
 # Independent maintenance
 
 - Upstream: https://github.com/coulsontl/ai-toolbox
-- Recorded upstream commit: `5e18c4a80130e6704fe38c9a4f134f6cc039c1c5`
+- Initial upstream baseline commit: `5e18c4a80130e6704fe38c9a4f134f6cc039c1c5`
 - Linear baseline commit: `f5a739568cee811bed11ab745bb5a4d16917e9e2`
 - `upstream-main` preserves the original upstream commit graph and authorship.
-- `main` reconstructs the functional commit sequence without merge commits. Original author/committer identities, dates and messages are retained with an `Original-Commit` trailer. Rewritten commit signatures are not represented as original signatures; inspect `upstream-main` for the original objects.
+- `main` keeps a functional commit sequence without merge commits. The initial linear reconstruction retains original author/committer identities, dates and messages with an `Original-Commit` trailer. Later upstream synchronization uses cherry-picks: source authors and author dates are retained with a `(cherry picked from commit ...)` reference, while committer metadata records the new integration. Rewritten commit signatures are not represented as original signatures; inspect the upstream objects for original signatures.
 - [Commit mapping](docs/upstream-history-map.tsv) records source commits, rewritten commits and integration records. Redundant merges map to the existing linear tip. Mainline integration commits retain the original upstream integration tree. Internal merge integrations apply a parent-relative difference conservatively: the unique original parent already ancestral to the most recent mainline boundary is preferred, otherwise the first parent is used. They are not claimed to be pure conflict-resolution changes.
 - The linear baseline tree is identical to the recorded upstream tree. Every original first-parent boundary was checked for tree equality.
 - Existing licenses, copyright notices and third-party notices remain authoritative. No upstream author is replaced or claimed as the independent maintainer.
@@ -12,7 +12,7 @@
 
 ## Automation and releases
 
-Original workflow files are retained as documentation under `docs/upstream-workflows/` with `.txt` suffixes; GitHub does not load them as workflows. Repository Actions are enabled for two reviewed, read-only validation workflows. Structural history and JSON checks run on `main` changes. Full frontend and Rust validation can be dispatched manually on `main`; its initial-validation push trigger is restricted to `validation/cloud-checks`. The two heavy jobs run sequentially and do not publish or deploy.
+Original workflow files are retained as documentation under `docs/upstream-workflows/` with `.txt` suffixes; GitHub does not load them as workflows. Repository Actions are configured for three reviewed validation workflows with read-only repository permissions. Structural history and JSON checks run on `main` changes. Full frontend and Rust validation can be dispatched manually on `main`; its initial-validation push trigger is restricted to `validation/cloud-checks`. The two heavy jobs run sequentially and do not publish or deploy.
 
 No upstream tags, releases, secrets, signing keys, R2 storage configuration or publishing credentials are copied. This repository has not published independent binaries. Product identifiers, updater endpoints and release provenance require a separate review before building or distributing independent packages. Existing upstream development and test instructions still apply.
 
@@ -24,3 +24,15 @@ The initial full cloud run on `f660c307122e86c769c5d024d4c57802f3e4b2f4` passed:
 - Frontend: 966 tests passed, zero failed/skipped; 307 separate browser-fixture checks and the structural layout guards passed.
 - Rust: 3,118 tests passed, zero failed; 13 upstream tests remain ignored because they require real credentials, local databases/session files, installed CLIs or WSL environments. This count includes 11 passing doctests.
 - These results do not verify native desktop GUI behavior, platform-specific packaging/signing, live credentials or independent update channels. See the [validation backlog](https://github.com/xue-ding-e/AI-Toolbox-Next/issues/1).
+
+## Upstream synchronization prepared on 2026-10-18
+
+- Latest synchronized source: `019372a8e64215fb7089a8ed28206da9f934c43c`.
+- Previous mirrored source: `74d0ee923de0cc15b5be534e7f044b762de2a646`.
+- Candidate starts from existing maintenance `main` at `4cf5ceda436b3c86ac506a71dd83cff307268a37`; existing history is preserved and only single-parent commits are appended.
+- The 28 source commits comprise 23 separately replayed functional/documentation commits, two patch-equivalent WebSocket commits already present in this repository, and three merges. The merges are audited rather than inserted into development history. Source authors and source commit references are retained.
+- PR #428's test/fix patches are already represented by `3a753736` / `153fc0e7`; stable patch IDs match official `bff3a99b` / `3efe8494` respectively.
+- Merge `4adf486b` adds no independent integration change. Merge `4dd72321` combines service-tier and pricing/collector documentation; its exact resolved module-documentation blob is used during `140a6601` replay. Merge `46a3f990` reconciles heatmap/range naming, bilingual pricing text and formatter tests; its exact four resolved blobs are used during `98567a97` replay. The intervening source commits do not change those four paths.
+- At the `46a3f990` integration boundary and final source tip, all upstream application and test files match the official tree exactly. Remaining differences are only the existing Next README prefix, maintenance/history records, validation workflows, and the inert copy of the original release workflow.
+- [Synchronization evidence](docs/history-verification/upstream-sync-20261018.json) records every source commit and its candidate mapping. The initial baseline evidence above remains historical evidence, not a claim that this new candidate passed those old test runs.
+- This record describes a local review candidate; it does not assert that remote `main` or `upstream-main` has moved. Publishing requires a fresh remote-tip check and review/validation of the final candidate. No binary release or deployment is part of this synchronization.
