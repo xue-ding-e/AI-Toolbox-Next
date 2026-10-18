@@ -67,7 +67,11 @@ const defaultImageStoreDependencies: ImageStoreDependencies = {
 
 export const createImageStore = (
   dependencies: ImageStoreDependencies = defaultImageStoreDependencies
-) => create<ImageState>()((set, get) => ({
+) => {
+  // Only job snapshots share this revision; channel updates remain independent.
+  let jobsRevision = 0;
+
+  return create<ImageState>()((set, get) => ({
   channels: [],
   jobs: [],
   loading: false,
@@ -78,13 +82,16 @@ export const createImageStore = (
   lastJobId: null,
 
   loadWorkspace: async () => {
+    const jobsRequestRevision = ++jobsRevision;
     set({ loading: true });
     try {
       const workspace = await dependencies.getImageWorkspace();
       set({
         channels: workspace.channels,
-        jobs: workspace.jobs,
-        lastJobId: workspace.jobs[0]?.id ?? null,
+        ...(jobsRequestRevision === jobsRevision ? {
+          jobs: workspace.jobs,
+          lastJobId: workspace.jobs[0]?.id ?? null,
+        } : {}),
         editingChannelId:
           get().editingChannelId && workspace.channels.some((channel) => channel.id === get().editingChannelId)
             ? get().editingChannelId
@@ -96,7 +103,9 @@ export const createImageStore = (
   },
 
   refreshJobs: async () => {
+    const jobsRequestRevision = ++jobsRevision;
     const jobs = await dependencies.listImageJobs(50);
+    if (jobsRequestRevision !== jobsRevision) return;
     set({
       jobs,
       lastJobId: jobs[0]?.id ?? null,
@@ -139,6 +148,7 @@ export const createImageStore = (
 
   removeJob: async (jobId, deleteLocalAssets) => {
     await dependencies.deleteImageJob({ id: jobId, delete_local_assets: deleteLocalAssets });
+    jobsRevision += 1;
     set((currentState) => {
       const nextJobs = currentState.jobs.filter((job) => job.id !== jobId);
       const nextLastJobId =
@@ -163,16 +173,20 @@ export const createImageStore = (
     set({ submitting: true });
     try {
       const job = await dependencies.createImageJob(input);
+      jobsRevision += 1;
       set((currentState) => ({
         jobs: upsertImageJob(currentState.jobs, job),
         lastJobId: job.id,
       }));
       try {
+        const jobsRequestRevision = ++jobsRevision;
         const jobs = await dependencies.listImageJobs(50);
-        set((currentState) => ({
-          jobs: jobs.length > 0 ? jobs : currentState.jobs,
-          lastJobId: job.id,
-        }));
+        if (jobsRequestRevision === jobsRevision) {
+          set((currentState) => ({
+            jobs: jobs.length > 0 ? jobs : currentState.jobs,
+            lastJobId: job.id,
+          }));
+        }
       } catch (refreshError) {
         console.warn('Image jobs refresh failed after successful submit', refreshError);
       }
@@ -184,6 +198,7 @@ export const createImageStore = (
 
   setActiveView: (view) => set({ activeView: view }),
   setEditingChannelId: (channelId) => set({ editingChannelId: channelId }),
-}));
+  }));
+};
 
 export const useImageStore = createImageStore();
