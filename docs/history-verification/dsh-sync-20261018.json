@@ -1,0 +1,48 @@
+{
+  "source": "f3eae1e3fdbe7b2d1f53c74c8113c20df794e009",
+  "source_parent": "019372a8e64215fb7089a8ed28206da9f934c43c",
+  "maintenance_base": "fcbab9f1f8b270890610c8c6f080d2edb1d13a08",
+  "replayed_commit": "28e1a61777576f3d50b0261b863ff8cf97ac74ce",
+  "tested_commit": "799d39f1665253914e16f3a40be239ad95a399e0",
+  "source_changes": "Nine DSH source/test/documentation files exactly match the upstream commit. Existing image-history fix and Next maintenance overlay are retained.",
+  "validation": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39127462408",
+    "conclusion": "success",
+    "toolchain": {
+      "runner": "ubuntu-22.04",
+      "rustc": "1.99.1",
+      "cargo": "1.99.1"
+    },
+    "six_added_tests_list_verified": true,
+    "session_tests": {
+      "passed": 21,
+      "failed": 0,
+      "ignored": 2
+    },
+    "configuration_catalog_tests": {
+      "passed": 36,
+      "failed": 0,
+      "ignored": 0
+    },
+    "ignored_tests": [
+      "coding::session_manager::dsh::tests::real_artifact_smoke",
+      "coding::session_manager::dsh::tests::real_sessions_root_smoke"
+    ],
+    "local_node_focused": {
+      "passed": 26,
+      "failed": 0
+    },
+    "typescript": "passed",
+    "deliberately_skipped_jobs": [
+      "frontend",
+      "rust"
+    ],
+    "not_run": [
+      "Full Rust suite",
+      "Full frontend suite for this DSH candidate",
+      "Browser interactions and new input/compat model-field save roundtrip",
+      "Native desktop and real DSH session artifacts"
+    ]
+  },
+  "open_boundary": "The session-list parser inspects the first 40 lines for turn/start. A later first turn could be classified as blank. This is a static boundary concern, not a reproduced regression in real 0.2.1 sessions; a valid delayed-first-turn fixture and product semantics remain to be verified."
+}
