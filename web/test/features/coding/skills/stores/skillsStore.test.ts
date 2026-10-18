@@ -112,3 +112,124 @@ test('installed-tool options filter unavailable tools while retaining path and i
     id: 'absent-tool', label: 'Absent', installed: false, skillDir: null, iconUrl: null,
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+test('a pre-delete list cannot revive a skill after the post-delete reload', async () => {
+  const { deleteManagedSkill } = await import('../../../../../features/coding/skills/services/skillsApi.ts');
+  const oldResponse = deferred<ManagedSkill[]>();
+  let reads = 0;
+  mockInvoke(async (command) => {
+    if (command === 'skills_get_managed_skills') return ++reads === 1 ? oldResponse.promise : [];
+    assert.equal(command, 'skills_delete_managed');
+  });
+  useSkillsStore.setState({ skills: [skill] });
+  const oldRead = useSkillsStore.getState().loadSkills();
+  // Same API -> reload boundary used by useSkills.deleteSkill; no native deletion.
+  await deleteManagedSkill(skill.id);
+  await useSkillsStore.getState().loadSkills();
+  assert.deepEqual(useSkillsStore.getState().skills, []);
+  oldResponse.resolve([skill]);
+  await oldRead;
+  assert.deepEqual(useSkillsStore.getState().skills, []);
+});
+
+for (const fails of [false, true]) {
+  test(`obsolete ${fails ? 'failed' : 'successful'} list leaves latest loading and error alone`, async (context) => {
+    context.mock.method(console, 'error', () => {});
+    const older = deferred<ManagedSkill[]>();
+    const latest = deferred<ManagedSkill[]>();
+    let calls = 0;
+    mockInvoke(async () => ++calls === 1 ? older.promise : latest.promise);
+    useSkillsStore.setState({ skills: [skill] });
+    const first = useSkillsStore.getState().loadSkills();
+    const second = useSkillsStore.getState().loadSkills();
+    if (fails) older.reject(new Error('Obsolete failure'));
+    else older.resolve([]);
+    await first;
+    assert.equal(useSkillsStore.getState().loading, true);
+    assert.equal(useSkillsStore.getState().error, null);
+    assert.deepEqual(useSkillsStore.getState().skills, [skill]);
+    latest.resolve([]);
+    await second;
+    assert.equal(useSkillsStore.getState().loading, false);
+    assert.deepEqual(useSkillsStore.getState().skills, []);
+  });
+}
+
+test('latest failure retains current skills and is not hidden by obsolete success; retry works', async (context) => {
+  context.mock.method(console, 'error', () => {});
+  const older = deferred<ManagedSkill[]>();
+  let calls = 0;
+  mockInvoke(async () => {
+    calls += 1;
+    if (calls === 1) return older.promise;
+    if (calls === 2) throw new Error('Latest failure');
+    return [];
+  });
+  useSkillsStore.setState({ skills: [skill] });
+  const first = useSkillsStore.getState().loadSkills();
+  await useSkillsStore.getState().loadSkills();
+  older.resolve([]);
+  await first;
+  assert.deepEqual(useSkillsStore.getState().skills, [skill]);
+  assert.equal(useSkillsStore.getState().error, 'Error: Latest failure');
+  assert.equal(useSkillsStore.getState().loading, false);
+  await useSkillsStore.getState().loadSkills();
+  assert.deepEqual(useSkillsStore.getState().skills, []);
+  assert.equal(useSkillsStore.getState().error, null);
+});
+
+test('obsolete failure after a completed latest read cannot replace its success', async (context) => {
+  context.mock.method(console, 'error', () => {});
+  const older = deferred<ManagedSkill[]>();
+  let calls = 0;
+  mockInvoke(async () => ++calls === 1 ? older.promise : [skill]);
+  const first = useSkillsStore.getState().loadSkills();
+  await useSkillsStore.getState().loadSkills();
+  older.reject(new Error('Obsolete failure'));
+  await first;
+  assert.deepEqual(useSkillsStore.getState().skills, [skill]);
+  assert.equal(useSkillsStore.getState().error, null);
+  assert.equal(useSkillsStore.getState().loading, false);
+});
+
+test('list completion preserves a concurrent tool-status error', async (context) => {
+  context.mock.method(console, 'error', () => {});
+  const list = deferred<ManagedSkill[]>();
+  mockInvoke(async (command) => {
+    if (command === 'skills_get_managed_skills') return list.promise;
+    assert.equal(command, 'skills_get_tool_status');
+    throw new Error('Tool status failure');
+  });
+  const read = useSkillsStore.getState().loadSkills();
+  await useSkillsStore.getState().loadToolStatus();
+  list.resolve([skill]);
+  await read;
+  assert.deepEqual(useSkillsStore.getState().skills, [skill]);
+  assert.equal(useSkillsStore.getState().error, 'Error: Tool status failure');
+  assert.equal(useSkillsStore.getState().loading, false);
+});
+
+test('tool status completes independently of overlapping list requests', async () => {
+  const list = deferred<ManagedSkill[]>();
+  mockInvoke(async (command) => {
+    if (command === 'skills_get_managed_skills') return list.promise;
+    assert.equal(command, 'skills_get_tool_status');
+    return tools;
+  });
+  const first = useSkillsStore.getState().loadSkills();
+  const second = useSkillsStore.getState().loadSkills();
+  await useSkillsStore.getState().loadToolStatus();
+  assert.deepEqual(useSkillsStore.getState().toolStatus, tools);
+  assert.equal(useSkillsStore.getState().loading, true);
+  list.resolve([skill]);
+  await Promise.all([first, second]);
+  assert.deepEqual(useSkillsStore.getState().toolStatus, tools);
+  assert.equal(useSkillsStore.getState().loading, false);
+});
