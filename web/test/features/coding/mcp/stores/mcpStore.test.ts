@@ -171,3 +171,101 @@ test('scanning and fetching servers keep independent results in either completio
     assert.equal(useMcpStore.getState().loading, false);
   }
 });
+
+// The actions hook applies successful API results through these store methods.
+// Drive that boundary without rendering React or performing native writes.
+for (const mutation of ['create', 'edit', 'delete'] as const) {
+  test(`old list cannot undo successful ${mutation}`, async () => {
+    const api = await import('../../../../../features/coding/mcp/services/mcpApi.ts');
+    const oldList = deferred<McpServer[]>();
+    const changed = { ...sampleServer, name: 'Updated server' };
+    useMcpStore.setState({ servers: mutation === 'create' ? [] : [sampleServer] });
+    mockInvoke(async (command) => {
+      if (command === 'mcp_list_servers') return oldList.promise;
+      assert.equal(command, `mcp_${mutation === 'edit' ? 'update' : mutation}_server`);
+      return changed;
+    });
+    const read = useMcpStore.getState().fetchServers();
+    if (mutation === 'create') {
+      const created = await api.createMcpServer({ name: changed.name, server_type: 'stdio', server_config: changed.server_config });
+      useMcpStore.getState().addServer(created);
+    } else if (mutation === 'edit') {
+      const updated = await api.updateMcpServer(sampleServer.id, { name: changed.name });
+      useMcpStore.getState().updateServer(updated);
+    } else {
+      await api.deleteMcpServer(sampleServer.id);
+      useMcpStore.getState().removeServer(sampleServer.id);
+    }
+    const expected = mutation === 'delete' ? [] : [changed];
+    assert.deepEqual(useMcpStore.getState().servers, expected);
+    oldList.resolve(mutation === 'create' ? [] : [sampleServer]);
+    await read;
+    assert.deepEqual(useMcpStore.getState().servers, expected);
+    assert.equal(useMcpStore.getState().loading, false);
+  });
+}
+
+test('failed CRUD does not invalidate an in-flight list', async () => {
+  const api = await import('../../../../../features/coding/mcp/services/mcpApi.ts');
+  const response = deferred<McpServer[]>();
+  mockInvoke(async (command) => {
+    if (command === 'mcp_list_servers') return response.promise;
+    assert.equal(command, 'mcp_delete_server');
+    throw new Error('Synthetic delete failure');
+  });
+  const read = useMcpStore.getState().fetchServers();
+  await assert.rejects(api.deleteMcpServer(sampleServer.id), /Synthetic delete failure/);
+  response.resolve([sampleServer]);
+  await read;
+  assert.deepEqual(useMcpStore.getState().servers, [sampleServer]);
+  assert.equal(useMcpStore.getState().loading, false);
+});
+
+test('new read after a mutation applies while older completion keeps its loading', async () => {
+  const oldResponse = deferred<McpServer[]>();
+  const newResponse = deferred<McpServer[]>();
+  let calls = 0;
+  mockInvoke(async () => ++calls === 1 ? oldResponse.promise : newResponse.promise);
+  const oldRead = useMcpStore.getState().fetchServers();
+  useMcpStore.getState().addServer(sampleServer);
+  const newRead = useMcpStore.getState().fetchServers();
+  oldResponse.resolve([]);
+  await oldRead;
+  assert.deepEqual(useMcpStore.getState().servers, [sampleServer]);
+  assert.equal(useMcpStore.getState().loading, true);
+  const latest = { ...sampleServer, description: 'New backend state' };
+  newResponse.resolve([latest]);
+  await newRead;
+  assert.deepEqual(useMcpStore.getState().servers, [latest]);
+  assert.equal(useMcpStore.getState().loading, false);
+});
+
+test('explicit reorder is not reverted by a pending old list', async () => {
+  const other = { ...sampleServer, id: 'other-server' };
+  const response = deferred<McpServer[]>();
+  useMcpStore.setState({ servers: [sampleServer, other] });
+  mockInvoke(async () => response.promise);
+  const read = useMcpStore.getState().fetchServers();
+  useMcpStore.getState().setServers([other, sampleServer]);
+  response.resolve([sampleServer, other]);
+  await read;
+  assert.deepEqual(useMcpStore.getState().servers, [other, sampleServer]);
+  assert.equal(useMcpStore.getState().loading, false);
+});
+
+test('successive writes preserve each other while invalidating the same old read', async () => {
+  const edited = { ...sampleServer, name: 'Edited existing' };
+  const deleted = { ...sampleServer, id: 'deleted-server' };
+  const added = { ...sampleServer, id: 'added-server' };
+  const response = deferred<McpServer[]>();
+  useMcpStore.setState({ servers: [sampleServer, deleted] });
+  mockInvoke(async () => response.promise);
+  const read = useMcpStore.getState().fetchServers();
+  useMcpStore.getState().addServer(added);
+  useMcpStore.getState().updateServer(edited);
+  useMcpStore.getState().removeServer(deleted.id);
+  response.resolve([sampleServer, deleted]);
+  await read;
+  assert.deepEqual(useMcpStore.getState().servers, [edited, added]);
+  assert.equal(useMcpStore.getState().loading, false);
+});
