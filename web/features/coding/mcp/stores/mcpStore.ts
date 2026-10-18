@@ -31,6 +31,7 @@ interface McpState {
 
 export const useMcpStore = create<McpState>()((set) => {
   let serverFetchRevision = 0;
+  let serverWriteRevision = 0;
 
   return ({
   servers: [],
@@ -44,10 +45,11 @@ export const useMcpStore = create<McpState>()((set) => {
 
   fetchServers: async () => {
     const requestRevision = ++serverFetchRevision;
+    const writeRevision = serverWriteRevision;
     set({ loading: true });
     try {
       const servers = await mcpApi.listMcpServers();
-      if (requestRevision === serverFetchRevision) {
+      if (requestRevision === serverFetchRevision && writeRevision === serverWriteRevision) {
         set({ servers });
       }
     } catch (error) {
@@ -86,17 +88,31 @@ export const useMcpStore = create<McpState>()((set) => {
     }
   },
 
-  setServers: (servers) => set({ servers }),
+  // A completed mutation or local reorder supersedes in-flight list snapshots.
+  // Keep fetch ownership separate so its finally still releases loading.
+  setServers: (servers) => {
+    serverWriteRevision += 1;
+    set({ servers });
+  },
 
-  addServer: (server) => set((state) => ({ servers: [...state.servers, server] })),
+  addServer: (server) => {
+    serverWriteRevision += 1;
+    set((state) => ({ servers: [...state.servers, server] }));
+  },
 
-  updateServer: (server) => set((state) => ({
-    servers: state.servers.map((s) => (s.id === server.id ? server : s)),
-  })),
+  updateServer: (server) => {
+    serverWriteRevision += 1;
+    set((state) => ({
+      servers: state.servers.map((s) => (s.id === server.id ? server : s)),
+    }));
+  },
 
-  removeServer: (serverId) => set((state) => ({
-    servers: state.servers.filter((s) => s.id !== serverId),
-  })),
+  removeServer: (serverId) => {
+    serverWriteRevision += 1;
+    set((state) => ({
+      servers: state.servers.filter((s) => s.id !== serverId),
+    }));
+  },
 
   setShowInTray: async (enabled) => {
     try {
