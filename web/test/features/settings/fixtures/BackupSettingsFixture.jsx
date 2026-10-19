@@ -1,4 +1,5 @@
 import React from 'react';
+import RestoreConfirmFixture from './RestoreConfirmFixture';
 import RestorePasswordFixture from './RestorePasswordFixture';
 import RestoreSuccessFixture from './RestoreSuccessFixture';
 import { createRoot } from 'react-dom/client';
@@ -307,6 +308,7 @@ function Fixture() {
   const [remoteChannel, setRemoteChannel] = React.useState(null);
   const lifecycle = parameters.has('remoteLifecycle');
   return <App>
+    {parameters.has('restoreConfirm') && <RestoreConfirmFixture />}
     {parameters.has('restorePassword') && <RestorePasswordFixture />}
     {parameters.has('restoreSuccess') && <RestoreSuccessFixture />}
     <Button data-testid="open-settings" onClick={() => setSettingsOpen(true)}>Open settings</Button>
