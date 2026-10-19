@@ -1,0 +1,32 @@
+{
+  "scope": "Real GeneralSettingsPage restore-channel routing coverage; tests only, no product bug claimed",
+  "base": "3707d0026487076ed9bf39f97e9be9f5e72eb8dd",
+  "testedHead": "7e985cc0bd2959c28402e5b632050ed19d2b520d",
+  "consolidatedSameTree": "99f004268dfcd2ab20856d7513628d31dda55bb9",
+  "validation": {
+    "url": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39336483175",
+    "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39336483175/job/118347153799",
+    "domScenarios": 12,
+    "browserChecksPassed": 12,
+    "typescript": "passed",
+    "build": "passed",
+    "otherJobsSkipped": 8,
+    "logSha256": "54ee9b623d5995b7c4a7d060bfa062dc166c69c5d15125925d1a69470c0ce32c"
+  },
+  "coverage": [
+    "Unmodified real GeneralSettingsPage with real stores, service wrappers, restore dialogs and flow",
+    "Select and save local/WebDAV/repository channel via real settings DOM",
+    "Each channel: selector cancellation, checked-option confirmation cancellation, plaintext success, checked encrypted restore with password-required/wrong-password retries",
+    "Independent raw IPC argument assertions for local path, WebDAV connection parameters, filename, repository SHA and options",
+    "Repository retry retains selected SHA despite a future same-name listing response change, without refetching",
+    "Unknown IPC commands recorded and rejected"
+  ],
+  "limits": [
+    "IPC/platform, initial store data and service responses are synthetic; no live credentials, native restore, filesystem writes or restart",
+    "Local picker cancellation is a synthetic boundary null result, not a real native picker interaction",
+    "Covers backup restore routes within the mounted page, not all settings features or application navigation",
+    "DOM interactions largely use element.click; no complete desktop, WSL, visual/theme, Rust or full frontend-suite acceptance",
+    "Existing component suites were not rerun; this run only executes the new 12-route fixture"
+  ],
+  "reviewCorrection": "Before CI, static review corrected no-argument repository listing expectation to {} as defaulted by real Tauri core.invoke; not a product failure"
+}
