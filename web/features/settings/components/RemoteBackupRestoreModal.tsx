@@ -70,9 +70,15 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
   }, [open]);
 
   React.useEffect(() => {
-    if (open) {
-      loadBackups();
+    if (!open) {
+      return;
     }
+    // One read belongs to one open session, even when the same channel reopens.
+    // The parent recreates loadFiles on render, so callback identity is not a
+    // session boundary and must not trigger another request.
+    let active = true;
+    void loadBackups(() => active);
+    return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -83,12 +89,16 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
     setActiveTabKey(showHostTabs ? 'current' : 'all');
   }, [open, showHostTabs]);
 
-  const loadBackups = async () => {
+  const loadBackups = async (isCurrentSession: () => boolean) => {
     setLoading(true);
+    // A failed new read must not expose a previous channel's filename/SHA.
+    setBackups([]);
     try {
       const files = await loadFiles();
+      if (!isCurrentSession()) return;
       setBackups(files);
     } catch (error) {
+      if (!isCurrentSession()) return;
       console.error('Failed to list backups:', error);
 
       // Parse error if it's JSON
@@ -104,7 +114,7 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
 
       message.error(errorMessage);
     } finally {
-      setLoading(false);
+      if (isCurrentSession()) setLoading(false);
     }
   };
 

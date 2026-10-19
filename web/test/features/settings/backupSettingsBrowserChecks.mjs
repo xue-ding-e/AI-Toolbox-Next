@@ -54,6 +54,108 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
     record(name, measured);
   };
 
+  // Run each race in a fresh document. Deferred service promises control order;
+  // assertions inspect the real component DOM and real row selection callbacks.
+  const verifyRemoteLifecycle = async () => {
+    const failures = [];
+    let completed = 0;
+    const check = (name, actual, expected) => {
+      try { assert.deepEqual(actual, expected, name); record(name, actual); }
+      catch (error) { failures.push(error); console.error(error.message); }
+    };
+    const begin = async (nextChannel = 'repository') => {
+      await navigate({ theme: 'light', language: 'en-US', remoteLifecycle: '1' });
+      await call('openRemote', 'webdav');
+      await waitFor('backupFixture.state.remoteLoads.length === 1');
+      await call('closeRemote');
+      await call('openRemote', nextChannel);
+      await waitFor('backupFixture.state.remoteLoads.length === 2');
+      assert.deepEqual(await evaluate('backupFixture.state.remoteLoads.map(request => request.channel)'),
+        ['webdav', nextChannel], 'both independent service requests must actually start');
+      assert.equal((await call('remoteSnapshot')).loading, true, 'new request starts loading');
+    };
+    const expectedFiles = channel => ['ai-toolbox-backup-20261019-120000.zip', channel + '-only.zip'];
+    const assertSelection = async (name, channel) => {
+      await call('selectRemote', 'ai-toolbox-backup-20261019-120000.zip');
+      const selections = (await call('remoteSnapshot')).selections;
+      check(name + ': selected file retains current channel and SHA', selections.map(({ channel, file }) =>
+        ({ channel, filename: file.filename, sha: file.sha })), [{ channel,
+        filename: 'ai-toolbox-backup-20261019-120000.zip', sha: channel + '-shared-sha' }]);
+    };
+    for (const older of ['success', 'error']) {
+      for (const newer of ['success', 'error', 'pending']) {
+        const name = 'remote lifecycle: old ' + older + ' after new ' + newer;
+        await begin();
+        if (newer !== 'pending') await call('settleRemote', 1, newer);
+        const before = await call('remoteSnapshot');
+        // Positive control: a current error must still be surfaced, not globally swallowed.
+        if (newer === 'error') {
+          assert.ok(before.errors.some(error => error.includes('repository-request-1-failed')),
+            name + ': current repository error is visible');
+        }
+        await call('settleRemote', 0, older);
+        const after = await call('remoteSnapshot');
+        check(name + ': obsolete completion preserves loading', after.loading, newer === 'pending');
+        check(name + ': obsolete completion preserves current list', after.files,
+          newer === 'success' ? expectedFiles('repository') : []);
+        check(name + ': obsolete rejection does not add an error', after.errors, before.errors);
+        if (newer === 'pending') {
+          await call('settleRemote', 1, 'success');
+          check(name + ': current completion renders repository', (await call('remoteSnapshot')).files,
+            expectedFiles('repository'));
+        }
+        if (newer !== 'error') await assertSelection(name, 'repository');
+        completed++;
+      }
+    }
+    // Same-channel reopen must invalidate the earlier session too; a channel-only
+    // guard is insufficient. Distinct per-request SHA proves which session won.
+    await begin('webdav');
+    await evaluate('backupFixture.state.remoteLoads[0].files[0].sha="obsolete-session-sha"');
+    await call('settleRemote', 1, 'success');
+    await call('settleRemote', 0, 'success');
+    await assertSelection('same channel close/reopen', 'webdav');
+    completed++;
+
+    await navigate({ theme: 'light', language: 'en-US', remoteLifecycle: '1' });
+    await call('openRemote', 'webdav');
+    await waitFor('backupFixture.state.remoteLoads.length === 1');
+    await call('closeRemote');
+    await call('settleRemote', 0, 'error');
+    check('closed modal ignores obsolete error', (await call('remoteSnapshot')).errors, []);
+    await call('openRemote', 'repository');
+    await waitFor('backupFixture.state.remoteLoads.length === 2');
+    await call('settleRemote', 1, 'success');
+    await assertSelection('reopen after closed request rejects', 'repository');
+    completed++;
+    // A completed previous session is also stale: if the new channel fails,
+    // its modal must not offer the previous channel's otherwise valid entries.
+    await navigate({ theme: 'light', language: 'en-US', remoteLifecycle: '1' });
+    await call('openRemote', 'webdav');
+    await waitFor('backupFixture.state.remoteLoads.length === 1');
+    await call('settleRemote', 0, 'success');
+    assert.deepEqual((await call('remoteSnapshot')).files, expectedFiles('webdav'),
+      'previous session really rendered its files');
+    await call('closeRemote');
+    await call('openRemote', 'repository');
+    await waitFor('backupFixture.state.remoteLoads.length === 2');
+    await call('settleRemote', 1, 'error');
+    const failedReopen = await call('remoteSnapshot');
+    check('failed new channel clears previous successful list', failedReopen.files, []);
+    check('failed new channel finishes its own loading', failedReopen.loading, false);
+    assert.ok(failedReopen.errors.some(error => error.includes('repository-request-1-failed')),
+      'failed new channel still reports its current error');
+    check('failed new channel has no restore selection', failedReopen.selections, []);
+    completed++;
+    assert.equal(completed, 9, 'all remote lifecycle scenarios must execute');
+    console.log('Executed ' + completed + ' remote lifecycle scenarios; assertion failures: ' + failures.length);
+    if (failures.length) throw new AggregateError(failures, 'Remote backup lifecycle regressions: ' + failures.length);
+  };
+  const group = process.env.BACKUP_SETTINGS_CHECK_GROUP || 'all';
+  assert.ok(['all', 'remote-lifecycle'].includes(group), 'Unknown backup settings check group: ' + group);
+  await verifyRemoteLifecycle();
+  if (group === 'remote-lifecycle') return checks;
+
   for (const scenario of [
     { theme: 'light', language: 'zh-CN', system: 'light' },
     { theme: 'dark', language: 'en-US', system: 'dark' },
