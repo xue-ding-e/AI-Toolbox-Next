@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-19",
+  "base": "84084bb7dae9fc3e502901ff2754d1d59186abdb",
+  "upstream_report": "https://github.com/coulsontl/ai-toolbox/issues/432",
+  "relationship": "Independent synthetic reproduction of lost Codex response identity; the reporter's trigger is not established.",
+  "functional_commit": "2b262ba5582e3df0aee21ce942f2c1f1b39b5120",
+  "consolidated_tested_tree_commit": "a5251206b0c2daaf3487385df00a1daaa3fe8e39",
+  "tested_head": "761643d22eef42d476b6f7533da7c68b0639d62d",
+  "tree": "c47958f1413cddfbee81a8d56a7248f864d52a81",
+  "red": {
+    "head": "cad44bc66ded7b6cfe242b9fa8cd54651f5368af",
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39243072726/job/118028304668",
+    "passed": 0,
+    "failed": 3,
+    "ignored": 0,
+    "log_sha256": "40bd68a0cc9ef0005dd7838c60bddca8286b29048ddbc50e978c6b72a7dccb3b",
+    "observed": "Two known-response cases counted 3 instead of 2; a different known response was incorrectly suppressed (1 instead of 2)."
+  },
+  "intermediate": {
+    "dispatch_422": "6a03d8e1 had an invalid YAML plain scalar ending in ::; no run was created. Block scalar fixed without changing the command.",
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39245515491/job/118036365568",
+    "head": "953b32654b0de20d60c69f29c5cedacecd2d70e5",
+    "passed": 113,
+    "failed": 6,
+    "ignored": 7,
+    "reason": "New tests incorrectly assumed load_states contained only the source file ledger. cost-reconciliation:codex is an additional state. Corrected tests select the production source_identity key; counting/identity/migration assertions retained.",
+    "log_sha256": "e46761d0eb604ebd816c151c4a4ad548d26499afce49a1e8c0bfcb8ad6227682"
+  },
+  "green": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39247140474/job/118041701603",
+    "passed": 119,
+    "failed": 0,
+    "ignored": 7,
+    "selected_new_tests": 6,
+    "filter": "coding::proxy_gateway::session_import::tests::",
+    "toolchain": "rustc 1.99.1; cargo 1.99.1; Ubuntu 22.04",
+    "log_sha256": "c2b3c9f62c4c9a63a66f50dd7dd2129cd7cf0c3ee014d46e513245404d7555da"
+  },
+  "ignored": [
+    "local_opencode_v2_store_imports_per_request_usage",
+    "native_tests::cost_tests::cross_cli::local_other_cli_costs_on_a_snapshot",
+    "native_tests::cost_tests::local_cost_reconciliation_all_sources_on_a_snapshot",
+    "native_tests::cost_tests::local_dsh_cost_reconciliation_on_a_snapshot",
+    "native_tests::local_database_reconciliation_on_a_snapshot",
+    "native_tests::local_dsh_parser_upgrade_on_a_snapshot",
+    "native_tests::local_native_sources_read_only_smoke"
+  ],
+  "limits": [
+    "Temporary synthetic JSONL and SQLite; no actual user credentials or session data.",
+    "Revision-6 persisted states are synthesized from real run_sync state, not executed by an old binary.",
+    "Pruned/retired rows remain absent; no claim of recomputing historical archived rollup costs.",
+    "Existing cross-provider response-ID collision behavior is unchanged.",
+    "No GUI/native application, live provider, WSL, full Rust suite, packaging or deployment verification.",
+    "Frontend code is unchanged; Node/TypeScript were not rerun for this Rust-only correction."
+  ]
+}
