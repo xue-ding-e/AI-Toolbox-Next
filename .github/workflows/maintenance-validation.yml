@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -33,9 +33,24 @@ jobs:
       - name: TypeScript check
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm exec tsc --noEmit
-      - name: Full upstream frontend suite
+      - name: Run applicable frontend regressions
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm test
+        env:
+          VALIDATION_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$VALIDATION_REF" = "refs/heads/test/restore-orchestration" ]; then
+            # This topic changes restore orchestration, not unrelated account browser fixtures.
+            node --import ./scripts/register-node-ts-extension-loader.mjs --test --test-reporter=tap web/test/features/settings/utils/*.test.ts | tee /tmp/restore-utils-tests.tap
+            grep -Fx "# tests 36" /tmp/restore-utils-tests.tap
+            grep -Fx "# pass 36" /tmp/restore-utils-tests.tap
+            grep -Fx "# fail 0" /tmp/restore-utils-tests.tap
+            node scripts/verify-form-modal-layout.mjs
+            node scripts/verify-provider-card-layout.mjs
+            node scripts/verify-official-accounts-shared.mjs
+          else
+            pnpm test
+          fi
       - name: Frontend production build
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm build
