@@ -880,6 +880,16 @@ fn codex_legacy_first_keeps_one_call_and_adopts_the_response_identity() {
     assert_eq!(ids, vec![format!("SESSION:codex:{PARENT}:resp-late")]);
 }
 
+fn codex_response_identity_source_id(root: &Path) -> String {
+    format!(
+        "codex:{}",
+        source_identity(
+            GatewayUsageTool::Codex,
+            &root.join(format!("rollout-{PARENT}.jsonl"))
+        )
+    )
+}
+
 // Synthetic identity regression, not a reproduction of issue #432's unknown trigger.
 // Exercise the real transcript parser: a hand-built SessionUsageRecord would
 // bypass the response_id -> envelope_id boundary this scenario needs to cover.
@@ -958,13 +968,14 @@ fn assert_codex_response_identity_matches_only_its_proxy(legacy_first: bool) {
     );
 
     let states = load_states(&db).unwrap();
-    assert_eq!(states.len(), 1);
-    let state = states.values().next().unwrap();
+    let native_id = format!("SESSION:codex:{PARENT}:resp-target");
+    // Cost reconciliation also stores state; select the exact Codex file source.
+    let source_id = codex_response_identity_source_id(root.path());
+    let state = states
+        .get(&source_id)
+        .expect("the Codex file source has a ledger");
     assert_eq!(state.records.len(), 1);
-    let imported = state
-        .records
-        .get(&format!("SESSION:codex:{PARENT}:resp-target"))
-        .expect("the ledger adopts the authoritative response identity");
+    let imported = state.records.get(&native_id).unwrap();
     assert_eq!(
         imported.matched_proxy_id.as_deref(),
         Some(proxy_ids[0].as_str())
@@ -1032,10 +1043,13 @@ fn codex_response_identity_unmatched_response_preserves_independent_call() {
     assert_eq!(result.parsed_records, 1);
     assert_eq!(count(&db), 2, "different response IDs are independent calls");
     let states = load_states(&db).unwrap();
-    assert_eq!(states.len(), 1);
-    let state = states.values().next().unwrap();
+    let native_id = format!("SESSION:codex:{PARENT}:resp-native-only");
+    let source_id = codex_response_identity_source_id(root.path());
+    let state = states
+        .get(&source_id)
+        .expect("the Codex file source has a ledger");
     assert_eq!(state.records.len(), 1);
-    let imported = state.records.values().next().unwrap();
+    let imported = state.records.get(&native_id).unwrap();
     assert_eq!(imported.matched_proxy_id, None);
     assert_eq!(imported.envelope_id.as_deref(), Some("resp-native-only"));
     let logs =
@@ -1091,7 +1105,11 @@ fn codex_response_identity_revision6_rescan_repairs_rows_and_matches() {
             let independent_id = proxy_id("resp-independent");
             let target_id = proxy_id("resp-target");
             let mut states = load_states(&db).unwrap();
-            let (source_id, state) = states.iter_mut().next().unwrap();
+            let source_id = codex_response_identity_source_id(root.path());
+            let state = states
+                .get_mut(&source_id)
+                .expect("the initial import created the Codex file ledger");
+            assert_eq!(state.records.len(), 1);
             // Model the persisted revision-6 outcomes, keeping the actual parser's
             // fingerprint and the unchanged file's mtime/size. No matcher is
             // duplicated here: these are the two old states the upgrade must heal.
@@ -1125,7 +1143,7 @@ fn codex_response_identity_revision6_rescan_repairs_rows_and_matches() {
                     )
                     .map_err(|error| error.to_string())?;
                 }
-                save_state(conn, source_id, state)
+                save_state(conn, &source_id, state)
             })
             .unwrap();
             assert_eq!(count(&db), if wrong_match { 1 } else { 3 });
@@ -1138,7 +1156,7 @@ fn codex_response_identity_revision6_rescan_repairs_rows_and_matches() {
             );
             assert_eq!(count(&db), 2);
             let states = load_states(&db).unwrap();
-            let state = states.get(source_id).unwrap();
+            let state = states.get(&source_id).unwrap();
             assert_eq!(state.parser_revision, 7);
             assert_eq!(state.records.len(), 1);
             let imported = state.records.get(&native_id).unwrap();
@@ -1200,7 +1218,11 @@ fn codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows() {
         );
         let native_id = format!("SESSION:codex:{PARENT}:resp-pruned");
         let mut states = load_states(&db).unwrap();
-        let (source_id, state) = states.iter_mut().next().unwrap();
+        let source_id = codex_response_identity_source_id(root.path());
+        let state = states
+            .get_mut(&source_id)
+            .expect("the initial import created the Codex file ledger");
+        assert_eq!(state.records.len(), 1);
         state.parser_revision = 6;
         state.pending = false;
         let imported = state.records.get_mut(&native_id).unwrap();
@@ -1214,7 +1236,7 @@ fn codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows() {
                 [&native_id],
             )
             .map_err(|error| error.to_string())?;
-            save_state(conn, source_id, state)
+            save_state(conn, &source_id, state)
         })
         .unwrap();
         let repaired = run_sync(&db, GatewayCliKey::Codex, root.path());
@@ -1223,8 +1245,9 @@ fn codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows() {
         assert_eq!(repaired.inserted_records, 0);
         assert_eq!(count(&db), 0);
         let states = load_states(&db).unwrap();
-        let state = states.get(source_id).unwrap();
+        let state = states.get(&source_id).unwrap();
         assert_eq!(state.parser_revision, 7);
+        assert_eq!(state.records.len(), 1);
         assert_eq!(state.records.get(&native_id).unwrap().retired, retired);
         assert_eq!(
             run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
@@ -1272,8 +1295,13 @@ fn codex_response_identity_missing_response_id_keeps_unique_usage_fallback() {
     assert_eq!(result.parsed_records, 1);
     assert_eq!(count(&db), 1);
     let states = load_states(&db).unwrap();
-    let state = states.values().next().unwrap();
-    let imported = state.records.values().next().unwrap();
+    let native_id = format!("SESSION:codex:{PARENT}:token_usage:1");
+    let source_id = codex_response_identity_source_id(root.path());
+    let state = states
+        .get(&source_id)
+        .expect("the Codex file source has a ledger");
+    assert_eq!(state.records.len(), 1);
+    let imported = state.records.get(&native_id).unwrap();
     assert_eq!(imported.envelope_id, None);
     assert_eq!(
         imported.matched_proxy_id.as_deref(),
