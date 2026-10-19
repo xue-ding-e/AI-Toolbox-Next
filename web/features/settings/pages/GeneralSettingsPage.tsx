@@ -74,6 +74,7 @@ import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
 import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import styles from './GeneralSettingsPage.module.less';
+import { executeRestoreFlow } from '../utils/restoreFlow';
 
 const { Text } = Typography;
 
@@ -535,22 +536,6 @@ const GeneralSettingsPage: React.FC = () => {
     }
   };
 
-  const parseRestoreError = (error: unknown): { type?: string; message: string } => {
-    const fallback = t('settings.backupSettings.restoreFailed');
-    try {
-      const errorObj = JSON.parse(String(error));
-      const messageText = errorObj.suggestion
-        ? `${fallback}: ${t(errorObj.suggestion)}`
-        : `${fallback}: ${String(error)}`;
-      return { type: errorObj.type, message: messageText };
-    } catch {
-      return { message: `${fallback}: ${String(error)}` };
-    }
-  };
-
-  const isPasswordError = (type?: string) =>
-    type === 'passwordRequired' || type === 'passwordWrong';
-
   /**
    * Ask for the one-shot decryption password and retry the same restore selection.
    * Cancel keeps the dialog closed and guarantees zero restore writes.
@@ -592,46 +577,18 @@ const GeneralSettingsPage: React.FC = () => {
     });
   };
 
-  const executeRestore = async (
-    restoreFn: (restorePassword?: string) => Promise<RestoreResult>,
-    description: string,
-    skipCliCustomRootsHolder: { value: boolean },
-    restorePassword?: string,
-  ) => {
-    setRestoreLoading(true);
-    try {
-      const restoreResult = await restoreFn(restorePassword);
-      // 恢复成功后弹出重启对话框
-      Modal.info({
-        title: t('settings.backupSettings.restoreSuccess'),
-        content: buildRestoreSuccessContent(restoreResult, t),
-        okText: t('common.restart'),
-        closable: false,
-        maskClosable: false,
-        keyboard: false,
-        onOk: () => {
-          restartApp();
-        },
-      });
-      showRestoreWarnings(restoreResult);
-    } catch (error) {
-      const parsed = parseRestoreError(error);
-      if (isPasswordError(parsed.type)) {
-        // Nothing has been written yet: ask for the password and retry the same file.
-        promptRestorePassword(
-          (password) => {
-            void executeRestore(restoreFn, description, skipCliCustomRootsHolder, password);
-          },
-          parsed.type === 'passwordWrong',
-        );
-        return;
-      }
-      console.error('Restore failed:', error);
-      message.error(parsed.message);
-    } finally {
-      setRestoreLoading(false);
-    }
-  };
+  const executeRestore = (restoreFn: (restorePassword?: string) => Promise<RestoreResult>) =>
+    executeRestoreFlow(restoreFn, {
+      setLoading: setRestoreLoading,
+      translate: t,
+      buildSuccessContent: (result) => buildRestoreSuccessContent(result, t),
+      showSuccess: (dialog) => { Modal.info(dialog); },
+      showWarnings: (result) => showRestoreWarnings(result),
+      promptPassword: promptRestorePassword,
+      restart: restartApp,
+      logError: (label, error) => console.error(label, error),
+      showError: (text) => { message.error(text); },
+    });
 
   const handleRestore = async () => {
     if (backupType === 'webdav') {
@@ -680,8 +637,6 @@ const GeneralSettingsPage: React.FC = () => {
                 skipCliCustomRoots: skipCliCustomRootsHolder.value,
                 restorePassword,
               }),
-            t('settings.backupSettings.confirmRestoreDesc'),
-            skipCliCustomRootsHolder,
           );
         },
       });
@@ -771,8 +726,6 @@ const GeneralSettingsPage: React.FC = () => {
               restorePassword,
             });
           },
-          restoreDescription,
-          skipCliCustomRootsHolder,
         );
       },
     });
