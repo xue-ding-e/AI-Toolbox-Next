@@ -103,7 +103,9 @@ export async function verifyRestoreConfirm({ send, evaluate, navigate, waitFor, 
     if (mode !== 'default') await toggle(true);
     if (mode === 'unchecked') await toggle(false);
     if (mode === 'checked') await screenshot('restore-confirm-checked-dark');
-    await evaluate('window.restoreConfirmButton = document.querySelector(".ant-modal-confirm .ant-btn-primary")');
+    // Keep the DOM reference in the browser; CDP returnByValue must not try to
+    // serialize the element and its React object graph across the boundary.
+    await evaluate('void (window.restoreConfirmButton = document.querySelector(".ant-modal-confirm .ant-btn-primary"))');
     await confirm();
     const expected = mode === 'checked';
     await assertPending(expected);
