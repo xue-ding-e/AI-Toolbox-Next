@@ -50,6 +50,7 @@ jobs:
             node scripts/verify-official-accounts-shared.mjs
           elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-delete-lifecycle" ]; then
             BACKUP_SETTINGS_CHECK_GROUP=remote-delete-lifecycle node scripts/verify-backup-settings.mjs
+            BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs
           elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-lifecycle" ]; then
             # Exercise only the real remote-backup Modal lifecycle fixture.
             BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs
