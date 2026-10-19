@@ -86,6 +86,7 @@ sequenceDiagram
 ## 最小验证
 
 - `node scripts/verify-settings-restore-routes.mjs`：真实挂载 `GeneralSettingsPage`，经设置弹窗切换 local/WebDAV/repository 后校验恢复路径、取消及密码重试的原始 IPC 参数（12 场景）。使用真实服务包装与 stores，但平台、初始状态、IPC 响应均为合成边界；原生选择器取消只返回合成 null，不证明实际恢复落盘或重启。无参 repository 列表调用经真实 Tauri core 默认参数后为 `{}`。
+- `SETTINGS_RESTORE_CHECK_GROUP=error-recovery node scripts/verify-settings-restore-routes.mjs` 单独运行 7 个真实页面错误恢复场景，不重跑默认 12 例；未知 group 必须报错。WebDAV 缺 URL、repository 分别缺 owner/仓库名以挂载前合成初始状态进入，重复点击恢复须显示 warning 且零额外 IPC（无 picker/list/restore）；本地选择器保持 pending 后合成拒绝，须出现错误并释放真实按钮 loading，再次选择可打开新确认框；三渠道普通 restore 拒绝须显示具体错误、无密码/成功框、解除 loading，随后经页面按钮重新选文件和确认可成功，且不沿用失败选择的路径/filename/SHA/勾选项。复用原真实 page/services/stores，只扩充 IPC 边界与 DOM 观察；不访问原生选择器、远端、凭据、真实备份或恢复落盘，不点击成功弹框的重启按钮，也不放宽共享 runner 的异常闸门。
 
 - 恢复前确认由 `components/confirmRestore.tsx` 承载，设置页本地与远端入口、DOM 夹具复用同一 `Modal.confirm`/Checkbox/onOk。每次打开独立分配默认 false 的局部 holder；Checkbox 只写 holder，确认后每次服务尝试（含密码递归）读取同一 holder。不能提前固化打开时的选项，不能共享跨弹窗 holder，也不能把 void/fire-and-forget 的 onOk 改成 return/await 恢复 Promise。文件路径、远端 channel/filename/SHA 及 WebDAV 参数仍由页面原闭包绑定。
 - `BACKUP_SETTINGS_CHECK_GROUP=restore-confirm node scripts/verify-backup-settings.mjs` 精确运行 10 个 DOM 场景：未勾选/勾选后取消两例零合成服务调用，默认 false/勾选 true/取消勾选 false 三例确认，取消后重开重置，三种选项各经过 passwordRequired → passwordWrong → 成功，以及密码框取消不再重试。复用真实确认框、密码框和 `executeRestoreFlow`，用未完成的合成服务与 thenable 观察不等待语义。filename/SHA 只来自合成选中闭包；不覆盖完整设置页选中路由、原生选择器、真实远端下载、凭据读取或恢复落盘。所有密码为固定合成值；这组新增行为覆盖，不代表发现了产品缺陷。

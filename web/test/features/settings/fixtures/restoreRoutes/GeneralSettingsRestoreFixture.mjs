@@ -7,8 +7,8 @@ import { useAppStore } from '@/stores/appStore';
 import { useThemeStore } from '@/stores/themeStore';
 import i18n from '@/i18n';
 import {
-  fixtureData, installTauriBoundary, boundarySnapshot,
-  setLocalSelection, replaceSelectionSources, settleRestore,
+  fixtureData, initialConfiguration, installTauriBoundary, boundarySnapshot,
+  setLocalSelection, holdNextLocalSelection, rejectLocalSelection, replaceSelectionSources, settleRestore,
 } from './tauri.mjs';
 import '@/App.css';
 
@@ -17,11 +17,12 @@ const mode = parameters.get('theme') || 'light';
 document.documentElement.dataset.theme = mode;
 await i18n.changeLanguage(parameters.get('language') || 'en-US');
 installTauriBoundary();
+const initial = initialConfiguration(parameters.get('configuration') || 'configured');
 // Seed a local starting point. Subsequent channel changes go through the real
 // page's settings dialog, saveBackupSettingsUnified and backupSettingsStatePatch.
+// Error guards may instead start with incomplete saved remote settings.
 useSettingsStore.setState({
-  isInitialized: true, backupType: 'local', localBackupPath: fixtureData.localDirectory,
-  webdav: structuredClone(fixtureData.webdav), autoCheckUpdate: false,
+  isInitialized: true, ...initial, localBackupPath: fixtureData.localDirectory, autoCheckUpdate: false,
 });
 useAppStore.setState({ isInitialized: true, language: i18n.language, languagePreference: i18n.language });
 useThemeStore.setState({ isInitialized: true, mode, resolvedTheme: mode });
@@ -50,6 +51,8 @@ window.settingsRestoreFixture = {
   text,
   dialog,
   setLocalSelection,
+  holdNextLocalSelection,
+  rejectLocalSelection,
   replaceSelectionSources,
   settleRestore,
   clickPage(key) { clickButton(document.getElementById('root'), key); },
@@ -103,6 +106,9 @@ window.settingsRestoreFixture = {
       wrongPassword: password?.querySelector('.ant-typography-danger')?.textContent ?? null,
       successOpen: !!success,
       restoreLoading: !!restore?.classList.contains('ant-btn-loading'),
+      canRestore: !!restore && !restore.disabled && !restore.classList.contains('ant-btn-loading'),
+      errors: [...document.querySelectorAll('.ant-message-error')].filter(visible).map(element => element.textContent),
+      warnings: [...document.querySelectorAll('.ant-message-warning')].filter(visible).map(element => element.textContent),
       remoteFiles: [...(dialog('settings.backupSettings.selectBackupFile')?.querySelectorAll('.ant-list-item') || [])]
         .filter(visible).map(element => element.querySelector('.ant-list-item-meta-description')?.textContent),
     };
