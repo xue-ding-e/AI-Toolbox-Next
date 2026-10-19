@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { verifyRestorePassword } from './restorePasswordBrowserChecks.mjs';
 
 export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRoot }) {
   const checks = [];
@@ -278,7 +279,11 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
     if (failures.length) throw new AggregateError(failures, 'Remote backup delete lifecycle regressions: ' + failures.length);
   };
   const group = process.env.BACKUP_SETTINGS_CHECK_GROUP || 'all';
-  assert.ok(['all', 'remote-lifecycle', 'remote-delete-lifecycle'].includes(group), 'Unknown backup settings check group: ' + group);
+  assert.ok(['all', 'remote-lifecycle', 'remote-delete-lifecycle', 'restore-password'].includes(group), 'Unknown backup settings check group: ' + group);
+  if (group === 'all' || group === 'restore-password') {
+    await verifyRestorePassword({ send, evaluate, navigate, waitFor, delay, record, screenshot, call });
+  }
+  if (group === 'restore-password') return checks;
   if (group === 'all' || group === 'remote-delete-lifecycle') await verifyRemoteDeleteLifecycle();
   if (group === 'remote-delete-lifecycle') return checks;
   await verifyRemoteLifecycle();
