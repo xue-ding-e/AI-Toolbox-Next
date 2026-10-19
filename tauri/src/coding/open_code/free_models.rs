@@ -710,8 +710,18 @@ fn read_auth_map() -> Result<HashMap<String, AuthEntry>, String> {
 
 // Path injection keeps tests on synthetic files while using the production reader.
 fn read_auth_map_at(data_root: &Path) -> Result<HashMap<String, AuthEntry>, String> {
-    let mut auth_map = read_auth_json_map_at(data_root)?;
-    for (provider_id, entry) in read_credential_table_entries_at(data_root) {
+    let credential_entries = read_credential_table_entries_at(data_root);
+    let mut auth_map = match read_auth_json_map_at(data_root) {
+        Ok(entries) => entries,
+        Err(error) if credential_entries.is_empty() => return Err(error),
+        Err(_) => {
+            // Legacy JSON is only an import source for V2. A broken old file
+            // must not hide credentials already available in the runtime store.
+            log::warn!("[Auth] Failed to read legacy auth.json; using database credentials");
+            HashMap::new()
+        }
+    };
+    for (provider_id, entry) in credential_entries {
         auth_map.insert(provider_id, entry);
     }
     Ok(auth_map)
@@ -1248,6 +1258,43 @@ mod tests {
         assert_eq!(
             extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
             Some("synthetic-db-key")
+        );
+    }
+
+    #[test]
+    fn credential_reader_preserves_legacy_error_without_database_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("auth.json"), "{malformed synthetic json").unwrap();
+        let error = read_auth_map_at(directory.path()).unwrap_err();
+        assert!(error.starts_with("Failed to parse auth.json:"));
+        assert!(!directory.path().join("opencode.db").exists());
+
+        synthetic_credential_store(directory.path());
+        let connection = rusqlite::Connection::open(directory.path().join("opencode.db")).unwrap();
+        connection.execute("DELETE FROM credential", []).unwrap();
+        let error = read_auth_map_at(directory.path()).unwrap_err();
+        assert!(error.starts_with("Failed to parse auth.json:"));
+    }
+
+    #[test]
+    fn credential_reader_merges_legacy_only_entries_and_prefers_database_on_conflict() {
+        let directory = tempfile::tempdir().unwrap();
+        synthetic_credential_store(directory.path());
+        fs::write(directory.path().join("auth.json"),
+            r#"{
+                "synthetic-provider":{"type":"api","key":"synthetic-legacy-conflict"},
+                "synthetic-legacy-only":{"type":"api","key":"synthetic-legacy-key"}
+            }"#,
+        ).unwrap();
+        let entries = read_auth_map_at(directory.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
+            Some("synthetic-db-key")
+        );
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-legacy-only").unwrap()).as_deref(),
+            Some("synthetic-legacy-key")
         );
     }
 
