@@ -48,6 +48,7 @@ sequenceDiagram
 
 - 官方卡片分享只读取选中 provider 的 API-key 认证，不能复用会 fallback 到 OAuth access 的连通性 `resolve_auth_credential`。默认 URL/SDK/模型从本地 cache/bundled metadata 补齐；用户当前配置优先，分享不触发远端刷新。
 - 凭据来源是 `auth.json` **与** `opencode.db` 的 `credential` 表合并：OpenCode 2.x 只在数据库迁移时把 `auth.json` 一次性导入 `credential` 表，之后 CLI 登录/切换只写数据库。`read_auth_map` 先读 `auth.json` 再用数据库条目覆盖（同一 integration 以数据库为准）；数据库内按 `active DESC, time_created DESC, id DESC` 取第一条，对应官方 `resolveConnections(...)[0]`。`value` 是 JSON：`key` → API key、`oauth` → access/refresh、`external` → 无可读密钥。数据目录统一走 `session_manager::resolve_opencode_data_root`（含 XDG_DATA_HOME 与 WSL Direct），不要重新拼 `~/.local/share/opencode`。编辑仍写 `auth.json`，页面在 V2 模式提示用户执行 `opencode auth login`。
+- 旧 `auth.json` 读取/解析失败时，仅当数据库已读到非空 credential 条目才回退到数据库；数据库无可用条目仍保留原错误，不能把失败伪装成空账号列表。JSON 正常时保留两边并集且数据库优先。诊断日志只记录失败类别，不输出凭据或文件内容；合成真实读取路径回归见 `free_models::tests::credential_reader_*`。
 
 - 不要把 OpenCode prompt 路径写死成 `~/.config/opencode/AGENTS.md`。应始终先走当前配置路径决议，再取同目录下的 `AGENTS.md`。
 - 前端显示的 `configPathInfo.source` 只是“路径来自哪里”，不是 WSL Direct 判断。WSL Direct 统一看 `runtime_location` / `module_statuses`。
