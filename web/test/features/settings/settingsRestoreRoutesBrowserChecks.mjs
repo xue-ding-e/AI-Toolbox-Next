@@ -75,8 +75,10 @@ export async function verifySettingsRestoreRoutes({ send, evaluate, baseUrl }) {
         assert.deepEqual(source.args.options.filters, [{ name: 'Backup Files', extensions: ['zip', 'enc'] }],
           'the production picker accepts both plaintext and encrypted backups');
       } else {
-        assert.deepEqual(source.args, channel === 'webdav' ? webdavConnection : null,
-          'list request preserves complete WebDAV parameters or repository no-argument contract');
+        // The real Tauri core.invoke(cmd, args = {}) normalizes a service's
+        // omitted argument before this IPC boundary observes it.
+        assert.deepEqual(source.args, channel === 'webdav' ? webdavConnection : {},
+          'list request preserves complete WebDAV parameters or repository empty IPC arguments');
       }
     }
   };
