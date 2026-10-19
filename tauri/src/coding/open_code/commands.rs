@@ -863,17 +863,11 @@ pub async fn set_opencode_v2_config_mode<R: tauri::Runtime>(
     enabled: bool,
 ) -> Result<bool, String> {
     let path_info = get_opencode_config_path_info(state.clone()).await?;
-    // OpenCode 2.x only discovers `opencode.json`/`opencode.jsonc`. A legacy
-    // default `config.json` is renamed first; explicit paths stay untouched
-    // because the CLI loads them verbatim.
-    let resolved_path = if enabled && path_info.source == "default" {
-        v2_migration::rename_legacy_default_config(Path::new(&path_info.path))?
-    } else {
-        PathBuf::from(&path_info.path)
-    };
-    let config_path = resolved_path.as_path();
-    let was_enabled = v2_migration::is_active(config_path);
-    let is_enabled = v2_migration::set_mode(config_path, enabled)?;
+    let (was_enabled, is_enabled) = v2_migration::set_mode_for_source(
+        Path::new(&path_info.path),
+        path_info.source == "default",
+        enabled,
+    )?;
 
     if was_enabled != is_enabled {
         let _ = app.emit("config-changed", "window");
