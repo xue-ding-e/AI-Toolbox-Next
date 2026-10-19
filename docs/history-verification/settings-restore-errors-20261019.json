@@ -1,0 +1,28 @@
+{
+  "scope": "Real GeneralSettingsPage restore error recovery coverage; tests only, no product bug claimed",
+  "base": "106f42e06aa38aff4d0a52ced2b5661fb0feeaf0",
+  "testedHead": "903e7d25fb998253cb928a437c06210b07a7eb27",
+  "validation": {
+    "url": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39343102319",
+    "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39343102319/job/118369151521",
+    "domScenarios": 7,
+    "browserChecksPassed": 7,
+    "typescript": "passed",
+    "build": "passed",
+    "otherJobsSkipped": 8,
+    "logSha256": "6bf541da6b23eba705f4cb0cc3b1438a6d1e6191a4883867590d8d5e650e0343"
+  },
+  "coverage": [
+    "Unmodified real GeneralSettingsPage, stores, service wrappers and restore flow; only synthetic platform/IPC boundary",
+    "Missing WebDAV URL, missing repository owner and missing repository name show warning with zero additional IPC calls",
+    "Deferred local picker rejection shows error, releases actual page loading and allows opening picker again",
+    "Local, WebDAV and repository ordinary restore failures show error details and release loading; manual reselection and retry succeeds",
+    "Independent raw arguments assert selected path/filename/SHA and options do not leak from the failed attempt; unexpected commands remain rejected"
+  ],
+  "limits": [
+    "No product failure was observed; this adds regression coverage rather than a bug fix",
+    "IPC/platform, initial store data and responses are synthetic; no real credentials, native picker, remote restore, filesystem restore or restart",
+    "Repository configuration readiness uses immediate synthetic IPC and two animation frames; does not cover asynchronous configuration-load races",
+    "Focused seven error-recovery scenarios only; prior twelve routing cases, full frontend suite, Rust, complete desktop/navigation, WSL and theme/visual acceptance were not rerun"
+  ]
+}
