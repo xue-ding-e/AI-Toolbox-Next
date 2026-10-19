@@ -1118,15 +1118,31 @@ pub async fn get_opencode_preview(
 /// 字面量使用，`$` 不会被插值，写进去什么就是什么。
 #[tauri::command]
 pub async fn save_opencode_auth_config(
+    state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
+    config: Value,
+    original: Value,
+) -> Result<(), String> {
+    let config_path = get_opencode_config_path(state).await?;
+    let auth_path = super::free_models::get_opencode_auth_config_path()?;
+    save_auth_config_at_paths(Path::new(&config_path), Path::new(&auth_path), config, original)?;
+
+    let _ = app.emit("config-changed", "opencode");
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-opencode", ());
+    Ok(())
+}
+
+// The command and synthetic tempdir regressions use this exact disk write path.
+fn save_auth_config_at_paths(
+    _config_path: &Path,
+    auth_path: &Path,
     config: Value,
     original: Value,
 ) -> Result<(), String> {
     if !config.is_object() {
         return Err("auth.json must be a JSON object".to_string());
     }
-    let auth_path_str = super::free_models::get_opencode_auth_config_path()?;
-    let auth_path = Path::new(&auth_path_str);
     if let Some(parent) = auth_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
@@ -1187,9 +1203,6 @@ pub async fn save_opencode_auth_config(
     )
     .map_err(|e| format!("Failed to write auth.json: {e}"))?;
 
-    let _ = app.emit("config-changed", "opencode");
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-opencode", ());
     Ok(())
 }
 
@@ -2168,4 +2181,93 @@ pub async fn resolve_opencode_all_api_hub_providers(
             provider_config: all_api_hub::candidate_to_opencode_provider(candidate),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod auth_write_guard_tests {
+    use super::save_auth_config_at_paths;
+    use crate::coding::open_code::v2_migration;
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn auth_write_guard_v2_preserves_auth_and_credential_database_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("opencode.json");
+        let auth = dir.path().join("auth.json");
+        let database = dir.path().join("opencode.db");
+        fs::write(&config, "{\"provider\":{}}").unwrap();
+        fs::write(&auth, "{\"synthetic\":{\"key\":\"old\"}}\n").unwrap();
+        fs::write(&database, b"synthetic credential database sentinel").unwrap();
+        v2_migration::set_mode_for_source(&config, false, true).unwrap();
+        let auth_before = fs::read(&auth).unwrap();
+        let database_before = fs::read(&database).unwrap();
+        let result = save_auth_config_at_paths(&config, &auth, json!({}), json!({}));
+        assert!(result.is_err(), "V2 auth saves must be rejected");
+        assert_eq!(fs::read(&auth).unwrap(), auth_before);
+        assert_eq!(fs::read(&database).unwrap(), database_before);
+    }
+
+    #[test]
+    fn auth_write_guard_v2_does_not_create_missing_auth_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("opencode.json");
+        let auth = dir.path().join("missing/auth.json");
+        fs::write(&config, "{}").unwrap();
+        v2_migration::set_mode_for_source(&config, false, true).unwrap();
+        assert!(save_auth_config_at_paths(&config, &auth, json!({}), json!({})).is_err());
+        assert!(!auth.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn auth_write_guard_v1_preserves_refreshed_and_new_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("opencode.json");
+        let auth = dir.path().join("auth.json");
+        fs::write(&config, "{}").unwrap();
+        fs::write(&auth, r#"{"kept":{"key":"refreshed"},"changed":{"key":"old"},"deleted":{},"new":{"key":"new"}}"#).unwrap();
+        save_auth_config_at_paths(
+            &config, &auth,
+            json!({"kept":{"key":"old"},"changed":{"key":"edited"}}),
+            json!({"kept":{"key":"old"},"changed":{"key":"old"},"deleted":{}}),
+        ).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&auth).unwrap()).unwrap();
+        assert_eq!(saved, json!({"kept":{"key":"refreshed"},"changed":{"key":"edited"},"new":{"key":"new"}}));
+    }
+
+    #[test]
+    fn auth_write_guard_invalid_marker_type_preserves_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("opencode.json");
+        let auth = dir.path().join("auth.json");
+        fs::write(&config, "{}").unwrap();
+        fs::write(&auth, "{\"sentinel\":true}").unwrap();
+        fs::create_dir(v2_migration::v1_backup_path(&config)).unwrap();
+        let before = fs::read(&auth).unwrap();
+        assert!(save_auth_config_at_paths(&config, &auth, json!({}), json!({})).is_err());
+        assert_eq!(fs::read(&auth).unwrap(), before);
+    }
+
+    #[test]
+    fn auth_write_guard_failed_mode_probe_preserves_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked_parent = dir.path().join("not-a-directory");
+        let config = blocked_parent.join("opencode.json");
+        let auth = dir.path().join("auth.json");
+        fs::write(&blocked_parent, "synthetic blocker").unwrap();
+        fs::write(&auth, "{\"sentinel\":true}").unwrap();
+        let before = fs::read(&auth).unwrap();
+        assert!(save_auth_config_at_paths(&config, &auth, json!({}), json!({})).is_err());
+        assert_eq!(fs::read(&auth).unwrap(), before);
+    }
+
+    #[test]
+    fn auth_write_guard_v1_rejects_non_object_without_creating_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("opencode.json");
+        let auth = dir.path().join("missing/auth.json");
+        fs::write(&config, "{}").unwrap();
+        assert!(save_auth_config_at_paths(&config, &auth, json!([]), json!({})).is_err());
+        assert!(!auth.parent().unwrap().exists());
+    }
 }
