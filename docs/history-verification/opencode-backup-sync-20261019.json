@@ -1,0 +1,66 @@
+{
+  "base_main": "c02d95147fc75c0fe17001c64d1fa8d986b95e51",
+  "official_target": "a6c569e127ceb57cb807b58f50492713684d71b0",
+  "tested_head": "788face11b471ff8e9c99f4b4f89bb85c1410193",
+  "equivalent_tree_head": "a17c6022abf8575b247d1eca846a679ae84897a6",
+  "mapping": [
+    [
+      "78a8fb8f7da0e0b1f7abd58b9db82d44b3c8dce7",
+      "75ba2b9910290f63f27793dc39e84ab71943fdc3"
+    ],
+    [
+      "82ec24c0e301adc27a8aba87cee017fb3a05e99d",
+      "2776247bcad44ec4d7a60b0bcc1b43de4fca2cb3"
+    ],
+    [
+      "a6c569e127ceb57cb807b58f50492713684d71b0",
+      "69f89a81042dd6055a91ede6d6860fe163444500"
+    ]
+  ],
+  "not_replayed": [
+    "163fbead9fbbf00d6e3772ab8c50a3804203abf1",
+    "c22466503b0664b2487e8e4e5591bb36ffa39992"
+  ],
+  "not_replayed_reason": "Official Homebrew/Scoop release manifests are not a configured Next distribution. upstream-main retains their original history.",
+  "validation": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39275744016",
+    "frontend": {
+      "job": 118139479703,
+      "node_passed": 1071,
+      "node_failed": 0,
+      "tsc": "passed",
+      "three_structural_guards": "passed",
+      "pnpm_build": "passed",
+      "log_sha256": "441be96fda8b27923ced4f7b0fe84047d1c351f1fe08415548618cc5a9bfd601"
+    },
+    "rust": {
+      "job": 118140576380,
+      "passed": 263,
+      "failed": 0,
+      "ignored": 7,
+      "modules": {
+        "backup_utils": 66,
+        "backup_restore": 5,
+        "opencode_migration": 34,
+        "opencode_commands": 12,
+        "opencode_credentials": 12,
+        "model_presets": 9,
+        "model_pricing": 5,
+        "preset_pricing_coverage": 1,
+        "session_import": 119
+      },
+      "selected_marker_tests": 5,
+      "retained_source_mode_tests": 5,
+      "retained_credential_reader_tests": 5,
+      "retained_codex_response_identity_tests": 6,
+      "log_sha256": "3a56a04bbc73bd5ade42c4e15c91ed98861113a02e735391ac170b5904b5104a"
+    }
+  },
+  "boundaries": [
+    "Four added tests use real tempfile files, production filter/ZIP/path helpers and migration. The round trip is component-level, not the complete AppHandle-bound restore_from_archive pipeline.",
+    "Filtering remains per entry: excluding the config does not itself exclude the marker during restore; explicitly excluding the marker from backup keeps the config. Characterization verifies this behavior but does not establish partial-pair restore safety. No user exclusion is silently overridden.",
+    "Default paired backup/migration helper round trips preserve V1 bytes. Arbitrary filtered config/marker combinations, live data restoration, real GUI/native behavior and WSL remain unverified.",
+    "Seven ignored session-import tests require local CLI data/database snapshots; they were not run. No release or deployment performed.",
+    "Official a6c569e1 does not yet include the response_id parser mapping discussed in issue432; Next PR10 identity mapping/revision7 and tests remain intact. Reporter-specific root cause is unconfirmed."
+  ]
+}
