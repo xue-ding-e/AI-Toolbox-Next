@@ -83,6 +83,8 @@ sequenceDiagram
 
 ## 最小验证
 
+- 恢复编排的轻量回归：`node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts`。真实页面通过 `executeRestoreFlow` 注入 Modal/消息/密码框适配器；保持确认与密码提交的 fire-and-forget 语义、先成功弹窗再警告、密码框打开后本轮解除 loading、仅提交密码才重试同一恢复闭包。测试只覆盖编排，不代表按钮/DOM/原生恢复已验收；并发用例仅记录已有每次调用独立清除 loading 的行为，不证明 UI 可触发并发。
+
 - `node scripts/verify-backup-settings.mjs` 运行真实设置表单、真实 store 与远端列表，模拟 Tauri 持久化响应；验证三渠道保存往返、自动备份回显、加载前禁止保存、Token 平台切换、失败保留密码草稿，以及零额外滚动高度的渐变。HTTP/SQLite/系统凭据的后端行为必须另跑 Rust 回归，不能把前端 mock 当成真实远端验证。
 - Skills 警告翻译回归位于 `web/test/features/settings/utils/syncMessageTranslator.test.ts`；同步 UI 需验证有警告完成后的单次展示，以及下一次无警告同步后提示清空。
 - 防休眠改动验证 `web/test/stores/keepAwakeSettings.test.ts` 和 Rust `keep_awake::tests` / `keep_awake_preference_round_trips_and_old_records_default_to_disabled`；覆盖连续开关、保存失败、系统失败后重试、跨线程释放和旧配置的默认值。
