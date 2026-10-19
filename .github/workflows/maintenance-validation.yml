@@ -148,3 +148,45 @@ jobs:
           for module in coding::open_code::v2_migration coding::open_code::free_models coding::open_code::commands coding::open_code::markdown_agents coding::open_code::tray_support coding::mcp::config_sync coding::runtime_location settings::backup::utils tray::tests; do
             cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
           done
+  opencode-rename-regression:
+    # Only the independently reviewed legacy config rename regression candidate.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/validate-opencode-rename-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify all five source-mode regressions are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --list > /tmp/rename-tests.txt
+          cat /tmp/rename-tests.txt
+          test "$(grep -c '^coding::open_code::v2_migration::tests::source_mode_.*: test$' /tmp/rename-tests.txt)" -eq 5
+          for name in source_mode_invalid_json_preserves_legacy_path_and_bytes source_mode_semantic_conflict_preserves_legacy_path_and_bytes source_mode_success_renames_and_preserves_restorable_bytes source_mode_existing_target_preserves_both_files source_mode_explicit_legacy_path_is_not_renamed; do
+            grep -Fx "coding::open_code::v2_migration::tests::${name}: test" /tmp/rename-tests.txt
+          done
+      - name: Run actual migration and command contracts serially
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --test-threads=1
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands -- --test-threads=1
