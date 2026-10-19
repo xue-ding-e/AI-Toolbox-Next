@@ -2337,6 +2337,16 @@ pub fn set_mode_for_source(
     // default `config.json` is renamed first; explicit paths stay untouched
     // because the CLI loads them verbatim.
     let resolved_path = if enabled && is_default {
+        if path.file_name().and_then(|name| name.to_str()) == Some("config.json")
+            && !is_active(path)
+        {
+            // Reject parse/semantic failures before moving the legacy file.
+            // This is a preflight, not a rollback guarantee for later I/O or
+            // concurrent external edits; set_mode still validates its own read.
+            let content = fs::read_to_string(path)
+                .map_err(|error| format!("Failed to read OpenCode config: {error}"))?;
+            parse_v1_as_v2_json(&content)?;
+        }
         rename_legacy_default_config(path)?
     } else {
         path.to_path_buf()
@@ -3513,6 +3523,9 @@ mod tests {
         assert_eq!(fs::read(&legacy).unwrap(), original);
         assert!(!directory.path().join("opencode.json").exists());
         assert!(!v1_backup_path(&legacy).exists());
+        let target = directory.path().join("opencode.json");
+        assert!(!v1_backup_path(&target).exists());
+        assert!(!v2_backup_path(&target).exists());
     }
 
     #[test]
@@ -3527,6 +3540,9 @@ mod tests {
         assert_eq!(fs::read(&legacy).unwrap(), original);
         assert!(!directory.path().join("opencode.json").exists());
         assert!(!v1_backup_path(&legacy).exists());
+        let target = directory.path().join("opencode.json");
+        assert!(!v1_backup_path(&target).exists());
+        assert!(!v2_backup_path(&target).exists());
     }
 
     #[test]

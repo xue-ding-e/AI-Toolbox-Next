@@ -95,3 +95,5 @@ sequenceDiagram
 - 至少验证：应用 prompt 后本地 `AGENTS.md` 被正确改写，并触发 WSL 同步事件。
 - 至少验证：从 tray 切换主模型或小模型后，配置文件里仍是完整 `provider_id/model_id`，且页面/托盘选中态一致。
 - 至少验证：包含 `agent.*.model`、permission、options 和未知字段的配置经过后端反序列化/序列化后保持不变。
+
+- 默认旧 `config.json` 启用 V2 时，必须在重命名前用同一个迁移转换器预检解析/语义；非法 JSON 或冲突字段失败应保留原路径和字节，且不生成目标或备份。此预检只防止确定的转换失败，不承诺并发外部修改或后续 I/O 故障的完整回滚；不要用覆盖原路径的补偿 rename 掩盖竞态。回归见 `v2_migration::tests::source_mode_*`。
