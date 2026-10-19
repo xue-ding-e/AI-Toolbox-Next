@@ -190,3 +190,41 @@ jobs:
           set -euo pipefail
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --test-threads=1
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands -- --test-threads=1
+  codex-response-identity-regression:
+    # Synthetic session/proxy identity regression only; no live credentials.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/validate-codex-response-identity-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify the three response identity regressions are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --list > /tmp/codex-response-identity-tests.txt
+          cat /tmp/codex-response-identity-tests.txt
+          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq 3
+          for name in codex_response_identity_record_first_matches_only_its_proxy codex_response_identity_legacy_first_matches_only_its_proxy codex_response_identity_unmatched_response_preserves_independent_call; do
+            grep -Fx "coding::proxy_gateway::session_import::tests::${name}: test" /tmp/codex-response-identity-tests.txt
+          done
+      - name: Run synthetic Codex transcript and proxy reconciliation regressions
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --test-threads=1
