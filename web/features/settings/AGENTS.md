@@ -85,6 +85,8 @@ sequenceDiagram
 
 ## 最小验证
 
+- 恢复前确认由 `components/confirmRestore.tsx` 承载，设置页本地与远端入口、DOM 夹具复用同一 `Modal.confirm`/Checkbox/onOk。每次打开独立分配默认 false 的局部 holder；Checkbox 只写 holder，确认后每次服务尝试（含密码递归）读取同一 holder。不能提前固化打开时的选项，不能共享跨弹窗 holder，也不能把 void/fire-and-forget 的 onOk 改成 return/await 恢复 Promise。文件路径、远端 channel/filename/SHA 及 WebDAV 参数仍由页面原闭包绑定。
+- `BACKUP_SETTINGS_CHECK_GROUP=restore-confirm node scripts/verify-backup-settings.mjs` 精确运行 10 个 DOM 场景：未勾选/勾选后取消两例零合成服务调用，默认 false/勾选 true/取消勾选 false 三例确认，取消后重开重置，三种选项各经过 passwordRequired → passwordWrong → 成功，以及密码框取消不再重试。复用真实确认框、密码框和 `executeRestoreFlow`，用未完成的合成服务与 thenable 观察不等待语义。filename/SHA 只来自合成选中闭包；不覆盖完整设置页选中路由、原生选择器、真实远端下载、凭据读取或恢复落盘。所有密码为固定合成值；这组新增行为覆盖，不代表发现了产品缺陷。
 - 恢复密码弹框的生产实现由 `components/promptRestorePassword.tsx` 统一承载，设置页和真实 DOM 夹具复用；不要在夹具复制输入/校验逻辑。空字符串必须 warning + rejected Promise 保持弹框，非空原样传递（不 trim），`onSubmit` 为 void/fire-and-forget，取消不提交。输入框没有 `onPressEnter` 或 form 提交绑定，保留 AntD 默认键盘行为，不要在可测试性提取时顺带新增快捷键。
 - AntD 6.4.3 的静态确认框 `ActionButton` 会在 `onOk` 的拒绝分支清除 loading 后再次 reject（[固定版本源码](https://github.com/ant-design/ant-design/blob/6.4.3/components/_util/ActionButton.tsx)）。空密码校验保留原来的无 reason `Promise.reject()`；DOM 负向测试仅在这一点击窗口捕获并断言一次 `reason === undefined` 的 `unhandledrejection`，随即移除监听，缺失或其它异常仍失败。本轮可测试性提取不能为消除该已存在的控制流信号修改产品语义，也不能放宽共享 browser runner 的异常闸门。
 - `BACKUP_SETTINGS_CHECK_GROUP=restore-password node scripts/verify-backup-settings.mjs` 精确运行 9 个 DOM 场景：空值后纠正、取消、非空一次提交且不等待 callback thenable、错误提示与新输入、输入框 Enter、确认按钮 Enter、Escape、非空空白保留、两次递归密码重试。最后一例仅证明真实 `executeRestoreFlow` 保留合成 filename/SHA 服务闭包，不覆盖 `GeneralSettingsPage` 完整选中路由、真实远端服务或恢复落盘；所有密码均为固定合成值。键盘通过 CDP 默认动作验证，不能用 synthetic KeyboardEvent 的无默认动作代替。
