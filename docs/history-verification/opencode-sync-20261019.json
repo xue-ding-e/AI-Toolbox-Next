@@ -1,0 +1,61 @@
+{
+  "source": "fd007e1a7fc54e8442d8ef9dd086d06c8c7aa0be",
+  "previous_source": "f3eae1e3fdbe7b2d1f53c74c8113c20df794e009",
+  "maintenance_base": "ab8d0065e3513b8573b4d296b0b95a5742026369",
+  "source_mapping": {
+    "11a2aa8c93bdd7c993f0f7e1305e1b6a5d278c60": "289e17bddc2e3c9bc6b79a9f9fc44278e043fdec",
+    "fd007e1a7fc54e8442d8ef9dd086d06c8c7aa0be": "85bb777b3491be8158a886b0987c6999fe1f8562"
+  },
+  "red": {
+    "sha": "3780bfb94c9629902ef8ac7d985d7eb0804528e8",
+    "run": 39181124959,
+    "job": 117833893916,
+    "migration_passed": 29,
+    "free_models_passed": 9,
+    "free_models_failed": 1,
+    "failure": "credential_reader_uses_valid_database_when_legacy_json_is_malformed",
+    "log_sha256": "18ad3091c2fb8e9b9ae413bdd0049b1db86d3459395349f253efd0b2d86f738e"
+  },
+  "green": {
+    "sha": "4a5c23a7904b1b0c22140e2c6dfc85d250b12323",
+    "run": 39181880993,
+    "job": 117836179532,
+    "rust_modules_passed": {
+      "v2_migration": 29,
+      "free_models": 12,
+      "commands": 12,
+      "markdown_agents": 6,
+      "tray_support": 4,
+      "mcp_config_sync": 40,
+      "runtime_location": 19,
+      "backup_utils": 61,
+      "tray_tests": 10
+    },
+    "total_passed": 193,
+    "failed": 0,
+    "ignored": 0,
+    "log_sha256": "e6d41d90e797aa1ab9c7a229b7b46da558ee65730f848d8451e9291e2bb975a0"
+  },
+  "frontend": {
+    "source_sha": "f7ef5db7",
+    "focused_passed": 93,
+    "all_node_passed": 1055,
+    "tsc": "passed",
+    "structural_guards": 3,
+    "note": "Frontend source unchanged through green candidate."
+  },
+  "unverified": [
+    "native GUI and live credentials",
+    "real OpenCode config/database migration and WSL",
+    "default config.json rename followed by migration parse failure",
+    "full Rust suite and application packaging"
+  ],
+  "preservation": [
+    "existing image/MCP/Skills fixes",
+    "Next attribution and original AGPL/NOTICE",
+    "inert upstream release workflow",
+    "linear main and original-history upstream mirror"
+  ],
+  "integration_fix": "d309e32d",
+  "integration_note": "Same-feature RED test and GREEN fix consolidated; tested production and workflow trees unchanged."
+}
