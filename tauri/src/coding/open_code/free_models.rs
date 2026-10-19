@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -619,11 +619,8 @@ pub fn get_opencode_auth_config_path() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-fn read_auth_json_map() -> Result<HashMap<String, AuthEntry>, String> {
-    let auth_path = match get_auth_json_path() {
-        Ok(path) => path,
-        Err(err) => return Err(err),
-    };
+fn read_auth_json_map_at(data_root: &Path) -> Result<HashMap<String, AuthEntry>, String> {
+    let auth_path = data_root.join("auth.json");
 
     if !auth_path.exists() {
         return Ok(HashMap::new());
@@ -640,10 +637,7 @@ fn read_auth_json_map() -> Result<HashMap<String, AuthEntry>, String> {
 /// connectivity fallbacks and sharing must also see the SQLite store. The
 /// first row per integration wins: `active` first, then newest, matching the
 /// CLI's `resolveConnections(...)[0]`.
-fn read_credential_table_entries() -> HashMap<String, AuthEntry> {
-    let Ok(data_root) = get_opencode_data_root() else {
-        return HashMap::new();
-    };
+fn read_credential_table_entries_at(data_root: &Path) -> HashMap<String, AuthEntry> {
     let database_path = data_root.join("opencode.db");
     if !database_path.exists() {
         return HashMap::new();
@@ -711,8 +705,23 @@ fn read_credential_table_entries() -> HashMap<String, AuthEntry> {
 /// table wins when both stores know an integration, because that is what the
 /// V2 runtime reads.
 fn read_auth_map() -> Result<HashMap<String, AuthEntry>, String> {
-    let mut auth_map = read_auth_json_map()?;
-    for (provider_id, entry) in read_credential_table_entries() {
+    read_auth_map_at(&get_opencode_data_root()?)
+}
+
+// Path injection keeps tests on synthetic files while using the production reader.
+fn read_auth_map_at(data_root: &Path) -> Result<HashMap<String, AuthEntry>, String> {
+    let credential_entries = read_credential_table_entries_at(data_root);
+    let mut auth_map = match read_auth_json_map_at(data_root) {
+        Ok(entries) => entries,
+        Err(error) if credential_entries.is_empty() => return Err(error),
+        Err(_) => {
+            // Legacy JSON is only an import source for V2. A broken old file
+            // must not hide credentials already available in the runtime store.
+            log::warn!("[Auth] Failed to read legacy auth.json; using database credentials");
+            HashMap::new()
+        }
+    };
+    for (provider_id, entry) in credential_entries {
         auth_map.insert(provider_id, entry);
     }
     Ok(auth_map)
@@ -1221,6 +1230,103 @@ pub async fn get_auth_providers_data(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn synthetic_credential_store(root: &Path) {
+        let connection = rusqlite::Connection::open(root.join("opencode.db")).unwrap();
+        connection.execute_batch(
+            "CREATE TABLE credential (
+                id TEXT PRIMARY KEY, integration_id TEXT, value TEXT NOT NULL,
+                active INTEGER NOT NULL, time_created INTEGER NOT NULL
+            );",
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO credential VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "synthetic-row", "synthetic-provider",
+                r#"{"type":"key","key":"synthetic-db-key"}"#, 1, 1
+            ],
+        ).unwrap();
+    }
+
+    #[test]
+    fn credential_reader_uses_valid_database_when_legacy_json_is_malformed() {
+        let directory = tempfile::tempdir().unwrap();
+        synthetic_credential_store(directory.path());
+        fs::write(directory.path().join("auth.json"), "{malformed synthetic json").unwrap();
+        let entries = read_auth_map_at(directory.path())
+            .expect("valid V2 credentials must remain readable despite malformed legacy auth.json");
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
+            Some("synthetic-db-key")
+        );
+    }
+
+    #[test]
+    fn credential_reader_preserves_legacy_error_without_database_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("auth.json"), "{malformed synthetic json").unwrap();
+        let error = read_auth_map_at(directory.path()).unwrap_err();
+        assert!(error.starts_with("Failed to parse auth.json:"));
+        assert!(!directory.path().join("opencode.db").exists());
+
+        synthetic_credential_store(directory.path());
+        let connection = rusqlite::Connection::open(directory.path().join("opencode.db")).unwrap();
+        connection.execute("DELETE FROM credential", []).unwrap();
+        let error = read_auth_map_at(directory.path()).unwrap_err();
+        assert!(error.starts_with("Failed to parse auth.json:"));
+    }
+
+    #[test]
+    fn credential_reader_merges_legacy_only_entries_and_prefers_database_on_conflict() {
+        let directory = tempfile::tempdir().unwrap();
+        synthetic_credential_store(directory.path());
+        fs::write(directory.path().join("auth.json"),
+            r#"{
+                "synthetic-provider":{"type":"api","key":"synthetic-legacy-conflict"},
+                "synthetic-legacy-only":{"type":"api","key":"synthetic-legacy-key"}
+            }"#,
+        ).unwrap();
+        let entries = read_auth_map_at(directory.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
+            Some("synthetic-db-key")
+        );
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-legacy-only").unwrap()).as_deref(),
+            Some("synthetic-legacy-key")
+        );
+    }
+
+    #[test]
+    fn credential_reader_currently_prefers_database_without_a_migration_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        synthetic_credential_store(directory.path());
+        fs::write(directory.path().join("auth.json"),
+            r#"{"synthetic-provider":{"type":"api","key":"synthetic-legacy-key"}}"#,
+        ).unwrap();
+        // Characterization, not a declaration of the V1/V2 precedence contract.
+        assert!(!super::super::v2_migration::is_active(&directory.path().join("opencode.json")));
+        let entries = read_auth_map_at(directory.path()).unwrap();
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
+            Some("synthetic-db-key")
+        );
+    }
+
+    #[test]
+    fn credential_reader_uses_legacy_json_without_a_database() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("auth.json"),
+            r#"{"synthetic-provider":{"type":"api","key":"synthetic-legacy-key"}}"#,
+        ).unwrap();
+        let entries = read_auth_map_at(directory.path()).unwrap();
+        assert_eq!(
+            extract_auth_credential(entries.get("synthetic-provider").unwrap()).as_deref(),
+            Some("synthetic-legacy-key")
+        );
+        assert!(!directory.path().join("opencode.db").exists());
+    }
 
     #[test]
     fn sharing_only_exports_api_key_auth_and_never_oauth_tokens() {
