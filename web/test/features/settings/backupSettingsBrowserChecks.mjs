@@ -128,7 +128,26 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
     await call('settleRemote', 1, 'success');
     await assertSelection('reopen after closed request rejects', 'repository');
     completed++;
-    assert.equal(completed, 8, 'all remote lifecycle scenarios must execute');
+    // A completed previous session is also stale: if the new channel fails,
+    // its modal must not offer the previous channel's otherwise valid entries.
+    await navigate({ theme: 'light', language: 'en-US', remoteLifecycle: '1' });
+    await call('openRemote', 'webdav');
+    await waitFor('backupFixture.state.remoteLoads.length === 1');
+    await call('settleRemote', 0, 'success');
+    assert.deepEqual((await call('remoteSnapshot')).files, expectedFiles('webdav'),
+      'previous session really rendered its files');
+    await call('closeRemote');
+    await call('openRemote', 'repository');
+    await waitFor('backupFixture.state.remoteLoads.length === 2');
+    await call('settleRemote', 1, 'error');
+    const failedReopen = await call('remoteSnapshot');
+    check('failed new channel clears previous successful list', failedReopen.files, []);
+    check('failed new channel finishes its own loading', failedReopen.loading, false);
+    assert.ok(failedReopen.errors.some(error => error.includes('repository-request-1-failed')),
+      'failed new channel still reports its current error');
+    check('failed new channel has no restore selection', failedReopen.selections, []);
+    completed++;
+    assert.equal(completed, 9, 'all remote lifecycle scenarios must execute');
     console.log('Executed ' + completed + ' remote lifecycle scenarios; assertion failures: ' + failures.length);
     if (failures.length) throw new AggregateError(failures, 'Remote backup lifecycle regressions: ' + failures.length);
   };
