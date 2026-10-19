@@ -2,6 +2,40 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+// Serializes this process's mode transitions and auth writes. External CLI,
+// backup/restore and filesystem writers do not participate in this lock.
+static MODE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_lock<T>(lock: &Mutex<()>, operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _guard = lock.lock().map_err(|_| "OpenCode mode lock is poisoned; restart before writing".to_string())?;
+    operation()
+}
+
+pub(crate) fn with_mode_write_lock<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    with_lock(&MODE_WRITE_LOCK, operation)
+}
+
+/// Unlike `is_file`, errors and malformed markers are not evidence of V1.
+/// Callers that combine this check with writes must hold MODE_WRITE_LOCK.
+pub(crate) fn checked_active(config_path: &Path) -> Result<bool, String> {
+    let marker = v1_backup_path(config_path);
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Failed to inspect OpenCode V2 mode: {error}")),
+    };
+    let metadata = if metadata.file_type().is_symlink() {
+        fs::metadata(&marker).map_err(|error| format!("Failed to inspect OpenCode V2 mode: {error}"))?
+    } else {
+        metadata
+    };
+    if !metadata.is_file() {
+        return Err("OpenCode V2 marker is not a regular file".to_string());
+    }
+    Ok(true)
+}
 
 fn sibling_path(config_path: &Path, stem: &str) -> PathBuf {
     let file_name = match config_path
@@ -2349,12 +2383,20 @@ pub fn set_mode_for_source(
     is_default: bool,
     enabled: bool,
 ) -> Result<(bool, bool), String> {
+    with_mode_write_lock(|| set_mode_for_source_locked(path, is_default, enabled))
+}
+
+fn set_mode_for_source_locked(
+    path: &Path,
+    is_default: bool,
+    enabled: bool,
+) -> Result<(bool, bool), String> {
     // OpenCode 2.x only discovers `opencode.json`/`opencode.jsonc`. A legacy
     // default `config.json` is renamed first; explicit paths stay untouched
     // because the CLI loads them verbatim.
     let resolved_path = if enabled && is_default {
         if path.file_name().and_then(|name| name.to_str()) == Some("config.json")
-            && !is_active(path)
+            && !checked_active(path)?
         {
             // Reject parse/semantic failures before moving the legacy file.
             // This is a preflight, not a rollback guarantee for later I/O or
@@ -2368,12 +2410,17 @@ pub fn set_mode_for_source(
         path.to_path_buf()
     };
     let config_path = resolved_path.as_path();
-    let was_enabled = is_active(config_path);
-    let is_enabled = set_mode(config_path, enabled)?;
+    let was_enabled = checked_active(config_path)?;
+    let is_enabled = set_mode_locked(config_path, enabled)?;
     Ok((was_enabled, is_enabled))
 }
 
 pub fn set_mode(config_path: &Path, enabled: bool) -> Result<bool, String> {
+    with_mode_write_lock(|| set_mode_locked(config_path, enabled))
+}
+
+fn set_mode_locked(config_path: &Path, enabled: bool) -> Result<bool, String> {
+    let active = checked_active(config_path)?;
     let backup_v1 = v1_backup_path(config_path);
     let backup_v2 = v2_backup_path(config_path);
     let config_path_text = config_path.to_string_lossy();
@@ -2386,7 +2433,7 @@ pub fn set_mode(config_path: &Path, enabled: bool) -> Result<bool, String> {
     }
 
     if enabled {
-        if backup_v1.exists() {
+        if active {
             return Ok(true);
         }
         if !config_path.exists() {
@@ -2428,7 +2475,7 @@ pub fn set_mode(config_path: &Path, enabled: bool) -> Result<bool, String> {
         return Ok(true);
     }
 
-    if !backup_v1.exists() {
+    if !active {
         return Ok(false);
     }
 
@@ -3678,5 +3725,66 @@ mod tests {
             migrated["providers"]["relay"]["request"]["headers"]["Authorization"],
             json!("Custom")
         );
+    }
+}
+
+#[cfg(test)]
+mod mode_write_guard_tests {
+    use super::*;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    #[test]
+    fn mode_write_guard_serializes_both_migration_entry_points() {
+        for source_aware in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("opencode.json");
+            fs::write(&path, "{}").unwrap();
+            let guard = MODE_WRITE_LOCK.lock().unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let (finished_tx, finished_rx) = mpsc::channel();
+            let worker_path = path.clone();
+            let worker = std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let result = if source_aware {
+                    set_mode_for_source(&worker_path, false, true).map(|(_, mode)| mode)
+                } else {
+                    set_mode(&worker_path, true)
+                };
+                finished_tx.send(result).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let completed_while_locked = finished_rx.recv_timeout(Duration::from_millis(50));
+            let marker_while_locked = v1_backup_path(&path).exists();
+            drop(guard);
+            worker.join().unwrap();
+            assert!(completed_while_locked.is_err());
+            assert!(!marker_while_locked);
+            assert!(finished_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap());
+            assert!(checked_active(&path).unwrap());
+        }
+    }
+
+    #[test]
+    fn mode_write_guard_poison_blocks_the_operation() {
+        // Poison only an isolated lock, never the process-wide migration lock.
+        let lock = Arc::new(Mutex::new(()));
+        let worker_lock = Arc::clone(&lock);
+        assert!(std::thread::spawn(move || {
+            let _guard = worker_lock.lock().unwrap();
+            panic!("synthetic lock poison");
+        }).join().is_err());
+        let mut called = false;
+        assert!(with_lock(&lock, || { called = true; Ok(()) }).is_err());
+        assert!(!called);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mode_write_guard_dangling_marker_is_unknown_not_v1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        std::os::unix::fs::symlink(dir.path().join("missing"), v1_backup_path(&path)).unwrap();
+        assert!(checked_active(&path).is_err());
     }
 }
