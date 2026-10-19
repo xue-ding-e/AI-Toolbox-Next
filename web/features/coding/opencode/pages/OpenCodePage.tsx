@@ -1,4 +1,5 @@
 import React from 'react';
+import { createAuthConfigMode } from '../utils/authConfigMode';
 import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Form, Tooltip, Modal } from 'antd';
 import {
   CloudSyncOutlined,
@@ -327,12 +328,11 @@ const OpenCodePage: React.FC = () => {
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [previewData, setPreviewDataLocal] = React.useState<OpenCodePreviewData | null>(null);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
-  const [v2MigrationEnabled, setV2MigrationEnabled] = React.useState(false);
-  // Starts true: the mode is probed asynchronously after mount, and a false
-  // start paints the "migration is off" banner for one frame on every load —
-  // V2 users would see the V1 advice flash before it disappears. It also keeps
-  // 「自定义配置目录」 disabled until the real mode is known.
-  const [v2MigrationLoading, setV2MigrationLoading] = React.useState(true);
+  const [authConfigMode] = React.useState(createAuthConfigMode);
+  const authPreviewRequest = React.useRef(0);
+  const { enabled: v2MigrationEnabled, loading: v2MigrationLoading, confirmed: v2MigrationConfirmed } = React.useSyncExternalStore(
+    authConfigMode.subscribe, authConfigMode.getSnapshot,
+  );
   const [v2HintDismissed, setV2HintDismissed] = React.useState(() => {
     try {
       return localStorage.getItem(OPENCODE_V2_HINT_DISMISSED_KEY) === '1';
@@ -517,25 +517,18 @@ const OpenCodePage: React.FC = () => {
 
   React.useEffect(() => {
     let cancelled = false;
-    setV2MigrationLoading(true);
-    void getOpenCodeV2ConfigMode()
-      .then((enabled) => {
-        if (!cancelled) setV2MigrationEnabled(enabled);
-      })
+    void authConfigMode.run(getOpenCodeV2ConfigMode, () => !cancelled)
       .catch((error: unknown) => {
         console.error('Failed to read OpenCode V2 config mode:', error);
         if (!cancelled && settingsModalOpen) {
           message.error(error instanceof Error ? error.message : t('common.error'));
         }
-      })
-      .finally(() => {
-        if (!cancelled) setV2MigrationLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [settingsModalOpen, t]);
+  }, [authConfigMode, settingsModalOpen, openCodeConfigRefreshKey, t]);
 
   React.useEffect(() => {
     const checkAllApiHubAvailability = async () => {
@@ -865,12 +858,20 @@ const OpenCodePage: React.FC = () => {
    * 不能因为拿着旧副本而被覆盖。
    */
   const handleOpenAuthConfig = async () => {
+    const request = ++authPreviewRequest.current;
     try {
-      const preview = await getOpenCodePreview();
+      // Re-probe every open; the settings modal is not the only way the
+      // migration marker can change. No editor opens on an old V1 snapshot.
+      const [preview, mode] = await Promise.all([
+        getOpenCodePreview(),
+        authConfigMode.run(getOpenCodeV2ConfigMode),
+      ]);
+      if (request !== authPreviewRequest.current || mode === undefined) return;
       setAuthContent(preview.authContent ?? undefined);
       setAuthConfigPath(preview.authPath ?? undefined);
       setAuthModalOpen(true);
     } catch (error) {
+      if (request !== authPreviewRequest.current) return;
       console.error('Failed to read OpenCode auth.json:', error);
       message.error(t('common.error'));
     }
@@ -2130,23 +2131,23 @@ const OpenCodePage: React.FC = () => {
   };
 
   const handleV2MigrationToggle = async (enabled: boolean) => {
-    setV2MigrationLoading(true);
     try {
-      const actualMode = await setOpenCodeV2ConfigMode(enabled);
-      setV2MigrationEnabled(actualMode);
-      await loadConfig(false, true);
+      const actualMode = await authConfigMode.change(async () => {
+        const mode = await setOpenCodeV2ConfigMode(enabled);
+        await loadConfig(false, true);
+        try {
+          await refreshTrayMenu();
+        } catch (error: unknown) {
+          console.error('Failed to refresh OpenCode tray after config migration:', error);
+        }
+        return mode;
+      });
+      await authConfigMode.run(getOpenCodeV2ConfigMode);
       incrementOpenCodeConfigRefresh();
-      try {
-        await refreshTrayMenu();
-      } catch (error: unknown) {
-        console.error('Failed to refresh OpenCode tray after config migration:', error);
-      }
       message.success(t(actualMode ? 'opencode.v2Migration.enabled' : 'opencode.v2Migration.disabled'));
     } catch (error: unknown) {
       console.error('Failed to change OpenCode V2 config mode:', error);
       message.error(error instanceof Error ? error.message : t('common.error'));
-    } finally {
-      setV2MigrationLoading(false);
     }
   };
 
@@ -2160,11 +2161,11 @@ const OpenCodePage: React.FC = () => {
 
   /**
    * V2 keeps credentials in `opencode.db`, so `auth.json` becomes a view-only
-   * copy: editing it would be silently ignored by the runtime. Hold the
-   * read-only state until the mode probe finishes, same as the page-top V2
-   * line, so the modal never opens editable for a V2 user.
+   * copy: editing it would be silently ignored by the runtime. Unknown,
+   * loading and failed probes also stay read-only; only confirmed V1 writes.
+   * The controller rejects stale responses and checks again at save time.
    */
-  const authConfigReadOnly = !v2MigrationLoading && v2MigrationEnabled;
+  const authConfigReadOnly = authConfigMode.readOnly();
 
   /**
    * One provider's card props, for both layouts.
@@ -2286,7 +2287,7 @@ const OpenCodePage: React.FC = () => {
                 onCustomizeConfig={() => setPathModalOpen(true)}
                 // The V2 migration owns the config file location; moving it
                 // mid-migration would leave the switch pointing at another file.
-                customizeConfigDisabled={v2MigrationEnabled || v2MigrationLoading}
+                customizeConfigDisabled={!v2MigrationConfirmed || v2MigrationEnabled || v2MigrationLoading}
                 customizeConfigDisabledReason={t('opencode.v2Migration.customizeDisabledReason')}
                 onOpenFolder={handleOpenConfigFolder}
                 onRefresh={() => {
@@ -2333,7 +2334,7 @@ const OpenCodePage: React.FC = () => {
                     {t('opencode.v2Migration.activeHint')}
                   </div>
                 )}
-                {!v2MigrationLoading && !v2MigrationEnabled && !v2HintDismissed && (
+                {v2MigrationConfirmed && !v2MigrationLoading && !v2MigrationEnabled && !v2HintDismissed && (
                   <div
                     style={{
                       display: 'flex',
@@ -2722,7 +2723,7 @@ const OpenCodePage: React.FC = () => {
                               the note is only meaningful while migration is
                               on, and the loading guard keeps it from appearing
                               mid-toggle before the mode is confirmed. */}
-                          {authConfigReadOnly && (
+                          {v2MigrationConfirmed && v2MigrationEnabled && (
                             <div style={{ marginTop: 4 }}>
                               <Text type="secondary" style={{ fontSize: 12 }}>
                                 {t('opencode.official.v2AuthHint')}
@@ -2940,9 +2941,12 @@ const OpenCodePage: React.FC = () => {
               path={authConfigPath}
               readOnly={authConfigReadOnly}
               onSave={async (submitted, original) => {
-                await saveOpenCodeAuthConfig(submitted, original);
+                await authConfigMode.save(() => saveOpenCodeAuthConfig(submitted, original));
               }}
-              onCancel={() => setAuthModalOpen(false)}
+              onCancel={() => {
+                authPreviewRequest.current++;
+                setAuthModalOpen(false);
+              }}
               onSaved={async () => {
                 // 改完凭据要重查官方渠道列表——它是按 auth.json 的键派生的。
                 const data = await getOpenCodeAuthProviders();

@@ -65,6 +65,8 @@ const AuthConfigModal: React.FC<AuthConfigModalProps> = ({
   const [openedUnparseable, setOpenedUnparseable] = React.useState(false);
   const [valid, setValid] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const readOnlyRef = React.useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   // 每次打开都从磁盘原文重读：这个弹窗不是常驻编辑面，拿着上次关闭时的副本
   // 会让用户在别处改过的内容被静默覆盖。
@@ -92,6 +94,8 @@ const AuthConfigModal: React.FC<AuthConfigModalProps> = ({
   }, [open, content]);
 
   const handleSave = async () => {
+    // A queued onOk from an older render must honor a newly read-only modal.
+    if (readOnlyRef.current) return;
     if (!valid) {
       message.error(t('common.jsonInvalid'));
       return;
