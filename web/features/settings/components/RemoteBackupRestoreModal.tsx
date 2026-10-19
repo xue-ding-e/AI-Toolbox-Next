@@ -48,6 +48,7 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [backups, setBackups] = React.useState<BackupFileInfo[]>([]);
+  const openSessionRef = React.useRef<{ active: boolean } | null>(null);
 
   const normalizedCurrentHostLabel = currentHostLabel.trim();
   const showHostTabs = normalizedCurrentHostLabel.length > 0;
@@ -76,9 +77,10 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
     // One read belongs to one open session, even when the same channel reopens.
     // The parent recreates loadFiles on render, so callback identity is not a
     // session boundary and must not trigger another request.
-    let active = true;
-    void loadBackups(() => active);
-    return () => { active = false; };
+    const session = { active: true };
+    openSessionRef.current = session;
+    void loadBackups(() => session.active);
+    return () => { session.active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -125,14 +127,21 @@ const RemoteBackupRestoreModal: React.FC<RemoteBackupRestoreModalProps> = ({
 
   const handleDelete = async (file: ParsedBackupFile, e: React.MouseEvent) => {
     e.stopPropagation(); // 阻止触发选择
+    // The request keeps its original file/SHA; only UI completion belongs to
+    // this open session. Closing does not cancel the remote deletion.
+    const session = openSessionRef.current;
     try {
       await deleteFile(file);
+      if (!session?.active) return;
       message.success(t('common.success'));
       // 刷新列表
       setBackups((currentBackups) =>
-        currentBackups.filter((backup) => backup.filename !== file.filename),
+        session.active
+          ? currentBackups.filter((backup) => backup.filename !== file.filename)
+          : currentBackups,
       );
     } catch (error) {
+      if (!session?.active) return;
       console.error('Failed to delete backup:', error);
 
       let errorMessage = t('common.error');
