@@ -58,7 +58,7 @@ test('pending restore stays loading; success presents locked restart dialog befo
     okText: 'translated:common.restart', closable: false, maskClosable: false, keyboard: false, onOk: undefined,
   });
   assert.equal(dialog.onOk(), undefined, 'restart callback remains fire-and-forget');
-  assert.deepEqual(h.events.at(-1), ['restart']);
+  assert.deepEqual(h.events[h.events.length - 1], ['restart']);
 });
 
 for (const [label, error, suffix] of [
@@ -103,7 +103,7 @@ test('password-required then wrong-password retries the same closure only on lat
   const secondFinished = h.nextFinish();
   assert.equal(h.prompts[0].submit('wrong'), undefined);
   assert.equal(calls.length, 2);
-  assert.deepEqual(h.events.at(-1), ['loading', true]);
+  assert.deepEqual(h.events[h.events.length - 1], ['loading', true]);
   attempts[1].reject(JSON.stringify({ type: 'passwordWrong' }));
   await secondFinished;
   assert.equal(h.prompts[1].wrong, true);
@@ -133,7 +133,7 @@ for (const type of ['passwordRequired', 'passwordWrong']) {
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(calls, 1);
     assert.equal(h.prompts[0].wrong, type === 'passwordWrong');
-    assert.deepEqual(h.events.at(-1), ['loading', false]);
+    assert.deepEqual(h.events[h.events.length - 1], ['loading', false]);
     assert.equal(h.dialogs.length, 0);
   });
 }
@@ -147,7 +147,7 @@ test('overlapping calls characterize existing per-attempt loading, not an operat
   assert.deepEqual(h.events, [['loading', true], ['loading', true]]);
   first.resolve(success);
   await a;
-  assert.deepEqual(h.events.at(-1), ['loading', false], 'first completion clears loading while second is pending');
+  assert.deepEqual(h.events[h.events.length - 1], ['loading', false], 'first completion clears loading while second is pending');
   assert.equal(h.dialogs.length, 1);
   second.resolve(success);
   await b;
