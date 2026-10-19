@@ -2326,6 +2326,37 @@ pub fn rename_legacy_default_config(config_path: &Path) -> Result<PathBuf, Strin
     Ok(target)
 }
 
+/// Apply the same source-aware migration used by the command, with explicit
+/// paths so isolated tests never resolve or touch a user's configuration.
+pub fn set_mode_for_source(
+    path: &Path,
+    is_default: bool,
+    enabled: bool,
+) -> Result<(bool, bool), String> {
+    // OpenCode 2.x only discovers `opencode.json`/`opencode.jsonc`. A legacy
+    // default `config.json` is renamed first; explicit paths stay untouched
+    // because the CLI loads them verbatim.
+    let resolved_path = if enabled && is_default {
+        if path.file_name().and_then(|name| name.to_str()) == Some("config.json")
+            && !is_active(path)
+        {
+            // Reject parse/semantic failures before moving the legacy file.
+            // This is a preflight, not a rollback guarantee for later I/O or
+            // concurrent external edits; set_mode still validates its own read.
+            let content = fs::read_to_string(path)
+                .map_err(|error| format!("Failed to read OpenCode config: {error}"))?;
+            parse_v1_as_v2_json(&content)?;
+        }
+        rename_legacy_default_config(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let config_path = resolved_path.as_path();
+    let was_enabled = is_active(config_path);
+    let is_enabled = set_mode(config_path, enabled)?;
+    Ok((was_enabled, is_enabled))
+}
+
 pub fn set_mode(config_path: &Path, enabled: bool) -> Result<bool, String> {
     let backup_v1 = v1_backup_path(config_path);
     let backup_v2 = v2_backup_path(config_path);
@@ -3479,6 +3510,82 @@ mod tests {
             restored["mcp"]["remote"]["oauth"],
             json!({ "clientId": "client", "clientSecret": "secret", "callbackPort": 19877 })
         );
+    }
+
+    #[test]
+    fn source_mode_invalid_json_preserves_legacy_path_and_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("config.json");
+        let original = b"{invalid synthetic JSON\n";
+        fs::write(&legacy, original).unwrap();
+        assert!(set_mode_for_source(&legacy, true, true).is_err());
+        assert!(legacy.is_file(), "failed migration must preserve the original path");
+        assert_eq!(fs::read(&legacy).unwrap(), original);
+        assert!(!directory.path().join("opencode.json").exists());
+        assert!(!v1_backup_path(&legacy).exists());
+        let target = directory.path().join("opencode.json");
+        assert!(!v1_backup_path(&target).exists());
+        assert!(!v2_backup_path(&target).exists());
+    }
+
+    #[test]
+    fn source_mode_semantic_conflict_preserves_legacy_path_and_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("config.json");
+        let original = br#"{"command":{"synthetic":{"template":"old"}},"commands":{"synthetic":{"template":"different"}}}"#;
+        fs::write(&legacy, original).unwrap();
+        let error = set_mode_for_source(&legacy, true, true).unwrap_err();
+        assert!(error.contains("conflicting"), "unexpected error: {error}");
+        assert!(legacy.is_file(), "failed migration must preserve the original path");
+        assert_eq!(fs::read(&legacy).unwrap(), original);
+        assert!(!directory.path().join("opencode.json").exists());
+        assert!(!v1_backup_path(&legacy).exists());
+        let target = directory.path().join("opencode.json");
+        assert!(!v1_backup_path(&target).exists());
+        assert!(!v2_backup_path(&target).exists());
+    }
+
+    #[test]
+    fn source_mode_success_renames_and_preserves_restorable_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("config.json");
+        let target = directory.path().join("opencode.json");
+        let original = b"{\n  \"provider\": {}\n}\n";
+        fs::write(&legacy, original).unwrap();
+        assert_eq!(set_mode_for_source(&legacy, true, true).unwrap(), (false, true));
+        assert!(!legacy.exists());
+        assert!(target.is_file());
+        assert_eq!(fs::read(v1_backup_path(&target)).unwrap(), original);
+        assert_eq!(set_mode_for_source(&target, true, false).unwrap(), (true, false));
+        assert_eq!(fs::read(&target).unwrap(), original);
+    }
+
+    #[test]
+    fn source_mode_existing_target_preserves_both_files() {
+        for filename in ["opencode.json", "opencode.jsonc"] {
+            let directory = tempfile::tempdir().unwrap();
+            let legacy = directory.path().join("config.json");
+            let target = directory.path().join(filename);
+            let original = br#"{"provider":{}}"#;
+            let existing = br#"{"providers":{"synthetic":{}}}"#;
+            fs::write(&legacy, original).unwrap();
+            fs::write(&target, existing).unwrap();
+            let error = set_mode_for_source(&legacy, true, true).unwrap_err();
+            assert!(error.contains("already exists"));
+            assert_eq!(fs::read(&legacy).unwrap(), original);
+            assert_eq!(fs::read(&target).unwrap(), existing);
+        }
+    }
+
+    #[test]
+    fn source_mode_explicit_legacy_path_is_not_renamed() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("config.json");
+        fs::write(&legacy, br#"{"provider":{}}"#).unwrap();
+        assert_eq!(set_mode_for_source(&legacy, false, true).unwrap(), (false, true));
+        assert!(legacy.is_file());
+        assert!(!directory.path().join("opencode.json").exists());
+        assert!(v1_backup_path(&legacy).is_file());
     }
 
     #[test]
