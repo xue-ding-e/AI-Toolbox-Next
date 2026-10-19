@@ -42,6 +42,7 @@ sequenceDiagram
 - 切换 GitHub/Gitee 时立即清空输入中的 Token，已保存状态也只对原平台有效；后端仍须拒绝跨平台复用已存 Token。清空前端输入并不能替代后端校验。
 - 备份加密密码只在设置弹窗内出现：提交非空才写入本机系统凭据库，保存成功或关闭后立即从 state 清空；前端只能看到 `has_password` + `password_known` 状态。`password_known=false` 表示本机凭据库读不到（显示"未知"态，不能显示"未设置"）。恢复时后端先读凭据库（凭据库读失败也按 `passwordRequired` 返回，用户仍可手动输密码），前端据此在同一选择上弹密码框重试，取消必须保证零恢复写入。
 - 远端备份列表（WebDAV/仓库）共用 `RemoteBackupRestoreModal`，只消费统一 `BackupFileInfo`（filename/size/encrypted + 仓库条目的 sha）；文件名解析统一走 `utils/backupFilename.ts`（镜像后端契约，支持两类历史命名、新唯一标识与 `.zip`/`.zip.enc`，含多字节 legacy 前缀）。不要在组件里写只匹配 `.zip` 的正则或各自的解析规则；仓库删除/恢复必须带列表返回的 sha。
+- 远端列表读取属于一次 `open` 会话：关闭/卸载即使请求尚未结束也必须失效，重开同渠道同样是新会话。过期读取不能写列表、报错或清除新一轮 loading；新一轮开始清空旧列表，防止失败后选到上一渠道的 filename/sha。`GeneralSettingsPage` 每次 render 都创建 load/delete 回调，不能把 `loadFiles` 函数引用当会话边界或直接加入读取 effect 依赖，否则会重复加载。真实 Modal 乱序回归通过 `BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs` 单独运行；这组仅覆盖读取与选中，不代表删除并发已验证。
 - 本地恢复文件选择器同时接受 `.zip` 与 `.zip.enc`（扩展名过滤器 `['zip', 'enc']`），真实格式由后端按文件头判断，与当前是否启用加密无关。
 - `ScrollFadeHint` 用 callback ref 取得实际 `.ant-modal-body`，`afterOpenChange` 在复用未销毁的 Modal 时重新绑定。提示使用零高度 sticky 锚点加向上绘制的伪元素，必须放在表单 flex 分组之外，避免 gap 或提示自身新增滚动高度；使用主题阴影变量、`pointer-events: none` 和 `aria-hidden`，到底或无溢出时隐藏。验收首次打开、异步加载、重新打开、缩放、亮暗/system、中英文长标签及 footer 可见性。
 - 数据目录设置区必须分别呈现本进程 `effective/is_custom` 与下次启动 `next_start/restart_required`；不能用保存的 override 标记当前目录，也不能把“稍后重启”说成撤销保存。待生效状态常驻提供重启和撤销入口。目录选择、保存和重置须互斥；后端保存成功响应直接返回最新状态，失败保留当前路径并呈现具体错误。
