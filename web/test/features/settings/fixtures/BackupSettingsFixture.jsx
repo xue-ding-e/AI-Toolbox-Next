@@ -22,6 +22,9 @@ const state = {
   pendingLoads: [],
   deferFiles: parameters.has('deferFiles'),
   pendingFileLoads: [],
+  remoteLoads: [],
+  remoteSelections: [],
+  remoteDeletes: [],
   repository: parameters.has('blank') ? {
     platform: 'github', owner: '', repository: '', branch: '', directory: '',
   } : {
@@ -38,6 +41,20 @@ const state = {
     encrypted: !!(index % 2),
   })).reverse(),
 };
+// Service-boundary doubles only: lifecycle/state handling stays in the real modal.
+const remoteFiles = channel => [
+  { filename: 'ai-toolbox-backup-20261019-120000.zip', size: 1024, sha: channel + '-shared-sha', encrypted: false },
+  { filename: channel + '-only.zip', size: 2048, sha: channel + '-unique-sha', encrypted: false },
+];
+const remoteLoaders = Object.fromEntries(['webdav', 'repository'].map(channel => [channel, () => {
+  const files = structuredClone(remoteFiles(channel));
+  return new Promise((resolve, reject) => {
+    state.remoteLoads.push({ channel, files, resolve, reject, settled: false });
+  });
+}]));
+const remoteDeleters = Object.fromEntries(['webdav', 'repository'].map(channel => [channel, async file => {
+  state.remoteDeletes.push({ channel, file: structuredClone(file) });
+}]));
 const repositoryView = () => ({ config: structuredClone(state.repository), has_token: state.hasToken });
 window.__TAURI_INTERNALS__ = {
   invoke: async (command, args) => {
@@ -198,6 +215,40 @@ window.backupFixture = {
   },
   async resolveLoad() { state.pendingLoads.shift()?.(); await tick(); },
   async resolveFiles() { state.pendingFileLoads.shift()?.(); await tick(); },
+  async openRemote(channel) {
+    document.querySelector('[data-testid="open-remote-' + channel + '"]').click();
+    await tick();
+  },
+  async closeRemote() {
+    const close = this.nestedModal().querySelector('.ant-modal-close');
+    if (!close) throw new Error('Missing remote modal close button');
+    close.click();
+    await tick();
+  },
+  async settleRemote(index, outcome) {
+    const request = state.remoteLoads[index];
+    if (!request || request.settled) throw new Error('Missing/unexpected settled remote request: ' + index);
+    request.settled = true;
+    if (outcome === 'error') request.reject(new Error(request.channel + '-request-' + index + '-failed'));
+    else request.resolve(structuredClone(request.files));
+    await tick();
+  },
+  remoteSnapshot() {
+    const modal = [...document.querySelectorAll('.ant-modal')].find(visible);
+    return {
+      loading: !!modal?.querySelector('.ant-spin-spinning'),
+      files: [...(modal?.querySelectorAll('.ant-list-item-meta-description') || [])].map(item => item.textContent),
+      errors: [...document.querySelectorAll('.ant-message-error')].map(item => item.textContent),
+      selections: state.remoteSelections,
+    };
+  },
+  async selectRemote(filename) {
+    const row = [...this.nestedModal().querySelectorAll('.ant-list-item')].find(item =>
+      item.querySelector('.ant-list-item-meta-description')?.textContent === filename);
+    if (!row) throw new Error('Missing selectable remote file: ' + filename);
+    row.click();
+    await tick();
+  },
   savedRequests() { return state.requests.filter(request => request.command === 'save_backup_settings'); },
   autoSettings() {
     const saved = useSettingsStore.getState();
@@ -212,23 +263,30 @@ window.backupFixture = {
 function Fixture() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [remoteOpen, setRemoteOpen] = React.useState(false);
+  const [remoteChannel, setRemoteChannel] = React.useState(null);
+  const lifecycle = parameters.has('remoteLifecycle');
   return <App>
     <Button data-testid="open-settings" onClick={() => setSettingsOpen(true)}>Open settings</Button>
     <Button data-testid="open-remote" onClick={() => setRemoteOpen(true)}>Open backups</Button>
+    {['webdav', 'repository'].map(channel => <Button key={channel}
+      data-testid={'open-remote-' + channel} onClick={() => setRemoteChannel(channel)}>{channel}</Button>)}
     <BackupSettingsModal open={settingsOpen} onClose={() => { state.closed = true; setSettingsOpen(false); }} />
     <RemoteBackupRestoreModal
-      open={remoteOpen}
-      onClose={() => setRemoteOpen(false)}
+      open={lifecycle ? remoteChannel !== null : remoteOpen}
+      onClose={() => lifecycle ? setRemoteChannel(null) : setRemoteOpen(false)}
       currentHostLabel=""
-      loadFiles={async () => {
+      loadFiles={lifecycle ? remoteLoaders[remoteChannel || 'webdav'] : async () => {
         if (state.deferFiles) {
           state.deferFiles = false;
           return new Promise(resolve => state.pendingFileLoads.push(() => resolve(structuredClone(state.files))));
         }
         return structuredClone(state.files);
       }}
-      deleteFile={async file => { state.files = state.files.filter(item => item.sha !== file.sha); }}
-      onSelect={selection => { state.selection = selection; }}
+      deleteFile={lifecycle ? remoteDeleters[remoteChannel || 'webdav'] : async file => { state.files = state.files.filter(item => item.sha !== file.sha); }}
+      onSelect={selection => {
+        state.selection = selection;
+        if (lifecycle) state.remoteSelections.push({ channel: remoteChannel, file: structuredClone(selection.file) });
+      }}
     />
   </App>;
 }
