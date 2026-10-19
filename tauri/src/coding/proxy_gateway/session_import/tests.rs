@@ -1052,6 +1052,241 @@ fn codex_response_identity_unmatched_response_preserves_independent_call() {
 }
 
 #[test]
+fn codex_response_identity_revision6_rescan_repairs_rows_and_matches() {
+    for legacy_first in [false, true] {
+        for wrong_match in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let file = root.path().join(format!("rollout-{PARENT}.jsonl"));
+            let usage = json!({"input_tokens":1000,"cached_input_tokens":400,
+                "cache_write_input_tokens":0,"output_tokens":50,"total_tokens":1050});
+            let record = codex_token_usage_record("resp-target", usage.clone(), THEN);
+            let mirror = json!({"type":"event_msg","timestamp":THEN,"payload":{
+                "type":"token_count","info":{
+                    "total_token_usage":usage,"last_token_usage":usage}}});
+            let mut events = vec![
+                json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+                json!({"type":"turn_context","payload":{"model":"usage-test-model"}}),
+            ];
+            if legacy_first {
+                events.extend([mirror, record]);
+            } else {
+                events.extend([record, mirror]);
+            }
+            write_jsonl(&file, &events);
+            let source_before = fs::read(&file).unwrap();
+            let db = SqliteDbState::in_memory_for_test().unwrap();
+            assert_eq!(
+                run_sync(&db, GatewayCliKey::Codex, root.path()).inserted_records,
+                1
+            );
+            let native_id = format!("SESSION:codex:{PARENT}:resp-target");
+            let proxy_id = |envelope| {
+                crate::coding::proxy_gateway::usage_parser::stable_usage_request_id(
+                    GatewayCliKey::Codex,
+                    Some("provider"),
+                    Some(envelope),
+                    "unused-fallback",
+                )
+            };
+            let independent_id = proxy_id("resp-independent");
+            let target_id = proxy_id("resp-target");
+            let mut states = load_states(&db).unwrap();
+            let (source_id, state) = states.iter_mut().next().unwrap();
+            // Model the persisted revision-6 outcomes, keeping the actual parser's
+            // fingerprint and the unchanged file's mtime/size. No matcher is
+            // duplicated here: these are the two old states the upgrade must heal.
+            state.parser_revision = 6;
+            state.pending = false;
+            let imported = state.records.get_mut(&native_id).unwrap();
+            imported.envelope_id = None;
+            imported.matched_proxy_id = wrong_match.then(|| independent_id.clone());
+            db.with_conn(|conn| {
+                let ids = if wrong_match {
+                    vec![&independent_id]
+                } else {
+                    vec![&independent_id, &target_id]
+                };
+                for id in ids {
+                    conn.execute(
+                        "INSERT INTO proxy_request_logs
+                         (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                          cache_read_tokens, cache_creation_tokens, created_at, status_code,
+                          request_kind, data_source)
+                         VALUES (?1, 'provider', 'codex', 'usage-test-model', 600, 50,
+                                 400, 0, ?2, 200, 'request', 'proxy')",
+                        params![id, THEN],
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                if wrong_match {
+                    conn.execute(
+                        "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+                        [&native_id],
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                save_state(conn, source_id, state)
+            })
+            .unwrap();
+            assert_eq!(count(&db), if wrong_match { 1 } else { 3 });
+
+            let repaired = run_sync(&db, GatewayCliKey::Codex, root.path());
+            assert_eq!(repaired.failed_files, 0);
+            assert_eq!(
+                repaired.parsed_records, 1,
+                "revision 6 must invalidate an unchanged file"
+            );
+            assert_eq!(count(&db), 2);
+            let states = load_states(&db).unwrap();
+            let state = states.get(source_id).unwrap();
+            assert_eq!(state.parser_revision, 7);
+            assert_eq!(state.records.len(), 1);
+            let imported = state.records.get(&native_id).unwrap();
+            assert_eq!(imported.envelope_id.as_deref(), Some("resp-target"));
+            assert_eq!(
+                imported.matched_proxy_id.as_deref(),
+                if wrong_match {
+                    None
+                } else {
+                    Some(target_id.as_str())
+                }
+            );
+            let logs = usage_stats::request_logs(
+                &db,
+                &GatewayRequestLogFilters::default(),
+                0,
+                10,
+                true,
+            )
+            .unwrap();
+            assert!(logs.data.iter().any(|row| row.trace_id == independent_id));
+            assert_eq!(
+                logs.data.iter().any(|row| row.trace_id == native_id),
+                wrong_match
+            );
+            assert_eq!(
+                logs.data.iter().any(|row| row.trace_id == target_id),
+                !wrong_match
+            );
+            let again = run_sync(&db, GatewayCliKey::Codex, root.path());
+            assert_eq!(again.failed_files, 0);
+            assert_eq!(again.parsed_records, 0);
+            assert_eq!(count(&db), 2);
+            assert_eq!(fs::read(&file).unwrap(), source_before);
+        }
+    }
+}
+
+#[test]
+fn codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows() {
+    for retired in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        write_jsonl(
+            &root.path().join(format!("rollout-{PARENT}.jsonl")),
+            &[
+                json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+                json!({"type":"turn_context","payload":{"model":"usage-test-model"}}),
+                codex_token_usage_record(
+                    "resp-pruned",
+                    json!({"input_tokens":100,"output_tokens":50,"total_tokens":150}),
+                    THEN,
+                ),
+            ],
+        );
+        let db = SqliteDbState::in_memory_for_test().unwrap();
+        assert_eq!(
+            run_sync(&db, GatewayCliKey::Codex, root.path()).inserted_records,
+            1
+        );
+        let native_id = format!("SESSION:codex:{PARENT}:resp-pruned");
+        let mut states = load_states(&db).unwrap();
+        let (source_id, state) = states.iter_mut().next().unwrap();
+        state.parser_revision = 6;
+        state.pending = false;
+        let imported = state.records.get_mut(&native_id).unwrap();
+        imported.envelope_id = None;
+        imported.retired = retired;
+        // A processed row has been removed; the ledger is its tombstone.
+        // Revision invalidation must not infer permission to bill it again.
+        db.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+                [&native_id],
+            )
+            .map_err(|error| error.to_string())?;
+            save_state(conn, source_id, state)
+        })
+        .unwrap();
+        let repaired = run_sync(&db, GatewayCliKey::Codex, root.path());
+        assert_eq!(repaired.failed_files, 0);
+        assert_eq!(repaired.parsed_records, 1);
+        assert_eq!(repaired.inserted_records, 0);
+        assert_eq!(count(&db), 0);
+        let states = load_states(&db).unwrap();
+        let state = states.get(source_id).unwrap();
+        assert_eq!(state.parser_revision, 7);
+        assert_eq!(state.records.get(&native_id).unwrap().retired, retired);
+        assert_eq!(
+            run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
+            0
+        );
+        assert_eq!(count(&db), 0);
+    }
+}
+
+#[test]
+fn codex_response_identity_missing_response_id_keeps_unique_usage_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let mut record = codex_token_usage_record(
+        "unused",
+        json!({"input_tokens":1000,"cached_input_tokens":400,
+            "cache_write_input_tokens":0,"output_tokens":50,"total_tokens":1050}),
+        THEN,
+    );
+    record["payload"].as_object_mut().unwrap().remove("response_id");
+    write_jsonl(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+            json!({"type":"turn_context","payload":{"model":"usage-test-model"}}),
+            record,
+        ],
+    );
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+             (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+              cache_read_tokens, cache_creation_tokens, created_at, status_code,
+              request_kind, data_source)
+             VALUES ('proxy-without-shared-id', 'provider', 'codex', 'usage-test-model',
+                     600, 50, 400, 0, ?1, 200, 'request', 'proxy')",
+            [THEN],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.parsed_records, 1);
+    assert_eq!(count(&db), 1);
+    let states = load_states(&db).unwrap();
+    let state = states.values().next().unwrap();
+    let imported = state.records.values().next().unwrap();
+    assert_eq!(imported.envelope_id, None);
+    assert_eq!(
+        imported.matched_proxy_id.as_deref(),
+        Some("proxy-without-shared-id")
+    );
+    assert_eq!(
+        run_sync(&db, GatewayCliKey::Codex, root.path()).parsed_records,
+        0
+    );
+    assert_eq!(count(&db), 1);
+}
+
+#[test]
 fn codex_fork_records_never_bill_the_child() {
     let root = tempfile::tempdir().unwrap();
     let usage = json!({"input_tokens":1000,"cached_input_tokens":0,
