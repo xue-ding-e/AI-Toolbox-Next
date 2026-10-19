@@ -1,0 +1,42 @@
+{
+  "scope": "Behavior-preserving extraction of the actual GeneralSettingsPage restore orchestration into its shared tested helper. No confirmed product defect is claimed.",
+  "base": "d33f01aeb13a429eb036e9d86fe85ff824d23385",
+  "tested_head": "4b640827301267a3d14eff6ada8b8a6238c0e0b5",
+  "equivalent_tree_head": "01a29c7c965eb618d900dc51f510bdd0f801bb37",
+  "validation": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39269760555",
+    "job": 118118662360,
+    "result": "success",
+    "settings_utils": {
+      "passed": 36,
+      "failed": 0,
+      "new_restore_cases": 10
+    },
+    "tsc": "passed",
+    "structural_guards": [
+      "verify-form-modal-layout",
+      "verify-provider-card-layout",
+      "verify-official-accounts-shared"
+    ],
+    "pnpm_build": "passed",
+    "rust": "skipped",
+    "log_sha256": "8613fbc2a051092bc63967aeb1b6c09a7baec6583a12cca7b11a0fd7ff9b97cf"
+  },
+  "earlier_attempt": {
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39265863900",
+    "head": "c6d2fe76ba77f3e4ddc5db59a4aec5bd022c4c2e",
+    "result": "cancelled to release the shared validation window",
+    "node_passed": 1065,
+    "node_failed": 0,
+    "tsc": "failed at four test Array.at calls; fixed using equivalent length-minus-one indexing",
+    "full_pnpm_test": "incomplete",
+    "build": "not run",
+    "log_sha256": "f2f9642a90fa5bd6b4b194bb11caf07cd09134710f63d74b0c094052911a6b84"
+  },
+  "boundaries": [
+    "Tests execute the same helper called by the page with injected adapters; they do not mount the page or validate real Modal/DOM behavior.",
+    "Password submission is asynchronous and retries the same restore closure. Cancellation means no subsequent submission; real native restore/persistence is not exercised.",
+    "Overlapping attempts characterize existing per-attempt loading behavior; no concurrency fix is claimed.",
+    "No real credentials, native desktop restore, packaging, release or deployment validation."
+  ]
+}
