@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-password-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-success-dialog') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-confirm-options') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/settings-restore-routes')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -48,6 +48,8 @@ jobs:
             node scripts/verify-form-modal-layout.mjs
             node scripts/verify-provider-card-layout.mjs
             node scripts/verify-official-accounts-shared.mjs
+          elif [ "$VALIDATION_REF" = "refs/heads/test/settings-restore-routes" ]; then
+            node scripts/verify-settings-restore-routes.mjs
           elif [ "$VALIDATION_REF" = "refs/heads/test/restore-confirm-options" ]; then
             node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts
             BACKUP_SETTINGS_CHECK_GROUP=restore-confirm node scripts/verify-backup-settings.mjs
