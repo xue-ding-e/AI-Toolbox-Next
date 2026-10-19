@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-lifecycle') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/remote-backup-delete-lifecycle')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -48,6 +48,8 @@ jobs:
             node scripts/verify-form-modal-layout.mjs
             node scripts/verify-provider-card-layout.mjs
             node scripts/verify-official-accounts-shared.mjs
+          elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-delete-lifecycle" ]; then
+            BACKUP_SETTINGS_CHECK_GROUP=remote-delete-lifecycle node scripts/verify-backup-settings.mjs
           elif [ "$VALIDATION_REF" = "refs/heads/test/remote-backup-lifecycle" ]; then
             # Exercise only the real remote-backup Modal lifecycle fixture.
             BACKUP_SETTINGS_CHECK_GROUP=remote-lifecycle node scripts/verify-backup-settings.mjs
