@@ -151,8 +151,136 @@ export async function verifyBackupSettings({ send, evaluate, baseUrl, artifactRo
     console.log('Executed ' + completed + ' remote lifecycle scenarios; assertion failures: ' + failures.length);
     if (failures.length) throw new AggregateError(failures, 'Remote backup lifecycle regressions: ' + failures.length);
   };
+  // Delete races use the real Modal, row button and Popconfirm. Only the remote
+  // service promise is deferred; no test implementation of handleDelete exists.
+  const verifyRemoteDeleteLifecycle = async () => {
+    const failures = [];
+    let completed = 0;
+    const shared = 'ai-toolbox-backup-20261019-120000.zip';
+    const expectedFiles = channel => [shared, channel + '-only.zip'];
+    const snapshot = () => call('remoteDeleteSnapshot');
+    const check = (name, actual, expected) => {
+      try { assert.deepEqual(actual, expected, name); record(name, actual); }
+      catch (error) { failures.push(error); console.error(error.message); }
+    };
+    const begin = async () => {
+      await navigate({ theme: 'light', language: 'en-US', remoteLifecycle: '1', remoteDeleteLifecycle: '1' });
+      await call('openRemote', 'webdav');
+      await waitFor('backupFixture.state.remoteLoads.length === 1');
+      await call('settleRemote', 0, 'success');
+      assert.deepEqual((await snapshot()).files, expectedFiles('webdav'), 'delete source list really rendered');
+      await call('openDeleteConfirmation', shared);
+      await waitFor('!![...document.querySelectorAll(".ant-popconfirm")].find(element => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden")');
+      const before = await snapshot();
+      assert.deepEqual(before.deletes, [], 'opening confirmation does not delete');
+      assert.deepEqual(before.selections, [], 'delete button does not select restore');
+      assert.equal(await call('visibleModalCount'), 1, 'delete button leaves modal open');
+    };
+    const confirm = async () => {
+      await call('answerDeleteConfirmation', true);
+      await waitFor('backupFixture.state.remoteDeletes.length === 1');
+      const pending = await snapshot();
+      assert.deepEqual(pending.deletes, [{ channel: 'webdav', filename: shared,
+        sha: 'webdav-shared-sha', settled: false }], 'confirmation sends exact original file once');
+      assert.deepEqual(pending.files, expectedFiles('webdav'), 'pending deletion keeps list');
+      assert.deepEqual(pending.selections, [], 'confirmation never restores');
+      assert.deepEqual(pending.errors, [], 'pending deletion has no error toast');
+      assert.deepEqual(pending.successes, [], 'pending deletion has no success toast');
+    };
+    const assertRequest = async name => {
+      const state = await snapshot();
+      check(name + ': one original service delete only', state.deletes, [{ channel: 'webdav',
+        filename: shared, sha: 'webdav-shared-sha', settled: true }]);
+      check(name + ': no accidental restore selection', state.selections, []);
+    };
+    // Positive controls reject fixes which suppress every delete result or skip
+    // the actual confirmation. Cancel must invoke neither delete nor restore.
+    for (const outcome of ['success', 'error', 'cancel']) {
+      const name = 'remote delete current ' + outcome;
+      await begin();
+      if (outcome === 'cancel') {
+        await call('answerDeleteConfirmation', false);
+        await waitFor('![...document.querySelectorAll(".ant-popconfirm")].some(element => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden")');
+        const state = await snapshot();
+        check(name + ': no service delete', state.deletes, []);
+        check(name + ': no restore selection', state.selections, []);
+        check(name + ': list retained', state.files, expectedFiles('webdav'));
+        check(name + ': no success toast', state.successes, []);
+        check(name + ': no error toast', state.errors, []);
+        check(name + ': modal stays open', await call('visibleModalCount'), 1);
+      } else {
+        await confirm();
+        await call('settleRemoteDelete', 0, outcome);
+        const state = await snapshot();
+        check(name + ': expected list', state.files,
+          outcome === 'success' ? ['webdav-only.zip'] : expectedFiles('webdav'));
+        check(name + ': success toast count', state.successes.length, outcome === 'success' ? 1 : 0);
+        check(name + ': error toast count', state.errors.length, outcome === 'error' ? 1 : 0);
+        if (outcome === 'error') check(name + ': current error remains visible',
+          state.errors.some(error => error.includes('webdav-delete-0-failed')), true);
+        await assertRequest(name);
+      }
+      completed++;
+    }
+    for (const nextChannel of ['repository', 'webdav']) {
+      for (const outcome of ['success', 'error']) {
+        const name = 'remote delete old ' + outcome + ' after reopen ' + nextChannel;
+        await begin();
+        await confirm();
+        await call('closeRemote');
+        await waitFor('backupFixture.visibleModalCount() === 0');
+        await call('openRemote', nextChannel);
+        await waitFor('backupFixture.state.remoteLoads.length === 2');
+        // Same filename, distinct revision even for a same-channel reopen.
+        const currentSha = nextChannel + '-reopened-sha';
+        await evaluate('backupFixture.state.remoteLoads[1].files[0].sha=' + JSON.stringify(currentSha));
+        await call('settleRemote', 1, 'success');
+        const before = await snapshot();
+        assert.deepEqual(before.files, expectedFiles(nextChannel), name + ': current list is loaded');
+        await call('settleRemoteDelete', 0, outcome);
+        const after = await snapshot();
+        check(name + ': current list preserved', after.files, before.files);
+        check(name + ': loading preserved', after.loading, before.loading);
+        check(name + ': no obsolete success toast', after.successes, before.successes);
+        check(name + ': no obsolete error toast', after.errors, before.errors);
+        await assertRequest(name);
+        // A missing row is already recorded above; keep running all race cases
+        // in RED rather than aborting on a secondary DOM lookup failure.
+        if (after.files.includes(shared)) {
+          await call('selectRemote', shared);
+          check(name + ': real row selection uses new SHA', (await snapshot()).selections.map(({ channel, file }) =>
+            ({ channel, filename: file.filename, sha: file.sha })),
+          [{ channel: nextChannel, filename: shared, sha: currentSha }]);
+        }
+        completed++;
+      }
+    }
+    for (const outcome of ['success', 'error']) {
+      const name = 'remote delete closed late ' + outcome;
+      await begin();
+      await confirm();
+      await call('closeRemote');
+      await waitFor('backupFixture.visibleModalCount() === 0');
+      await call('settleRemoteDelete', 0, outcome);
+      const closed = await snapshot();
+      check(name + ': remains closed', await call('visibleModalCount'), 0);
+      check(name + ': no success toast', closed.successes, []);
+      check(name + ': no error toast', closed.errors, []);
+      await assertRequest(name);
+      await call('openRemote', 'repository');
+      await waitFor('backupFixture.state.remoteLoads.length === 2');
+      await call('settleRemote', 1, 'success');
+      check(name + ': next session loads intact', (await snapshot()).files, expectedFiles('repository'));
+      completed++;
+    }
+    assert.equal(completed, 9, 'all remote delete lifecycle scenarios must execute');
+    console.log('Executed ' + completed + ' remote delete lifecycle scenarios; assertion failures: ' + failures.length);
+    if (failures.length) throw new AggregateError(failures, 'Remote backup delete lifecycle regressions: ' + failures.length);
+  };
   const group = process.env.BACKUP_SETTINGS_CHECK_GROUP || 'all';
-  assert.ok(['all', 'remote-lifecycle'].includes(group), 'Unknown backup settings check group: ' + group);
+  assert.ok(['all', 'remote-lifecycle', 'remote-delete-lifecycle'].includes(group), 'Unknown backup settings check group: ' + group);
+  if (group === 'all' || group === 'remote-delete-lifecycle') await verifyRemoteDeleteLifecycle();
+  if (group === 'remote-delete-lifecycle') return checks;
   await verifyRemoteLifecycle();
   if (group === 'remote-lifecycle') return checks;
 

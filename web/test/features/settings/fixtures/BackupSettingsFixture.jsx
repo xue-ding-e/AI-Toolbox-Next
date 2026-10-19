@@ -53,6 +53,11 @@ const remoteLoaders = Object.fromEntries(['webdav', 'repository'].map(channel =>
   });
 }]));
 const remoteDeleters = Object.fromEntries(['webdav', 'repository'].map(channel => [channel, async file => {
+  if (parameters.has('remoteDeleteLifecycle')) {
+    return new Promise((resolve, reject) => {
+      state.remoteDeletes.push({ channel, file: structuredClone(file), resolve, reject, settled: false });
+    });
+  }
   state.remoteDeletes.push({ channel, file: structuredClone(file) });
 }]));
 const repositoryView = () => ({ config: structuredClone(state.repository), has_token: state.hasToken });
@@ -232,6 +237,40 @@ window.backupFixture = {
     if (outcome === 'error') request.reject(new Error(request.channel + '-request-' + index + '-failed'));
     else request.resolve(structuredClone(request.files));
     await tick();
+  },
+  async openDeleteConfirmation(filename) {
+    const row = [...this.nestedModal().querySelectorAll('.ant-list-item')].find(item =>
+      item.querySelector('.ant-list-item-meta-description')?.textContent === filename);
+    const button = row?.querySelector('.ant-list-item-action button');
+    if (!button) throw new Error('Missing remote delete button: ' + filename);
+    button.click();
+    await tick();
+  },
+  async answerDeleteConfirmation(confirm) {
+    const popup = [...document.querySelectorAll('.ant-popconfirm')].find(visible);
+    const label = i18n.t(confirm ? 'common.confirm' : 'common.cancel').replace(/\s/g, '');
+    const button = [...(popup?.querySelectorAll('button') || [])].find(element =>
+      visible(element) && element.textContent.replace(/\s/g, '') === label);
+    if (!button) throw new Error('Missing visible delete confirmation button: ' + label);
+    button.click();
+    await tick();
+  },
+  async settleRemoteDelete(index, outcome) {
+    const request = state.remoteDeletes[index];
+    if (!request || request.settled) throw new Error('Missing/unexpected settled remote delete: ' + index);
+    request.settled = true;
+    if (outcome === 'error') request.reject(new Error(request.channel + '-delete-' + index + '-failed'));
+    else request.resolve();
+    await tick();
+  },
+  remoteDeleteSnapshot() {
+    return {
+      ...this.remoteSnapshot(),
+      successes: [...document.querySelectorAll('.ant-message-success')].map(item => item.textContent),
+      deletes: state.remoteDeletes.map(({ channel, file, settled }) => ({
+        channel, filename: file.filename, sha: file.sha, settled,
+      })),
+    };
   },
   remoteSnapshot() {
     const modal = [...document.querySelectorAll('.ant-modal')].find(visible);
