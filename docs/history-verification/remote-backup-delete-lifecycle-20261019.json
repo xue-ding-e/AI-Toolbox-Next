@@ -1,0 +1,36 @@
+{
+  "baseline": "5d7ac1ee624e828dba6bbe85c0d82d8e6b3c27f1",
+  "red": {
+    "commit": "7bbe823c647b6e3360902bf67ec7cb06dc5afd84",
+    "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39308037504/job/118250088183",
+    "scenarios": 9,
+    "assertion_failures": 8,
+    "tsc": "passed",
+    "build": "passed",
+    "log_sha256": "4c4ea9e91017d912acd4fa1188d9ea109b8ba24e42f2204cdb9fdf360f066744"
+  },
+  "green": {
+    "commit": "a79d5c5456fc073d8c0a19b32e85ec9ac9e431d2",
+    "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39308900480/job/118253078902",
+    "delete_scenarios": 9,
+    "delete_browser_checks": 57,
+    "load_scenarios": 9,
+    "load_browser_checks": 30,
+    "assertion_failures": 0,
+    "tsc": "passed",
+    "build": "passed",
+    "log_sha256": "95f2e6f342902d7a15aa01b7cdbd3f464959e44cfaef7cebeabc156d56c9bf9b"
+  },
+  "consolidation": {
+    "fix": "7ab9c1f6",
+    "ci": "69083f6d63588b41e13bf64463bfd9dbcb5e48dd",
+    "same_tree_as_green": true
+  },
+  "scope": "Real RemoteBackupRestoreModal rows and Popconfirm confirmation/cancellation with synthetic deferred delete responses. Current success/error/cancel controls, cross-channel same filename/different SHA, same-channel reopen and closed-modal late completion. Original delete file/SHA and exactly one service callback invocation retained; obsolete UI completions ignored.",
+  "limits": [
+    "Closing does not cancel a remote deletion already sent; no real service or data was deleted in tests.",
+    "No full GeneralSettingsPage, native IPC, live credentials, remote service, packaging or desktop acceptance.",
+    "Only two selected browser fixture groups ran; full Node/browser/Rust suites did not run. Eight other jobs skipped.",
+    "No release/deployment/artifact upload or permission expansion."
+  ]
+}
