@@ -216,15 +216,15 @@ jobs:
           rustc --version
           cargo --version
           df -h
-      - name: Verify the three response identity regressions are selected
+      - name: Verify all six response identity regressions are selected
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --list > /tmp/codex-response-identity-tests.txt
           cat /tmp/codex-response-identity-tests.txt
-          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq 3
-          for name in codex_response_identity_record_first_matches_only_its_proxy codex_response_identity_legacy_first_matches_only_its_proxy codex_response_identity_unmatched_response_preserves_independent_call; do
+          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq 6
+          for name in codex_response_identity_record_first_matches_only_its_proxy codex_response_identity_legacy_first_matches_only_its_proxy codex_response_identity_unmatched_response_preserves_independent_call codex_response_identity_revision6_rescan_repairs_rows_and_matches codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows codex_response_identity_missing_response_id_keeps_unique_usage_fallback; do
             grep -Fx "coding::proxy_gateway::session_import::tests::${name}: test" /tmp/codex-response-identity-tests.txt
           done
-      - name: Run synthetic Codex transcript and proxy reconciliation regressions
-        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --test-threads=1
+      - name: Run session import and matching regressions serially
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests:: -- --test-threads=1
