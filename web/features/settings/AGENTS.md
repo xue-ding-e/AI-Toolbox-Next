@@ -85,6 +85,10 @@ sequenceDiagram
 
 ## 最小验证
 
+- 恢复密码弹框的生产实现由 `components/promptRestorePassword.tsx` 统一承载，设置页和真实 DOM 夹具复用；不要在夹具复制输入/校验逻辑。空字符串必须 warning + rejected Promise 保持弹框，非空原样传递（不 trim），`onSubmit` 为 void/fire-and-forget，取消不提交。输入框没有 `onPressEnter` 或 form 提交绑定，保留 AntD 默认键盘行为，不要在可测试性提取时顺带新增快捷键。
+- AntD 6.4.3 的静态确认框 `ActionButton` 会在 `onOk` 的拒绝分支清除 loading 后再次 reject（[固定版本源码](https://github.com/ant-design/ant-design/blob/6.4.3/components/_util/ActionButton.tsx)）。空密码校验保留原来的无 reason `Promise.reject()`；DOM 负向测试仅在这一点击窗口捕获并断言一次 `reason === undefined` 的 `unhandledrejection`，随即移除监听，缺失或其它异常仍失败。本轮可测试性提取不能为消除该已存在的控制流信号修改产品语义，也不能放宽共享 browser runner 的异常闸门。
+- `BACKUP_SETTINGS_CHECK_GROUP=restore-password node scripts/verify-backup-settings.mjs` 精确运行 9 个 DOM 场景：空值后纠正、取消、非空一次提交且不等待 callback thenable、错误提示与新输入、输入框 Enter、确认按钮 Enter、Escape、非空空白保留、两次递归密码重试。最后一例仅证明真实 `executeRestoreFlow` 保留合成 filename/SHA 服务闭包，不覆盖 `GeneralSettingsPage` 完整选中路由、真实远端服务或恢复落盘；所有密码均为固定合成值。键盘通过 CDP 默认动作验证，不能用 synthetic KeyboardEvent 的无默认动作代替。
+
 - 恢复编排的轻量回归：`node --import ./scripts/register-node-ts-extension-loader.mjs --test web/test/features/settings/utils/restoreFlow.test.ts`。真实页面通过 `executeRestoreFlow` 注入 Modal/消息/密码框适配器；保持确认与密码提交的 fire-and-forget 语义、先成功弹窗再警告、密码框打开后本轮解除 loading、仅提交密码才重试同一恢复闭包。测试只覆盖编排，不代表按钮/DOM/原生恢复已验收；并发用例仅记录已有每次调用独立清除 loading 的行为，不证明 UI 可触发并发。
 
 - `node scripts/verify-backup-settings.mjs` 运行真实设置表单、真实 store 与远端列表，模拟 Tauri 持久化响应；验证三渠道保存往返、自动备份回显、加载前禁止保存、Token 平台切换、失败保留密码草稿，以及零额外滚动高度的渐变。HTTP/SQLite/系统凭据的后端行为必须另跑 Rust 回归，不能把前端 mock 当成真实远端验证。
