@@ -1000,6 +1000,84 @@ fn codex_response_identity_legacy_first_matches_only_its_proxy() {
     assert_codex_response_identity_matches_only_its_proxy(true);
 }
 
+/// Adapted from coulsontl/ai-toolbox commit 69ee959435c7efaba563f2e91d7adc2884225731
+/// by coulsontl (AGPL-3.0-or-later). Synthetic regression for the upstream
+/// issue #432 diagnosis: a Codex call that the gateway recorded as `incomplete` (an
+/// upstream `response.incomplete` still bills its tokens) is invisible to the
+/// usage-equal heuristic, which only accepts `completed` proxy rows. The
+/// rollout's `token_usage_record.response_id` is the upstream envelope id, so
+/// the native row must converge on that identity without the heuristic.
+#[test]
+fn codex_response_identity_converges_with_an_incomplete_proxy_row() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join(format!("rollout-{PARENT}.jsonl"));
+    let usage = json!({"input_tokens":1000,"cached_input_tokens":400,
+        "cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,
+        "total_tokens":1050});
+    write_jsonl(
+        &file,
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+            json!({"type":"event_msg","timestamp":THEN - 9,"payload":{"type":"task_started"}}),
+            json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            codex_token_usage_record("resp-incomplete", usage, THEN),
+        ],
+    );
+    let source_before = fs::read(&file).unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id,provider_id,app_type,model,request_model,
+                input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,created_at,
+                duration_ms,status_code,stream_outcome,transport,request_kind,data_source)
+             VALUES ('SESSION:codex:provider:resp-incomplete','provider','codex','gpt-5','gpt-5',
+                500,50,400,0,?1,2000,0,'incomplete','websocket','request','proxy')",
+            [THEN],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.parsed_records, 1);
+    assert_eq!(
+        result.inserted_records, 0,
+        "the response identity must suppress the native row"
+    );
+    assert_eq!(count(&db), 1);
+    let logs =
+        usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true).unwrap();
+    assert_eq!(logs.data.len(), 1);
+    assert_eq!(logs.data[0].data_source, "proxy");
+    assert_eq!(
+        logs.data[0].trace_id,
+        "SESSION:codex:provider:resp-incomplete"
+    );
+    let state = load_states(&db)
+        .unwrap()
+        .remove(&codex_response_identity_source_id(root.path()))
+        .unwrap();
+    assert_eq!(state.records.len(), 1);
+    let record = state
+        .records
+        .get(&format!("SESSION:codex:{PARENT}:resp-incomplete"))
+        .unwrap();
+    assert_eq!(record.envelope_id.as_deref(), Some("resp-incomplete"));
+    assert_eq!(
+        record.matched_proxy_id.as_deref(),
+        Some("SESSION:codex:provider:resp-incomplete")
+    );
+
+    // Unchanged files must not resurrect the suppressed native row.
+    let again = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(again.failed_files, 0);
+    assert_eq!(again.inserted_records, 0);
+    assert_eq!(count(&db), 1);
+    assert_eq!(fs::read(&file).unwrap(), source_before);
+}
+
 #[test]
 fn codex_response_identity_unmatched_response_preserves_independent_call() {
     let root = tempfile::tempdir().unwrap();
