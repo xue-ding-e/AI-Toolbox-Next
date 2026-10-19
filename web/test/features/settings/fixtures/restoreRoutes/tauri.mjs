@@ -41,6 +41,8 @@ const state = {
   files: { webdav: makeFiles('webdav'), repository: makeFiles('repository') },
 };
 const pendingRestores = [];
+let deferNextLocalSelection = false;
+let pendingLocalSelection = null;
 const restoreCommands = new Set(['restore_database', 'restore_from_webdav', 'restore_from_repository']);
 const allowedEvents = new Set(['update-download-progress', 'auto-backup-completed', 'auto-backup-failed']);
 const clone = value => structuredClone(value ?? null);
@@ -60,6 +62,22 @@ export const listen = async event => {
   // No operating-system listener is registered and no event is emitted.
   return () => {};
 };
+
+export function initialConfiguration(scenario = 'configured') {
+  // Incomplete saved settings cannot be created through the validated form.
+  // Seed them before mounting, just as the existing fixture seeds local state.
+  const webdav = clone(fixtureData.webdav);
+  if (scenario === 'configured') return { backupType: 'local', webdav };
+  if (scenario === 'webdav-url-missing') {
+    webdav.url = '';
+    return { backupType: 'webdav', webdav };
+  }
+  if (scenario === 'repository-owner-missing' || scenario === 'repository-name-missing') {
+    state.repository[scenario === 'repository-owner-missing' ? 'owner' : 'repository'] = '';
+    return { backupType: 'repository', webdav };
+  }
+  throw new Error('Unknown settings restore initial configuration: ' + scenario);
+}
 
 export function installTauriBoundary() {
   window.__TAURI_INTERNALS__ = {
@@ -84,6 +102,10 @@ export function installTauriBoundary() {
         // Only selectBackupFile's real plugin call is allowed. A directory
         // picker or another native interaction must fail rather than succeed.
         if (args?.options?.directory) return unexpected('directory dialog');
+        if (deferNextLocalSelection) {
+          deferNextLocalSelection = false;
+          return new Promise((resolve, reject) => { pendingLocalSelection = { resolve, reject }; });
+        }
         return state.localSelection;
       }
       if (command === 'list_webdav_backups') return clone(state.files.webdav);
@@ -108,7 +130,21 @@ export function boundarySnapshot() {
   return clone({
     requests: state.requests, restores: state.restores,
     subscriptions: state.subscriptions, unexpected: state.unexpected,
+    localSelectionPending: pendingLocalSelection !== null,
+    repository: state.repository,
   });
+}
+
+export function holdNextLocalSelection() {
+  if (deferNextLocalSelection || pendingLocalSelection) throw new Error('Synthetic picker already held');
+  deferNextLocalSelection = true;
+}
+
+export function rejectLocalSelection() {
+  if (!pendingLocalSelection) throw new Error('No pending synthetic picker');
+  const pending = pendingLocalSelection;
+  pendingLocalSelection = null;
+  pending.reject('fixture native picker unavailable');
 }
 
 export function setLocalSelection(path) {
@@ -131,10 +167,11 @@ export function replaceSelectionSources() {
 export function settleRestore(index, outcome = 'success') {
   const request = state.restores[index];
   if (!request || request.settled) throw new Error('Missing or settled synthetic restore: ' + index);
-  if (!['success', 'passwordRequired', 'passwordWrong'].includes(outcome)) {
+  if (!['success', 'passwordRequired', 'passwordWrong', 'failure'].includes(outcome)) {
     throw new Error('Unsupported synthetic restore outcome: ' + outcome);
   }
   request.settled = true;
   if (outcome === 'success') pendingRestores[index].resolve({ warnings: [], willReapplyApplied: true });
+  else if (outcome === 'failure') pendingRestores[index].reject('fixture ordinary restore failure');
   else pendingRestores[index].reject(JSON.stringify({ type: outcome }));
 }
