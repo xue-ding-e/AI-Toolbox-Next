@@ -880,6 +880,177 @@ fn codex_legacy_first_keeps_one_call_and_adopts_the_response_identity() {
     assert_eq!(ids, vec![format!("SESSION:codex:{PARENT}:resp-late")]);
 }
 
+// Synthetic identity regression, not a reproduction of issue #432's unknown trigger.
+// Exercise the real transcript parser: a hand-built SessionUsageRecord would
+// bypass the response_id -> envelope_id boundary this scenario needs to cover.
+fn assert_codex_response_identity_matches_only_its_proxy(legacy_first: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join(format!("rollout-{PARENT}.jsonl"));
+    let usage = json!({"input_tokens":1000,"cached_input_tokens":400,
+        "cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,
+        "total_tokens":1050});
+    let record = codex_token_usage_record("resp-target", usage.clone(), THEN);
+    let mirror = json!({"type":"event_msg","timestamp":THEN,"payload":{
+        "type":"token_count","info":{
+            "total_token_usage":usage,"last_token_usage":usage},
+        "rate_limits":{"limit_id":"codex"}}});
+    let mut events = vec![
+        json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+        json!({"type":"turn_context","payload":{"model":"usage-test-model"}}),
+    ];
+    if legacy_first {
+        events.extend([mirror, record]);
+    } else {
+        events.extend([record, mirror]);
+    }
+    write_jsonl(&file, &events);
+    let source_before = fs::read(&file).unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    let proxy_ids = ["resp-target", "resp-independent"].map(|envelope| {
+        crate::coding::proxy_gateway::usage_parser::stable_usage_request_id(
+            GatewayCliKey::Codex,
+            Some("provider"),
+            Some(envelope),
+            "unused-fallback",
+        )
+    });
+    db.with_conn(|conn| {
+        for id in &proxy_ids {
+            // Both completed calls have identical counters, model and second.
+            // Only the response identity can distinguish them safely.
+            conn.execute(
+                "INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                  cache_read_tokens, cache_creation_tokens, created_at, status_code,
+                  request_kind, data_source)
+                 VALUES (?1, 'provider', 'codex', 'usage-test-model', 600, 50,
+                         400, 0, ?2, 200, 'request', 'proxy')",
+                params![id, THEN],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count(&db), 2);
+
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.parsed_records, 1, "the mirror is not another call");
+    assert_eq!(count(&db), 2, "the transcript must not bill a third call");
+    let summary = usage_stats::usage_summary(&db, None, None, None, true).unwrap();
+    assert_eq!(summary.total_input_tokens, 1200);
+    assert_eq!(summary.total_cache_read_tokens, 800);
+    assert_eq!(summary.total_output_tokens, 100);
+    let logs =
+        usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true).unwrap();
+    let mut actual_ids = logs
+        .data
+        .iter()
+        .map(|row| row.trace_id.clone())
+        .collect::<Vec<_>>();
+    actual_ids.sort();
+    let mut expected_ids = proxy_ids.to_vec();
+    expected_ids.sort();
+    assert_eq!(
+        actual_ids, expected_ids,
+        "both independent proxy rows survive"
+    );
+
+    let states = load_states(&db).unwrap();
+    assert_eq!(states.len(), 1);
+    let state = states.values().next().unwrap();
+    assert_eq!(state.records.len(), 1);
+    let imported = state
+        .records
+        .get(&format!("SESSION:codex:{PARENT}:resp-target"))
+        .expect("the ledger adopts the authoritative response identity");
+    assert_eq!(
+        imported.matched_proxy_id.as_deref(),
+        Some(proxy_ids[0].as_str())
+    );
+    assert_eq!(imported.envelope_id.as_deref(), Some("resp-target"));
+
+    // An unchanged rescan must remain idempotent and leave the transcript alone.
+    let again = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(again.failed_files, 0);
+    assert_eq!(again.inserted_records, 0);
+    assert_eq!(count(&db), 2);
+    assert_eq!(fs::read(&file).unwrap(), source_before);
+}
+
+#[test]
+fn codex_response_identity_record_first_matches_only_its_proxy() {
+    assert_codex_response_identity_matches_only_its_proxy(false);
+}
+
+#[test]
+fn codex_response_identity_legacy_first_matches_only_its_proxy() {
+    assert_codex_response_identity_matches_only_its_proxy(true);
+}
+
+#[test]
+fn codex_response_identity_unmatched_response_preserves_independent_call() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteDbState::in_memory_for_test().unwrap();
+    write_jsonl(
+        &root.path().join(format!("rollout-{PARENT}.jsonl")),
+        &[
+            json!({"type":"session_meta","timestamp":THEN - 10,"payload":{"id":PARENT}}),
+            json!({"type":"turn_context","payload":{"model":"usage-test-model"}}),
+            codex_token_usage_record(
+                "resp-native-only",
+                json!({"input_tokens":1000,"cached_input_tokens":400,
+                    "cache_write_input_tokens":0,"output_tokens":50,"total_tokens":1050}),
+                THEN,
+            ),
+        ],
+    );
+    let proxy_id = crate::coding::proxy_gateway::usage_parser::stable_usage_request_id(
+        GatewayCliKey::Codex,
+        Some("provider"),
+        Some("resp-proxy-only"),
+        "unused-fallback",
+    );
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+             (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+              cache_read_tokens, cache_creation_tokens, created_at, status_code,
+              request_kind, data_source)
+             VALUES (?1, 'provider', 'codex', 'usage-test-model', 600, 50,
+                     400, 0, ?2, 200, 'request', 'proxy')",
+            params![proxy_id, THEN],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .unwrap();
+
+    let result = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(result.failed_files, 0);
+    assert_eq!(result.parsed_records, 1);
+    assert_eq!(count(&db), 2, "different response IDs are independent calls");
+    let states = load_states(&db).unwrap();
+    assert_eq!(states.len(), 1);
+    let state = states.values().next().unwrap();
+    assert_eq!(state.records.len(), 1);
+    let imported = state.records.values().next().unwrap();
+    assert_eq!(imported.matched_proxy_id, None);
+    assert_eq!(imported.envelope_id.as_deref(), Some("resp-native-only"));
+    let logs =
+        usage_stats::request_logs(&db, &GatewayRequestLogFilters::default(), 0, 10, true).unwrap();
+    assert!(logs.data.iter().any(|row| row.trace_id == proxy_id));
+    assert!(logs
+        .data
+        .iter()
+        .any(|row| row.trace_id == format!("SESSION:codex:{PARENT}:resp-native-only")));
+    let again = run_sync(&db, GatewayCliKey::Codex, root.path());
+    assert_eq!(again.failed_files, 0);
+    assert_eq!(again.inserted_records, 0);
+    assert_eq!(count(&db), 2);
+}
+
 #[test]
 fn codex_fork_records_never_bill_the_child() {
     let root = tempfile::tempdir().unwrap();
