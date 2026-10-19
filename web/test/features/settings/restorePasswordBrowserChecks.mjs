@@ -38,7 +38,39 @@ export async function verifyRestorePassword({ send, evaluate, navigate, waitFor,
   let completed = 0;
 
   await begin();
-  await confirm();
+  // AntD 6.4.3 ActionButton re-rejects an onOk rejection after clearing its
+  // loading state. Characterize that existing empty-input negative path only:
+  // https://github.com/ant-design/ant-design/blob/6.4.3/components/_util/ActionButton.tsx
+  // The shared runner must still fail on every unexpected browser exception.
+  await evaluate(`(() => {
+    const input = document.querySelector(${JSON.stringify(passwordSelector)});
+    const button = input?.closest('.ant-modal-confirm').querySelector('.ant-btn-primary');
+    if (!input || input.value !== '' || !button) throw new Error('Expected fresh empty password dialog');
+    const expectation = { count: 0, armed: false };
+    const arm = () => { expectation.armed = true; };
+    const listener = event => {
+      if (!expectation.armed || event.reason !== undefined || expectation.count !== 0 || !input.isConnected
+        || input.value !== '' || restorePasswordFixture.state.submissions.length !== 0) return;
+      expectation.count++;
+      event.preventDefault();
+      window.removeEventListener('unhandledrejection', listener);
+    };
+    expectation.cleanup = () => {
+      window.removeEventListener('unhandledrejection', listener);
+      button.removeEventListener('click', arm);
+    };
+    window.restorePasswordEmptyRejection = expectation;
+    window.addEventListener('unhandledrejection', listener);
+    button.addEventListener('click', arm, { once: true });
+  })()`);
+  try {
+    await confirm();
+    await waitFor('window.restorePasswordEmptyRejection.count === 1');
+    assert.equal(await evaluate('window.restorePasswordEmptyRejection.count'), 1,
+      'empty validation produces exactly one expected undefined rejection');
+  } finally {
+    await evaluate('window.restorePasswordEmptyRejection.cleanup()');
+  }
   await waitFor('!!document.querySelector(".ant-message-warning")');
   assert.equal(await evaluate(visibleCount), 1, 'empty password rejection keeps dialog open');
   assert.deepEqual((await snapshot()).submissions, [], 'empty input never invokes submit');
