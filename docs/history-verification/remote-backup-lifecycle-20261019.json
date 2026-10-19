@@ -1,0 +1,34 @@
+{
+  "baseline": "9b24d50fbd01716a0f550894283749e1b047493f",
+  "red": {
+    "commit": "f2bbe2b75228f7ba3bc7216a0ffba46b7ddeb32e",
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39302895829/job/118232420742",
+    "scenarios": 8,
+    "assertion_failures": 11,
+    "tsc": "passed",
+    "build": "passed",
+    "log_sha256": "7c76816f9bea8f22be5d857050afb96b56e9b098012fec9fc19e5880b2732065"
+  },
+  "green": {
+    "commit": "ea0e85ee8be9f9f67459f1954462d2653edc4e97",
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39303762636/job/118235391381",
+    "scenarios": 9,
+    "browser_checks_passed": 30,
+    "assertion_failures": 0,
+    "tsc": "passed",
+    "build": "passed",
+    "log_sha256": "588416597c14cecb128daa77026c389a4ea1548af337967bd213781d9ec43de7"
+  },
+  "consolidation": {
+    "fix": "8308ce02",
+    "ci": "c631bfcacea3b5b03e3c42436b17bab82da98553",
+    "same_tree_as_green": true
+  },
+  "scope": "Existing real RemoteBackupRestoreModal mounted in Chromium fixture with synthetic deferred WebDAV/repository responses. Old success/error/finally cannot affect a later open session; fresh reads clear stale filenames/SHA. Original eight RED scenarios retained; ninth GREEN neighbor verifies new-channel failure after a completed old list.",
+  "limits": [
+    "Only load/select lifecycle; delete concurrency and backend request cancellation are not covered.",
+    "Not full GeneralSettingsPage, native IPC, real remote services/credentials, backup writes or desktop acceptance.",
+    "Only selected fixture group ran; full Node/browser/Rust suites did not run. Eight other workflow jobs skipped.",
+    "No release, deployment, artifact upload or permission expansion."
+  ]
+}
