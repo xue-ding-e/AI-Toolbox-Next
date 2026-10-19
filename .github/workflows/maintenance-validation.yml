@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/validation/cloud-checks' || github.ref == 'refs/heads/maintenance/compaction-refusal-memory' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/restore-orchestration') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-backup-20261019') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard')
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -45,6 +45,12 @@ jobs:
             grep -Fx "# tests 36" /tmp/restore-utils-tests.tap
             grep -Fx "# pass 36" /tmp/restore-utils-tests.tap
             grep -Fx "# fail 0" /tmp/restore-utils-tests.tap
+            node scripts/verify-form-modal-layout.mjs
+            node scripts/verify-provider-card-layout.mjs
+            node scripts/verify-official-accounts-shared.mjs
+          elif [ "$VALIDATION_REF" = "refs/heads/fix/opencode-auth-write-guard" ]; then
+            pnpm run test:web
+            node scripts/verify-auth-config-guard.mjs
             node scripts/verify-form-modal-layout.mjs
             node scripts/verify-provider-card-layout.mjs
             node scripts/verify-official-accounts-shared.mjs
@@ -293,5 +299,82 @@ jobs:
         run: |
           set -euo pipefail
           for module in settings::backup::utils settings::backup::restore coding::open_code::v2_migration coding::open_code::commands coding::open_code::free_models coding::preset_models db::model_pricing_seed every_published_preset_model_resolves_to_model_pricing coding::proxy_gateway::session_import::tests; do
+            cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
+          done
+
+  opencode-auth-write-guard:
+    # Synthetic files only. This focused tests-first branch intentionally goes red.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/opencode-auth-write-guard'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Verify exact source and six regression selections
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands::auth_write_guard_tests -- --list > /tmp/auth-guard-tests.txt
+          cat /tmp/auth-guard-tests.txt
+          test "$(grep -c '^coding::open_code::commands::auth_write_guard_tests::auth_write_guard_.*: test$' /tmp/auth-guard-tests.txt)" -eq 6
+          for name in v2_preserves_auth_and_credential_database_bytes v2_does_not_create_missing_auth_directory v1_preserves_refreshed_and_new_entries invalid_marker_type_preserves_auth failed_mode_probe_preserves_auth v1_rejects_non_object_without_creating_auth; do
+            grep -Fx "coding::open_code::commands::auth_write_guard_tests::auth_write_guard_${name}: test" /tmp/auth-guard-tests.txt
+          done
+      - name: Run real auth save regressions
+        run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands::auth_write_guard_tests -- --test-threads=1
+
+  opencode-auth-write-guard-green:
+    needs: frontend
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/opencode-auth-write-guard'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Verify real auth write and migration lock tests are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib -- --list > /tmp/auth-guard-green-tests.txt
+          test "$(grep -c '^coding::open_code::commands::auth_write_guard_tests::auth_write_guard_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 7
+          test "$(grep -c '^coding::open_code::v2_migration::mode_write_guard_tests::mode_write_guard_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 3
+          test "$(grep -c '^coding::open_code::v2_migration::tests::source_mode_.*: test$' /tmp/auth-guard-green-tests.txt)" -eq 5
+          for name in v2_preserves_auth_and_credential_database_bytes v2_does_not_create_missing_auth_directory v1_preserves_refreshed_and_new_entries invalid_marker_type_preserves_auth failed_mode_probe_preserves_auth v1_rejects_non_object_without_creating_auth rechecks_mode_after_waiting_for_migration_lock; do
+            grep -Fx "coding::open_code::commands::auth_write_guard_tests::auth_write_guard_${name}: test" /tmp/auth-guard-green-tests.txt
+          done
+          for name in serializes_both_migration_entry_points poison_blocks_the_operation dangling_marker_is_unknown_not_v1; do
+            grep -Fx "coding::open_code::v2_migration::mode_write_guard_tests::mode_write_guard_${name}: test" /tmp/auth-guard-green-tests.txt
+          done
+      - name: Run auth save, migration and credential read neighbors serially
+        shell: bash
+        run: |
+          set -euo pipefail
+          for module in coding::open_code::commands coding::open_code::v2_migration coding::open_code::free_models; do
             cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
           done

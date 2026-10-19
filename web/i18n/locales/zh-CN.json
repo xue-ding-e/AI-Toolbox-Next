@@ -2664,7 +2664,7 @@
       "openConfigHint": "在应用内查看并编辑 auth.json",
       "v2AuthHint": "OpenCode V2 已把凭据迁移到 opencode.db；这里的渠道列表会同时读取数据库。新增或修改凭据请在终端执行 opencode auth login，auth.json 在 V2 下仅可查看。",
       "descriptionReadOnly": "以下渠道来自 OpenCode 官方 Auth 认证，模型列表只读；渠道凭据可点右上角 auth.json 在应用内查看（V2 模式下不可编辑）。",
-      "openConfigHintReadOnly": "在应用内查看 auth.json（V2 模式下只读）"
+      "openConfigHintReadOnly": "在应用内查看 auth.json（确认 V1 模式后才可编辑）"
     },
     "agentSettings": {
       "title": "Agent 模型",

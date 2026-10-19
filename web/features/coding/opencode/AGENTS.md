@@ -135,3 +135,5 @@ sequenceDiagram
 - 改卡片映射层时运行 `web/test/features/coding/opencode/utils/providerCardMapping.test.ts`（头部兜底、`isPrimary` 对带 `/` 与 `#variant` 的默认引用、无默认模型返回空）；再加 `pnpm run test:provider-card-layout` 与 `pnpm run test:form-modal-layout` 两道静态守卫。
 - 改“其他配置”的保存基底或 `JsonEditor` 失焦回调时运行 `web/test/features/coding/opencode/utils/openCodeOtherConfig.test.ts`；要验证真实 Monaco 失焦链路（含 issue #406 的回归）走 `pnpm test:json-editor-blur`（本地浏览器 fixture，不进 CI）。
 - 改共享连通性弹窗的「测试配置」折叠布局时运行 `pnpm test:connectivity-modal-layout`（浏览器 fixture，在 CI 链中）。它锁定：配置区默认收起、收起态模型表在首屏内、收起态表单控件不进 tab 序、摘要行不溢出、以及校验被拒时自动展开配置区。
+
+- Auth 编辑只在模式探测成功且明确为 V1 时开放；未知、加载、失败和 V2 均只读。`utils/authConfigMode.ts` 是页面 probe/toggle/save 共用的状态门禁：请求代次拒绝旧响应，migration 全生命周期阻止并发 probe 解锁，保存回调读取实时状态。每次打开 auth 弹窗都重查模式，旧 preview 请求不得重新打开已取消或已被新请求取代的弹窗；失败后的有效 V1 retry 才可重新开放。共享 modal 同时隐藏 Save、设 Monaco readOnly，并拦截旧 onOk 回调；后端仍是最终写入边界。Node 回归位于 `web/test/features/coding/opencode/utils/authConfigMode.test.ts`；`pnpm test:auth-config-guard` 使用真实共享 Modal/Monaco 与同一 controller，IPC 和落盘为合成桩，不代表 native Tauri 端到端验证。
