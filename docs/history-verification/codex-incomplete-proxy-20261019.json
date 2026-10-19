@@ -1,0 +1,22 @@
+{
+  "baseline": "c03278a5362a1cdad6142cf20e2263169bdc8fc2",
+  "tested_commit": "161d516ae42aad5fdc56387e1bd1526398780cc6",
+  "upstream_source": "69ee959435c7efaba563f2e91d7adc2884225731",
+  "scope": "Additional incomplete proxy identity regression only; production parser/revision already corrected in PR10 and unchanged.",
+  "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39294787688",
+  "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39294787688/job/118204369033",
+  "result": {
+    "passed": 7,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 2998,
+    "other_jobs_skipped": 8
+  },
+  "log_sha256": "0942831df3b18d161b0020414389d2ca6ec0eda3d5fabc7584469a39bec529ce",
+  "validation": "All seven codex_response_identity_ test names checked with --list before running the same exact filter. Real synthetic JSONL -> run_sync -> in-memory SQLite, exact source identity, matching envelope, single proxy row, repeated scan idempotency and unchanged source bytes.",
+  "limits": [
+    "Not a new production bug fix or proof of issue #432 reporter's root cause.",
+    "No full Rust, frontend, real network/WebSocket, GUI, native IPC, user credentials or deployment validation.",
+    "Official observations infrastructure is not imported; upstream-main remains a6c569e127ceb57cb807b58f50492713684d71b0."
+  ]
+}
