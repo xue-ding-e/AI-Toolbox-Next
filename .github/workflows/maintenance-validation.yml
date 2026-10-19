@@ -105,3 +105,46 @@ jobs:
         run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::session_manager::dsh -- --nocapture
       - name: Run DSH configuration and catalog regressions
         run: cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::dsh -- --nocapture
+  opencode-2032-regression:
+    # Only the independently reviewed OpenCode 2.0.32 synchronization candidate.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/sync-opencode-2032-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+      - name: Record exact source and toolchain
+        run: |
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+          df -h
+      - name: Verify all 29 migration regressions are selected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::v2_migration -- --list > /tmp/opencode-2032-tests.txt
+          cat /tmp/opencode-2032-tests.txt
+          test "$(grep -c '^coding::open_code::v2_migration::tests::.*: test$' /tmp/opencode-2032-tests.txt)" -eq 29
+          for name in provider_and_model_compatibility_survive_a_round_trip thinking_block_binding_folds_into_model_compatibility object_model_selection_folds_into_the_v1_reference mcp_oauth_false_round_trips package_specifier_writes_aisdk_for_npm_packages_only mcp_oauth_unknown_keys_survive_the_conversion empty_enabled_providers_denies_every_provider generated_policies_precede_native_policies commands_round_trip_model_variant_and_subtask unchanged_small_model_keeps_the_title_variant v1_provider_migrates_to_official_v2_provider_and_model_shapes v1_agent_mode_and_small_model_migrate_to_v2_agents v1_mcp_nests_oauth_and_bounds_every_timeout_phase v1_top_level_names_and_skills_migrate disabled_and_enabled_providers_round_trip_through_policies v1_anthropic_provider_keeps_its_key_in_settings v2_auth_headers_lift_back_into_provider_options v2_explicit_api_key_wins_over_auth_header model_capabilities_round_trip_reasoning_and_temperature untouched_model_writes_no_capabilities_block model_level_provider_api_becomes_flat_settings_base_url mcp_timeout_overrides_experimental_mcp_timeout released_v2_flat_provider_restores_the_v1_editor_shape dual_shape_provider_survives_a_read_write_round_trip v2_provider_agent_and_mcp_restore_v1_editor_shapes set_mode_restores_the_original_v1_bytes enabling_v2_renames_a_legacy_config_json enabling_v2_refuses_to_overwrite_an_existing_opencode_json explicit_provider_header_overrides_generated_auth_header; do
+            grep -Fx "coding::open_code::v2_migration::tests::${name}: test" /tmp/opencode-2032-tests.txt
+          done
+      - name: Run migration and affected neighboring regressions serially
+        shell: bash
+        run: |
+          set -euo pipefail
+          for module in coding::open_code::v2_migration coding::open_code::free_models coding::open_code::commands coding::open_code::markdown_agents coding::open_code::tray_support coding::mcp::config_sync coding::runtime_location settings::backup::utils tray::tests; do
+            cargo test --locked --manifest-path tauri/Cargo.toml --lib "$module" -- --test-threads=1
+          done
