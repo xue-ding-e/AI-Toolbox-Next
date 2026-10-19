@@ -74,6 +74,7 @@ import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
 import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import styles from './GeneralSettingsPage.module.less';
+import { promptRestorePassword } from '../components/promptRestorePassword';
 import { executeRestoreFlow } from '../utils/restoreFlow';
 
 const { Text } = Typography;
@@ -536,46 +537,6 @@ const GeneralSettingsPage: React.FC = () => {
     }
   };
 
-  /**
-   * Ask for the one-shot decryption password and retry the same restore selection.
-   * Cancel keeps the dialog closed and guarantees zero restore writes.
-   */
-  const promptRestorePassword = (
-    onSubmit: (password: string) => void,
-    wrongAttempt: boolean,
-  ) => {
-    let passwordValue = '';
-    Modal.confirm({
-      title: t('settings.backupSettings.encryption.passwordPromptTitle'),
-      content: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {wrongAttempt && (
-            <Typography.Text type="danger" style={{ fontSize: 12 }}>
-              {t('settings.backupSettings.encryption.errors.passwordWrong')}
-            </Typography.Text>
-          )}
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t('settings.backupSettings.encryption.passwordPromptDesc')}
-          </Typography.Text>
-          <Input.Password
-            autoFocus
-            onChange={(event) => {
-              passwordValue = event.target.value;
-            }}
-          />
-        </div>
-      ),
-      okText: t('common.confirm'),
-      cancelText: t('common.cancel'),
-      onOk: () => {
-        if (!passwordValue) {
-          message.warning(t('settings.backupSettings.encryption.passwordRequiredPrompt'));
-          return Promise.reject();
-        }
-        onSubmit(passwordValue);
-      },
-    });
-  };
 
   const executeRestore = (restoreFn: (restorePassword?: string) => Promise<RestoreResult>) =>
     executeRestoreFlow(restoreFn, {
@@ -584,7 +545,7 @@ const GeneralSettingsPage: React.FC = () => {
       buildSuccessContent: (result) => buildRestoreSuccessContent(result, t),
       showSuccess: (dialog) => { Modal.info(dialog); },
       showWarnings: (result) => showRestoreWarnings(result),
-      promptPassword: promptRestorePassword,
+      promptPassword: (onSubmit, wrongAttempt) => promptRestorePassword(t, onSubmit, wrongAttempt),
       restart: restartApp,
       logError: (label, error) => console.error(label, error),
       showError: (text) => { message.error(text); },
