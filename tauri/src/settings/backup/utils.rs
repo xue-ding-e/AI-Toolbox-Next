@@ -4724,6 +4724,58 @@ mod tests {
     }
 
     #[test]
+    fn opencode_v2_marker_filter_helpers_characterize_independent_entry_rules() {
+        // Characterize the current per-entry filter boundary; this does not
+        // establish that a partially restored V2 pair is safe or intentional.
+        let config_rule = vec![BackupFileFilterRule {
+            tool: "opencode".to_string(),
+            file_path: "~/.config/opencode/opencode.jsonc".to_string(),
+        }];
+        assert!(should_filter_external_config_entry(
+            &config_rule,
+            "opencode",
+            "opencode.jsonc"
+        ));
+        assert!(!should_filter_external_config_entry(
+            &config_rule,
+            "opencode",
+            "openvode_v1.jsonc"
+        ));
+
+        let source = tempfile::tempdir().expect("source");
+        let config = source.path().join("opencode.jsonc");
+        fs::write(&config, r#"{"providers":{}}"#).expect("config");
+        fs::write(source.path().join("openvode_v1.jsonc"), "original v1 bytes")
+            .expect("marker");
+        let marker_rule = vec![BackupFileFilterRule {
+            tool: "opencode".to_string(),
+            file_path: "~/.config/opencode/openvode_v1.jsonc".to_string(),
+        }];
+        let config_excluded =
+            should_filter_external_config_entry(&marker_rule, "opencode", "opencode.jsonc");
+        assert!(!config_excluded);
+        let (marker, marker_name) =
+            opencode_v2_marker_backup_entry(&config, config_excluded).expect("marker candidate");
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let mut directories = HashSet::new();
+        for (path, name) in [(&config, "opencode.jsonc"), (&marker, marker_name.as_str())] {
+            add_external_config_file_to_zip(
+                &mut zip,
+                &mut directories,
+                path,
+                "opencode",
+                name,
+                &marker_rule,
+                SimpleFileOptions::default(),
+            )
+            .expect("apply actual writer filter");
+        }
+        let mut archive = ZipArchive::new(zip.finish().expect("finish zip")).expect("archive");
+        assert!(archive.by_name("external-configs/opencode/opencode.jsonc").is_ok());
+        assert!(archive.by_name("external-configs/opencode/openvode_v1.jsonc").is_err());
+    }
+
+    #[test]
     fn opencode_v2_marker_restore_path_helper_rejects_unsafe_names() {
         let target = tempfile::tempdir().expect("target");
         let safe = resolve_external_config_restore_output_path(target.path(), "openvode_v1.jsonc")
