@@ -1,0 +1,41 @@
+{
+  "base": "46200c5ee6557fdb358cba1c4dfa34352e64c45d",
+  "depends_on_pr": "https://github.com/xue-ding-e/AI-Toolbox-Next/pull/8",
+  "scope": "Validate a default legacy config.json before rename; preserve original path/bytes on deterministic JSON or migration-semantic failure. Uses the real command helper and converter.",
+  "red": {
+    "sha": "08ba5b8466b85f2ccd727c3f631d0fe8b6e2701d",
+    "run": 39185308693,
+    "job": 117846382421,
+    "migration_passed": 32,
+    "migration_failed": 2,
+    "commands": "not run after fail-fast",
+    "log_sha256": "78e1538d60768caea07e52b047f3e42322ab120ab5f9cc3533f47cc5d07ce059"
+  },
+  "green": {
+    "sha": "5f4d76c4a9790f5c350b39b80c8642f3bbaedcc8",
+    "run": 39186144474,
+    "job": 117848879516,
+    "migration_passed": 34,
+    "commands_passed": 12,
+    "failed": 0,
+    "ignored": 0,
+    "log_sha256": "93626eafd3215ae889f613b95f17a5502665eb724c03fba0ab147d37f0ab71bd"
+  },
+  "consolidated_fix": "39ed7567",
+  "validation_workflow": "12dfb3e8",
+  "source_mode_regressions": [
+    "invalid JSON preserves path/bytes",
+    "semantic conflict preserves path/bytes",
+    "success migration and restore",
+    "existing json/jsonc destination preserves both files",
+    "explicit path is not renamed"
+  ],
+  "boundaries": [
+    "synthetic temporary filesystem, no real user files/credentials",
+    "no GUI or WSL runtime validation",
+    "no claim of complete rollback for later IO errors or concurrent external edits",
+    "no new frontend or full Rust suite run",
+    "PR8 approval boundary remains unchanged; this candidate is stacked and not integrated into main"
+  ],
+  "diagnostic_note": "If destination exists and source is also invalid, parse diagnostics now precede destination-conflict diagnostics, without writing files."
+}
