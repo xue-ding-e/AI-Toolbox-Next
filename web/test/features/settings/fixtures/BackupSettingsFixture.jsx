@@ -1,5 +1,6 @@
 import React from 'react';
 import RestorePasswordFixture from './RestorePasswordFixture';
+import RestoreSuccessFixture from './RestoreSuccessFixture';
 import { createRoot } from 'react-dom/client';
 import { App, Button, ConfigProvider, theme } from 'antd';
 import BackupSettingsModal from '@/features/settings/components/BackupSettingsModal';
@@ -307,6 +308,7 @@ function Fixture() {
   const lifecycle = parameters.has('remoteLifecycle');
   return <App>
     {parameters.has('restorePassword') && <RestorePasswordFixture />}
+    {parameters.has('restoreSuccess') && <RestoreSuccessFixture />}
     <Button data-testid="open-settings" onClick={() => setSettingsOpen(true)}>Open settings</Button>
     <Button data-testid="open-remote" onClick={() => setRemoteOpen(true)}>Open backups</Button>
     {['webdav', 'repository'].map(channel => <Button key={channel}
