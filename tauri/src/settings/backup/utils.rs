@@ -4625,6 +4625,180 @@ mod tests {
     }
 
     #[test]
+    fn opencode_v2_marker_helper_respects_real_config_filter_and_file_type() {
+        for (config_name, marker_name) in [
+            ("opencode.json", "openvode_v1.json"),
+            ("custom.jsonc", "openvode_v1.jsonc"),
+            ("custom", "openvode_v1"),
+        ] {
+            let directory = tempfile::tempdir().expect("temp dir");
+            let config_path = directory.path().join(config_name);
+            let marker_path = directory.path().join(marker_name);
+            fs::write(&config_path, "{}").expect("config");
+            fs::create_dir(&marker_path).expect("directory is not a mode marker");
+            assert_eq!(opencode_v2_marker_backup_entry(&config_path, false), None);
+            fs::remove_dir(&marker_path).expect("remove directory");
+            fs::write(&marker_path, "original v1 bytes").expect("marker");
+            assert_eq!(
+                opencode_v2_marker_backup_entry(&config_path, false),
+                Some((marker_path, marker_name.to_string()))
+            );
+
+            let rules = vec![BackupFileFilterRule {
+                tool: "opencode".to_string(),
+                file_path: format!("~/.config/opencode/{config_name}"),
+            }];
+            let excluded = should_filter_external_config_entry(&rules, "opencode", config_name);
+            assert!(excluded, "real path normalization must match {config_name}");
+            assert_eq!(opencode_v2_marker_backup_entry(&config_path, excluded), None);
+            assert!(!should_filter_external_config_entry(
+                &rules,
+                "opencode",
+                "auth.json"
+            ));
+        }
+    }
+
+    #[test]
+    fn opencode_v2_marker_zip_helpers_preserve_migration_rollback_bytes() {
+        use crate::coding::open_code::v2_migration::{is_active, set_mode_for_source};
+
+        // Component-level filesystem/ZIP round trip, not restore_from_archive:
+        // the latter also owns DB/root selection and restore orchestration.
+        for config_name in ["opencode.json", "opencode.jsonc"] {
+            let source = tempfile::tempdir().expect("source");
+            let target = tempfile::tempdir().expect("target");
+            let config_path = source.path().join(config_name);
+            let original = b"{\n  \"provider\": {}, \"model\": \"relay/model\"\n}\n";
+            fs::write(&config_path, original).expect("v1 config");
+            assert_eq!(
+                set_mode_for_source(&config_path, false, true).expect("enable v2"),
+                (false, true)
+            );
+            let migrated = fs::read(&config_path).expect("migrated config");
+            let (marker_path, marker_name) =
+                opencode_v2_marker_backup_entry(&config_path, false).expect("marker");
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            let mut directories = HashSet::new();
+            for (path, name) in [
+                (&config_path, config_name),
+                (&marker_path, marker_name.as_str()),
+            ] {
+                add_external_config_file_to_zip(
+                    &mut zip,
+                    &mut directories,
+                    path,
+                    "opencode",
+                    name,
+                    &[],
+                    SimpleFileOptions::default(),
+                )
+                .expect("write entry");
+            }
+            let mut archive = ZipArchive::new(zip.finish().expect("finish zip")).expect("archive");
+            for (name, expected) in [
+                (config_name, migrated.as_slice()),
+                (marker_name.as_str(), original.as_slice()),
+            ] {
+                let mut file = archive
+                    .by_name(&format!("external-configs/opencode/{name}"))
+                    .expect("entry");
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).expect("entry bytes");
+                assert_eq!(bytes, expected);
+                let output = resolve_external_config_restore_output_path(target.path(), name)
+                    .expect("safe path")
+                    .expect("output");
+                fs::write(output, bytes).expect("restore fixture bytes");
+            }
+            let restored = target.path().join(config_name);
+            assert!(is_active(&restored));
+            assert_eq!(fs::read(&restored).expect("restored config"), migrated);
+            assert_eq!(
+                set_mode_for_source(&restored, false, false).expect("restore v1"),
+                (true, false)
+            );
+            assert_eq!(fs::read(&restored).expect("original bytes"), original);
+            assert!(!is_active(&restored));
+        }
+    }
+
+    #[test]
+    fn opencode_v2_marker_filter_helpers_characterize_independent_entry_rules() {
+        // Characterize the current per-entry filter boundary; this does not
+        // establish that a partially restored V2 pair is safe or intentional.
+        let config_rule = vec![BackupFileFilterRule {
+            tool: "opencode".to_string(),
+            file_path: "~/.config/opencode/opencode.jsonc".to_string(),
+        }];
+        assert!(should_filter_external_config_entry(
+            &config_rule,
+            "opencode",
+            "opencode.jsonc"
+        ));
+        assert!(!should_filter_external_config_entry(
+            &config_rule,
+            "opencode",
+            "openvode_v1.jsonc"
+        ));
+
+        let source = tempfile::tempdir().expect("source");
+        let config = source.path().join("opencode.jsonc");
+        fs::write(&config, r#"{"providers":{}}"#).expect("config");
+        fs::write(source.path().join("openvode_v1.jsonc"), "original v1 bytes")
+            .expect("marker");
+        let marker_rule = vec![BackupFileFilterRule {
+            tool: "opencode".to_string(),
+            file_path: "~/.config/opencode/openvode_v1.jsonc".to_string(),
+        }];
+        let config_excluded =
+            should_filter_external_config_entry(&marker_rule, "opencode", "opencode.jsonc");
+        assert!(!config_excluded);
+        let (marker, marker_name) =
+            opencode_v2_marker_backup_entry(&config, config_excluded).expect("marker candidate");
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let mut directories = HashSet::new();
+        for (path, name) in [(&config, "opencode.jsonc"), (&marker, marker_name.as_str())] {
+            add_external_config_file_to_zip(
+                &mut zip,
+                &mut directories,
+                path,
+                "opencode",
+                name,
+                &marker_rule,
+                SimpleFileOptions::default(),
+            )
+            .expect("apply actual writer filter");
+        }
+        let mut archive = ZipArchive::new(zip.finish().expect("finish zip")).expect("archive");
+        assert!(archive.by_name("external-configs/opencode/opencode.jsonc").is_ok());
+        assert!(archive.by_name("external-configs/opencode/openvode_v1.jsonc").is_err());
+    }
+
+    #[test]
+    fn opencode_v2_marker_restore_path_helper_rejects_unsafe_names() {
+        let target = tempfile::tempdir().expect("target");
+        let safe = resolve_external_config_restore_output_path(target.path(), "openvode_v1.jsonc")
+            .expect("safe path")
+            .expect("marker path");
+        assert_eq!(safe, target.path().join("openvode_v1.jsonc"));
+        for entry in [
+            "../openvode_v1.jsonc",
+            r"..\openvode_v1.jsonc",
+            "nested/../openvode_v1.jsonc",
+            "C:/openvode_v1.jsonc",
+            "openvode_v1.jsonc:stream",
+            "openvode_v1\0.jsonc",
+        ] {
+            assert!(
+                resolve_external_config_restore_output_path(target.path(), entry).is_err(),
+                "unsafe marker path accepted: {entry:?}"
+            );
+        }
+        assert_eq!(fs::read_dir(target.path()).expect("read target").count(), 0);
+    }
+
+    #[test]
     fn gemini_cli_prompt_backup_and_restore_paths_follow_context_file_name() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let gemini_root = temp_dir.path().join(".gemini");
