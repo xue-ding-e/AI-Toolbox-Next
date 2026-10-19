@@ -1,5 +1,5 @@
 import React from 'react';
-import { App, Typography, Button, Select, Space, message, Modal, Table, Switch, Input, Row, Col, Card, Divider, Checkbox } from 'antd';
+import { App, Typography, Button, Select, Space, message, Modal, Table, Switch, Input, Row, Col, Card, Divider } from 'antd';
 import { FolderOpen } from 'lucide-react';
 import {
   EditOutlined,
@@ -74,6 +74,7 @@ import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
 import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import styles from './GeneralSettingsPage.module.less';
+import { confirmRestore } from '../components/confirmRestore';
 import { promptRestorePassword } from '../components/promptRestorePassword';
 import { executeRestoreFlow } from '../utils/restoreFlow';
 
@@ -97,35 +98,6 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   hermes: 'subModules.hermes',
   dsh: 'subModules.dsh',
 };
-
-/** Local mutable holder so Modal.confirm content can toggle without reopening. */
-const createSkipCliCustomRootsHolder = () => {
-  const holder = { value: false };
-  return holder;
-};
-
-const buildRestoreConfirmContent = (
-  description: React.ReactNode,
-  holder: { value: boolean },
-  t: (key: string) => string
-) => (
-  <div>
-    <div style={{ marginBottom: 12 }}>{description}</div>
-    <Checkbox
-      defaultChecked={false}
-      onChange={(event) => {
-        holder.value = event.target.checked;
-      }}
-    >
-      <Space direction="vertical" size={0}>
-        <span>{t('settings.backupSettings.skipCliCustomRoots')}</span>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {t('settings.backupSettings.skipCliCustomRootsDesc')}
-        </Text>
-      </Space>
-    </Checkbox>
-  </div>
-);
 
 const buildRestoreSuccessContent = (
   restoreResult: RestoreResult,
@@ -581,26 +553,12 @@ const GeneralSettingsPage: React.FC = () => {
         return;
       }
 
-      const skipCliCustomRootsHolder = createSkipCliCustomRootsHolder();
-      Modal.confirm({
-        title: t('settings.backupSettings.confirmRestore'),
-        content: buildRestoreConfirmContent(
-          t('settings.backupSettings.confirmRestoreDesc'),
-          skipCliCustomRootsHolder,
-          t
-        ),
-        okText: t('common.confirm'),
-        cancelText: t('common.cancel'),
-        onOk: () => {
-          void executeRestore(
-            (restorePassword) =>
-              restoreDatabase(zipFilePath, {
-                skipCliCustomRoots: skipCliCustomRootsHolder.value,
-                restorePassword,
-              }),
-          );
-        },
-      });
+      confirmRestore(
+        t,
+        t('settings.backupSettings.confirmRestoreDesc'),
+        (options) => restoreDatabase(zipFilePath, options),
+        executeRestore,
+      );
     } catch (error) {
       console.error('Restore failed:', error);
       message.error(t('settings.backupSettings.restoreFailed'));
@@ -663,33 +621,24 @@ const GeneralSettingsPage: React.FC = () => {
             : t('settings.backupSettings.confirmRestoreDesc')
         : t('settings.backupSettings.confirmRestoreDesc');
 
-    const skipCliCustomRootsHolder = createSkipCliCustomRootsHolder();
-    Modal.confirm({
-      title: t('settings.backupSettings.confirmRestore'),
-      content: buildRestoreConfirmContent(restoreDescription, skipCliCustomRootsHolder, t),
-      okText: t('common.confirm'),
-      cancelText: t('common.cancel'),
-      onOk: () => {
-        void executeRestore(
-          (restorePassword) => {
-            if (channel === 'webdav') {
-              return restoreFromWebDAV(
-                webdav.url,
-                webdav.username,
-                webdav.password,
-                webdav.remotePath,
-                file.filename,
-                { skipCliCustomRoots: skipCliCustomRootsHolder.value, restorePassword }
-              );
-            }
-            return restoreFromRepository(file.filename, file.sha ?? '', {
-              skipCliCustomRoots: skipCliCustomRootsHolder.value,
-              restorePassword,
-            });
-          },
-        );
+    confirmRestore(
+      t,
+      restoreDescription,
+      (options) => {
+        if (channel === 'webdav') {
+          return restoreFromWebDAV(
+            webdav.url,
+            webdav.username,
+            webdav.password,
+            webdav.remotePath,
+            file.filename,
+            options
+          );
+        }
+        return restoreFromRepository(file.filename, file.sha ?? '', options);
       },
-    });
+      executeRestore,
+    );
   };
 
   const handleOpenDataDir = async () => {
