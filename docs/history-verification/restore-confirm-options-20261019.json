@@ -1,0 +1,37 @@
+{
+  "scope": "Behavior-preserving restore confirmation adapter extraction and real DOM coverage; no demonstrated product bug",
+  "base": "81abf92e72e295974de5a59befa5edc8a0daacb5",
+  "testedHead": "cc866a273ac81a4fa66d898ad88841be5de6a92d",
+  "consolidatedSameTree": "2d70002051d3312f1a50b7af857bd516d4f24bca",
+  "firstRun": {
+    "url": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39328992628",
+    "head": "794fd70a3966c1bcd2501762fc919ef5c4318504",
+    "result": "Node10, tsc and build passed; DOM runner failed with CDP Object reference chain is too long before completing scenarios",
+    "cause": "Fixture assignment expression returned a DOM node to returnByValue; fixed only by void assignment, retaining browser reference and all assertions",
+    "logSha256": "c4ae6b115a05aea3d7842569354015b24186c1ca6b85382a04c07d1ae2cb5cc1"
+  },
+  "validation": {
+    "url": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39329958860",
+    "job": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39329958860/job/118325344895",
+    "nodePassed": 10,
+    "domScenarios": 10,
+    "browserChecksPassed": 10,
+    "typescript": "passed",
+    "build": "passed",
+    "otherJobsSkipped": 8,
+    "logSha256": "cc5f19f3072b88aad8434ae9140abe85de9ccb1075fb4c43c958d8ed2e306a99"
+  },
+  "coverage": [
+    "Real page local and remote paths share confirmRestore adapter",
+    "Real Modal/Checkbox cancellation invokes no synthetic restore service",
+    "Default false, checked true, unchecked false and reopen resets",
+    "Password-required/wrong-password retries retain option and synthetic filename/SHA closure",
+    "Password cancel does not invoke another restore; original void onOk behavior remains"
+  ],
+  "limits": [
+    "No real backup service, credentials, native picker, IPC, filesystem restore or restart",
+    "Synthetic selection closure is not full GeneralSettingsPage routing validation",
+    "No full frontend/Rust/desktop or visual/theme acceptance",
+    "First failure was fixture protocol failure, not a product RED"
+  ]
+}
