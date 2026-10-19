@@ -1,0 +1,119 @@
+{
+  "base_main": "ea9c6f2942d3fda1162ebd8bb9a0154bc87c9224",
+  "bounded_upstream_port": {
+    "commit": "e2623e3d1a19b8c44289d9a1794df0e47432b167",
+    "sources": [
+      {
+        "sha": "ed57bc95c3e56c9993cdd5c1a853737bc9f9bb30",
+        "scope": "auth UI page change"
+      },
+      {
+        "sha": "1b1cd65c7e142cad6b9394661875d30c9fc6c027",
+        "scope": "OpenCode page hunk only; unrelated unwired observations module excluded"
+      },
+      {
+        "sha": "bb161f226e108852891739776c0b209fe72f2d6a",
+        "scope": "V2 read-only auth preview intent"
+      }
+    ],
+    "complete_sync": false,
+    "exclusions": [
+      "Unwired observations module",
+      "Codex identity patch already covered by Next PR #10",
+      "Official release/distribution changes"
+    ]
+  },
+  "functional_commit": "92c3e888221bb3c011441d83c4cfec18063cdb00",
+  "reviewed_draft": "a4438d58be98ce5d65a38b756c1438e395165d4e",
+  "functional_and_reviewed_tree": "975036be70ffaf2d7eb415038b8de0270930b061",
+  "red": {
+    "head": "944493419edbed849d9406c665729eb075c43bfc",
+    "node": {
+      "passed": 1,
+      "failed": 7,
+      "log_sha256": "af21b8becf2bdb7f2edd8ff57913ece95ad979c1528668ef23e3cecf33fe9635"
+    },
+    "rust": {
+      "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39284956095",
+      "job": 118168178185,
+      "conclusion": "failure",
+      "compiled": true,
+      "listed_tests": 6,
+      "passed": 2,
+      "failed": 4,
+      "ignored": 0,
+      "failed_names": [
+        "auth_write_guard_failed_mode_probe_preserves_auth",
+        "auth_write_guard_invalid_marker_type_preserves_auth",
+        "auth_write_guard_v2_does_not_create_missing_auth_directory",
+        "auth_write_guard_v2_preserves_auth_and_credential_database_bytes"
+      ],
+      "log_sha256": "af953e7db777e0cb4b5addac653b1691cd294b5b2c952fb6f96843b2530fa6e0"
+    }
+  },
+  "green": {
+    "head": "5161c9f3120b81672df407e3bf853db02642c1c0",
+    "tree": "39d405526f0e1b62466b38bc85bde89a1640a609",
+    "run": "https://github.com/xue-ding-e/AI-Toolbox-Next/actions/runs/39287165044",
+    "conclusion": "success",
+    "platform": "Ubuntu 22.04",
+    "toolchains": {
+      "node": "22.23.3",
+      "pnpm": "9.15.0",
+      "rustc": "1.99.1"
+    },
+    "frontend": {
+      "job": 118177266034,
+      "node_passed": 1081,
+      "node_failed": 0,
+      "node_skipped": 0,
+      "browser_checks": 18,
+      "browser_themes": [
+        "light 1280x900",
+        "dark 700x900"
+      ],
+      "typescript": "passed",
+      "production_build": "passed",
+      "structural_guards": {
+        "form_modal_files": 15,
+        "provider_card_files": 12,
+        "provider_card_existing_pending": 3,
+        "official_account_modules": 12,
+        "official_account_existing_pending": 3
+      },
+      "log_sha256": "590ef01ea7b5d86e538b9db03c216675021bb8a574f3c565fa9ce986d31a3c53"
+    },
+    "rust": {
+      "job": 118179220239,
+      "passed": 68,
+      "failed": 0,
+      "ignored": 0,
+      "modules": {
+        "coding::open_code::commands": 19,
+        "coding::open_code::v2_migration": 37,
+        "coding::open_code::free_models": 12
+      },
+      "listed_auth_guards": 7,
+      "listed_mode_lock_tests": 3,
+      "listed_retained_source_mode_tests": 5,
+      "log_sha256": "e449a0cc3c46c4d22aef089a5d1dfcb1f018e6b89cdc389c5e8078178ffd2141"
+    },
+    "local_focused_node": {
+      "passed": 10,
+      "failed": 0,
+      "log_sha256": "f75169a8140eaab52a99e3b0a4cd351d455f538469e315beb29195149d6a23df"
+    }
+  },
+  "log_hash_format": "SHA-256 of saved UTF-8 decoded job logs or local command output; CI logs are linked by run/job, not committed. No credentials or user configuration were collected.",
+  "boundaries": [
+    "The tests-first helper extracts the command's actual disk-write body. Resolving the config path is an extra fallible precondition; extraction is not claimed to be completely behavior-neutral.",
+    "The Node failures are contract assertions in the production-consumed mode controller, not seven independently observed user incidents. No actual GUI/user-data damage is claimed.",
+    "The browser fixture uses real shared AuthConfigModal and Monaco plus the production mode controller. Mode answers and saves are synthetic. It does not mount the full OpenCodePage or execute native IPC.",
+    "The old onOk handler reference is guarded in production but not directly invoked in this fixture. Screenshots were produced in the CI temporary directory but not retained or visually reviewed.",
+    "The auth database preservation assertion uses a synthetic byte sentinel, not a live OpenCode credential database. Tests write only synthetic temporary paths.",
+    "The single process mutex coordinates both migration setters and auth saves and rejects poison. It does not coordinate external OpenCode CLI, backup/restore writers, or all config-path-setting changes.",
+    "Concurrency tests use started channels and 50 ms timeouts; these are bounded scheduling checks with potential scheduling false positives, not a formal mutual-exclusion proof.",
+    "The full Rust suite, unrelated browser fixtures, native GUI, real credentials/CLI, WSL and packaging are outside this run. No release/deployment or user-machine operation was performed.",
+    "After the exact GREEN source, only maintenance evidence documentation changes. Fresh remote refs and independent review remain required for integration."
+  ]
+}
