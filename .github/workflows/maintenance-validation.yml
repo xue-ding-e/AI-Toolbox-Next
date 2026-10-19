@@ -218,10 +218,11 @@ jobs:
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::open_code::commands -- --test-threads=1
   codex-response-identity-regression:
     # Synthetic session/proxy identity regression only; no live credentials.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/maintenance/validate-codex-response-identity-20261019'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/maintenance/validate-codex-response-identity-20261019' || github.ref == 'refs/heads/test/codex-incomplete-proxy-regression')
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
+      VALIDATION_REF: ${{ github.ref }}
       CARGO_BUILD_JOBS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
@@ -242,19 +243,30 @@ jobs:
           rustc --version
           cargo --version
           df -h
-      - name: Verify all six response identity regressions are selected
+      - name: Verify exact response identity regression selection
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --list > /tmp/codex-response-identity-tests.txt
           cat /tmp/codex-response-identity-tests.txt
-          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq 6
+          expected_count=6
+          if [ "$VALIDATION_REF" = "refs/heads/test/codex-incomplete-proxy-regression" ]; then
+            expected_count=7
+            grep -Fx "coding::proxy_gateway::session_import::tests::codex_response_identity_converges_with_an_incomplete_proxy_row: test" /tmp/codex-response-identity-tests.txt
+          fi
+          test "$(grep -c '^coding::proxy_gateway::session_import::tests::codex_response_identity_.*: test$' /tmp/codex-response-identity-tests.txt)" -eq "$expected_count"
           for name in codex_response_identity_record_first_matches_only_its_proxy codex_response_identity_legacy_first_matches_only_its_proxy codex_response_identity_unmatched_response_preserves_independent_call codex_response_identity_revision6_rescan_repairs_rows_and_matches codex_response_identity_revision6_rescan_does_not_resurrect_pruned_rows codex_response_identity_missing_response_id_keeps_unique_usage_fallback; do
             grep -Fx "coding::proxy_gateway::session_import::tests::${name}: test" /tmp/codex-response-identity-tests.txt
           done
-      - name: Run session import and matching regressions serially
+      - name: Run scoped identity regressions serially
+        shell: bash
         run: |
-          cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests:: -- --test-threads=1
+          set -euo pipefail
+          if [ "$VALIDATION_REF" = "refs/heads/test/codex-incomplete-proxy-regression" ]; then
+            cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests::codex_response_identity_ -- --test-threads=1
+          else
+            cargo test --locked --manifest-path tauri/Cargo.toml --lib coding::proxy_gateway::session_import::tests:: -- --test-threads=1
+          fi
   opencode-backup-sync:
     # Run only after the exact synchronization candidate passes frontend validation.
     needs: frontend
