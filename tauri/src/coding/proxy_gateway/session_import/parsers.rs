@@ -100,7 +100,9 @@ pub(super) fn revision(cli_key: GatewayUsageTool) -> u32 {
         // 5: parse `token_usage_record` as the authoritative per-response
         // source and deduct the legacy `token_count` mirror that repeats it.
         // 6: time each response from the prompt/tool output that sent it.
-        GatewayUsageTool::Codex => 6,
+        // 7: retain response identity for exact proxy matches and recheck
+        // revision-6 heuristic matches when unchanged transcripts are scanned.
+        GatewayUsageTool::Codex => 7,
         // 5: bracket each call with the `turn/start` / `request/header` /
         // `llm/retry-started` event that sent it and the settled message.
         GatewayUsageTool::Dsh => 5,
@@ -962,6 +964,7 @@ fn parse_codex_lines(
                                     .push(record.request_id.clone());
                                 record.request_id =
                                     format!("SESSION:codex:{thread_id}:{response_id}");
+                                record.usage.envelope_id = Some(response_id.clone());
                                 // Keep the mirror's estimate when this record
                                 // cannot compute one of its own.
                                 record.duration_ms = duration_ms.or(record.duration_ms);
@@ -970,7 +973,8 @@ fn parse_codex_lines(
                         continue;
                     }
                 }
-                let token_usage = usage.clone().into_usage();
+                let mut token_usage = usage.clone().into_usage();
+                token_usage.envelope_id = response_id.clone();
                 if token_usage.total_tokens().is_none() {
                     continue;
                 }
