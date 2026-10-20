@@ -65,6 +65,25 @@ impl RunningGateway {
         api_format: &str,
         configure: impl FnOnce(&mut ProxyGatewaySettings),
     ) -> Self {
+        Self::new_for_api_format_configured_with_database(
+            upstream_url,
+            provider_type,
+            logging,
+            api_format,
+            configure,
+            |_| {},
+        )
+    }
+
+    /// Initialize isolated database settings before the real runtime loads them.
+    pub(super) fn new_for_api_format_configured_with_database(
+        upstream_url: &str,
+        provider_type: &str,
+        logging: BodyLogging,
+        api_format: &str,
+        configure: impl FnOnce(&mut ProxyGatewaySettings),
+        configure_database: impl FnOnce(&SqliteDbState),
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let db = SqliteDbState::in_memory_for_test().unwrap();
         let api_version = if api_format == "gemini_native" {
@@ -97,6 +116,7 @@ impl RunningGateway {
             )
         })
         .unwrap();
+        configure_database(&db);
         let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = probe.local_addr().unwrap().port();
         drop(probe);
