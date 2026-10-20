@@ -12,12 +12,19 @@
 //! bodies after the fact would always report "nothing" for most users. The
 //! request side reuses the `Value` already parsed by
 //! `build_upstream_body_for_provider`; the response side scans the body it is
-//! already parsing, or a bounded tail scanner inside the streaming writer.
+//! already parsing, or bounded structured SSE events before response conversion.
 
 use crate::coding::proxy_gateway::request_log::safe_lossy_observation_detail;
+use super::http_io::DebugBodyStream;
 use crate::coding::proxy_gateway::transformer::AiProtocol;
 use crate::coding::proxy_gateway::types::{GatewayNativeToolRecord, GatewayRequestRewrite};
+use crate::coding::proxy_gateway::usage_parser::{
+    find_sse_block_delimiter, flattened_flush_boundary, for_each_flattened_sse_field,
+    parse_sse_data_block,
+};
+use futures_util::StreamExt;
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
 
 /// Canonical tool kinds. A single vocabulary shared by every protocol keeps the
 /// detail dialog from having to translate per-dialect names.
@@ -43,17 +50,20 @@ pub(super) const REWRITE_LOSSY_CONVERSION: &str = "lossy_conversion";
 pub(super) const MAX_TOOL_RECORDS: usize = 16;
 pub(super) const MAX_REWRITE_RECORDS: usize = 32;
 const MAX_DETAIL_CHARS: usize = 256;
-/// Bytes carried across stream chunks so a marker split between two chunks is
-/// still seen. Longest marker is `"image_generation_call"` (21 bytes).
-const STREAM_TAIL_BYTES: usize = 96;
+/// Diagnostics never retain a full stream. An oversized, incomplete event is
+/// ignored through its next delimiter; later events can still be observed.
+const MAX_TOOL_EVENT_BYTES: usize = 256 * 1024;
 
 /// Runtime accumulator handed through request preparation and the response
 /// path. `native_tools` is keyed by kind; `rewrites` is append-only and
 /// capped.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct RequestObservations {
     pub(super) native_tools: Vec<GatewayNativeToolRecord>,
     pub(super) rewrites: Vec<GatewayRequestRewrite>,
+    /// Only bounded canonical kinds cross the streaming/response boundary.
+    /// No response payload is retained here, even when body logging is enabled.
+    streamed_used_tools: Option<Arc<Mutex<Vec<&'static str>>>>,
 }
 
 impl RequestObservations {
@@ -83,11 +93,55 @@ impl RequestObservations {
         }
     }
 
-    /// Streaming counterpart: markers seen in raw SSE bytes.
+    /// Streaming counterpart: tool kinds recognized in structured upstream events.
     pub(super) fn observe_used_markers(&mut self, kinds: &[&'static str]) {
         for kind in kinds {
             self.mark_used(kind, true);
         }
+    }
+
+    /// Observe bytes on demand, before any provider filter or response conversion.
+    /// The original chunks, errors, EOF and polling/backpressure pass through
+    /// unchanged; there is no background reader or queue.
+    pub(super) fn observe_sse_stream(
+        &mut self,
+        stream: DebugBodyStream,
+        protocol: AiProtocol,
+    ) -> DebugBodyStream {
+        // Chat (including Ollama NDJSON) has no native hosted-tool vocabulary.
+        if protocol == AiProtocol::OpenAiChat {
+            return stream;
+        }
+        let shared = Arc::new(Mutex::new(Vec::new()));
+        self.streamed_used_tools = Some(shared.clone());
+        let mut scanner = UsedToolScanner::with_protocol(protocol);
+        scanner.shared = Some(shared);
+        Box::pin(futures_util::stream::unfold(
+            (stream, scanner),
+            |(mut stream, mut scanner)| async move {
+                let next = stream.next().await;
+                match &next {
+                    Some(Ok(chunk)) => scanner.push_chunk(chunk),
+                    Some(Err(_)) | None => scanner.finish(),
+                }
+                scanner.publish();
+                next.map(|chunk| (chunk, (stream, scanner)))
+            },
+        ))
+    }
+
+    /// Merge at the logging boundary, including first-chunk rejection or client
+    /// cancellation, which may bypass normal streaming-writer completion.
+    pub(super) fn native_tools_snapshot(&self) -> Vec<GatewayNativeToolRecord> {
+        let mut snapshot = Self {
+            native_tools: self.native_tools.clone(),
+            ..Self::default()
+        };
+        if let Some(shared) = &self.streamed_used_tools {
+            let kinds = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            snapshot.observe_used_markers(&kinds);
+        }
+        snapshot.native_tools
     }
 
     fn mark_used(&mut self, kind: &str, used: bool) {
@@ -366,72 +420,144 @@ fn dedupe_records(
     records
 }
 
-/// Streaming marker scanner.
-///
-/// SSE/WS bodies are forwarded chunk by chunk; this keeps a bounded tail so a
-/// marker split across two chunks is still recognized. It scans raw bytes for
-/// the quoted wire names from every dialect at once: a Chat stream cannot carry
-/// a Responses item type, and the extra comparisons cost nothing at SSE
-/// frequency. No protocol argument is needed for that reason.
+/// Bounded, protocol-aware SSE observer. Reuses the usage collector's physical
+/// delimiter and multi-line data parser, but never affects stream delivery.
 pub(super) struct UsedToolScanner {
-    tail: Vec<u8>,
+    protocol: AiProtocol,
+    buffer: Vec<u8>,
+    discarding_oversized_event: bool,
     kinds: Vec<&'static str>,
+    shared: Option<Arc<Mutex<Vec<&'static str>>>>,
 }
 
 impl UsedToolScanner {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::with_protocol(AiProtocol::OpenAiResponses)
+    }
+
+    fn with_protocol(protocol: AiProtocol) -> Self {
         Self {
-            tail: Vec::new(),
+            protocol,
+            buffer: Vec::new(),
+            discarding_oversized_event: false,
             kinds: Vec::new(),
+            shared: None,
         }
     }
 
-    pub(super) fn push_chunk(&mut self, chunk: &[u8]) {
-        let mut haystack = Vec::with_capacity(self.tail.len() + chunk.len());
-        haystack.extend_from_slice(&self.tail);
-        haystack.extend_from_slice(chunk);
-        for (marker, kind) in STREAM_MARKERS {
-            if self.kinds.contains(kind) {
-                continue;
+    pub(super) fn push_chunk(&mut self, mut chunk: &[u8]) {
+        while !chunk.is_empty() {
+            let append_len = chunk.len().min(MAX_TOOL_EVENT_BYTES - self.buffer.len());
+            let mut search_from = self.buffer.len().saturating_sub(3);
+            self.buffer.extend_from_slice(&chunk[..append_len]);
+            chunk = &chunk[append_len..];
+            let mut consumed = 0;
+            while let Some((position, delimiter_len)) =
+                find_sse_block_delimiter(&self.buffer[search_from..])
+            {
+                let block_end = search_from + position;
+                if !self.discarding_oversized_event {
+                    Self::observe_block(
+                        self.protocol,
+                        &self.buffer[consumed..block_end],
+                        &mut self.kinds,
+                    );
+                }
+                self.discarding_oversized_event = false;
+                consumed = block_end + delimiter_len;
+                search_from = consumed;
             }
-            if contains_bytes(&haystack, marker.as_bytes()) {
-                self.kinds.push(kind);
+            self.buffer.drain(..consumed);
+            if !self.discarding_oversized_event && self.buffer.len() == MAX_TOOL_EVENT_BYTES {
+                // Some supported relays flatten SSE fields onto one line.
+                // Flush only complete JSON spans before applying the hard cap.
+                // A network/cap boundary may split UTF-8. Complete earlier
+                // events are still safe to flush; retain the unfinished tail.
+                let utf8_end = std::str::from_utf8(&self.buffer)
+                    .map_or_else(|error| error.valid_up_to(), |text| text.len());
+                let prefix = &self.buffer[..utf8_end];
+                let boundary = if is_flattened_field_line(
+                    std::str::from_utf8(prefix).expect("valid UTF-8 prefix"),
+                ) {
+                    flattened_flush_boundary(prefix)
+                } else {
+                    0
+                };
+                Self::observe_block(self.protocol, &self.buffer[..boundary], &mut self.kinds);
+                self.buffer.drain(..boundary);
+            }
+            if self.discarding_oversized_event || self.buffer.len() == MAX_TOOL_EVENT_BYTES {
+                // Retain only enough bytes to find a split delimiter. Never
+                // treat the tail of an oversized event as a fresh JSON event.
+                let keep_from = self.buffer.len().saturating_sub(3);
+                self.buffer.drain(..keep_from);
+                self.discarding_oversized_event = true;
             }
         }
-        let keep = STREAM_TAIL_BYTES.min(haystack.len());
-        self.tail = haystack[haystack.len() - keep..].to_vec();
+    }
+
+    fn finish(&mut self) {
+        if !self.discarding_oversized_event {
+            Self::observe_block(self.protocol, &self.buffer, &mut self.kinds);
+        }
+        self.buffer.clear();
+    }
+
+    fn observe_block(protocol: AiProtocol, block: &[u8], kinds: &mut Vec<&'static str>) {
+        let mut observe = |value: &Value| {
+            for kind in used_tools(protocol, value) {
+                if kinds.len() < MAX_TOOL_RECORDS && !kinds.contains(&kind) {
+                    kinds.push(kind);
+                }
+            }
+        };
+        if let Some(value) = parse_sse_data_block(block) {
+            observe(&value);
+        } else {
+            let text = String::from_utf8_lossy(block);
+            let text = text.trim();
+            // Only a flattened field line is eligible for this fallback. A
+            // comment, id/retry field or malformed multi-line data block must
+            // not turn a quoted "data:" example into a real tool invocation.
+            if !is_flattened_field_line(text) {
+                return;
+            }
+            for_each_flattened_sse_field(text, |_, data| {
+                if let Ok(value) = serde_json::from_str::<Value>(data) {
+                    observe(&value);
+                }
+                false
+            });
+        }
     }
 
     pub(super) fn kinds(&self) -> &[&'static str] {
         &self.kinds
     }
+
+    fn publish(&self) {
+        if let Some(shared) = &self.shared {
+            *shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                self.kinds().to_vec();
+        }
+    }
 }
 
-/// Markers shared by every protocol's wire dialect. Searching all of them is
-/// harmless: a Chat stream cannot contain a Responses item type, and the extra
-/// comparisons cost nothing at SSE frequency.
-const STREAM_MARKERS: &[(&str, &str)] = &[
-    ("\"web_search_call\"", TOOL_WEB_SEARCH),
-    ("\"web_search_tool_result\"", TOOL_WEB_SEARCH),
-    ("\"image_generation_call\"", TOOL_IMAGE_GENERATION),
-    ("\"code_interpreter_call\"", TOOL_CODE_INTERPRETER),
-    ("\"computer_call\"", TOOL_COMPUTER_USE),
-    ("\"file_search_call\"", TOOL_FILE_SEARCH),
-    ("\"mcp_call\"", TOOL_MCP),
-    ("\"mcp_tool_use\"", TOOL_MCP),
-    ("\"local_shell_call\"", TOOL_LOCAL_SHELL),
-    ("\"groundingMetadata\"", TOOL_WEB_SEARCH),
-    ("\"grounding_metadata\"", TOOL_WEB_SEARCH),
-    ("\"executableCode\"", TOOL_CODE_INTERPRETER),
-    ("\"executable_code\"", TOOL_CODE_INTERPRETER),
-    ("\"codeExecutionResult\"", TOOL_CODE_INTERPRETER),
-    ("\"code_execution_result\"", TOOL_CODE_INTERPRETER),
-];
+impl Drop for UsedToolScanner {
+    fn drop(&mut self) {
+        // Cancellation/first-chunk rejection can drop the wrapper before EOF.
+        // Flush only already-received, complete JSON; never poll the upstream.
+        self.finish();
+        self.publish();
+    }
+}
 
-fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
+fn is_flattened_field_line(text: &str) -> bool {
+    let text = text.trim();
+    (text.starts_with("event:") || text.starts_with("data:"))
+        && !text.contains('\r')
+        && !text.contains('\n')
 }
 
 #[cfg(test)]
@@ -561,6 +687,218 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .contains(SECRET));
+        }
+    }
+
+    #[test]
+    fn stream_scanner_handles_split_utf8_multiline_and_mixed_delimiters() {
+        let wire = concat!(
+            ": keepalive\r\n\r\n",
+            "event: response.output_item.added\n",
+            "data: {\"item\":\n",
+            "data: {\"type\":\"web_search_call\",\"id\":\"搜索\"}}\n\n",
+            "data: {\"item\":{\"type\":\"image_generation_call\"}}\r\n\r\n",
+            "data: [DONE]\n\n",
+        )
+        .as_bytes();
+        for chunk_size in [1, 2, 3, 7, 64, wire.len()] {
+            let mut scanner = UsedToolScanner::new();
+            for chunk in wire.chunks(chunk_size) {
+                scanner.push_chunk(chunk);
+            }
+            assert_eq!(scanner.kinds(), &[TOOL_WEB_SEARCH, TOOL_IMAGE_GENERATION]);
+            assert!(scanner.buffer.is_empty());
+        }
+    }
+
+    #[test]
+    fn stream_scanner_ignores_text_and_other_protocol_markers() {
+        let text = "web_search_call groundingMetadata event: x data: {\"type\":\"mcp_call\"}";
+        for protocol in [
+            AiProtocol::OpenAiResponses,
+            AiProtocol::AnthropicMessages,
+            AiProtocol::GeminiNative,
+            AiProtocol::OpenAiChat,
+        ] {
+            let value = json!({"type": "text", "text": text, "content": text});
+            let mut scanner = UsedToolScanner::with_protocol(protocol);
+            scanner.push_chunk(format!("data: {value}\n\n").as_bytes());
+            scanner.finish();
+            assert!(scanner.kinds().is_empty(), "{protocol:?}");
+        }
+        let mut scanner = UsedToolScanner::with_protocol(AiProtocol::AnthropicMessages);
+        scanner.push_chunk(b"data: {\"item\":{\"type\":\"web_search_call\"}}\n\n");
+        assert!(scanner.kinds().is_empty());
+
+        let mut scanner = UsedToolScanner::new();
+        scanner.push_chunk(
+            concat!(
+                ": example data: {\"type\":\"web_search_call\"}\n\n",
+                "event: comment\n: data: {\"type\":\"mcp_call\"}\n\n",
+            )
+            .as_bytes(),
+        );
+        assert!(scanner.kinds().is_empty());
+    }
+
+    #[test]
+    fn stream_scanner_recognizes_anthropic_and_gemini_native_events() {
+        for (protocol, value, expected) in [
+            (
+                AiProtocol::AnthropicMessages,
+                json!({"type": "content_block_start", "content_block": {
+                    "type": "server_tool_use", "name": "web_search"}}),
+                vec![TOOL_WEB_SEARCH],
+            ),
+            (
+                AiProtocol::GeminiNative,
+                json!({"candidates": [{"groundingMetadata": {}, "content": {
+                    "parts": [{"executableCode": {"language": "PYTHON"}}]}}]}),
+                vec![TOOL_CODE_INTERPRETER, TOOL_WEB_SEARCH],
+            ),
+        ] {
+            let mut scanner = UsedToolScanner::with_protocol(protocol);
+            scanner.push_chunk(format!("data: {value}\n\n").as_bytes());
+            assert_eq!(scanner.kinds(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn stream_scanner_bounds_oversized_events_and_recovers_after_the_delimiter() {
+        let oversized = format!(
+            "data: {{\"type\":\"web_search_call\",\"payload\":\"{}\"}}",
+            "x".repeat(MAX_TOOL_EVENT_BYTES * 2),
+        );
+        for chunk_size in [7, 4096, oversized.len()] {
+            let mut scanner = UsedToolScanner::new();
+            for chunk in oversized.as_bytes().chunks(chunk_size) {
+                scanner.push_chunk(chunk);
+                assert!(scanner.buffer.len() <= MAX_TOOL_EVENT_BYTES);
+            }
+            assert!(scanner.kinds().is_empty());
+            assert!(scanner.discarding_oversized_event);
+            scanner.push_chunk(b"\r\n\r");
+            scanner.push_chunk(b"\ndata: {\"item\":{\"type\":\"file_search_call\"}}\n\n");
+            assert_eq!(scanner.kinds(), &[TOOL_FILE_SEARCH]);
+            assert!(!scanner.discarding_oversized_event);
+        }
+
+        // A malformed multi-line data value is not a flattened event sequence,
+        // even when its first JSON value happens to fit before the hard cap.
+        let malformed = format!(
+            "event: x\ndata: {{\"type\":\"web_search_call\"}}\ndata: {{\"text\":\"{}\"}}\n\n",
+            "x".repeat(MAX_TOOL_EVENT_BYTES),
+        );
+        let mut scanner = UsedToolScanner::new();
+        scanner.push_chunk(malformed.as_bytes());
+        scanner.finish();
+        assert!(scanner.kinds().is_empty());
+    }
+
+    #[test]
+    fn stream_scanner_handles_complete_eof_and_flattened_events_without_guessing() {
+        let mut scanner = UsedToolScanner::new();
+        scanner.push_chunk(b"data: {\"type\":\"web_search_call\"");
+        scanner.finish();
+        assert!(scanner.kinds().is_empty());
+
+        scanner.push_chunk(b"data: {\"type\":\"file_search_call\"}");
+        scanner.finish();
+        assert_eq!(scanner.kinds(), &[TOOL_FILE_SEARCH]);
+
+        let event = "event: item data: {\"item\":{\"type\":\"web_search_call\"}} ";
+        let flattened = event.repeat(MAX_TOOL_EVENT_BYTES / event.len() + 2);
+        scanner.push_chunk(flattened.as_bytes());
+        assert!(scanner.buffer.len() < MAX_TOOL_EVENT_BYTES);
+        assert!(!scanner.discarding_oversized_event);
+        scanner.push_chunk(b"event: item data: {\"item\":{\"type\":\"mcp_call\"}}");
+        scanner.finish();
+        assert_eq!(scanner.kinds(), &[TOOL_FILE_SEARCH, TOOL_WEB_SEARCH, TOOL_MCP]);
+    }
+
+    #[test]
+    fn stream_scanner_flushes_flattened_events_when_the_cap_splits_utf8() {
+        let first = "event: item data: {\"item\":{\"type\":\"web_search_call\"}} ";
+        let text_start = "event: text data: {\"type\":\"text\",\"text\":\"";
+        let padding = "x".repeat(MAX_TOOL_EVENT_BYTES - 1 - first.len() - text_start.len());
+        let wire = format!(
+            "{first}{text_start}{padding}搜\"}} event: item data: {{\"item\":{{\"type\":\"mcp_call\"}}}}"
+        );
+        let mut scanner = UsedToolScanner::new();
+        scanner.push_chunk(&wire.as_bytes()[..MAX_TOOL_EVENT_BYTES]);
+        assert_eq!(scanner.kinds(), &[TOOL_WEB_SEARCH]);
+        assert!(!scanner.discarding_oversized_event);
+        scanner.push_chunk(&wire.as_bytes()[MAX_TOOL_EVENT_BYTES..]);
+        scanner.finish();
+        assert_eq!(scanner.kinds(), &[TOOL_WEB_SEARCH, TOOL_MCP]);
+    }
+
+    #[tokio::test]
+    async fn stream_observer_is_lazy_and_preserves_chunks_errors_and_request_markers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let polls = Arc::new(AtomicUsize::new(0));
+        let stream_polls = polls.clone();
+        let chunks = vec![
+            Ok(b"data: {\"item\":{\"type\":\"web_".to_vec()),
+            Ok(b"search_call\"}}\n\n".to_vec()),
+            Err("upstream body failed".to_string()),
+        ];
+        let stream = futures_util::stream::iter(chunks.clone()).inspect(move |_| {
+            stream_polls.fetch_add(1, Ordering::SeqCst);
+        });
+        let mut observations = RequestObservations::default();
+        let request = json!({"tools": [{"type": "web_search"}]});
+        observations.observe_declared(AiProtocol::OpenAiResponses, &request);
+        observations.observe_forwarded(AiProtocol::OpenAiResponses, &request);
+        observations.push_rewrite(REWRITE_PROMPT_CACHE_KEY, None);
+        let mut stream =
+            observations.observe_sse_stream(Box::pin(stream), AiProtocol::OpenAiResponses);
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert!(!observations.native_tools_snapshot()[0].used);
+        for (index, expected) in chunks.into_iter().enumerate() {
+            assert_eq!(stream.next().await, Some(expected));
+            assert_eq!(polls.load(Ordering::SeqCst), index + 1);
+            assert_eq!(observations.native_tools_snapshot()[0].used, index > 0);
+        }
+        assert!(stream.next().await.is_none());
+        let tools = observations.native_tools_snapshot();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].declared && tools[0].forwarded && tools[0].used);
+        assert_eq!(observations.rewrites[0].kind, REWRITE_PROMPT_CACHE_KEY);
+    }
+
+    #[tokio::test]
+    async fn stream_observer_drop_keeps_received_markers_and_stops_reading() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::task::Poll;
+
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        for wire in [
+            "data: {\"item\":{\"type\":\"web_search_call\"}}\n\n",
+            "event: item data: {\"item\":{\"type\":\"web_search_call\"}}",
+        ] {
+            let dropped = Arc::new(AtomicBool::new(false));
+            let guard = Dropped(dropped.clone());
+            let mut sent = false;
+            let upstream = futures_util::stream::poll_fn(move |_| {
+                let _guard = &guard;
+                assert!(!sent, "the observer must not read ahead");
+                sent = true;
+                Poll::Ready(Some(Ok(wire.as_bytes().to_vec())))
+            });
+            let mut observations = RequestObservations::default();
+            let mut stream =
+                observations.observe_sse_stream(Box::pin(upstream), AiProtocol::OpenAiResponses);
+            assert!(stream.next().await.unwrap().is_ok());
+            drop(stream);
+            assert!(dropped.load(Ordering::SeqCst));
+            assert!(observations.native_tools_snapshot()[0].used);
         }
     }
 

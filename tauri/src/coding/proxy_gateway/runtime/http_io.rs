@@ -592,7 +592,13 @@ pub(super) async fn write_response(
         write!(&mut header, "Connection: close\r\n")?;
     }
     write!(&mut header, "\r\n")?;
-    stream.write_all(&header).await?;
+    if let Err(error) = stream.write_all(&header).await {
+        // The first-chunk probe may already have received upstream events.
+        // Release its stream before logging so observer Drop can publish an
+        // already-complete tail even when no response headers reached the client.
+        response.body_stream.take();
+        return Err(error);
+    }
     if streaming {
         write_streaming_body(stream, response, started_instant, settings).await?;
     } else {
@@ -617,10 +623,6 @@ async fn write_streaming_body(
     // client-facing error event instead of being misclassified as incomplete.
     let mut usage_collector =
         SseUsageCollector::with_provider_type(response.provider_type.as_deref());
-    // Hosted-tool markers are scanned on the bytes actually forwarded, so the
-    // detail dialog can say whether the upstream really ran a native tool. This
-    // is independent of body storage, which is off by default.
-    let mut used_tool_scanner = super::observations::UsedToolScanner::new();
     response.response_body_bytes = 0;
     response.body.clear();
     let idle_timeout_secs = response
@@ -716,7 +718,6 @@ async fn write_streaming_body(
         response.response_body_bytes = response
             .response_body_bytes
             .saturating_add(chunk.len() as u64);
-        used_tool_scanner.push_chunk(&chunk);
         append_body_snapshot(response, &chunk, settings);
         let chunk_header = format!("{:X}\r\n", chunk.len());
         let chunk_write_result: std::io::Result<()> = async {
@@ -845,9 +846,6 @@ async fn write_streaming_body(
         response.token_usage = usage_collector.finish(cli_key);
     }
     response.stream_outcome = outcome;
-    response
-        .observations
-        .observe_used_markers(used_tool_scanner.kinds());
     write_result
 }
 
@@ -1194,6 +1192,42 @@ mod tests {
         drop(client);
         let received = String::from_utf8_lossy(&reader.await.unwrap()).to_string();
         (response, result, received)
+    }
+
+    #[tokio::test]
+    async fn header_write_failure_keeps_preread_native_tool_observations() {
+        let (mut client, reader) = connect_write_pair().await;
+        // Locally close the write half so header writing fails deterministically,
+        // without racing the peer's TCP close notification.
+        client.shutdown().await.unwrap();
+        let mut response = test_streaming_response(vec![Ok(
+            b"event: item data: {\"item\":{\"type\":\"web_search_call\"}}".to_vec(),
+        )]);
+        let raw = response.body_stream.take().unwrap();
+        let mut observed = response
+            .observations
+            .observe_sse_stream(raw, AiProtocol::OpenAiResponses);
+        // Mirror the first-chunk probe: it reads and then replays the first
+        // chunk, leaving the underlying observer alive until response disposal.
+        let first = observed.next().await.unwrap();
+        response.body_stream = Some(Box::pin(
+            futures_util::stream::iter([first]).chain(observed),
+        ));
+        let result = write_response(
+            &mut client,
+            &mut response,
+            Instant::now(),
+            &ProxyGatewaySettings::default(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(response.body_stream.is_none());
+        let tools = response.observations.native_tools_snapshot();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].kind, "web_search");
+        assert!(tools[0].used);
+        drop(client);
+        assert!(reader.await.unwrap().is_empty());
     }
 
     #[tokio::test]

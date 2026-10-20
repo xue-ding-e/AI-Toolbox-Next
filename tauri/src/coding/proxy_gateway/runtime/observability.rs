@@ -210,7 +210,7 @@ pub(super) fn record_gateway_observability_with_transport(
             websocket,
             // Detail-only observation markers: they stay in the JSONL record and
             // are deliberately absent from the compact SQLite summary.
-            native_tools: response.observations.native_tools.clone(),
+            native_tools: response.observations.native_tools_snapshot(),
             rewrites: response.observations.rewrites.clone(),
             summary: GatewayRequestLogSummary {
                 transport,
