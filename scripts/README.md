@@ -55,6 +55,24 @@ node scripts/verify-gateway-request-observations.mjs
 - Writes `scenarios.json` and the shared runner's `results.json` into the printed artifact directory. Scenario/assertion counts and unhandled browser exceptions are failure gates.
 - This is component DOM regression coverage, not desktop GUI, full-page, backend observation collection, or real JSONL acceptance. Running it is a separate step from syntax checks or TypeScript checks.
 
+## verify-gateway-request-export.mjs
+
+Tests-first coverage of the real Gateway request-detail export lifecycle:
+
+```bash
+node scripts/verify-gateway-request-export.mjs
+# Diagnose one failure independently; the default still requires all five cases.
+GATEWAY_REQUEST_EXPORT_CASE=picker-rejected node scripts/verify-gateway-request-export.mjs
+GATEWAY_REQUEST_EXPORT_CASE=picker-pending node scripts/verify-gateway-request-export.mjs
+```
+
+- Uses the existing Chromium/Vite runner and its `--browser` / `--output` options. No dependency, production handler, or shared-runner change is needed.
+- Five cases / 46 assertions: exact successful trace/path and picker options, cancel without export, rejected picker with a rendered error and restored button, single picker during pending repeated clicks, and a disabled button during pending export. Individual cases have fixed counts too; unknown or empty selections fail.
+- Keeps the real `GatewayRequestsView`, `proxyGatewayApi` wrappers and `@tauri-apps/plugin-dialog` wrapper. The locked dialog version is 2.6.0; its [official save implementation](https://github.com/tauri-apps/plugins-workspace/blob/dialog-v2.6.0/plugins/dialog/guest-js/index.ts#L372-L377) invokes `plugin:dialog|save` with `{ options }`.
+- Synthetic IPC allows only request list/detail, an idle rebuild-status poll, save-dialog results, and export completion. It records the path as a string and never opens a native picker or writes a file. The fixture reuses only synthetic DTO seeds from the observation tests; it does not run those tests.
+- Runs fail fast. Each started case writes its synthetic state and assertion progress to `<case>.json`, including failures, alongside the shared runner's diagnostics. No rejected promise is suppressed and no browser exception is marked expected; the shared runner's global exception gate remains in force.
+- This is a tests-first candidate, not a reproduction report. At baseline `36209322660b223ee6b9c9eeba67149a197cc002`, the source awaits `save()` outside its `try` and sets export busy afterward. The candidate must be executed before reporting a result or proposing a production change. A synthetic pending promise cannot establish whether the native picker permits re-entry; DOM-rendered alert checks also do not establish native-window visibility. No desktop/full-page or real export acceptance is claimed.
+
 ## transparent-white.js
 
 Convert white/near-white pixels to transparent in a PNG image.
