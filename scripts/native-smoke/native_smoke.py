@@ -151,7 +151,7 @@ try:
     old = settings_fingerprint()
     click(THEME)
     collect_popup_diagnostics('popup-open')
-    click("//div[contains(@class,'ant-select-item-option-content') and (normalize-space()='" + target_labels[0] + "' or normalize-space()='" + target_labels[1] + "')]")
+    click("//div[contains(concat(' ',normalize-space(@class),' '),' ant-select-item-option ')][div[contains(concat(' ',normalize-space(@class),' '),' ant-select-item-option-content ') and (normalize-space()='" + target_labels[0] + "' or normalize-space()='" + target_labels[1] + "')]]")
     wait(lambda: text(THEME) in target_labels)
     wait(lambda: settings_fingerprint() not in (None, old))
     record('theme-ui-changed-and-save-barrier', target_theme=target_labels[0])
