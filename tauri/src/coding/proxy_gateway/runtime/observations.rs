@@ -14,6 +14,7 @@
 //! `build_upstream_body_for_provider`; the response side scans the body it is
 //! already parsing, or a bounded tail scanner inside the streaming writer.
 
+use crate::coding::proxy_gateway::request_log::safe_lossy_observation_detail;
 use crate::coding::proxy_gateway::transformer::AiProtocol;
 use crate::coding::proxy_gateway::types::{GatewayNativeToolRecord, GatewayRequestRewrite};
 use serde_json::Value;
@@ -118,11 +119,19 @@ impl RequestObservations {
         }
         self.rewrites.push(GatewayRequestRewrite {
             kind: kind.to_string(),
-            detail: detail.map(|value| truncate(value, MAX_DETAIL_CHARS)),
+            detail: detail.map(|value| {
+                if kind == REWRITE_LOSSY_CONVERSION {
+                    safe_lossy_observation_detail(&value).to_string()
+                } else {
+                    truncate(value, MAX_DETAIL_CHARS)
+                }
+            }),
         });
     }
 
-    /// Records `lossy_warnings` verbatim (already human-readable).
+    /// Records safe structural summaries. The original warnings remain available
+    /// to the protocol response header, but their request-derived values must
+    /// never enter this body-independent diagnostic log.
     pub(super) fn push_lossy_warnings(&mut self, warnings: &[String]) {
         for warning in warnings {
             self.push_rewrite(REWRITE_LOSSY_CONVERSION, Some(warning.clone()));
@@ -513,9 +522,52 @@ mod tests {
     }
 
     #[test]
+    fn privacy_lossy_warnings_never_copy_request_values_into_observations() {
+        use crate::coding::proxy_gateway::transformer::{check_lossy_conversion, ConversionRoute};
+
+        const SECRET: &str = "synthetic_plain_private_value";
+        for (source, target, body) in [
+            (
+                AiProtocol::OpenAiChat,
+                AiProtocol::OpenAiResponses,
+                json!({"modalities": ["text", SECRET]}),
+            ),
+            (
+                AiProtocol::OpenAiChat,
+                AiProtocol::OpenAiResponses,
+                json!({"messages": [{"content": [{"type": SECRET}]}]}),
+            ),
+            (
+                AiProtocol::GeminiNative,
+                AiProtocol::OpenAiChat,
+                json!({"contents": [{"parts": [{"inlineData": {"mimeType": SECRET}}]}]}),
+            ),
+        ] {
+            let issues = check_lossy_conversion(ConversionRoute::new(source, target), &body);
+            assert_eq!(issues.len(), 1);
+            let warnings: Vec<String> = issues
+                .iter()
+                .map(|issue| format!("{}: {}", issue.path, issue.message))
+                .collect();
+            assert!(warnings[0].contains(SECRET));
+            let original_warnings = warnings.clone();
+            let mut observations = RequestObservations::default();
+            observations.push_lossy_warnings(&warnings);
+            assert_eq!(warnings, original_warnings, "wire warnings stay unchanged");
+            assert_eq!(observations.rewrites.len(), 1);
+            assert_eq!(observations.rewrites[0].kind, REWRITE_LOSSY_CONVERSION);
+            assert!(!observations.rewrites[0]
+                .detail
+                .as_ref()
+                .unwrap()
+                .contains(SECRET));
+        }
+    }
+
+    #[test]
     fn rewrite_detail_is_truncated() {
         let mut observations = RequestObservations::default();
-        observations.push_rewrite(REWRITE_LOSSY_CONVERSION, Some("x".repeat(400)));
+        observations.push_rewrite(REWRITE_PROMPT_CACHE_KEY, Some("x".repeat(400)));
 
         let detail = observations.rewrites[0].detail.as_deref().unwrap();
         assert_eq!(detail.chars().count(), MAX_DETAIL_CHARS + 1);
