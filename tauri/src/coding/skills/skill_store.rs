@@ -718,6 +718,93 @@ mod tests {
             .expect("preferences record")
     }
 
+    // Seed the old persisted representation, without group_id, rather than
+    // constructing already-migrated records. No real skill directories are used.
+    fn seed_legacy_group_skill(state: &SqliteDbState, id: &str, group: Option<&str>) {
+        let value = serde_json::json!({
+            "name": id, "source_type": "git",
+            "source_ref": "https://github.com/example/synthetic-skills/tree/main/subdir",
+            "source_revision": "synthetic-revision", "central_path": "/synthetic/not-accessed",
+            "content_hash": "synthetic-hash", "user_group": group,
+            "user_note": "keep-note", "tags": ["keep-tag"],
+            "enabled_tools": ["codex"], "management_enabled": true,
+            "created_at": 100, "updated_at": 200, "sort_index": 4,
+            "status": "installed"
+        });
+        state.with_conn(|conn| db_put(conn, DbTable::Skill, id, &value))
+            .expect("seed old skill payload");
+    }
+
+    fn assert_legacy_source_metadata(skill: &Skill) {
+        assert_eq!(skill.source_type, "git");
+        assert_eq!(skill.source_ref.as_deref(), Some("https://github.com/example/synthetic-skills/tree/main/subdir"));
+        assert_eq!(skill.source_revision.as_deref(), Some("synthetic-revision"));
+        assert_eq!(skill.central_path, "/synthetic/not-accessed");
+        assert_eq!(skill.content_hash.as_deref(), Some("synthetic-hash"));
+        assert_eq!(skill.user_note.as_deref(), Some("keep-note"));
+        assert_eq!(skill.tags, vec!["keep-tag"]);
+        assert_eq!(skill.enabled_tools, vec!["codex"]);
+        assert!(skill.management_enabled);
+        assert_eq!((skill.created_at, skill.updated_at, skill.sort_index), (100, 200, 4));
+    }
+
+    #[tokio::test]
+    async fn legacy_group_migration_preserves_source_metadata_and_survives_reopen() {
+        let (temp, state) = create_test_db();
+        seed_legacy_group_skill(&state, "first", Some("  Work  "));
+        seed_legacy_group_skill(&state, "second", Some("work"));
+        let mut skills = get_managed_skills(&state).await.expect("migrate via real list entry");
+        skills.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(skills.len(), 2);
+        let groups = get_skill_groups(&state).await.expect("read migrated registry");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name.to_lowercase(), "work");
+        for skill in &skills {
+            assert_eq!(skill.group_id.as_deref(), Some(groups[0].id.as_str()));
+            assert!(skill.user_group.as_ref().is_some_and(|name| name.trim().eq_ignore_ascii_case("work")));
+            assert_legacy_source_metadata(skill);
+        }
+        let snapshot = serde_json::to_value(&skills).expect("serialize migrated skills");
+        let registry = serde_json::to_value(&groups).expect("serialize registry");
+        drop(state);
+        let reopened = SqliteDbState::open(temp.path().join("ai-toolbox.db")).expect("reopen synthetic DB");
+        let mut reopened_skills = get_managed_skills(&reopened).await.unwrap();
+        reopened_skills.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(serde_json::to_value(reopened_skills).unwrap(), snapshot);
+        assert_eq!(serde_json::to_value(get_skill_groups(&reopened).await.unwrap()).unwrap(), registry);
+    }
+
+    #[tokio::test]
+    async fn legacy_group_migration_reuses_existing_case_insensitive_registry() {
+        let (_temp, state) = create_test_db();
+        let group = SkillGroupRecord { id: "existing-group".into(), name: "Work".into(),
+            note: Some("registry-note".into()), sort_index: 8, created_at: 10, updated_at: 20 };
+        save_skill_group(&state, &group).await.expect("seed existing registry");
+        seed_legacy_group_skill(&state, "first", Some(" work "));
+        let groups = get_skill_groups(&state).await.expect("migrate via group entry");
+        assert_eq!(serde_json::to_value(&groups).unwrap(), serde_json::to_value(vec![group]).unwrap());
+        let skills = get_managed_skills(&state).await.unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].group_id.as_deref(), Some("existing-group"));
+        assert_legacy_source_metadata(&skills[0]);
+    }
+
+    #[tokio::test]
+    async fn legacy_group_migration_does_not_invent_custom_groups_for_repository_sources() {
+        let (_temp, state) = create_test_db();
+        seed_legacy_group_skill(&state, "no-custom-group", None);
+        seed_legacy_group_skill(&state, "blank-custom-group", Some("   "));
+        for _ in 0..2 {
+            assert!(get_skill_groups(&state).await.unwrap().is_empty());
+            let skills = get_managed_skills(&state).await.unwrap();
+            assert_eq!(skills.len(), 2);
+            for skill in &skills {
+                assert!(skill.group_id.is_none());
+                assert_legacy_source_metadata(skill);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn non_path_setting_write_does_not_create_central_repo_path() {
         let (_temp, state) = create_test_db();
