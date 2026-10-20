@@ -628,7 +628,12 @@ async fn privacy_lossy_observations_do_not_persist_secrets_without_bodies() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let reply: Value = response.json().await.unwrap();
-    assert_eq!(reply["choices"][0]["message"]["content"], "found it");
+    // Responses text becomes IR parts; the Chat reverse adapter preserves
+    // those as typed content parts even when there is only one text part.
+    assert_eq!(
+        reply["choices"][0]["message"]["content"],
+        json!([{"type": "text", "text": "found it"}])
+    );
     assert_eq!(reply["choices"][0]["finish_reason"], "stop");
     upstream.await.unwrap();
 
