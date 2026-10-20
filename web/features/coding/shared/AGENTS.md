@@ -69,6 +69,8 @@ sequenceDiagram
 
 ## 易错点与历史坑（Gotchas）
 
+- `providerListStateCache` 的单飞 Promise 只缓存初次读取完成状态，不能缓存返回的状态对象。每次 `loadProviderListState()` 都要在自己的 continuation 中读取当前缓存，否则本地布局/排序更新后，KeepAlive 重挂载仍拿到旧对象。回归见 `providerListStateCache.test.ts`；这是模块状态链验证，不是原生整页验收。
+
 - 不要把 `shared/` 写成新的业务层。它应该统一交互语义，而不是偷存一份自己的持久化状态。
 - 供应商批量选择的 `allIds` 必须由 owning page 按真实可删除条件过滤；卡片复选框统一消费 hook 的 `isSelectable`，避免全选排除了默认项、卡片却仍显示可选。进入选择模式时禁用供应商拖拽。确认执行时使用最新的可选集合和页面回调，防止弹窗打开期间切换默认项后误删。
 - 批量删除回调只有整批成功才返回成功状态；失败时先刷新 owning module，再保留尚未删除的选择。绑定官方账号的 Codex/Grok/Gemini/Kimi provider 也应排除，不能让第一条后端拒绝中断整批后再静默清空选择。
